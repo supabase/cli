@@ -4,11 +4,15 @@
 // (a different family, reaching in for the generic `isUserDefinedDockerNetwork`
 // predicate), both of which already imported these primitives from `deploy.ts`
 // before this file existed.
-import { resolve } from "node:path";
-import { Effect, Stream } from "effect";
+import { BunPath } from "@effect/platform-bun";
+import { Config, Effect, Option, Stream } from "effect";
+import * as EffectPath from "effect/Path";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
 import { legacyMakeDockerImageResolver } from "../../legacy/shared/legacy-docker-image-resolve.ts";
+import { FunctionsOperationError } from "./functions-api.errors.ts";
+
+const { resolve } = Effect.runSync(EffectPath.Path.pipe(Effect.provide(BunPath.layer)));
 
 const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
 const MAX_PROJECT_ID_LENGTH = 40;
@@ -91,15 +95,23 @@ export function toDockerPath(hostPath: string) {
  */
 export function containerArchiveBytes(
   files: Readonly<Record<string, string>>,
-): Promise<Uint8Array> {
-  return new Bun.Archive(
-    Object.fromEntries(
-      Object.entries(files).map(([containerPath, content]) => [
-        containerPath.replace(/^\/+/, ""),
-        content,
-      ]),
-    ),
-  ).bytes();
+): Effect.Effect<Uint8Array, FunctionsOperationError> {
+  return Effect.tryPromise({
+    try: () =>
+      new Bun.Archive(
+        Object.fromEntries(
+          Object.entries(files).map(([containerPath, content]) => [
+            containerPath.replace(/^\/+/, ""),
+            content,
+          ]),
+        ),
+      ).bytes(),
+    catch: (cause) =>
+      new FunctionsOperationError({
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
+  });
 }
 
 export interface FunctionsDockerRunSpec {
@@ -162,10 +174,10 @@ export function buildFunctionsDockerRunArgs(spec: FunctionsDockerRunSpec): Array
 // arrives — Go's `DockerStreamLogs`/`DockerRunOnceWithConfig` copy a
 // container's log stream live while it runs, rather than buffering the whole
 // thing until exit.
-function collectByteStream(
-  stream: Stream.Stream<Uint8Array, unknown>,
+function collectByteStream<E>(
+  stream: Stream.Stream<Uint8Array, E>,
   onChunk?: (chunk: string) => Effect.Effect<void>,
-): Effect.Effect<string, unknown> {
+): Effect.Effect<string, FunctionsOperationError> {
   return Effect.suspend(() => {
     const decoder = new TextDecoder();
     let text = "";
@@ -178,6 +190,13 @@ function collectByteStream(
     ).pipe(
       Effect.flatMap(() => append(decoder.decode())),
       Effect.map(() => text),
+      Effect.mapError(
+        (cause) =>
+          new FunctionsOperationError({
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+      ),
     );
   });
 }
@@ -272,7 +291,7 @@ export const ensureDockerNetwork = Effect.fnUntraced(function* (
   const inspect = yield* runChildProcess("docker", ["network", "inspect", networkMode], {
     stdout: "ignore",
     stderr: "ignore",
-  }).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
+  }).pipe(Effect.orElseSucceed(() => ({ exitCode: 1, stdout: "", stderr: "" })));
   if (inspect.exitCode === 0) {
     return;
   }
@@ -295,15 +314,22 @@ export const ensureDockerNetwork = Effect.fnUntraced(function* (
     },
   );
   if (create.exitCode !== 0 && !create.stderr.includes("already exists")) {
-    return yield* Effect.fail(new Error(`failed to create docker network: ${networkMode}`));
+    return yield* new FunctionsOperationError({
+      message: `failed to create docker network: ${networkMode}`,
+    });
   }
 });
 
 export const ensureDockerNamedVolume = Effect.fnUntraced(function* (
   volumeName: string,
   projectId: string,
+  projectEnvValues?: Readonly<Record<string, string>>,
 ) {
-  if (process.env["BITBUCKET_CLONE_DIR"] !== undefined) {
+  const bitbucketCloneDir =
+    projectEnvValues === undefined
+      ? Option.getOrUndefined(yield* Config.option(Config.string("BITBUCKET_CLONE_DIR")))
+      : projectEnvValues.BITBUCKET_CLONE_DIR;
+  if (bitbucketCloneDir !== undefined && bitbucketCloneDir.length > 0) {
     return;
   }
 
@@ -325,7 +351,9 @@ export const ensureDockerNamedVolume = Effect.fnUntraced(function* (
     },
   );
   if (create.exitCode !== 0 && !create.stderr.includes("already exists")) {
-    return yield* Effect.fail(new Error(`failed to create docker volume: ${volumeName}`));
+    return yield* new FunctionsOperationError({
+      message: `failed to create docker volume: ${volumeName}`,
+    });
   }
 });
 
@@ -333,7 +361,7 @@ export const isDockerRunning = Effect.fnUntraced(function* () {
   const result = yield* runChildProcess("docker", ["info"], {
     stdout: "ignore",
     stderr: "ignore",
-  }).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
+  }).pipe(Effect.orElseSucceed(() => ({ exitCode: 1, stdout: "", stderr: "" })));
   return result.exitCode === 0;
 });
 
@@ -349,7 +377,7 @@ export const isDockerRunning = Effect.fnUntraced(function* () {
 export function resolveEdgeRuntimeVersion(
   denoVersion: number | undefined,
   defaultVersion: string,
-): Effect.Effect<string, Error> {
+): Effect.Effect<string, FunctionsOperationError> {
   if (denoVersion === undefined || denoVersion === 2) {
     return Effect.succeed(defaultVersion);
   }
@@ -357,7 +385,9 @@ export function resolveEdgeRuntimeVersion(
     return Effect.succeed(DENO1_EDGE_RUNTIME_VERSION);
   }
   return Effect.fail(
-    new Error(`Failed reading config: Invalid edge_runtime.deno_version: ${denoVersion}.`),
+    new FunctionsOperationError({
+      message: `Failed reading config: Invalid edge_runtime.deno_version: ${denoVersion}.`,
+    }),
   );
 }
 

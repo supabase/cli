@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Option, Schema } from "effect";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -16,6 +16,8 @@ import {
 import { legacyPostgresConfigDelete } from "./delete/delete.handler.ts";
 import { legacyPostgresConfigGet } from "./get/get.handler.ts";
 import { legacyPostgresConfigUpdate } from "./update/update.handler.ts";
+
+const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 type LegacyOutput = "env" | "pretty" | "json" | "toml" | "yaml";
 
@@ -215,7 +217,7 @@ describe("legacy postgres-config get", () => {
       const exit = yield* Effect.exit(legacyPostgresConfigGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = encodeJson(exit.cause);
         expect(errorJson).toContain("LegacyPostgresConfigGetUnexpectedStatusError");
         expect(errorJson).toContain("unexpected config overrides status 503");
       }
@@ -231,7 +233,7 @@ describe("legacy postgres-config get", () => {
       const exit = yield* Effect.exit(legacyPostgresConfigGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = encodeJson(exit.cause);
         expect(errorJson).toContain("LegacyPostgresConfigGetNetworkError");
         expect(errorJson).toContain("failed to retrieve Postgres config overrides");
       }
@@ -380,7 +382,7 @@ describe("legacy postgres-config update", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = encodeJson(exit.cause);
         expect(errorJson).toContain("LegacyPostgresConfigInvalidConfigValueError");
         expect(errorJson).toContain("expected config value in key:value format");
       }
@@ -411,7 +413,7 @@ describe("legacy postgres-config update", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = encodeJson(exit.cause);
         expect(errorJson).toContain("LegacyPostgresConfigUpdateUnexpectedStatusError");
         expect(errorJson).toContain("unexpected update config overrides status 503");
       }
@@ -434,7 +436,7 @@ describe("legacy postgres-config update", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = encodeJson(exit.cause);
         expect(errorJson).toContain("LegacyPostgresConfigGetNetworkError");
         expect(errorJson).toContain("failed to retrieve Postgres config overrides");
       }
@@ -465,7 +467,7 @@ describe("legacy postgres-config update", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = encodeJson(exit.cause);
         expect(errorJson).toContain("LegacyPostgresConfigUpdateNetworkError");
         expect(errorJson).toContain("failed to update config overrides");
       }
@@ -594,7 +596,7 @@ describe("legacy postgres-config delete", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = encodeJson(exit.cause);
         expect(errorJson).toContain("LegacyPostgresConfigDeleteUnexpectedStatusError");
       }
       expect(telemetry.flushed).toBe(true);
@@ -619,7 +621,7 @@ describe("legacy postgres-config delete", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = encodeJson(exit.cause);
         expect(errorJson).toContain("LegacyPostgresConfigGetUnexpectedStatusError");
       }
       expect(api.requests).toHaveLength(1);
@@ -647,7 +649,7 @@ describe("legacy postgres-config delete", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = encodeJson(exit.cause);
         expect(errorJson).toContain("LegacyPostgresConfigDeleteNetworkError");
         expect(errorJson).toContain("failed to delete config overrides");
       }

@@ -1,6 +1,6 @@
-import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
+import { V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Option, Formatter, Schema } from "effect";
 
 import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -125,7 +125,9 @@ describe("legacy domains get integration", () => {
     const { layer, out } = setup({ goOutput: "json", response });
     return Effect.gen(function* () {
       yield* legacyDomainsGet(baseFlags);
-      const parsed = JSON.parse(out.stdoutText) as typeof V1GetHostnameConfigOutput.Type;
+      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(V1GetHostnameConfigOutput))(
+        out.stdoutText,
+      );
       expect(parsed.data.result.ownership_verification).toEqual({ type: "", name: "", value: "" });
       expect(parsed.data.result.ssl.validation_records).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -155,7 +157,9 @@ describe("legacy domains get integration", () => {
     const { layer, out } = setup({ goOutput: "json", response });
     return Effect.gen(function* () {
       yield* legacyDomainsGet(baseFlags);
-      const parsed = JSON.parse(out.stdoutText) as Record<string, unknown>;
+      const parsed = yield* Schema.decodeEffect(
+        Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+      )(out.stdoutText);
       expect(parsed.status).toBe("");
       expect(parsed.custom_hostname).toBe("");
       expect(parsed.data).toMatchObject({
@@ -294,7 +298,7 @@ describe("legacy domains get integration", () => {
       const exit = yield* Effect.exit(legacyDomainsGet(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyDomainsUnexpectedStatusError");
         expect(json).toContain("unexpected get hostname status 503");
       }
@@ -361,7 +365,7 @@ describe("legacy domains get integration", () => {
       const exit = yield* Effect.exit(legacyDomainsGet(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyDomainsNetworkError");
         expect(json).toContain("failed to get custom hostname");
       }

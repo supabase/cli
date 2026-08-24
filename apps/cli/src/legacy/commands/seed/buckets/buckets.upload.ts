@@ -1,4 +1,4 @@
-import * as nodePath from "node:path";
+import type { Path } from "effect";
 
 /**
  * Pure path helper for `seed buckets` object upload, ported from
@@ -20,14 +20,16 @@ import * as nodePath from "node:path";
  * to forward slashes (`filepath.ToSlash`) for the remote key.
  */
 export function legacyBucketObjectKey(
+  path: Path.Path,
+  posixPath: Path.Path,
   bucketName: string,
   objectsPath: string,
   filePath: string,
 ): string {
-  const relPath = nodePath.relative(objectsPath, filePath);
+  const relPath = path.relative(objectsPath, filePath);
   if (relPath === "") {
-    return nodePath.posix.join(bucketName, nodePath.basename(filePath));
+    return posixPath.join(bucketName, posixPath.basename(filePath));
   }
-  const relPosix = relPath.split(nodePath.sep).join(nodePath.posix.sep);
-  return nodePath.posix.join(bucketName, relPosix);
+  const relPosix = relPath.split(path.sep).join(posixPath.sep);
+  return posixPath.join(bucketName, relPosix);
 }

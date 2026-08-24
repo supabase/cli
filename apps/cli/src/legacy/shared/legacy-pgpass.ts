@@ -1,7 +1,3 @@
-import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
-
 /**
  * libpq `.pgpass` password lookup, a 1:1 port of `jackc/pgpassfile`
  * (`ParsePassfile` + `FindPassword`) as used by `pgconn.ParseConfig`:
@@ -76,9 +72,15 @@ export function legacyFindPgpassPassword(
   return "";
 }
 
-/** Environment lookup for `PGPASSFILE`/`APPDATA`; defaults to `process.env`. */
+/** Environment lookup for `PGPASSFILE`/`APPDATA`, supplied by the caller. */
 type LegacyPassfileEnv = (name: string) => string | undefined;
-const processEnv: LegacyPassfileEnv = (name) => process.env[name];
+
+/** Explicit filesystem/path data supplied by the Effect composition boundary. */
+export interface LegacyPgpassRuntime {
+  readonly homeDirectory?: string;
+  readonly join: (base: string, ...parts: ReadonlyArray<string>) => string;
+  readonly files: ReadonlyMap<string, string>;
+}
 
 /**
  * Resolve the passfile path with pgconn's precedence: an
@@ -91,7 +93,11 @@ const processEnv: LegacyPassfileEnv = (name) => process.env[name];
  * `os.Open("")` fails → no `.pgpass` lookup → empty password). Only an *absent*
  * (`undefined`) setting falls through to `PGPASSFILE`/the default.
  */
-function pgpassFilePath(env: LegacyPassfileEnv, passfile: string | undefined): string | undefined {
+function pgpassFilePath(
+  env: LegacyPassfileEnv,
+  passfile: string | undefined,
+  runtime: LegacyPgpassRuntime | undefined,
+): string | undefined {
   if (passfile !== undefined) {
     return passfile.length > 0 ? passfile : undefined;
   }
@@ -102,11 +108,13 @@ function pgpassFilePath(env: LegacyPassfileEnv, passfile: string | undefined): s
   if (process.platform === "win32") {
     const appData = env("APPDATA");
     return appData !== undefined && appData.length > 0
-      ? join(appData, "postgresql", "pgpass.conf")
+      ? runtime?.join(appData, "postgresql", "pgpass.conf")
       : undefined;
   }
-  const home = homedir();
-  return home.length > 0 ? join(home, ".pgpass") : undefined;
+  const home = runtime?.homeDirectory;
+  return home !== undefined && home.length > 0 && runtime !== undefined
+    ? runtime.join(home, ".pgpass")
+    : undefined;
 }
 
 /**
@@ -114,27 +122,26 @@ function pgpassFilePath(env: LegacyPassfileEnv, passfile: string | undefined): s
  * when the file is absent/unreadable or has no matching entry. A unix-socket
  * host (a path) matches `localhost`, mirroring pgconn's `NetworkAddress`.
  *
- * `env` supplies `PGPASSFILE`/`APPDATA` (defaults to `process.env`); `passfile` is
- * an explicit connection-string `passfile=` setting that takes precedence.
+ * `env` supplies `PGPASSFILE`/`APPDATA`; `passfile` is an explicit
+ * connection-string `passfile=` setting that takes precedence. The runtime's
+ * file map is populated by the Effect filesystem boundary; this parser never
+ * reads process-global state or performs synchronous I/O.
  */
 export function legacyPgpassPassword(
   host: string,
   port: number,
   database: string,
   username: string,
-  env: LegacyPassfileEnv = processEnv,
+  env: LegacyPassfileEnv = () => undefined,
   passfile?: string,
+  runtime?: LegacyPgpassRuntime,
 ): string {
-  const path = pgpassFilePath(env, passfile);
+  const path = pgpassFilePath(env, passfile, runtime);
   if (path === undefined) {
     return "";
   }
-  let contents: string;
-  try {
-    contents = readFileSync(path, "utf8");
-  } catch {
-    return "";
-  }
+  const contents = runtime?.files.get(path);
+  if (contents === undefined) return "";
   const matchHost = host.startsWith("/") ? "localhost" : host;
   return legacyFindPgpassPassword(contents, matchHost, String(port), database, username);
 }

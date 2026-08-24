@@ -62,7 +62,7 @@ describe("legacy completion powershell", () => {
           "--no-descriptions",
         ]);
         expect(out.stdoutText).toContain("__completeNoDesc");
-      }).pipe(Effect.provide(layer)) as Effect.Effect<void>;
+      }).pipe(Effect.provide(layer));
     },
   );
 
@@ -81,7 +81,7 @@ describe("legacy completion powershell", () => {
         yield* Command.runWith(legacyTestRoot(), { version: "0.0.0-test" })(["powershell"]);
         const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
         expect(event).toBeDefined();
-      }).pipe(Effect.provide(layer)) as Effect.Effect<void>;
+      }).pipe(Effect.provide(layer));
     },
   );
 });

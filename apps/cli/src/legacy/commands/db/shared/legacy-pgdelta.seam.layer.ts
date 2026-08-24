@@ -19,6 +19,7 @@ import {
 } from "../../../shared/legacy-docker-ids.ts";
 import { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
 import { LegacyDeclarativeSeam } from "./legacy-pgdelta.seam.service.ts";
+import { LegacyViperEnv } from "../../../../shared/legacy/legacy-viper-env.ts";
 
 const legacyShadowDockerCause = (
   stderr: string,
@@ -83,6 +84,7 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
     const spawner = yield* ChildProcessSpawner;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const legacyEnv = yield* LegacyViperEnv;
     // Captures every OTHER service `legacyExportBaselineCatalogRef`/
     // `legacyExportDeclarativeCatalogRef`/`legacyStartLocalDatabase` need internally (Output,
     // RuntimeInfo, HttpClient, LegacyDbConnection, LegacyEdgeRuntimeScript, LegacyDockerRun,
@@ -93,8 +95,10 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
     // `legacy-platform-api-factory.layer.ts`'s identical capture-and-provide shape.
     const context = yield* Effect.context<
       | LegacyExportBaselineCatalogDeps
-      | LegacyExportDeclarativeCatalogDeps
       | LegacyStartLocalDatabaseDeps
+      | LegacyViperEnv
+      | FileSystem.FileSystem
+      | Path.Path
     >();
 
     return LegacyDeclarativeSeam.of({
@@ -108,178 +112,166 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
               noCache,
               projectRef,
             })
+        ).pipe(Effect.provideContext(context), Effect.mapError(legacyToShadowDbError)),
+      ensureLocalDatabaseStarted: Effect.gen(function* () {
+        const running = yield* legacyIsLocalDbRunning(
+          spawner,
+          fs,
+          path,
+          cliConfig.workdir,
+          Option.getOrUndefined(cliConfig.projectId),
         ).pipe(
           Effect.provideContext(context),
-          Effect.catch((cause) => Effect.fail(legacyToShadowDbError(cause))),
-        ),
-      ensureLocalDatabaseStarted: () =>
+          Effect.mapError(
+            (cause) =>
+              new LegacyDeclarativeShadowDbError({
+                message: cause.message,
+                ...(cause.daemonDown === true ? { docker: "daemon" as const } : {}),
+                // Same propagation as the start-failure catch below: the inspect error's
+                // Docker-install recovery text (Go's `utils.CmdSuggestion`) must survive the
+                // seam, or the normalizer falls back to its generic debug hint.
+                ...(cause.suggestion !== undefined ? { suggestion: cause.suggestion } : {}),
+              }),
+          ),
+        );
+        if (running) return; // already running — the seam never prints anything here.
+        yield* legacyStartLocalDatabase().pipe(
+          Effect.provideContext(context),
+          Effect.asVoid,
+          Effect.mapError(
+            (cause) =>
+              new LegacyDeclarativeShadowDbError({
+                message: `failed to start local database: ${cause.message}`,
+                ...(legacyHasDaemonSignal(cause) ? { docker: "daemon" as const } : {}),
+                ...("suggestion" in cause && typeof cause.suggestion === "string"
+                  ? { suggestion: cause.suggestion }
+                  : {}),
+              }),
+          ),
+        );
+      }),
+      ensureLocalPostgresImageCurrent: Effect.scoped(
         Effect.gen(function* () {
-          const running = yield* legacyIsLocalDbRunning(
-            spawner,
+          const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir).pipe(
+            Effect.provideContext(context),
+            Effect.mapError(
+              (error) =>
+                new LegacyDeclarativeShadowDbError({
+                  message: `failed to read config for local Postgres image check: ${error.message}`,
+                }),
+            ),
+          );
+          const image = yield* legacyResolveDbImage(
             fs,
             path,
             cliConfig.workdir,
+            toml.majorVersion,
+            Option.getOrUndefined(toml.orioledbVersion),
+          ).pipe(Effect.provideContext(context));
+          const tomlProjectId = toml.projectId;
+          const projectId = legacyResolveLocalProjectId(
             Option.getOrUndefined(cliConfig.projectId),
+            Option.getOrUndefined(tomlProjectId),
+            cliConfig.workdir,
+          );
+          const containerId = localDbContainerId(projectId);
+          const child = yield* spawnContainerCli(spawner, ["container", "inspect", containerId], {
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "pipe",
+            extendEnv: true,
+          }).pipe(
+            Effect.mapError(
+              () =>
+                new LegacyDeclarativeShadowDbError({
+                  message: "failed to inspect local Postgres container.",
+                  docker: "daemon",
+                }),
+            ),
+          );
+          const stdoutChunks: Array<Uint8Array> = [];
+          const stderrChunks: Array<Uint8Array> = [];
+          yield* Stream.runForEach(child.stdout, (chunk) =>
+            Effect.sync(() => {
+              stdoutChunks.push(chunk);
+            }),
           ).pipe(
             Effect.mapError(
-              (cause) =>
+              () =>
                 new LegacyDeclarativeShadowDbError({
-                  message: cause.message,
-                  ...(cause.daemonDown === true ? { docker: "daemon" as const } : {}),
-                  // Same propagation as the start-failure catch below: the inspect error's
-                  // Docker-install recovery text (Go's `utils.CmdSuggestion`) must survive the
-                  // seam, or the normalizer falls back to its generic debug hint.
-                  ...(cause.suggestion !== undefined ? { suggestion: cause.suggestion } : {}),
+                  message: "failed to inspect local Postgres container.",
+                  docker: "daemon",
                 }),
             ),
           );
-          if (running) return; // already running — the seam never prints anything here.
-          yield* legacyStartLocalDatabase().pipe(
-            Effect.provideContext(context),
-            Effect.asVoid,
-            Effect.catch((cause) =>
-              Effect.fail(
+          yield* Stream.runForEach(child.stderr, (chunk) =>
+            Effect.sync(() => {
+              stderrChunks.push(chunk);
+            }),
+          ).pipe(
+            Effect.mapError(
+              () =>
                 new LegacyDeclarativeShadowDbError({
-                  message: `failed to start local database: ${cause.message}`,
-                  ...(legacyHasDaemonSignal(cause) ? { docker: "daemon" as const } : {}),
-                  ...("suggestion" in cause && typeof cause.suggestion === "string"
-                    ? { suggestion: cause.suggestion }
-                    : {}),
+                  message: "failed to inspect local Postgres container.",
+                  docker: "daemon",
                 }),
-              ),
             ),
           );
+          const inspectExit = yield* child.exitCode.pipe(
+            Effect.map(Number),
+            Effect.mapError(
+              () =>
+                new LegacyDeclarativeShadowDbError({
+                  message: "failed to inspect local Postgres container.",
+                  docker: "daemon",
+                }),
+            ),
+          );
+          const decodeChunks = (chunks: ReadonlyArray<Uint8Array>): string => {
+            const total = chunks.reduce((size, chunk) => size + chunk.length, 0);
+            const bytes = new Uint8Array(total);
+            let offset = 0;
+            for (const chunk of chunks) {
+              bytes.set(chunk, offset);
+              offset += chunk.length;
+            }
+            return new TextDecoder().decode(bytes).trim();
+          };
+          const stderr = decodeChunks(stderrChunks);
+          const stdout = decodeChunks(stdoutChunks);
+          if (inspectExit !== 0) {
+            if (legacyIsMissingContainerInspectError(stderr)) return;
+            return yield* new LegacyDeclarativeShadowDbError({
+              message:
+                stderr.length > 0
+                  ? `failed to inspect local Postgres container: ${stderr}`
+                  : "failed to inspect local Postgres container.",
+              ...legacyShadowDockerCause(stderr),
+            });
+          }
+          const actual = legacyResolveContainerInspectImageName(stdout);
+          const registryOverride = yield* legacyEnv
+            .get("SUPABASE_INTERNAL_IMAGE_REGISTRY")
+            .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+          const expected = legacyGetRegistryImageUrl(image, {
+            SUPABASE_INTERNAL_IMAGE_REGISTRY: Option.getOrElse(registryOverride, () => ""),
+          }).trim();
+          const actualTag = dockerImageTag(actual);
+          const expectedTag = dockerImageTag(expected);
+          if (actualTag.length === 0 || expectedTag.length === 0 || actualTag === expectedTag) {
+            return;
+          }
+          return yield* new LegacyDeclarativeShadowDbError({
+            message: `local Postgres container image is stale: running ${actual} but expected ${expected}. Run supabase stop --all --no-backup, then supabase start before syncing declarative schemas.`,
+          });
         }),
-      ensureLocalPostgresImageCurrent: () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir).pipe(
-              Effect.mapError(
-                (error) =>
-                  new LegacyDeclarativeShadowDbError({
-                    message: `failed to read config for local Postgres image check: ${error.message}`,
-                  }),
-              ),
-            );
-            const image = yield* legacyResolveDbImage(
-              fs,
-              path,
-              cliConfig.workdir,
-              toml.majorVersion,
-              Option.getOrUndefined(toml.orioledbVersion),
-            );
-            const tomlProjectId = toml.projectId;
-            const projectId = legacyResolveLocalProjectId(
-              Option.getOrUndefined(cliConfig.projectId),
-              Option.getOrUndefined(tomlProjectId),
-              cliConfig.workdir,
-            );
-            const containerId = localDbContainerId(projectId);
-            const child = yield* spawnContainerCli(spawner, ["container", "inspect", containerId], {
-              stdin: "ignore",
-              stdout: "pipe",
-              stderr: "pipe",
-              extendEnv: true,
-            }).pipe(
-              Effect.mapError(
-                () =>
-                  new LegacyDeclarativeShadowDbError({
-                    message: "failed to inspect local Postgres container.",
-                    docker: "daemon",
-                  }),
-              ),
-            );
-            const stdoutChunks: Array<Uint8Array> = [];
-            const stderrChunks: Array<Uint8Array> = [];
-            yield* Stream.runForEach(child.stdout, (chunk) =>
-              Effect.sync(() => {
-                stdoutChunks.push(chunk);
-              }),
-            ).pipe(
-              Effect.mapError(
-                () =>
-                  new LegacyDeclarativeShadowDbError({
-                    message: "failed to inspect local Postgres container.",
-                    docker: "daemon",
-                  }),
-              ),
-            );
-            yield* Stream.runForEach(child.stderr, (chunk) =>
-              Effect.sync(() => {
-                stderrChunks.push(chunk);
-              }),
-            ).pipe(
-              Effect.mapError(
-                () =>
-                  new LegacyDeclarativeShadowDbError({
-                    message: "failed to inspect local Postgres container.",
-                    docker: "daemon",
-                  }),
-              ),
-            );
-            const inspectExit = yield* child.exitCode.pipe(
-              Effect.map(Number),
-              Effect.mapError(
-                () =>
-                  new LegacyDeclarativeShadowDbError({
-                    message: "failed to inspect local Postgres container.",
-                    docker: "daemon",
-                  }),
-              ),
-            );
-            const decodeChunks = (chunks: ReadonlyArray<Uint8Array>): string => {
-              const total = chunks.reduce((size, chunk) => size + chunk.length, 0);
-              const bytes = new Uint8Array(total);
-              let offset = 0;
-              for (const chunk of chunks) {
-                bytes.set(chunk, offset);
-                offset += chunk.length;
-              }
-              return new TextDecoder().decode(bytes).trim();
-            };
-            const stderr = decodeChunks(stderrChunks);
-            const stdout = decodeChunks(stdoutChunks);
-            if (inspectExit !== 0) {
-              if (legacyIsMissingContainerInspectError(stderr)) return;
-              return yield* Effect.fail(
-                new LegacyDeclarativeShadowDbError({
-                  message:
-                    stderr.length > 0
-                      ? `failed to inspect local Postgres container: ${stderr}`
-                      : "failed to inspect local Postgres container.",
-                  ...legacyShadowDockerCause(stderr),
-                }),
-              );
-            }
-            const actual = legacyResolveContainerInspectImageName(stdout);
-            const expected = legacyGetRegistryImageUrl(image).trim();
-            const actualTag = dockerImageTag(actual);
-            const expectedTag = dockerImageTag(expected);
-            if (actualTag.length === 0 || expectedTag.length === 0 || actualTag === expectedTag) {
-              return;
-            }
-            return yield* Effect.fail(
-              new LegacyDeclarativeShadowDbError({
-                message: `local Postgres container image is stale: running ${actual} but expected ${expected}. Run supabase stop --all --no-backup, then supabase start before syncing declarative schemas.`,
-              }),
-            );
-          }),
-        ),
+      ),
     });
   }),
 );
 
 type LegacyExportBaselineCatalogDeps =
   ReturnType<typeof legacyExportBaselineCatalogRef> extends Effect.Effect<
-    infer _A,
-    infer _E,
-    infer R
-  >
-    ? R
-    : never;
-
-type LegacyExportDeclarativeCatalogDeps =
-  ReturnType<typeof legacyExportDeclarativeCatalogRef> extends Effect.Effect<
     infer _A,
     infer _E,
     infer R

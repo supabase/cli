@@ -7,7 +7,7 @@ export const SupavisorConfigResponse = Schema.Struct({
   is_using_scram_auth: Schema.Boolean,
   db_user: Schema.String,
   db_host: Schema.String,
-  db_port: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+  db_port: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
         expected: "a value greater than or equal to -9007199254740991",
@@ -22,7 +22,7 @@ export const SupavisorConfigResponse = Schema.Struct({
   connection_string: Schema.String,
   connectionString: Schema.String.annotate({ description: "Use connection_string instead" }),
   default_pool_size: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -36,7 +36,7 @@ export const SupavisorConfigResponse = Schema.Struct({
     Schema.Null,
   ]),
   max_client_conn: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -107,7 +107,7 @@ export const V1ServiceHealthResponse = Schema.Struct({
         healthy: Schema.Boolean.annotate({ description: "Deprecated. Use `status` instead." }),
         db_connected: Schema.Boolean,
         replication_connected: Schema.Boolean,
-        connected_cluster: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        connected_cluster: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
           .check(
             Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
               expected: "a value greater than or equal to -9007199254740991",
@@ -141,7 +141,7 @@ export const BranchResponse = Schema.Struct({
   is_default: Schema.Boolean,
   git_branch: Schema.optionalKey(Schema.String),
   pr_number: Schema.optionalKey(
-    Schema.Number.annotate({ format: "int32" })
+    Schema.Finite.annotate({ format: "int32" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -155,7 +155,7 @@ export const BranchResponse = Schema.Struct({
       ),
   ),
   latest_check_run_id: Schema.optionalKey(
-    Schema.Number.annotate({
+    Schema.Finite.annotate({
       description: "This field is deprecated and will not be populated.",
     }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
   ),
@@ -209,7 +209,7 @@ export const FunctionResponse = Schema.Struct({
   slug: Schema.String,
   name: Schema.String,
   status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
-  version: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+  version: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
         expected: "a value greater than or equal to -9007199254740991",
@@ -220,7 +220,7 @@ export const FunctionResponse = Schema.Struct({
         expected: "a value less than or equal to 9007199254740991",
       }),
     ),
-  created_at: Schema.Number.annotate({ format: "int64" })
+  created_at: Schema.Finite.annotate({ format: "int64" })
     .check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -232,7 +232,7 @@ export const FunctionResponse = Schema.Struct({
         expected: "a value less than or equal to 9007199254740991",
       }),
     ),
-  updated_at: Schema.Number.annotate({ format: "int64" })
+  updated_at: Schema.Finite.annotate({ format: "int64" })
     .check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -353,7 +353,7 @@ export const UpdateCustomHostnameResponseJsonValue = Schema.Union([
   Schema.Union([
     Schema.Union([
       Schema.String,
-      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       Schema.Boolean,
     ]),
     Schema.Null,
@@ -386,7 +386,7 @@ export const ListProjectAddonsResponseJsonValue = Schema.Union([
   Schema.Union([
     Schema.Union([
       Schema.String,
-      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       Schema.Boolean,
     ]),
     Schema.Null,
@@ -458,7 +458,7 @@ export const V1AcceptInviteExternalJitAccessOutput = Schema.Struct({
         Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
       ),
       expires_at: Schema.optionalKey(
-        Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       ),
       allowed_networks: Schema.optionalKey(
         Schema.Struct({
@@ -679,7 +679,7 @@ export const V1AuthorizeJitAccessOutput = Schema.Struct({
       Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
     ),
     expires_at: Schema.optionalKey(
-      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
     ),
     allowed_networks: Schema.optionalKey(
       Schema.Struct({
@@ -809,7 +809,7 @@ export const V1BulkUpdateFunctionsInput = Schema.Struct({
       ),
       name: Schema.String,
       status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
-      version: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      version: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
             expected: "a value greater than or equal to -9007199254740991",
@@ -821,7 +821,7 @@ export const V1BulkUpdateFunctionsInput = Schema.Struct({
           }),
         ),
       created_at: Schema.optionalKey(
-        Schema.Number.annotate({ format: "int64" })
+        Schema.Finite.annotate({ format: "int64" })
           .check(Schema.isInt().annotate({ expected: "an integer" }))
           .check(
             Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -849,7 +849,7 @@ export const V1BulkUpdateFunctionsOutput = Schema.Struct({
       slug: Schema.String,
       name: Schema.String,
       status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
-      version: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      version: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
             expected: "a value greater than or equal to -9007199254740991",
@@ -860,7 +860,7 @@ export const V1BulkUpdateFunctionsOutput = Schema.Struct({
             expected: "a value less than or equal to 9007199254740991",
           }),
         ),
-      created_at: Schema.Number.annotate({ format: "int64" })
+      created_at: Schema.Finite.annotate({ format: "int64" })
         .check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -872,7 +872,7 @@ export const V1BulkUpdateFunctionsOutput = Schema.Struct({
             expected: "a value less than or equal to 9007199254740991",
           }),
         ),
-      updated_at: Schema.Number.annotate({ format: "int64" })
+      updated_at: Schema.Finite.annotate({ format: "int64" })
         .check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -1016,7 +1016,7 @@ export const V1CreateABranchOutput = Schema.Struct({
   is_default: Schema.Boolean,
   git_branch: Schema.optionalKey(Schema.String),
   pr_number: Schema.optionalKey(
-    Schema.Number.annotate({ format: "int32" })
+    Schema.Finite.annotate({ format: "int32" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -1030,7 +1030,7 @@ export const V1CreateABranchOutput = Schema.Struct({
       ),
   ),
   latest_check_run_id: Schema.optionalKey(
-    Schema.Number.annotate({
+    Schema.Finite.annotate({
       description: "This field is deprecated and will not be populated.",
     }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
   ),
@@ -1101,7 +1101,7 @@ export const V1CreateAFunctionOutput = Schema.Struct({
   slug: Schema.String,
   name: Schema.String,
   status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
-  version: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+  version: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
         expected: "a value greater than or equal to -9007199254740991",
@@ -1112,7 +1112,7 @@ export const V1CreateAFunctionOutput = Schema.Struct({
         expected: "a value less than or equal to 9007199254740991",
       }),
     ),
-  created_at: Schema.Number.annotate({ format: "int64" })
+  created_at: Schema.Finite.annotate({ format: "int64" })
     .check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -1124,7 +1124,7 @@ export const V1CreateAFunctionOutput = Schema.Struct({
         expected: "a value less than or equal to 9007199254740991",
       }),
     ),
-  updated_at: Schema.Number.annotate({ format: "int64" })
+  updated_at: Schema.Finite.annotate({ format: "int64" })
     .check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -1460,7 +1460,7 @@ export const V1CreateLoginRoleOutput = Schema.Struct({
   password: Schema.String.check(
     Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
   ),
-  ttl_seconds: Schema.Number.annotate({ format: "int64" })
+  ttl_seconds: Schema.Finite.annotate({ format: "int64" })
     .check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(1).annotate({ expected: "a value greater than or equal to 1" }),
@@ -1858,7 +1858,7 @@ export const V1DeleteAProjectInput = Schema.Struct({
     ),
 });
 export const V1DeleteAProjectOutput = Schema.Struct({
-  id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+  id: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
         expected: "a value greater than or equal to -9007199254740991",
@@ -2157,7 +2157,7 @@ export const V1DeployAFunctionOutput = Schema.Struct({
   slug: Schema.String,
   name: Schema.String,
   status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
-  version: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+  version: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
         expected: "a value greater than or equal to -9007199254740991",
@@ -2169,7 +2169,7 @@ export const V1DeployAFunctionOutput = Schema.Struct({
       }),
     ),
   created_at: Schema.optionalKey(
-    Schema.Number.annotate({ format: "int64" })
+    Schema.Finite.annotate({ format: "int64" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -2183,7 +2183,7 @@ export const V1DeployAFunctionOutput = Schema.Struct({
       ),
   ),
   updated_at: Schema.optionalKey(
-    Schema.Number.annotate({ format: "int64" })
+    Schema.Finite.annotate({ format: "int64" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -2309,7 +2309,7 @@ export const V1ExchangeOauthTokenOutput = Schema.Struct({
         "The `urn:ietf:params:oauth:grant-type:jwt-bearer` grant type issues access tokens only, no refresh token is returned and the token cannot be revoked via `/v1/oauth/revoke`.",
     }),
   ),
-  expires_in: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+  expires_in: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
         expected: "a value greater than or equal to -9007199254740991",
@@ -2364,7 +2364,7 @@ export const V1GetABranchOutput = Schema.Struct({
   is_default: Schema.Boolean,
   git_branch: Schema.optionalKey(Schema.String),
   pr_number: Schema.optionalKey(
-    Schema.Number.annotate({ format: "int32" })
+    Schema.Finite.annotate({ format: "int32" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -2378,7 +2378,7 @@ export const V1GetABranchOutput = Schema.Struct({
       ),
   ),
   latest_check_run_id: Schema.optionalKey(
-    Schema.Number.annotate({
+    Schema.Finite.annotate({
       description: "This field is deprecated and will not be populated.",
     }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
   ),
@@ -2464,7 +2464,7 @@ export const V1GetABranchConfigOutput = Schema.Struct({
     "RESIZING",
   ]),
   db_host: Schema.String,
-  db_port: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+  db_port: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isLessThanOrEqualTo(9007199254740991).annotate({
         expected: "a value less than or equal to 9007199254740991",
@@ -2496,7 +2496,7 @@ export const V1GetAFunctionOutput = Schema.Struct({
   slug: Schema.String,
   name: Schema.String,
   status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
-  version: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+  version: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
         expected: "a value greater than or equal to -9007199254740991",
@@ -2507,7 +2507,7 @@ export const V1GetAFunctionOutput = Schema.Struct({
         expected: "a value less than or equal to 9007199254740991",
       }),
     ),
-  created_at: Schema.Number.annotate({ format: "int64" })
+  created_at: Schema.Finite.annotate({ format: "int64" })
     .check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -2519,7 +2519,7 @@ export const V1GetAFunctionOutput = Schema.Struct({
         expected: "a value less than or equal to 9007199254740991",
       }),
     ),
-  updated_at: Schema.Number.annotate({ format: "int64" })
+  updated_at: Schema.Finite.annotate({ format: "int64" })
     .check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -2601,15 +2601,15 @@ export const V1GetASnippetOutput = Schema.Struct({
   name: Schema.String,
   description: Schema.Union([Schema.String, Schema.Null]),
   project: Schema.Struct({
-    id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    id: Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
     name: Schema.String,
   }),
   owner: Schema.Struct({
-    id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    id: Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
     username: Schema.String,
   }),
   updated_by: Schema.Struct({
-    id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    id: Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
     username: Schema.String,
   }),
   favorite: Schema.Boolean,
@@ -2724,7 +2724,7 @@ export const V1GetActionRunOutput = Schema.Struct({
   ),
   workdir: Schema.Union([Schema.String, Schema.Null]),
   check_run_id: Schema.Union([
-    Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
     Schema.Null,
   ]),
   created_at: Schema.String,
@@ -2750,7 +2750,7 @@ export const V1GetAllProjectsForOrganizationInput = Schema.Struct({
     }),
   ),
   offset: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -2763,7 +2763,7 @@ export const V1GetAllProjectsForOrganizationInput = Schema.Struct({
       ),
   ),
   limit: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(1).annotate({
           expected: "a value greater than or equal to 1",
@@ -2850,11 +2850,11 @@ export const V1GetAllProjectsForOrganizationOutput = Schema.Struct({
           identifier: Schema.String,
           type: Schema.Literals(["PRIMARY", "READ_REPLICA"]),
           disk_volume_size_gb: Schema.optionalKey(
-            Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+            Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
           ),
           disk_type: Schema.optionalKey(Schema.Literals(["gp3", "io2"])),
           disk_throughput_mbps: Schema.optionalKey(
-            Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+            Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
           ),
           disk_last_modified_at: Schema.optionalKey(Schema.String),
         }),
@@ -2862,13 +2862,13 @@ export const V1GetAllProjectsForOrganizationOutput = Schema.Struct({
     }),
   ),
   pagination: Schema.Struct({
-    count: Schema.Number.annotate({
+    count: Schema.Finite.annotate({
       description: "Total number of projects. Use this to calculate the total number of pages.",
     }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
-    limit: Schema.Number.annotate({ description: "Maximum number of projects per page" }).check(
+    limit: Schema.Finite.annotate({ description: "Maximum number of projects per page" }).check(
       Schema.isFinite().annotate({ expected: "a finite number" }),
     ),
-    offset: Schema.Number.annotate({
+    offset: Schema.Finite.annotate({
       description: "Number of projects skipped in this response",
     }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
   }),
@@ -2908,7 +2908,7 @@ export const V1GetAuthServiceConfigInput = Schema.Struct({
 });
 export const V1GetAuthServiceConfigOutput = Schema.Struct({
   api_max_request_duration: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -2922,7 +2922,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   db_max_pool_size: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -3058,7 +3058,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   hook_after_user_created_uri: Schema.Union([Schema.String, Schema.Null]),
   hook_after_user_created_secrets: Schema.Union([Schema.String, Schema.Null]),
   jwt_exp: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -3073,7 +3073,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   ]),
   mailer_allow_unverified_email_sign_ins: Schema.Union([Schema.Boolean, Schema.Null]),
   mailer_autoconfirm: Schema.Union([Schema.Boolean, Schema.Null]),
-  mailer_otp_exp: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+  mailer_otp_exp: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
         expected: "a value greater than or equal to -9007199254740991",
@@ -3085,7 +3085,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
       }),
     ),
   mailer_otp_length: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -3145,7 +3145,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   mailer_notifications_identity_linked_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mailer_notifications_identity_unlinked_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mfa_max_enrolled_factors: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -3168,7 +3168,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   webauthn_rp_display_name: Schema.Union([Schema.String, Schema.Null]),
   webauthn_rp_id: Schema.Union([Schema.String, Schema.Null]),
   webauthn_rp_origins: Schema.Union([Schema.String, Schema.Null]),
-  mfa_phone_otp_length: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+  mfa_phone_otp_length: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
         expected: "a value greater than or equal to -9007199254740991",
@@ -3181,7 +3181,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
     ),
   mfa_phone_template: Schema.Union([Schema.String, Schema.Null]),
   mfa_phone_max_frequency: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -3199,7 +3199,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   nimbus_oauth_client_secret: Schema.Union([Schema.String, Schema.Null]),
   password_hibp_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   password_min_length: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -3222,7 +3222,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   rate_limit_anonymous_users: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -3236,7 +3236,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   rate_limit_email_sent: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -3250,7 +3250,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   rate_limit_sms_sent: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -3264,7 +3264,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   rate_limit_token_refresh: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -3278,7 +3278,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   rate_limit_verify: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -3292,7 +3292,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   rate_limit_otp: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -3306,7 +3306,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   rate_limit_web3: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -3333,7 +3333,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   security_captcha_secret: Schema.Union([Schema.String, Schema.Null]),
   security_manual_linking_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_refresh_token_reuse_interval: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -3348,19 +3348,19 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   ]),
   security_update_password_require_reauthentication: Schema.Union([Schema.Boolean, Schema.Null]),
   sessions_inactivity_timeout: Schema.Union([
-    Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
     Schema.Null,
   ]),
   sessions_single_per_user: Schema.Union([Schema.Boolean, Schema.Null]),
   sessions_tags: Schema.Union([Schema.String, Schema.Null]),
   sessions_timebox: Schema.Union([
-    Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
     Schema.Null,
   ]),
   site_url: Schema.Union([Schema.String, Schema.Null]),
   sms_autoconfirm: Schema.Union([Schema.Boolean, Schema.Null]),
   sms_max_frequency: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -3376,7 +3376,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   sms_messagebird_access_key: Schema.Union([Schema.String, Schema.Null]),
   sms_messagebird_originator: Schema.Union([Schema.String, Schema.Null]),
   sms_otp_exp: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -3389,7 +3389,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
       ),
     Schema.Null,
   ]),
-  sms_otp_length: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+  sms_otp_length: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
         expected: "a value greater than or equal to -9007199254740991",
@@ -3441,7 +3441,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   ]),
   smtp_host: Schema.Union([Schema.String, Schema.Null]),
   smtp_max_frequency: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -3463,7 +3463,7 @@ export const V1GetAuthServiceConfigOutput = Schema.Struct({
   oauth_server_allow_dynamic_registration: Schema.Boolean,
   oauth_server_authorization_path: Schema.Union([Schema.String, Schema.Null]),
   custom_oauth_enabled: Schema.Boolean,
-  custom_oauth_max_providers: Schema.Number.check(
+  custom_oauth_max_providers: Schema.Finite.check(
     Schema.isInt().annotate({ expected: "an integer" }),
   )
     .check(
@@ -3619,14 +3619,14 @@ export const V1GetDatabaseDiskInput = Schema.Struct({
 export const V1GetDatabaseDiskOutput = Schema.Struct({
   attributes: Schema.Union([
     Schema.Struct({
-      iops: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      iops: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isLessThanOrEqualTo(9007199254740991).annotate({
             expected: "a value less than or equal to 9007199254740991",
           }),
         )
         .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
-      size_gb: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      size_gb: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isLessThanOrEqualTo(9007199254740991).annotate({
             expected: "a value less than or equal to 9007199254740991",
@@ -3634,7 +3634,7 @@ export const V1GetDatabaseDiskOutput = Schema.Struct({
         )
         .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
       throughput_mibps: Schema.optionalKey(
-        Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
           .check(
             Schema.isLessThanOrEqualTo(9007199254740991).annotate({
               expected: "a value less than or equal to 9007199254740991",
@@ -3645,14 +3645,14 @@ export const V1GetDatabaseDiskOutput = Schema.Struct({
       type: Schema.Literal("gp3"),
     }),
     Schema.Struct({
-      iops: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      iops: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isLessThanOrEqualTo(9007199254740991).annotate({
             expected: "a value less than or equal to 9007199254740991",
           }),
         )
         .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
-      size_gb: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      size_gb: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isLessThanOrEqualTo(9007199254740991).annotate({
             expected: "a value less than or equal to 9007199254740991",
@@ -3720,11 +3720,11 @@ export const V1GetDiskUtilizationInput = Schema.Struct({
 export const V1GetDiskUtilizationOutput = Schema.Struct({
   timestamp: Schema.String,
   metrics: Schema.Struct({
-    fs_size_bytes: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
-    fs_avail_bytes: Schema.Number.check(
+    fs_size_bytes: Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    fs_avail_bytes: Schema.Finite.check(
       Schema.isFinite().annotate({ expected: "a finite number" }),
     ),
-    fs_used_bytes: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    fs_used_bytes: Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
   }),
 });
 export const V1GetHostnameConfigInput = Schema.Struct({
@@ -3804,7 +3804,7 @@ export const V1GetJitAccessOutput = Schema.Struct({
         Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
       ),
       expires_at: Schema.optionalKey(
-        Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       ),
       allowed_networks: Schema.optionalKey(
         Schema.Struct({
@@ -4020,7 +4020,7 @@ export const V1GetOrganizationEntitlementsOutput = Schema.Struct({
         Schema.Struct({ enabled: Schema.Boolean }),
         Schema.Struct({
           enabled: Schema.Boolean,
-          value: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          value: Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
           unlimited: Schema.Boolean,
           unit: Schema.String,
         }),
@@ -4047,7 +4047,7 @@ export const V1GetOrganizationProjectClaimOutput = Schema.Struct({
     members_exceeding_free_project_limit: Schema.Array(
       Schema.Struct({
         name: Schema.String,
-        limit: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        limit: Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       }),
     ),
     source_subscription_plan: Schema.Literals(["free", "pro", "team", "enterprise", "platform"]),
@@ -4136,7 +4136,7 @@ export const V1GetPerformanceAdvisorsOutput = Schema.Struct({
           fkey_name: Schema.optionalKey(Schema.String),
           fkey_columns: Schema.optionalKey(
             Schema.Array(
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+              Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
             ),
           ),
         }),
@@ -4213,7 +4213,7 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
   maintenance_work_mem: Schema.optionalKey(Schema.String),
   track_activity_query_size: Schema.optionalKey(Schema.String),
   max_connections: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(1).annotate({
           expected: "a value greater than or equal to 1",
@@ -4226,7 +4226,7 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
       ),
   ),
   max_locks_per_transaction: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(10).annotate({
           expected: "a value greater than or equal to 10",
@@ -4239,7 +4239,7 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
       ),
   ),
   max_logical_replication_workers: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -4252,7 +4252,7 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
       ),
   ),
   max_parallel_maintenance_workers: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -4265,7 +4265,7 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
       ),
   ),
   max_parallel_workers: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -4278,7 +4278,7 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
       ),
   ),
   max_parallel_workers_per_gather: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -4291,7 +4291,7 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
       ),
   ),
   max_replication_slots: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -4307,7 +4307,7 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
   max_standby_archive_delay: Schema.optionalKey(Schema.String),
   max_standby_streaming_delay: Schema.optionalKey(Schema.String),
   max_sync_workers_per_subscription: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -4321,7 +4321,7 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
   ),
   max_wal_size: Schema.optionalKey(Schema.String),
   max_wal_senders: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -4334,7 +4334,7 @@ export const V1GetPostgresConfigOutput = Schema.Struct({
       ),
   ),
   max_worker_processes: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -4404,7 +4404,7 @@ export const V1GetPostgresUpgradeEligibilityOutput = Schema.Struct({
       app_version: Schema.String,
     }),
   ),
-  duration_estimate_hours: Schema.Number.check(
+  duration_estimate_hours: Schema.Finite.check(
     Schema.isFinite().annotate({ expected: "a finite number" }),
   ),
   legacy_auth_custom_roles: Schema.Array(Schema.String),
@@ -4489,7 +4489,7 @@ export const V1GetPostgresUpgradeStatusOutput = Schema.Struct({
     Schema.Struct({
       initiated_at: Schema.String,
       latest_status_at: Schema.String,
-      target_version: Schema.Number.check(
+      target_version: Schema.Finite.check(
         Schema.isFinite().annotate({ expected: "a finite number" }),
       ),
       error: Schema.optionalKey(
@@ -4520,7 +4520,7 @@ export const V1GetPostgresUpgradeStatusOutput = Schema.Struct({
           "10_completed_post_physical_backup",
         ]),
       ),
-      status: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      status: Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
     }),
     Schema.Null,
   ]),
@@ -4538,7 +4538,7 @@ export const V1GetPostgrestServiceConfigInput = Schema.Struct({
 });
 export const V1GetPostgrestServiceConfigOutput = Schema.Struct({
   db_schema: Schema.String,
-  max_rows: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+  max_rows: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
         expected: "a value greater than or equal to -9007199254740991",
@@ -4551,7 +4551,7 @@ export const V1GetPostgrestServiceConfigOutput = Schema.Struct({
     ),
   db_extra_search_path: Schema.String,
   db_pool: Schema.Union([
-    Schema.Number.annotate({
+    Schema.Finite.annotate({
       description: "If `null`, the value is automatically configured based on compute size.",
     })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -4568,7 +4568,7 @@ export const V1GetPostgrestServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   db_pool_acquisition_timeout: Schema.Union([
-    Schema.Number.annotate({
+    Schema.Finite.annotate({
       description: "If `null`, the value is automatically configured to 10.",
     })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -4754,7 +4754,7 @@ export const V1GetProjectDiskAutoscaleConfigInput = Schema.Struct({
 });
 export const V1GetProjectDiskAutoscaleConfigOutput = Schema.Struct({
   growth_percent: Schema.Union([
-    Schema.Number.annotate({ description: "Growth percentage for disk autoscaling" })
+    Schema.Finite.annotate({ description: "Growth percentage for disk autoscaling" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isLessThanOrEqualTo(9007199254740991).annotate({
@@ -4765,7 +4765,7 @@ export const V1GetProjectDiskAutoscaleConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   min_increment_gb: Schema.Union([
-    Schema.Number.annotate({ description: "Minimum increment size for disk autoscaling in GB" })
+    Schema.Finite.annotate({ description: "Minimum increment size for disk autoscaling in GB" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isLessThanOrEqualTo(9007199254740991).annotate({
@@ -4776,7 +4776,7 @@ export const V1GetProjectDiskAutoscaleConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   max_size_gb: Schema.Union([
-    Schema.Number.annotate({ description: "Maximum limit the disk size will grow to in GB" })
+    Schema.Finite.annotate({ description: "Maximum limit the disk size will grow to in GB" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isLessThanOrEqualTo(9007199254740991).annotate({
@@ -4806,7 +4806,7 @@ export const V1GetProjectFunctionCombinedStatsOutput = Schema.Struct({
     Schema.Union([
       Schema.String,
       Schema.Struct({
-        code: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        code: Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
         errors: Schema.Array(
           Schema.Struct({
             domain: Schema.String,
@@ -4854,7 +4854,7 @@ export const V1GetProjectLogsOutput = Schema.Struct({
     Schema.Union([
       Schema.String,
       Schema.Struct({
-        code: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        code: Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
         errors: Schema.Array(
           Schema.Struct({
             domain: Schema.String,
@@ -4890,7 +4890,7 @@ export const V1GetProjectLogsAllOutput = Schema.Struct({
     Schema.Union([
       Schema.String,
       Schema.Struct({
-        code: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        code: Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
         errors: Schema.Array(
           Schema.Struct({
             domain: Schema.String,
@@ -4919,7 +4919,7 @@ export const V1GetProjectPgbouncerConfigInput = Schema.Struct({
 });
 export const V1GetProjectPgbouncerConfigOutput = Schema.Struct({
   default_pool_size: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -4933,7 +4933,7 @@ export const V1GetProjectPgbouncerConfigOutput = Schema.Struct({
   ),
   ignore_startup_parameters: Schema.optionalKey(Schema.String),
   max_client_conn: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -4948,7 +4948,7 @@ export const V1GetProjectPgbouncerConfigOutput = Schema.Struct({
   pool_mode: Schema.optionalKey(Schema.Literals(["transaction", "session", "statement"])),
   connection_string: Schema.optionalKey(Schema.String),
   server_idle_timeout: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -4961,7 +4961,7 @@ export const V1GetProjectPgbouncerConfigOutput = Schema.Struct({
       ),
   ),
   server_lifetime: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -4974,7 +4974,7 @@ export const V1GetProjectPgbouncerConfigOutput = Schema.Struct({
       ),
   ),
   query_wait_timeout: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -4987,7 +4987,7 @@ export const V1GetProjectPgbouncerConfigOutput = Schema.Struct({
       ),
   ),
   reserve_pool_size: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -5134,16 +5134,16 @@ export const V1GetProjectUsageApiCountOutput = Schema.Struct({
     Schema.Array(
       Schema.Struct({
         timestamp: Schema.String.annotate({ format: "date-time" }),
-        total_auth_requests: Schema.Number.check(
+        total_auth_requests: Schema.Finite.check(
           Schema.isFinite().annotate({ expected: "a finite number" }),
         ),
-        total_realtime_requests: Schema.Number.check(
+        total_realtime_requests: Schema.Finite.check(
           Schema.isFinite().annotate({ expected: "a finite number" }),
         ),
-        total_rest_requests: Schema.Number.check(
+        total_rest_requests: Schema.Finite.check(
           Schema.isFinite().annotate({ expected: "a finite number" }),
         ),
-        total_storage_requests: Schema.Number.check(
+        total_storage_requests: Schema.Finite.check(
           Schema.isFinite().annotate({ expected: "a finite number" }),
         ),
       }),
@@ -5153,7 +5153,7 @@ export const V1GetProjectUsageApiCountOutput = Schema.Struct({
     Schema.Union([
       Schema.String,
       Schema.Struct({
-        code: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        code: Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
         errors: Schema.Array(
           Schema.Struct({
             domain: Schema.String,
@@ -5184,7 +5184,7 @@ export const V1GetProjectUsageRequestCountOutput = Schema.Struct({
   result: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
-        count: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        count: Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       }),
     ),
   ),
@@ -5192,7 +5192,7 @@ export const V1GetProjectUsageRequestCountOutput = Schema.Struct({
     Schema.Union([
       Schema.String,
       Schema.Struct({
-        code: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        code: Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
         errors: Schema.Array(
           Schema.Struct({
             domain: Schema.String,
@@ -5241,7 +5241,7 @@ export const V1GetRealtimeConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   connection_pool: Schema.Union([
-    Schema.Number.annotate({ description: "Sets connection pool size for Realtime Authorization" })
+    Schema.Finite.annotate({ description: "Sets connection pool size for Realtime Authorization" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(1).annotate({
@@ -5254,7 +5254,7 @@ export const V1GetRealtimeConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   postgres_changes_pool: Schema.Union([
-    Schema.Number.annotate({
+    Schema.Finite.annotate({
       description: "Sets connection pool size used to create Postgres Changes subscriptions",
     })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -5269,7 +5269,7 @@ export const V1GetRealtimeConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   max_concurrent_users: Schema.Union([
-    Schema.Number.annotate({ description: "Sets maximum number of concurrent users rate limit" })
+    Schema.Finite.annotate({ description: "Sets maximum number of concurrent users rate limit" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(1).annotate({
@@ -5284,7 +5284,7 @@ export const V1GetRealtimeConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   max_events_per_second: Schema.Union([
-    Schema.Number.annotate({
+    Schema.Finite.annotate({
       description: "Sets maximum number of events per second rate per channel limit",
     })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -5301,7 +5301,7 @@ export const V1GetRealtimeConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   max_bytes_per_second: Schema.Union([
-    Schema.Number.annotate({
+    Schema.Finite.annotate({
       description: "Sets maximum number of bytes per second rate per channel limit",
     })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -5318,7 +5318,7 @@ export const V1GetRealtimeConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   max_channels_per_client: Schema.Union([
-    Schema.Number.annotate({ description: "Sets maximum number of channels per client rate limit" })
+    Schema.Finite.annotate({ description: "Sets maximum number of channels per client rate limit" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(1).annotate({
@@ -5333,7 +5333,7 @@ export const V1GetRealtimeConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   max_joins_per_second: Schema.Union([
-    Schema.Number.annotate({ description: "Sets maximum number of joins per second rate limit" })
+    Schema.Finite.annotate({ description: "Sets maximum number of joins per second rate limit" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(1).annotate({
@@ -5348,7 +5348,7 @@ export const V1GetRealtimeConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   max_presence_events_per_second: Schema.Union([
-    Schema.Number.annotate({
+    Schema.Finite.annotate({
       description: "Sets maximum number of presence events per second rate limit",
     })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -5365,7 +5365,7 @@ export const V1GetRealtimeConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   max_payload_size_in_kb: Schema.Union([
-    Schema.Number.annotate({ description: "Sets maximum number of payload size in KB rate limit" })
+    Schema.Finite.annotate({ description: "Sets maximum number of payload size in KB rate limit" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(1).annotate({
@@ -5473,7 +5473,7 @@ export const V1GetSecurityAdvisorsOutput = Schema.Struct({
           fkey_name: Schema.optionalKey(Schema.String),
           fkey_columns: Schema.optionalKey(
             Schema.Array(
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+              Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
             ),
           ),
         }),
@@ -5511,7 +5511,7 @@ export const V1GetServicesHealthInput = Schema.Struct({
     ).annotate({ description: "Array of enums." }),
   ]),
   timeout_ms: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -5552,7 +5552,7 @@ export const V1GetStorageConfigInput = Schema.Struct({
     ),
 });
 export const V1GetStorageConfigOutput = Schema.Struct({
-  fileSizeLimit: Schema.Number.annotate({ format: "int64" })
+  fileSizeLimit: Schema.Finite.annotate({ format: "int64" })
     .check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -5570,7 +5570,7 @@ export const V1GetStorageConfigOutput = Schema.Struct({
     purgeCache: Schema.Struct({ enabled: Schema.Boolean }),
     icebergCatalog: Schema.Struct({
       enabled: Schema.Boolean,
-      maxNamespaces: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      maxNamespaces: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(0).annotate({
             expected: "a value greater than or equal to 0",
@@ -5581,7 +5581,7 @@ export const V1GetStorageConfigOutput = Schema.Struct({
             expected: "a value less than or equal to 9007199254740991",
           }),
         ),
-      maxTables: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      maxTables: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(0).annotate({
             expected: "a value greater than or equal to 0",
@@ -5592,7 +5592,7 @@ export const V1GetStorageConfigOutput = Schema.Struct({
             expected: "a value less than or equal to 9007199254740991",
           }),
         ),
-      maxCatalogs: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      maxCatalogs: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(0).annotate({
             expected: "a value greater than or equal to 0",
@@ -5606,7 +5606,7 @@ export const V1GetStorageConfigOutput = Schema.Struct({
     }),
     vectorBuckets: Schema.Struct({
       enabled: Schema.Boolean,
-      maxBuckets: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      maxBuckets: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(0).annotate({
             expected: "a value greater than or equal to 0",
@@ -5617,7 +5617,7 @@ export const V1GetStorageConfigOutput = Schema.Struct({
             expected: "a value less than or equal to 9007199254740991",
           }),
         ),
-      maxIndexes: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      maxIndexes: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(0).annotate({
             expected: "a value greater than or equal to 0",
@@ -5682,7 +5682,7 @@ export const V1InviteExternalJitAccessInput = Schema.Struct({
         Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
       ),
       expires_at: Schema.optionalKey(
-        Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       ),
       allowed_networks: Schema.optionalKey(
         Schema.Struct({
@@ -5751,7 +5751,7 @@ export const V1InviteExternalJitAccessOutput = Schema.Struct({
         Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
       ),
       expires_at: Schema.optionalKey(
-        Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       ),
       allowed_networks: Schema.optionalKey(
         Schema.Struct({
@@ -5804,12 +5804,12 @@ export const V1ListActionRunsInput = Schema.Struct({
       }),
     ),
   offset: Schema.optionalKey(
-    Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })).check(
+    Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })).check(
       Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
     ),
   ),
   limit: Schema.optionalKey(
-    Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })).check(
+    Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })).check(
       Schema.isGreaterThanOrEqualTo(10).annotate({
         expected: "a value greater than or equal to 10",
       }),
@@ -5849,7 +5849,7 @@ export const V1ListActionRunsOutput = Schema.Array(
     ),
     workdir: Schema.Union([Schema.String, Schema.Null]),
     check_run_id: Schema.Union([
-      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+      Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       Schema.Null,
     ]),
     created_at: Schema.String,
@@ -5873,7 +5873,7 @@ export const V1ListAllBackupsOutput = Schema.Struct({
   pitr_enabled: Schema.Boolean,
   backups: Schema.Array(
     Schema.Struct({
-      id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      id: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
             expected: "a value greater than or equal to -9007199254740991",
@@ -5898,7 +5898,7 @@ export const V1ListAllBackupsOutput = Schema.Struct({
   ),
   physical_backup_data: Schema.Struct({
     earliest_physical_backup_date_unix: Schema.optionalKey(
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
             expected: "a value greater than or equal to -9007199254740991",
@@ -5911,7 +5911,7 @@ export const V1ListAllBackupsOutput = Schema.Struct({
         ),
     ),
     latest_physical_backup_date_unix: Schema.optionalKey(
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
             expected: "a value greater than or equal to -9007199254740991",
@@ -6039,15 +6039,15 @@ export const V1ListAllSnippetsOutput = Schema.Struct({
       name: Schema.String,
       description: Schema.Union([Schema.String, Schema.Null]),
       project: Schema.Struct({
-        id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        id: Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
         name: Schema.String,
       }),
       owner: Schema.Struct({
-        id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        id: Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
         username: Schema.String,
       }),
       updated_by: Schema.Struct({
-        id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        id: Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
         username: Schema.String,
       }),
       favorite: Schema.Boolean,
@@ -6168,7 +6168,7 @@ export const V1ListJitAccessOutput = Schema.Struct({
               Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
             ),
             expires_at: Schema.optionalKey(
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+              Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
             ),
             allowed_networks: Schema.optionalKey(
               Schema.Struct({
@@ -6230,7 +6230,7 @@ export const V1ListJitAccessOutput = Schema.Struct({
               Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
             ),
             expires_at: Schema.optionalKey(
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+              Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
             ),
             allowed_networks: Schema.optionalKey(
               Schema.Struct({
@@ -6361,7 +6361,7 @@ export const V1ListProjectAddonsOutput = Schema.Struct({
           description: Schema.String,
           type: Schema.Literals(["fixed", "usage"]),
           interval: Schema.Literals(["monthly", "hourly"]),
-          amount: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          amount: Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
         }),
         meta: Schema.optionalKey(ListProjectAddonsResponseJsonValue),
       }),
@@ -6416,7 +6416,7 @@ export const V1ListProjectAddonsOutput = Schema.Struct({
             description: Schema.String,
             type: Schema.Literals(["fixed", "usage"]),
             interval: Schema.Literals(["monthly", "hourly"]),
-            amount: Schema.Number.check(
+            amount: Schema.Finite.check(
               Schema.isFinite().annotate({ expected: "a finite number" }),
             ),
           }),
@@ -6478,14 +6478,14 @@ export const V1ModifyDatabaseDiskInput = Schema.Struct({
   attributes: Schema.Union(
     [
       Schema.Struct({
-        iops: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        iops: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
           .check(
             Schema.isLessThanOrEqualTo(9007199254740991).annotate({
               expected: "a value less than or equal to 9007199254740991",
             }),
           )
           .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
-        size_gb: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        size_gb: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
           .check(
             Schema.isLessThanOrEqualTo(9007199254740991).annotate({
               expected: "a value less than or equal to 9007199254740991",
@@ -6493,7 +6493,7 @@ export const V1ModifyDatabaseDiskInput = Schema.Struct({
           )
           .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
         throughput_mibps: Schema.optionalKey(
-          Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
             .check(
               Schema.isLessThanOrEqualTo(9007199254740991).annotate({
                 expected: "a value less than or equal to 9007199254740991",
@@ -6504,14 +6504,14 @@ export const V1ModifyDatabaseDiskInput = Schema.Struct({
         type: Schema.Literal("gp3"),
       }),
       Schema.Struct({
-        iops: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        iops: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
           .check(
             Schema.isLessThanOrEqualTo(9007199254740991).annotate({
               expected: "a value less than or equal to 9007199254740991",
             }),
           )
           .check(Schema.isGreaterThan(0).annotate({ expected: "a value greater than 0" })),
-        size_gb: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        size_gb: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
           .check(
             Schema.isLessThanOrEqualTo(9007199254740991).annotate({
               expected: "a value less than or equal to 9007199254740991",
@@ -6841,7 +6841,7 @@ export const V1RestorePhysicalBackupInput = Schema.Struct({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
-  id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+  id: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
         expected: "a value greater than or equal to -9007199254740991",
@@ -6863,7 +6863,7 @@ export const V1RestorePitrBackupInput = Schema.Struct({
         expected: "a string matching the RegExp ^[a-z]+$",
       }),
     ),
-  recovery_time_target_unix: Schema.Number.annotate({ format: "int64" })
+  recovery_time_target_unix: Schema.Finite.annotate({ format: "int64" })
     .check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(0).annotate({ expected: "a value greater than or equal to 0" }),
@@ -7053,7 +7053,7 @@ export const V1UpdateABranchConfigOutput = Schema.Struct({
   is_default: Schema.Boolean,
   git_branch: Schema.optionalKey(Schema.String),
   pr_number: Schema.optionalKey(
-    Schema.Number.annotate({ format: "int32" })
+    Schema.Finite.annotate({ format: "int32" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -7067,7 +7067,7 @@ export const V1UpdateABranchConfigOutput = Schema.Struct({
       ),
   ),
   latest_check_run_id: Schema.optionalKey(
-    Schema.Number.annotate({
+    Schema.Finite.annotate({
       description: "This field is deprecated and will not be populated.",
     }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
   ),
@@ -7143,7 +7143,7 @@ export const V1UpdateAFunctionOutput = Schema.Struct({
   slug: Schema.String,
   name: Schema.String,
   status: Schema.Literals(["ACTIVE", "REMOVED", "THROTTLED"]),
-  version: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+  version: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
         expected: "a value greater than or equal to -9007199254740991",
@@ -7154,7 +7154,7 @@ export const V1UpdateAFunctionOutput = Schema.Struct({
         expected: "a value less than or equal to 9007199254740991",
       }),
     ),
-  created_at: Schema.Number.annotate({ format: "int64" })
+  created_at: Schema.Finite.annotate({ format: "int64" })
     .check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -7166,7 +7166,7 @@ export const V1UpdateAFunctionOutput = Schema.Struct({
         expected: "a value less than or equal to 9007199254740991",
       }),
     ),
-  updated_at: Schema.Number.annotate({ format: "int64" })
+  updated_at: Schema.Finite.annotate({ format: "int64" })
     .check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -7199,7 +7199,7 @@ export const V1UpdateAProjectInput = Schema.Struct({
   ).check(Schema.isMaxLength(256).annotate({ expected: "a value with a length of at most 256" })),
 });
 export const V1UpdateAProjectOutput = Schema.Struct({
-  id: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+  id: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
         expected: "a value greater than or equal to -9007199254740991",
@@ -7359,7 +7359,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   disable_signup: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   jwt_exp: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(0).annotate({
             expected: "a value greater than or equal to 0",
@@ -7394,7 +7394,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   smtp_pass: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   smtp_max_frequency: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(0).annotate({
             expected: "a value greater than or equal to 0",
@@ -7498,7 +7498,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   mfa_max_enrolled_factors: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(0).annotate({
             expected: "a value greater than or equal to 0",
@@ -7537,7 +7537,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   security_captcha_secret: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   sessions_timebox: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })).check(
+      Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })).check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
         }),
@@ -7547,7 +7547,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   sessions_inactivity_timeout: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })).check(
+      Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })).check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
         }),
@@ -7571,7 +7571,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   rate_limit_anonymous_users: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(1).annotate({
             expected: "a value greater than or equal to 1",
@@ -7587,7 +7587,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   rate_limit_email_sent: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(1).annotate({
             expected: "a value greater than or equal to 1",
@@ -7603,7 +7603,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   rate_limit_sms_sent: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(1).annotate({
             expected: "a value greater than or equal to 1",
@@ -7619,7 +7619,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   rate_limit_verify: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(1).annotate({
             expected: "a value greater than or equal to 1",
@@ -7635,7 +7635,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   rate_limit_token_refresh: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(1).annotate({
             expected: "a value greater than or equal to 1",
@@ -7651,7 +7651,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   rate_limit_otp: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(1).annotate({
             expected: "a value greater than or equal to 1",
@@ -7667,7 +7667,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   rate_limit_web3: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(1).annotate({
             expected: "a value greater than or equal to 1",
@@ -7688,7 +7688,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   password_hibp_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   password_min_length: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(6).annotate({
             expected: "a value greater than or equal to 6",
@@ -7719,7 +7719,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   security_refresh_token_reuse_interval: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(0).annotate({
             expected: "a value greater than or equal to 0",
@@ -7734,7 +7734,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
     ]),
   ),
   mailer_otp_exp: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -7748,7 +7748,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   mailer_otp_length: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(6).annotate({
             expected: "a value greater than or equal to 6",
@@ -7763,7 +7763,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   sms_autoconfirm: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   sms_max_frequency: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(0).annotate({
             expected: "a value greater than or equal to 0",
@@ -7779,7 +7779,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   sms_otp_exp: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(0).annotate({
             expected: "a value greater than or equal to 0",
@@ -7794,7 +7794,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
     ]),
   ),
   sms_otp_length: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -7984,7 +7984,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   external_zoom_secret: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
   db_max_pool_size: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
             expected: "a value greater than or equal to -9007199254740991",
@@ -8003,7 +8003,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   api_max_request_duration: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
             expected: "a value greater than or equal to -9007199254740991",
@@ -8029,7 +8029,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   mfa_phone_verify_enabled: Schema.optionalKey(Schema.Union([Schema.Boolean, Schema.Null])),
   mfa_phone_max_frequency: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(0).annotate({
             expected: "a value greater than or equal to 0",
@@ -8045,7 +8045,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
   ),
   mfa_phone_otp_length: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(0).annotate({
             expected: "a value greater than or equal to 0",
@@ -8071,7 +8071,7 @@ export const V1UpdateAuthServiceConfigInput = Schema.Struct({
 });
 export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   api_max_request_duration: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -8085,7 +8085,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   db_max_pool_size: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -8221,7 +8221,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   hook_after_user_created_uri: Schema.Union([Schema.String, Schema.Null]),
   hook_after_user_created_secrets: Schema.Union([Schema.String, Schema.Null]),
   jwt_exp: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -8236,7 +8236,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   ]),
   mailer_allow_unverified_email_sign_ins: Schema.Union([Schema.Boolean, Schema.Null]),
   mailer_autoconfirm: Schema.Union([Schema.Boolean, Schema.Null]),
-  mailer_otp_exp: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+  mailer_otp_exp: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
         expected: "a value greater than or equal to -9007199254740991",
@@ -8248,7 +8248,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
       }),
     ),
   mailer_otp_length: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -8308,7 +8308,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   mailer_notifications_identity_linked_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mailer_notifications_identity_unlinked_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   mfa_max_enrolled_factors: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -8331,7 +8331,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   webauthn_rp_display_name: Schema.Union([Schema.String, Schema.Null]),
   webauthn_rp_id: Schema.Union([Schema.String, Schema.Null]),
   webauthn_rp_origins: Schema.Union([Schema.String, Schema.Null]),
-  mfa_phone_otp_length: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+  mfa_phone_otp_length: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
         expected: "a value greater than or equal to -9007199254740991",
@@ -8344,7 +8344,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
     ),
   mfa_phone_template: Schema.Union([Schema.String, Schema.Null]),
   mfa_phone_max_frequency: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -8362,7 +8362,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   nimbus_oauth_client_secret: Schema.Union([Schema.String, Schema.Null]),
   password_hibp_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   password_min_length: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -8385,7 +8385,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   rate_limit_anonymous_users: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -8399,7 +8399,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   rate_limit_email_sent: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -8413,7 +8413,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   rate_limit_sms_sent: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -8427,7 +8427,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   rate_limit_token_refresh: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -8441,7 +8441,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   rate_limit_verify: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -8455,7 +8455,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   rate_limit_otp: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -8469,7 +8469,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   rate_limit_web3: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -8496,7 +8496,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   security_captcha_secret: Schema.Union([Schema.String, Schema.Null]),
   security_manual_linking_enabled: Schema.Union([Schema.Boolean, Schema.Null]),
   security_refresh_token_reuse_interval: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -8511,19 +8511,19 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   ]),
   security_update_password_require_reauthentication: Schema.Union([Schema.Boolean, Schema.Null]),
   sessions_inactivity_timeout: Schema.Union([
-    Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
     Schema.Null,
   ]),
   sessions_single_per_user: Schema.Union([Schema.Boolean, Schema.Null]),
   sessions_tags: Schema.Union([Schema.String, Schema.Null]),
   sessions_timebox: Schema.Union([
-    Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+    Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
     Schema.Null,
   ]),
   site_url: Schema.Union([Schema.String, Schema.Null]),
   sms_autoconfirm: Schema.Union([Schema.Boolean, Schema.Null]),
   sms_max_frequency: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -8539,7 +8539,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   sms_messagebird_access_key: Schema.Union([Schema.String, Schema.Null]),
   sms_messagebird_originator: Schema.Union([Schema.String, Schema.Null]),
   sms_otp_exp: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -8552,7 +8552,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
       ),
     Schema.Null,
   ]),
-  sms_otp_length: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+  sms_otp_length: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
         expected: "a value greater than or equal to -9007199254740991",
@@ -8604,7 +8604,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   ]),
   smtp_host: Schema.Union([Schema.String, Schema.Null]),
   smtp_max_frequency: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -8626,7 +8626,7 @@ export const V1UpdateAuthServiceConfigOutput = Schema.Struct({
   oauth_server_allow_dynamic_registration: Schema.Boolean,
   oauth_server_authorization_path: Schema.Union([Schema.String, Schema.Null]),
   custom_oauth_enabled: Schema.Boolean,
-  custom_oauth_max_providers: Schema.Number.check(
+  custom_oauth_max_providers: Schema.Finite.check(
     Schema.isInt().annotate({ expected: "an integer" }),
   )
     .check(
@@ -8770,7 +8770,7 @@ export const V1UpdateJitAccessInput = Schema.Struct({
         Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
       ),
       expires_at: Schema.optionalKey(
-        Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       ),
       allowed_networks: Schema.optionalKey(
         Schema.Struct({
@@ -8831,7 +8831,7 @@ export const V1UpdateJitAccessOutput = Schema.Struct({
         Schema.isMinLength(1).annotate({ expected: "a value with a length of at least 1" }),
       ),
       expires_at: Schema.optionalKey(
-        Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+        Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
       ),
       allowed_networks: Schema.optionalKey(
         Schema.Struct({
@@ -8968,7 +8968,7 @@ export const V1UpdatePoolerConfigInput = Schema.Struct({
     ),
   default_pool_size: Schema.optionalKey(
     Schema.Union([
-      Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+      Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
         .check(
           Schema.isGreaterThanOrEqualTo(0).annotate({
             expected: "a value greater than or equal to 0",
@@ -8990,7 +8990,7 @@ export const V1UpdatePoolerConfigInput = Schema.Struct({
 });
 export const V1UpdatePoolerConfigOutput = Schema.Struct({
   default_pool_size: Schema.Union([
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -9043,7 +9043,7 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
   maintenance_work_mem: Schema.optionalKey(Schema.String),
   track_activity_query_size: Schema.optionalKey(Schema.String),
   max_connections: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(1).annotate({
           expected: "a value greater than or equal to 1",
@@ -9056,7 +9056,7 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
       ),
   ),
   max_locks_per_transaction: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(10).annotate({
           expected: "a value greater than or equal to 10",
@@ -9069,7 +9069,7 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
       ),
   ),
   max_logical_replication_workers: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -9082,7 +9082,7 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
       ),
   ),
   max_parallel_maintenance_workers: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -9095,7 +9095,7 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
       ),
   ),
   max_parallel_workers: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -9108,7 +9108,7 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
       ),
   ),
   max_parallel_workers_per_gather: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -9121,7 +9121,7 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
       ),
   ),
   max_replication_slots: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -9137,7 +9137,7 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
   max_standby_archive_delay: Schema.optionalKey(Schema.String),
   max_standby_streaming_delay: Schema.optionalKey(Schema.String),
   max_sync_workers_per_subscription: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -9151,7 +9151,7 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
   ),
   max_wal_size: Schema.optionalKey(Schema.String),
   max_wal_senders: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -9164,7 +9164,7 @@ export const V1UpdatePostgresConfigInput = Schema.Struct({
       ),
   ),
   max_worker_processes: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -9234,7 +9234,7 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
   maintenance_work_mem: Schema.optionalKey(Schema.String),
   track_activity_query_size: Schema.optionalKey(Schema.String),
   max_connections: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(1).annotate({
           expected: "a value greater than or equal to 1",
@@ -9247,7 +9247,7 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
       ),
   ),
   max_locks_per_transaction: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(10).annotate({
           expected: "a value greater than or equal to 10",
@@ -9260,7 +9260,7 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
       ),
   ),
   max_logical_replication_workers: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -9273,7 +9273,7 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
       ),
   ),
   max_parallel_maintenance_workers: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -9286,7 +9286,7 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
       ),
   ),
   max_parallel_workers: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -9299,7 +9299,7 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
       ),
   ),
   max_parallel_workers_per_gather: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -9312,7 +9312,7 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
       ),
   ),
   max_replication_slots: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -9328,7 +9328,7 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
   max_standby_archive_delay: Schema.optionalKey(Schema.String),
   max_standby_streaming_delay: Schema.optionalKey(Schema.String),
   max_sync_workers_per_subscription: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -9342,7 +9342,7 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
   ),
   max_wal_size: Schema.optionalKey(Schema.String),
   max_wal_senders: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
           expected: "a value greater than or equal to -9007199254740991",
@@ -9355,7 +9355,7 @@ export const V1UpdatePostgresConfigOutput = Schema.Struct({
       ),
   ),
   max_worker_processes: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -9408,7 +9408,7 @@ export const V1UpdatePostgrestServiceConfigInput = Schema.Struct({
   db_extra_search_path: Schema.optionalKey(Schema.String),
   db_schema: Schema.optionalKey(Schema.String),
   max_rows: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -9421,7 +9421,7 @@ export const V1UpdatePostgrestServiceConfigInput = Schema.Struct({
       ),
   ),
   db_pool: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -9434,7 +9434,7 @@ export const V1UpdatePostgrestServiceConfigInput = Schema.Struct({
       ),
   ),
   db_pool_acquisition_timeout: Schema.optionalKey(
-    Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+    Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
           expected: "a value greater than or equal to 0",
@@ -9447,7 +9447,7 @@ export const V1UpdatePostgrestServiceConfigInput = Schema.Struct({
 });
 export const V1UpdatePostgrestServiceConfigOutput = Schema.Struct({
   db_schema: Schema.String,
-  max_rows: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+  max_rows: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
     .check(
       Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
         expected: "a value greater than or equal to -9007199254740991",
@@ -9460,7 +9460,7 @@ export const V1UpdatePostgrestServiceConfigOutput = Schema.Struct({
     ),
   db_extra_search_path: Schema.String,
   db_pool: Schema.Union([
-    Schema.Number.annotate({
+    Schema.Finite.annotate({
       description: "If `null`, the value is automatically configured based on compute size.",
     })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -9477,7 +9477,7 @@ export const V1UpdatePostgrestServiceConfigOutput = Schema.Struct({
     Schema.Null,
   ]),
   db_pool_acquisition_timeout: Schema.Union([
-    Schema.Number.annotate({
+    Schema.Finite.annotate({
       description: "If `null`, the value is automatically configured to 10.",
     })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -9636,7 +9636,7 @@ export const V1UpdateRealtimeConfigInput = Schema.Struct({
     Schema.Boolean.annotate({ description: "Whether to only allow private channels" }),
   ),
   connection_pool: Schema.optionalKey(
-    Schema.Number.annotate({ description: "Sets connection pool size for Realtime Authorization" })
+    Schema.Finite.annotate({ description: "Sets connection pool size for Realtime Authorization" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(1).annotate({
@@ -9648,7 +9648,7 @@ export const V1UpdateRealtimeConfigInput = Schema.Struct({
       ),
   ),
   postgres_changes_pool: Schema.optionalKey(
-    Schema.Number.annotate({
+    Schema.Finite.annotate({
       description: "Sets connection pool size used to create Postgres Changes subscriptions",
     })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -9662,7 +9662,7 @@ export const V1UpdateRealtimeConfigInput = Schema.Struct({
       ),
   ),
   max_concurrent_users: Schema.optionalKey(
-    Schema.Number.annotate({ description: "Sets maximum number of concurrent users rate limit" })
+    Schema.Finite.annotate({ description: "Sets maximum number of concurrent users rate limit" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(1).annotate({
@@ -9676,7 +9676,7 @@ export const V1UpdateRealtimeConfigInput = Schema.Struct({
       ),
   ),
   max_events_per_second: Schema.optionalKey(
-    Schema.Number.annotate({
+    Schema.Finite.annotate({
       description: "Sets maximum number of events per second rate per channel limit",
     })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -9692,7 +9692,7 @@ export const V1UpdateRealtimeConfigInput = Schema.Struct({
       ),
   ),
   max_bytes_per_second: Schema.optionalKey(
-    Schema.Number.annotate({
+    Schema.Finite.annotate({
       description: "Sets maximum number of bytes per second rate per channel limit",
     })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -9708,7 +9708,7 @@ export const V1UpdateRealtimeConfigInput = Schema.Struct({
       ),
   ),
   max_channels_per_client: Schema.optionalKey(
-    Schema.Number.annotate({ description: "Sets maximum number of channels per client rate limit" })
+    Schema.Finite.annotate({ description: "Sets maximum number of channels per client rate limit" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(1).annotate({
@@ -9722,7 +9722,7 @@ export const V1UpdateRealtimeConfigInput = Schema.Struct({
       ),
   ),
   max_joins_per_second: Schema.optionalKey(
-    Schema.Number.annotate({ description: "Sets maximum number of joins per second rate limit" })
+    Schema.Finite.annotate({ description: "Sets maximum number of joins per second rate limit" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(1).annotate({
@@ -9736,7 +9736,7 @@ export const V1UpdateRealtimeConfigInput = Schema.Struct({
       ),
   ),
   max_presence_events_per_second: Schema.optionalKey(
-    Schema.Number.annotate({
+    Schema.Finite.annotate({
       description: "Sets maximum number of presence events per second rate limit",
     })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -9752,7 +9752,7 @@ export const V1UpdateRealtimeConfigInput = Schema.Struct({
       ),
   ),
   max_payload_size_in_kb: Schema.optionalKey(
-    Schema.Number.annotate({ description: "Sets maximum number of payload size in KB rate limit" })
+    Schema.Finite.annotate({ description: "Sets maximum number of payload size in KB rate limit" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(1).annotate({
@@ -9802,7 +9802,7 @@ export const V1UpdateStorageConfigInput = Schema.Struct({
       }),
     ),
   fileSizeLimit: Schema.optionalKey(
-    Schema.Number.annotate({ format: "int64" })
+    Schema.Finite.annotate({ format: "int64" })
       .check(Schema.isInt().annotate({ expected: "an integer" }))
       .check(
         Schema.isGreaterThanOrEqualTo(0).annotate({
@@ -9823,7 +9823,7 @@ export const V1UpdateStorageConfigInput = Schema.Struct({
       icebergCatalog: Schema.optionalKey(
         Schema.Struct({
           enabled: Schema.Boolean,
-          maxNamespaces: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          maxNamespaces: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
             .check(
               Schema.isGreaterThanOrEqualTo(0).annotate({
                 expected: "a value greater than or equal to 0",
@@ -9834,7 +9834,7 @@ export const V1UpdateStorageConfigInput = Schema.Struct({
                 expected: "a value less than or equal to 9007199254740991",
               }),
             ),
-          maxTables: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          maxTables: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
             .check(
               Schema.isGreaterThanOrEqualTo(0).annotate({
                 expected: "a value greater than or equal to 0",
@@ -9845,7 +9845,7 @@ export const V1UpdateStorageConfigInput = Schema.Struct({
                 expected: "a value less than or equal to 9007199254740991",
               }),
             ),
-          maxCatalogs: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          maxCatalogs: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
             .check(
               Schema.isGreaterThanOrEqualTo(0).annotate({
                 expected: "a value greater than or equal to 0",
@@ -9861,7 +9861,7 @@ export const V1UpdateStorageConfigInput = Schema.Struct({
       vectorBuckets: Schema.optionalKey(
         Schema.Struct({
           enabled: Schema.Boolean,
-          maxBuckets: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          maxBuckets: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
             .check(
               Schema.isGreaterThanOrEqualTo(0).annotate({
                 expected: "a value greater than or equal to 0",
@@ -9872,7 +9872,7 @@ export const V1UpdateStorageConfigInput = Schema.Struct({
                 expected: "a value less than or equal to 9007199254740991",
               }),
             ),
-          maxIndexes: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          maxIndexes: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
             .check(
               Schema.isGreaterThanOrEqualTo(0).annotate({
                 expected: "a value greater than or equal to 0",
@@ -10047,7 +10047,7 @@ export const V2CreateLogDrainInput = Schema.Struct({
           password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
           port: Schema.optionalKey(
             Schema.Union([
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+              Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
               Schema.Null,
             ]),
           ),
@@ -10082,7 +10082,7 @@ export const V2CreateLogDrainInput = Schema.Struct({
         Schema.Struct({
           host: Schema.optionalKey(Schema.String),
           port: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(0).annotate({
                   expected: "a value greater than or equal to 0",
@@ -10134,7 +10134,7 @@ export const V2CreateLogDrainOutput = Schema.Struct({
           password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
           port: Schema.optionalKey(
             Schema.Union([
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+              Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
               Schema.Null,
             ]),
           ),
@@ -10169,7 +10169,7 @@ export const V2CreateLogDrainOutput = Schema.Struct({
         Schema.Struct({
           host: Schema.optionalKey(Schema.String),
           port: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(0).annotate({
                   expected: "a value greater than or equal to 0",
@@ -10602,7 +10602,7 @@ export const V2DeployAWorkerInput = Schema.Struct({
         runtime: Schema.optionalKey(Schema.String),
         size: Schema.String,
         exposure: Schema.String,
-        instances: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        instances: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
           .check(
             Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
               expected: "a value greater than or equal to -9007199254740991",
@@ -10632,7 +10632,7 @@ export const V2DeployAWorkerOutput = Schema.Struct({
         runtime: Schema.optionalKey(Schema.String),
         size: Schema.String,
         exposure: Schema.String,
-        instances: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        instances: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
           .check(
             Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
               expected: "a value greater than or equal to -9007199254740991",
@@ -10651,7 +10651,7 @@ export const V2DeployAWorkerOutput = Schema.Struct({
       deleting: Schema.optionalKey(Schema.Boolean),
       instances: Schema.optionalKey(
         Schema.Struct({
-          declared: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          declared: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
             .check(
               Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
                 expected: "a value greater than or equal to -9007199254740991",
@@ -10662,7 +10662,7 @@ export const V2DeployAWorkerOutput = Schema.Struct({
                 expected: "a value less than or equal to 9007199254740991",
               }),
             ),
-          live: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          live: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
             .check(
               Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
                 expected: "a value greater than or equal to -9007199254740991",
@@ -10673,7 +10673,7 @@ export const V2DeployAWorkerOutput = Schema.Struct({
                 expected: "a value less than or equal to 9007199254740991",
               }),
             ),
-          ready: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          ready: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
             .check(
               Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
                 expected: "a value greater than or equal to -9007199254740991",
@@ -10684,7 +10684,7 @@ export const V2DeployAWorkerOutput = Schema.Struct({
                 expected: "a value less than or equal to 9007199254740991",
               }),
             ),
-          stale: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          stale: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
             .check(
               Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
                 expected: "a value greater than or equal to -9007199254740991",
@@ -10726,7 +10726,7 @@ export const V2GetAWorkerOutput = Schema.Struct({
         runtime: Schema.optionalKey(Schema.String),
         size: Schema.String,
         exposure: Schema.String,
-        instances: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        instances: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
           .check(
             Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
               expected: "a value greater than or equal to -9007199254740991",
@@ -10745,7 +10745,7 @@ export const V2GetAWorkerOutput = Schema.Struct({
       deleting: Schema.optionalKey(Schema.Boolean),
       instances: Schema.optionalKey(
         Schema.Struct({
-          declared: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          declared: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
             .check(
               Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
                 expected: "a value greater than or equal to -9007199254740991",
@@ -10756,7 +10756,7 @@ export const V2GetAWorkerOutput = Schema.Struct({
                 expected: "a value less than or equal to 9007199254740991",
               }),
             ),
-          live: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          live: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
             .check(
               Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
                 expected: "a value greater than or equal to -9007199254740991",
@@ -10767,7 +10767,7 @@ export const V2GetAWorkerOutput = Schema.Struct({
                 expected: "a value less than or equal to 9007199254740991",
               }),
             ),
-          ready: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          ready: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
             .check(
               Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
                 expected: "a value greater than or equal to -9007199254740991",
@@ -10778,7 +10778,7 @@ export const V2GetAWorkerOutput = Schema.Struct({
                 expected: "a value less than or equal to 9007199254740991",
               }),
             ),
-          stale: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          stale: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
             .check(
               Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
                 expected: "a value greater than or equal to -9007199254740991",
@@ -10812,7 +10812,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
     id: Schema.String.annotate({ description: "Project ref." }),
     attributes: Schema.Struct({
       database: Schema.Struct({
-        major_version: Schema.Number.annotate({
+        major_version: Schema.Finite.annotate({
           description:
             "The major Postgres version the database runs. `17` covers both Postgres 17 and Oriole on 17, since Oriole is a storage engine rather than a version.",
         })
@@ -10875,7 +10875,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
           maintenance_work_mem: Schema.optionalKey(Schema.String),
           track_activity_query_size: Schema.optionalKey(Schema.String),
           max_connections: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(1).annotate({
                   expected: "a value greater than or equal to 1",
@@ -10888,7 +10888,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               ),
           ),
           max_locks_per_transaction: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(10).annotate({
                   expected: "a value greater than or equal to 10",
@@ -10901,7 +10901,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               ),
           ),
           max_logical_replication_workers: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(0).annotate({
                   expected: "a value greater than or equal to 0",
@@ -10914,7 +10914,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               ),
           ),
           max_parallel_maintenance_workers: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(0).annotate({
                   expected: "a value greater than or equal to 0",
@@ -10927,7 +10927,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               ),
           ),
           max_parallel_workers: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(0).annotate({
                   expected: "a value greater than or equal to 0",
@@ -10940,7 +10940,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               ),
           ),
           max_parallel_workers_per_gather: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(0).annotate({
                   expected: "a value greater than or equal to 0",
@@ -10953,7 +10953,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               ),
           ),
           max_replication_slots: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
                   expected: "a value greater than or equal to -9007199254740991",
@@ -10969,7 +10969,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
           max_standby_archive_delay: Schema.optionalKey(Schema.String),
           max_standby_streaming_delay: Schema.optionalKey(Schema.String),
           max_sync_workers_per_subscription: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(0).annotate({
                   expected: "a value greater than or equal to 0",
@@ -10983,7 +10983,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
           ),
           max_wal_size: Schema.optionalKey(Schema.String),
           max_wal_senders: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
                   expected: "a value greater than or equal to -9007199254740991",
@@ -10996,7 +10996,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               ),
           ),
           max_worker_processes: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(0).annotate({
                   expected: "a value greater than or equal to 0",
@@ -11055,7 +11055,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
       pooler: Schema.Struct({
         pool_mode: Schema.Literals(["transaction", "session", "statement"]),
         ignore_startup_parameters: Schema.String,
-        server_idle_timeout: Schema.Number.check(
+        server_idle_timeout: Schema.Finite.check(
           Schema.isInt().annotate({ expected: "an integer" }),
         )
           .check(
@@ -11068,7 +11068,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               expected: "a value less than or equal to 9007199254740991",
             }),
           ),
-        server_lifetime: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        server_lifetime: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
           .check(
             Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
               expected: "a value greater than or equal to -9007199254740991",
@@ -11079,7 +11079,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               expected: "a value less than or equal to 9007199254740991",
             }),
           ),
-        query_wait_timeout: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        query_wait_timeout: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
           .check(
             Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
               expected: "a value greater than or equal to -9007199254740991",
@@ -11090,7 +11090,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               expected: "a value less than or equal to 9007199254740991",
             }),
           ),
-        reserve_pool_size: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        reserve_pool_size: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
           .check(
             Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
               expected: "a value greater than or equal to -9007199254740991",
@@ -11101,7 +11101,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               expected: "a value less than or equal to 9007199254740991",
             }),
           ),
-        default_pool_size: Schema.Number.annotate({
+        default_pool_size: Schema.Finite.annotate({
           description:
             "Defaults to the pooler's size for the project's compute when not overridden.",
         })
@@ -11116,7 +11116,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               expected: "a value less than or equal to 9007199254740991",
             }),
           ),
-        max_client_conn: Schema.Number.annotate({
+        max_client_conn: Schema.Finite.annotate({
           description:
             "Defaults to the pooler's size for the project's compute when not overridden.",
         })
@@ -11141,7 +11141,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
       api: Schema.Struct({
         db_schema: Schema.String.annotate({ description: "Schemas exposed through the Data API" }),
         db_extra_search_path: Schema.String,
-        max_rows: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        max_rows: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
           .check(
             Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
               expected: "a value greater than or equal to -9007199254740991",
@@ -11152,7 +11152,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               expected: "a value less than or equal to 9007199254740991",
             }),
           ),
-        db_pool_acquisition_timeout: Schema.Number.check(
+        db_pool_acquisition_timeout: Schema.Finite.check(
           Schema.isInt().annotate({ expected: "an integer" }),
         )
           .check(
@@ -11166,7 +11166,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
             }),
           ),
         db_pool: Schema.Union([
-          Schema.Number.annotate({
+          Schema.Finite.annotate({
             description:
               "If `null`, no pool size is written to the project's PostgREST config and PostgREST's own default applies. The platform does not pick a value here.",
           })
@@ -11186,7 +11186,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
       }),
       realtime: Schema.Struct({
         private_only: Schema.Boolean,
-        max_concurrent_users: Schema.Number.check(
+        max_concurrent_users: Schema.Finite.check(
           Schema.isInt().annotate({ expected: "an integer" }),
         )
           .check(
@@ -11199,7 +11199,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               expected: "a value less than or equal to 9007199254740991",
             }),
           ),
-        max_events_per_second: Schema.Number.check(
+        max_events_per_second: Schema.Finite.check(
           Schema.isInt().annotate({ expected: "an integer" }),
         )
           .check(
@@ -11212,7 +11212,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               expected: "a value less than or equal to 9007199254740991",
             }),
           ),
-        max_bytes_per_second: Schema.Number.check(
+        max_bytes_per_second: Schema.Finite.check(
           Schema.isInt().annotate({ expected: "an integer" }),
         )
           .check(
@@ -11225,7 +11225,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               expected: "a value less than or equal to 9007199254740991",
             }),
           ),
-        max_channels_per_client: Schema.Number.check(
+        max_channels_per_client: Schema.Finite.check(
           Schema.isInt().annotate({ expected: "an integer" }),
         )
           .check(
@@ -11238,7 +11238,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               expected: "a value less than or equal to 9007199254740991",
             }),
           ),
-        max_joins_per_second: Schema.Number.check(
+        max_joins_per_second: Schema.Finite.check(
           Schema.isInt().annotate({ expected: "an integer" }),
         )
           .check(
@@ -11251,7 +11251,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               expected: "a value less than or equal to 9007199254740991",
             }),
           ),
-        max_presence_events_per_second: Schema.Number.check(
+        max_presence_events_per_second: Schema.Finite.check(
           Schema.isInt().annotate({ expected: "an integer" }),
         )
           .check(
@@ -11264,7 +11264,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
               expected: "a value less than or equal to 9007199254740991",
             }),
           ),
-        max_payload_size_in_kb: Schema.Number.check(
+        max_payload_size_in_kb: Schema.Finite.check(
           Schema.isInt().annotate({ expected: "an integer" }),
         )
           .check(
@@ -11279,7 +11279,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
           ),
         presence_enabled: Schema.Boolean,
         suspend: Schema.Boolean,
-        connection_pool: Schema.Number.annotate({
+        connection_pool: Schema.Finite.annotate({
           description:
             "Defaults to Realtime's pool size for the project's compute when not overridden.",
         })
@@ -11295,7 +11295,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
             }),
           ),
         postgres_changes_pool: Schema.Union([
-          Schema.Number.annotate({
+          Schema.Finite.annotate({
             description: "If `null`, no override is stored and Realtime applies its own default.",
           })
             .check(Schema.isInt().annotate({ expected: "an integer" }))
@@ -11313,7 +11313,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
         ]),
       }),
       storage: Schema.Struct({
-        file_size_limit: Schema.Number.annotate({ format: "int64" })
+        file_size_limit: Schema.Finite.annotate({ format: "int64" })
           .check(Schema.isInt().annotate({ expected: "an integer" }))
           .check(
             Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
@@ -11331,7 +11331,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
           purge_cache: Schema.Struct({ enabled: Schema.Boolean }),
           iceberg_catalog: Schema.Struct({
             enabled: Schema.Boolean,
-            max_namespaces: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            max_namespaces: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
                   expected: "a value greater than or equal to -9007199254740991",
@@ -11342,7 +11342,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
                   expected: "a value less than or equal to 9007199254740991",
                 }),
               ),
-            max_tables: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            max_tables: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
                   expected: "a value greater than or equal to -9007199254740991",
@@ -11353,7 +11353,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
                   expected: "a value less than or equal to 9007199254740991",
                 }),
               ),
-            max_catalogs: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            max_catalogs: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
                   expected: "a value greater than or equal to -9007199254740991",
@@ -11367,7 +11367,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
           }),
           vector_buckets: Schema.Struct({
             enabled: Schema.Boolean,
-            max_buckets: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            max_buckets: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
                   expected: "a value greater than or equal to -9007199254740991",
@@ -11378,7 +11378,7 @@ export const V2GetProjectConfigOutput = Schema.Struct({
                   expected: "a value less than or equal to 9007199254740991",
                 }),
               ),
-            max_indexes: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            max_indexes: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
                   expected: "a value greater than or equal to -9007199254740991",
@@ -11423,7 +11423,7 @@ export const V2ListAllWorkersOutput = Schema.Struct({
           runtime: Schema.optionalKey(Schema.String),
           size: Schema.String,
           exposure: Schema.String,
-          instances: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+          instances: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
             .check(
               Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
                 expected: "a value greater than or equal to -9007199254740991",
@@ -11442,7 +11442,7 @@ export const V2ListAllWorkersOutput = Schema.Struct({
         deleting: Schema.optionalKey(Schema.Boolean),
         instances: Schema.optionalKey(
           Schema.Struct({
-            declared: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            declared: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
                   expected: "a value greater than or equal to -9007199254740991",
@@ -11453,7 +11453,7 @@ export const V2ListAllWorkersOutput = Schema.Struct({
                   expected: "a value less than or equal to 9007199254740991",
                 }),
               ),
-            live: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            live: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
                   expected: "a value greater than or equal to -9007199254740991",
@@ -11464,7 +11464,7 @@ export const V2ListAllWorkersOutput = Schema.Struct({
                   expected: "a value less than or equal to 9007199254740991",
                 }),
               ),
-            ready: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            ready: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
                   expected: "a value greater than or equal to -9007199254740991",
@@ -11475,7 +11475,7 @@ export const V2ListAllWorkersOutput = Schema.Struct({
                   expected: "a value less than or equal to 9007199254740991",
                 }),
               ),
-            stale: Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            stale: Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(-9007199254740991).annotate({
                   expected: "a value greater than or equal to -9007199254740991",
@@ -11520,7 +11520,7 @@ export const V2ListLogDrainsOutput = Schema.Struct({
             password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
             port: Schema.optionalKey(
               Schema.Union([
-                Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+                Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
                 Schema.Null,
               ]),
             ),
@@ -11555,7 +11555,7 @@ export const V2ListLogDrainsOutput = Schema.Struct({
           Schema.Struct({
             host: Schema.optionalKey(Schema.String),
             port: Schema.optionalKey(
-              Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
                 .check(
                   Schema.isGreaterThanOrEqualTo(0).annotate({
                     expected: "a value greater than or equal to 0",
@@ -11602,7 +11602,7 @@ export const V2ListOrganizationGithubConnectionsInput = Schema.Struct({
   page: Schema.optionalKey(
     Schema.Struct({
       size: Schema.optionalKey(
-        Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
           .check(
             Schema.isGreaterThanOrEqualTo(1).annotate({
               expected: "a value greater than or equal to 1",
@@ -11671,7 +11671,7 @@ export const V2ListOrganizationGithubConnectionsOutput = Schema.Struct({
       attributes: Schema.Struct({
         inserted_at: Schema.String.annotate({ description: "When the connection was created" }),
         updated_at: Schema.String.annotate({ description: "When the connection was last updated" }),
-        installation_id: Schema.Number.annotate({
+        installation_id: Schema.Finite.annotate({
           description: "GitHub App installation id",
         }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
         workdir: Schema.String.annotate({
@@ -11680,14 +11680,14 @@ export const V2ListOrganizationGithubConnectionsOutput = Schema.Struct({
         supabase_changes_only: Schema.Boolean.annotate({
           description: "Whether branches are only created for changes under `supabase/`",
         }),
-        branch_limit: Schema.Number.annotate({
+        branch_limit: Schema.Finite.annotate({
           description: "Maximum number of preview branches",
         }).check(Schema.isFinite().annotate({ expected: "a finite number" })),
         new_branch_per_pr: Schema.Boolean.annotate({
           description: "Whether a preview branch is created for every pull request",
         }),
         project: Schema.Struct({
-          id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          id: Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
           ref: Schema.String.annotate({ description: "Project ref" })
             .check(
               Schema.isMinLength(20).annotate({ expected: "a value with a length of at least 20" }),
@@ -11703,12 +11703,12 @@ export const V2ListOrganizationGithubConnectionsOutput = Schema.Struct({
           name: Schema.String,
         }).annotate({ description: "The connected Supabase project" }),
         repository: Schema.Struct({
-          id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+          id: Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
           name: Schema.String,
         }).annotate({ description: "The connected GitHub repository" }),
         user: Schema.Union([
           Schema.Struct({
-            id: Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+            id: Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
             username: Schema.String,
             primary_email: Schema.Union([Schema.String, Schema.Null]),
           }).annotate({ description: "The user who created the connection, if still known" }),
@@ -11749,7 +11749,7 @@ export const V2ListOrganizationMembersInput = Schema.Struct({
   page: Schema.optionalKey(
     Schema.Struct({
       size: Schema.optionalKey(
-        Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
           .check(
             Schema.isGreaterThanOrEqualTo(1).annotate({
               expected: "a value greater than or equal to 1",
@@ -11892,7 +11892,7 @@ export const V2ListOrganizationProjectsInput = Schema.Struct({
   page: Schema.optionalKey(
     Schema.Struct({
       size: Schema.optionalKey(
-        Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+        Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
           .check(
             Schema.isGreaterThanOrEqualTo(1).annotate({
               expected: "a value greater than or equal to 1",
@@ -12006,11 +12006,11 @@ export const V2ListOrganizationProjectsOutput = Schema.Struct({
               ]),
             ),
             disk_volume_size_gb: Schema.optionalKey(
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+              Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
             ),
             disk_type: Schema.optionalKey(Schema.Literals(["gp3", "io2"])),
             disk_throughput_mbps: Schema.optionalKey(
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+              Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
             ),
             disk_last_modified_at: Schema.optionalKey(Schema.String),
           }),
@@ -12216,7 +12216,7 @@ export const V2UpdateLogDrainInput = Schema.Struct({
             password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
             port: Schema.optionalKey(
               Schema.Union([
-                Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+                Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
                 Schema.Null,
               ]),
             ),
@@ -12251,7 +12251,7 @@ export const V2UpdateLogDrainInput = Schema.Struct({
           Schema.Struct({
             host: Schema.optionalKey(Schema.String),
             port: Schema.optionalKey(
-              Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+              Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
                 .check(
                   Schema.isGreaterThanOrEqualTo(0).annotate({
                     expected: "a value greater than or equal to 0",
@@ -12304,7 +12304,7 @@ export const V2UpdateLogDrainOutput = Schema.Struct({
           password: Schema.optionalKey(Schema.Union([Schema.String, Schema.Null])),
           port: Schema.optionalKey(
             Schema.Union([
-              Schema.Number.check(Schema.isFinite().annotate({ expected: "a finite number" })),
+              Schema.Finite.check(Schema.isFinite().annotate({ expected: "a finite number" })),
               Schema.Null,
             ]),
           ),
@@ -12339,7 +12339,7 @@ export const V2UpdateLogDrainOutput = Schema.Struct({
         Schema.Struct({
           host: Schema.optionalKey(Schema.String),
           port: Schema.optionalKey(
-            Schema.Number.check(Schema.isInt().annotate({ expected: "an integer" }))
+            Schema.Finite.check(Schema.isInt().annotate({ expected: "an integer" }))
               .check(
                 Schema.isGreaterThanOrEqualTo(0).annotate({
                   expected: "a value greater than or equal to 0",

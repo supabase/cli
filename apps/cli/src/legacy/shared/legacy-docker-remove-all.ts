@@ -181,15 +181,13 @@ export const legacyDockerRemoveAll = (
       (result) => Result.isFailure(result) || result.success !== 0,
     );
     if (failedStop !== undefined) {
-      return yield* Effect.fail(
-        new LegacyDockerRemoveAllStopError({
-          message: `failed to stop container: ${
-            Result.isFailure(failedStop)
-              ? legacyDescribeContainerCliFailure(failedStop.failure)
-              : `exit ${failedStop.success}`
-          }`,
-        }),
-      );
+      return yield* new LegacyDockerRemoveAllStopError({
+        message: `failed to stop container: ${
+          Result.isFailure(failedStop)
+            ? legacyDescribeContainerCliFailure(failedStop.failure)
+            : `exit ${failedStop.success}`
+        }`,
+      });
     }
 
     // The prune calls collect stdout (the CLI's deleted-ID report) instead of
@@ -211,9 +209,9 @@ export const legacyDockerRemoveAll = (
       ),
     );
     if (containerPrune.exitCode !== 0) {
-      return yield* Effect.fail(
-        new LegacyDockerRemoveAllContainerPruneError({ message: "failed to prune containers" }),
-      );
+      return yield* new LegacyDockerRemoveAllContainerPruneError({
+        message: "failed to prune containers",
+      });
     }
     yield* reportPruned(debug, "Pruned containers:", containerPrune.stdout);
     // Containers are now CONFIRMED removed — see `onContainersRemoved`'s doc comment for why this
@@ -257,9 +255,9 @@ export const legacyDockerRemoveAll = (
         ),
       );
       if (volumePrune.exitCode !== 0) {
-        return yield* Effect.fail(
-          new LegacyDockerRemoveAllVolumePruneError({ message: "failed to prune volumes" }),
-        );
+        return yield* new LegacyDockerRemoveAllVolumePruneError({
+          message: "failed to prune volumes",
+        });
       }
       // Inside the `deleteVolumes` branch, like Go's report inside the
       // `NoBackupVolume` block.
@@ -281,9 +279,9 @@ export const legacyDockerRemoveAll = (
       ),
     );
     if (networkPrune.exitCode !== 0) {
-      return yield* Effect.fail(
-        new LegacyDockerRemoveAllNetworkPruneError({ message: "failed to prune networks" }),
-      );
+      return yield* new LegacyDockerRemoveAllNetworkPruneError({
+        message: "failed to prune networks",
+      });
     }
     // Go: singular "network", unlike the other two reports.
     yield* reportPruned(debug, "Pruned network:", networkPrune.stdout);

@@ -127,10 +127,10 @@ export const legacyProjectsDelete = Effect.fn("legacy.projects.delete")(function
     // The link file written by `supabase link` holds exactly the ref.
     // Compare against the trimmed content so a corrupt/multi-ref file can't
     // trigger an unintended `.temp` removal.
-    const matches = yield* fs
-      .readFileString(refPath)
-      .pipe(Effect.map((content) => content.trim() === ref))
-      .pipe(Effect.orElseSucceed(() => false));
+    const matches = yield* fs.readFileString(refPath).pipe(
+      Effect.map((content) => content.trim() === ref),
+      Effect.orElseSucceed(() => false),
+    );
     if (matches) {
       yield* fs.remove(tempDir, { recursive: true }).pipe(Effect.ignore);
     }

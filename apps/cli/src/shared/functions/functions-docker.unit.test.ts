@@ -1,14 +1,16 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Layer, Sink, Stream } from "effect";
+import { ConfigProvider, Deferred, Effect, Layer, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   buildFunctionsDockerRunArgs,
   containerArchiveBytes,
+  ensureDockerNamedVolume,
   localDockerId,
   resolveDockerNetworkMode,
   runChildProcess,
 } from "./functions-docker.ts";
+import { makeLegacyViperEnvLayer } from "../legacy/legacy-viper-env.ts";
 
 /**
  * A `ChildProcessSpawner` layer whose handle emits exactly the given raw
@@ -208,14 +210,20 @@ describe("containerArchiveBytes", () => {
     return entries;
   }
 
-  it("strips leading slashes into root-relative tar entries with the contractual 0644 mode", async () => {
-    const archive = await containerArchiveBytes({ "/root/index.ts": "export const x = 1;\n" });
-    // The 0644 mode is contractual — a Bun default change must fail here, not as a
-    // runtime permission error inside the container.
-    expect(tarRegularFileEntries(archive)).toEqual([["root/index.ts", 0o644]]);
-    const files = await new Bun.Archive(archive).files();
-    expect(await files.get("root/index.ts")?.text()).toBe("export const x = 1;\n");
-  });
+  it("strips leading slashes into root-relative tar entries with the contractual 0644 mode", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const archive = yield* containerArchiveBytes({ "/root/index.ts": "export const x = 1;\n" });
+        // The 0644 mode is contractual — a Bun default change must fail here, not as a
+        // runtime permission error inside the container.
+        expect(tarRegularFileEntries(archive)).toEqual([["root/index.ts", 0o644]]);
+        const files = yield* Effect.promise(() => new Bun.Archive(archive).files());
+        const entry = files.get("root/index.ts");
+        expect(entry === undefined ? undefined : yield* Effect.promise(() => entry.text())).toBe(
+          "export const x = 1;\n",
+        );
+      }),
+    ));
 });
 
 describe("resolveDockerNetworkMode", () => {
@@ -272,6 +280,24 @@ describe("resolveDockerNetworkMode", () => {
     expect(result).toBe(localDockerId("network", "my-project"));
     expect(result).toBe("supabase_network_my-project");
   });
+});
+
+describe("ensureDockerNamedVolume", () => {
+  it.effect("skips creation when Bitbucket is supplied by project dotenv values", () =>
+    ensureDockerNamedVolume("supabase_edge_runtime_project", "project", {
+      BITBUCKET_CLONE_DIR: "/opt/bitbucket",
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          Layer.succeed(
+            ChildProcessSpawner.ChildProcessSpawner,
+            ChildProcessSpawner.make(() => Effect.die("unexpected Docker volume creation")),
+          ),
+          makeLegacyViperEnvLayer(ConfigProvider.fromEnv({ env: {}, preserveEmptyStrings: true })),
+        ),
+      ),
+    ),
+  );
 });
 
 describe("runChildProcess", () => {

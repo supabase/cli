@@ -1,10 +1,18 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit } from "effect";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, Exit, Layer } from "effect";
+import * as Formatter from "effect/Formatter";
 import { CliOutput, Command } from "effect/unstable/cli";
 
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 import { LEGACY_GLOBAL_FLAGS } from "../../../shared/legacy/global-flags.ts";
 import { legacyMigrationCommand } from "./migration.command.ts";
+import {
+  buildLegacyTestRuntime,
+  mockLegacyCliConfig,
+  mockLegacyPlatformApi,
+} from "../../../../tests/helpers/legacy-mocks.ts";
+import { mockOutput, mockTelemetryRuntime } from "../../../../tests/helpers/mocks.ts";
 
 // `withGlobalFlags` must come AFTER `withSubcommands` — see
 // `start.string-slice-flags.integration.test.ts`'s identical comment.
@@ -27,15 +35,26 @@ describe("legacy migration command integration", () => {
       ]).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const causeJson = JSON.stringify(exit.cause);
+        const causeJson = Formatter.formatJson(exit.cause);
         // The alias resolved: the parse error is scoped to the squash LEAF, not the root.
         expect(causeJson).toContain('"commandPath":["supabase","migration","squash"]');
         expect(causeJson).not.toContain('"subcommand":"migrations"');
       }
-    }).pipe(Effect.provide(CliOutput.layer(textCliOutputFormatter())));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          CliOutput.layer(textCliOutputFormatter()),
+          buildLegacyTestRuntime({
+            out: mockOutput(),
+            api: mockLegacyPlatformApi(),
+            cliConfig: mockLegacyCliConfig({ workdir: "." }),
+          }),
+          mockTelemetryRuntime(),
+          BunServices.layer,
+        ),
+      ),
+    );
 
-    // Command.runWith's Environment type is retained even though this path only needs CliOutput
-    // at runtime.
-    return run as Effect.Effect<void>;
+    return run;
   });
 });

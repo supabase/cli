@@ -387,12 +387,10 @@ export const legacyDiffSchemaPgAdmin = (
         // The differ's own stderr is never surfaced beyond the progress-line
         // filter above; any non-matching line is silently dropped, even under
         // `--debug`.
-        return yield* Effect.fail(
-          new LegacyDbDiffPgAdminError({
-            message: `error running container: exit ${result.exitCode}`,
-            reason: "differ",
-          }),
-        );
+        return yield* new LegacyDbDiffPgAdminError({
+          message: `error running container: exit ${result.exitCode}`,
+          reason: "differ",
+        });
       }
       const stdout = new TextDecoder().decode(result.stdout);
       // Parsed per run rather than concatenated across runs and parsed once,
@@ -401,12 +399,10 @@ export const legacyDiffSchemaPgAdmin = (
       // this module's own header comment.
       const parsed = legacyParsePgAdminDiffEntries(stdout);
       if (Result.isFailure(parsed)) {
-        return yield* Effect.fail(
-          new LegacyDbDiffPgAdminError({
-            message: parsed.failure.message,
-            reason: "invalid_output",
-          }),
-        );
+        return yield* new LegacyDbDiffPgAdminError({
+          message: parsed.failure.message,
+          reason: "invalid_output",
+        });
       }
       ddls.push(...parsed.success);
     }

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import { ConfigProvider, Effect, Layer, Sink, Stream } from "effect";
+import { PlatformError, SystemError } from "effect/PlatformError";
 import { FileSystem } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
 import { Browser } from "./browser.service.ts";
 import { browserLayer } from "./browser.layer.ts";
@@ -12,21 +13,23 @@ function mockSpawner() {
   const spawned: SpawnedCommand[] = [];
   const layer = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make((command: any) =>
-      Effect.sync(() => {
-        const cmd = command as { _tag: string; command: string; args: readonly string[] };
-        spawned.push({ command: cmd.command, args: cmd.args });
+    ChildProcessSpawner.make((command: ChildProcess.Command) =>
+      Effect.gen(function* () {
+        if (command._tag !== "StandardCommand") {
+          return yield* Effect.die("browser test received a piped command");
+        }
+        spawned.push({ command: command.command, args: command.args });
         return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),
           exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
           isRunning: Effect.succeed(false),
           kill: () => Effect.void,
           unref: Effect.succeed(Effect.void),
-          stdin: Sink.drain as any,
+          stdin: Sink.drain,
           stdout: Stream.empty,
           stderr: Stream.empty,
           all: Stream.empty,
-          getInputFd: () => Sink.drain as any,
+          getInputFd: () => Sink.drain,
           getOutputFd: () => Stream.empty,
         });
       }),
@@ -142,7 +145,18 @@ describe("Browser", () => {
   it.effect("errors are ignored when spawner fails", () => {
     const failingLayer = Layer.succeed(
       ChildProcessSpawner.ChildProcessSpawner,
-      ChildProcessSpawner.make(() => Effect.fail(new Error("spawn failed") as any)),
+      ChildProcessSpawner.make(() =>
+        Effect.fail(
+          new PlatformError(
+            new SystemError({
+              _tag: "Unknown",
+              module: "ChildProcess",
+              method: "spawn",
+              description: "spawn failed",
+            }),
+          ),
+        ),
+      ),
     );
     const configLayer = ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }));
     const layer = Layer.mergeAll(

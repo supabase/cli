@@ -1,6 +1,7 @@
 import { Effect, Option } from "effect";
 
 import { LegacyNetworkIdFlag } from "../../../../shared/legacy/global-flags.ts";
+import { LegacyViperEnv } from "../../../../shared/legacy/legacy-viper-env.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import {
   LegacyDbConnection,
@@ -97,8 +98,8 @@ where pd.deptype is null
 order by pn.nspname`;
 
 /** Mirrors Go's `types.IsSSLDebugEnabled` (`internal/gen/types/types.go:201`). */
-function legacyIsSslDebugEnabled(): boolean {
-  return (process.env["SUPABASE_SSL_DEBUG"] ?? "").toLowerCase() === "true";
+function legacyIsSslDebugEnabled(value: string | undefined): boolean {
+  return (value ?? "").toLowerCase() === "true";
 }
 
 /** Mirrors Go's `shouldFallbackToLegacyMigra` (`internal/db/diff/migra.go:155`). */
@@ -116,11 +117,17 @@ const buildMigraEnv = Effect.fnUntraced(function* (params: {
   readonly schema: ReadonlyArray<string>;
 }) {
   const probe = yield* LegacyPgDeltaSslProbe;
+  const legacyEnv = yield* LegacyViperEnv;
+  const sslDebug = yield* legacyEnv
+    .get("SUPABASE_SSL_DEBUG")
+    .pipe(Effect.orElseSucceed(() => Option.none<string>()));
   const env: Record<string, string> = {
     SOURCE: params.source,
     TARGET: params.target,
   };
-  if (legacyIsSslDebugEnabled()) env["SUPABASE_SSL_DEBUG"] = "true";
+  if (legacyIsSslDebugEnabled(Option.getOrUndefined(sslDebug))) {
+    env["SUPABASE_SSL_DEBUG"] = "true";
+  }
   // Go's GetRootCA: probe the target for TLS; if it speaks TLS, inject the
   // embedded CA bundle as SSL_CA (`internal/gen/types/types.go:124-148`).
   const requireSsl = yield* probe.requireSsl(params.target);
@@ -146,11 +153,9 @@ const loadTargetUserSchemas = Effect.fnUntraced(function* (
   const connection = yield* LegacyDbConnection;
   const input = parseLegacyConnectionString(target);
   if (input === undefined) {
-    return yield* Effect.fail(
-      new LegacyMigraSchemaLoadError({
-        message: "failed to list schemas: invalid target connection string",
-      }),
-    );
+    return yield* new LegacyMigraSchemaLoadError({
+      message: "failed to list schemas: invalid target connection string",
+    });
   }
   return yield* Effect.scoped(
     Effect.gen(function* () {
@@ -191,13 +196,19 @@ const diffMigraBash = Effect.fnUntraced(function* (params: {
 }) {
   const docker = yield* LegacyDockerRun;
   const runtimeInfo = yield* RuntimeInfo;
+  const legacyEnv = yield* LegacyViperEnv;
   const networkIdFlag = yield* LegacyNetworkIdFlag;
   const schema =
     params.schema.length > 0
       ? params.schema
       : yield* loadTargetUserSchemas(params.target, params.connectOptions);
   const env: Record<string, string> = { SOURCE: params.source, TARGET: params.target };
-  if (legacyIsSslDebugEnabled()) env["SUPABASE_SSL_DEBUG"] = "true";
+  const sslDebug = yield* legacyEnv
+    .get("SUPABASE_SSL_DEBUG")
+    .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+  if (legacyIsSslDebugEnabled(Option.getOrUndefined(sslDebug))) {
+    env["SUPABASE_SSL_DEBUG"] = "true";
+  }
   // Passing the script as a string means command-line args must be set manually
   // via `set --` so migra.sh's `"$@"` loop sees the schema list (Go's `args`).
   const args = `set -- ${schema.join(" ")};`;
@@ -212,9 +223,14 @@ const diffMigraBash = Effect.fnUntraced(function* (params: {
       ? { _tag: "named" as const, name: networkId }
       : { _tag: "host" as const };
   const extraHosts = runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
+  const registryOverride = yield* legacyEnv
+    .get("SUPABASE_INTERNAL_IMAGE_REGISTRY")
+    .pipe(Effect.orElseSucceed(() => Option.none<string>()));
   const result = yield* docker
     .runCapture({
-      image: legacyGetRegistryImageUrl(LEGACY_MIGRA_IMAGE),
+      image: legacyGetRegistryImageUrl(LEGACY_MIGRA_IMAGE, {
+        SUPABASE_INTERNAL_IMAGE_REGISTRY: Option.getOrElse(registryOverride, () => ""),
+      }),
       cmd: ["/bin/sh", "-c", args + legacyMigraDiffShellScript],
       env,
       binds: [],
@@ -236,11 +252,9 @@ const diffMigraBash = Effect.fnUntraced(function* (params: {
       ),
     );
   if (result.exitCode !== 0) {
-    return yield* Effect.fail(
-      new LegacyMigraDiffError({
-        message: `error diffing schema:\n${result.stderr}`,
-      }),
-    );
+    return yield* new LegacyMigraDiffError({
+      message: `error diffing schema:\n${result.stderr}`,
+    });
   }
   return new TextDecoder().decode(result.stdout);
 });
@@ -271,6 +285,7 @@ export const legacyDiffMigra = Effect.fnUntraced(function* (
       env,
       binds: [`${legacyEdgeRuntimeId(ctx.projectId)}:/root/.cache/deno:rw`],
       errPrefix: "error diffing schema",
+      projectEnvValues: ctx.projectEnv,
       denoVersion: ctx.denoVersion,
       workdir: ctx.cwd,
     })

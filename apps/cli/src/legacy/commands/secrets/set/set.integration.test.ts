@@ -1,9 +1,16 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Option, PlatformError } from "effect";
+import {
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Path,
+  PlatformError,
+  Schema,
+} from "effect";
 
 import {
   mockOutput,
@@ -20,6 +27,10 @@ import {
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
 import { classifyCliCauseActionability } from "../../../../shared/telemetry/error-actionability.ts";
 import { legacySecretsSet } from "./set.handler.ts";
+
+const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const fixturePath = ManagedRuntime.make(BunServices.layer).runSync(Path.Path);
+const join = (first: string, ...rest: ReadonlyArray<string>) => fixturePath.join(first, ...rest);
 
 function mockLegacyDebugLoggerTracked() {
   const messages: Array<string> = [];
@@ -91,13 +102,23 @@ function setup(opts: SetupOpts = {}) {
 }
 
 function writeConfig(content: string) {
-  mkdirSync(join(tempRoot.current, "supabase"), { recursive: true });
-  writeFileSync(join(tempRoot.current, "supabase", "config.toml"), content);
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(join(tempRoot.current, "supabase"), { recursive: true });
+    yield* fs.writeFileString(join(tempRoot.current, "supabase", "config.toml"), content);
+  });
 }
 
 function writeSupabaseDotEnv(content: string) {
-  mkdirSync(join(tempRoot.current, "supabase"), { recursive: true });
-  writeFileSync(join(tempRoot.current, "supabase", ".env"), content);
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(join(tempRoot.current, "supabase"), { recursive: true });
+    yield* fs.writeFileString(join(tempRoot.current, "supabase", ".env"), content);
+  });
+}
+
+function writeFixture(path: string, content: string) {
+  return Effect.flatMap(FileSystem.FileSystem, (fs) => fs.writeFileString(path, content));
 }
 
 function parsePostBody(body: unknown): Array<{ name: string; value: string }> {
@@ -195,7 +216,7 @@ describe("legacy secrets set integration", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacySecretsSetInputError");
+          expect(encodeJson(exit.cause)).toContain("LegacySecretsSetInputError");
           const classified = classifyCliCauseActionability(exit.cause);
           expect(classified.error_kind).toBe("user_actionable");
           expect(classified.error_category).toBe("invalid_input");
@@ -206,9 +227,9 @@ describe("legacy secrets set integration", () => {
   );
 
   it.live("sets secrets from --env-file with a relative path (joined to CWD)", () => {
-    writeFileSync(join(tempRoot.current, "myfile.env"), "FROM_FILE=fromvalue\n");
     const { layer, api } = setup();
     return Effect.gen(function* () {
+      yield* writeFixture(join(tempRoot.current, "myfile.env"), "FROM_FILE=fromvalue\n");
       yield* legacySecretsSet({
         projectRef: Option.none(),
         envFile: Option.some("myfile.env"),
@@ -222,9 +243,9 @@ describe("legacy secrets set integration", () => {
 
   it.live("sets secrets from --env-file with an absolute path", () => {
     const abs = join(tempRoot.current, "absolute.env");
-    writeFileSync(abs, "ABS=value\n");
     const { layer, api } = setup();
     return Effect.gen(function* () {
+      yield* writeFixture(abs, "ABS=value\n");
       yield* legacySecretsSet({
         projectRef: Option.none(),
         envFile: Option.some(abs),
@@ -235,9 +256,9 @@ describe("legacy secrets set integration", () => {
   });
 
   it.live("CLI args override --env-file entries for the same key", () => {
-    writeFileSync(join(tempRoot.current, "override.env"), "FOO=from-file\n");
     const { layer, api } = setup();
     return Effect.gen(function* () {
+      yield* writeFixture(join(tempRoot.current, "override.env"), "FOO=from-file\n");
       yield* legacySecretsSet({
         projectRef: Option.none(),
         envFile: Option.some("override.env"),
@@ -250,15 +271,15 @@ describe("legacy secrets set integration", () => {
   it.live(
     "merges entries from supabase/config.toml [edge_runtime.secrets] ahead of env-file and CLI args",
     () => {
-      writeConfig(
-        `[edge_runtime.secrets]
+      const { layer, api } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
 FROM_CONFIG = "config-value"
 SHARED = "config-shared"
 `,
-      );
-      writeFileSync(join(tempRoot.current, ".env-file"), "SHARED=envfile-shared\n");
-      const { layer, api } = setup();
-      return Effect.gen(function* () {
+        );
+        yield* writeFixture(join(tempRoot.current, ".env-file"), "SHARED=envfile-shared\n");
         yield* legacySecretsSet({
           projectRef: Option.none(),
           envFile: Option.some(".env-file"),
@@ -276,13 +297,13 @@ SHARED = "config-shared"
   );
 
   it.live("interpolates env(VAR) in config.toml secrets when the env var is defined", () => {
-    writeConfig(
-      `[edge_runtime.secrets]
-DB_URL = "env(MY_DB_URL)"
-`,
-    );
     const { layer, api } = setup({ env: { MY_DB_URL: "postgres://x" } });
     return Effect.gen(function* () {
+      yield* writeConfig(
+        `[edge_runtime.secrets]
+DB_URL = "env(MY_DB_URL)"
+`,
+      );
       yield* legacySecretsSet({
         projectRef: Option.none(),
         envFile: Option.none(),
@@ -295,15 +316,15 @@ DB_URL = "env(MY_DB_URL)"
   });
 
   it.live("skips secrets whose env() reference cannot be resolved (Go set.go:48-52 parity)", () => {
-    writeConfig(
-      `[edge_runtime.secrets]
+    const { layer, api } = setup({ env: { MY_DB_URL: "postgres://x" } });
+    return Effect.gen(function* () {
+      yield* writeConfig(
+        `[edge_runtime.secrets]
 RESOLVED = "env(MY_DB_URL)"
 UNRESOLVED = "env(NOT_SET_ANYWHERE)"
 LITERAL = "plain-value"
 `,
-    );
-    const { layer, api } = setup({ env: { MY_DB_URL: "postgres://x" } });
-    return Effect.gen(function* () {
+      );
       yield* legacySecretsSet({
         projectRef: Option.none(),
         envFile: Option.none(),
@@ -328,14 +349,14 @@ LITERAL = "plain-value"
       // are included — so a literal `EMPTY = ""` in config.toml is never
       // sent, which prevents it from silently overwriting a same-named
       // remote secret with an empty string.
-      writeConfig(
-        `[edge_runtime.secrets]
+      const { layer, api } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
 EMPTY = ""
 NON_EMPTY = "config-value"
 `,
-      );
-      const { layer, api } = setup();
-      return Effect.gen(function* () {
+        );
         yield* legacySecretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -351,16 +372,16 @@ NON_EMPTY = "config-value"
   it.live(
     "does not crash when config.toml has env(NUMERIC_PORT) on an unrelated numeric field (CLI-1489 regression guard)",
     () => {
-      writeConfig(
-        `[analytics]
+      const { layer, api } = setup({ env: { SUPABASE_ANALYTICS_PORT: "54327" } });
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[analytics]
 port = "env(SUPABASE_ANALYTICS_PORT)"
 
 [edge_runtime.secrets]
 FOO = "literal-foo"
 `,
-      );
-      const { layer, api } = setup({ env: { SUPABASE_ANALYTICS_PORT: "54327" } });
-      return Effect.gen(function* () {
+        );
         yield* legacySecretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -403,7 +424,7 @@ FOO = "literal-foo"
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacySecretsNoArgumentsError");
+          expect(encodeJson(exit.cause)).toContain("LegacySecretsNoArgumentsError");
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
@@ -422,7 +443,7 @@ FOO = "literal-foo"
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
+        const errJson = encodeJson(exit.cause);
         expect(errJson).toContain("LegacyInvalidSecretPairError");
         expect(errJson).toContain("Invalid secret pair: NOTAPAIR");
       }
@@ -442,7 +463,7 @@ FOO = "literal-foo"
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
+        const errJson = encodeJson(exit.cause);
         expect(errJson).toContain("LegacySecretsEnvFileOpenError");
         expect(errJson).toContain("failed to open env file");
         expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
@@ -482,9 +503,9 @@ FOO = "literal-foo"
   it.live(
     "tolerates a malformed config.toml, logs it to the debug logger, and still sets CLI-arg secrets",
     () => {
-      writeConfig("this is not valid = = toml [[[\n");
       const { layer, api, debugLogger } = setup();
       return Effect.gen(function* () {
+        yield* writeConfig("this is not valid = = toml [[[\n");
         yield* legacySecretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -508,16 +529,16 @@ FOO = "literal-foo"
       // landing on `utils.Config` — `secrets set` still reads it. Effect
       // Schema's `decodeUnknownSync` is atomic and would otherwise discard the
       // whole document, silently dropping `FROM_CONFIG` too.
-      writeConfig(
-        `[edge_runtime.secrets]
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
 FROM_CONFIG = "config-value"
 
 [analytics]
 port = "not-a-number"
 `,
-      );
-      const { layer, api, debugLogger } = setup();
-      return Effect.gen(function* () {
+        );
         yield* legacySecretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -544,16 +565,16 @@ port = "not-a-number"
       // `InspectorPort` is left at its zero value — verified empirically
       // against `pkg/config` directly. The recovery must therefore re-decode
       // `secrets` on its own rather than the whole `edge_runtime` subtree.
-      writeConfig(
-        `[edge_runtime]
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime]
 inspector_port = "not-a-number"
 
 [edge_runtime.secrets]
 FROM_CONFIG = "config-value"
 `,
-      );
-      const { layer, api, debugLogger } = setup();
-      return Effect.gen(function* () {
+        );
         yield* legacySecretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -579,14 +600,14 @@ FROM_CONFIG = "config-value"
       // non-fatal way — so this must not abort the command either. `.env`
       // is only read once a `supabase/config.toml`/`.json` is found
       // (`findProjectPaths`), so a config.toml must exist here too.
-      writeConfig(
-        `[edge_runtime.secrets]
-FROM_CONFIG = "config-value"
-`,
-      );
-      writeSupabaseDotEnv("THIS IS NOT A VALID DOTENV LINE\n");
       const { layer, api, debugLogger } = setup();
       return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
+FROM_CONFIG = "config-value"
+`,
+        );
+        yield* writeSupabaseDotEnv("THIS IS NOT A VALID DOTENV LINE\n");
         yield* legacySecretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -611,14 +632,14 @@ FROM_CONFIG = "config-value"
       // `utils.Config.EdgeRuntime.Secrets` even with `BAD` present. Effect
       // Schema's `decodeUnknownSync` is atomic per record and would otherwise
       // discard `GOOD` too when re-decoding the whole `secrets` map at once.
-      writeConfig(
-        `[edge_runtime.secrets]
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
 GOOD = "config-value"
 BAD = 123
 `,
-      );
-      const { layer, api, debugLogger } = setup();
-      return Effect.gen(function* () {
+        );
         yield* legacySecretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -640,17 +661,17 @@ BAD = 123
       // fine on its own (it's a valid, if empty, string), so it must be
       // dropped downstream in the same merge loop the happy path uses, not
       // resurrected as a false "recoverable" entry.
-      writeConfig(
-        `[edge_runtime.secrets]
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
 EMPTY = ""
 GOOD = "config-value"
 
 [analytics]
 port = "not-a-number"
 `,
-      );
-      const { layer, api, debugLogger } = setup();
-      return Effect.gen(function* () {
+        );
         yield* legacySecretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -675,16 +696,16 @@ port = "not-a-number"
       // `decodeMapFromSlice` path, and the whole field is left empty. Before
       // the `isRecord` fix, `Object.entries(["actual-secret"])` would turn
       // this into a spurious `{ "0": "actual-secret" }` entry.
-      writeConfig(
-        `[analytics]
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[analytics]
 port = "not-a-number"
 
 [edge_runtime]
 secrets = ["actual-secret"]
 `,
-      );
-      const { layer, api, debugLogger } = setup();
-      return Effect.gen(function* () {
+        );
         yield* legacySecretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -709,8 +730,10 @@ secrets = ["actual-secret"]
       // override in `loadFromFile` (`pkg/config/config.go:604-609`) before the
       // tolerant decode this PR models — the recovered secret must reflect the
       // remote's override value, not the base document's.
-      writeConfig(
-        `[edge_runtime.secrets]
+      const { layer, out, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
 FROM_CONFIG = "base-value"
 
 [analytics]
@@ -722,9 +745,7 @@ project_id = "${LEGACY_VALID_REF}"
 [remotes.staging.edge_runtime.secrets]
 FROM_CONFIG = "remote-value"
 `,
-      );
-      const { layer, out, api, debugLogger } = setup();
-      return Effect.gen(function* () {
+        );
         yield* legacySecretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -752,8 +773,10 @@ FROM_CONFIG = "remote-value"
       // unconditionally whenever a `[remotes.*]` block's `project_id` matches
       // `Config.ProjectId`, before `mapstructure` ever runs. `mockLegacyCliConfig`
       // defaults the resolved ref to `LEGACY_VALID_REF`.
-      writeConfig(
-        `[edge_runtime.secrets]
+      const { layer, out, api } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
 FROM_CONFIG = "base-value"
 
 [remotes.staging]
@@ -762,9 +785,7 @@ project_id = "${LEGACY_VALID_REF}"
 [remotes.staging.edge_runtime.secrets]
 FROM_CONFIG = "remote-value"
 `,
-      );
-      const { layer, out, api } = setup();
-      return Effect.gen(function* () {
+        );
         yield* legacySecretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -781,13 +802,13 @@ FROM_CONFIG = "remote-value"
   it.live(
     "does not print a remote override notice when no [remotes.*] block matches the resolved ref",
     () => {
-      writeConfig(
-        `[edge_runtime.secrets]
-FROM_CONFIG = "config-value"
-`,
-      );
       const { layer, out, api } = setup();
       return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
+FROM_CONFIG = "config-value"
+`,
+        );
         yield* legacySecretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -809,8 +830,10 @@ FROM_CONFIG = "config-value"
       // before `mapstructure` ever runs (`pkg/config/config.go:601`). There
       // is no parsed document to recover a subtree from, so config-sourced
       // secrets are dropped entirely — only CLI-arg secrets survive.
-      writeConfig(
-        `[edge_runtime.secrets]
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
 FROM_CONFIG = "config-value"
 
 [remotes.a]
@@ -819,9 +842,7 @@ project_id = "dupe-project-id"
 [remotes.b]
 project_id = "dupe-project-id"
 `,
-      );
-      const { layer, api, debugLogger } = setup();
-      return Effect.gen(function* () {
+        );
         yield* legacySecretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -845,16 +866,16 @@ project_id = "dupe-project-id"
       // above. There is no parsed document to recover a subtree from, so
       // config-sourced secrets are dropped entirely — only CLI-arg secrets
       // survive.
-      writeConfig(
-        `[edge_runtime.secrets]
+      const { layer, api, debugLogger } = setup();
+      return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
 FROM_CONFIG = "config-value"
 
 [remotes.a]
 project_id = "not-a-valid-ref"
 `,
-      );
-      const { layer, api, debugLogger } = setup();
-      return Effect.gen(function* () {
+        );
         yield* legacySecretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -873,15 +894,15 @@ project_id = "not-a-valid-ref"
       // `smol-toml`'s `TomlError` embeds a source codeblock (the offending line ±1)
       // in its message; the planted secret sits directly above the syntax error so
       // it would land inside that codeblock if the handler logged the raw message.
-      writeConfig(
-        [
-          "[edge_runtime.secrets]",
-          'PLANTED_SECRET = "sk_live_TOTALLY_REAL_SECRET_VALUE"',
-          "BROKEN = = invalid[[[",
-        ].join("\n"),
-      );
       const { layer, debugLogger } = setup();
       return Effect.gen(function* () {
+        yield* writeConfig(
+          [
+            "[edge_runtime.secrets]",
+            'PLANTED_SECRET = "sk_live_TOTALLY_REAL_SECRET_VALUE"',
+            "BROKEN = = invalid[[[",
+          ].join("\n"),
+        );
         yield* legacySecretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -904,13 +925,13 @@ project_id = "not-a-valid-ref"
       // sits inside `[edge_runtime.secrets]` itself, so this also exercises
       // the per-entry recovery path — `PLANTED_SECRET` is dropped, but the
       // CLI-arg secret still goes through.
-      writeConfig(
-        `[edge_runtime.secrets]
-PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
-`,
-      );
       const { layer, api, debugLogger } = setup();
       return Effect.gen(function* () {
+        yield* writeConfig(
+          `[edge_runtime.secrets]
+PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
+`,
+        );
         yield* legacySecretsSet({
           projectRef: Option.none(),
           envFile: Option.none(),
@@ -927,9 +948,9 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
   it.live(
     "still fails with LegacySecretsNoArgumentsError when a malformed config leaves zero secret sources",
     () => {
-      writeConfig("this is not valid = = toml [[[\n");
       const { layer, api } = setup();
       return Effect.gen(function* () {
+        yield* writeConfig("this is not valid = = toml [[[\n");
         const exit = yield* Effect.exit(
           legacySecretsSet({
             projectRef: Option.none(),
@@ -939,7 +960,7 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacySecretsNoArgumentsError");
+          expect(encodeJson(exit.cause)).toContain("LegacySecretsNoArgumentsError");
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
@@ -958,7 +979,7 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
+        const errJson = encodeJson(exit.cause);
         expect(errJson).toContain("LegacySecretsSetNetworkError");
         expect(errJson).toContain("failed to set secrets");
       }
@@ -977,7 +998,7 @@ PLANTED_SECRET = ["sk_live_TOTALLY_REAL_SECRET_VALUE"]
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
+        const errJson = encodeJson(exit.cause);
         expect(errJson).toContain("LegacySecretsSetUnexpectedStatusError");
         expect(errJson).toContain("Unexpected error setting project secrets");
       }

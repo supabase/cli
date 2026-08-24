@@ -17,12 +17,10 @@ export const list = Effect.fn("branches.list")(function* () {
 
   const maybeLinkState = yield* projectLinkState.load;
   if (Option.isNone(maybeLinkState)) {
-    return yield* Effect.fail(
-      new ProjectNotLinkedError({
-        detail: "No project is linked in this directory.",
-        suggestion: "Run `supabase link` first.",
-      }),
-    );
+    return yield* new ProjectNotLinkedError({
+      detail: "No project is linked in this directory.",
+      suggestion: "Run `supabase link` first.",
+    });
   }
 
   const { project, active_branch } = maybeLinkState.value;

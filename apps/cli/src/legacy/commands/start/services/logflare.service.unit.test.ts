@@ -1,13 +1,17 @@
-import { join } from "node:path";
-
+import { BunPath } from "@effect/platform-bun";
 import { describe, expect, test } from "vitest";
+import { Effect } from "effect";
+import * as EffectPath from "effect/Path";
 
 import {
   legacyBuildLogflareContainerSpec,
   type LegacyLogflareContainerSpecInput,
 } from "./logflare.service.ts";
 
+const testPath = Effect.runSync(EffectPath.Path.pipe(Effect.provide(BunPath.layer)));
+
 const base: LegacyLogflareContainerSpecInput = {
+  path: testPath,
   image: "supabase/logflare:1.0.0",
   projectId: "proj",
   networkId: "supabase_network_proj",
@@ -95,7 +99,7 @@ describe("legacyBuildLogflareContainerSpec", () => {
     expect(spec.env.POSTGRES_BACKEND_URL).toBeUndefined();
     expect(spec.env.POSTGRES_BACKEND_SCHEMA).toBeUndefined();
     expect(spec.binds).toEqual([
-      `${join("/workdir", "gcloud.json")}:/opt/app/rel/logflare/bin/gcloud.json`,
+      `${testPath.join("/workdir", "gcloud.json")}:/opt/app/rel/logflare/bin/gcloud.json`,
     ]);
   });
 
@@ -106,6 +110,8 @@ describe("legacyBuildLogflareContainerSpec", () => {
       gcpJwtPath: "",
       workdir: "/workdir",
     });
-    expect(spec.binds).toEqual([`${join("/workdir", "")}:/opt/app/rel/logflare/bin/gcloud.json`]);
+    expect(spec.binds).toEqual([
+      `${testPath.join("/workdir", "")}:/opt/app/rel/logflare/bin/gcloud.json`,
+    ]);
   });
 });

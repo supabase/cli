@@ -7,7 +7,7 @@ export const TelemetryConfigSchema = Schema.Struct({
   consent: ConsentStateSchema,
   device_id: Schema.String,
   session_id: Schema.String,
-  session_last_active: Schema.Number,
+  session_last_active: Schema.Finite,
   distinct_id: Schema.optionalKey(Schema.String),
 });
 export type TelemetryConfig = Schema.Schema.Type<typeof TelemetryConfigSchema>;

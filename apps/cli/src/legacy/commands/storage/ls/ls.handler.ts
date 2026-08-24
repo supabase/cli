@@ -37,12 +37,10 @@ export const legacyStorageLs = Effect.fn("legacy.storage.ls")(function* (
     // discarded on the local target — see push.handler.ts's identical guard
     // (db push) for the full TS-only rationale.
     if (Option.isSome(flags.projectRef) && flags.local) {
-      return yield* Effect.fail(
-        new LegacyStorageMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-        }),
-      );
+      return yield* new LegacyStorageMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+      });
     }
 
     // Routing reads the `--local` value (Go `storage.go:21-32`): local clears the

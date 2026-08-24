@@ -1,7 +1,9 @@
-import path from "node:path";
+import { BunPath } from "@effect/platform-bun";
+import { Effect, Path } from "effect";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
+const path = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
 const cliRoot = path.resolve(import.meta.dirname, "../../..");
 
 /**

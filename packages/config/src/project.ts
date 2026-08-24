@@ -148,14 +148,14 @@ function parseDotEnv(
       const match = dotEnvLinePattern.exec(candidate);
 
       if (match === null) {
-        return yield* Effect.fail(new ProjectEnvParseError({ path, line: index + 1 }));
+        return yield* new ProjectEnvParseError({ path, line: index + 1 });
       }
 
       const key = match[1];
       const rawValue = match[2] ?? "";
 
       if (key === undefined) {
-        return yield* Effect.fail(new ProjectEnvParseError({ path, line: index + 1 }));
+        return yield* new ProjectEnvParseError({ path, line: index + 1 });
       }
 
       values[key] = parseDotEnvValue(rawValue);
@@ -243,7 +243,8 @@ export const loadProjectEnvironment = Effect.fnUntraced(function* (
     loadedPaths.push(paths.envLocalPath);
   }
 
-  applySource(values, sources, normalizeAmbientEnv(options.baseEnv), "ambient");
+  const ambient = normalizeAmbientEnv(options.baseEnv);
+  applySource(values, sources, ambient, "ambient");
 
   return {
     paths,

@@ -2,6 +2,7 @@ import { Effect, FileSystem, Path, Schema } from "effect";
 import { ProjectConfigSchema, type ProjectConfig } from "./base.ts";
 import { loadProjectConfig } from "./io.ts";
 import { findProjectPaths } from "./paths.ts";
+import type { ProjectEnvironment } from "./project.ts";
 
 const functionSlugPattern = /^[a-zA-Z0-9_-]+$/;
 const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
@@ -25,6 +26,7 @@ export type FunctionsManifest = Readonly<Record<string, ResolvedFunctionConfig>>
 interface InferFunctionsManifestOptions {
   readonly cwd: string;
   readonly config?: ProjectConfig;
+  readonly projectEnv?: ProjectEnvironment;
   /** Forwarded to {@link findProjectPaths}'s own `search` option — see its doc comment. */
   readonly search?: boolean;
 }
@@ -84,9 +86,10 @@ export const inferFunctionsManifest = Effect.fnUntraced(function* (
   const projectRoot = projectPaths?.projectRoot ?? options.cwd;
   const config =
     options.config ??
-    (yield* loadProjectConfig(options.cwd).pipe(
-      Effect.map((loaded) => loaded?.config ?? emptyConfig),
-    ));
+    (yield* loadProjectConfig(options.cwd, {
+      ...(options.projectEnv === undefined ? {} : { projectEnv: options.projectEnv }),
+      ...(options.search === undefined ? {} : { search: options.search }),
+    }).pipe(Effect.map((loaded) => loaded?.config ?? emptyConfig)));
   const functionsDir = path.join(projectRoot, "supabase", edgeFunctionsDirectoryName);
   const filesystemFunctions: Record<string, ResolvedFunctionConfig> = {};
 

@@ -1,6 +1,4 @@
-import * as nodePath from "node:path";
-
-import { Effect, Option } from "effect";
+import { Effect, Option, Path } from "effect";
 
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -38,6 +36,7 @@ export const legacyStorageMv = Effect.fn("legacy.storage.mv")(function* (
   const telemetryState = yield* LegacyTelemetryState;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const resolver = yield* LegacyProjectRefResolver;
+  const path = yield* Path.Path;
 
   let linkedRef = "";
 
@@ -46,12 +45,10 @@ export const legacyStorageMv = Effect.fn("legacy.storage.mv")(function* (
     // discarded on the local target — see push.handler.ts's identical guard
     // (db push) for the full TS-only rationale.
     if (Option.isSome(flags.projectRef) && flags.local) {
-      return yield* Effect.fail(
-        new LegacyStorageMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-        }),
-      );
+      return yield* new LegacyStorageMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+      });
     }
 
     const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
@@ -100,7 +97,13 @@ export const legacyStorageMv = Effect.fn("legacy.storage.mv")(function* (
           }
 
           // Recursive fallback on `not_found`.
-          const moved = yield* moveStorageObjectAll(gateway, output, `${srcParsed}/`, dstParsed);
+          const moved = yield* moveStorageObjectAll(
+            gateway,
+            output,
+            path,
+            `${srcParsed}/`,
+            dstParsed,
+          );
           if (output.format !== "text") {
             yield* output.success("", { message: "", moved });
           }
@@ -122,6 +125,7 @@ export const legacyStorageMv = Effect.fn("legacy.storage.mv")(function* (
 const moveStorageObjectAll = (
   gateway: LegacyStorageGateway,
   output: typeof Output.Service,
+  path: Path.Path,
   srcPath: string,
   dstPath: string,
 ) =>
@@ -144,9 +148,9 @@ const moveStorageObjectAll = (
           ? objectPath.slice(srcPath.length)
           : objectPath;
         const [srcBucket, srcPrefix] = legacySplitBucketPrefix(objectPath);
-        const absPath = nodePath.posix.join(dstPrefix, relPath);
+        const absPath = path.join(dstPrefix, relPath);
         yield* output.raw(
-          `Moving object: ${objectPath} => ${nodePath.posix.join(dstPath, relPath)}\n`,
+          `Moving object: ${objectPath} => ${path.join(dstPath, relPath)}\n`,
           "stderr",
         );
         yield* gateway.moveObject(srcBucket, srcPrefix, absPath);

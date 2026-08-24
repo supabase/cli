@@ -1,9 +1,10 @@
-import { Context, Effect, FileSystem, Layer, Path } from "effect";
+import { Config, Context, Effect, FileSystem, Layer, Path, Schema } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
 import { Output } from "../../../shared/output/output.service.ts";
 import { sanitizeLegacyErrorBody } from "../../shared/legacy-http-errors.ts";
+import { legacyErrorMessage } from "../../shared/legacy-error-message.ts";
 import {
   LegacyBootstrapTemplateDownloadError,
   LegacyBootstrapTemplateListError,
@@ -55,6 +56,10 @@ interface GithubContentEntry {
   readonly download_url?: string | null;
 }
 
+const GithubSamplesSchema = Schema.Struct({
+  samples: Schema.optional(Schema.Array(Schema.Unknown)),
+});
+
 function isStarterTemplate(value: unknown): value is LegacyStarterTemplate {
   return (
     typeof value === "object" &&
@@ -72,7 +77,7 @@ const mapDownloadError = (
     cause instanceof LegacyBootstrapTemplateDownloadError
       ? cause
       : new LegacyBootstrapTemplateDownloadError({
-          message: `failed to download template: ${cause}`,
+          message: `failed to download template: ${legacyErrorMessage(cause)}`,
         }),
   );
 
@@ -86,7 +91,7 @@ export const legacyTemplateServiceLayer = Layer.effect(
 
     // Go reads `GITHUB_TOKEN` directly (`utils.GetGitHubClient`) to raise the
     // anonymous GitHub API rate limit. When unset, requests are anonymous.
-    const githubToken = process.env["GITHUB_TOKEN"];
+    const githubToken = yield* Config.string("GITHUB_TOKEN").pipe(Config.withDefault(""));
 
     const contentsRequest = (owner: string, repo: string, contentPath: string, ref: string) => {
       const encodedPath = contentPath
@@ -114,7 +119,7 @@ export const legacyTemplateServiceLayer = Layer.effect(
           Effect.mapError(
             (cause) =>
               new LegacyBootstrapTemplateListError({
-                message: `failed to list samples: ${cause}`,
+                message: `failed to list samples: ${legacyErrorMessage(cause)}`,
               }),
           ),
         );
@@ -129,20 +134,25 @@ export const legacyTemplateServiceLayer = Layer.effect(
       const payload = yield* response.json.pipe(
         Effect.mapError(
           (cause) =>
-            new LegacyBootstrapTemplateListError({ message: `failed to decode samples: ${cause}` }),
+            new LegacyBootstrapTemplateListError({
+              message: `failed to decode samples: ${legacyErrorMessage(cause)}`,
+            }),
         ),
       );
       const decoded = Buffer.from(
         ((payload as GithubContentEntry).content ?? "").replaceAll("\n", ""),
         "base64",
       ).toString("utf8");
-      const parsed = yield* Effect.try({
-        try: () => JSON.parse(decoded) as { samples?: ReadonlyArray<unknown> },
-        catch: (cause) =>
-          new LegacyBootstrapTemplateListError({
-            message: `failed to unmarshal samples: ${cause}`,
-          }),
-      });
+      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(GithubSamplesSchema))(
+        decoded,
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new LegacyBootstrapTemplateListError({
+              message: `failed to unmarshal samples: ${legacyErrorMessage(cause)}`,
+            }),
+        ),
+      );
       return (parsed.samples ?? []).filter(isStarterTemplate);
     });
 

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
+import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Option, Stdio } from "effect";
 
-import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { commandRuntimeLayer as rawCommandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { CurrentAnalyticsContext } from "../../../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../../../shared/telemetry/analytics.service.ts";
 import {
@@ -15,6 +16,9 @@ import {
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { legacyFunctionsDeleteHandler } from "./delete.command.ts";
 import { legacyFunctionsDelete } from "./delete.handler.ts";
+
+const commandRuntimeLayer = (commandPath: ReadonlyArray<string>) =>
+  rawCommandRuntimeLayer(commandPath).pipe(Layer.provide(BunServices.layer));
 
 const tempRoot = useLegacyTempWorkdir("supabase-functions-delete-legacy-");
 
@@ -43,8 +47,8 @@ function mockContextualAnalytics() {
 
 // Strip ANSI SGR (aqua slug/ref via `legacyAqua`) so byte-assertions are
 // stable whether or not the test stdout supports color.
-// eslint-disable-next-line no-control-regex
-const stripSgr = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
+const stripSgr = (text: string) =>
+  text.replace(new RegExp(`${String.fromCharCode(0x1b)}\\[[0-9;]*m`, "gu"), "");
 
 describe("legacy functions delete", () => {
   it.live("deletes a function natively through the Management API", () => {

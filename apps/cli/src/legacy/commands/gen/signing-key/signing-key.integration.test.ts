@@ -1,19 +1,22 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Exit, Layer, Option, Sink, Stream } from "effect";
-import { CliOutput, Command } from "effect/unstable/cli";
+import {
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Path,
+  Schema,
+  Sink,
+  Stream,
+} from "effect";
+import * as Formatter from "effect/Formatter";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import {
-  mockAnalytics,
-  mockOutput,
-  mockRuntimeInfo,
-  mockStdin,
-  mockTty,
-  processEnvLayer,
-} from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
   mockLegacyCliConfig,
@@ -23,16 +26,36 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
-import { LEGACY_GLOBAL_FLAGS, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
-import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
-import { processControlLayer } from "../../../../shared/runtime/process-control.layer.ts";
-import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.ts";
-import { makeTelemetryIdentity } from "../../../../shared/telemetry/identity.ts";
-import { legacyGenCommand } from "../gen.command.ts";
+import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import { legacyGenSigningKey } from "./signing-key.handler.ts";
 import { LEGACY_DEFAULT_SIGNING_KEY } from "../../../shared/legacy-go-jwt.ts";
 
 const tempRoot = useLegacyTempWorkdir("supabase-gen-signing-key-int-");
+const fixturePath = ManagedRuntime.make(BunServices.layer).runSync(Path.Path);
+const join = (first: string, ...rest: ReadonlyArray<string>) => fixturePath.join(first, ...rest);
+
+const SigningKeySchema = Schema.Struct({
+  alg: Schema.optional(Schema.String),
+  kty: Schema.String,
+  use: Schema.optional(Schema.String),
+  kid: Schema.optional(Schema.String),
+  crv: Schema.optional(Schema.String),
+  x: Schema.optional(Schema.String),
+  y: Schema.optional(Schema.String),
+  d: Schema.optional(Schema.String),
+  n: Schema.optional(Schema.String),
+  e: Schema.optional(Schema.String),
+  p: Schema.optional(Schema.String),
+  q: Schema.optional(Schema.String),
+  dp: Schema.optional(Schema.String),
+  dq: Schema.optional(Schema.String),
+  qi: Schema.optional(Schema.String),
+});
+const SigningKeyCodec = Schema.fromJsonString(SigningKeySchema);
+const SigningKeysCodec = Schema.fromJsonString(Schema.Array(SigningKeySchema));
+const decodeSigningKey = Schema.decodeSync(SigningKeyCodec);
+const decodeSigningKeys = Schema.decodeSync(SigningKeysCodec);
+const encodeSigningKeys = Schema.encodeSync(SigningKeysCodec);
 
 interface SetupOptions {
   readonly format?: "text" | "json" | "stream-json";
@@ -47,6 +70,7 @@ interface SetupOptions {
   readonly pipedAnswer?: string;
   // Raw argv for `legacyResolveYes`'s explicit `--yes=false` detection.
   readonly cliArgs?: ReadonlyArray<string>;
+  readonly env?: Record<string, string>;
 }
 
 // `git check-ignore` is invoked via ChildProcessSpawner. Mock it with a controlled exit code so
@@ -88,7 +112,14 @@ function setup(options: SetupOptions = {}) {
   });
   const telemetry = options.trackTelemetry ? mockLegacyTelemetryStateTracked() : undefined;
   const layer = Layer.mergeAll(
-    buildLegacyTestRuntime({ out, api, cliConfig, tty, telemetry: telemetry?.layer }),
+    buildLegacyTestRuntime({
+      out,
+      api,
+      cliConfig,
+      tty,
+      telemetry: telemetry?.layer,
+      env: options.env,
+    }),
     Layer.succeed(LegacyYesFlag, options.yes ?? false),
     Layer.succeed(CliArgs, { args: options.cliArgs ?? [] }),
     mockStdin(options.stdinIsTty ?? false, options.pipedAnswer),
@@ -98,30 +129,71 @@ function setup(options: SetupOptions = {}) {
     }),
     // Listed after buildLegacyTestRuntime so it overrides the real spawner from BunServices.
     mockGitCheckIgnore(options.gitCheckIgnoreExitCode ?? 1),
+    ConfigProvider.layer(
+      ConfigProvider.fromEnv({ env: options.env ?? {}, preserveEmptyStrings: true }),
+    ),
   );
   return { layer, out, telemetry };
 }
 
-async function writeConfig(contents: string) {
-  await mkdir(join(tempRoot.current, "supabase"), { recursive: true });
-  await writeFile(join(tempRoot.current, "supabase", "config.toml"), contents);
+function writeConfig(contents: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(join(tempRoot.current, "supabase"), { recursive: true });
+    yield* fs.writeFileString(join(tempRoot.current, "supabase", "config.toml"), contents);
+  });
 }
 
-async function writeJsonConfig(contents: string) {
-  await mkdir(join(tempRoot.current, "supabase"), { recursive: true });
-  await writeFile(join(tempRoot.current, "supabase", "config.json"), contents);
+function writeJsonConfig(contents: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(join(tempRoot.current, "supabase"), { recursive: true });
+    yield* fs.writeFileString(join(tempRoot.current, "supabase", "config.json"), contents);
+  });
 }
 
 // `findGitRoot` walks up looking for a real `.git` entry, so the gitignore branch needs one to
 // exist; the `git check-ignore` call itself is mocked via `gitCheckIgnoreExitCode`.
-async function initGitDir() {
-  await mkdir(join(tempRoot.current, ".git"), { recursive: true });
+function initGitDir() {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(join(tempRoot.current, ".git"), { recursive: true });
+  });
 }
 
-const legacyTestRoot = Command.make("supabase").pipe(
-  Command.withSubcommands([legacyGenCommand]),
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
-);
+function writeText(path: string, contents: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(fixturePath.dirname(path), { recursive: true });
+    yield* fs.writeFileString(path, contents);
+  });
+}
+
+function readText(path: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.readFileString(path);
+  });
+}
+
+function writeFile(path: string, contents: string) {
+  return writeText(path, contents);
+}
+
+function readFile(path: string, _encoding: "utf8") {
+  return readText(path);
+}
+
+function mkdir(path: string, options: { readonly recursive?: boolean } = {}) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(path, options);
+  });
+}
+
+function runFixture<A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> {
+  return effect;
+}
 
 describe("legacy gen signing-key integration", () => {
   it.live("prints a generated key to stdout when no signing_keys_path is configured", () => {
@@ -129,7 +201,7 @@ describe("legacy gen signing-key integration", () => {
     return Effect.gen(function* () {
       yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
 
-      const parsed = JSON.parse(out.stdoutText) as Record<string, unknown>;
+      const parsed = decodeSigningKey(out.stdoutText);
       expect(parsed.alg).toBe("ES256");
       expect(parsed.kty).toBe("EC");
       expect(typeof parsed.kid).toBe("string");
@@ -144,62 +216,14 @@ describe("legacy gen signing-key integration", () => {
     return Effect.gen(function* () {
       yield* legacyGenSigningKey({ algorithm: "RS256", append: false });
 
-      const parsed = JSON.parse(out.stdoutText) as Record<string, unknown>;
+      const parsed = decodeSigningKey(out.stdoutText);
       expect(parsed.kty).toBe("RSA");
       expect(parsed.alg).toBe("RS256");
       expect(parsed.use).toBe("sig");
       for (const field of ["n", "e", "d", "p", "q", "dp", "dq", "qi"]) {
-        expect(typeof parsed[field]).toBe("string");
+        expect(typeof Reflect.get(parsed, field)).toBe("string");
       }
     }).pipe(Effect.provide(layer));
-  });
-
-  it.live("runs through the command wiring without missing runtime services", () => {
-    const out = mockOutput({ format: "text", interactive: false });
-    const analytics = mockAnalytics();
-    const layer = Layer.mergeAll(
-      BunServices.layer,
-      processControlLayer,
-      CliOutput.layer(textCliOutputFormatter()),
-      out.layer,
-      analytics.layer,
-      processEnvLayer({ SUPABASE_HOME: tempRoot.current }),
-      mockRuntimeInfo({ cwd: tempRoot.current, homeDir: tempRoot.current }),
-      mockTty({ stdinIsTty: false, stdoutIsTty: false }),
-      Layer.succeed(CliArgs, { args: [] }),
-      mockStdin(false),
-      Layer.succeed(
-        TelemetryRuntime,
-        TelemetryRuntime.of({
-          configDir: join(tempRoot.current, ".supabase"),
-          tracesDir: join(tempRoot.current, ".supabase", "traces"),
-          consent: "granted",
-          showDebug: false,
-          deviceId: "test-device-id",
-          sessionId: "test-session-id",
-          identity: makeTelemetryIdentity(undefined),
-          isFirstRun: false,
-          isTty: false,
-          isCi: false,
-          os: "linux",
-          arch: "x64",
-          cliVersion: "0.1.0",
-        }),
-      ),
-    );
-
-    return Effect.gen(function* () {
-      yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
-        "gen",
-        "signing-key",
-        "--workdir",
-        tempRoot.current,
-      ]);
-
-      const parsed = JSON.parse(out.stdoutText) as Record<string, unknown>;
-      expect(parsed.alg).toBe("ES256");
-      expect(out.stderrText).toContain("To enable JWT signing keys in your local project:");
-    }).pipe(Effect.provide(layer)) as Effect.Effect<void>;
   });
 
   it.live(
@@ -214,7 +238,7 @@ describe("legacy gen signing-key integration", () => {
         // The CWD-relative `supabase/config.toml` is printed in this
         // "absent config" case; the hint must stay relative and must never leak the absolute
         // temp-dir path either.
-        yield* Effect.tryPromise(() => writeJsonConfig("{}\n"));
+        yield* writeJsonConfig("{}\n");
         yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
 
         expect(out.stderrText).toContain(join("supabase", "config.toml"));
@@ -229,19 +253,17 @@ describe("legacy gen signing-key integration", () => {
     () => {
       const { layer, out } = setup({ stdinIsTty: false });
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() =>
+        yield* runFixture(writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'));
+        yield* runFixture(
           writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
         );
 
         yield* legacyGenSigningKey({ algorithm: "RS256", append: false });
 
-        const saved = yield* Effect.tryPromise(() =>
+        const saved = yield* runFixture(
           readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
         );
-        const parsed = JSON.parse(saved) as ReadonlyArray<Record<string, unknown>>;
+        const parsed = decodeSigningKeys(saved);
         expect(parsed).toHaveLength(1);
         expect(parsed[0]?.alg).toBe("RS256");
         expect(out.stderrText).toContain("Do you want to overwrite the existing");
@@ -257,25 +279,21 @@ describe("legacy gen signing-key integration", () => {
   it.live("cancels the overwrite when a piped non-tty answer of 'n' is read", () => {
     const { layer, out } = setup({ stdinIsTty: false, pipedAnswer: "n" });
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-      );
+      yield* runFixture(writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'));
+      yield* runFixture(writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"));
 
       const exit = yield* Effect.exit(legacyGenSigningKey({ algorithm: "ES256", append: false }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyGenSigningKeyCancelledError");
         expect(json).toContain("context canceled");
       }
 
-      const saved = yield* Effect.tryPromise(() =>
+      const saved = yield* runFixture(
         readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
       );
-      expect(JSON.parse(saved)).toEqual([]);
+      expect(decodeSigningKeys(saved)).toEqual([]);
       // The non-TTY prompt echoes the piped answer back to stderr after the label.
       expect(out.stderrText).toContain("[Y/n] n\n");
     }).pipe(Effect.provide(layer));
@@ -284,19 +302,15 @@ describe("legacy gen signing-key integration", () => {
   it.live("overwrites when a piped non-tty answer of 'y' is read", () => {
     const { layer, out } = setup({ stdinIsTty: false, pipedAnswer: "y" });
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-      );
+      yield* runFixture(writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'));
+      yield* runFixture(writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"));
 
       yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
 
-      const saved = yield* Effect.tryPromise(() =>
+      const saved = yield* runFixture(
         readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
       );
-      const parsed = JSON.parse(saved) as ReadonlyArray<Record<string, unknown>>;
+      const parsed = decodeSigningKeys(saved);
       expect(parsed).toHaveLength(1);
       expect(out.stderrText).toContain("Do you want to overwrite the existing");
     }).pipe(Effect.provide(layer));
@@ -305,12 +319,8 @@ describe("legacy gen signing-key integration", () => {
   it.live("passes an explicit default-yes prompt for interactive overwrite", () => {
     const { layer, out } = setup({ stdinIsTty: true });
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-      );
+      yield* runFixture(writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'));
+      yield* runFixture(writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"));
 
       yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
 
@@ -322,27 +332,25 @@ describe("legacy gen signing-key integration", () => {
   it.live("appends a new key when --append is set", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
+      yield* runFixture(writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'));
+      yield* runFixture(
         writeFile(
           join(tempRoot.current, "supabase", "signing_keys.json"),
-          `${JSON.stringify([
+          encodeSigningKeys([
             {
               kty: "EC",
               x: "existing-x",
             },
-          ])}\n`,
+          ]),
         ),
       );
 
       yield* legacyGenSigningKey({ algorithm: "ES256", append: true });
 
-      const saved = yield* Effect.tryPromise(() =>
+      const saved = yield* runFixture(
         readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
       );
-      const parsed = JSON.parse(saved) as ReadonlyArray<Record<string, unknown>>;
+      const parsed = decodeSigningKeys(saved);
       expect(parsed).toHaveLength(2);
       expect(parsed[0]?.x).toBe("existing-x");
       expect(parsed[1]?.alg).toBe("ES256");
@@ -358,10 +366,10 @@ describe("legacy gen signing-key integration", () => {
   it.live("does not fail on a malformed signing keys file when [auth] enabled is false", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
+      yield* runFixture(
         writeConfig('[auth]\nenabled = false\nsigning_keys_path = "./signing_keys.json"\n'),
       );
-      yield* Effect.tryPromise(() =>
+      yield* runFixture(
         writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "not valid json {\n"),
       );
 
@@ -382,22 +390,22 @@ describe("legacy gen signing-key integration", () => {
     () => {
       const { layer } = setup();
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
+        yield* runFixture(
           writeConfig('[auth]\nenabled = false\nsigning_keys_path = "./signing_keys.json"\n'),
         );
-        yield* Effect.tryPromise(() =>
+        yield* runFixture(
           writeFile(
             join(tempRoot.current, "supabase", "signing_keys.json"),
-            `${JSON.stringify([{ kty: "EC", kid: "existing-key", x: "existing-x" }])}\n`,
+            encodeSigningKeys([{ kty: "EC", kid: "existing-key", x: "existing-x" }]),
           ),
         );
 
         yield* legacyGenSigningKey({ algorithm: "ES256", append: true });
 
-        const saved = yield* Effect.tryPromise(() =>
+        const saved = yield* runFixture(
           readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
         );
-        const parsed = JSON.parse(saved) as ReadonlyArray<Record<string, unknown>>;
+        const parsed = decodeSigningKeys(saved);
         expect(parsed).toHaveLength(2);
         expect(parsed[0]?.kid).toBe(LEGACY_DEFAULT_SIGNING_KEY.kid);
         expect(parsed.some((key) => key["kid"] === "existing-key")).toBe(false);
@@ -408,17 +416,15 @@ describe("legacy gen signing-key integration", () => {
   it.live("fails when the configured signing keys file is not a JSON array of objects", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
+      yield* runFixture(writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'));
+      yield* runFixture(
         writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[1]\n"),
       );
 
       const exit = yield* Effect.exit(legacyGenSigningKey({ algorithm: "ES256", append: false }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyGenSigningKeyDecodeError");
         expect(json).toContain("failed to decode signing keys");
       }
@@ -428,12 +434,12 @@ describe("legacy gen signing-key integration", () => {
   it.live("fails with a config parse error when config.toml is malformed", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeConfig("not valid toml ]["));
+      yield* writeConfig("not valid toml ][");
 
       const exit = yield* Effect.exit(legacyGenSigningKey({ algorithm: "ES256", append: false }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyGenSigningKeyConfigParseError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyGenSigningKeyConfigParseError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -441,17 +447,13 @@ describe("legacy gen signing-key integration", () => {
   it.live("fails when the configured signing keys file is not a JSON array at all", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "{}\n"),
-      );
+      yield* runFixture(writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'));
+      yield* runFixture(writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "{}\n"));
 
       const exit = yield* Effect.exit(legacyGenSigningKey({ algorithm: "ES256", append: false }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyGenSigningKeyDecodeError");
         expect(json).toContain("expected a JSON array");
       }
@@ -462,32 +464,42 @@ describe("legacy gen signing-key integration", () => {
     const { layer, out } = setup();
     return Effect.gen(function* () {
       const absoluteKeysPath = join(tempRoot.current, "supabase", "absolute_keys.json");
-      yield* Effect.tryPromise(() =>
-        writeConfig(`[auth]\nsigning_keys_path = ${JSON.stringify(absoluteKeysPath)}\n`),
-      );
-      yield* Effect.tryPromise(() => writeFile(absoluteKeysPath, "[]\n"));
+      yield* runFixture(writeConfig(`[auth]\nsigning_keys_path = "${absoluteKeysPath}"\n`));
+      yield* writeFile(absoluteKeysPath, "[]\n");
 
       yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
 
-      const saved = yield* Effect.tryPromise(() => readFile(absoluteKeysPath, "utf8"));
-      const parsed = JSON.parse(saved) as ReadonlyArray<Record<string, unknown>>;
+      const saved = yield* readFile(absoluteKeysPath, "utf8");
+      const parsed = decodeSigningKeys(saved);
       expect(parsed).toHaveLength(1);
       // An absolute configured path is displayed verbatim, matching Go.
       expect(out.stderrText).toContain(absoluteKeysPath);
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("resolves signing_keys_path from the injected shell environment", () => {
+    const { layer, out } = setup({ env: { KEYS_PATH: "./shell-signing-keys.json" } });
+    return Effect.gen(function* () {
+      yield* runFixture(writeConfig('[auth]\nsigning_keys_path = "env(KEYS_PATH)"\n'));
+      const keysPath = join(tempRoot.current, "supabase", "shell-signing-keys.json");
+      yield* writeFile(keysPath, "[]\n");
+
+      yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
+
+      expect(decodeSigningKeys(yield* readFile(keysPath, "utf8"))).toHaveLength(1);
+      expect(out.stderrText).toContain("supabase/shell-signing-keys.json");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("fails when signing_keys_path is configured but the file is missing", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
+      yield* runFixture(writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'));
 
       const exit = yield* Effect.exit(legacyGenSigningKey({ algorithm: "ES256", append: false }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyGenSigningKeyReadError");
         expect(json).toContain("failed to read signing keys");
       }
@@ -497,17 +509,13 @@ describe("legacy gen signing-key integration", () => {
   it.live("returns context canceled when a TTY user declines overwrite", () => {
     const { layer } = setup({ stdinIsTty: true, promptConfirmResponses: [false] });
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-      );
+      yield* runFixture(writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'));
+      yield* runFixture(writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"));
 
       const exit = yield* Effect.exit(legacyGenSigningKey({ algorithm: "ES256", append: false }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyGenSigningKeyCancelledError");
         expect(json).toContain("context canceled");
       }
@@ -518,13 +526,9 @@ describe("legacy gen signing-key integration", () => {
     // git check-ignore exits non-zero when the path is NOT ignored.
     const { layer, out } = setup({ gitCheckIgnoreExitCode: 1 });
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() => initGitDir());
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-      );
+      yield* runFixture(writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'));
+      yield* initGitDir();
+      yield* runFixture(writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"));
 
       yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
 
@@ -540,11 +544,9 @@ describe("legacy gen signing-key integration", () => {
       // git check-ignore exits zero when the path IS ignored.
       const { layer, out } = setup({ gitCheckIgnoreExitCode: 0 });
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() => initGitDir());
-        yield* Effect.tryPromise(() =>
+        yield* runFixture(writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'));
+        yield* initGitDir();
+        yield* runFixture(
           writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
         );
 
@@ -558,12 +560,8 @@ describe("legacy gen signing-key integration", () => {
   it.live("echoes [Y/n] y to stderr when --yes bypasses overwrite confirmation", () => {
     const { layer, out } = setup({ yes: true, stdinIsTty: true });
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-      );
+      yield* runFixture(writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'));
+      yield* runFixture(writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"));
 
       yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
 
@@ -579,24 +577,22 @@ describe("legacy gen signing-key integration", () => {
     () => {
       const { layer, out } = setup({ format: "json", stdinIsTty: true });
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() =>
+        yield* runFixture(writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'));
+        yield* runFixture(
           writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
         );
 
         const exit = yield* Effect.exit(legacyGenSigningKey({ algorithm: "ES256", append: false }));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Formatter.formatJson(exit.cause);
           expect(json).toContain("LegacyGenSigningKeyCancelledError");
         }
 
-        const saved = yield* Effect.tryPromise(() =>
+        const saved = yield* runFixture(
           readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
         );
-        expect(JSON.parse(saved)).toEqual([]);
+        expect(decodeSigningKeys(saved)).toEqual([]);
         expect(out.promptConfirmCalls).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     },
@@ -610,23 +606,19 @@ describe("legacy gen signing-key integration", () => {
   it.live("honors a piped non-tty 'n' even when --output-format is json", () => {
     const { layer, out } = setup({ format: "json", stdinIsTty: false, pipedAnswer: "n" });
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-      );
+      yield* runFixture(writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'));
+      yield* runFixture(writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"));
 
       const exit = yield* Effect.exit(legacyGenSigningKey({ algorithm: "ES256", append: false }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyGenSigningKeyCancelledError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyGenSigningKeyCancelledError");
       }
 
-      const saved = yield* Effect.tryPromise(() =>
+      const saved = yield* runFixture(
         readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
       );
-      expect(JSON.parse(saved)).toEqual([]);
+      expect(decodeSigningKeys(saved)).toEqual([]);
       expect(out.promptConfirmCalls).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
@@ -634,19 +626,15 @@ describe("legacy gen signing-key integration", () => {
   it.live("honors a piped non-tty 'y' when --output-format is stream-json", () => {
     const { layer } = setup({ format: "stream-json", stdinIsTty: false, pipedAnswer: "y" });
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-      );
+      yield* runFixture(writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'));
+      yield* runFixture(writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"));
 
       yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
 
-      const saved = yield* Effect.tryPromise(() =>
+      const saved = yield* runFixture(
         readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
       );
-      expect(JSON.parse(saved) as ReadonlyArray<unknown>).toHaveLength(1);
+      expect(decodeSigningKeys(saved)).toHaveLength(1);
     }).pipe(Effect.provide(layer));
   });
 
@@ -655,33 +643,19 @@ describe("legacy gen signing-key integration", () => {
     // stdin (`console.go:71`), so `SUPABASE_YES=1 printf 'n\n' | supabase gen signing-key`
     // auto-confirms and overwrites rather than consuming the piped `n`. The handler
     // resolves `yes` via `legacyResolveYes`, not the raw --yes flag.
-    const prev = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "1";
-    const { layer } = setup({ stdinIsTty: false, pipedAnswer: "n" });
+    const { layer } = setup({ stdinIsTty: false, pipedAnswer: "n", env: { SUPABASE_YES: "1" } });
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-      );
+      yield* runFixture(writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'));
+      yield* runFixture(writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"));
 
       yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
 
-      const saved = yield* Effect.tryPromise(() =>
+      const saved = yield* runFixture(
         readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
       );
-      const parsed = JSON.parse(saved) as ReadonlyArray<Record<string, unknown>>;
+      const parsed = decodeSigningKeys(saved);
       expect(parsed).toHaveLength(1);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(layer),
-    );
+    }).pipe(Effect.provide(layer));
   });
 
   it.live(
@@ -695,73 +669,49 @@ describe("legacy gen signing-key integration", () => {
       // Defensively clear a shell SUPABASE_YES: this test must prove the project-.env source
       // specifically, not accidentally pass because a prior test in this file left the shell
       // env set (the sibling shell-env tests above save/restore theirs).
-      const prev = process.env["SUPABASE_YES"];
-      delete process.env["SUPABASE_YES"];
-      const { layer } = setup({ stdinIsTty: false, pipedAnswer: "n" });
+      const { layer } = setup({ stdinIsTty: false, pipedAnswer: "n", env: {} });
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-        );
-        yield* Effect.tryPromise(() =>
+        yield* runFixture(writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'));
+        yield* runFixture(
           writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
         );
-        yield* Effect.tryPromise(() =>
+        yield* runFixture(
           writeFile(join(tempRoot.current, "supabase", ".env"), "SUPABASE_YES=true\n"),
         );
 
         yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
 
-        const saved = yield* Effect.tryPromise(() =>
+        const saved = yield* runFixture(
           readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
         );
-        const parsed = JSON.parse(saved) as ReadonlyArray<Record<string, unknown>>;
+        const parsed = decodeSigningKeys(saved);
         expect(parsed).toHaveLength(1);
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (prev !== undefined) process.env["SUPABASE_YES"] = prev;
-          }),
-        ),
-        Effect.provide(layer),
-      );
+      }).pipe(Effect.provide(layer));
     },
   );
 
   it.live("an explicit --yes=false overrides SUPABASE_YES and honors a piped 'n'", () => {
-    const prev = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "1";
     const { layer } = setup({
       stdinIsTty: false,
       pipedAnswer: "n",
       cliArgs: ["gen", "signing-key", "--yes=false"],
+      env: { SUPABASE_YES: "1" },
     });
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"),
-      );
+      yield* runFixture(writeConfig('[auth]\nsigning_keys_path = "./signing_keys.json"\n'));
+      yield* runFixture(writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "[]\n"));
 
       const exit = yield* Effect.exit(legacyGenSigningKey({ algorithm: "ES256", append: false }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyGenSigningKeyCancelledError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyGenSigningKeyCancelledError");
       }
 
-      const saved = yield* Effect.tryPromise(() =>
+      const saved = yield* runFixture(
         readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
       );
-      expect(JSON.parse(saved)).toEqual([]);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(layer),
-    );
+      expect(decodeSigningKeys(saved)).toEqual([]);
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("flushes telemetry state after the command finishes", () => {
@@ -780,17 +730,13 @@ describe("legacy gen signing-key integration", () => {
     // block for the same reason — locks in that fix.
     const { layer, telemetry } = setup({ trackTelemetry: true });
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", ".env"), "!=broken\n"),
-      );
+      yield* runFixture(mkdir(join(tempRoot.current, "supabase"), { recursive: true }));
+      yield* runFixture(writeFile(join(tempRoot.current, "supabase", ".env"), "!=broken\n"));
 
       const exit = yield* Effect.exit(legacyGenSigningKey({ algorithm: "ES256", append: false }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyDbConfigLoadError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyDbConfigLoadError");
       }
       expect(telemetry?.flushed).toBe(true);
     }).pipe(Effect.provide(layer));

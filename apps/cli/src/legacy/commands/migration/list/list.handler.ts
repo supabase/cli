@@ -40,31 +40,25 @@ const runList = Effect.fnUntraced(function* (
   // first, then {db-url, password}. `setFlags` is already
   // alphabetically sorted, matching the established group-error formatting.
   if (target.setFlags.length > 1) {
-    return yield* Effect.fail(
-      new LegacyMigrationTargetFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-      }),
-    );
+    return yield* new LegacyMigrationTargetFlagsError({
+      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
+    });
   }
   if (Option.isSome(flags.dbUrl) && Option.isSome(flags.password)) {
-    return yield* Effect.fail(
-      new LegacyMigrationPasswordFlagsError({
-        message:
-          "if any flags in the group [db-url password] are set none of the others can be; [db-url password] were all set",
-      }),
-    );
+    return yield* new LegacyMigrationPasswordFlagsError({
+      message:
+        "if any flags in the group [db-url password] are set none of the others can be; [db-url password] were all set",
+    });
   }
 
   // `--project-ref` never implies `--linked` and must not be silently
   // discarded on a non-linked target — see push.handler.ts's identical guard
   // (db push) for the full TS-only rationale.
   if (Option.isSome(flags.projectRef) && (target.connType ?? "linked") !== "linked") {
-    return yield* Effect.fail(
-      new LegacyMigrationTargetFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      }),
-    );
+    return yield* new LegacyMigrationTargetFlagsError({
+      message:
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+    });
   }
 
   const listBody = Effect.gen(function* () {

@@ -1,10 +1,11 @@
 import { KONG_LOCAL_CA_CERT } from "@supabase/config";
 import { defaultJwtSecret, generateJwt } from "@supabase/stack/effect";
-import { Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { legacyResolveApiExternalUrl } from "./legacy-api-url.ts";
+import { LegacyViperEnv } from "../../shared/legacy/legacy-viper-env.ts";
 import { legacyMapTenantApiKeysError } from "./legacy-get-tenant-api-keys.ts";
 import { legacyGetHostname } from "./legacy-hostname.ts";
 import { legacyExtractServiceKeys } from "./legacy-tenant-keys.ts";
@@ -14,6 +15,17 @@ import {
   LegacyStorageConfigError,
   LegacyStorageMissingApiKeyError,
 } from "./legacy-storage-credentials.errors.ts";
+
+const legacyStorageCauseText = (value: unknown): string => {
+  if (value instanceof Error) return value.message;
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return value.toString();
+  }
+  if (typeof value === "symbol") return value.toString();
+  return Object.prototype.toString.call(value);
+};
 
 /**
  * Resolves the Storage gateway base URL + service-role key (+ local Kong CA),
@@ -61,12 +73,13 @@ export const legacyResolveStorageCredentials = Effect.fnUntraced(function* (opts
   readonly config: LegacyStorageConfigView;
 }) {
   const cliConfig = yield* LegacyCliConfig;
+  const viperEnv = yield* LegacyViperEnv;
 
   if (opts.projectRef !== "") {
     const baseUrl = `https://${opts.projectRef}.${cliConfig.projectHost}`;
     // Go: `viper.IsSet("AUTH_SERVICE_ROLE_KEY")` → use the env-provided key and
     // skip the tenant lookup.
-    const envKey = process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
+    const envKey = Option.getOrUndefined(yield* viperEnv.get("SUPABASE_AUTH_SERVICE_ROLE_KEY"));
     if (envKey !== undefined && envKey.length > 0) {
       return { baseUrl, apiKey: envKey, localKongCa: undefined } satisfies LegacyStorageCredentials;
     }
@@ -97,7 +110,7 @@ export const legacyResolveStorageCredentials = Effect.fnUntraced(function* (opts
 
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const baseUrl = resolveLocalBaseUrl(opts.config);
+  const baseUrl = yield* resolveLocalBaseUrl(opts.config);
   const apiKey = yield* resolveLocalServiceRoleKey(opts.config.auth);
 
   // `status.NewKongClient` installs unconditionally for the local client; its
@@ -126,9 +139,9 @@ export const legacyResolveStorageCredentials = Effect.fnUntraced(function* (opts
  * Local API URL: `legacyResolveApiExternalUrl` with `legacyGetHostname` (Go's
  * `utils.GetHostname`) supplying the host when `api.external_url` is unset.
  */
-function resolveLocalBaseUrl(config: LegacyStorageConfigView): string {
-  return legacyResolveApiExternalUrl(config.api, legacyGetHostname());
-}
+const resolveLocalBaseUrl = Effect.fnUntraced(function* (config: LegacyStorageConfigView) {
+  return legacyResolveApiExternalUrl(config.api, yield* legacyGetHostname);
+});
 
 /**
  * Resolve the service-role key for the local Storage gateway, mirroring Go's
@@ -146,7 +159,8 @@ const resolveLocalServiceRoleKey = Effect.fnUntraced(function* (auth: {
   readonly jwt_secret?: string;
   readonly service_role_key?: string;
 }) {
-  const envSecret = process.env["SUPABASE_AUTH_JWT_SECRET"];
+  const viperEnv = yield* LegacyViperEnv;
+  const envSecret = Option.getOrUndefined(yield* viperEnv.get("SUPABASE_AUTH_JWT_SECRET"));
   const configuredSecret =
     envSecret !== undefined && envSecret.length > 0 ? envSecret : auth.jwt_secret;
 
@@ -161,11 +175,11 @@ const resolveLocalServiceRoleKey = Effect.fnUntraced(function* (auth: {
     jwtSecret = configuredSecret;
   }
 
-  const envKey = process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
+  const envKey = Option.getOrUndefined(yield* viperEnv.get("SUPABASE_AUTH_SERVICE_ROLE_KEY"));
   const configuredKey = envKey !== undefined && envKey.length > 0 ? envKey : auth.service_role_key;
   return configuredKey !== undefined && configuredKey.length > 0
     ? configuredKey
-    : generateJwt(jwtSecret, "service_role");
+    : yield* Effect.sync(() => generateJwt(jwtSecret, "service_role"));
 });
 
 /**
@@ -207,7 +221,7 @@ const validateLocalKongTls = Effect.fnUntraced(function* (
         "PlatformError",
         (cause) =>
           new LegacyStorageConfigError({
-            message: `failed to read TLS cert: ${String(cause.cause ?? cause)}`,
+            message: `failed to read TLS cert: ${legacyStorageCauseText(cause.cause ?? cause)}`,
           }),
       ),
     );
@@ -217,7 +231,7 @@ const validateLocalKongTls = Effect.fnUntraced(function* (
         "PlatformError",
         (cause) =>
           new LegacyStorageConfigError({
-            message: `failed to read TLS key: ${String(cause.cause ?? cause)}`,
+            message: `failed to read TLS key: ${legacyStorageCauseText(cause.cause ?? cause)}`,
           }),
       ),
     );
@@ -226,35 +240,3 @@ const validateLocalKongTls = Effect.fnUntraced(function* (
 
   return KONG_LOCAL_CA_CERT;
 });
-
-/**
- * Builds a `typeof globalThis.fetch` that injects `tls.ca` into every request,
- * trusting the provided CA PEM for HTTPS connections to the local Kong gateway.
- * Mirrors `newLocalClient`.
- *
- * Bun's fetch accepts `{ tls: { ca: string } }` via `BunFetchRequestInit`, which
- * extends `RequestInit`; no `as` cast is needed.
- */
-function legacyKongCaFetch(ca: string): typeof globalThis.fetch {
-  const fetchImpl = async (
-    input: string | URL | Request,
-    init?: RequestInit,
-  ): Promise<Response> => {
-    const caInit: BunFetchRequestInit = { ...init, tls: { ca } };
-    return globalThis.fetch(input, caInit);
-  };
-  return Object.assign(fetchImpl, { preconnect: globalThis.fetch.preconnect });
-}
-
-/**
- * The `FetchHttpClient.Fetch` override to provide for Storage gateway calls: a
- * CA-trusting fetch for a local https gateway, plain `globalThis.fetch`
- * otherwise. Storage calls never use DoH in Go (`newLocalClient` /
- * `newRemoteClient` use `status.NewKongClient` / `http.DefaultClient`), so the
- * DoH-wrapped shared client is always overridden at the gateway scope.
- */
-export function legacyStorageGatewayFetch(
-  localKongCa: string | undefined,
-): typeof globalThis.fetch {
-  return localKongCa !== undefined ? legacyKongCaFetch(localKongCa) : globalThis.fetch;
-}

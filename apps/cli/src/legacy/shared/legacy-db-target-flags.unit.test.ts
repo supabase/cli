@@ -1,7 +1,7 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, Path, PlatformError } from "effect";
 import {
   resolveLegacyDbTargetFlags,
   VALUE_CONSUMING_LONG_FLAGS,
@@ -213,14 +213,27 @@ describe("VALUE_CONSUMING_LONG_FLAGS / VALUE_CONSUMING_SHORT_FLAGS completeness 
   const INDIRECT_NAME_FILES = new Set(["issue.command.ts"]);
   const VALUE_FLAG_KINDS = ["string", "integer", "choice", "choiceWithValue", "float"];
 
-  function walk(dir: string): Array<string> {
-    return readdirSync(dir).flatMap((entry) => {
-      const fullPath = path.join(dir, entry);
-      const stats = statSync(fullPath);
-      if (stats.isDirectory()) return walk(fullPath);
-      return entry.endsWith(".command.ts") ? [fullPath] : [];
+  const walk = (
+    fs: FileSystem.FileSystem,
+    path: Path.Path,
+    dir: string,
+  ): Effect.Effect<Array<string>, PlatformError.PlatformError> =>
+    Effect.gen(function* () {
+      const entries = yield* fs.readDirectory(dir);
+      const nested = yield* Effect.forEach(entries, (entry) => {
+        const fullPath = path.join(dir, entry);
+        return fs
+          .stat(fullPath)
+          .pipe(
+            Effect.flatMap((stats) =>
+              stats.type === "Directory"
+                ? walk(fs, path, fullPath)
+                : Effect.succeed(entry.endsWith(".command.ts") ? [fullPath] : []),
+            ),
+          );
+      });
+      return nested.flat();
     });
-  }
 
   interface DeclaredFlag {
     readonly file: string;
@@ -228,66 +241,85 @@ describe("VALUE_CONSUMING_LONG_FLAGS / VALUE_CONSUMING_SHORT_FLAGS completeness 
     readonly alias: string | undefined;
   }
 
-  function extractDeclaredFlags(filePath: string): Array<DeclaredFlag> {
-    const source = readFileSync(filePath, "utf8");
-    const callRegex = /Flag\.(string|integer|choice|choiceWithValue|float|boolean)\(/g;
-    const calls = Array.from(source.matchAll(callRegex), (match) => ({
-      index: match.index,
-      kind: match[1]!,
-    }));
+  const extractDeclaredFlags = (
+    fs: FileSystem.FileSystem,
+    filePath: string,
+  ): Effect.Effect<Array<DeclaredFlag>, PlatformError.PlatformError> =>
+    fs.readFileString(filePath).pipe(
+      Effect.map((source) => {
+        const callRegex = /Flag\.(string|integer|choice|choiceWithValue|float|boolean)\(/g;
+        const calls = Array.from(source.matchAll(callRegex), (match) => ({
+          index: match.index,
+          kind: match[1]!,
+        }));
 
-    const declared: Array<DeclaredFlag> = [];
-    for (let i = 0; i < calls.length; i++) {
-      const current = calls[i]!;
-      if (!VALUE_FLAG_KINDS.includes(current.kind)) continue;
+        const declared: Array<DeclaredFlag> = [];
+        for (let i = 0; i < calls.length; i++) {
+          const current = calls[i]!;
+          if (!VALUE_FLAG_KINDS.includes(current.kind)) continue;
 
-      // Name declared as a literal string (e.g. `Flag.string("schema")`).
-      // A name passed as an identifier (`Flag.string(name)`) doesn't match
-      // and is silently skipped — see INDIRECT_NAME_FILES above.
-      const remainder = source.slice(current.index);
-      const nameMatch = remainder.match(/^Flag\.\w+\(\s*"([a-zA-Z0-9-]+)"/);
-      if (!nameMatch) continue;
+          // Name declared as a literal string (e.g. `Flag.string("schema")`).
+          // A name passed as an identifier (`Flag.string(name)`) doesn't match
+          // and is silently skipped — see INDIRECT_NAME_FILES above.
+          const remainder = source.slice(current.index);
+          const nameMatch = remainder.match(/^Flag\.\w+\(\s*"([a-zA-Z0-9-]+)"/);
+          if (!nameMatch) continue;
 
-      // The alias, if any, is somewhere in the `.pipe(...)` chain between
-      // this flag declaration and the next one.
-      const windowEnd = i + 1 < calls.length ? calls[i + 1]!.index : source.length;
-      const window = source.slice(current.index, windowEnd);
-      const aliasMatch = window.match(/withAlias\(\s*"([a-zA-Z0-9])"\s*\)/);
+          // The alias, if any, is somewhere in the `.pipe(...)` chain between
+          // this flag declaration and the next one.
+          const windowEnd = i + 1 < calls.length ? calls[i + 1]!.index : source.length;
+          const window = source.slice(current.index, windowEnd);
+          const aliasMatch = window.match(/withAlias\(\s*"([a-zA-Z0-9])"\s*\)/);
 
-      declared.push({ file: filePath, name: nameMatch[1]!, alias: aliasMatch?.[1] });
-    }
-    return declared;
-  }
-
-  it("registers every directly-declared value-consuming flag name in VALUE_CONSUMING_LONG_FLAGS", () => {
-    const missing: Array<string> = [];
-
-    for (const filePath of walk(commandsDir)) {
-      if (INDIRECT_NAME_FILES.has(path.basename(filePath))) continue;
-
-      for (const flag of extractDeclaredFlags(filePath)) {
-        if (!VALUE_CONSUMING_LONG_FLAGS.has(flag.name)) {
-          missing.push(`${flag.name} (${path.relative(commandsDir, flag.file)})`);
+          declared.push({ file: filePath, name: nameMatch[1]!, alias: aliasMatch?.[1] });
         }
-      }
-    }
+        return declared;
+      }),
+    );
 
-    expect(missing).toEqual([]);
-  });
+  it.effect(
+    "registers every directly-declared value-consuming flag name in VALUE_CONSUMING_LONG_FLAGS",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const missing: Array<string> = [];
 
-  it("registers every directly-declared value-consuming flag's shorthand in VALUE_CONSUMING_SHORT_FLAGS", () => {
-    const missing: Array<string> = [];
+        for (const filePath of yield* walk(fs, path, commandsDir)) {
+          if (INDIRECT_NAME_FILES.has(path.basename(filePath))) continue;
 
-    for (const filePath of walk(commandsDir)) {
-      if (INDIRECT_NAME_FILES.has(path.basename(filePath))) continue;
-
-      for (const flag of extractDeclaredFlags(filePath)) {
-        if (flag.alias !== undefined && !VALUE_CONSUMING_SHORT_FLAGS.has(flag.alias)) {
-          missing.push(`-${flag.alias} (--${flag.name}, ${path.relative(commandsDir, flag.file)})`);
+          for (const flag of yield* extractDeclaredFlags(fs, filePath)) {
+            if (!VALUE_CONSUMING_LONG_FLAGS.has(flag.name)) {
+              missing.push(`${flag.name} (${path.relative(commandsDir, flag.file)})`);
+            }
+          }
         }
-      }
-    }
 
-    expect(missing).toEqual([]);
-  });
+        expect(missing).toEqual([]);
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
+
+  it.effect(
+    "registers every directly-declared value-consuming flag's shorthand in VALUE_CONSUMING_SHORT_FLAGS",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const missing: Array<string> = [];
+
+        for (const filePath of yield* walk(fs, path, commandsDir)) {
+          if (INDIRECT_NAME_FILES.has(path.basename(filePath))) continue;
+
+          for (const flag of yield* extractDeclaredFlags(fs, filePath)) {
+            if (flag.alias !== undefined && !VALUE_CONSUMING_SHORT_FLAGS.has(flag.alias)) {
+              missing.push(
+                `-${flag.alias} (--${flag.name}, ${path.relative(commandsDir, flag.file)})`,
+              );
+            }
+          }
+        }
+
+        expect(missing).toEqual([]);
+      }).pipe(Effect.provide(BunServices.layer)),
+  );
 });

@@ -1,4 +1,4 @@
-import { Effect, type FileSystem, type Path } from "effect";
+import { DateTime, Effect, Schema, type FileSystem, type Path } from "effect";
 
 import { legacyPgDeltaTempPath } from "../../../shared/legacy-pgdelta.cache.ts";
 import type {
@@ -23,7 +23,7 @@ export function legacyFormatPgDeltaNextDebugId(
   millis: number,
   operation: LegacyPgDeltaNextOperation,
 ): string {
-  const digits = new Date(millis).toISOString().replace(/\D/gu, "").slice(0, 17);
+  const digits = DateTime.formatIso(DateTime.makeUnsafe(millis)).replace(/\D/gu, "").slice(0, 17);
   return `${digits.slice(0, 8)}-${digits.slice(8, 14)}-${digits.slice(14)}-${operation}`;
 }
 
@@ -62,7 +62,10 @@ export const legacySavePgDeltaNextDebugArtifacts = Effect.fnUntraced(function* (
   yield* write("desired-snapshot.json", artifacts.desiredSnapshot);
   yield* write("plan.json", artifacts.plan);
   if (artifacts.diagnostics !== undefined) {
-    yield* write("diagnostics.json", `${JSON.stringify(artifacts.diagnostics, null, 2)}\n`);
+    const diagnostics = yield* Schema.encodeEffect(
+      Schema.fromJsonString(Schema.Unknown, { space: 2 }),
+    )(artifacts.diagnostics);
+    yield* write("diagnostics.json", `${diagnostics}\n`);
   }
 
   const metadata: LegacyPgDeltaNextArtifactMetadata = {
@@ -73,9 +76,9 @@ export const legacySavePgDeltaNextDebugArtifacts = Effect.fnUntraced(function* (
     cacheReusable: false,
     files: [...files].sort(),
   };
-  yield* fs.writeFileString(
-    path.join(debugDir, "metadata.json"),
-    `${JSON.stringify(metadata, null, 2)}\n`,
-  );
+  const encodedMetadata = yield* Schema.encodeEffect(
+    Schema.fromJsonString(Schema.Unknown, { space: 2 }),
+  )(metadata);
+  yield* fs.writeFileString(path.join(debugDir, "metadata.json"), `${encodedMetadata}\n`);
   return debugDir;
 });

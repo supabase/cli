@@ -1,3 +1,6 @@
+// oxlint-disable effecttsgo/async-function -- these tests exercise the Promise-based CLI command boundary.
+// oxlint-disable effecttsgo/unsafe-effect-type-assertion -- --version exits before other command services are evaluated.
+// oxlint-disable typescript/no-base-to-string -- the console spy mirrors console.log's arbitrary argument formatting.
 import { describe, expect, test } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer } from "effect";

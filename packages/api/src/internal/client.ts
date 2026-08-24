@@ -1,4 +1,4 @@
-import { Effect, Option, Context } from "effect";
+import { Data, Effect, Option, Context } from "effect";
 import * as Cause from "effect/Cause";
 import * as Redacted from "effect/Redacted";
 import type { SchemaError } from "effect/Schema";
@@ -74,12 +74,11 @@ export class SupabaseApiClient extends Context.Service<SupabaseApiClient, Supaba
   "@supabase/api/SupabaseApiClient",
 ) {}
 
-export class SupabaseApiConfigError extends Error {
-  readonly _tag = "SupabaseApiConfigError";
-
+export class SupabaseApiConfigError extends Data.TaggedError("SupabaseApiConfigError")<{
+  readonly message: string;
+}> {
   constructor(message: string) {
-    super(message);
-    this.name = "SupabaseApiConfigError";
+    super({ message });
   }
 }
 
@@ -93,8 +92,10 @@ export type SupabaseApiInputErrorSource = "generated_client" | "user_input";
  * `user_input` without inspecting the schema error message. The original
  * schema failure is preserved as `cause`.
  */
-export class SupabaseApiInputError extends Error {
-  readonly _tag = "SupabaseApiInputError";
+export class SupabaseApiInputError extends Data.TaggedError("SupabaseApiInputError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {
   #source: SupabaseApiInputErrorSource = "generated_client";
 
   get source(): SupabaseApiInputErrorSource {
@@ -102,8 +103,7 @@ export class SupabaseApiInputError extends Error {
   }
 
   constructor(message: string, options?: { readonly cause?: unknown }) {
-    super(message, options);
-    this.name = "SupabaseApiInputError";
+    super({ message, cause: options?.cause });
   }
 
   static markAsUserInput<T extends SupabaseApiInputError>(error: T): T {
@@ -125,10 +125,8 @@ function resolveSupabaseApiConfig(
     const accessToken = config.accessToken ?? Option.getOrUndefined(apiConfig.accessToken);
 
     if (accessToken === undefined) {
-      return yield* Effect.fail(
-        new SupabaseApiConfigError(
-          "Missing access token. Provide `accessToken` or set `SUPABASE_ACCESS_TOKEN`.",
-        ),
+      return yield* new SupabaseApiConfigError(
+        "Missing access token. Provide `accessToken` or set `SUPABASE_ACCESS_TOKEN`.",
       );
     }
 
@@ -367,9 +365,9 @@ function asBinaryRequestBody(value: unknown): Effect.Effect<Uint8Array, HttpBody
   }
   if (revealed instanceof Blob) {
     return Effect.tryPromise({
-      try: async () => new Uint8Array(await revealed.arrayBuffer()),
+      try: (_signal) => revealed.arrayBuffer(),
       catch: (cause) => new HttpBody.HttpBodyError({ reason: { _tag: "JsonError" }, cause }),
-    });
+    }).pipe(Effect.map((bytes) => new Uint8Array(bytes)));
   }
   return Effect.succeed(new TextEncoder().encode(String(revealed)));
 }
@@ -551,7 +549,7 @@ export function makeSupabaseApiClient(
     return {
       execute: (definition, input) =>
         Effect.gen(function* () {
-          const validated = yield* Schema.decodeUnknownEffect(definition.inputSchema)(input).pipe(
+          const validated = yield* Schema.decodeEffect(definition.inputSchema)(input).pipe(
             Effect.mapError((error) => new SupabaseApiInputError(error.message, { cause: error })),
           );
           const response = yield* executeRequest(prepared, definition, validated);
@@ -568,7 +566,7 @@ export function makeSupabaseApiClient(
         }),
       executeRaw: (definition, input, headers) =>
         Effect.gen(function* () {
-          const validated = yield* Schema.decodeUnknownEffect(definition.inputSchema)(input).pipe(
+          const validated = yield* Schema.decodeEffect(definition.inputSchema)(input).pipe(
             Effect.mapError((error) => new SupabaseApiInputError(error.message, { cause: error })),
           );
           const request = yield* buildRequest(definition, validated).pipe(

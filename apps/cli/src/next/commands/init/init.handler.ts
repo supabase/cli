@@ -13,12 +13,10 @@ export const init = Effect.fnUntraced(function* (
   const runtimeInfo = yield* RuntimeInfo;
 
   if (flags.useOrioledb && !flags.experimental) {
-    return yield* Effect.fail(
-      new InitExperimentalRequiredError({
-        detail: "--use-orioledb is only available when experimental features are enabled.",
-        suggestion: "Rerun the command with `supabase init --experimental --use-orioledb`.",
-      }),
-    );
+    return yield* new InitExperimentalRequiredError({
+      detail: "--use-orioledb is only available when experimental features are enabled.",
+      suggestion: "Rerun the command with `supabase init --experimental --use-orioledb`.",
+    });
   }
 
   yield* output.intro("Initialize local Supabase project");

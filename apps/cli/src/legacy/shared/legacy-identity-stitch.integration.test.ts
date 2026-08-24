@@ -1,10 +1,18 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Effect, FileSystem, Layer, Path, Schema } from "effect";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { BunFileSystem, BunPath } from "@effect/platform-bun";
 import { mockAnalytics, mockTelemetryRuntime } from "../../../tests/helpers/mocks.ts";
 import { LegacyIdentityStitch, legacyIdentityStitchLayer } from "./legacy-identity-stitch.ts";
+
+const LegacyTelemetryFixtureSchema = Schema.fromJsonString(
+  Schema.Struct({
+    enabled: Schema.Boolean,
+    device_id: Schema.String,
+    schema_version: Schema.optional(Schema.Finite),
+  }),
+);
 
 /**
  * Build a minimal fake HttpClientResponse carrying the given headers.
@@ -44,17 +52,19 @@ function makeStitchLayer(opts: {
 describe("legacyIdentityStitchLayer — stitchedDistinctId()", () => {
   it.live("populates stitchedDistinctId() after the first response with X-Gotrue-Id", () => {
     const analytics = mockAnalytics();
-    const configDir = "/tmp/legacy-identity-stitch-test-" + String(Date.now());
+    const configDir = "/tmp/legacy-identity-stitch-test-first";
 
     return Effect.gen(function* () {
       // Write a valid telemetry.json so stitchIdentity sees enabled=true.
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* fs.makeDirectory(configDir, { recursive: true });
-      yield* fs.writeFileString(
-        path.join(configDir, "telemetry.json"),
-        JSON.stringify({ enabled: true, device_id: "device-001", schema_version: 1 }),
-      );
+      const telemetry = yield* Schema.encodeEffect(LegacyTelemetryFixtureSchema)({
+        enabled: true,
+        device_id: "device-001",
+        schema_version: 1,
+      });
+      yield* fs.writeFileString(path.join(configDir, "telemetry.json"), telemetry);
 
       const svc = yield* LegacyIdentityStitch;
 
@@ -71,24 +81,30 @@ describe("legacyIdentityStitchLayer — stitchedDistinctId()", () => {
       expect(analytics.aliased).toHaveLength(1);
       expect(analytics.aliased[0]).toEqual({ distinctId: "gotrue-abc-123", alias: "device-001" });
     }).pipe(
-      Effect.provide(makeStitchLayer({ analytics, configDir })),
-      Effect.provide(BunFileSystem.layer),
-      Effect.provide(BunPath.layer),
+      Effect.provide(
+        Layer.mergeAll(
+          makeStitchLayer({ analytics, configDir }),
+          BunFileSystem.layer,
+          BunPath.layer,
+        ),
+      ),
     );
   });
 
   it.live("once-only guard: a second stitch call with a different id keeps the first", () => {
     const analytics = mockAnalytics();
-    const configDir = "/tmp/legacy-identity-stitch-test-guard-" + String(Date.now());
+    const configDir = "/tmp/legacy-identity-stitch-test-guard";
 
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* fs.makeDirectory(configDir, { recursive: true });
-      yield* fs.writeFileString(
-        path.join(configDir, "telemetry.json"),
-        JSON.stringify({ enabled: true, device_id: "device-001", schema_version: 1 }),
-      );
+      const telemetry = yield* Schema.encodeEffect(LegacyTelemetryFixtureSchema)({
+        enabled: true,
+        device_id: "device-001",
+        schema_version: 1,
+      });
+      yield* fs.writeFileString(path.join(configDir, "telemetry.json"), telemetry);
 
       const svc = yield* LegacyIdentityStitch;
 
@@ -102,9 +118,13 @@ describe("legacyIdentityStitchLayer — stitchedDistinctId()", () => {
       expect(analytics.aliased).toHaveLength(1);
       expect(analytics.aliased[0]?.distinctId).toBe("first-id");
     }).pipe(
-      Effect.provide(makeStitchLayer({ analytics, configDir })),
-      Effect.provide(BunFileSystem.layer),
-      Effect.provide(BunPath.layer),
+      Effect.provide(
+        Layer.mergeAll(
+          makeStitchLayer({ analytics, configDir }),
+          BunFileSystem.layer,
+          BunPath.layer,
+        ),
+      ),
     );
   });
 });
@@ -112,7 +132,7 @@ describe("legacyIdentityStitchLayer — stitchedDistinctId()", () => {
 describe("legacyIdentityStitchLayer — hybrid stamp/alias", () => {
   it.live("ephemeral (CI) runtime stamps the identity but does not alias or persist", () => {
     const analytics = mockAnalytics();
-    const configDir = "/tmp/legacy-identity-stitch-test-ci-" + String(Date.now());
+    const configDir = "/tmp/legacy-identity-stitch-test-ci";
 
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -129,15 +149,19 @@ describe("legacyIdentityStitchLayer — hybrid stamp/alias", () => {
       const exists = yield* fs.exists(path.join(configDir, "telemetry.json"));
       expect(exists).toBe(false);
     }).pipe(
-      Effect.provide(makeStitchLayer({ analytics, configDir, isCi: true })),
-      Effect.provide(BunFileSystem.layer),
-      Effect.provide(BunPath.layer),
+      Effect.provide(
+        Layer.mergeAll(
+          makeStitchLayer({ analytics, configDir, isCi: true }),
+          BunFileSystem.layer,
+          BunPath.layer,
+        ),
+      ),
     );
   });
 
   it.live("stamps over a stale persisted identity without aliasing", () => {
     const analytics = mockAnalytics();
-    const configDir = "/tmp/legacy-identity-stitch-test-stale-" + String(Date.now());
+    const configDir = "/tmp/legacy-identity-stitch-test-stale";
 
     return Effect.gen(function* () {
       const svc = yield* LegacyIdentityStitch;
@@ -151,24 +175,30 @@ describe("legacyIdentityStitchLayer — hybrid stamp/alias", () => {
       // ...but we never alias — that would merge two unrelated person graphs.
       expect(analytics.aliased).toHaveLength(0);
     }).pipe(
-      Effect.provide(makeStitchLayer({ analytics, configDir, distinctId: "old-user" })),
-      Effect.provide(BunFileSystem.layer),
-      Effect.provide(BunPath.layer),
+      Effect.provide(
+        Layer.mergeAll(
+          makeStitchLayer({ analytics, configDir, distinctId: "old-user" }),
+          BunFileSystem.layer,
+          BunPath.layer,
+        ),
+      ),
     );
   });
 
   it.live("concurrent first responses alias exactly once", () => {
     const analytics = mockAnalytics();
-    const configDir = "/tmp/legacy-identity-stitch-test-conc-" + String(Date.now());
+    const configDir = "/tmp/legacy-identity-stitch-test-concurrent";
 
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* fs.makeDirectory(configDir, { recursive: true });
-      yield* fs.writeFileString(
-        path.join(configDir, "telemetry.json"),
-        JSON.stringify({ enabled: true, device_id: "device-001", schema_version: 1 }),
-      );
+      const telemetry = yield* Schema.encodeEffect(LegacyTelemetryFixtureSchema)({
+        enabled: true,
+        device_id: "device-001",
+        schema_version: 1,
+      });
+      yield* fs.writeFileString(path.join(configDir, "telemetry.json"), telemetry);
 
       const svc = yield* LegacyIdentityStitch;
 
@@ -185,9 +215,13 @@ describe("legacyIdentityStitchLayer — hybrid stamp/alias", () => {
       expect(analytics.aliased).toHaveLength(1);
       expect(svc.stitchedDistinctId()).toBe(analytics.aliased[0]?.distinctId);
     }).pipe(
-      Effect.provide(makeStitchLayer({ analytics, configDir })),
-      Effect.provide(BunFileSystem.layer),
-      Effect.provide(BunPath.layer),
+      Effect.provide(
+        Layer.mergeAll(
+          makeStitchLayer({ analytics, configDir }),
+          BunFileSystem.layer,
+          BunPath.layer,
+        ),
+      ),
     );
   });
 });

@@ -1,4 +1,16 @@
-import { Effect, Layer, Option, Stdio, Stream, Tracer } from "effect";
+import {
+  Crypto,
+  Effect,
+  FiberSet,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Scope,
+  Stdio,
+  Stream,
+  Tracer,
+} from "effect";
 import type { Exit, Context } from "effect";
 
 import { makeDebugConsoleExporter } from "./exporters/debug-console.ts";
@@ -13,11 +25,11 @@ import { Tracing } from "./tracing.service.ts";
  * This layer owns telemetry bootstrap, consent evaluation, identifier loading,
  * and exporter wiring. Commands only depend on the `Tracing` service tag.
  */
-function generateHexId(length: number): string {
+function generateHexId(length: number, nextInt: () => number): string {
   const chars = "0123456789abcdef";
   let result = "";
   for (let i = 0; i < length; i++) {
-    result += chars[Math.floor(Math.random() * chars.length)];
+    result += chars[Math.abs(nextInt()) % chars.length];
   }
   return result;
 }
@@ -49,6 +61,7 @@ class ExportableSpan implements Tracer.Span {
       readonly sampled: boolean;
     },
     onEnd: (span: ExportableSpan) => void,
+    nextInt: () => number,
   ) {
     this.name = options.name;
     this.parent = options.parent;
@@ -58,10 +71,10 @@ class ExportableSpan implements Tracer.Span {
     this.sampled = options.sampled;
     this.status = { _tag: "Started", startTime: options.startTime };
     this.traceId = Option.match(options.parent, {
-      onNone: () => generateHexId(32),
+      onNone: () => generateHexId(32, nextInt),
       onSome: (parent) => parent.traceId,
     });
-    this.spanId = generateHexId(16);
+    this.spanId = generateHexId(16, nextInt);
     this.onEnd = onEnd;
   }
 
@@ -90,8 +103,18 @@ export const tracingLayer = Layer.effect(
   Effect.gen(function* () {
     const stdio = yield* Stdio.Stdio;
     const telemetryRuntime = yield* TelemetryRuntime;
+    const crypto = yield* Crypto.Crypto;
+    const exportFibers = yield* FiberSet.make<void, never>();
+    const runExport = yield* FiberSet.runtime(exportFibers)<FileSystem.FileSystem | Path.Path>();
+    const scope = yield* Scope.Scope;
+    yield* Scope.addFinalizer(scope, FiberSet.awaitEmpty(exportFibers));
+    const context = yield* Effect.context<
+      Stdio.Stdio | FileSystem.FileSystem | Path.Path | Crypto.Crypto
+    >();
     const exportSpanToDebugConsole = makeDebugConsoleExporter((line) => {
-      Effect.runFork(Stream.make(line).pipe(Stream.run(stdio.stderr()), Effect.ignore));
+      Effect.runForkWith(context)(
+        Stream.make(line).pipe(Stream.run(stdio.stderr()), Effect.ignore),
+      );
     });
 
     // Exporters are gated by consent/debug flags before spans start flowing.
@@ -102,7 +125,7 @@ export const tracingLayer = Layer.effect(
     function onSpanEnd(span: ExportableSpan): void {
       if (!span.sampled) return;
       if (telemetryRuntime.consent === "granted") {
-        exportSpanToNdjson(span, telemetryRuntime.tracesDir);
+        runExport(exportSpanToNdjson(span, telemetryRuntime.tracesDir));
       }
       if (telemetryRuntime.showDebug) {
         exportSpanToDebugConsole(span);
@@ -124,7 +147,7 @@ export const tracingLayer = Layer.effect(
 
     return Tracer.make({
       span(options) {
-        const span = new ExportableSpan(options, onSpanEnd);
+        const span = new ExportableSpan(options, onSpanEnd, () => crypto.nextIntUnsafe());
         for (const [key, value] of Object.entries(globalAttrs)) {
           span.attribute(key, value);
         }

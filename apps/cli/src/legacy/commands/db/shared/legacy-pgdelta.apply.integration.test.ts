@@ -1,12 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer } from "effect";
+import { Cause, ConfigProvider, Effect, Exit, FileSystem, Formatter, Layer, Path } from "effect";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDebugFlag } from "../../../../shared/legacy/global-flags.ts";
+import { makeLegacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   type LegacyEdgeRuntimeRunOpts,
@@ -24,6 +22,10 @@ const CTX: LegacyPgDeltaContext = {
   denoVersion: 2,
   projectEnv: {},
 };
+const stringifyJson = (value: unknown): string => Formatter.formatJson(value, { space: 2 });
+const legacyTestViperLayer = makeLegacyViperEnvLayer(
+  ConfigProvider.fromEnv({ preserveEmptyStrings: true }),
+);
 
 function fakeEdgeRuntime(outcome: { stdout?: string; stderr?: string; fail?: string } = {}) {
   const calls: Array<LegacyEdgeRuntimeRunOpts> = [];
@@ -42,12 +44,14 @@ function fakeEdgeRuntime(outcome: { stdout?: string; stderr?: string; fail?: str
   return { layer, calls };
 }
 
-function makeDeclarativeDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "legacy-pgdelta-apply-"));
-  mkdirSync(join(dir, "declarative"), { recursive: true });
-  writeFileSync(join(dir, "declarative", "public.sql"), "create table t ();");
-  return join(dir, "declarative");
-}
+const makeDeclarativeDir = (fs: FileSystem.FileSystem, path: Path.Path) =>
+  Effect.gen(function* () {
+    const root = yield* fs.makeTempDirectory({ prefix: "legacy-pgdelta-apply-" });
+    const dir = path.join(root, "declarative");
+    yield* fs.makeDirectory(dir, { recursive: true });
+    yield* fs.writeFileString(path.join(dir, "public.sql"), "create table t ();");
+    return dir;
+  });
 
 const failError = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
@@ -79,6 +83,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            legacyTestViperLayer,
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
@@ -90,11 +95,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
   );
 
   it.effect("maps an edge-runtime failure to LegacyPgDeltaDeclarativeApplyError", () => {
-    const dir = makeDeclarativeDir();
     const edge = fakeEdgeRuntime({ fail: "error running pg-delta script: boom" });
     const out = mockOutput();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* makeDeclarativeDir(fs, path);
       const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
         fs,
         declarativeDirAbs: dir,
@@ -105,11 +111,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
       expect((failError(exit) as { message: string }).message).toBe(
         "error running pg-delta script: boom",
       );
-      rmSync(dir, { recursive: true, force: true });
+      yield* fs.remove(dir, { recursive: true });
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
           BunServices.layer,
+          legacyTestViperLayer,
           edge.layer,
           out.layer,
           Layer.succeed(LegacyDebugFlag, false),
@@ -120,11 +127,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
   });
 
   it.effect("fails with a parse error WITHOUT the raw stdout when --debug is unset", () => {
-    const dir = makeDeclarativeDir();
     const edge = fakeEdgeRuntime({ stdout: "not json{" });
     const out = mockOutput();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* makeDeclarativeDir(fs, path);
       const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
         fs,
         declarativeDirAbs: dir,
@@ -136,11 +144,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
       expect(message).toContain("failed to parse pg-delta apply output");
       expect(message).not.toContain("stdout:");
       expect(message).not.toContain("not json{");
-      rmSync(dir, { recursive: true, force: true });
+      yield* fs.remove(dir, { recursive: true });
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
           BunServices.layer,
+          legacyTestViperLayer,
           edge.layer,
           out.layer,
           Layer.succeed(LegacyDebugFlag, false),
@@ -151,11 +160,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
   });
 
   it.effect("fails with a parse error INCLUDING the raw stdout when --debug is set", () => {
-    const dir = makeDeclarativeDir();
     const edge = fakeEdgeRuntime({ stdout: "not json{" });
     const out = mockOutput();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* makeDeclarativeDir(fs, path);
       const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
         fs,
         declarativeDirAbs: dir,
@@ -166,11 +176,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
       const message = (failError(exit) as { message: string }).message;
       expect(message).toContain("failed to parse pg-delta apply output");
       expect(message).toContain("stdout: not json{");
-      rmSync(dir, { recursive: true, force: true });
+      yield* fs.remove(dir, { recursive: true });
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
           BunServices.layer,
+          legacyTestViperLayer,
           edge.layer,
           out.layer,
           Layer.succeed(LegacyDebugFlag, true),
@@ -183,19 +194,14 @@ describe("legacyApplyDeclarativePgDelta", () => {
   it.effect(
     "fails with a parse error INCLUDING the raw stdout when SUPABASE_DEBUG is set only in the project .env",
     () => {
-      // Go's `Config.Load` -> `loadNestedEnv` `os.Setenv`s the project `supabase/.env` into the
-      // process before `pgdelta.ApplyDeclarative` ever reads `viper.GetBool("DEBUG")`
-      // (review: PRRT_kwDOErm0O86XL_oz) — so a `SUPABASE_DEBUG` set only in `supabase/.env`,
-      // never in the shell or via `--debug`, still surfaces the raw stdout. Delete any shell
-      // `SUPABASE_DEBUG` first: shell *presence* (even `false`) would otherwise suppress the
-      // project value entirely, per `legacyViperEnvBoolWithProjectFallback`'s own semantics.
-      const previous = process.env["SUPABASE_DEBUG"];
-      delete process.env["SUPABASE_DEBUG"];
-      const dir = makeDeclarativeDir();
+      // A `SUPABASE_DEBUG` value supplied through the project environment is resolved by
+      // `legacyResolveDebugWithProjectEnv`, without mutating the shell environment.
       const edge = fakeEdgeRuntime({ stdout: "not json{" });
       const out = mockOutput();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* makeDeclarativeDir(fs, path);
         const exit = yield* legacyApplyDeclarativePgDelta(
           { ...CTX, projectEnv: { SUPABASE_DEBUG: "true" } },
           {
@@ -209,17 +215,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
         const message = (failError(exit) as { message: string }).message;
         expect(message).toContain("failed to parse pg-delta apply output");
         expect(message).toContain("stdout: not json{");
-        rmSync(dir, { recursive: true, force: true });
+        yield* fs.remove(dir, { recursive: true });
       }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_DEBUG"];
-            else process.env["SUPABASE_DEBUG"] = previous;
-          }),
-        ),
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            legacyTestViperLayer,
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
@@ -239,11 +240,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
       // failed-apply summary with every counter at its zero value, rather than treating `null`
       // as a parse failure. `legacyApplyDeclarativePgDelta` must normalize `null` to `{}` before
       // its own structural guard, matching that behavior (review: PRRT_kwDOErm0O86W8ZYo).
-      const dir = makeDeclarativeDir();
       const edge = fakeEdgeRuntime({ stdout: "null" });
       const out = mockOutput();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* makeDeclarativeDir(fs, path);
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
@@ -259,11 +261,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
           "failed to parse pg-delta apply output",
         );
         expect(out.stderrText).toContain('pg-delta apply returned status "".');
-        rmSync(dir, { recursive: true, force: true });
+        yield* fs.remove(dir, { recursive: true });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            legacyTestViperLayer,
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
@@ -282,11 +285,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
       // array/string/number/bool payload for a struct destination with an UnmarshalTypeError —
       // so a bare `JSON.parse(...) as LegacyPgDeltaApplyResult` cast would let `parsed.status`
       // throw an unhandled TypeError instead of failing typed.
-      const dir = makeDeclarativeDir();
       const edge = fakeEdgeRuntime({ stdout: "42" });
       const out = mockOutput();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* makeDeclarativeDir(fs, path);
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
@@ -298,11 +302,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
         expect((failError(exit) as { message: string }).message).toContain(
           "failed to parse pg-delta apply output",
         );
-        rmSync(dir, { recursive: true, force: true });
+        yield* fs.remove(dir, { recursive: true });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            legacyTestViperLayer,
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
@@ -315,11 +320,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
   );
 
   it.effect("fails with LegacyPgDeltaDeclarativeApplyError when stdout is a JSON array", () => {
-    const dir = makeDeclarativeDir();
     const edge = fakeEdgeRuntime({ stdout: "[1,2,3]" });
     const out = mockOutput();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* makeDeclarativeDir(fs, path);
       const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
         fs,
         declarativeDirAbs: dir,
@@ -331,11 +337,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
       expect((failError(exit) as { message: string }).message).toContain(
         "failed to parse pg-delta apply output",
       );
-      rmSync(dir, { recursive: true, force: true });
+      yield* fs.remove(dir, { recursive: true });
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
           BunServices.layer,
+          legacyTestViperLayer,
           edge.layer,
           out.layer,
           Layer.succeed(LegacyDebugFlag, false),
@@ -352,13 +359,14 @@ describe("legacyApplyDeclarativePgDelta", () => {
       // not reach `legacyFormatApplyFailure`'s `for (const issue of errors)`, which would throw an
       // unhandled TypeError on a non-iterable object — Go's `json.Unmarshal` rejects this the same
       // way, since `Errors` is declared `[]ApplyIssue` (`apps/cli-go/internal/pgdelta/apply.go:33`).
-      const dir = makeDeclarativeDir();
       const edge = fakeEdgeRuntime({
         stdout: JSON.stringify({ status: "error", errors: { length: 1 } }),
       });
       const out = mockOutput();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* makeDeclarativeDir(fs, path);
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
@@ -370,11 +378,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
         expect((failError(exit) as { message: string }).message).toContain(
           "failed to parse pg-delta apply output",
         );
-        rmSync(dir, { recursive: true, force: true });
+        yield* fs.remove(dir, { recursive: true });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            legacyTestViperLayer,
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
@@ -394,13 +403,14 @@ describe("legacyApplyDeclarativePgDelta", () => {
       // (`apps/cli-go/internal/pgdelta/apply.go:124-142`): a numeric element fails BOTH its
       // string-arm and its object-arm unmarshal, which fails the WHOLE `ApplyResult` decode —
       // Go never reaches a "success" status in this case, so the TS guard must reject it too.
-      const dir = makeDeclarativeDir();
       const edge = fakeEdgeRuntime({
         stdout: JSON.stringify({ status: "success", errors: [123] }),
       });
       const out = mockOutput();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* makeDeclarativeDir(fs, path);
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
@@ -412,11 +422,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
         expect((failError(exit) as { message: string }).message).toContain(
           "failed to parse pg-delta apply output",
         );
-        rmSync(dir, { recursive: true, force: true });
+        yield* fs.remove(dir, { recursive: true });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            legacyTestViperLayer,
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
@@ -434,13 +445,14 @@ describe("legacyApplyDeclarativePgDelta", () => {
       // Unlike `ApplyIssue`, Go's `ApplyDiagnosis.UnmarshalJSON` (`apply.go:79-116`) has no
       // bare-string acceptance branch, so `{"diagnostics":["boom"]}` fails Go's whole decode too
       // (verified: unmarshaling a JSON string into `ApplyDiagnosis`'s shadow struct errors).
-      const dir = makeDeclarativeDir();
       const edge = fakeEdgeRuntime({
         stdout: JSON.stringify({ status: "success", diagnostics: ["boom"] }),
       });
       const out = mockOutput();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* makeDeclarativeDir(fs, path);
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
@@ -452,11 +464,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
         expect((failError(exit) as { message: string }).message).toContain(
           "failed to parse pg-delta apply output",
         );
-        rmSync(dir, { recursive: true, force: true });
+        yield* fs.remove(dir, { recursive: true });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            legacyTestViperLayer,
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
@@ -476,7 +489,6 @@ describe("legacyApplyDeclarativePgDelta", () => {
       // tries `ApplyStatementLocation`, then a bare string, and silently leaves `StatementID` nil
       // if BOTH fail — never propagating an error. A mistyped `statementId` must NOT fail the
       // whole parse.
-      const dir = makeDeclarativeDir();
       const payload = {
         status: "success",
         diagnostics: [{ message: "note", statementId: 42 }],
@@ -485,6 +497,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
       const out = mockOutput();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* makeDeclarativeDir(fs, path);
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
@@ -492,11 +506,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isSuccess(exit)).toBe(true);
-        rmSync(dir, { recursive: true, force: true });
+        yield* fs.remove(dir, { recursive: true });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            legacyTestViperLayer,
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
@@ -519,7 +534,6 @@ describe("legacyApplyDeclarativePgDelta", () => {
       // string) — so Go silently leaves `StatementID` nil rather than erroring the whole parse,
       // verified empirically. Rendering the raw object anyway would show a bogus `(123#1)`
       // location Go never emits.
-      const dir = makeDeclarativeDir();
       const payload = {
         status: "success",
         diagnostics: [{ message: "note", statementId: { filePath: 123, statementIndex: 1 } }],
@@ -528,6 +542,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
       const out = mockOutput();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* makeDeclarativeDir(fs, path);
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
@@ -535,11 +551,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isSuccess(exit)).toBe(true);
-        rmSync(dir, { recursive: true, force: true });
+        yield* fs.remove(dir, { recursive: true });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            legacyTestViperLayer,
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
@@ -561,7 +578,6 @@ describe("legacyApplyDeclarativePgDelta", () => {
       // so `{"errors":[{"message":null}]}` is a valid, Go-accepted payload, not a parse failure.
       // The formatter's existing `String(issue.message ?? "")` already renders a zero-value
       // message as "unknown pg-delta issue" once the guard lets the `null` through.
-      const dir = makeDeclarativeDir();
       const payload = {
         status: "error",
         totalApplied: 0,
@@ -574,6 +590,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
       const out = mockOutput();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* makeDeclarativeDir(fs, path);
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
@@ -583,11 +601,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
         expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDeclarativeApplyError");
         expect(out.stderrText).toContain("- unknown pg-delta issue");
         expect(out.stderrText).toContain("- unknown pg-delta diagnostic");
-        rmSync(dir, { recursive: true, force: true });
+        yield* fs.remove(dir, { recursive: true });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            legacyTestViperLayer,
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, true),
@@ -609,12 +628,13 @@ describe("legacyApplyDeclarativePgDelta", () => {
       // `{"status":"success","totalApplied":null}` is a valid, Go-accepted payload, not a parse
       // failure — same "null means absent" rule already applied to nested issue/diagnostic
       // scalar fields above.
-      const dir = makeDeclarativeDir();
       const payload = { status: "success", totalApplied: null, totalRounds: null };
       const edge = fakeEdgeRuntime({ stdout: JSON.stringify(payload) });
       const out = mockOutput();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* makeDeclarativeDir(fs, path);
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
@@ -623,11 +643,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
         }).pipe(Effect.exit);
         expect(Exit.isSuccess(exit)).toBe(true);
         expect(out.stderrText).toContain("Applied 0 statements in 0 round(s).");
-        rmSync(dir, { recursive: true, force: true });
+        yield* fs.remove(dir, { recursive: true });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            legacyTestViperLayer,
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
@@ -646,11 +667,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
       // non-pointer `string` field decoded via the default `encoding/json` — verified
       // empirically that `{}` and `{"status":null}` both decode with `err == nil` and
       // `Status == ""`, reaching the normal failed-apply summary (not a parse failure).
-      const dir = makeDeclarativeDir();
       const edge = fakeEdgeRuntime({ stdout: JSON.stringify({}) });
       const out = mockOutput();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* makeDeclarativeDir(fs, path);
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
@@ -663,11 +685,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
           "pg-delta declarative apply failed with status: ",
         );
         expect(out.stderrText).toContain('pg-delta apply returned status "".');
-        rmSync(dir, { recursive: true, force: true });
+        yield* fs.remove(dir, { recursive: true });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            legacyTestViperLayer,
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
@@ -688,7 +711,6 @@ describe("legacyApplyDeclarativePgDelta", () => {
       // `json.Unmarshal([]byte(\`{"status":"error","errors":null}\`), &r)` returns `err == nil`
       // with `len(r.Errors) == 0`. A payload reporting all four as `null` must format as if none
       // were reported at all, not fail the parse.
-      const dir = makeDeclarativeDir();
       const payload = {
         status: "error",
         totalApplied: 0,
@@ -703,6 +725,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
       const out = mockOutput();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* makeDeclarativeDir(fs, path);
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
@@ -711,11 +735,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
         }).pipe(Effect.exit);
         expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDeclarativeApplyError");
         expect(out.stderrText).toContain("No per-statement diagnostics were reported by pg-delta.");
-        rmSync(dir, { recursive: true, force: true });
+        yield* fs.remove(dir, { recursive: true });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            legacyTestViperLayer,
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
@@ -733,13 +758,14 @@ describe("legacyApplyDeclarativePgDelta", () => {
       // Same reasoning as the array-typed-field test above, for `ApplyResult`'s numeric fields
       // (`TotalApplied int`, etc.) — a malformed counter must fail the parse, not be silently
       // treated as a genuine successful-apply summary.
-      const dir = makeDeclarativeDir();
       const edge = fakeEdgeRuntime({
         stdout: JSON.stringify({ status: "success", totalApplied: "5" }),
       });
       const out = mockOutput();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* makeDeclarativeDir(fs, path);
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
@@ -751,11 +777,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
         expect((failError(exit) as { message: string }).message).toContain(
           "failed to parse pg-delta apply output",
         );
-        rmSync(dir, { recursive: true, force: true });
+        yield* fs.remove(dir, { recursive: true });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            legacyTestViperLayer,
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
@@ -775,13 +802,14 @@ describe("legacyApplyDeclarativePgDelta", () => {
       // empirically that `json.Unmarshal` on `{"totalApplied":1.5}` errors identically to a
       // string-typed field mismatch, so `1.5` must fail the parse here too, not be treated as a
       // truncated/rounded successful-apply count.
-      const dir = makeDeclarativeDir();
       const edge = fakeEdgeRuntime({
         stdout: JSON.stringify({ status: "success", totalApplied: 1.5 }),
       });
       const out = mockOutput();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* makeDeclarativeDir(fs, path);
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
@@ -793,11 +821,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
         expect((failError(exit) as { message: string }).message).toContain(
           "failed to parse pg-delta apply output",
         );
-        rmSync(dir, { recursive: true, force: true });
+        yield* fs.remove(dir, { recursive: true });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            legacyTestViperLayer,
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
@@ -816,13 +845,14 @@ describe("legacyApplyDeclarativePgDelta", () => {
       // into `int` fails with "value out of range" (`strconv.ParseInt`'s int64 width) — so a
       // mistyped/oversized numeric field must be rejected here too, not accepted as a (false)
       // successful-apply count.
-      const dir = makeDeclarativeDir();
       const edge = fakeEdgeRuntime({
         stdout: JSON.stringify({ status: "success", totalApplied: 1e20 }),
       });
       const out = mockOutput();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* makeDeclarativeDir(fs, path);
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
@@ -834,11 +864,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
         expect((failError(exit) as { message: string }).message).toContain(
           "failed to parse pg-delta apply output",
         );
-        rmSync(dir, { recursive: true, force: true });
+        yield* fs.remove(dir, { recursive: true });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            legacyTestViperLayer,
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
@@ -852,7 +883,6 @@ describe("legacyApplyDeclarativePgDelta", () => {
   it.effect(
     "on a non-success status, prints the formatted failure to stderr but not the raw payload when --debug is unset",
     () => {
-      const dir = makeDeclarativeDir();
       const payload = {
         status: "error",
         totalApplied: 0,
@@ -864,6 +894,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
       const out = mockOutput();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* makeDeclarativeDir(fs, path);
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
@@ -877,11 +909,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
         expect(out.stderrText).toContain('pg-delta apply returned status "error".');
         expect(out.stderrText).toContain("- boom");
         expect(out.stderrText).not.toContain("pg-delta apply result:");
-        rmSync(dir, { recursive: true, force: true });
+        yield* fs.remove(dir, { recursive: true });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            legacyTestViperLayer,
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
@@ -896,7 +929,6 @@ describe("legacyApplyDeclarativePgDelta", () => {
   it.effect(
     "on a non-success status with --debug set, additionally dumps the pretty-printed raw payload",
     () => {
-      const dir = makeDeclarativeDir();
       const payload = {
         status: "error",
         totalApplied: 0,
@@ -908,6 +940,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
       const out = mockOutput();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* makeDeclarativeDir(fs, path);
         yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
@@ -915,12 +949,13 @@ describe("legacyApplyDeclarativePgDelta", () => {
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(out.stderrText).toContain("pg-delta apply result:");
-        expect(out.stderrText).toContain(JSON.stringify(payload, null, 2));
-        rmSync(dir, { recursive: true, force: true });
+        expect(out.stderrText).toContain(stringifyJson(payload));
+        yield* fs.remove(dir, { recursive: true });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            legacyTestViperLayer,
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, true),
@@ -935,7 +970,6 @@ describe("legacyApplyDeclarativePgDelta", () => {
   it.effect(
     "on success, prints the applied-statements summary and forwards SCHEMA_PATH/TARGET/binds",
     () => {
-      const dir = makeDeclarativeDir();
       const payload = {
         status: "success",
         totalStatements: 3,
@@ -947,6 +981,8 @@ describe("legacyApplyDeclarativePgDelta", () => {
       const out = mockOutput();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* makeDeclarativeDir(fs, path);
         yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
@@ -965,11 +1001,12 @@ describe("legacyApplyDeclarativePgDelta", () => {
           `${dir}:/declarative:ro`,
         ]);
         expect(opts.errPrefix).toBe("error running pg-delta script");
-        rmSync(dir, { recursive: true, force: true });
+        yield* fs.remove(dir, { recursive: true });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
             BunServices.layer,
+            legacyTestViperLayer,
             edge.layer,
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),

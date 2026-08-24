@@ -1,5 +1,9 @@
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, test } from "vitest";
-import { makeTempHome, runSupabase } from "../../../../../tests/helpers/cli.ts";
+import { Effect, FileSystem, Path } from "effect";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+
+import { makeTempHomeEffect, runSupabaseEffect } from "../../../../../tests/helpers/cli.ts";
 
 // Argument-validation negatives for `functions download`. A black-box
 // subprocess test keeps these assertions valid regardless of where the
@@ -15,6 +19,28 @@ const SLUG = "download-e2e-basic";
 const FAKE_TOKEN = `sbp_${"0".repeat(40)}`;
 const FAKE_REF = "a".repeat(20);
 
+function runInTempHome<A, E>(
+  use: (
+    home: string,
+  ) => Effect.Effect<
+    A,
+    E,
+    FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
+  >,
+) {
+  return Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const home = yield* Effect.acquireRelease(
+          makeTempHomeEffect,
+          (tempHome) => tempHome.disposeEffect,
+        );
+        return yield* use(home.dir);
+      }),
+    ).pipe(Effect.provide(BunServices.layer)),
+  );
+}
+
 describe("supabase functions download (legacy) — argument validation", () => {
   const conflicts = [
     { name: "--use-api + --use-docker", flags: ["--use-api", "--use-docker"] },
@@ -23,19 +49,22 @@ describe("supabase functions download (legacy) — argument validation", () => {
   ] as const;
 
   for (const { name, flags } of conflicts) {
-    test(`rejects ${name} as mutually exclusive`, { timeout: E2E_TIMEOUT_MS }, async () => {
-      using home = makeTempHome();
-      const { exitCode, stderr } = await runSupabase(
-        ["functions", "download", SLUG, "--project-ref", FAKE_REF, ...flags],
-        {
-          entrypoint: "legacy",
-          home: home.dir,
-          env: { HOME: home.dir, SUPABASE_ACCESS_TOKEN: FAKE_TOKEN },
-        },
-      );
-      expect(exitCode).not.toBe(0);
-      expect(stderr).toMatch(/none of the others can be|mutually exclusive/i);
-    });
+    test(`rejects ${name} as mutually exclusive`, { timeout: E2E_TIMEOUT_MS }, () =>
+      runInTempHome((home) =>
+        Effect.gen(function* () {
+          const { exitCode, stderr } = yield* runSupabaseEffect(
+            ["functions", "download", SLUG, "--project-ref", FAKE_REF, ...flags],
+            {
+              entrypoint: "legacy",
+              home,
+              env: { HOME: home, SUPABASE_ACCESS_TOKEN: FAKE_TOKEN },
+            },
+          );
+          expect(exitCode).not.toBe(0);
+          expect(stderr).toMatch(/none of the others can be|mutually exclusive/i);
+        }),
+      ),
+    );
   }
 
   // CLI-1862: `--use-docker` now defaults to `true`. Before the

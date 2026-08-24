@@ -21,7 +21,7 @@ import {
   LegacySsoShowUnexpectedStatusError,
   LegacySsoTomlEncodeError,
 } from "../sso.errors.ts";
-import { renderSingleProvider, validateUuid } from "../sso.format.ts";
+import { legacyQuoteSsoValue, renderSingleProvider, validateUuid } from "../sso.format.ts";
 import type { LegacySsoShowFlags } from "./show.command.ts";
 
 const mapStatusOrNetwork = mapLegacyHttpError({
@@ -37,13 +37,11 @@ const handleShowError = (providerId: string, cause: SupabaseApiError) =>
     // `show` is intentionally omitted from the upgrade-suggestion paths
     // (see plan §"Telemetry parity").
     if (mapped._tag === "LegacySsoShowUnexpectedStatusError" && mapped.status === 404) {
-      return yield* Effect.fail(
-        new LegacySsoShowNotFoundError({
-          message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
-        }),
-      );
+      return yield* new LegacySsoShowNotFoundError({
+        message: `An identity provider with ID ${legacyQuoteSsoValue(providerId)} could not be found.`,
+      });
     }
-    return yield* Effect.fail(mapped);
+    return yield* mapped;
   });
 
 export const legacySsoShow = Effect.fn("legacy.sso.show")(function* (flags: LegacySsoShowFlags) {
@@ -80,11 +78,9 @@ export const legacySsoShow = Effect.fn("legacy.sso.show")(function* (flags: Lega
 
       if (goFmt === "env") {
         // Established `--output env` unsupported error message.
-        return yield* Effect.fail(
-          new LegacySsoShowEnvNotSupportedError({
-            message: "--output env flag is not supported",
-          }),
-        );
+        return yield* new LegacySsoShowEnvNotSupportedError({
+          message: "--output env flag is not supported",
+        });
       }
       if (goFmt === "json") {
         yield* output.raw(encodeGoJson(response));

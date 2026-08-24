@@ -30,9 +30,10 @@ export const legacyTestNew = Effect.fn("legacy.test.new")(function* (flags: Lega
 
     const exists = yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false));
     if (exists) {
-      return yield* Effect.fail(
-        new LegacyTestNewFileExistsError({ path: relPath, message: `${relPath} already exists.` }),
-      );
+      return yield* new LegacyTestNewFileExistsError({
+        path: relPath,
+        message: `${relPath} already exists.`,
+      });
     }
 
     // `utils.WriteFile` pins the dir to 0755 and the test file to 0644

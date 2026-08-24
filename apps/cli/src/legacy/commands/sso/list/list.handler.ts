@@ -48,20 +48,19 @@ const handleListError = (ref: string, cause: SupabaseApiError) =>
         response: legacyGateResponse(cause),
       });
       if (mapped.status === 404) {
-        return yield* Effect.fail(
-          new LegacySsoListSamlDisabledError({ message: SAML_DISABLED_MESSAGE, upgradeSuggested }),
-        );
-      }
-      return yield* Effect.fail(
-        new LegacySsoListUnexpectedStatusError({
-          status: mapped.status,
-          body: mapped.body,
-          message: mapped.message,
+        return yield* new LegacySsoListSamlDisabledError({
+          message: SAML_DISABLED_MESSAGE,
           upgradeSuggested,
-        }),
-      );
+        });
+      }
+      return yield* new LegacySsoListUnexpectedStatusError({
+        status: mapped.status,
+        body: mapped.body,
+        message: mapped.message,
+        upgradeSuggested,
+      });
     }
-    return yield* Effect.fail(mapped);
+    return yield* mapped;
   });
 
 export const legacySsoList = Effect.fn("legacy.sso.list")(function* (flags: LegacySsoListFlags) {

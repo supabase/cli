@@ -56,6 +56,7 @@ import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.ser
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyIdentityStitch } from "../../../shared/legacy-identity-stitch.ts";
+import { makeLegacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
 
 import { legacyDbAdvisorsRuntimeLayer } from "../advisors/advisors.layers.ts";
 import { legacyDbLintRuntimeLayer } from "./lint.layers.ts";
@@ -121,6 +122,7 @@ function ambientStubs() {
     mockLegacyLinkedProjectCacheLayer,
     mockLegacyTelemetryStateLayer,
     heavyServiceStubs,
+    makeLegacyViperEnvLayer(),
   );
 }
 
@@ -131,7 +133,7 @@ describe("legacyDbLintRuntimeLayer — LegacyIdentityStitch exposure", () => {
       return Effect.gen(function* () {
         const stitch = yield* Effect.serviceOption(LegacyIdentityStitch);
         expect(Option.isSome(stitch)).toBe(true);
-      }).pipe(Effect.provide(legacyDbLintRuntimeLayer), Effect.provide(ambientStubs()));
+      }).pipe(Effect.provide(legacyDbLintRuntimeLayer.pipe(Layer.provideMerge(ambientStubs()))));
     },
   );
 });
@@ -143,7 +145,9 @@ describe("legacyDbAdvisorsRuntimeLayer — LegacyIdentityStitch exposure (regres
       return Effect.gen(function* () {
         const stitch = yield* Effect.serviceOption(LegacyIdentityStitch);
         expect(Option.isSome(stitch)).toBe(true);
-      }).pipe(Effect.provide(legacyDbAdvisorsRuntimeLayer), Effect.provide(ambientStubs()));
+      }).pipe(
+        Effect.provide(legacyDbAdvisorsRuntimeLayer.pipe(Layer.provideMerge(ambientStubs()))),
+      );
     },
   );
 });

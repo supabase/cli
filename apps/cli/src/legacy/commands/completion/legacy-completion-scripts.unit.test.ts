@@ -1,6 +1,7 @@
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, Path } from "effect";
 
 import {
   type LegacyCompletionShell,
@@ -9,8 +10,12 @@ import {
 
 const fixturesDir = fileURLToPath(new URL("./__fixtures__", import.meta.url));
 
-function readFixture(shell: LegacyCompletionShell, variant: "desc" | "nodesc"): string {
-  return readFileSync(`${fixturesDir}/${shell}.${variant}.txt`, "utf8");
+function readFixture(shell: LegacyCompletionShell, variant: "desc" | "nodesc") {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return yield* fs.readFileString(path.join(fixturesDir, `${shell}.${variant}.txt`));
+  }).pipe(Effect.provide(BunServices.layer));
 }
 
 describe("legacyGenerateCompletionScript", () => {
@@ -131,15 +136,23 @@ describe("legacyGenerateCompletionScript", () => {
     const shells: ReadonlyArray<LegacyCompletionShell> = ["bash", "zsh", "fish", "powershell"];
 
     for (const shell of shells) {
-      it(`matches the real cobra ${shell} completion script byte-for-byte (with descriptions)`, () => {
-        const generated = legacyGenerateCompletionScript(shell, { noDescriptions: false });
-        expect(generated).toBe(readFixture(shell, "desc"));
-      });
+      it.effect(
+        `matches the real cobra ${shell} completion script byte-for-byte (with descriptions)`,
+        () =>
+          Effect.gen(function* () {
+            const generated = legacyGenerateCompletionScript(shell, { noDescriptions: false });
+            expect(generated).toBe(yield* readFixture(shell, "desc"));
+          }),
+      );
 
-      it(`matches the real cobra ${shell} completion script byte-for-byte (--no-descriptions)`, () => {
-        const generated = legacyGenerateCompletionScript(shell, { noDescriptions: true });
-        expect(generated).toBe(readFixture(shell, "nodesc"));
-      });
+      it.effect(
+        `matches the real cobra ${shell} completion script byte-for-byte (--no-descriptions)`,
+        () =>
+          Effect.gen(function* () {
+            const generated = legacyGenerateCompletionScript(shell, { noDescriptions: true });
+            expect(generated).toBe(yield* readFixture(shell, "nodesc"));
+          }),
+      );
     }
   });
 });

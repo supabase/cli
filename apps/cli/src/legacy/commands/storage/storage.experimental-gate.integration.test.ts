@@ -18,6 +18,7 @@ import {
   useLegacyTempWorkdir,
 } from "../../../../tests/helpers/legacy-mocks.ts";
 import { LegacyExperimentalRequiredError } from "../../shared/legacy-experimental-gate.ts";
+import { makeLegacyViperEnvLayer } from "../../../shared/legacy/legacy-viper-env.ts";
 import { legacyStorageCommand } from "./storage.command.ts";
 import { LegacyStorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
 
@@ -54,6 +55,7 @@ function setup(args: ReadonlyArray<string>) {
       configDir: `${tempRoot.current}/.supabase`,
       tracesDir: `${tempRoot.current}/.supabase/traces`,
     }),
+    makeLegacyViperEnvLayer(),
   );
   return { layer };
 }

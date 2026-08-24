@@ -1,9 +1,20 @@
-import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from "effect";
+import {
+  Cause,
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Path,
+  PlatformError,
+  Sink,
+  Stream,
+} from "effect";
+import * as Formatter from "effect/Formatter";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -41,12 +52,14 @@ import {
 } from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { legacyDockerRunLayer } from "../../../shared/legacy-docker-run.layer.ts";
+import { makeLegacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
 import { LegacyEdgeRuntimeScriptError } from "../../../shared/legacy-edge-runtime-script.errors.ts";
 import {
   LegacyEdgeRuntimeScript,
   type LegacyEdgeRuntimeRunOpts,
 } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
+import { legacyLocalGatewayHttpClientTestLayer } from "../../../shared/legacy-local-gateway-http-client.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type {
   LegacyDbConfigFlags,
@@ -86,6 +99,56 @@ const DEFAULT_FLAGS: LegacyDbResetFlags = {
   version: Option.none(),
   last: Option.none(),
 };
+
+const fixturePath = ManagedRuntime.make(BunServices.layer).runSync(Path.Path);
+const join = (first: string, ...rest: ReadonlyArray<string>) => fixturePath.join(first, ...rest);
+const pendingWrites = new Map<
+  string,
+  Array<{ readonly path: string; readonly contents: string }>
+>();
+const pendingStandaloneWrites: Array<{ readonly path: string; readonly contents: string }> = [];
+
+function formatCause(cause: Cause.Cause<unknown>) {
+  return Formatter.formatJson(cause);
+}
+
+function queueWrite(workdir: string, path: string, contents: string) {
+  const writes = pendingWrites.get(workdir) ?? [];
+  writes.push({ path, contents });
+  pendingWrites.set(workdir, writes);
+}
+
+function writeFileSync(path: string, contents: string) {
+  pendingStandaloneWrites.push({ path, contents });
+}
+
+function flushFixtureWrites(workdir: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const writes = pendingWrites.get(workdir) ?? [];
+    for (const write of writes) {
+      yield* fs.makeDirectory(fixturePath.dirname(write.path), { recursive: true });
+      yield* fs.writeFileString(write.path, write.contents);
+    }
+    pendingWrites.delete(workdir);
+    for (const write of pendingStandaloneWrites) {
+      yield* fs.makeDirectory(fixturePath.dirname(write.path), { recursive: true });
+      yield* fs.writeFileString(write.path, write.contents);
+    }
+    pendingStandaloneWrites.length = 0;
+  });
+}
+
+function chmodPath(path: string, mode: number) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.chmod(path, mode);
+  }).pipe(Effect.provide(BunServices.layer));
+}
+
+function prepareFixtures(workdir: string) {
+  return flushFixtureWrites(workdir).pipe(Effect.provide(BunServices.layer));
+}
 
 /**
  * Tracks every `resolve`/`resolvePoolerFallback` invocation so tests can prove a
@@ -269,14 +332,12 @@ function mockContainerCliSpawner(route: (args: ReadonlyArray<string>) => RouteRe
         spawned.push({ args });
 
         if (command._tag !== "StandardCommand") {
-          return yield* Effect.fail(
-            PlatformError.systemError({
-              _tag: "NotFound",
-              module: "ChildProcess",
-              method: "spawn",
-              description: "spawn failed",
-            }),
-          );
+          return yield* PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            description: "spawn failed",
+          });
         }
 
         const result = route(args);
@@ -313,7 +374,7 @@ function containerNameFromCreateArgs(args: ReadonlyArray<string>): string {
 }
 
 function fakeContainerId(name: string): string {
-  return [...name]
+  return Array.from(name)
     .map((char) => (char.codePointAt(0) ?? 0).toString(16).padStart(2, "0"))
     .join("")
     .padEnd(64, "0")
@@ -446,16 +507,15 @@ function setup(
     // `LegacyProjectNotLinkedError` absent an explicit `--project-ref` flag,
     // instead of silently falling back to `opts.ref ?? LEGACY_VALID_REF`.
     linkedFails?: boolean;
+    env?: Readonly<Record<string, string | undefined>>;
   },
 ) {
   if (opts.toml !== undefined) {
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), opts.toml);
+    queueWrite(workdir, join(workdir, "supabase", "config.toml"), opts.toml);
   }
   for (const [rel, content] of Object.entries(opts.files ?? {})) {
     const abs = join(workdir, rel);
-    mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, content);
+    queueWrite(workdir, abs, content);
   }
 
   const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
@@ -483,7 +543,7 @@ function setup(
   const edgeRuntime = Layer.succeed(LegacyEdgeRuntimeScript, {
     run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
       edgeRunCalls.push(runOpts);
-      registryEnvAtRunTime.push(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]);
+      registryEnvAtRunTime.push(runOpts.projectEnvValues?.["SUPABASE_INTERNAL_IMAGE_REGISTRY"]);
       if (opts.catalogExportFailWith !== undefined) {
         return Effect.fail(
           new LegacyEdgeRuntimeScriptError({ message: opts.catalogExportFailWith }),
@@ -492,6 +552,11 @@ function setup(
       return Effect.succeed({ stdout: opts.catalogStdout ?? '{"version":1}', stderr: "" });
     },
   });
+  const providerEnv: Record<string, string> = {};
+  for (const [key, value] of Object.entries(opts.env ?? {})) {
+    if (value !== undefined) providerEnv[key] = value;
+  }
+  const configProvider = ConfigProvider.fromEnv({ env: providerEnv, preserveEmptyStrings: true });
   const pgDeltaSslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
     requireSsl: () => Effect.succeed(false),
     requireSslForHost: () => Effect.succeed(false),
@@ -502,11 +567,16 @@ function setup(
     conn.layer,
     resolver.layer,
     mockLegacyCliConfig({ workdir }),
-    BunServices.layer,
+    BunServices.layer.pipe(
+      Layer.tap((context) => flushFixtureWrites(workdir).pipe(Effect.provideContext(context))),
+    ),
+    makeLegacyViperEnvLayer(configProvider),
+    Layer.succeed(ConfigProvider.ConfigProvider, configProvider),
     child.layer,
     mockRuntimeInfo({ platform: "linux" }),
     mockProcessControl().layer,
     alwaysReadyHttpClientLayer,
+    legacyLocalGatewayHttpClientTestLayer(alwaysReadyHttpClientLayer),
     legacyDockerRunLayer.pipe(
       Layer.provide(child.layer),
       Layer.provide(mockProcessControl().layer),
@@ -701,7 +771,7 @@ describe("legacy db reset", () => {
         return Effect.gen(function* () {
           const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("is not running.");
+          if (Exit.isFailure(exit)) expect(formatCause(exit.cause)).toContain("is not running.");
           expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
             false,
           );
@@ -721,7 +791,7 @@ describe("legacy db reset", () => {
           const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("failed to load config");
+            expect(formatCause(exit.cause)).toContain("failed to load config");
           }
           expect(child.spawned.some((s) => s.args[0] === "container" && s.args[1] === "rm")).toBe(
             false,
@@ -767,21 +837,13 @@ describe("legacy db reset", () => {
         toml: 'project_id = "test"\n',
         args: ["db", "reset", "--local"],
         isLocal: true,
+        env: { GITHUB_HEAD_REF: "feature-x" },
       });
-      const previous = process.env["GITHUB_HEAD_REF"];
-      process.env["GITHUB_HEAD_REF"] = "feature-x";
       return Effect.gen(function* () {
         yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("on branch ");
         expect(out.stderrText).toContain("feature-x");
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["GITHUB_HEAD_REF"];
-            else process.env["GITHUB_HEAD_REF"] = previous;
-          }),
-        ),
-      );
+      });
     });
 
     it.live("emits a json result for a local reset", () => {
@@ -814,7 +876,7 @@ describe("legacy db reset", () => {
         const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("failed to remove container");
+          expect(formatCause(exit.cause)).toContain("failed to remove container");
         }
         expect(telemetry.flushed).toBe(true);
       });
@@ -883,7 +945,7 @@ describe("legacy db reset", () => {
         const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("failed to restart supabase_storage_test");
+          expect(formatCause(exit.cause)).toContain("failed to restart supabase_storage_test");
         }
       });
     });
@@ -952,7 +1014,7 @@ describe("legacy db reset", () => {
           const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const cause = JSON.stringify(exit.cause);
+            const cause = formatCause(exit.cause);
             expect(cause).toContain("permission denied to create database");
             expect(cause).toContain("At statement: 1");
             expect(cause).toContain("CREATE DATABASE postgres WITH OWNER postgres");
@@ -996,7 +1058,7 @@ describe("legacy db reset", () => {
         const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("failed to disconnect clients");
+          expect(formatCause(exit.cause)).toContain("failed to disconnect clients");
         }
       });
     });
@@ -1080,7 +1142,7 @@ describe("legacy db reset", () => {
         const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("failed to count replication slots");
+          expect(formatCause(exit.cause)).toContain("failed to count replication slots");
         }
         // A single attempt — the permanent failure never retries.
         const countCalls = conn.queries.filter((q) => q.sql === COUNT_REPLICATION_SLOTS);
@@ -1101,7 +1163,7 @@ describe("legacy db reset", () => {
           const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("replication slots still active");
+            expect(formatCause(exit.cause)).toContain("replication slots still active");
           }
         });
       },
@@ -1300,7 +1362,7 @@ describe("legacy db reset", () => {
           // Config loads through the established reader (`legacyCheckDbToml`),
           // so a malformed config aborts with `failed to load config`, same
           // as the other db commands (diff/dump/pull/migration).
-          expect(JSON.stringify(exit.cause)).toContain("failed to load config");
+          expect(formatCause(exit.cause)).toContain("failed to load config");
         }
       });
     });
@@ -1309,24 +1371,16 @@ describe("legacy db reset", () => {
       // Regression: `enabled = "env(VAR)"` must load via env-expansion + boolean
       // parsing (`legacyCheckDbToml`) instead of the strict @supabase/config
       // loader rejecting it.
-      const previous = process.env["MIGRATIONS_ENABLED"];
-      process.env["MIGRATIONS_ENABLED"] = "true";
       const { layer, out } = setup(tmp.current, {
         toml: 'project_id = "test"\n\n[db.migrations]\nenabled = "env(MIGRATIONS_ENABLED)"\n',
         files: migrationFile("20240101000000"),
         confirm: [true],
+        env: { MIGRATIONS_ENABLED: "true" },
       });
       return Effect.gen(function* () {
         yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["MIGRATIONS_ENABLED"];
-            else process.env["MIGRATIONS_ENABLED"] = previous;
-          }),
-        ),
-      );
+      });
     });
 
     it.live("rejects mutually exclusive target flags", () => {
@@ -1350,7 +1404,7 @@ describe("legacy db reset", () => {
           last: Option.some(1),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("[last version]");
+        if (Exit.isFailure(exit)) expect(formatCause(exit.cause)).toContain("[last version]");
       });
     });
 
@@ -1385,7 +1439,7 @@ describe("legacy db reset", () => {
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain(
+          expect(formatCause(exit.cause)).toContain(
             "glob supabase/migrations/20240101000000_*.sql: file does not exist",
           );
         }
@@ -1444,7 +1498,7 @@ describe("legacy db reset", () => {
           Effect.exit,
         );
         expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("context canceled");
+        if (Exit.isFailure(exit)) expect(formatCause(exit.cause)).toContain("context canceled");
         expect(conn.execs).toHaveLength(0);
       });
     });
@@ -1488,9 +1542,7 @@ describe("legacy db reset", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain(
-            "failed to parse config: missing private key",
-          );
+          expect(formatCause(exit.cause)).toContain("failed to parse config: missing private key");
         }
         // Config load failed before ResetAll → schemas were never dropped.
         expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(false);
@@ -1512,9 +1564,7 @@ describe("legacy db reset", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain(
-            "Missing required field in config: project_id",
-          );
+          expect(formatCause(exit.cause)).toContain("Missing required field in config: project_id");
         }
         expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(false);
       });
@@ -1612,7 +1662,7 @@ describe("legacy db reset", () => {
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain(
+          expect(formatCause(exit.cause)).toContain(
             "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
           );
         }
@@ -1729,8 +1779,6 @@ describe("legacy db reset", () => {
         // scoping (same-named test in `push.integration.test.ts`). Without
         // that scoping, this reads only real `process.env` and falls back to
         // the default registry instead.
-        const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-        delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
         const { layer, registryEnvAtRunTime } = setup(tmp.current, {
           toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
           files: {
@@ -1742,16 +1790,7 @@ describe("legacy db reset", () => {
         return Effect.gen(function* () {
           yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
           expect(registryEnvAtRunTime).toEqual(["my-mirror.example.com"]);
-          // The finalizer reverted it — never leaks into the surrounding process.
-          expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
-        }).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (prev === undefined) delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-              else process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = prev;
-            }),
-          ),
-        );
+        });
       },
     );
 
@@ -1994,7 +2033,7 @@ describe("legacy db reset", () => {
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const cause = JSON.stringify(exit.cause);
+            const cause = formatCause(exit.cause);
             expect(cause).toContain("no files matched pattern: supabase/nomatch/*.sql");
             // No CmdSuggestion on this failure mode — only a per-file exec failure sets one.
             expect(cause).not.toContain("See schema file");
@@ -2044,7 +2083,7 @@ describe("legacy db reset", () => {
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const cause = JSON.stringify(exit.cause);
+            const cause = formatCause(exit.cause);
             expect(cause).toContain("syntax error at or near");
             // The suggestion is `"See schema file: <Bold(fp)>"` (established output contract).
             expect(cause).toContain("See schema file:");
@@ -2070,20 +2109,23 @@ describe("legacy db reset", () => {
           experimental: true,
           confirm: [true],
         });
-        chmodSync(schemaFile, 0o000);
+        const makeUnreadable = prepareFixtures(tmp.current).pipe(
+          Effect.flatMap(() => chmodPath(schemaFile, 0o000)),
+        );
         return Effect.gen(function* () {
+          yield* makeUnreadable;
           const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
             Effect.provide(layer),
             Effect.exit,
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const cause = JSON.stringify(exit.cause);
+            const cause = formatCause(exit.cause);
             expect(cause).not.toContain("See schema file");
           }
           // The statement was never reached, so it was never executed.
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
-        }).pipe(Effect.ensuring(Effect.sync(() => chmodSync(schemaFile, 0o644))));
+        }).pipe(Effect.ensuring(chmodPath(schemaFile, 0o644).pipe(Effect.ignore)));
       },
     );
 
@@ -2102,22 +2144,25 @@ describe("legacy db reset", () => {
           experimental: true,
           confirm: [true],
         });
-        chmodSync(schemasDir, 0o000);
+        const makeUnreadable = prepareFixtures(tmp.current).pipe(
+          Effect.flatMap(() => chmodPath(schemasDir, 0o000)),
+        );
         return Effect.gen(function* () {
+          yield* makeUnreadable;
           const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
             Effect.provide(layer),
             Effect.exit,
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const cause = JSON.stringify(exit.cause);
+            const cause = formatCause(exit.cause);
             expect(cause).toContain("failed to walk matched directory");
             expect(cause).not.toContain("See schema file");
           }
           // Schemas were already dropped before the failed apply step (drop-then-apply order).
           expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
-        }).pipe(Effect.ensuring(Effect.sync(() => chmodSync(schemasDir, 0o755))));
+        }).pipe(Effect.ensuring(chmodPath(schemasDir, 0o755).pipe(Effect.ignore)));
       },
     );
 
@@ -2127,8 +2172,6 @@ describe("legacy db reset", () => {
         // The project `.env` is applied before EXPERIMENTAL is read, so a
         // `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` reaches the
         // native three-conjunct gate the same way an explicit `--experimental` does.
-        const previous = process.env["SUPABASE_EXPERIMENTAL"];
-        delete process.env["SUPABASE_EXPERIMENTAL"];
         const { layer, out, conn } = setup(tmp.current, {
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
           files: {
@@ -2144,14 +2187,7 @@ describe("legacy db reset", () => {
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
           expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(false);
           expect(out.stderrText).not.toContain("Applying migration");
-        }).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_EXPERIMENTAL"];
-              else process.env["SUPABASE_EXPERIMENTAL"] = previous;
-            }),
-          ),
-        );
+        });
       },
     );
 
@@ -2165,9 +2201,9 @@ describe("legacy db reset", () => {
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("--no-seed cannot be used with --sql-paths");
+          expect(formatCause(exit.cause)).toContain("--no-seed cannot be used with --sql-paths");
           // The established suggestion, rendered as a Suggestion: line.
-          expect(JSON.stringify(exit.cause)).toContain("Use either");
+          expect(formatCause(exit.cause)).toContain("Use either");
         }
       });
     });
@@ -2307,7 +2343,7 @@ describe("legacy db reset", () => {
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("--no-seed cannot be used with --sql-paths");
+          expect(formatCause(exit.cause)).toContain("--no-seed cannot be used with --sql-paths");
         }
       });
     });
@@ -2322,7 +2358,7 @@ describe("legacy db reset", () => {
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain(
+          expect(formatCause(exit.cause)).toContain(
             "--sql-paths requires a non-empty path or glob pattern",
           );
         }
@@ -2339,7 +2375,7 @@ describe("legacy db reset", () => {
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const cause = JSON.stringify(exit.cause);
+          const cause = formatCause(exit.cause);
           expect(cause).toContain("invalid argument");
           expect(cause).toContain("strconv.ParseUint");
         }

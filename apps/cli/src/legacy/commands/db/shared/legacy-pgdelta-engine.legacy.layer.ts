@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Crypto, Effect, FileSystem, Layer, Path } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -35,6 +35,7 @@ import {
   legacyResolveMigrationsCatalogRef,
 } from "../../../shared/legacy-pgdelta.cache.ts";
 import { LegacyDeclarativeSeam } from "./legacy-pgdelta.seam.service.ts";
+import { LegacyViperEnv } from "../../../../shared/legacy/legacy-viper-env.ts";
 
 const mapError = (cause: { readonly message: string }) =>
   new LegacyPgDeltaEngineError({ message: cause.message, cause });
@@ -96,6 +97,8 @@ export const legacyPgDeltaLegacyEngineLayer = Layer.effect(
     const debugFlag = yield* LegacyDebugFlag;
     const experimentalFlag = yield* LegacyExperimentalFlag;
     const networkIdFlag = yield* LegacyNetworkIdFlag;
+    const viperEnv = yield* LegacyViperEnv;
+    const crypto = yield* Crypto.Crypto;
 
     const runtime = Layer.mergeAll(
       Layer.succeed(LegacyEdgeRuntimeScript, edgeRuntime),
@@ -113,6 +116,8 @@ export const legacyPgDeltaLegacyEngineLayer = Layer.effect(
       Layer.succeed(LegacyDebugFlag, debugFlag),
       Layer.succeed(LegacyExperimentalFlag, experimentalFlag),
       Layer.succeed(LegacyNetworkIdFlag, networkIdFlag),
+      Layer.succeed(LegacyViperEnv, viperEnv),
+      Layer.succeed(Crypto.Crypto, crypto),
     );
 
     const provideRuntime = <Success, Error, Requirements>(
@@ -208,12 +213,10 @@ export const legacyPgDeltaLegacyEngineLayer = Layer.effect(
         Effect.gen(function* () {
           yield* warnStrictCoverageIgnored(input.strictCoverage);
           if (input.source === undefined) {
-            return yield* Effect.fail(
-              new LegacyPgDeltaEngineError({
-                message: "legacy pg-delta declarative export requires an empty shadow database",
-                cause: "missing declarative export source",
-              }),
-            );
+            return yield* new LegacyPgDeltaEngineError({
+              message: "legacy pg-delta declarative export requires an empty shadow database",
+              cause: "missing declarative export source",
+            });
           }
           const result = yield* provideRuntime(
             legacyDeclarativeExportPgDelta(input.context, {

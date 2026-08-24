@@ -1,14 +1,25 @@
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { ProjectConfig } from "@supabase/config";
 import { ProjectConfigSchema } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, FileSystem, Layer, Path, Schema, Sink, Stream } from "effect";
+import {
+  Cause,
+  ConfigProvider,
+  Deferred,
+  Effect,
+  FileSystem,
+  Layer,
+  ManagedRuntime,
+  Path,
+  Schema,
+  Sink,
+  Stream,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import type { PlatformError } from "effect/PlatformError";
 
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
+import { useLegacyTempWorkdir } from "../../../../tests/helpers/legacy-mocks.ts";
 import { LegacyDbExecError } from "../legacy-db-connection.errors.ts";
 import { LegacyDbConnection, type LegacyDbSession } from "../legacy-db-connection.service.ts";
 import { LegacyDockerRun, type LegacyDockerRunOpts } from "../legacy-docker-run.service.ts";
@@ -19,6 +30,7 @@ import {
   type LegacyEdgeRuntimeRunOpts,
 } from "../legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../legacy-pgdelta-ssl-probe.service.ts";
+import { makeLegacyViperEnvLayer } from "../../../shared/legacy/legacy-viper-env.ts";
 import {
   LegacyDbSetupError,
   legacyResolveDbSetupPrelude,
@@ -193,17 +205,76 @@ function mockPgDeltaSslProbeLayer() {
   });
 }
 
+const defaultConfig: ProjectConfig = decodeConfig({});
+const testPath = ManagedRuntime.make(BunServices.layer).runSync(Path.Path);
+const tempRoot = useLegacyTempWorkdir("legacy-db-setup-");
+const fixtureWrites = new Map<
+  string,
+  Array<Effect.Effect<void, PlatformError, FileSystem.FileSystem | Path.Path>>
+>();
+
+const join = (...segments: ReadonlyArray<string>): string => testPath.join(...segments);
 function makeWorkdir(): string {
-  return mkdtempSync(join(tmpdir(), "legacy-db-setup-"));
+  return tempRoot.current;
+}
+
+function queueFixture(
+  workdir: string,
+  effect: Effect.Effect<void, PlatformError, FileSystem.FileSystem | Path.Path>,
+): void {
+  const existing = fixtureWrites.get(workdir) ?? [];
+  existing.push(effect);
+  fixtureWrites.set(workdir, existing);
 }
 
 function writeConfigToml(workdir: string, content: string): void {
   const supabaseDir = join(workdir, "supabase");
-  mkdirSync(supabaseDir, { recursive: true });
-  writeFileSync(join(supabaseDir, "config.toml"), content);
+  queueFixture(
+    workdir,
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(supabaseDir, { recursive: true });
+      yield* fs.writeFileString(join(supabaseDir, "config.toml"), content);
+    }),
+  );
 }
 
-const defaultConfig: ProjectConfig = decodeConfig({});
+function mkdirSync(path: string, options?: { readonly recursive?: boolean }): void {
+  const workdir = path.split("/supabase")[0] ?? path;
+  queueFixture(
+    workdir,
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(path, { recursive: options?.recursive ?? false });
+    }),
+  );
+}
+
+function writeFileSync(path: string, content: string): void {
+  const workdir = path.split("/supabase")[0] ?? path;
+  queueFixture(
+    workdir,
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const parent = testPath.dirname(path);
+      yield* fs.makeDirectory(parent, { recursive: true });
+      yield* fs.writeFileString(path, content);
+    }),
+  );
+}
+
+function rmSync(
+  _path: string,
+  _options?: { readonly recursive?: boolean; readonly force?: boolean },
+): void {}
+
+function flushFixtureWrites(
+  workdir: string,
+): Effect.Effect<void, PlatformError, FileSystem.FileSystem | Path.Path> {
+  const writes = fixtureWrites.get(workdir) ?? [];
+  fixtureWrites.delete(workdir);
+  return Effect.forEach(writes, (write) => write, { discard: true });
+}
 
 function baseInput(
   workdir: string,
@@ -249,6 +320,7 @@ const run = (
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    yield* flushFixtureWrites(input.workdir);
     return yield* legacyStartSetupLocalDatabase(mockAlwaysCachedSpawner(), {
       ...input,
       fs,
@@ -258,6 +330,12 @@ const run = (
     Effect.provide(
       Layer.mergeAll(
         BunServices.layer,
+        makeLegacyViperEnvLayer(
+          ConfigProvider.fromEnv({
+            env: input.projectEnvValues ?? {},
+            preserveEmptyStrings: true,
+          }),
+        ),
         out.layer,
         docker.layer,
         mockRuntimeInfo({ platform: "darwin" }),
@@ -545,7 +623,9 @@ describe("legacyStartSetupLocalDatabase", () => {
         Effect.flip,
         Effect.map((error) => {
           expect(error).toBeInstanceOf(LegacyDbSetupError);
-          expect((error as LegacyDbSetupError).message).toBe("error running container: exit 1");
+          if (error instanceof LegacyDbSetupError) {
+            expect(error.message).toBe("error running container: exit 1");
+          }
           rmSync(workdir, { recursive: true, force: true });
         }),
       );
@@ -694,17 +774,22 @@ describe("legacyStartSetupLocalDatabase", () => {
       const docker = mockDockerRun();
       const edgeRuntime = mockEdgeRuntime({ stdout: '{"snapshot":"ok"}' });
       return run(baseInput(workdir, session, { majorVersion: 14 }), out, docker, edgeRuntime).pipe(
-        Effect.map(() => {
-          expect(edgeRuntime.calls).toHaveLength(1);
-          expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-          const tempDir = join(workdir, "supabase", ".temp", "pgdelta");
-          const catalogFiles = readdirSync(tempDir).filter((name) =>
-            name.startsWith("catalog-local-migrations-"),
-          );
-          expect(catalogFiles).toHaveLength(1);
-          expect(readFileSync(join(tempDir, catalogFiles[0]!), "utf8")).toBe('{"snapshot":"ok"}');
-          rmSync(workdir, { recursive: true, force: true });
-        }),
+        Effect.flatMap(() =>
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            expect(edgeRuntime.calls).toHaveLength(1);
+            expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+            const tempDir = join(workdir, "supabase", ".temp", "pgdelta");
+            const catalogFiles = (yield* fs.readDirectory(tempDir)).filter((name) =>
+              name.startsWith("catalog-local-migrations-"),
+            );
+            expect(catalogFiles).toHaveLength(1);
+            expect(yield* fs.readFileString(join(tempDir, catalogFiles[0]!))).toBe(
+              '{"snapshot":"ok"}',
+            );
+            rmSync(workdir, { recursive: true, force: true });
+          }).pipe(Effect.provide(BunServices.layer)),
+        ),
       );
     });
 
@@ -716,8 +801,6 @@ describe("legacyStartSetupLocalDatabase", () => {
         // `supabase/.env` fallback below and resolve to the next implementation —
         // matching the engine-selector layer's own precedence rather than
         // `toml.envLookup`'s (which treats an empty shell value as unset).
-        const prev = process.env["SUPABASE_USE_PG_DELTA_NEXT"];
-        process.env["SUPABASE_USE_PG_DELTA_NEXT"] = "";
         const workdir = makeWorkdir();
         writeConfigToml(workdir, "[experimental.pgdelta]\nenabled = true\n");
         writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_USE_PG_DELTA_NEXT=false\n");
@@ -726,7 +809,10 @@ describe("legacyStartSetupLocalDatabase", () => {
         const docker = mockDockerRun();
         const edgeRuntime = mockEdgeRuntime({ stdout: '{"snapshot":"ok"}' });
         return run(
-          baseInput(workdir, session, { majorVersion: 14 }),
+          baseInput(workdir, session, {
+            majorVersion: 14,
+            projectEnvValues: { SUPABASE_USE_PG_DELTA_NEXT: "" },
+          }),
           out,
           docker,
           edgeRuntime,
@@ -735,12 +821,6 @@ describe("legacyStartSetupLocalDatabase", () => {
             expect(edgeRuntime.calls).toHaveLength(0);
             rmSync(workdir, { recursive: true, force: true });
           }),
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (prev === undefined) delete process.env["SUPABASE_USE_PG_DELTA_NEXT"];
-              else process.env["SUPABASE_USE_PG_DELTA_NEXT"] = prev;
-            }),
-          ),
         );
       },
     );
@@ -773,19 +853,10 @@ describe("legacyStartSetupLocalDatabase", () => {
     );
 
     it.effect(
-      "applies PGDELTA_NPM_REGISTRY from the project .env for the catalog export, then reverts it",
+      "passes PGDELTA_NPM_REGISTRY from the project .env to the catalog export explicitly",
       () => {
-        // Go's `Config.Load` already `os.Setenv`'d the project `.env` into the process
-        // (`loadNestedEnv`, config.go:788) long before `SetupLocalDatabase` runs, so a
-        // PGDELTA_NPM_REGISTRY set only in supabase/.env (not the shell) reaches
-        // `PgDeltaNpmRegistryOption` there. This module threads config overrides via
-        // `projectEnvValues` rather than mutating `process.env` globally, so the
-        // cache-warmup step must scope-apply it around just `legacyExportCatalogPgDelta`'s
-        // call (`legacyPgDeltaNpmRegistryOption` reads bare `process.env`) and revert
-        // afterwards — mirroring `db push`/`db pull`/`db dump`/`bootstrap`'s own use of
-        // `legacyApplyProjectEnv` for the same shared pg-delta code.
-        const previous = process.env["PGDELTA_NPM_REGISTRY"];
-        delete process.env["PGDELTA_NPM_REGISTRY"];
+        // The project value is threaded through `projectEnvValues` and encoded in the
+        // pg-delta invocation's explicit npm registry options; no ambient mutation is used.
         const workdir = makeWorkdir();
         writeConfigToml(workdir, "[experimental.pgdelta]\nenabled = true\n");
         mkdirSync(join(workdir, "supabase"), { recursive: true });
@@ -814,11 +885,6 @@ describe("legacyStartSetupLocalDatabase", () => {
             expect(edgeRuntime.calls[0]?.extraEnv?.["NPM_CONFIG_REGISTRY"]).toBe(
               "https://registry.example.com/supabase",
             );
-            // Reverted: the scope closes once the cache-warmup call completes, so it
-            // never leaks into subsequent steps or other tests.
-            expect(process.env["PGDELTA_NPM_REGISTRY"]).toBeUndefined();
-            if (previous === undefined) delete process.env["PGDELTA_NPM_REGISTRY"];
-            else process.env["PGDELTA_NPM_REGISTRY"] = previous;
             rmSync(workdir, { recursive: true, force: true });
           }),
         );
@@ -890,7 +956,7 @@ describe("legacyResolveDbSetupPrelude", () => {
         {
           majorVersion: 15,
           realtimeEnabledForSetup: true,
-          jwks: Effect.fail(new Error("jwks discovery failed")),
+          jwks: Effect.fail(new Cause.UnknownError(undefined, String("jwks discovery failed"))),
         },
         out,
       ).pipe(
@@ -1063,6 +1129,7 @@ describe("legacyStartInitCurrentBranch", () => {
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
+      yield* flushFixtureWrites(workdir);
       yield* legacyStartInitCurrentBranch(fs, path, workdir);
       const content = yield* fs.readFileString(
         join(workdir, "supabase", ".branches", "_current_branch"),
@@ -1084,6 +1151,7 @@ describe("legacyStartInitCurrentBranch", () => {
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
+      yield* flushFixtureWrites(workdir);
       yield* legacyStartInitCurrentBranch(fs, path, workdir);
       const content = yield* fs.readFileString(join(branchesDir, "_current_branch"));
       expect(content).toBe("feature-x");

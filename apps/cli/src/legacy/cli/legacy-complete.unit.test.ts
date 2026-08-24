@@ -1491,7 +1491,7 @@ describe("legacyTryComplete", () => {
       // production capture (`legacyCaptureCompleteTelemetryEffect`,
       // `legacyDefaultCompleteDeps`'s own default) is covered separately in
       // `legacy-complete.integration.test.ts`.
-      captureTelemetry: async () => {},
+      captureTelemetry: () => Promise.resolve(),
       ...overrides,
     };
     return { deps, stdoutWrites, exits };
@@ -1499,33 +1499,40 @@ describe("legacyTryComplete", () => {
 
   // `legacyTryComplete` returns `Promise<boolean>` — it awaits
   // `deps.captureTelemetry` before calling `deps.exit`.
-  it("returns false and does nothing for non-__complete argv", async () => {
+  it("returns false and does nothing for non-__complete argv", () => {
     const { deps, stdoutWrites, exits } = makeDeps({ argv: ["migration", "list"] });
-    expect(await legacyTryComplete(deps)).toBe(false);
-    expect(stdoutWrites).toEqual([]);
-    expect(exits).toEqual([]);
+    return legacyTryComplete(deps).then((result) => {
+      expect(result).toBe(false);
+      expect(stdoutWrites).toEqual([]);
+      expect(exits).toEqual([]);
+    });
   });
 
-  it("writes the formatted response to stdout and exits 0 for a real completion request", async () => {
+  it("writes the formatted response to stdout and exits 0 for a real completion request", () => {
     const { deps, stdoutWrites, exits } = makeDeps();
-    expect(await legacyTryComplete(deps)).toBe(true);
-    expect(stdoutWrites).toHaveLength(1);
-    expect(stdoutWrites[0]).toContain("list\t");
-    expect(stdoutWrites[0]).toMatch(/:4\n$/);
-    expect(exits).toEqual([0]);
+    return legacyTryComplete(deps).then((result) => {
+      expect(result).toBe(true);
+      expect(stdoutWrites).toHaveLength(1);
+      expect(stdoutWrites[0]).toContain("list\t");
+      expect(stdoutWrites[0]).toMatch(/:4\n$/);
+      expect(exits).toEqual([0]);
+    });
   });
 
-  it("respects __completeNoDesc by stripping descriptions from the written response", async () => {
+  it("respects __completeNoDesc by stripping descriptions from the written response", () => {
     const { deps, stdoutWrites } = makeDeps({ argv: ["__completeNoDesc", "migration", "li"] });
-    await legacyTryComplete(deps);
-    expect(stdoutWrites[0]).toBe("list\n:4\n");
+    return legacyTryComplete(deps).then(() => {
+      expect(stdoutWrites[0]).toBe("list\n:4\n");
+    });
   });
 
-  it("exits 1 and does not write anything to stdout for zero completion args", async () => {
+  it("exits 1 and does not write anything to stdout for zero completion args", () => {
     const { deps, stdoutWrites, exits } = makeDeps({ argv: ["__complete"] });
-    expect(await legacyTryComplete(deps)).toBe(true);
-    expect(stdoutWrites).toEqual([]);
-    expect(exits).toEqual([1]);
+    return legacyTryComplete(deps).then((result) => {
+      expect(result).toBe(true);
+      expect(stdoutWrites).toEqual([]);
+      expect(exits).toEqual([1]);
+    });
   });
 });
 

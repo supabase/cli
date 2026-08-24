@@ -133,7 +133,7 @@ export function legacyLoadProfile(
 
     const ext = goFilepathExt(token);
     if (!VIPER_SUPPORTED_EXTS.has(ext)) {
-      return yield* failRead(`Unsupported Config Type ${JSON.stringify(ext)}`);
+      return yield* failRead(`Unsupported Config Type "${ext}"`);
     }
 
     const content = yield* fs
@@ -152,12 +152,17 @@ export function legacyLoadProfile(
         ),
       );
 
-    let parsed: unknown;
-    try {
-      parsed = parseYaml(content);
-    } catch (cause) {
-      return yield* failRead(`While parsing config: ${parseDetail(cause)}`);
-    }
+    let parsed = yield* Effect.try({
+      try: () => parseYaml(content),
+      catch: (cause) => new LegacyProfileLoadError({ message: parseDetail(cause) }),
+    }).pipe(
+      Effect.mapError(
+        (error) =>
+          new LegacyProfileLoadError({
+            message: `failed to read profile: While parsing config: ${error.message}`,
+          }),
+      ),
+    );
     if (parsed === null || parsed === undefined) {
       parsed = {};
     }
@@ -175,7 +180,7 @@ export function legacyLoadProfile(
     // A same-key case collision is nondeterministic in Go (map iteration
     // order) — document order (last wins) is used here.
     const config: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+    for (const [key, value] of Object.entries(parsed)) {
       config[key.toLowerCase()] = value;
     }
 

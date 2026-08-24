@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Path, Result } from "effect";
+import { Effect, FileSystem, Path, Predicate, Result } from "effect";
 
 import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
 import { LegacyCredentialDeleteError } from "../../auth/legacy-errors.ts";
@@ -25,9 +25,7 @@ export const legacyUnlink = Effect.fn("legacy.unlink")(function* () {
     // read failure surfaces verbatim (unlink.go:16-19).
     const exists = yield* fs.exists(paths.projectRef).pipe(Effect.orElseSucceed(() => false));
     if (!exists) {
-      return yield* Effect.fail(
-        new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }),
-      );
+      return yield* new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE });
     }
     // Go reads the raw bytes without trimming — `link` writes the ref with no
     // trailing newline, so the value round-trips exactly (used for both the
@@ -67,14 +65,12 @@ export const legacyUnlink = Effect.fn("legacy.unlink")(function* () {
       // collected message, not just the first. Keep the leading failure's tag
       // (temp removal precedes the credential delete, matching that order).
       if (rest.length === 0) {
-        return yield* Effect.fail(first);
+        return yield* first;
       }
       const message = collected.map((e) => e.message).join("\n");
-      return yield* Effect.fail(
-        first._tag === "LegacyUnlinkTempRemovalError"
-          ? new LegacyUnlinkTempRemovalError({ message })
-          : new LegacyCredentialDeleteError({ message }),
-      );
+      return yield* Predicate.isTagged(first, "LegacyUnlinkTempRemovalError")
+        ? new LegacyUnlinkTempRemovalError({ message })
+        : new LegacyCredentialDeleteError({ message });
     }
 
     // 3. PostRun: `Finished supabase unlink.` to stdout (text), structured success

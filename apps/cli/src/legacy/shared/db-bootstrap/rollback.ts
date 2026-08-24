@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, type FileSystem, type Path } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import type { LegacyContainerIdName } from "../legacy-docker-lifecycle.ts";
@@ -101,7 +101,7 @@ export const legacyRollbackStart = (
   deleteVolumes: boolean,
   workdir: string,
   debug: boolean,
-): Effect.Effect<void, never> =>
+): Effect.Effect<void, never, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     // Go's `DockerRemoveAll` prints "Stopping containers..." to the writer its
     // caller passes (`internal/utils/docker.go:97`); the start-failure path
@@ -121,11 +121,13 @@ export const legacyRollbackStart = (
       },
       debug,
     ).pipe(
-      Effect.catch((error) =>
-        Effect.sync(() => {
-          globalThis.process.stderr.write(`${error.message}\n`);
-        }),
-      ),
+      Effect.matchEffect({
+        onFailure: (error) =>
+          Effect.sync(() => {
+            globalThis.process.stderr.write(`${error.message}\n`);
+          }),
+        onSuccess: () => Effect.void,
+      }),
     );
     yield* legacyCleanupStartSecrets(removedContainers, workdir);
   });

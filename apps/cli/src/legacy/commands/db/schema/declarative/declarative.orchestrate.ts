@@ -103,10 +103,8 @@ export const legacyDiffDeclarativeToMigrations = Effect.fnUntraced(function* (
   const engine = yield* LegacyPgDeltaEngine;
   const exists = yield* fs.exists(run.declarativeDir).pipe(Effect.orElseSucceed(() => false));
   if (!exists) {
-    return yield* Effect.fail(
-      declarativeError(
-        "No declarative schema directory found. Run supabase db schema declarative generate first.",
-      ),
+    return yield* declarativeError(
+      "No declarative schema directory found. Run supabase db schema declarative generate first.",
     );
   }
   const files = yield* LegacyLoadPgDeltaSqlFiles(fs, path, run.declarativeDir).pipe(

@@ -17,6 +17,8 @@ import { legacyApplySeedFiles, type LegacySeedConfig } from "./legacy-seed.ts";
 
 /** Config consumed by `legacyMigrateAndSeed`. */
 export interface LegacyMigrateAndSeedConfig {
+  /** Fully resolved environment for scanner/config overrides; never read from process globals. */
+  readonly projectEnv: Readonly<Record<string, string>>;
   readonly migrationsEnabled: boolean;
   readonly seed: LegacySeedConfig;
   /**
@@ -97,5 +99,5 @@ export const legacyMigrateAndSeed = (
         );
       }
     }
-    yield* legacyApplySeedFiles(session, fs, path, workdir, config.seed);
+    yield* legacyApplySeedFiles(session, fs, path, workdir, config.seed, config.projectEnv);
   });

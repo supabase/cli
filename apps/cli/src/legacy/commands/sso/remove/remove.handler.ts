@@ -24,7 +24,7 @@ import {
   LegacySsoRemoveUnexpectedStatusError,
   LegacySsoTomlEncodeError,
 } from "../sso.errors.ts";
-import { renderSingleProvider, validateUuid } from "../sso.format.ts";
+import { legacyQuoteSsoValue, renderSingleProvider, validateUuid } from "../sso.format.ts";
 import type { LegacySsoRemoveFlags } from "./remove.command.ts";
 
 const mapStatusOrNetwork = mapLegacyHttpError({
@@ -45,23 +45,19 @@ const handleRemoveError = (ref: string, providerId: string, cause: SupabaseApiEr
         response: legacyGateResponse(cause),
       });
       if (mapped.status === 404) {
-        return yield* Effect.fail(
-          new LegacySsoRemoveNotFoundError({
-            message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
-            upgradeSuggested,
-          }),
-        );
-      }
-      return yield* Effect.fail(
-        new LegacySsoRemoveUnexpectedStatusError({
-          status: mapped.status,
-          body: mapped.body,
-          message: mapped.message,
+        return yield* new LegacySsoRemoveNotFoundError({
+          message: `An identity provider with ID ${legacyQuoteSsoValue(providerId)} could not be found.`,
           upgradeSuggested,
-        }),
-      );
+        });
+      }
+      return yield* new LegacySsoRemoveUnexpectedStatusError({
+        status: mapped.status,
+        body: mapped.body,
+        message: mapped.message,
+        upgradeSuggested,
+      });
     }
-    return yield* Effect.fail(mapped);
+    return yield* mapped;
   });
 
 export const legacySsoRemove = Effect.fn("legacy.sso.remove")(function* (

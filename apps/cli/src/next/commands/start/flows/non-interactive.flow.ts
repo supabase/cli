@@ -14,11 +14,8 @@ export const startNonInteractive = Effect.fnUntraced(function* () {
     yield* stack
       .allStateChanges()
       .pipe(Stream.runForEach((state) => output.info(`${state.name}: ${state.status}`)));
-  })
-    .pipe(Effect.raceFirst(interruptOnSignal))
-    .pipe(
-      Effect.ensuring(
-        Effect.uninterruptible(stack.dispose().pipe(Effect.catch(() => Effect.void))),
-      ),
-    );
+  }).pipe(
+    Effect.raceFirst(interruptOnSignal),
+    Effect.ensuring(Effect.uninterruptible(stack.dispose().pipe(Effect.ignore))),
+  );
 });

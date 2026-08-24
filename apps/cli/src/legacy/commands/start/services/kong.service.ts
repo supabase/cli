@@ -49,8 +49,7 @@
  * module calls `legacyGenerateGoJwt` itself.
  */
 
-import * as nodePath from "node:path";
-import { legacyResolveNotificationContentPath } from "../../../shared/legacy-config-validate.ts";
+import type { Path } from "effect";
 
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 import { legacyEnvOrDefault } from "../lib/legacy-env-or-default.ts";
@@ -121,7 +120,7 @@ export function legacyBuildKongQueryToken(apiKeys: LegacyKongApiKeys): string {
  * never touches `process.env`.
  */
 export function legacyResolveKongNginxWorkerProcesses(
-  projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
+  projectEnvValues?: Readonly<Record<string, string>>,
 ): string {
   return legacyEnvOrDefault("KONG_NGINX_WORKER_PROCESSES", "1", projectEnvValues);
 }
@@ -158,18 +157,22 @@ export interface LegacyKongEmailTemplateMount {
 export function legacyBuildKongEmailTemplateBind(
   mount: LegacyKongEmailTemplateMount,
   workdir: string,
+  path: Path.Path,
 ): string | undefined {
   if (mount.contentPath.length === 0) return undefined;
+  const projectRootRelative = mount.contentPath.replace(/^\.\//u, "");
   const hostPath = mount.notification
-    ? legacyResolveNotificationContentPath(workdir, mount.contentPath)
-    : nodePath.isAbsolute(mount.contentPath)
+    ? projectRootRelative.startsWith("supabase/")
+      ? path.resolve(workdir, mount.contentPath)
+      : path.join(workdir, "supabase", mount.contentPath)
+    : path.isAbsolute(mount.contentPath)
       ? mount.contentPath
-      : nodePath.resolve(workdir, mount.contentPath);
-  const dockerPath = nodePath.posix.join(
+      : path.resolve(workdir, mount.contentPath);
+  const dockerPath = path.join(
     LEGACY_KONG_NGINX_EMAIL_TEMPLATE_DIR,
-    `${mount.id}${nodePath.extname(hostPath)}`,
+    `${mount.id}${path.extname(hostPath)}`,
   );
-  return `${hostPath}:${dockerPath}:rw`;
+  return `${hostPath}:${dockerPath.replaceAll(path.sep, "/")}:rw`;
 }
 
 const LEGACY_KONG_ENTRYPOINT_HEAD =
@@ -190,6 +193,8 @@ export function legacyBuildKongEntrypointScript(nginxTemplate: string): string {
 }
 
 export interface LegacyKongContainerSpecInput {
+  /** Platform path service used for host and in-container path derivation. */
+  readonly path: Path.Path;
   /** `config.api.kong_image`, already resolved/pulled by the caller. */
   readonly image: string;
   /** `legacyServiceContainerName("kong", projectId)`. */
@@ -289,7 +294,7 @@ export function legacyBuildKongContainerSpec(
   });
 
   const binds = (input.emailTemplateMounts ?? [])
-    .map((mount) => legacyBuildKongEmailTemplateBind(mount, input.workdir))
+    .map((mount) => legacyBuildKongEmailTemplateBind(mount, input.workdir, input.path))
     .filter((bind): bind is string => bind !== undefined);
 
   const dockerPort = input.apiTlsEnabled ? 8443 : 8000;

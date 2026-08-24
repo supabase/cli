@@ -167,9 +167,7 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
     // argv (the flag parses as unset), hence the emulation. Keep this ahead
     // of the profile/workdir/required-flag/mutex checks.
     if (scan.missingValueError !== undefined) {
-      return yield* Effect.fail(
-        new LegacySsoFlagNeedsArgumentError({ message: scan.missingValueError }),
-      );
+      return yield* new LegacySsoFlagNeedsArgumentError({ message: scan.missingValueError });
     }
 
     // The effective `--profile`/`SUPABASE_PROFILE` is resolved immediately
@@ -203,9 +201,9 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
       : undefined;
     const reconciledTokenForAux =
       reconciledTokenCached === undefined
-        ? Effect.succeed<Option.Option<Redacted.Redacted<string>> | undefined>(undefined)
-        : Effect.catch(reconciledTokenCached, () =>
-            Effect.succeed(Option.none<Redacted.Redacted<string>>()),
+        ? Effect.succeed(Option.none<Redacted.Redacted<string>>())
+        : Effect.orElseSucceed(reconciledTokenCached, () =>
+            Option.none<Redacted.Redacted<string>>(),
           );
 
     // The effective `--workdir`/`SUPABASE_WORKDIR` is validated after flag
@@ -229,18 +227,16 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
     // here. A genuine `-t saml` records a `type` occurrence via the scan's
     // shorthand map and never trips this.
     if (!occurrences.has("type") && scan.consumedFlagNames.has("type")) {
-      return yield* Effect.fail(
-        new LegacySsoAddRequiredFlagError({ message: `required flag(s) "type" not set` }),
-      );
+      return yield* new LegacySsoAddRequiredFlagError({
+        message: `required flag(s) "type" not set`,
+      });
     }
 
     const changed = SSO_ADD_MUTEX_GROUP.filter((flagName) => occurrences.has(flagName));
     if (changed.length > 1) {
-      return yield* Effect.fail(
-        new LegacySsoMutexFlagError({
-          message: cobraMutuallyExclusiveErrorMessage(SSO_ADD_MUTEX_GROUP, changed),
-        }),
-      );
+      return yield* new LegacySsoMutexFlagError({
+        message: cobraMutuallyExclusiveErrorMessage(SSO_ADD_MUTEX_GROUP, changed),
+      });
     }
 
     // The scan and the Effect parser can disagree on more than the mutex:
@@ -364,24 +360,21 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
           statusCode: response.status,
           response,
           apiUrl,
-          ...(yield* Effect.map(reconciledTokenForAux, (token) =>
-            token !== undefined ? { accessToken: token } : {},
-          )),
+          ...(yield* Effect.map(reconciledTokenForAux, (accessToken) => ({ accessToken }))),
         });
         yield* creating?.fail() ?? Effect.void;
         if (response.status === 404) {
-          return yield* Effect.fail(
-            new LegacySsoAddSamlDisabledError({ message: SAML_DISABLED_MESSAGE, upgradeSuggested }),
-          );
-        }
-        return yield* Effect.fail(
-          new LegacySsoAddUnexpectedStatusError({
-            status: response.status,
-            body: bodyText,
-            message: `Unexpected error adding identity provider: ${bodyText}`,
+          return yield* new LegacySsoAddSamlDisabledError({
+            message: SAML_DISABLED_MESSAGE,
             upgradeSuggested,
-          }),
-        );
+          });
+        }
+        return yield* new LegacySsoAddUnexpectedStatusError({
+          status: response.status,
+          body: bodyText,
+          message: `Unexpected error adding identity provider: ${bodyText}`,
+          upgradeSuggested,
+        });
       }
 
       const parsedJson = yield* response.json.pipe(Effect.orElseSucceed((): unknown => ({})));

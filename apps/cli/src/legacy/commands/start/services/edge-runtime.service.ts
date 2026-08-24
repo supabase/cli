@@ -69,6 +69,8 @@ export interface LegacyEdgeRuntimeBringUpInput {
   readonly networkId: string;
   /** `utils.Config.EdgeRuntime.Image`, already resolved/pulled by the caller (`image-prepull.ts`/`legacyResolveEdgeRuntimeImage`). */
   readonly image: string;
+  /** Go's merged project environment, used for Bitbucket's named-volume restriction. */
+  readonly projectEnvValues?: Readonly<Record<string, string>>;
   /**
    * `cliConfig.workdir` in `start.handler.ts` — used as `functions serve`'s
    * `projectRoot`/`flagCwd` (no separate "flag cwd" exists for `start`) and
@@ -183,6 +185,7 @@ export const legacyStartEdgeRuntimeContainer = Effect.fn("legacy.start.edgeRunti
       legacyStartInternalDbPassword(input.dbUrl),
     ),
     image: input.image,
+    projectEnvValues: input.projectEnvValues,
     projectRoot: input.workdir,
     supabaseDir: `${input.workdir}/supabase`,
     flagCwd: input.workdir,

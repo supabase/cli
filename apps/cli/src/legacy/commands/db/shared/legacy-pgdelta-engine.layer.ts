@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Config, Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import { legacyHttpClientLayer } from "../../../auth/legacy-http-debug.layer.ts";
 import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
@@ -60,8 +60,9 @@ export const legacyPgDeltaEngineLayer = Layer.unwrap(
     const path = yield* Path.Path;
     const cliConfig = yield* LegacyCliConfig;
     const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+    const shellFlag = yield* Config.option(Config.string(LEGACY_PG_DELTA_NEXT_FLAG_NAME));
     const raw = legacyPgDeltaImplementationFlag(
-      process.env[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
+      Option.getOrUndefined(shellFlag),
       projectEnv[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
     );
     return legacyPgDeltaEngineSelectorLayer(raw, {

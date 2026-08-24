@@ -132,9 +132,7 @@ describe("platformApiLayer", () => {
     );
 
     return Effect.gen(function* () {
-      const exit = yield* Effect.gen(function* () {
-        return yield* PlatformApi;
-      }).pipe(Effect.provide(layer), Effect.exit);
+      const exit = yield* PlatformApi.pipe(Effect.provide(layer), Effect.exit);
       expect(exit._tag).toBe("Failure");
       if (exit._tag === "Failure") {
         expect(String(exit.cause)).toContain("PlatformAuthRequiredError");
@@ -236,20 +234,22 @@ describe("platformApiLayer", () => {
       ),
     );
 
+    const testLayer = Layer.mergeAll(
+      layer,
+      runtimeLayer,
+      analytics.layer,
+      mockOutput({ format: "text" }).layer,
+      Stdio.layerTest({
+        args: Effect.succeed(["branches", "list"]),
+      }),
+    );
+
     return Effect.gen(function* () {
       const api = yield* PlatformApi;
       yield* api.v1.listAllBranches({ ref: "abcdefghijklmnopqrst" });
     }).pipe(
       withCommandInstrumentation(),
-      Effect.provide(layer),
-      Effect.provide(runtimeLayer),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["branches", "list"]),
-        }),
-      ),
+      Effect.provide(testLayer),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(seenRunIds).toEqual(["run-analytics"]);

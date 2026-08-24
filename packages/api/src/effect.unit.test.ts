@@ -93,10 +93,10 @@ describe("SSO provider contracts", () => {
 
   test("decodes SSO provider responses without nested SAML and domain IDs", () => {
     expect(() =>
-      Schema.decodeUnknownSync(V1ListAllSsoProviderOutput)({ items: [SPARSE_PROVIDER] }),
+      Schema.decodeSync(V1ListAllSsoProviderOutput)({ items: [SPARSE_PROVIDER] }),
     ).not.toThrow();
     for (const schema of SINGLE_PROVIDER_SCHEMAS) {
-      expect(() => Schema.decodeUnknownSync(schema)(SPARSE_PROVIDER)).not.toThrow();
+      expect(() => Schema.decodeSync(schema)(SPARSE_PROVIDER)).not.toThrow();
     }
   });
 
@@ -109,7 +109,7 @@ describe("SSO provider contracts", () => {
 
     // Go's structs have no such fields, so `encoding/json` never echoes them.
     for (const schema of SINGLE_PROVIDER_SCHEMAS) {
-      const decoded = Schema.decodeUnknownSync(schema)(withLegacyIds);
+      const decoded = Schema.decodeSync(schema)(withLegacyIds);
       expect(decoded.saml).not.toHaveProperty("id");
       expect(decoded.domains?.[0]).not.toHaveProperty("id");
     }
@@ -117,7 +117,7 @@ describe("SSO provider contracts", () => {
 
   test("accepts object-valued SSO attribute mapping defaults", () => {
     expect(() =>
-      Schema.decodeUnknownSync(V1CreateASsoProviderInput)({
+      Schema.decodeSync(V1CreateASsoProviderInput)({
         ref: "abcdefghijklmnopqrst",
         type: "saml",
         attribute_mapping: {
@@ -133,7 +133,7 @@ describe("SSO provider contracts", () => {
 describe("database OpenAPI response contract", () => {
   test("accepts a normal non-empty OpenAPI document", () => {
     expect(() =>
-      Schema.decodeUnknownSync(V1GetDatabaseOpenapiOutput)({
+      Schema.decodeSync(V1GetDatabaseOpenapiOutput)({
         openapi: "3.0.0",
         info: { title: "Example", version: "1.0.0" },
         paths: {
@@ -149,230 +149,45 @@ describe("database OpenAPI response contract", () => {
 });
 
 describe("makeApiClient", () => {
-  test("allows raw operations to override generated request headers", async () => {
-    let accept: string | undefined;
+  test("allows raw operations to override generated request headers", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        let accept: string | undefined;
 
-    const client = await Effect.runPromise(
-      makeApiClient(config).pipe(
-        Effect.provide(
-          httpClientLayer((request) => {
-            accept = request.headers.accept;
-            return Effect.succeed(jsonResponse(request, 200, {}));
-          }),
-        ),
-      ),
-    );
-
-    await Effect.runPromise(
-      client.executeRaw(
-        operationDefinitions.v1GetAFunctionBody,
-        {
-          ref: "abcdefghijklmnopqrst",
-          function_slug: "hello-world",
-        },
-        { Accept: "multipart/form-data" },
-      ),
-    );
-
-    expect(accept).toBe("multipart/form-data");
-  });
-
-  test("uses the default API URL when baseUrl is omitted", async () => {
-    const seenRequests: Array<{ method: string; url: string }> = [];
-
-    const client = await Effect.runPromise(
-      makeApiClient({ accessToken: "test-token" }).pipe(
-        Effect.provide(
-          httpClientLayer((request) => {
-            seenRequests.push({
-              method: request.method,
-              url: request.url,
-            });
-            return Effect.succeed(
-              jsonResponse(request, 200, {
-                id: "project-id",
-                ref: "abcdefghijklmnopqrst",
-                organization_id: "org-id",
-                organization_slug: "my-org",
-                name: "project-name",
-                region: "us-east-1",
-                created_at: "2026-03-13T12:00:00.000Z",
-                status: "ACTIVE_HEALTHY",
-                database: {
-                  host: "db.supabase.internal",
-                  version: "17.0.1",
-                  postgres_engine: "17",
-                  release_channel: "ga",
-                },
-              }),
-            );
-          }),
-        ),
-      ),
-    );
-
-    await Effect.runPromise(
-      client.v1.getProject({
-        ref: "abcdefghijklmnopqrst",
-      }),
-    );
-
-    expect(seenRequests).toEqual([
-      {
-        method: "GET",
-        url: "https://api.supabase.com/v1/projects/abcdefghijklmnopqrst",
-      },
-    ]);
-  });
-
-  test("reads the access token from the environment when omitted", async () => {
-    const seenRequests: Array<{ authorization: string | undefined }> = [];
-
-    const client = await Effect.runPromise(
-      makeApiClient().pipe(
-        Effect.provide(
-          httpClientLayer((request) => {
-            seenRequests.push({
-              authorization: request.headers.authorization,
-            });
-            return Effect.succeed(
-              jsonResponse(request, 200, {
-                id: "project-id",
-                ref: "abcdefghijklmnopqrst",
-                organization_id: "org-id",
-                organization_slug: "my-org",
-                name: "project-name",
-                region: "us-east-1",
-                created_at: "2026-03-13T12:00:00.000Z",
-                status: "ACTIVE_HEALTHY",
-                database: {
-                  host: "db.supabase.internal",
-                  version: "17.0.1",
-                  postgres_engine: "17",
-                  release_channel: "ga",
-                },
-              }),
-            );
-          }),
-        ),
-        Effect.provide(
-          ConfigProvider.layer(
-            ConfigProvider.fromUnknown({
-              SUPABASE_ACCESS_TOKEN: "env-token",
+        const client = yield* makeApiClient(config).pipe(
+          Effect.provide(
+            httpClientLayer((request) => {
+              accept = request.headers.accept;
+              return Effect.succeed(jsonResponse(request, 200, {}));
             }),
           ),
-        ),
-      ),
-    );
+        );
 
-    await Effect.runPromise(
-      client.v1.getProject({
-        ref: "abcdefghijklmnopqrst",
+        yield* client.executeRaw(
+          operationDefinitions.v1GetAFunctionBody,
+          {
+            ref: "abcdefghijklmnopqrst",
+            function_slug: "hello-world",
+          },
+          { Accept: "multipart/form-data" },
+        );
+
+        expect(accept).toBe("multipart/form-data");
       }),
-    );
+    ));
 
-    expect(seenRequests).toEqual([{ authorization: "Bearer env-token" }]);
-  });
+  test("uses the default API URL when baseUrl is omitted", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const seenRequests: Array<{ method: string; url: string }> = [];
 
-  test("passes configured default headers through the facade client", async () => {
-    const seenRequests: Array<{
-      command: string | undefined;
-      commandRunId: string | undefined;
-      authorization: string | undefined;
-    }> = [];
-
-    const client = await Effect.runPromise(
-      makeApiClient({
-        ...config,
-        headers: {
-          "X-Supabase-Command": "projects get",
-          "X-Supabase-Command-Run-ID": "run-456",
-        },
-      }).pipe(
-        Effect.provide(
-          httpClientLayer((request) => {
-            seenRequests.push({
-              command: request.headers["x-supabase-command"],
-              commandRunId: request.headers["x-supabase-command-run-id"],
-              authorization: request.headers.authorization,
-            });
-            return Effect.succeed(
-              jsonResponse(request, 200, {
-                id: "project-id",
-                ref: "abcdefghijklmnopqrst",
-                organization_id: "org-id",
-                organization_slug: "my-org",
-                name: "project-name",
-                region: "us-east-1",
-                created_at: "2026-03-13T12:00:00.000Z",
-                status: "ACTIVE_HEALTHY",
-                database: {
-                  host: "db.supabase.internal",
-                  version: "17.0.1",
-                  postgres_engine: "17",
-                  release_channel: "ga",
-                },
-              }),
-            );
-          }),
-        ),
-      ),
-    );
-
-    await Effect.runPromise(
-      client.v1.getProject({
-        ref: "abcdefghijklmnopqrst",
-      }),
-    );
-
-    expect(seenRequests).toEqual([
-      {
-        command: "projects get",
-        commandRunId: "run-456",
-        authorization: "Bearer test-token",
-      },
-    ]);
-  });
-
-  test("fails early when no access token is configured", async () => {
-    const exit = await Effect.runPromise(
-      makeApiClient().pipe(
-        Effect.exit,
-        Effect.provide(
-          httpClientLayer((request) =>
-            Effect.succeed(
-              jsonResponse(request, 200, {
-                ok: true,
-              }),
-            ),
-          ),
-        ),
-        Effect.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({}))),
-      ),
-    );
-
-    expect(exit._tag).toBe("Failure");
-    if (exit._tag === "Failure") {
-      expect(String(exit.cause)).toContain("Missing access token");
-    }
-  });
-
-  test("returns only versioned methods under the v1 namespace", async () => {
-    const seenRequests: Array<{ method: string; url: string }> = [];
-
-    const client = await Effect.runPromise(
-      makeApiClient(config).pipe(
-        Effect.provide(
-          httpClientLayer((request) => {
-            seenRequests.push({
-              method: request.method,
-              url: request.url,
-            });
-
-            if (
-              request.method === "POST" &&
-              request.url === "https://api.supabase.com/v1/projects"
-            ) {
+        const client = yield* makeApiClient({ accessToken: "test-token" }).pipe(
+          Effect.provide(
+            httpClientLayer((request) => {
+              seenRequests.push({
+                method: request.method,
+                url: request.url,
+              });
               return Effect.succeed(
                 jsonResponse(request, 200, {
                   id: "project-id",
@@ -383,17 +198,45 @@ describe("makeApiClient", () => {
                   region: "us-east-1",
                   created_at: "2026-03-13T12:00:00.000Z",
                   status: "ACTIVE_HEALTHY",
+                  database: {
+                    host: "db.supabase.internal",
+                    version: "17.0.1",
+                    postgres_engine: "17",
+                    release_channel: "ga",
+                  },
                 }),
               );
-            }
+            }),
+          ),
+        );
 
-            if (
-              request.method === "GET" &&
-              request.url === "https://api.supabase.com/v1/projects"
-            ) {
-              return Effect.succeed(
-                jsonResponse(request, 200, [
-                  {
+        yield* client.v1.getProject({
+          ref: "abcdefghijklmnopqrst",
+        });
+
+        expect(seenRequests).toEqual([
+          {
+            method: "GET",
+            url: "https://api.supabase.com/v1/projects/abcdefghijklmnopqrst",
+          },
+        ]);
+      }),
+    ));
+
+  test("reads the access token from the environment when omitted", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const seenRequests: Array<{ authorization: string | undefined }> = [];
+
+        const client = yield* makeApiClient().pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              httpClientLayer((request) => {
+                seenRequests.push({
+                  authorization: request.headers.authorization,
+                });
+                return Effect.succeed(
+                  jsonResponse(request, 200, {
                     id: "project-id",
                     ref: "abcdefghijklmnopqrst",
                     organization_id: "org-id",
@@ -408,185 +251,336 @@ describe("makeApiClient", () => {
                       postgres_engine: "17",
                       release_channel: "ga",
                     },
-                  },
-                ]),
-              );
-            }
-
-            return Effect.succeed(
-              jsonResponse(request, 200, {
-                id: "project-id",
-                ref: "abcdefghijklmnopqrst",
-                organization_id: "org-id",
-                organization_slug: "my-org",
-                name: "project-name",
-                region: "us-east-1",
-                created_at: "2026-03-13T12:00:00.000Z",
-                status: "ACTIVE_HEALTHY",
-                database: {
-                  host: "db.supabase.internal",
-                  version: "17.0.1",
-                  postgres_engine: "17",
-                  release_channel: "ga",
-                },
+                  }),
+                );
               }),
-            );
-          }),
-        ),
-      ),
-    );
+              ConfigProvider.layer(
+                ConfigProvider.fromUnknown({
+                  SUPABASE_ACCESS_TOKEN: "env-token",
+                }),
+              ),
+            ),
+          ),
+        );
 
-    expect("createAProject" in client).toBe(false);
-    expect("getProject" in client).toBe(false);
-    expect("listAllProjects" in client).toBe(false);
-    expect(typeof client.v1.createAProject).toBe("function");
-    expect(typeof client.v1.getProject).toBe("function");
-    expect(typeof client.v1.listAllProjects).toBe("function");
+        yield* client.v1.getProject({
+          ref: "abcdefghijklmnopqrst",
+        });
 
-    const created = await Effect.runPromise(
-      client.v1.createAProject({
-        db_pass: "hunter2",
-        name: "project-name",
-        organization_slug: "my-org",
+        expect(seenRequests).toEqual([{ authorization: "Bearer env-token" }]);
       }),
-    );
-    const project = await Effect.runPromise(
-      client.v1.getProject({
-        ref: "abcdefghijklmnopqrst",
-      }),
-    );
-    const projects = await Effect.runPromise(client.v1.listAllProjects());
+    ));
 
-    expect(created.ref).toBe("abcdefghijklmnopqrst");
-    expect(project.database.host).toBe("db.supabase.internal");
-    expect(projects).toHaveLength(1);
-    expect(seenRequests).toEqual([
-      {
-        method: "POST",
-        url: "https://api.supabase.com/v1/projects",
-      },
-      {
-        method: "GET",
-        url: "https://api.supabase.com/v1/projects/abcdefghijklmnopqrst",
-      },
-      {
-        method: "GET",
-        url: "https://api.supabase.com/v1/projects",
-      },
-    ]);
-  });
+  test("passes configured default headers through the facade client", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const seenRequests: Array<{
+          command: string | undefined;
+          commandRunId: string | undefined;
+          authorization: string | undefined;
+        }> = [];
 
-  test("addresses same-named v1 and v2 operations independently by namespace", async () => {
-    const seenRequests: Array<{ method: string; url: string }> = [];
-
-    const client = await Effect.runPromise(
-      makeApiClient(config).pipe(
-        Effect.provide(
-          httpClientLayer((request) => {
-            seenRequests.push({
-              method: request.method,
-              url: request.url,
-            });
-
-            if (request.url === "https://api.supabase.com/v1/organizations/my-org/members") {
+        const client = yield* makeApiClient({
+          ...config,
+          headers: {
+            "X-Supabase-Command": "projects get",
+            "X-Supabase-Command-Run-ID": "run-456",
+          },
+        }).pipe(
+          Effect.provide(
+            httpClientLayer((request) => {
+              seenRequests.push({
+                command: request.headers["x-supabase-command"],
+                commandRunId: request.headers["x-supabase-command-run-id"],
+                authorization: request.headers.authorization,
+              });
               return Effect.succeed(
-                jsonResponse(request, 200, [
-                  {
-                    user_id: "user-id",
-                    user_name: "user-name",
-                    role_name: "Owner",
-                    mfa_enabled: false,
-                    avatar_url: null,
+                jsonResponse(request, 200, {
+                  id: "project-id",
+                  ref: "abcdefghijklmnopqrst",
+                  organization_id: "org-id",
+                  organization_slug: "my-org",
+                  name: "project-name",
+                  region: "us-east-1",
+                  created_at: "2026-03-13T12:00:00.000Z",
+                  status: "ACTIVE_HEALTHY",
+                  database: {
+                    host: "db.supabase.internal",
+                    version: "17.0.1",
+                    postgres_engine: "17",
+                    release_channel: "ga",
                   },
-                ]),
+                }),
               );
-            }
+            }),
+          ),
+        );
 
-            return Effect.succeed(
-              jsonResponse(request, 200, {
-                data: [],
-                links: { prev: null, next: null },
-              }),
-            );
-          }),
-        ),
-      ),
-    );
+        yield* client.v1.getProject({
+          ref: "abcdefghijklmnopqrst",
+        });
 
-    expect(typeof client.v1.listOrganizationMembers).toBe("function");
-    expect(typeof client.v2.listOrganizationMembers).toBe("function");
-
-    const v1Members = await Effect.runPromise(
-      client.v1.listOrganizationMembers({ slug: "my-org" }),
-    );
-    const v2Members = await Effect.runPromise(
-      client.v2.listOrganizationMembers({ slug: "my-org" }),
-    );
-
-    expect(v1Members).toEqual([
-      {
-        user_id: "user-id",
-        user_name: "user-name",
-        role_name: "Owner",
-        mfa_enabled: false,
-        avatar_url: null,
-      },
-    ]);
-    expect(v2Members.data).toEqual([]);
-    expect(seenRequests).toEqual([
-      {
-        method: "GET",
-        url: "https://api.supabase.com/v1/organizations/my-org/members",
-      },
-      {
-        method: "GET",
-        url: "https://api.supabase.com/v2/organizations/my-org/members",
-      },
-    ]);
-  });
-
-  test("serializes generated binary methods through the effect facade", async () => {
-    let seenRequest: HttpClientRequest.HttpClientRequest | undefined;
-
-    const client = await Effect.runPromise(
-      makeApiClient(config).pipe(
-        Effect.provide(
-          httpClientLayer((request) => {
-            seenRequest = request;
-            return Effect.succeed(
-              jsonResponse(request, 201, {
-                id: "function-id",
-                slug: "demo",
-                name: "Demo Function",
-                status: "ACTIVE",
-                version: 1,
-                created_at: 1_710_000_000,
-                updated_at: 1_710_000_001,
-                verify_jwt: true,
-                entrypoint_path: "functions/demo/index.ts",
-                import_map_path: "functions/demo/deno.json",
-                ezbr_sha256: "abc123",
-              }),
-            );
-          }),
-        ),
-      ),
-    );
-
-    const body = new Blob(["console.log('blob body');"]);
-    const result = await Effect.runPromise(
-      client.v1.createAFunction({
-        ref: "abcdefghijklmnopqrst",
-        slug: "demo",
-        verify_jwt: true,
-        entrypoint_path: "functions/demo/index.ts",
-        body,
+        expect(seenRequests).toEqual([
+          {
+            command: "projects get",
+            commandRunId: "run-456",
+            authorization: "Bearer test-token",
+          },
+        ]);
       }),
-    );
+    ));
 
-    expect(result.slug).toBe("demo");
-    expect(seenRequest?.headers["content-type"]).toBe("application/vnd.denoland.eszip");
-    expect(new URL(seenRequest!.url).pathname).toBe("/v1/projects/abcdefghijklmnopqrst/functions");
-    expect(requestBodyText(seenRequest!)).toBe("console.log('blob body');");
-  });
+  test("fails early when no access token is configured", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const exit = yield* makeApiClient().pipe(
+          Effect.exit,
+          Effect.provide(
+            Layer.mergeAll(
+              httpClientLayer((request) =>
+                Effect.succeed(
+                  jsonResponse(request, 200, {
+                    ok: true,
+                  }),
+                ),
+              ),
+              ConfigProvider.layer(ConfigProvider.fromUnknown({})),
+            ),
+          ),
+        );
+
+        expect(exit._tag).toBe("Failure");
+        if (exit._tag === "Failure") {
+          expect(String(exit.cause)).toContain("Missing access token");
+        }
+      }),
+    ));
+
+  test("returns only versioned methods under the v1 namespace", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const seenRequests: Array<{ method: string; url: string }> = [];
+
+        const client = yield* makeApiClient(config).pipe(
+          Effect.provide(
+            httpClientLayer((request) => {
+              seenRequests.push({
+                method: request.method,
+                url: request.url,
+              });
+
+              if (
+                request.method === "POST" &&
+                request.url === "https://api.supabase.com/v1/projects"
+              ) {
+                return Effect.succeed(
+                  jsonResponse(request, 200, {
+                    id: "project-id",
+                    ref: "abcdefghijklmnopqrst",
+                    organization_id: "org-id",
+                    organization_slug: "my-org",
+                    name: "project-name",
+                    region: "us-east-1",
+                    created_at: "2026-03-13T12:00:00.000Z",
+                    status: "ACTIVE_HEALTHY",
+                  }),
+                );
+              }
+
+              if (
+                request.method === "GET" &&
+                request.url === "https://api.supabase.com/v1/projects"
+              ) {
+                return Effect.succeed(
+                  jsonResponse(request, 200, [
+                    {
+                      id: "project-id",
+                      ref: "abcdefghijklmnopqrst",
+                      organization_id: "org-id",
+                      organization_slug: "my-org",
+                      name: "project-name",
+                      region: "us-east-1",
+                      created_at: "2026-03-13T12:00:00.000Z",
+                      status: "ACTIVE_HEALTHY",
+                      database: {
+                        host: "db.supabase.internal",
+                        version: "17.0.1",
+                        postgres_engine: "17",
+                        release_channel: "ga",
+                      },
+                    },
+                  ]),
+                );
+              }
+
+              return Effect.succeed(
+                jsonResponse(request, 200, {
+                  id: "project-id",
+                  ref: "abcdefghijklmnopqrst",
+                  organization_id: "org-id",
+                  organization_slug: "my-org",
+                  name: "project-name",
+                  region: "us-east-1",
+                  created_at: "2026-03-13T12:00:00.000Z",
+                  status: "ACTIVE_HEALTHY",
+                  database: {
+                    host: "db.supabase.internal",
+                    version: "17.0.1",
+                    postgres_engine: "17",
+                    release_channel: "ga",
+                  },
+                }),
+              );
+            }),
+          ),
+        );
+
+        expect("createAProject" in client).toBe(false);
+        expect("getProject" in client).toBe(false);
+        expect("listAllProjects" in client).toBe(false);
+        expect(typeof client.v1.createAProject).toBe("function");
+        expect(typeof client.v1.getProject).toBe("function");
+        expect(typeof client.v1.listAllProjects).toBe("function");
+
+        const created = yield* client.v1.createAProject({
+          db_pass: "hunter2",
+          name: "project-name",
+          organization_slug: "my-org",
+        });
+        const project = yield* client.v1.getProject({
+          ref: "abcdefghijklmnopqrst",
+        });
+        const projects = yield* client.v1.listAllProjects();
+
+        expect(created.ref).toBe("abcdefghijklmnopqrst");
+        expect(project.database.host).toBe("db.supabase.internal");
+        expect(projects).toHaveLength(1);
+        expect(seenRequests).toEqual([
+          {
+            method: "POST",
+            url: "https://api.supabase.com/v1/projects",
+          },
+          {
+            method: "GET",
+            url: "https://api.supabase.com/v1/projects/abcdefghijklmnopqrst",
+          },
+          {
+            method: "GET",
+            url: "https://api.supabase.com/v1/projects",
+          },
+        ]);
+      }),
+    ));
+
+  test("addresses same-named v1 and v2 operations independently by namespace", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const seenRequests: Array<{ method: string; url: string }> = [];
+
+        const client = yield* makeApiClient(config).pipe(
+          Effect.provide(
+            httpClientLayer((request) => {
+              seenRequests.push({
+                method: request.method,
+                url: request.url,
+              });
+
+              if (request.url === "https://api.supabase.com/v1/organizations/my-org/members") {
+                return Effect.succeed(
+                  jsonResponse(request, 200, [
+                    {
+                      user_id: "user-id",
+                      user_name: "user-name",
+                      role_name: "Owner",
+                      mfa_enabled: false,
+                      avatar_url: null,
+                    },
+                  ]),
+                );
+              }
+
+              return Effect.succeed(
+                jsonResponse(request, 200, {
+                  data: [],
+                  links: { prev: null, next: null },
+                }),
+              );
+            }),
+          ),
+        );
+
+        expect(typeof client.v1.listOrganizationMembers).toBe("function");
+        expect(typeof client.v2.listOrganizationMembers).toBe("function");
+
+        const v1Members = yield* client.v1.listOrganizationMembers({ slug: "my-org" });
+        const v2Members = yield* client.v2.listOrganizationMembers({ slug: "my-org" });
+
+        expect(v1Members).toEqual([
+          {
+            user_id: "user-id",
+            user_name: "user-name",
+            role_name: "Owner",
+            mfa_enabled: false,
+            avatar_url: null,
+          },
+        ]);
+        expect(v2Members.data).toEqual([]);
+        expect(seenRequests).toEqual([
+          {
+            method: "GET",
+            url: "https://api.supabase.com/v1/organizations/my-org/members",
+          },
+          {
+            method: "GET",
+            url: "https://api.supabase.com/v2/organizations/my-org/members",
+          },
+        ]);
+      }),
+    ));
+
+  test("serializes generated binary methods through the effect facade", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        let seenRequest: HttpClientRequest.HttpClientRequest | undefined;
+
+        const client = yield* makeApiClient(config).pipe(
+          Effect.provide(
+            httpClientLayer((request) => {
+              seenRequest = request;
+              return Effect.succeed(
+                jsonResponse(request, 201, {
+                  id: "function-id",
+                  slug: "demo",
+                  name: "Demo Function",
+                  status: "ACTIVE",
+                  version: 1,
+                  created_at: 1_710_000_000,
+                  updated_at: 1_710_000_001,
+                  verify_jwt: true,
+                  entrypoint_path: "functions/demo/index.ts",
+                  import_map_path: "functions/demo/deno.json",
+                  ezbr_sha256: "abc123",
+                }),
+              );
+            }),
+          ),
+        );
+
+        const body = new Blob(["console.log('blob body');"]);
+        const result = yield* client.v1.createAFunction({
+          ref: "abcdefghijklmnopqrst",
+          slug: "demo",
+          verify_jwt: true,
+          entrypoint_path: "functions/demo/index.ts",
+          body,
+        });
+
+        expect(result.slug).toBe("demo");
+        expect(seenRequest?.headers["content-type"]).toBe("application/vnd.denoland.eszip");
+        expect(new URL(seenRequest!.url).pathname).toBe(
+          "/v1/projects/abcdefghijklmnopqrst/functions",
+        );
+        expect(requestBodyText(seenRequest!)).toBe("console.log('blob body');");
+      }),
+    ));
 });

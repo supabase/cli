@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Option } from "effect";
+import * as Formatter from "effect/Formatter";
 
 import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -76,7 +77,7 @@ describe("legacy sso show integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySsoInvalidUuidError");
         expect(dump).toContain('identity provider ID \\"not-a-uuid\\" is not a UUID');
       }
@@ -109,7 +110,7 @@ describe("legacy sso show integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySsoShowNotFoundError");
         expect(dump).toContain("An identity provider with ID");
         expect(dump).toContain("could not be found");
@@ -129,7 +130,7 @@ describe("legacy sso show integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySsoShowUnexpectedStatusError");
         expect(dump).toContain("Unexpected error fetching identity provider");
       }
@@ -148,7 +149,7 @@ describe("legacy sso show integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoShowNetworkError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacySsoShowNetworkError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -165,7 +166,7 @@ describe("legacy sso show integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySsoShowEnvNotSupportedError");
         expect(dump).toContain("--output env flag is not supported");
       }

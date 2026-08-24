@@ -1,9 +1,31 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-import { afterEach, describe, expect, test } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, FileSystem, Path } from "effect";
+import type * as PlatformError from "effect/PlatformError";
+import { describe, expect, test } from "vitest";
 import { runSupabase } from "../../../tests/helpers/cli.ts";
+
+const run = (args: string[], options?: Parameters<typeof runSupabase>[1]) =>
+  Effect.promise(() => runSupabase(args, options));
+
+const withUpgradeFixture = (
+  program: (workdir: string) => Effect.Effect<void, never, never>,
+): Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem | Path.Path> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workdir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-upgrade-notice-e2e-" });
+      const supabaseDir = path.join(workdir, "supabase");
+      const tempDir = path.join(supabaseDir, ".temp");
+      yield* fs.makeDirectory(tempDir, { recursive: true });
+      yield* fs.writeFileString(path.join(supabaseDir, "config.toml"), 'project_id = "demo"\n');
+      yield* fs.writeFileString(path.join(tempDir, "cli-latest"), "v99.99.99");
+      yield* program(workdir);
+    }),
+  );
+
+const runWithServices = <A, E>(program: Effect.Effect<A, E, BunServices.BunServices>) =>
+  Effect.runPromise(program.pipe(Effect.provide(BunServices.layer)));
 
 /**
  * CLI-1906: the real bug here is the actual OS process exit code —
@@ -14,17 +36,23 @@ import { runSupabase } from "../../../tests/helpers/cli.ts";
  * case that observes the real subprocess boundary.
  */
 describe("legacy CLI process exit codes (CLI-1906)", () => {
-  test("bare `branches` (no subcommand, no --help) exits 0", async () => {
-    const { exitCode } = await runSupabase(["branches"], { entrypoint: "legacy" });
-    expect(exitCode).toBe(0);
-  });
+  test("bare `branches` (no subcommand, no --help) exits 0", () =>
+    runWithServices(
+      Effect.gen(function* () {
+        const { exitCode } = yield* run(["branches"], { entrypoint: "legacy" });
+        expect(exitCode).toBe(0);
+      }),
+    ));
 
-  test("a genuine parse error still exits 1", async () => {
-    const { exitCode } = await runSupabase(["branches", "--this-flag-does-not-exist"], {
-      entrypoint: "legacy",
-    });
-    expect(exitCode).toBe(1);
-  });
+  test("a genuine parse error still exits 1", () =>
+    runWithServices(
+      Effect.gen(function* () {
+        const { exitCode } = yield* run(["branches", "--this-flag-does-not-exist"], {
+          entrypoint: "legacy",
+        });
+        expect(exitCode).toBe(1);
+      }),
+    ));
 });
 
 /**
@@ -42,105 +70,104 @@ describe("legacy CLI process exit codes (CLI-1906)", () => {
  * verified directly against the built Go binary).
  */
 describe("legacy CLI required-flag/choice parse errors (CLI-1901)", () => {
-  test("an unrecognized flag: stdout stays clean, the help/usage content and the single error line land on stderr with no duplicate", async () => {
-    const { exitCode, stdout, stderr } = await runSupabase(
-      ["branches", "--this-flag-does-not-exist"],
-      { entrypoint: "legacy" },
-    );
-    expect(exitCode).toBe(1);
-    expect(stdout).toBe("");
-    // Matches Go's still-shown usage block for this error class (see the
-    // describe-level comment) — this library's help doc isn't byte-identical
-    // to cobra's shorter usage template, but it's on the right stream now.
-    expect(stderr).toContain("USAGE");
-    // The error text appears exactly once — before the fix, the library's own
-    // duplicate render put it on stderr a second time (on top of the stdout
-    // help dump this test doesn't even need to check for, since stdout is
-    // asserted empty above).
-    const occurrences = stderr.split("Unrecognized flag: --this-flag-does-not-exist").length - 1;
-    expect(occurrences).toBe(1);
-    expect(
-      stderr.trim().endsWith("Try rerunning the command with --debug to troubleshoot the error."),
-    ).toBe(true);
-  });
+  test("an unrecognized flag: stdout stays clean, the help/usage content and the single error line land on stderr with no duplicate", () =>
+    runWithServices(
+      Effect.gen(function* () {
+        const { exitCode, stdout, stderr } = yield* run(
+          ["branches", "--this-flag-does-not-exist"],
+          { entrypoint: "legacy" },
+        );
+        expect(exitCode).toBe(1);
+        expect(stdout).toBe("");
+        // Matches Go's still-shown usage block for this error class (see the
+        // describe-level comment) — this library's help doc isn't byte-identical
+        // to cobra's shorter usage template, but it's on the right stream now.
+        expect(stderr).toContain("USAGE");
+        // The error text appears exactly once — before the fix, the library's own
+        // duplicate render put it on stderr a second time (on top of the stdout
+        // help dump this test doesn't even need to check for, since stdout is
+        // asserted empty above).
+        const occurrences =
+          stderr.split("Unrecognized flag: --this-flag-does-not-exist").length - 1;
+        expect(occurrences).toBe(1);
+        expect(
+          stderr
+            .trim()
+            .endsWith("Try rerunning the command with --debug to troubleshoot the error."),
+        ).toBe(true);
+      }),
+    ));
 });
 
 /** Real-subprocess proof of the `afterSuccess` wiring; everything else lives in `legacy-upgrade-notice.unit.test.ts`. */
 describe("legacy CLI upgrade notice (#5853)", () => {
-  let workdir: string;
+  test("prints the cached notice on success and honors SUPABASE_NO_UPDATE_NOTIFIER", () =>
+    runWithServices(
+      withUpgradeFixture((workdir) =>
+        Effect.gen(function* () {
+          const enabled = yield* run(["branches"], {
+            entrypoint: "legacy",
+            cwd: workdir,
+            env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" },
+          });
+          expect(enabled.exitCode).toBe(0);
+          expect(enabled.stderr).toContain("A new version of Supabase CLI is available: v99.99.99");
 
-  afterEach(() => {
-    rmSync(workdir, { recursive: true, force: true });
-  });
+          const suppressed = yield* run(["branches"], { entrypoint: "legacy", cwd: workdir });
+          expect(suppressed.exitCode).toBe(0);
+          expect(suppressed.stderr).not.toContain("A new version of Supabase CLI is available");
 
-  test("prints the cached notice on success and honors SUPABASE_NO_UPDATE_NOTIFIER", async () => {
-    workdir = mkdtempSync(join(tmpdir(), "supabase-upgrade-notice-e2e-"));
-    mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), 'project_id = "demo"\n');
-    writeFileSync(join(workdir, "supabase", ".temp", "cli-latest"), "v99.99.99");
+          const helped = yield* run(["branches", "--help"], {
+            entrypoint: "legacy",
+            cwd: workdir,
+            env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" },
+          });
+          expect(helped.exitCode).toBe(0);
+          expect(helped.stderr).toContain("A new version of Supabase CLI is available: v99.99.99");
+        }),
+      ),
+    ));
 
-    const enabled = await runSupabase(["branches"], {
-      entrypoint: "legacy",
-      cwd: workdir,
-      env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" },
-    });
-    expect(enabled.exitCode).toBe(0);
-    expect(enabled.stderr).toContain("A new version of Supabase CLI is available: v99.99.99");
+  test("a failing command exits non-zero and prints no notice", () =>
+    runWithServices(
+      withUpgradeFixture((workdir) =>
+        Effect.gen(function* () {
+          const { exitCode, stderr } = yield* run(["branches", "--nope"], {
+            entrypoint: "legacy",
+            cwd: workdir,
+            env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" },
+          });
+          expect(exitCode).toBe(1);
+          expect(stderr).not.toContain("A new version of Supabase CLI is available");
+        }),
+      ),
+    ));
 
-    const suppressed = await runSupabase(["branches"], { entrypoint: "legacy", cwd: workdir });
-    expect(suppressed.exitCode).toBe(0);
-    expect(suppressed.stderr).not.toContain("A new version of Supabase CLI is available");
+  test("keeps the Go upgrade notice before a native command suggestion", () =>
+    runWithServices(
+      withUpgradeFixture((workdir) =>
+        Effect.gen(function* () {
+          const enabled = yield* run(["gen", "signing-key"], {
+            entrypoint: "legacy",
+            cwd: workdir,
+            env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" },
+          });
+          expect(enabled.exitCode).toBe(0);
+          const noticeIndex = enabled.stderr.indexOf("A new version of Supabase CLI is available");
+          const suggestionIndex = enabled.stderr.indexOf(
+            "To enable JWT signing keys in your local project:",
+          );
+          expect(noticeIndex).toBeGreaterThanOrEqual(0);
+          expect(suggestionIndex).toBeGreaterThan(noticeIndex);
 
-    // `--help` exits through the plain-success branch, bare `branches` through
-    // the clean-ShowHelp one — both handledProgram call sites must fire.
-    const helped = await runSupabase(["branches", "--help"], {
-      entrypoint: "legacy",
-      cwd: workdir,
-      env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" },
-    });
-    expect(helped.exitCode).toBe(0);
-    expect(helped.stderr).toContain("A new version of Supabase CLI is available: v99.99.99");
-  });
-
-  test("a failing command exits non-zero and prints no notice", async () => {
-    workdir = mkdtempSync(join(tmpdir(), "supabase-upgrade-notice-e2e-"));
-    mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), 'project_id = "demo"\n');
-    writeFileSync(join(workdir, "supabase", ".temp", "cli-latest"), "v99.99.99");
-
-    const { exitCode, stderr } = await runSupabase(["branches", "--nope"], {
-      entrypoint: "legacy",
-      cwd: workdir,
-      env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" },
-    });
-    expect(exitCode).toBe(1);
-    expect(stderr).not.toContain("A new version of Supabase CLI is available");
-  });
-
-  test("keeps the Go upgrade notice before a native command suggestion", async () => {
-    workdir = mkdtempSync(join(tmpdir(), "supabase-upgrade-notice-e2e-"));
-    mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), 'project_id = "demo"\n');
-    writeFileSync(join(workdir, "supabase", ".temp", "cli-latest"), "v99.99.99");
-
-    const { exitCode, stderr } = await runSupabase(["gen", "signing-key"], {
-      entrypoint: "legacy",
-      cwd: workdir,
-      env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" },
-    });
-
-    expect(exitCode).toBe(0);
-    const noticeIndex = stderr.indexOf("A new version of Supabase CLI is available");
-    const suggestionIndex = stderr.indexOf("To enable JWT signing keys in your local project:");
-    expect(noticeIndex).toBeGreaterThanOrEqual(0);
-    expect(suggestionIndex).toBeGreaterThan(noticeIndex);
-
-    const suppressed = await runSupabase(["gen", "signing-key"], {
-      entrypoint: "legacy",
-      cwd: workdir,
-    });
-    expect(suppressed.exitCode).toBe(0);
-    expect(suppressed.stderr).not.toContain("A new version of Supabase CLI is available");
-    expect(suppressed.stderr).toContain("To enable JWT signing keys in your local project:");
-  });
+          const suppressed = yield* run(["gen", "signing-key"], {
+            entrypoint: "legacy",
+            cwd: workdir,
+          });
+          expect(suppressed.exitCode).toBe(0);
+          expect(suppressed.stderr).not.toContain("A new version of Supabase CLI is available");
+          expect(suppressed.stderr).toContain("To enable JWT signing keys in your local project:");
+        }),
+      ),
+    ));
 });

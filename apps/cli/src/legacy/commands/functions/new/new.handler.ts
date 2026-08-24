@@ -179,12 +179,10 @@ export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
   yield* Effect.gen(function* () {
     const invalidSlugMessage = validateFunctionSlugMessage(flags.functionName);
     if (invalidSlugMessage !== undefined) {
-      return yield* Effect.fail(
-        new LegacyFunctionsNewInvalidSlugError({
-          message: invalidSlugMessage,
-          detail: invalidFunctionSlugDetail,
-        }),
-      );
+      return yield* new LegacyFunctionsNewInvalidSlugError({
+        message: invalidSlugMessage,
+        detail: invalidFunctionSlugDetail,
+      });
     }
 
     const existingSlugs = yield* listExistingFunctionSlugs(cliConfig.workdir);
@@ -210,13 +208,11 @@ export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
       .exists(entrypointPath)
       .pipe(Effect.orElseSucceed(() => false));
     if (entrypointExists) {
-      return yield* Effect.fail(
-        new LegacyFunctionsNewFileExistsError({
-          path: relEntrypoint,
-          message: "failed to create entrypoint: file already exists",
-          suggestion: `Remove ${relEntrypoint} or use a different Function name.`,
-        }),
-      );
+      return yield* new LegacyFunctionsNewFileExistsError({
+        path: relEntrypoint,
+        message: "failed to create entrypoint: file already exists",
+        suggestion: `Remove ${relEntrypoint} or use a different Function name.`,
+      });
     }
 
     const templateInputs = yield* resolveTemplateInputs(cliConfig.workdir, flags.functionName);

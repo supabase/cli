@@ -1,8 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option, Redacted } from "effect";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Schema } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import {
@@ -31,6 +29,9 @@ import { legacyLogin } from "./login.handler.ts";
 import type { LegacyLoginFlags } from "./login.command.ts";
 
 const tempRoot = useLegacyTempWorkdir("supabase-login-int-");
+const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const path = Effect.runSync(Path.Path.pipe(Effect.provide(BunServices.layer)));
+const join = (first: string, ...rest: ReadonlyArray<string>) => path.join(first, ...rest);
 
 const noopHttpClient = Layer.succeed(
   HttpClient.HttpClient,
@@ -55,6 +56,7 @@ interface SetupOpts {
   readonly homeDir?: string;
   /** Raw argv for explicit `--profile` detection. */
   readonly argv?: ReadonlyArray<string>;
+  readonly env?: Record<string, string>;
 }
 
 function flags(overrides: Partial<LegacyLoginFlags> = {}): LegacyLoginFlags {
@@ -104,6 +106,7 @@ function setupLegacyLogin(opts: SetupOpts = {}) {
       ...(opts.homeDir !== undefined
         ? { runtimeInfo: mockRuntimeInfo({ homeDir: opts.homeDir }) }
         : {}),
+      env: opts.env,
     }),
     credentials.layer,
     crypto.layer,
@@ -152,7 +155,7 @@ describe("legacy login integration", () => {
       const exit = yield* Effect.exit(legacyLogin(flags({ token: Option.some("not-a-token") })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = encodeJson(exit.cause);
         expect(json).toContain("LegacyLoginSaveTokenError");
         expect(json).toContain("cannot save provided token:");
       }
@@ -165,7 +168,7 @@ describe("legacy login integration", () => {
       const exit = yield* Effect.exit(legacyLogin(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = encodeJson(exit.cause);
         expect(json).toContain("LegacyLoginMissingTokenError");
         expect(json).toContain("Cannot use automatic login flow inside non-TTY environments");
       }
@@ -222,7 +225,7 @@ describe("legacy login integration", () => {
       const exit = yield* Effect.exit(legacyLogin(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyLoginFailedError");
+        expect(encodeJson(exit.cause)).toContain("LegacyLoginFailedError");
       }
       // The 3rd (final) failure gives up without printing a Retry notice.
       expect(out.stderrText).toContain("Retry (2/2): ");
@@ -236,7 +239,7 @@ describe("legacy login integration", () => {
       const exit = yield* Effect.exit(legacyLogin(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = encodeJson(exit.cause);
         expect(json).toContain("LegacyLoginDecryptError");
         expect(json).toContain("cannot decrypt access token");
       }
@@ -293,7 +296,7 @@ describe("legacy login integration", () => {
       const exit = yield* Effect.exit(legacyLogin(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyLoginCryptoError");
+        expect(encodeJson(exit.cause)).toContain("LegacyLoginCryptoError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -314,21 +317,11 @@ describe("legacy login integration", () => {
   it.live(
     "prints the Claude Code plugin hint to stderr when in Claude Code with a TTY stdout",
     () => {
-      const prev = process.env["CLAUDECODE"];
-      process.env["CLAUDECODE"] = "1";
-      const { layer, out } = setupLegacyLogin({ stdoutIsTty: true });
+      const { layer, out } = setupLegacyLogin({ stdoutIsTty: true, env: { CLAUDECODE: "1" } });
       return Effect.gen(function* () {
         yield* legacyLogin(flags({ token: Option.some(LEGACY_VALID_TOKEN) }));
         expect(out.stderrText).toContain("claude-code-hint");
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (prev === undefined) delete process.env["CLAUDECODE"];
-            else process.env["CLAUDECODE"] = prev;
-          }),
-        ),
-      );
+      }).pipe(Effect.provide(layer));
     },
   );
 
@@ -340,45 +333,41 @@ describe("legacy login integration", () => {
     return Effect.gen(function* () {
       yield* legacyLogin(flags({ token: Option.some(LEGACY_VALID_TOKEN) }));
       const profilePath = join(tempRoot.current, ".supabase", "profile");
-      expect(existsSync(profilePath)).toBe(true);
-      expect(readFileSync(profilePath, "utf8")).toBe("supabase-staging");
+      const fs = yield* FileSystem.FileSystem;
+      expect(yield* fs.exists(profilePath)).toBe(true);
+      expect(yield* fs.readFileString(profilePath)).toBe("supabase-staging");
     }).pipe(Effect.provide(layer));
   });
 
   // The shadowed env value must never be re-persisted (Go: pflag `Changed`).
   it.live("explicit --profile supabase persists 'supabase', shadowing SUPABASE_PROFILE", () => {
-    const prev = process.env["SUPABASE_PROFILE"];
-    process.env["SUPABASE_PROFILE"] = "rogue-profile";
     const { layer } = setupLegacyLogin({
       argv: ["login", "--profile", "supabase", "--token", LEGACY_VALID_TOKEN],
       homeDir: tempRoot.current,
+      env: { SUPABASE_PROFILE: "rogue-profile" },
     });
     return Effect.gen(function* () {
       yield* legacyLogin(flags({ token: Option.some(LEGACY_VALID_TOKEN) }));
       const profilePath = join(tempRoot.current, ".supabase", "profile");
-      expect(readFileSync(profilePath, "utf8")).toBe("supabase");
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_PROFILE"];
-          else process.env["SUPABASE_PROFILE"] = prev;
-        }),
-      ),
-    );
+      const fs = yield* FileSystem.FileSystem;
+      expect(yield* fs.readFileString(profilePath)).toBe("supabase");
+    }).pipe(Effect.provide(layer));
   });
 
   // Permanently heals a file persisted by an older lenient version (#6091).
   it.live("explicit --profile supabase heals a stale persisted profile file", () => {
-    mkdirSync(join(tempRoot.current, ".supabase"), { recursive: true });
-    writeFileSync(join(tempRoot.current, ".supabase", "profile"), "resms");
     const { layer } = setupLegacyLogin({
       argv: ["login", "--profile=supabase"],
       homeDir: tempRoot.current,
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(join(tempRoot.current, ".supabase"), { recursive: true });
+      yield* fs.writeFileString(join(tempRoot.current, ".supabase", "profile"), "resms");
       yield* legacyLogin(flags({ token: Option.some(LEGACY_VALID_TOKEN) }));
-      expect(readFileSync(join(tempRoot.current, ".supabase", "profile"), "utf8")).toBe("supabase");
+      expect(yield* fs.readFileString(join(tempRoot.current, ".supabase", "profile"))).toBe(
+        "supabase",
+      );
     }).pipe(Effect.provide(layer));
   });
 
@@ -388,7 +377,7 @@ describe("legacy login integration", () => {
       const exit = yield* Effect.exit(legacyLogin(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("NonInteractiveError");
+        expect(encodeJson(exit.cause)).toContain("NonInteractiveError");
       }
     }).pipe(Effect.provide(layer));
   });

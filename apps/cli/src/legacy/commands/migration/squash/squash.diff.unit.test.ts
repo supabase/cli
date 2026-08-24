@@ -1,6 +1,6 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "vitest";
+import { Effect, FileSystem, Path } from "effect";
 
 import {
   LEGACY_SQUASH_SEPARATOR_COMMENT,
@@ -14,16 +14,25 @@ import {
  * corpus of 90+109+19 lines is exactly the kind of content a manual transcription
  * would silently corrupt (trailing whitespace, blank lines, quoting).
  */
-const testdataDir = fileURLToPath(new URL("./testdata/", import.meta.url));
-const readGoFixture = (name: string) => readFileSync(`${testdataDir}${name}`, "utf8");
+const readGoFixtures = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  const testdataDir = yield* path.fromFileUrl(new URL("./testdata/", import.meta.url));
+  return yield* Effect.all({
+    before: fs.readFileString(path.join(testdataDir, "before.sql")),
+    after: fs.readFileString(path.join(testdataDir, "after.sql")),
+    expected: fs.readFileString(path.join(testdataDir, "diff.sql")),
+  });
+});
 
 describe("legacySquashLineByLineDiff", () => {
-  it("diffs real pg_dump output into Go's exact diff.sql bytes", () => {
-    const before = readGoFixture("before.sql");
-    const after = readGoFixture("after.sql");
-    const expected = readGoFixture("diff.sql");
-    expect(legacySquashLineByLineDiff(before, after)).toBe(expected);
-  });
+  it("diffs real pg_dump output into Go's exact diff.sql bytes", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const { before, after, expected } = yield* readGoFixtures;
+        expect(legacySquashLineByLineDiff(before, after)).toBe(expected);
+      }).pipe(Effect.provide(BunServices.layer)),
+    ));
 
   it("keeps only after-only lines when before is shorter", () => {
     const before = "select 1;";

@@ -1,14 +1,24 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { describe, expect, it } from "@effect/vitest";
+import { BunServices } from "@effect/platform-bun";
 import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
-import { Effect, Exit, Layer, Option, Stdio } from "effect";
+import {
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Path,
+  Schema,
+  Stdio,
+} from "effect";
+import * as Formatter from "effect/Formatter";
 import * as HttpClient from "effect/unstable/http/HttpClient";
+import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequestModule from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
-import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
+import { commandRuntimeLayer as rawCommandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { CurrentAnalyticsContext } from "../../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
@@ -23,9 +33,13 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../tests/helpers/legacy-mocks.ts";
+
 import { legacyLink } from "./link.handler.ts";
 import { legacyLinkHandler } from "./link.command.ts";
 import type { LegacyLinkFlags } from "./link.command.ts";
+
+const commandRuntimeLayer = (commandPath: ReadonlyArray<string>) =>
+  rawCommandRuntimeLayer(commandPath).pipe(Layer.provide(BunServices.layer));
 
 const HEALTHY_PROJECT = {
   id: LEGACY_VALID_REF,
@@ -149,13 +163,34 @@ function manyBranches(count: number): LegacyLinkBranches {
   }));
 }
 
+const LinkedProjectCacheSchema = Schema.Struct({
+  ref: Schema.String,
+  name: Schema.optional(Schema.String),
+  organization_id: Schema.optional(Schema.String),
+  organization_slug: Schema.optional(Schema.String),
+});
+const LinkedProjectCacheCodec = Schema.fromJsonString(LinkedProjectCacheSchema);
+const encodeLinkedProjectCache = Schema.encodeSync(LinkedProjectCacheCodec);
+const decodeLinkedProjectCache = Schema.decodeSync(LinkedProjectCacheCodec);
+const LinkedProjectRefSchema = Schema.Struct({ ref: Schema.String });
+const encodeLinkedProjectRef = Schema.encodeSync(Schema.fromJsonString(LinkedProjectRefSchema));
+const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const TenantRestResponseSchema = Schema.Struct({
+  info: Schema.Struct({ version: Schema.String }),
+});
+const encodeTenantRestResponse = Schema.encodeSync(Schema.fromJsonString(TenantRestResponseSchema));
+const TenantVersionResponseSchema = Schema.Struct({ version: Schema.String });
+const encodeTenantVersionResponse = Schema.encodeSync(
+  Schema.fromJsonString(TenantVersionResponseSchema),
+);
+
 // ---------------------------------------------------------------------------
 // Setup
 // ---------------------------------------------------------------------------
 
 interface V1StubResult {
   readonly ok?: unknown;
-  readonly fail?: unknown;
+  readonly fail?: HttpClientError.HttpClientError;
 }
 
 interface SetupOpts {
@@ -174,10 +209,17 @@ interface SetupOpts {
 }
 
 const tempRoot = useLegacyTempWorkdir("supabase-link-int-");
+const fixturePath = ManagedRuntime.make(BunServices.layer).runSync(Path.Path);
+const pendingWrites = new Map<
+  string,
+  Array<{ readonly path: string; readonly contents: string }>
+>();
 
 function stub(result: V1StubResult | undefined, defaultOk: unknown) {
-  if (result?.fail !== undefined) return () => Effect.fail(result.fail);
-  return () => Effect.succeed(result?.ok ?? defaultOk);
+  const failure = result?.fail;
+  if (failure !== undefined) return () => Effect.fail(failure);
+  const value = result?.ok ?? defaultOk;
+  return () => Effect.succeed(value);
 }
 
 function tenantHttpLayer(opts: SetupOpts): Layer.Layer<HttpClient.HttpClient> {
@@ -186,25 +228,31 @@ function tenantHttpLayer(opts: SetupOpts): Layer.Layer<HttpClient.HttpClient> {
     HttpClient.make((request) =>
       Effect.gen(function* () {
         if (opts.tenant === "fail") {
-          return yield* Effect.fail(legacyTransportFailure(request));
+          return yield* legacyTransportFailure(request);
         }
         const url = request.url;
         if (url.includes("/rest/v1/")) {
           return HttpClientResponse.fromWeb(
             request,
-            new Response(JSON.stringify({ info: { version: opts.restVersion ?? "11.1.0" } }), {
-              status: 200,
-              headers: { "content-type": "application/json" },
-            }),
+            new Response(
+              encodeTenantRestResponse({ info: { version: opts.restVersion ?? "11.1.0" } }),
+              {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              },
+            ),
           );
         }
         if (url.includes("/auth/v1/health")) {
           return HttpClientResponse.fromWeb(
             request,
-            new Response(JSON.stringify({ version: opts.gotrueVersion ?? "v2.74.2" }), {
-              status: 200,
-              headers: { "content-type": "application/json" },
-            }),
+            new Response(
+              encodeTenantVersionResponse({ version: opts.gotrueVersion ?? "v2.74.2" }),
+              {
+                status: 200,
+                headers: { "content-type": "application/json" },
+              },
+            ),
           );
         }
         if (url.includes("/storage/v1/version")) {
@@ -237,14 +285,19 @@ function setup(opts: SetupOpts = {}) {
     workdir: tempRoot.current,
     projectId: opts.projectId ?? Option.none(),
   });
-  const layer = buildLegacyTestRuntime({
-    out,
-    api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer(opts) },
-    cliConfig,
-    analytics,
-    telemetry: telemetry.layer,
-    linkedProjectCache: linkedCache.layer,
-  });
+  const layer = Layer.mergeAll(
+    buildLegacyTestRuntime({
+      out,
+      api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer(opts) },
+      cliConfig,
+      analytics,
+      telemetry: telemetry.layer,
+      linkedProjectCache: linkedCache.layer,
+    }),
+    Layer.effectDiscard(
+      flushFixtureWrites(tempRoot.current).pipe(Effect.provide(BunServices.layer)),
+    ),
+  );
   return { layer, out, analytics, telemetry, linkedCache, apiMock, workdir: tempRoot.current };
 }
 
@@ -257,20 +310,39 @@ const flags = (overrides: Partial<LegacyLinkFlags> = {}): LegacyLinkFlags => ({
 });
 
 function tempFile(workdir: string, name: string): string {
-  return join(workdir, "supabase", ".temp", name);
+  return fixturePath.join(workdir, "supabase", ".temp", name);
 }
 
-function readTemp(workdir: string, name: string): string {
-  return readFileSync(tempFile(workdir, name), "utf8");
+function readTemp(workdir: string, name: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.readFileString(tempFile(workdir, name));
+  });
 }
 
-function existsTemp(workdir: string, name: string): boolean {
-  return existsSync(tempFile(workdir, name));
+function existsTemp(workdir: string, name: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.exists(tempFile(workdir, name)).pipe(Effect.orElseSucceed(() => false));
+  });
 }
 
 function writeTempContent(workdir: string, name: string, content: string): void {
-  mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
-  writeFileSync(tempFile(workdir, name), content);
+  const writes = pendingWrites.get(workdir) ?? [];
+  writes.push({ path: tempFile(workdir, name), contents: content });
+  pendingWrites.set(workdir, writes);
+}
+
+function flushFixtureWrites(workdir: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const writes = pendingWrites.get(workdir) ?? [];
+    for (const write of writes) {
+      yield* fs.makeDirectory(fixturePath.dirname(write.path), { recursive: true });
+      yield* fs.writeFileString(write.path, write.contents);
+    }
+    pendingWrites.delete(workdir);
+  });
 }
 
 // Seeds `<workdir>/supabase/.temp/project-ref` — the 3rd-priority parent
@@ -287,7 +359,7 @@ function writeLinkedProjectCacheFile(workdir: string, content: string): void {
 }
 
 function linkedProjectCacheJson(ref: string): string {
-  return JSON.stringify({
+  return encodeLinkedProjectCache({
     ref,
     name: "Parent Project",
     organization_id: "org_123",
@@ -356,14 +428,14 @@ describe("legacy link integration", () => {
       const { layer, out, workdir } = setup();
       return Effect.gen(function* () {
         yield* legacyLink(flags());
-        expect(readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
-        expect(readTemp(workdir, "postgres-version")).toBe("15.1.0.117");
-        expect(readTemp(workdir, "storage-migration")).toBe("2026-01-01-000000");
-        expect(readTemp(workdir, "rest-version")).toBe("v11.1.0");
-        expect(readTemp(workdir, "gotrue-version")).toBe("v2.74.2");
-        expect(readTemp(workdir, "storage-version")).toBe("v1.28.0");
+        expect(yield* readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
+        expect(yield* readTemp(workdir, "postgres-version")).toBe("15.1.0.117");
+        expect(yield* readTemp(workdir, "storage-migration")).toBe("2026-01-01-000000");
+        expect(yield* readTemp(workdir, "rest-version")).toBe("v11.1.0");
+        expect(yield* readTemp(workdir, "gotrue-version")).toBe("v2.74.2");
+        expect(yield* readTemp(workdir, "storage-version")).toBe("v1.28.0");
         // [YOUR-PASSWORD] stripped + transaction-mode port rewritten to 5432.
-        expect(readTemp(workdir, "pooler-url")).toBe(
+        expect(yield* readTemp(workdir, "pooler-url")).toBe(
           "postgresql://postgres.ref@pooler.example.co:5432/postgres",
         );
         expect(out.stdoutText).toContain("Finished supabase link.");
@@ -374,7 +446,7 @@ describe("legacy link integration", () => {
       const { layer, workdir } = setup();
       return Effect.gen(function* () {
         yield* legacyLink(flags());
-        const linked = JSON.parse(readTemp(workdir, "linked-project.json"));
+        const linked = decodeLinkedProjectCache(yield* readTemp(workdir, "linked-project.json"));
         expect(linked).toEqual({
           ref: LEGACY_VALID_REF,
           name: "My Project",
@@ -413,7 +485,7 @@ describe("legacy link integration", () => {
       const { layer, workdir } = setup({ projectId: Option.some(LEGACY_VALID_REF) });
       return Effect.gen(function* () {
         yield* legacyLink(flags({ projectRef: Option.none() }));
-        expect(readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
+        expect(yield* readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
       }).pipe(Effect.provide(layer));
     });
 
@@ -423,7 +495,7 @@ describe("legacy link integration", () => {
         yield* legacyLink(
           flags({ refOrBranch: Option.some(POSITIONAL_REF), projectRef: Option.none() }),
         );
-        expect(readTemp(workdir, "project-ref")).toBe(POSITIONAL_REF);
+        expect(yield* readTemp(workdir, "project-ref")).toBe(POSITIONAL_REF);
       }).pipe(Effect.provide(layer));
     });
 
@@ -433,7 +505,7 @@ describe("legacy link integration", () => {
         const exit = yield* Effect.exit(legacyLink(flags({ projectRef: Option.none() })));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Formatter.formatJson(exit.cause);
           expect(json).toContain("LegacyProjectRefRequiredError");
           expect(json).toContain(`required flag(s) \\"project-ref\\" not set`);
         }
@@ -448,7 +520,7 @@ describe("legacy link integration", () => {
           const exit = yield* Effect.exit(legacyLink(flags({ projectRef: Option.none() })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidProjectRefError");
+            expect(Formatter.formatJson(exit.cause)).toContain("LegacyInvalidProjectRefError");
           }
         }).pipe(Effect.provide(layer));
       },
@@ -460,10 +532,10 @@ describe("legacy link integration", () => {
       });
       return Effect.gen(function* () {
         yield* legacyLink(flags());
-        expect(readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
+        expect(yield* readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
         // No postgres-version / linked-project.json and no telemetry for a 404.
-        expect(existsSync(tempFile(workdir, "postgres-version"))).toBe(false);
-        expect(existsSync(tempFile(workdir, "linked-project.json"))).toBe(false);
+        expect(yield* existsTemp(workdir, "postgres-version")).toBe(false);
+        expect(yield* existsTemp(workdir, "linked-project.json")).toBe(false);
         // This is a plain ref link that happens to 404 (assumed to be a branch),
         // with NO name/UUID resolution — `branchResolution` never fired, so the
         // CLI-2167 branch-link telemetry extension doesn't fire either. Emits
@@ -482,7 +554,7 @@ describe("legacy link integration", () => {
         const exit = yield* Effect.exit(legacyLink(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Formatter.formatJson(exit.cause);
           expect(json).toContain("LegacyProjectPausedError");
           expect(json).toContain("project is paused");
           expect(json).toContain(
@@ -501,7 +573,7 @@ describe("legacy link integration", () => {
         expect(out.stderrText).toContain(
           "WARNING: Project status is COMING_UP instead of Active Healthy. Some operations might fail.",
         );
-        expect(readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
+        expect(yield* readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
       }).pipe(Effect.provide(layer));
     });
 
@@ -511,7 +583,7 @@ describe("legacy link integration", () => {
         const exit = yield* Effect.exit(legacyLink(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Formatter.formatJson(exit.cause);
           expect(json).toContain("LegacyLinkProjectStatusError");
           expect(json).toContain("Unexpected error retrieving remote project status");
         }
@@ -524,7 +596,7 @@ describe("legacy link integration", () => {
         const exit = yield* Effect.exit(legacyLink(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Formatter.formatJson(exit.cause);
           expect(json).toContain("LegacyLinkAuthTokenError");
           expect(json).toContain("Authorization failed for the access token and project ref pair");
         }
@@ -537,7 +609,7 @@ describe("legacy link integration", () => {
         const exit = yield* Effect.exit(legacyLink(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Formatter.formatJson(exit.cause);
           expect(json).toContain("LegacyLinkMissingKeyError");
           expect(json).toContain("Anon key not found.");
         }
@@ -556,7 +628,7 @@ describe("legacy link integration", () => {
       });
       return Effect.gen(function* () {
         yield* legacyLink(flags());
-        expect(readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
+        expect(yield* readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
         expect(out.stdoutText).toContain("Finished supabase link.");
       }).pipe(Effect.provide(layer));
     });
@@ -580,7 +652,7 @@ describe("legacy link integration", () => {
         const exit = yield* Effect.exit(legacyLink(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyLinkMissingKeyError");
+          expect(Formatter.formatJson(exit.cause)).toContain("LegacyLinkMissingKeyError");
         }
       }).pipe(Effect.provide(layer));
     });
@@ -594,11 +666,11 @@ describe("legacy link integration", () => {
       return Effect.gen(function* () {
         yield* legacyLink(flags());
         // Link still succeeds and writes the project-ref.
-        expect(readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
+        expect(yield* readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
         expect(out.stdoutText).toContain("Finished supabase link.");
         // The best-effort files are absent because their services errored.
-        expect(existsSync(tempFile(workdir, "storage-migration"))).toBe(false);
-        expect(existsSync(tempFile(workdir, "rest-version"))).toBe(false);
+        expect(yield* existsTemp(workdir, "storage-migration")).toBe(false);
+        expect(yield* existsTemp(workdir, "rest-version")).toBe(false);
       }).pipe(Effect.provide(layer));
     });
 
@@ -607,7 +679,7 @@ describe("legacy link integration", () => {
       writeTempContent(workdir, "pooler-url", "stale-pooler-url");
       return Effect.gen(function* () {
         yield* legacyLink(flags({ skipPooler: true }));
-        expect(existsSync(tempFile(workdir, "pooler-url"))).toBe(false);
+        expect(yield* existsTemp(workdir, "pooler-url")).toBe(false);
         expect(apiMock.requests.map((r) => r.method)).not.toContain("getPoolerConfig");
       }).pipe(Effect.provide(layer));
     });
@@ -638,11 +710,12 @@ describe("legacy link integration", () => {
         api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({ tenant: "fail" }) },
         cliConfig,
       });
-      writeFileSync(join(tempRoot.current, "supabase"), "not-a-dir");
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.writeFileString(fixturePath.join(tempRoot.current, "supabase"), "not-a-dir");
         const exit = yield* Effect.exit(legacyLink(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(existsSync(tempFile(tempRoot.current, "project-ref"))).toBe(false);
+        expect(yield* existsTemp(tempRoot.current, "project-ref")).toBe(false);
       }).pipe(Effect.provide(layer));
     });
 
@@ -663,7 +736,7 @@ describe("legacy link integration", () => {
         expect(success?.data).toMatchObject({ project_ref: LEGACY_VALID_REF });
         expect(success?.data).not.toHaveProperty("branch");
         expect(out.stdoutText).not.toContain("Finished supabase link.");
-        expect(readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
+        expect(yield* readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
       }).pipe(Effect.provide(layer));
     });
 
@@ -688,7 +761,7 @@ describe("legacy link integration", () => {
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
+            const json = Formatter.formatJson(exit.cause);
             expect(json).toContain("LegacyLinkRefArgConflictError");
             expect(json).toContain(
               "Cannot use both the [ref-or-branch] argument and the --project-ref flag.",
@@ -713,7 +786,7 @@ describe("legacy link integration", () => {
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
+            const json = Formatter.formatJson(exit.cause);
             expect(json).toContain("LegacyProjectRefRequiredError");
             expect(json).toContain(`required flag(s) \\"project-ref\\" not set`);
           }
@@ -729,7 +802,7 @@ describe("legacy link integration", () => {
           const exit = yield* Effect.exit(legacyLink(flags({ projectRef: Option.some("") })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
+            const json = Formatter.formatJson(exit.cause);
             expect(json).toContain("LegacyProjectRefRequiredError");
             expect(json).toContain(`required flag(s) \\"project-ref\\" not set`);
           }
@@ -745,7 +818,7 @@ describe("legacy link integration", () => {
           yield* legacyLink(
             flags({ refOrBranch: Option.some(""), projectRef: Option.some(LEGACY_VALID_REF) }),
           );
-          expect(readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
+          expect(yield* readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
         }).pipe(Effect.provide(layer));
       },
     );
@@ -758,7 +831,7 @@ describe("legacy link integration", () => {
           yield* legacyLink(
             flags({ refOrBranch: Option.some(LEGACY_VALID_REF), projectRef: Option.none() }),
           );
-          expect(readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
+          expect(yield* readTemp(workdir, "project-ref")).toBe(LEGACY_VALID_REF);
           expect(apiMock.requests.map((r) => r.method)).not.toContain("listAllBranches");
         }).pipe(Effect.provide(layer));
       },
@@ -785,10 +858,12 @@ describe("legacy link integration", () => {
           const branchCall = apiMock.requests.find((r) => r.method === "listAllBranches");
           // The dealbreaker bug: this must be the PARENT ref, never BRANCH_PROJECT_REF.
           expect(branchCall?.input).toMatchObject({ ref: PARENT_REF });
-          expect(readTemp(workdir, "project-ref")).toBe(OTHER_BRANCH_PROJECT_REF);
+          expect(yield* readTemp(workdir, "project-ref")).toBe(OTHER_BRANCH_PROJECT_REF);
           // The 404 branch-link path leaves the cache untouched — the invariant a
           // THIRD relink still depends on.
-          expect(readTemp(workdir, "linked-project.json")).toBe(linkedProjectCacheJson(PARENT_REF));
+          expect(yield* readTemp(workdir, "linked-project.json")).toBe(
+            linkedProjectCacheJson(PARENT_REF),
+          );
         }).pipe(Effect.provide(layer));
       },
     );
@@ -809,7 +884,7 @@ describe("legacy link integration", () => {
           );
           const branchCall = apiMock.requests.find((r) => r.method === "listAllBranches");
           expect(branchCall?.input).toMatchObject({ ref: PARENT_REF });
-          expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+          expect(yield* readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
         }).pipe(Effect.provide(layer));
       },
     );
@@ -835,7 +910,7 @@ describe("legacy link integration", () => {
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyLinkParentRefInvalidError");
+            expect(Formatter.formatJson(exit.cause)).toContain("LegacyLinkParentRefInvalidError");
           }
           expect(apiMock.requests.find((r) => r.method === "listAllBranches")).toBeUndefined();
         }).pipe(Effect.provide(layer));
@@ -849,9 +924,9 @@ describe("legacy link integration", () => {
         const corruptCacheContents = [
           "not json at all {",
           "null",
-          JSON.stringify({ notRef: "x" }),
-          JSON.stringify({ ref: 12345 }),
-          JSON.stringify({ ref: "" }),
+          encodeJson({ notRef: "x" }),
+          encodeJson({ ref: 12345 }),
+          encodeJson({ ref: "" }),
         ];
         return Effect.gen(function* () {
           for (const content of corruptCacheContents) {
@@ -860,6 +935,7 @@ describe("legacy link integration", () => {
             // would otherwise clobber this fixture before the next check runs.
             writeLinkedParentRef(workdir, FILE_ONLY_REF);
             writeLinkedProjectCacheFile(workdir, content);
+            yield* flushFixtureWrites(workdir);
             yield* legacyLink(
               flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
             );
@@ -885,7 +961,7 @@ describe("legacy link integration", () => {
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
+            const json = Formatter.formatJson(exit.cause);
             expect(json).toContain("LegacyLinkParentRefInvalidError");
             expect(json).toContain(
               `Cannot resolve branch \\"feature-branch\\": the linked project ref is invalid`,
@@ -910,7 +986,7 @@ describe("legacy link integration", () => {
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
+            const json = Formatter.formatJson(exit.cause);
             expect(json).toContain("LegacyLinkBranchNotLinkedError");
             expect(json).toContain(`Cannot resolve \\"feature-branch\\": it is not a project ref`);
             expect(json).toContain(
@@ -940,7 +1016,7 @@ describe("legacy link integration", () => {
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
+            const json = Formatter.formatJson(exit.cause);
             expect(json).toContain("LegacyLinkBranchNotLinkedError");
             expect(json).toContain(`Cannot resolve \\"feature-branch\\": it is not a project ref`);
           }
@@ -956,8 +1032,9 @@ describe("legacy link integration", () => {
         // A directory at the project-ref path makes `fs.readFileString` fail with
         // a real (non-not-exist) read error, exercising the defensive fallback
         // distinct from the plain "file missing" case.
-        mkdirSync(tempFile(workdir, "project-ref"), { recursive: true });
         return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.makeDirectory(tempFile(workdir, "project-ref"), { recursive: true });
           const exit = yield* Effect.exit(
             legacyLink(
               flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
@@ -965,7 +1042,7 @@ describe("legacy link integration", () => {
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyLinkBranchNotLinkedError");
+            expect(Formatter.formatJson(exit.cause)).toContain("LegacyLinkBranchNotLinkedError");
           }
           expect(apiMock.requests).toHaveLength(0);
         }).pipe(Effect.provide(layer));
@@ -986,8 +1063,8 @@ describe("legacy link integration", () => {
           yield* legacyLink(
             flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
           );
-          expect(readTemp(workdir, "linked-project.json")).toBe(
-            JSON.stringify({ ref: PARENT_REF }),
+          expect(yield* readTemp(workdir, "linked-project.json")).toBe(
+            encodeLinkedProjectRef({ ref: PARENT_REF }),
           );
 
           // Follow-up: a second branch-name link must still resolve via the
@@ -1000,7 +1077,7 @@ describe("legacy link integration", () => {
           );
           const branchCalls = apiMock.requests.filter((r) => r.method === "listAllBranches");
           expect(branchCalls.at(-1)?.input).toMatchObject({ ref: PARENT_REF });
-          expect(readTemp(workdir, "project-ref")).toBe(OTHER_BRANCH_PROJECT_REF);
+          expect(yield* readTemp(workdir, "project-ref")).toBe(OTHER_BRANCH_PROJECT_REF);
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1019,7 +1096,7 @@ describe("legacy link integration", () => {
           yield* legacyLink(
             flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
           );
-          expect(readTemp(workdir, "linked-project.json")).toBe(richCache);
+          expect(yield* readTemp(workdir, "linked-project.json")).toBe(richCache);
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1035,8 +1112,8 @@ describe("legacy link integration", () => {
         writeLinkedProjectCacheFile(workdir, cacheContent);
         return Effect.gen(function* () {
           yield* legacyLink(flags({ projectRef: Option.some(BRANCH_PROJECT_REF) }));
-          expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
-          expect(readTemp(workdir, "linked-project.json")).toBe(cacheContent);
+          expect(yield* readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+          expect(yield* readTemp(workdir, "linked-project.json")).toBe(cacheContent);
           const branchCall = apiMock.requests.find((r) => r.method === "listAllBranches");
           expect(branchCall?.input).toMatchObject({ ref: CACHE_ONLY_REF });
         }).pipe(Effect.provide(layer));
@@ -1053,8 +1130,8 @@ describe("legacy link integration", () => {
         writeLinkedProjectCacheFile(workdir, linkedProjectCacheJson(CACHE_ONLY_REF));
         return Effect.gen(function* () {
           yield* legacyLink(flags({ projectRef: Option.some(BRANCH_PROJECT_REF) }));
-          expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
-          expect(existsSync(tempFile(workdir, "linked-project.json"))).toBe(false);
+          expect(yield* readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+          expect(yield* existsTemp(workdir, "linked-project.json")).toBe(false);
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1074,8 +1151,8 @@ describe("legacy link integration", () => {
         writeLinkedProjectCacheFile(workdir, cacheContent);
         return Effect.gen(function* () {
           yield* legacyLink(flags({ projectRef: Option.some(BRANCH_PROJECT_REF) }));
-          expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
-          expect(existsTemp(workdir, "linked-project.json")).toBe(false);
+          expect(yield* readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+          expect(yield* existsTemp(workdir, "linked-project.json")).toBe(false);
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1091,7 +1168,7 @@ describe("legacy link integration", () => {
           yield* legacyLink(
             flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
           );
-          expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+          expect(yield* readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
           const branchRequest = apiMock.requests.find((r) => r.method === "listAllBranches");
           expect(branchRequest?.input).toMatchObject({ ref: PARENT_REF });
         }).pipe(Effect.provide(layer));
@@ -1105,7 +1182,7 @@ describe("legacy link integration", () => {
         writeLinkedParentRef(workdir, PARENT_REF);
         return Effect.gen(function* () {
           yield* legacyLink(flags({ projectRef: Option.some("feature-branch") }));
-          expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+          expect(yield* readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1117,7 +1194,7 @@ describe("legacy link integration", () => {
         yield* legacyLink(
           flags({ refOrBranch: Option.some(LINK_BRANCH.id), projectRef: Option.none() }),
         );
-        expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+        expect(yield* readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
       }).pipe(Effect.provide(layer));
     });
 
@@ -1131,7 +1208,7 @@ describe("legacy link integration", () => {
             projectRef: Option.none(),
           }),
         );
-        expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+        expect(yield* readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
       }).pipe(Effect.provide(layer));
     });
 
@@ -1150,14 +1227,14 @@ describe("legacy link integration", () => {
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
+            const json = Formatter.formatJson(exit.cause);
             expect(json).toContain("LegacyLinkBranchNotReadyError");
             expect(json).toContain(
               `Branch \\"feature-branch\\" has no project ref yet (status: CREATING_PROJECT)`,
             );
           }
           // No project-ref written, and no attempt to link the parent (env) ref instead.
-          expect(existsSync(tempFile(workdir, "project-ref"))).toBe(false);
+          expect(yield* existsTemp(workdir, "project-ref")).toBe(false);
           expect(apiMock.requests).toEqual([
             { method: "listAllBranches", input: { ref: PARENT_REF } },
           ]);
@@ -1177,7 +1254,7 @@ describe("legacy link integration", () => {
           ),
         );
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(readTemp(workdir, "project-ref")).toBe(PARENT_REF);
+        expect(yield* readTemp(workdir, "project-ref")).toBe(PARENT_REF);
       }).pipe(Effect.provide(layer));
     });
   });
@@ -1194,7 +1271,7 @@ describe("legacy link integration", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Formatter.formatJson(exit.cause);
           expect(json).toContain("LegacyLinkBranchNotFoundError");
           expect(json).toContain("branch-00");
           expect(json).toContain("branch-19");
@@ -1215,7 +1292,7 @@ describe("legacy link integration", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Formatter.formatJson(exit.cause);
           expect(json).toContain(`Did you mean \\"staging\\"?`);
           // "Staging" has an uppercase letter, so no ref-typo hint.
           expect(json).not.toContain("If you meant a project ref");
@@ -1236,7 +1313,7 @@ describe("legacy link integration", () => {
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
+            const json = Formatter.formatJson(exit.cause);
             expect(json).toContain("LegacyLinkBranchNotFoundError");
             expect(json).toContain(
               `Branch \\"missingbranch\\" not found: project ${PARENT_REF} has no branches.`,
@@ -1258,7 +1335,7 @@ describe("legacy link integration", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Formatter.formatJson(exit.cause);
           expect(json).toContain("LegacyLinkBranchNotFoundError");
           expect(json).toContain(`Branch \\"my-branch\\" not found for project ${PARENT_REF}.`);
           expect(json).not.toContain("If you meant a project ref");
@@ -1279,7 +1356,7 @@ describe("legacy link integration", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const json = JSON.stringify(exit.cause);
+          const json = Formatter.formatJson(exit.cause);
           expect(json).toContain("LegacyLinkBranchNotFoundError");
           expect(json).toContain(
             `Branch \\"missing-branch\\" not found for project ${PARENT_REF}. Available branches: alpha, zeta`,
@@ -1309,7 +1386,7 @@ describe("legacy link integration", () => {
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
+            const json = Formatter.formatJson(exit.cause);
             expect(json).toContain("LegacyLinkBranchListStatusError");
             expect(json).toContain(`Cannot list branches for project ${PARENT_REF} (HTTP 404)`);
             expect(json).toContain(
@@ -1333,7 +1410,7 @@ describe("legacy link integration", () => {
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
+            const json = Formatter.formatJson(exit.cause);
             expect(json).toContain("LegacyLinkBranchListStatusError");
             expect(json).toContain("unexpected list branches status 500");
           }
@@ -1354,7 +1431,7 @@ describe("legacy link integration", () => {
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
+            const json = Formatter.formatJson(exit.cause);
             expect(json).toContain("LegacyLinkBranchListNetworkError");
             expect(json).toContain("failed to list branches:");
           }
@@ -1397,7 +1474,7 @@ describe("legacy link integration", () => {
           yield* legacyLink(
             flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
           );
-          expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+          expect(yield* readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
           const success = out.messages.find((m) => m.type === "success");
           expect(success?.data).toMatchObject({
             project_ref: BRANCH_PROJECT_REF,
@@ -1425,7 +1502,7 @@ describe("legacy link integration", () => {
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
+            const json = Formatter.formatJson(exit.cause);
             expect(json).toContain("LegacyLinkBranchListStatusError");
           }
           expect(out.progressEvents).toEqual([]);
@@ -1482,7 +1559,7 @@ describe("legacy link integration", () => {
           expect(analytics.groupIdentified).toHaveLength(0);
           // The branch NAME is user-created content and must never leave the
           // machine in any captured analytics payload.
-          expect(JSON.stringify(analytics.captured)).not.toContain("feature-branch");
+          expect(Formatter.formatJson(analytics.captured)).not.toContain("feature-branch");
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1522,7 +1599,7 @@ describe("legacy link integration", () => {
               properties: { name: "My Project", organization_slug: "acme" },
             },
           ]);
-          expect(JSON.stringify(analytics.captured)).not.toContain('"main"');
+          expect(Formatter.formatJson(analytics.captured)).not.toContain('"main"');
         }).pipe(Effect.provide(layer));
       },
     );

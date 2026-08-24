@@ -1,8 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -16,6 +14,7 @@ import {
   LegacyDnsResolverFlag,
   LegacyNetworkIdFlag,
 } from "../../../../shared/legacy/global-flags.ts";
+import { makeLegacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import {
   LegacyInvalidProjectRefError,
@@ -196,13 +195,11 @@ function mockDockerRun(opts: {
       Effect.gen(function* () {
         allOpts.push(runOpts);
         if (opts.runFails === true) {
-          return yield* Effect.fail(
-            new LegacyDockerRunError({
-              message: "failed to run docker: not found",
-              reason: "spawn",
-              daemonDown: false,
-            }),
-          );
+          return yield* new LegacyDockerRunError({
+            message: "failed to run docker: not found",
+            reason: "spawn",
+            daemonDown: false,
+          });
         }
         const next = queue.shift();
         const r = next ?? { exitCode: opts.exitCode, stdout: opts.stdout, stderr: opts.stderr };
@@ -251,6 +248,7 @@ interface SetupOpts {
 }
 
 function setup(opts: SetupOpts = {}) {
+  const configProvider = ConfigProvider.fromEnv({ preserveEmptyStrings: true });
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
@@ -270,6 +268,8 @@ function setup(opts: SetupOpts = {}) {
   const docker = mockDockerRun(opts);
   const layer = Layer.mergeAll(
     out.layer,
+    ConfigProvider.layer(configProvider),
+    makeLegacyViperEnvLayer(configProvider),
     resolver.layer,
     projectRef.layer,
     docker.layer,
@@ -287,7 +287,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     BunServices.layer,
   );
-  return { layer, out, telemetry, resolver, docker, cache };
+  return { layer, configProvider, out, telemetry, resolver, docker, cache };
 }
 
 const flags = (over: Partial<LegacyDbDumpFlags> = {}): LegacyDbDumpFlags => ({
@@ -459,9 +459,11 @@ describe("legacy db dump integration", () => {
   it.live("prints the post-run Dumped-schema message on --dry-run --file without writing", () => {
     // The file is never opened on dry-run, but `Dumped schema to <abs>.` is
     // still printed, with no dry-run guard and without touching the file.
-    const filePath = join(tmp.current, "dry.sql");
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const filePath = path.join(tmp.current, "dry.sql");
       yield* legacyDbDump(
         flags({ dryRun: true, local: Option.some(true), file: Option.some(filePath) }),
       );
@@ -469,7 +471,7 @@ describe("legacy db dump integration", () => {
       expect(out.stderrText).toContain(`Dumped schema to`);
       expect(out.stderrText).toContain(filePath);
       expect(docker.lastOpts).toBeUndefined();
-      expect(existsSync(filePath)).toBe(false);
+      expect(yield* fs.exists(filePath)).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
@@ -489,13 +491,15 @@ describe("legacy db dump integration", () => {
   it.live("validates the merged config before the --dry-run print (Go root PreRun order)", () => {
     // The merged config is validated before the dump runs, even for
     // --dry-run, so an invalid config fails without printing.
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      ["[remotes.staging]", 'project_id = "staging"', ""].join("\n"),
-    );
     const { layer, out } = setup({ isLocal: true, workdir: tmp.current });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "config.toml"),
+        ["[remotes.staging]", 'project_id = "staging"', ""].join("\n"),
+      );
       const exit = yield* legacyDbDump(flags({ dryRun: true, local: Option.some(true) })).pipe(
         Effect.exit,
       );
@@ -582,8 +586,12 @@ describe("legacy db dump integration", () => {
       workdir: tmp.current,
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       yield* legacyDbDump(flags({ local: Option.some(true), file: Option.some("out.sql") }));
-      expect(readFileSync(join(tmp.current, "out.sql"), "utf8")).toBe("CREATE SCHEMA public;\n");
+      expect(yield* fs.readFileString(path.join(tmp.current, "out.sql"))).toBe(
+        "CREATE SCHEMA public;\n",
+      );
     }).pipe(Effect.provide(layer));
   });
 
@@ -596,28 +604,23 @@ describe("legacy db dump integration", () => {
   });
 
   it.live(
-    "resolves the pg_dump network via SUPABASE_NETWORK_ID from supabase/.env when neither the flag nor the ambient env is set",
+    "resolves the pg_dump network via SUPABASE_NETWORK_ID from supabase/.env when no flag is set",
     () => {
       // Host networking is the default, but a resolved `--network-id`/`SUPABASE_NETWORK_ID`
       // value overrides it whenever non-empty — a value sourced only from `supabase/.env`
       // still wins over host.
-      const prev = process.env["SUPABASE_NETWORK_ID"];
-      delete process.env["SUPABASE_NETWORK_ID"];
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_NETWORK_ID=dotenv-net\n");
       const { layer, docker } = setup({ isLocal: true, workdir: tmp.current });
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(tmp.current, "supabase", ".env"),
+          "SUPABASE_NETWORK_ID=dotenv-net\n",
+        );
         yield* legacyDbDump(flags({ local: Option.some(true) }));
         expect(docker.lastOpts?.network).toEqual({ _tag: "named", name: "dotenv-net" });
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (prev === undefined) delete process.env["SUPABASE_NETWORK_ID"];
-            else process.env["SUPABASE_NETWORK_ID"] = prev;
-          }),
-        ),
-        Effect.provide(layer),
-      );
+      }).pipe(Effect.provide(layer));
     },
   );
 
@@ -772,11 +775,13 @@ describe("legacy db dump integration", () => {
   });
 
   it.live("writes the dump to --file and reports the absolute path on stderr", () => {
-    const filePath = join(tmp.current, "out.sql");
     const { layer, out } = setup({ isLocal: true, stdout: "CREATE SCHEMA public;\n" });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const filePath = path.join(tmp.current, "out.sql");
       yield* legacyDbDump(flags({ local: Option.some(true), file: Option.some(filePath) }));
-      expect(readFileSync(filePath, "utf8")).toBe("CREATE SCHEMA public;\n");
+      expect(yield* fs.readFileString(filePath)).toBe("CREATE SCHEMA public;\n");
       expect(out.stderrText).toContain(`Dumped schema to`);
       expect(out.stderrText).toContain(filePath);
       // Nothing written to stdout in --file mode.

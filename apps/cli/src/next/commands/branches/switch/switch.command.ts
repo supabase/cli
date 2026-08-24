@@ -11,10 +11,8 @@ import { switchBranch } from "./switch.handler.ts";
 
 const branchesPlatformApiLayer = platformApiLayer.pipe(Layer.provide(credentialsLayer));
 const branchesRuntimeLayer = provideProjectCommandRuntime(
-  Layer.mergeAll(
-    branchesPlatformApiLayer,
-    projectLinkStateLayer,
-    commandRuntimeLayer(["branches", "switch"]),
+  Layer.mergeAll(branchesPlatformApiLayer, projectLinkStateLayer).pipe(
+    Layer.provideMerge(commandRuntimeLayer(["branches", "switch"])),
   ),
 );
 

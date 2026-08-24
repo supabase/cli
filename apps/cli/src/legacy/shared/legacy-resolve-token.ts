@@ -30,6 +30,6 @@ export const resolveLegacyAccessToken: Effect.Effect<
   }
   const credentials = yield* LegacyCredentials;
   return yield* credentials.getAccessToken.pipe(
-    Effect.catch(() => Effect.succeed(Option.none<Redacted.Redacted<string>>())),
+    Effect.orElseSucceed(() => Option.none<Redacted.Redacted<string>>()),
   );
 });

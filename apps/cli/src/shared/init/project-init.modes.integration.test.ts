@@ -1,17 +1,9 @@
-import { mkdirSync, mkdtempSync, rmSync, statSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, FileSystem, Layer, Path } from "effect";
 
 import { mockOutput, mockStdin, mockTty } from "../../../tests/helpers/mocks.ts";
 import { initProject } from "./project-init.ts";
-
-function makeTempProjectDir(): string {
-  return mkdtempSync(join(tmpdir(), "supabase-init-modes-"));
-}
 
 function runInit(cwd: string) {
   const out = mockOutput({ format: "text", interactive: false });
@@ -37,49 +29,43 @@ function runInit(cwd: string) {
 // incidental to the ambient umask.
 describe("initProject file modes (Go parity: 0755 dirs, 0644 files)", () => {
   it.live("pins the supabase dir and config.toml to Go's exact modes", () => {
-    const cwd = makeTempProjectDir();
-    const prevUmask = process.umask(0);
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fs.makeTempDirectory({ prefix: "supabase-init-modes-" });
+      const prevUmask = process.umask(0);
+      yield* Effect.gen(function* () {
+        yield* runInit(cwd);
+        const supabaseDir = path.join(cwd, "supabase");
+        const configTomlPath = path.join(supabaseDir, "config.toml");
 
-    return runInit(cwd).pipe(
-      Effect.andThen(
-        Effect.sync(() => {
-          const supabaseDir = join(cwd, "supabase");
-          const configTomlPath = join(supabaseDir, "config.toml");
-
-          expect(statSync(supabaseDir).mode & 0o777).toBe(0o755);
-          expect(statSync(configTomlPath).mode & 0o777).toBe(0o644);
-        }),
-      ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          process.umask(prevUmask);
-          rmSync(cwd, { recursive: true, force: true });
-        }),
-      ),
-    );
+        expect((yield* fs.stat(supabaseDir)).mode & 0o777).toBe(0o755);
+        expect((yield* fs.stat(configTomlPath)).mode & 0o777).toBe(0o644);
+      }).pipe(
+        Effect.ensuring(Effect.sync(() => process.umask(prevUmask))),
+        Effect.ensuring(fs.remove(cwd, { recursive: true }).pipe(Effect.ignore)),
+      );
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.live(
     "pins a freshly created supabase/.gitignore to Go's exact file mode inside a git repo",
     () => {
-      const cwd = makeTempProjectDir();
-      mkdirSync(join(cwd, ".git"));
-      const prevUmask = process.umask(0);
-
-      return runInit(cwd).pipe(
-        Effect.andThen(
-          Effect.sync(() => {
-            const gitignorePath = join(cwd, "supabase", ".gitignore");
-            expect(statSync(gitignorePath).mode & 0o777).toBe(0o644);
-          }),
-        ),
-        Effect.ensuring(
-          Effect.sync(() => {
-            process.umask(prevUmask);
-            rmSync(cwd, { recursive: true, force: true });
-          }),
-        ),
-      );
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* fs.makeTempDirectory({ prefix: "supabase-init-modes-" });
+        const prevUmask = process.umask(0);
+        yield* Effect.gen(function* () {
+          yield* fs.makeDirectory(path.join(cwd, ".git"));
+          yield* runInit(cwd);
+          const gitignorePath = path.join(cwd, "supabase", ".gitignore");
+          expect((yield* fs.stat(gitignorePath)).mode & 0o777).toBe(0o644);
+        }).pipe(
+          Effect.ensuring(Effect.sync(() => process.umask(prevUmask))),
+          Effect.ensuring(fs.remove(cwd, { recursive: true }).pipe(Effect.ignore)),
+        );
+      }).pipe(Effect.provide(BunServices.layer));
     },
   );
 });

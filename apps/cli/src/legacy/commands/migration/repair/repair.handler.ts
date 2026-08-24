@@ -71,11 +71,9 @@ const updateMigrationTable = Effect.fnUntraced(function* (
     for (const version of versions) {
       const resolved = yield* legacyResolveMigrationFile(fs, path, migrationsDir, version);
       if (Option.isNone(resolved)) {
-        return yield* Effect.fail(
-          new LegacyMigrationFileNotFoundError({
-            message: `glob supabase/migrations/${version}_*.sql: file does not exist`,
-          }),
-        );
+        return yield* new LegacyMigrationFileNotFoundError({
+          message: `glob supabase/migrations/${version}_*.sql: file does not exist`,
+        });
       }
       appliedFiles.push(yield* legacyReadMigrationFile(fs, path, resolved.value));
     }
@@ -123,21 +121,19 @@ const runRepair = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
+  const projectRef = yield* LegacyProjectRefResolver;
+  const linkedProjectCache = yield* LegacyLinkedProjectCache;
 
   if (target.setFlags.length > 1) {
-    return yield* Effect.fail(
-      new LegacyMigrationTargetFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-      }),
-    );
+    return yield* new LegacyMigrationTargetFlagsError({
+      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
+    });
   }
   if (Option.isSome(input.dbUrl) && Option.isSome(input.password)) {
-    return yield* Effect.fail(
-      new LegacyMigrationPasswordFlagsError({
-        message:
-          "if any flags in the group [db-url password] are set none of the others can be; [db-url password] were all set",
-      }),
-    );
+    return yield* new LegacyMigrationPasswordFlagsError({
+      message:
+        "if any flags in the group [db-url password] are set none of the others can be; [db-url password] were all set",
+    });
   }
 
   const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
@@ -148,12 +144,10 @@ const runRepair = Effect.fnUntraced(function* (
   // discarded on a non-linked target — see push.handler.ts's identical guard
   // (db push) for the full TS-only rationale.
   if (Option.isSome(input.projectRef) && connType !== "linked") {
-    return yield* Effect.fail(
-      new LegacyMigrationTargetFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      }),
-    );
+    return yield* new LegacyMigrationTargetFlagsError({
+      message:
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+    });
   }
 
   // Resolve the DB config (and, for the linked default, the project ref) BEFORE the
@@ -180,26 +174,18 @@ const runRepair = Effect.fnUntraced(function* (
   // (pre-run), and the cache is attached to the whole
   // repair flow via `Effect.ensuring` below — so it runs even when the version parse fails
   // or the repair-all prompt is declined (caches on cancellation too).
-  const cacheLinkedRef =
-    connType === "linked"
-      ? yield* Effect.gen(function* () {
-          const projectRef = yield* LegacyProjectRefResolver;
-          const linkedProjectCache = yield* LegacyLinkedProjectCache;
-          const ref = yield* projectRef.loadProjectRef(input.projectRef);
-          return linkedProjectCache.cache(ref);
-        })
-      : undefined;
+  const linkedRef =
+    connType === "linked" ? yield* projectRef.loadProjectRef(input.projectRef) : undefined;
+  const cacheLinkedRef = linkedRef === undefined ? undefined : linkedProjectCache.cache(linkedRef);
 
   const repairFlow = Effect.gen(function* () {
     // Version validation runs after DB-config resolution. Rejects non-numeric AND
     // out-of-int64-range values; `legacyParseMigrationVersion` mirrors that exactly.
     for (const version of input.versions) {
       if (legacyParseMigrationVersion(version) === undefined) {
-        return yield* Effect.fail(
-          new LegacyMigrationInvalidVersionError({
-            message: `failed to parse ${version}: invalid version number`,
-          }),
-        );
+        return yield* new LegacyMigrationInvalidVersionError({
+          message: `failed to parse ${version}: invalid version number`,
+        });
       }
     }
 
@@ -211,9 +197,7 @@ const runRepair = Effect.fnUntraced(function* (
         { defaultValue: false, yes },
       );
       if (!confirmed) {
-        return yield* Effect.fail(
-          new LegacyOperationCanceledError({ message: CONTEXT_CANCELED_MESSAGE }),
-        );
+        return yield* new LegacyOperationCanceledError({ message: CONTEXT_CANCELED_MESSAGE });
       }
       versions = yield* legacyLoadLocalVersions(fs, path, migrationsDir);
     }

@@ -1,6 +1,6 @@
 import type { V1ListAllOrganizationsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Formatter, Option } from "effect";
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -150,7 +150,7 @@ describe("legacy orgs list integration", () => {
       const exit = yield* Effect.exit(legacyOrgsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyOrgsEnvNotSupportedError");
         expect(json).toContain("--output env flag is not supported");
       }
@@ -194,7 +194,7 @@ describe("legacy orgs list integration", () => {
       const exit = yield* Effect.exit(legacyOrgsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyOrgsListUnexpectedStatusError");
         expect(json).toContain("unexpected list organizations status 503");
       }
@@ -207,7 +207,7 @@ describe("legacy orgs list integration", () => {
       const exit = yield* Effect.exit(legacyOrgsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyOrgsListNetworkError");
         expect(json).toContain("failed to list organizations");
       }
@@ -222,7 +222,7 @@ describe("legacy orgs list integration", () => {
       const exit = yield* Effect.exit(legacyOrgsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyOrgsListNetworkError");
       }
     }).pipe(Effect.provide(layer));

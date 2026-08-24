@@ -21,13 +21,11 @@ export const makePlatformApiServices = Effect.gen(function* () {
   const token = Option.isSome(configuredToken) ? configuredToken : storedToken;
 
   if (Option.isNone(token)) {
-    return yield* Effect.fail(
-      new PlatformAuthRequiredError({
-        message: "You are not logged in to Supabase.",
-        detail: "Platform commands require a management API access token.",
-        suggestion: "Run `supabase login` or set SUPABASE_ACCESS_TOKEN before retrying.",
-      }),
-    );
+    return yield* new PlatformAuthRequiredError({
+      message: "You are not logged in to Supabase.",
+      detail: "Platform commands require a management API access token.",
+      suggestion: "Run `supabase login` or set SUPABASE_ACCESS_TOKEN before retrying.",
+    });
   }
 
   const config = {

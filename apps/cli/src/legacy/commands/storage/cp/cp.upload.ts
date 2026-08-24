@@ -1,5 +1,3 @@
-import * as nodePath from "node:path";
-
 import { legacySplitBucketPrefix, legacyStorageIsDir } from "../../../shared/legacy-storage-url.ts";
 
 /**
@@ -24,6 +22,26 @@ export interface LegacyUploadDstPathInput {
   readonly fileExists: boolean;
 }
 
+const legacyPosixJoin = (...segments: ReadonlyArray<string>): string => {
+  const joined = segments.filter((segment) => segment.length > 0).join("/");
+  if (joined.length === 0) return ".";
+  const absolute = joined.startsWith("/");
+  const trailing = joined.endsWith("/");
+  const parts: string[] = [];
+  for (const part of joined.split("/")) {
+    if (part.length === 0 || part === ".") continue;
+    if (part === "..") {
+      if (parts.length > 0 && parts.at(-1) !== "..") parts.pop();
+      else if (!absolute) parts.push(part);
+      continue;
+    }
+    parts.push(part);
+  }
+  let result = `${absolute ? "/" : ""}${parts.join("/")}`;
+  if (result.length === 0) result = absolute ? "/" : ".";
+  return trailing && result !== "/" ? `${result}/` : result;
+};
+
 /**
  * Resolve the remote destination key for one walked file (`cp.go:135-148`):
  *  - single file (`relPath === "."`): append the file name only when the
@@ -40,13 +58,13 @@ export function legacyResolveUploadDstPath(input: LegacyUploadDstPathInput): str
   if (input.relPath === ".") {
     const [, prefix] = legacySplitBucketPrefix(dstPath);
     if (legacyStorageIsDir(prefix) || (input.dirExists && !input.fileExists)) {
-      dstPath = nodePath.posix.join(dstPath, input.fileName);
+      dstPath = legacyPosixJoin(dstPath, input.fileName);
     }
     return dstPath;
   }
   if (input.baseName !== "." && (input.dirExists || input.noSlash.length === 0)) {
-    dstPath = nodePath.posix.join(dstPath, input.baseName);
+    dstPath = legacyPosixJoin(dstPath, input.baseName);
   }
-  const relPosix = input.relPath.split(nodePath.sep).join(nodePath.posix.sep);
-  return nodePath.posix.join(dstPath, relPosix);
+  const relPosix = input.relPath.split(/[\\/]/u).join("/");
+  return legacyPosixJoin(dstPath, relPosix);
 }

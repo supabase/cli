@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Layer, Path } from "effect";
 import { loadProjectConfig, loadProjectConfigFile, saveProjectConfig } from "./io.ts";
-import { ProjectConfigStore } from "./project-config.service.ts";
+import { ProjectConfigStore, ProjectConfigStoreError } from "./project-config.service.ts";
 
 const makeProjectConfigStore = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -15,9 +15,18 @@ const makeProjectConfigStore = Effect.gen(function* () {
     );
 
   return ProjectConfigStore.of({
-    load: (cwd, options) => providePlatform(loadProjectConfig(cwd, options)),
-    loadFile: (filePath) => providePlatform(loadProjectConfigFile(filePath)),
-    save: (options) => providePlatform(saveProjectConfig(options)),
+    load: (cwd, options) =>
+      providePlatform(loadProjectConfig(cwd, options)).pipe(
+        Effect.mapError((cause) => new ProjectConfigStoreError({ operation: "load", cause })),
+      ),
+    loadFile: (filePath) =>
+      providePlatform(loadProjectConfigFile(filePath)).pipe(
+        Effect.mapError((cause) => new ProjectConfigStoreError({ operation: "loadFile", cause })),
+      ),
+    save: (options) =>
+      providePlatform(saveProjectConfig(options)).pipe(
+        Effect.mapError((cause) => new ProjectConfigStoreError({ operation: "save", cause })),
+      ),
   });
 });
 

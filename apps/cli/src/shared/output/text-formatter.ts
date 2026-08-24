@@ -16,7 +16,9 @@ export function textCliOutputFormatter(context?: CliErrorSuggestionContext): Cli
     error.changed ? error.message : stripSingleErrorHeader(base.formatErrors([error.source]));
 
   return {
-    ...base,
+    formatHelpDoc: base.formatHelpDoc,
+    formatCliError: base.formatCliError,
+    formatError: base.formatError,
     formatErrors: (errors) => {
       const formatted = formatCliErrorsForDisplay(errors, context);
       if (!formatted.changed) return base.formatErrors(errors);

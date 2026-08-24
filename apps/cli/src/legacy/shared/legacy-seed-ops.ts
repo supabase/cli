@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { Effect, type FileSystem, type Path } from "effect";
+import { Cause, Effect, type FileSystem, type Path } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
 import type { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
@@ -106,6 +106,7 @@ export const legacySeedData = <E>(
   workdir: string,
   path: Path.Path,
   seeds: ReadonlyArray<LegacySeedFile>,
+  projectEnv: Readonly<Record<string, string>>,
   mapError: (message: string) => E,
 ): Effect.Effect<void, E, Output> =>
   Effect.gen(function* () {
@@ -135,7 +136,11 @@ export const legacySeedData = <E>(
       const content = yield* fs.readFileString(
         path.isAbsolute(seed.path) ? seed.path : path.join(workdir, seed.path),
       );
-      yield* checkScannerBufferSize(content, (message) => new Error(message));
+      yield* checkScannerBufferSize(
+        content,
+        (message) => new Cause.UnknownError(undefined, String(message)),
+        projectEnv,
+      );
       const lines = legacySplitAndTrim(content);
       const statements = seed.dirty ? [] : lines;
       yield* session.exec("BEGIN");

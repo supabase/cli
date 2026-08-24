@@ -61,14 +61,23 @@ export const legacyPostgresConfigUpdate = Effect.fn("legacy.postgres-config.upda
       normalizeTimeoutConfig(finalOverrides);
 
       const updated = yield* putPostgresConfig(ref, finalOverrides, {
-        serializeError: (args) => new LegacyPostgresConfigUpdateSerializeError(args),
-        networkError: (args) => new LegacyPostgresConfigUpdateNetworkError(args),
-        statusError: (args) => new LegacyPostgresConfigUpdateUnexpectedStatusError(args),
-        unmarshalError: (args) => new LegacyPostgresConfigUpdateUnmarshalError(args),
-        networkMessage: (description) => `failed to update config overrides: ${description}`,
-        statusMessage: (status, body) =>
+        serializeError: (args: { readonly message: string }) =>
+          new LegacyPostgresConfigUpdateSerializeError(args),
+        networkError: (args: { readonly message: string }) =>
+          new LegacyPostgresConfigUpdateNetworkError(args),
+        statusError: (args: {
+          readonly status: number;
+          readonly body: string;
+          readonly message: string;
+        }) => new LegacyPostgresConfigUpdateUnexpectedStatusError(args),
+        unmarshalError: (args: { readonly message: string }) =>
+          new LegacyPostgresConfigUpdateUnmarshalError(args),
+        networkMessage: (description: string) =>
+          `failed to update config overrides: ${description}`,
+        statusMessage: (status: number, body: string) =>
           `unexpected update config overrides status ${status}: ${body}`,
-        unmarshalMessage: (description) => `failed to unmarshal update response: ${description}`,
+        unmarshalMessage: (description: string) =>
+          `failed to unmarshal update response: ${description}`,
       }).pipe(Effect.tapError(() => updating?.fail() ?? Effect.void));
 
       yield* updating?.clear() ?? Effect.void;

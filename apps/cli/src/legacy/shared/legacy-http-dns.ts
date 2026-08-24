@@ -103,57 +103,63 @@ export interface LegacyDohFetchOptions {
 export function legacyDohFetch(opts: LegacyDohFetchOptions): typeof globalThis.fetch {
   const { dnsResolver, resolver = legacyResolveHostsOverHttps } = opts;
   const innerFetch: FetchFn = opts.innerFetch ?? globalThis.fetch;
+  const request = (input: string | URL | Request, init?: RequestInit) =>
+    Effect.tryPromise({
+      try: () => innerFetch(input, init),
+      catch: (cause) =>
+        new LegacyDbConnectError({
+          message: cause instanceof Error ? cause.message : String(cause),
+        }),
+    });
 
-  const fetchImpl: FetchFn = async (
+  const fetchImpl: FetchFn = (
     input: string | URL | Request,
     init?: RequestInit,
-  ): Promise<Response> => {
-    // Normalise to string URL — same as what FetchHttpClient passes.
-    const originalUrl =
-      typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    const parsed = new URL(originalUrl);
-    // URL.hostname returns bracketed IPv6 (e.g. "[::1]") in Bun. Strip brackets
-    // before the isIP check so net.isIP correctly identifies IPv6 literals.
-    const rawHostname = parsed.hostname;
-    const host =
-      rawHostname.startsWith("[") && rawHostname.endsWith("]")
-        ? rawHostname.slice(1, -1)
-        : rawHostname;
+  ): Promise<Response> =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        // Normalise to string URL — same as what FetchHttpClient passes.
+        const originalUrl =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const parsed = new URL(originalUrl);
+        // URL.hostname returns bracketed IPv6 (e.g. "[::1]") in Bun. Strip brackets
+        // before the isIP check so net.isIP correctly identifies IPv6 literals.
+        const rawHostname = parsed.hostname;
+        const host =
+          rawHostname.startsWith("[") && rawHostname.endsWith("]")
+            ? rawHostname.slice(1, -1)
+            : rawHostname;
 
-    // Short-circuit 1: not DoH mode or already an IP literal.
-    if (dnsResolver !== "https" || net.isIP(host) !== 0) {
-      return innerFetch(input, init);
-    }
+        // Short-circuit 1: not DoH mode or already an IP literal.
+        if (dnsResolver !== "https" || net.isIP(host) !== 0) {
+          return yield* request(input, init);
+        }
 
-    // DoH-resolve and take the first IP (Go's ip[0]).
-    const ips = await Effect.runPromise(resolver(host));
-    const firstIp = ips[0];
-    if (firstIp === undefined) {
-      // resolver guarantees non-empty; this is a safety net.
-      return innerFetch(input, init);
-    }
+        // DoH-resolve and take the first IP (Go's ip[0]).
+        const ips = yield* resolver(host);
+        const firstIp = ips[0];
+        if (firstIp === undefined) {
+          // resolver guarantees non-empty; this is a safety net.
+          return yield* request(input, init);
+        }
 
-    const { url, serverName, hostHeader } = buildDohRequest(originalUrl, firstIp);
+        const { url, serverName, hostHeader } = buildDohRequest(originalUrl, firstIp);
 
-    // `BunFetchRequestInit` is Bun's global fetch-init type; it extends the
-    // standard `RequestInit` with `tls`. Bun's fetch honors `tls.serverName`:
-    // the TLS handshake sends this as the SNI extension and validates the peer
-    // certificate against it — not against the IP in the URL. Evidence:
-    // `fetch('https://104.16.133.229/', { tls: { serverName: 'cloudflare.com' } })`
-    // returned HTTP 403 (cert validated OK against 'cloudflare.com'). CWE-350
-    // guard: cert validation never falls back to the raw IP even though the URL
-    // authority is an IP literal.
-    const rewrittenInit: BunFetchRequestInit = {
-      ...init,
-      headers: {
-        ...init?.headers,
-        Host: hostHeader,
-      },
-      tls: { serverName },
-    };
+        // `BunFetchRequestInit` is Bun's global fetch-init type; it extends the
+        // standard `RequestInit` with `tls`. Bun's fetch honors `tls.serverName`:
+        // the TLS handshake sends this as the SNI extension and validates the peer
+        // certificate against it — not against the IP in the URL.
+        const headers = new Headers(init?.headers);
+        headers.set("Host", hostHeader);
+        const rewrittenInit: BunFetchRequestInit = {
+          ...init,
+          headers,
+          tls: { serverName },
+        };
 
-    return innerFetch(url, rewrittenInit);
-  };
+        return yield* request(url, rewrittenInit);
+      }),
+    );
 
   // `FetchHttpClient.Fetch` holds a `typeof globalThis.fetch`, which in Bun
   // carries a `preconnect` namespace member alongside the call signature.

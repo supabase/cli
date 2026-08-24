@@ -1,10 +1,6 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../shared/legacy/global-flags.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
@@ -12,6 +8,7 @@ import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { LegacyDockerRun, type LegacyDockerRunOpts } from "./legacy-docker-run.service.ts";
 import { legacyEdgeRuntimeScriptLayer } from "./legacy-edge-runtime-script.layer.ts";
 import { LegacyEdgeRuntimeScript } from "./legacy-edge-runtime-script.service.ts";
+import { makeLegacyViperEnvLayer } from "../../shared/legacy/legacy-viper-env.ts";
 
 // Fakes a `docker run --rm` capture: the pg-delta scripts throw to force the
 // worker to exit, so a real diff always comes back with a non-zero exit and
@@ -76,6 +73,7 @@ function setup(
         Layer.succeed(LegacyDebugFlag, false),
         Layer.succeed(LegacyNetworkIdFlag, Option.none<string>()),
         BunServices.layer,
+        makeLegacyViperEnvLayer(),
       ),
     ),
   );
@@ -150,45 +148,38 @@ describe("legacyEdgeRuntimeScriptLayer sentinel handling", () => {
       // reflects bootstrap's real target. `opts.workdir` (threaded from
       // `LegacyPgDeltaContext.cwd` by every pg-delta/migra caller) must win the
       // pin-file lookup instead.
-      const configWorkdir = mkdtempSync(join(tmpdir(), "edge-runtime-config-"));
-      const callerWorkdir = mkdtempSync(join(tmpdir(), "edge-runtime-caller-"));
-      mkdirSync(join(configWorkdir, "supabase", ".temp"), { recursive: true });
-      writeFileSync(
-        join(configWorkdir, "supabase", ".temp", "edge-runtime-version"),
-        "v-from-config\n",
-      );
-      mkdirSync(join(callerWorkdir, "supabase", ".temp"), { recursive: true });
-      writeFileSync(
-        join(callerWorkdir, "supabase", ".temp", "edge-runtime-version"),
-        "v-from-caller\n",
-      );
-
-      const { layer, docker } = setup(
-        { exitCode: 1, stdout: "", stderr: "main worker has been destroyed\n" },
-        { cliConfigWorkdir: configWorkdir },
-      );
-
       return Effect.gen(function* () {
-        const edge = yield* LegacyEdgeRuntimeScript;
-        yield* edge.run({
-          script: "console.log('x')",
-          env: {},
-          binds: [],
-          errPrefix: "error diffing schema",
-          denoVersion: 2,
-          workdir: callerWorkdir,
-        });
-        expect(docker.lastOpts?.image).toContain("edge-runtime:v-from-caller");
-        expect(docker.lastOpts?.image).not.toContain("v-from-config");
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.sync(() => {
-            rmSync(configWorkdir, { recursive: true, force: true });
-            rmSync(callerWorkdir, { recursive: true, force: true });
-          }),
-        ),
-      );
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const configWorkdir = yield* fs.makeTempDirectory({ prefix: "edge-runtime-config-" });
+        const callerWorkdir = yield* fs.makeTempDirectory({ prefix: "edge-runtime-caller-" });
+        const configTemp = path.join(configWorkdir, "supabase", ".temp");
+        const callerTemp = path.join(callerWorkdir, "supabase", ".temp");
+        yield* fs.makeDirectory(configTemp, { recursive: true });
+        yield* fs.writeFileString(path.join(configTemp, "edge-runtime-version"), "v-from-config\n");
+        yield* fs.makeDirectory(callerTemp, { recursive: true });
+        yield* fs.writeFileString(path.join(callerTemp, "edge-runtime-version"), "v-from-caller\n");
+
+        const { layer, docker } = setup(
+          { exitCode: 1, stdout: "", stderr: "main worker has been destroyed\n" },
+          { cliConfigWorkdir: configWorkdir },
+        );
+        yield* Effect.gen(function* () {
+          const edge = yield* LegacyEdgeRuntimeScript;
+          yield* edge.run({
+            script: "console.log('x')",
+            env: {},
+            binds: [],
+            errPrefix: "error diffing schema",
+            denoVersion: 2,
+            workdir: callerWorkdir,
+          });
+          expect(docker.lastOpts?.image).toContain("edge-runtime:v-from-caller");
+          expect(docker.lastOpts?.image).not.toContain("v-from-config");
+        }).pipe(Effect.provide(layer));
+        yield* fs.remove(configWorkdir, { recursive: true, force: true });
+        yield* fs.remove(callerWorkdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer));
     },
   );
 

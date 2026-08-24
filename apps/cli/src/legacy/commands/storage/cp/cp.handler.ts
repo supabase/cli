@@ -1,5 +1,3 @@
-import * as nodePath from "node:path";
-
 import type { ProjectConfig } from "@supabase/config";
 import { Effect, FileSystem, Option, Path, Stream } from "effect";
 import type { PlatformError } from "effect/PlatformError";
@@ -30,6 +28,17 @@ import {
   legacyGoUrlParse,
   legacySplitBucketPrefix,
 } from "../../../shared/legacy-storage-url.ts";
+
+const legacyStorageCauseText = (value: unknown): string => {
+  if (value instanceof Error) return value.message;
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return value.toString();
+  }
+  if (typeof value === "symbol") return value.toString();
+  return Object.prototype.toString.call(value);
+};
 import { legacyConnectStorageGateway, legacyLoadStorageConfig } from "../storage.frame.ts";
 import { LegacyStorageConfigError } from "../../../shared/legacy-storage-credentials.errors.ts";
 import {
@@ -86,12 +95,10 @@ export const legacyStorageCp = Effect.fn("legacy.storage.cp")(function* (
     // discarded on the local target — see push.handler.ts's identical guard
     // (db push) for the full TS-only rationale.
     if (Option.isSome(flags.projectRef) && flags.local) {
-      return yield* Effect.fail(
-        new LegacyStorageMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-        }),
-      );
+      return yield* new LegacyStorageMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+      });
     }
 
     const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
@@ -177,6 +184,13 @@ function absLocal(path: Path.Path, cwd: string, p: string): string {
   return path.isAbsolute(p) ? p : path.join(cwd, p);
 }
 
+/** Return the basename of a slash-delimited remote storage key. */
+function remoteObjectBasename(remotePath: string): string {
+  const withoutTrailingSlashes = remotePath.replace(/\/+$/, "");
+  const separator = withoutTrailingSlashes.lastIndexOf("/");
+  return separator === -1 ? withoutTrailingSlashes : withoutTrailingSlashes.slice(separator + 1);
+}
+
 /** Write a stream chunk fully to the open file handle. */
 const writeChunk = (handle: FileSystem.File, chunk: Uint8Array) => handle.writeAll(chunk);
 
@@ -196,7 +210,7 @@ const downloadSingle = (
         Effect.mapError(
           (cause) =>
             new LegacyStorageFileError({
-              message: `failed to create file: ${String(cause.cause ?? cause)}`,
+              message: `failed to create file: ${legacyStorageCauseText(cause.cause ?? cause)}`,
             }),
         ),
       );
@@ -224,9 +238,7 @@ const downloadAll = (
       Effect.map((i) => i.type === "Directory"),
       Effect.orElseSucceed(() => false),
     );
-    const localPath = isDir
-      ? path.join(localPath0, nodePath.posix.basename(remotePath))
-      : localPath0;
+    const localPath = isDir ? path.join(localPath0, remoteObjectBasename(remotePath)) : localPath0;
 
     const tasks: Array<{ objectPath: string; dstPath: string; isDir: boolean }> = [];
     // Capture the walk error as a value rather than failing on it immediately:
@@ -271,7 +283,7 @@ const downloadAll = (
                     Effect.mapError(
                       (cause) =>
                         new LegacyStorageFileError({
-                          message: `failed to create file: ${String(cause.cause ?? cause)}`,
+                          message: `failed to create file: ${legacyStorageCauseText(cause.cause ?? cause)}`,
                         }),
                     ),
                   );
@@ -290,7 +302,7 @@ const downloadAll = (
     // the pass above (the job queue's first error); the rare walk-error +
     // download-error pair is collapsed to whichever fails first.
     if (iterError !== undefined) {
-      return yield* Effect.fail(iterError);
+      return yield* iterError;
     }
   });
 
@@ -299,7 +311,7 @@ const makeDirIfNotExist = (fs: FileSystem.FileSystem, dir: string) =>
     Effect.mapError(
       (cause) =>
         new LegacyStorageFileError({
-          message: `failed to mkdir: ${String(cause.cause ?? cause)}`,
+          message: `failed to mkdir: ${legacyStorageCauseText(cause.cause ?? cause)}`,
         }),
     ),
   );
@@ -348,7 +360,7 @@ const uploadAll = (ctx: UploadCtx, remotePath: string, localPath: string, jobs: 
     let dirExists = false;
     let fileExists = false;
     if (noSlash.length > 0) {
-      const base = nodePath.posix.basename(noSlash);
+      const base = ctx.path.basename(noSlash);
       yield* legacyIterateStoragePaths(ctx.gateway, ctx.output, noSlash, (objectName) =>
         Effect.sync(() => {
           if (objectName === base) fileExists = true;
@@ -414,7 +426,7 @@ const autoCreateAndRetry = (
     const [bucket, prefix] = legacySplitBucketPrefix(dstPath);
     // Go only auto-creates when a prefix follows the bucket (`cp.go:154`).
     if (prefix.length === 0) {
-      return yield* Effect.fail(original);
+      return yield* original;
     }
     const props = yield* bucketAutoCreateProps(ctx, bucket);
     yield* ctx.gateway.createBucket(bucket, props);
@@ -485,7 +497,7 @@ const walkUploadDir = (
       // afero.Walk uses Lstat (no-follow); a symlink is not regular → skipped.
       const isSymlink = yield* fs.readLink(abs).pipe(
         Effect.as(true),
-        Effect.catch(() => Effect.succeed(false)),
+        Effect.orElseSucceed(() => false),
       );
       if (isSymlink) continue;
       const info = yield* fs.stat(abs);

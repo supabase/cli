@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Option, Formatter } from "effect";
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -99,7 +99,7 @@ describe("legacy domains delete integration", () => {
       const exit = yield* Effect.exit(legacyDomainsDelete(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("unexpected delete hostname status 503");
+        expect(Formatter.formatJson(exit.cause)).toContain("unexpected delete hostname status 503");
       }
       expect(telemetry.flushed).toBe(true);
       expect(linkedProjectCache.cached).toBe(true);
@@ -112,7 +112,7 @@ describe("legacy domains delete integration", () => {
       const exit = yield* Effect.exit(legacyDomainsDelete(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to delete custom hostname");
+        expect(Formatter.formatJson(exit.cause)).toContain("failed to delete custom hostname");
       }
     }).pipe(Effect.provide(layer));
   });

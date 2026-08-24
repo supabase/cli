@@ -1,13 +1,25 @@
 import { describe, expect, it } from "@effect/vitest";
 import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
-import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
-import { Deferred, Effect, Exit, Layer, Option, PlatformError, Sink, Stdio, Stream } from "effect";
+import { BunServices } from "@effect/platform-bun";
+import {
+  Deferred,
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  Schema,
+  Sink,
+  Stdio,
+  Stream,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
-import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { commandRuntimeLayer as rawCommandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { CurrentAnalyticsContext } from "../../../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../../../shared/telemetry/analytics.service.ts";
 import {
@@ -31,7 +43,57 @@ import { legacyFunctionsDownloadHandler } from "./download.command.ts";
 import type { LegacyFunctionsDownloadFlags } from "./download.command.ts";
 import { legacyFunctionsDownload } from "./download.handler.ts";
 
+const commandRuntimeLayer = (commandPath: ReadonlyArray<string>) =>
+  rawCommandRuntimeLayer(commandPath).pipe(Layer.provide(BunServices.layer));
+
 const PROJECT_ID = "abcdefghijklmnopqrst";
+const pathService = Effect.runSync(Path.Path.pipe(Effect.provide(BunServices.layer)));
+const join = (...parts: ReadonlyArray<string>) => pathService.join(...parts);
+const resolve = (...parts: ReadonlyArray<string>) => pathService.resolve(...parts);
+const encodeMultipartMetadata = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Struct({ deno2_entrypoint_path: Schema.String })),
+);
+const encodeProjectConfigJson = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Struct({ project_id: Schema.String })),
+);
+const withBunServices = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
+  effect.pipe(Effect.provide(BunServices.layer));
+const configEnvLayer = (env: Readonly<Record<string, string>>) =>
+  ConfigProvider.layer(ConfigProvider.fromEnv({ env, preserveEmptyStrings: true }));
+const makeDirectory = (path: string) =>
+  withBunServices(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(path, { recursive: true });
+    }),
+  );
+const writeText = (path: string, contents: string) =>
+  withBunServices(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(path, contents);
+    }),
+  );
+const readText = (path: string) =>
+  withBunServices(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      return yield* fs.readFileString(path);
+    }),
+  );
+const fileExists = (path: string) =>
+  withBunServices(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      return yield* fs.exists(path);
+    }),
+  );
+const removeTree = (path: string) =>
+  withBunServices(
+    Effect.gen(function* () {
+      yield* (yield* FileSystem.FileSystem).remove(path, { recursive: true, force: true });
+    }),
+  ).pipe(Effect.orDie);
 
 /**
  * Mutates the shared spawner options object from inside `onSpawn`, scoped to
@@ -87,14 +149,12 @@ function mockDockerRunSpawnFailure() {
       spawned.push({ command: cmd, args });
 
       if (args[0] === "run") {
-        return yield* Effect.fail(
-          PlatformError.systemError({
-            _tag: "NotFound",
-            module: "ChildProcess",
-            method: "spawn",
-            description: `${cmd} not found`,
-          }),
-        );
+        return yield* PlatformError.systemError({
+          _tag: "NotFound",
+          module: "ChildProcess",
+          method: "spawn",
+          description: `${cmd} not found`,
+        });
       }
 
       const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
@@ -163,7 +223,7 @@ function multipartResponse(request: Parameters<typeof HttpClientResponse.fromWeb
     'Content-Disposition: form-data; name="metadata"',
     "Content-Type: application/json",
     "",
-    JSON.stringify({ deno2_entrypoint_path: "source/index.ts" }),
+    encodeMultipartMetadata({ deno2_entrypoint_path: "source/index.ts" }),
     `--${boundary}`,
     'Content-Disposition: form-data; name="file"; filename="source/index.ts"',
     "",
@@ -243,12 +303,7 @@ describe("legacy functions download", () => {
 
       expect(proxy.calls).toEqual([]);
       expect(
-        yield* Effect.tryPromise(() =>
-          readFile(
-            join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
-            "utf8",
-          ),
-        ),
+        yield* readText(join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts")),
       ).toBe("console.log('legacy native')");
       expect(out.stderrText).toContain(
         "Downloaded Function hello-world from project abcdefghijklmnopqrst.",
@@ -317,7 +372,9 @@ describe("legacy functions download", () => {
         expect(out.stderrText).not.toContain("Downloaded Function");
         // No `--debug` — the temp eszip file is removed after the run.
         expect(
-          existsSync(join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip")),
+          yield* fileExists(
+            join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip"),
+          ),
         ).toBe(false);
       }).pipe(Effect.provide(layer));
     },
@@ -362,11 +419,8 @@ describe("legacy functions download", () => {
 
         expect(proxy.calls).toEqual([]);
         expect(
-          yield* Effect.tryPromise(() =>
-            readFile(
-              join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
-              "utf8",
-            ),
+          yield* readText(
+            join(tempRoot.current, "supabase", "functions", "hello-world", "index.ts"),
           ),
         ).toBe("console.log('legacy native')");
       }).pipe(Effect.provide(layer));
@@ -642,6 +696,51 @@ describe("legacy functions download", () => {
         out,
         api,
         cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        env: { BITBUCKET_CLONE_DIR: "/opt/atlassian/pipelines/agent/build" },
+      }),
+      configEnvLayer({ BITBUCKET_CLONE_DIR: "/opt/atlassian/pipelines/agent/build" }),
+      proxy.layer,
+      child.layer,
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "hello-world",
+          "--use-docker",
+          "--project-ref",
+          PROJECT_ID,
+        ]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+      const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+      expect(runCommand?.args).not.toContain(
+        `supabase_edge_runtime_${PROJECT_ID}:/root/.cache/deno:rw`,
+      );
+      const hostEszipPath = resolve(
+        tempRoot.current,
+        "supabase",
+        ".temp",
+        "output_hello-world.eszip",
+      );
+      expect(runCommand?.args).toContain(
+        `${hostEszipPath}:/root/eszips/output_hello-world.eszip:ro`,
+      );
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("uses project dotenv Bitbucket settings for Docker volume creation and mounts", () => {
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi();
+    const proxy = mockProxy();
+    const child = mockChildProcessSpawner({ exitCode: 0 });
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -657,38 +756,24 @@ describe("legacy functions download", () => {
       }),
     );
 
-    const previousBitbucketCloneDir = process.env["BITBUCKET_CLONE_DIR"];
-    process.env["BITBUCKET_CLONE_DIR"] = "/opt/atlassian/pipelines/agent/build";
-
     return Effect.gen(function* () {
-      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+      yield* makeDirectory(join(tempRoot.current, "supabase"));
+      yield* writeText(
+        join(tempRoot.current, "supabase", ".env"),
+        "BITBUCKET_CLONE_DIR=/opt/atlassian/pipelines/agent/build\n",
+      );
+      yield* writeText(
+        join(tempRoot.current, "supabase", "config.toml"),
+        'project_id = "' + PROJECT_ID + '"\n',
+      );
 
+      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
       const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+      expect(child.spawned.some((spawned) => spawned.args[0] === "volume")).toBe(false);
       expect(runCommand?.args).not.toContain(
         `supabase_edge_runtime_${PROJECT_ID}:/root/.cache/deno:rw`,
       );
-      const hostEszipPath = resolve(
-        tempRoot.current,
-        "supabase",
-        ".temp",
-        "output_hello-world.eszip",
-      );
-      expect(runCommand?.args).toContain(
-        `${hostEszipPath}:/root/eszips/output_hello-world.eszip:ro`,
-      );
-    })
-      .pipe(Effect.provide(layer))
-      .pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previousBitbucketCloneDir === undefined) {
-              delete process.env["BITBUCKET_CLONE_DIR"];
-            } else {
-              process.env["BITBUCKET_CLONE_DIR"] = previousBitbucketCloneDir;
-            }
-          }),
-        ),
-      );
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
   });
 
   it.live("requests the raw eszip body instead of a negotiated JSON response", () => {
@@ -942,15 +1027,11 @@ describe("legacy functions download", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => mkdir(nestedWorkdir, { recursive: true }));
-        yield* Effect.tryPromise(() =>
-          mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-        );
-        yield* Effect.tryPromise(() =>
-          writeFile(
-            join(tempRoot.current, "supabase", "config.toml"),
-            ['project_id = "ancestor-project"', ""].join("\n"),
-          ),
+        yield* makeDirectory(nestedWorkdir);
+        yield* makeDirectory(join(tempRoot.current, "supabase"));
+        yield* writeText(
+          join(tempRoot.current, "supabase", "config.toml"),
+          ['project_id = "ancestor-project"', ""].join("\n"),
         );
 
         yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
@@ -998,20 +1079,14 @@ describe("legacy functions download", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
+      yield* makeDirectory(join(tempRoot.current, "supabase"));
+      yield* writeText(
+        join(tempRoot.current, "supabase", "config.toml"),
+        ['project_id = "toml-project"', ""].join("\n"),
       );
-      yield* Effect.tryPromise(() =>
-        writeFile(
-          join(tempRoot.current, "supabase", "config.toml"),
-          ['project_id = "toml-project"', ""].join("\n"),
-        ),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(
-          join(tempRoot.current, "supabase", "config.json"),
-          JSON.stringify({ project_id: "json-project" }),
-        ),
+      yield* writeText(
+        join(tempRoot.current, "supabase", "config.json"),
+        encodeProjectConfigJson({ project_id: "json-project" }),
       );
 
       yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
@@ -1096,11 +1171,10 @@ describe("legacy functions download", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        mkdir(join(tempRoot.current, "supabase", ".temp"), { recursive: true }),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(join(tempRoot.current, "supabase", ".temp", "edge-runtime-version"), "v9.9.9\n"),
+      yield* makeDirectory(join(tempRoot.current, "supabase", ".temp"));
+      yield* writeText(
+        join(tempRoot.current, "supabase", ".temp", "edge-runtime-version"),
+        "v9.9.9\n",
       );
 
       yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
@@ -1140,7 +1214,7 @@ describe("legacy functions download", () => {
       yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
 
       expect(
-        existsSync(join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip")),
+        yield* fileExists(join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip")),
       ).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -1181,7 +1255,9 @@ describe("legacy functions download", () => {
         yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
 
         expect(
-          existsSync(join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip")),
+          yield* fileExists(
+            join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip"),
+          ),
         ).toBe(false);
       }).pipe(Effect.provide(layer));
     },
@@ -1221,14 +1297,10 @@ describe("legacy functions download", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() =>
-          mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-        );
-        yield* Effect.tryPromise(() =>
-          writeFile(
-            join(tempRoot.current, "supabase", "config.toml"),
-            ["[edge_runtime]", "deno_version = 3", ""].join("\n"),
-          ),
+        yield* makeDirectory(join(tempRoot.current, "supabase"));
+        yield* writeText(
+          join(tempRoot.current, "supabase", "config.toml"),
+          ["[edge_runtime]", "deno_version = 3", ""].join("\n"),
         );
 
         const error = yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true }).pipe(
@@ -1318,14 +1390,10 @@ describe("legacy functions download", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() =>
-            mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-          );
-          yield* Effect.tryPromise(() =>
-            writeFile(
-              join(tempRoot.current, "supabase", "config.toml"),
-              ["[edge_runtime]", "deno_version = 1", ""].join("\n"),
-            ),
+          yield* makeDirectory(join(tempRoot.current, "supabase"));
+          yield* writeText(
+            join(tempRoot.current, "supabase", "config.toml"),
+            ["[edge_runtime]", "deno_version = 1", ""].join("\n"),
           );
 
           const error = yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true }).pipe(
@@ -1370,14 +1438,10 @@ describe("legacy functions download", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() =>
-            mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-          );
-          yield* Effect.tryPromise(() =>
-            writeFile(
-              join(tempRoot.current, "supabase", "config.toml"),
-              ["[edge_runtime]", "deno_version = 1", ""].join("\n"),
-            ),
+          yield* makeDirectory(join(tempRoot.current, "supabase"));
+          yield* writeText(
+            join(tempRoot.current, "supabase", "config.toml"),
+            ["[edge_runtime]", "deno_version = 1", ""].join("\n"),
           );
 
           const error = yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true }).pipe(
@@ -1442,7 +1506,7 @@ describe("legacy functions download", () => {
       // is still cleaned up even though the failure happened before Docker
       // ever ran — not only after a successful `runChildProcess` call.
       expect(
-        existsSync(join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip")),
+        yield* fileExists(join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip")),
       ).toBe(false);
     }).pipe(Effect.provide(layer));
   });
@@ -1493,7 +1557,9 @@ describe("legacy functions download", () => {
         );
         expect(child.spawned.some((spawned) => spawned.args[0] === "run")).toBe(true);
         expect(
-          existsSync(join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip")),
+          yield* fileExists(
+            join(tempRoot.current, "supabase", ".temp", "output_hello-world.eszip"),
+          ),
         ).toBe(false);
       }).pipe(Effect.provide(layer));
     },
@@ -1844,12 +1910,8 @@ describe("legacy functions download", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() =>
-            mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-          );
-          yield* Effect.tryPromise(() =>
-            writeFile(join(tempRoot.current, "supabase", "config.toml"), 'project_id = ""\n'),
-          );
+          yield* makeDirectory(join(tempRoot.current, "supabase"));
+          yield* writeText(join(tempRoot.current, "supabase", "config.toml"), 'project_id = ""\n');
 
           const error = yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true }).pipe(
             Effect.flip,
@@ -1893,14 +1955,10 @@ describe("legacy functions download", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() =>
-            mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-          );
-          yield* Effect.tryPromise(() =>
-            writeFile(
-              join(tempRoot.current, "supabase", "config.toml"),
-              ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
-            ),
+          yield* makeDirectory(join(tempRoot.current, "supabase"));
+          yield* writeText(
+            join(tempRoot.current, "supabase", "config.toml"),
+            ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
           );
 
           const error = yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true }).pipe(
@@ -1929,7 +1987,9 @@ describe("legacy functions download", () => {
             out,
             api,
             cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            env: { SUPABASE_EDGE_RUNTIME_DENO_VERSION: "1" },
           }),
+          configEnvLayer({ SUPABASE_EDGE_RUNTIME_DENO_VERSION: "1" }),
           proxy.layer,
           child.layer,
           Stdio.layerTest({
@@ -1944,29 +2004,13 @@ describe("legacy functions download", () => {
           }),
         );
 
-        const previous = process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
-        process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
-
         return Effect.gen(function* () {
           yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
-
           const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
           expect(runCommand?.args.slice(-6)[0]).toBe(
             "public.ecr.aws/supabase/edge-runtime:v1.68.4",
           );
-        })
-          .pipe(Effect.provide(layer))
-          .pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                if (previous === undefined) {
-                  delete process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
-                } else {
-                  process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = previous;
-                }
-              }),
-            ),
-          );
+        }).pipe(Effect.provide(layer));
       },
     );
 
@@ -1982,7 +2026,9 @@ describe("legacy functions download", () => {
             out,
             api,
             cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            env: { SUPABASE_NETWORK_ID: "env-network" },
           }),
+          configEnvLayer({ SUPABASE_NETWORK_ID: "env-network" }),
           proxy.layer,
           child.layer,
           Stdio.layerTest({
@@ -1997,31 +2043,15 @@ describe("legacy functions download", () => {
           }),
         );
 
-        const previous = process.env["SUPABASE_NETWORK_ID"];
-        process.env["SUPABASE_NETWORK_ID"] = "env-network";
-
         return Effect.gen(function* () {
           yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
-
           expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toEqual({
             command: "docker",
             args: ["network", "inspect", "env-network"],
           });
           const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
           expect(runCommand?.args).toContain("env-network");
-        })
-          .pipe(Effect.provide(layer))
-          .pipe(
-            Effect.ensuring(
-              Effect.sync(() => {
-                if (previous === undefined) {
-                  delete process.env["SUPABASE_NETWORK_ID"];
-                } else {
-                  process.env["SUPABASE_NETWORK_ID"] = previous;
-                }
-              }),
-            ),
-          );
+        }).pipe(Effect.provide(layer));
       },
     );
 
@@ -2035,7 +2065,9 @@ describe("legacy functions download", () => {
           out,
           api,
           cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          env: { SUPABASE_NETWORK_ID: "env-network" },
         }),
+        configEnvLayer({ SUPABASE_NETWORK_ID: "env-network" }),
         proxy.layer,
         child.layer,
         Stdio.layerTest({
@@ -2052,12 +2084,8 @@ describe("legacy functions download", () => {
         }),
       );
 
-      const previous = process.env["SUPABASE_NETWORK_ID"];
-      process.env["SUPABASE_NETWORK_ID"] = "env-network";
-
       return Effect.gen(function* () {
         yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
-
         expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toEqual({
           command: "docker",
           args: ["network", "inspect", "flag-network"],
@@ -2065,19 +2093,7 @@ describe("legacy functions download", () => {
         const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
         expect(runCommand?.args).toContain("flag-network");
         expect(runCommand?.args).not.toContain("env-network");
-      })
-        .pipe(Effect.provide(layer))
-        .pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (previous === undefined) {
-                delete process.env["SUPABASE_NETWORK_ID"];
-              } else {
-                process.env["SUPABASE_NETWORK_ID"] = previous;
-              }
-            }),
-          ),
-        );
+      }).pipe(Effect.provide(layer));
     });
 
     it.live(
@@ -2108,14 +2124,10 @@ describe("legacy functions download", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() =>
-            mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
-          );
-          yield* Effect.tryPromise(() =>
-            writeFile(
-              join(tempRoot.current, "supabase", ".env"),
-              "SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io\n",
-            ),
+          yield* makeDirectory(join(tempRoot.current, "supabase"));
+          yield* writeText(
+            join(tempRoot.current, "supabase", ".env"),
+            "SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io\n",
           );
 
           yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
@@ -2129,9 +2141,6 @@ describe("legacy functions download", () => {
               (spawned) => spawned.args[0] === "image" && spawned.args[1] === "inspect",
             ),
           ).toHaveLength(1);
-          // Proves the registry came from the project dotenv file, not the
-          // ambient shell environment.
-          expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
         }).pipe(Effect.provide(layer));
       },
     );
@@ -2279,6 +2288,7 @@ describe("legacy functions download", () => {
 
       return Effect.gen(function* () {
         const platformApi = yield* LegacyPlatformApi;
+        const goConfigCompat = yield* legacyFunctionsGoConfigCompat;
 
         yield* downloadFunctions(
           { ...baseFlags, useDocker: true },
@@ -2286,7 +2296,7 @@ describe("legacy functions download", () => {
             api: platformApi,
             projectRoot: tempRoot.current,
             rawArgs: ["functions", "download", "hello-world", "--project-ref", PROJECT_ID],
-            goConfigCompat: legacyFunctionsGoConfigCompat,
+            goConfigCompat,
             edgeRuntimeVersion: "1.69.12",
             resolveProjectRef: () => Effect.succeed(PROJECT_ID),
             proxyDownload: () => Effect.die("unexpected proxy invocation"),

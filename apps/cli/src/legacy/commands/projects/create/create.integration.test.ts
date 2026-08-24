@@ -1,9 +1,11 @@
 import type { OrganizationResponseV1, V1CreateAProjectOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Schema } from "effect";
+
+const stringifyJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 import { Command } from "effect/unstable/cli";
 
-import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTelemetryRuntime, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_GLOBAL_FLAGS,
   LegacyExperimentalFlag,
@@ -62,6 +64,7 @@ interface SetupOpts {
   readonly promptPasswordResponses?: ReadonlyArray<string>;
   readonly tracked?: boolean;
   readonly experimental?: boolean;
+  readonly env?: Record<string, string>;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -92,6 +95,7 @@ function setup(opts: SetupOpts = {}) {
     tty,
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
+    env: opts.env,
     goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
   });
   const layer = Layer.mergeAll(
@@ -276,9 +280,7 @@ describe("legacy projects create integration", () => {
   it.live(
     "accepts --release-channel and --postgres-engine when only SUPABASE_EXPERIMENTAL is set",
     () => {
-      const { layer, api } = setup();
-      const previous = process.env["SUPABASE_EXPERIMENTAL"];
-      process.env["SUPABASE_EXPERIMENTAL"] = "true";
+      const { layer, api } = setup({ env: { SUPABASE_EXPERIMENTAL: "true" } });
       return Effect.gen(function* () {
         yield* legacyProjectsCreate({
           ...BASE_FLAGS,
@@ -291,18 +293,7 @@ describe("legacy projects create integration", () => {
         });
         expect(postBody(api)?.release_channel).toBe("internal");
         expect(postBody(api)?.postgres_engine).toBe("17-oriole");
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) {
-              delete process.env["SUPABASE_EXPERIMENTAL"];
-            } else {
-              process.env["SUPABASE_EXPERIMENTAL"] = previous;
-            }
-          }),
-        ),
-      );
+      }).pipe(Effect.provide(layer));
     },
   );
 
@@ -344,7 +335,7 @@ describe("legacy projects create integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = stringifyJson(exit.cause);
         expect(json).toContain("LegacyProjectsCreateMissingArgError");
         expect(json).toContain("--org-id");
       }
@@ -365,7 +356,7 @@ describe("legacy projects create integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectsCreateMissingArgError");
+        expect(stringifyJson(exit.cause)).toContain("LegacyProjectsCreateMissingArgError");
       }
       // No prompts and no org fetch happened.
       expect(api.requests.some((r) => r.method === "GET")).toBe(false);
@@ -400,7 +391,7 @@ describe("legacy projects create integration", () => {
       const exit = yield* Effect.exit(legacyProjectsCreate({ ...BASE_FLAGS }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectsCreateNameEmptyError");
+        expect(stringifyJson(exit.cause)).toContain("LegacyProjectsCreateNameEmptyError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -416,7 +407,7 @@ describe("legacy projects create integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectsOrgsListUnexpectedStatusError");
+        expect(stringifyJson(exit.cause)).toContain("LegacyProjectsOrgsListUnexpectedStatusError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -509,7 +500,7 @@ describe("legacy projects create integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = stringifyJson(exit.cause);
         expect(json).toContain("LegacyProjectsCreateNetworkError");
         expect(json).toContain("failed to create project");
       }
@@ -530,7 +521,7 @@ describe("legacy projects create integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectsCreateUnexpectedStatusError");
+        expect(stringifyJson(exit.cause)).toContain("LegacyProjectsCreateUnexpectedStatusError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -550,7 +541,7 @@ describe("legacy projects create integration", () => {
       // server byte-compares the request body. JSON.parse → stringify
       // round-trips key order, so this asserts the on-the-wire order.
       const body = api.requests.find((r) => r.method === "POST")?.body;
-      expect(JSON.stringify(body)).toBe(
+      expect(stringifyJson(body)).toBe(
         '{"db_pass":"s3cret-pass","desired_instance_size":"micro","name":"alpha","organization_slug":"acme","region":"us-east-1"}',
       );
     }).pipe(Effect.provide(layer));
@@ -615,6 +606,7 @@ describe("legacy projects create integration", () => {
   // previously listed "nano" as a valid choice, silently succeeding where
   // it should error.
   it.live("rejects --size nano at flag-parse time, matching Go's 18-value enum", () => {
+    const { layer } = setup();
     const root = Command.make("supabase").pipe(
       Command.withSubcommands([legacyProjectsCreateCommand]),
       Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
@@ -639,7 +631,7 @@ describe("legacy projects create integration", () => {
       if (Exit.isFailure(exit)) {
         expect(rejectsInvalidSizeChoice(Cause.squash(exit.cause))).toBe(true);
       }
-    }) as Effect.Effect<void>;
+    }).pipe(Effect.provide(Layer.mergeAll(layer, mockTelemetryRuntime())));
   });
 });
 

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { StackServiceState, type StackServiceStatus } from "@supabase/stack/effect";
 import { ConnectionInfo } from "./ConnectionInfo.tsx";
+import { StartDashboardView } from "./StartDashboard.tsx";
 
 function state(name: string, status: StackServiceStatus, error: string | null = null) {
   return new StackServiceState({
@@ -32,12 +33,8 @@ function collectNodes(node: unknown): Array<unknown> {
 }
 
 describe("StartDashboardView", () => {
-  test("renders the starting status without connection info", async () => {
-    const dashboardModule = await import("./StartDashboard.tsx");
-    expect("StartDashboardView" in dashboardModule).toBe(true);
-    if (!("StartDashboardView" in dashboardModule)) return;
-
-    const element = dashboardModule.StartDashboardView({
+  test("renders the starting status without connection info", () => {
+    const element = StartDashboardView({
       states: [state("postgres", "Starting")],
       info: null,
       showConnectionInfo: false,
@@ -55,12 +52,8 @@ describe("StartDashboardView", () => {
     ).toBe(false);
   }, 15_000);
 
-  test("renders the failed status without connection info", async () => {
-    const dashboardModule = await import("./StartDashboard.tsx");
-    expect("StartDashboardView" in dashboardModule).toBe(true);
-    if (!("StartDashboardView" in dashboardModule)) return;
-
-    const element = dashboardModule.StartDashboardView({
+  test("renders the failed status without connection info", () => {
+    const element = StartDashboardView({
       states: [state("postgres", "Failed", "Health check failed and restart budget was exhausted")],
       info: {
         url: "http://127.0.0.1:54321",

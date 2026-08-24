@@ -1,11 +1,9 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, PlatformError, Sink, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { afterEach, beforeEach } from "vitest";
+import { beforeEach } from "vitest";
+
+import { useLegacyTempWorkdir } from "../../../../tests/helpers/legacy-mocks.ts";
 
 import {
   LegacyContainerCreateError,
@@ -25,13 +23,10 @@ import {
 import type { LegacyStartContainerSpec } from "./docker-create-args.ts";
 
 let workdir: string;
+const tempWorkdir = useLegacyTempWorkdir("supabase-legacy-start-container-lifecycle-");
 
 beforeEach(() => {
-  workdir = mkdtempSync(join(tmpdir(), "supabase-legacy-start-container-lifecycle-"));
-});
-
-afterEach(() => {
-  rmSync(workdir, { recursive: true, force: true });
+  workdir = tempWorkdir.current;
 });
 
 /** Matches the standing `mockSpawner` shape used across `legacy-docker-*.unit.test.ts` files, generalized to a per-call handler for multi-step orchestration (volume create -> container create -> container start). */
@@ -609,11 +604,7 @@ describe("legacyEnsureNetwork", () => {
       stderr:
         "Error response from daemon: network with name supabase_network_proj already exists\n",
     }));
-    return legacyEnsureNetwork(mock.spawner, "supabase_network_proj", {}).pipe(
-      Effect.map(() => {
-        // Just needs to not fail — no return value to assert on.
-      }),
-    );
+    return legacyEnsureNetwork(mock.spawner, "supabase_network_proj", {}).pipe(Effect.asVoid);
   });
 
   it.live("fails with LegacyNetworkCreateError on any other failure", () => {
@@ -678,11 +669,7 @@ describe("legacyEnsureVolume", () => {
       exitCode: 125,
       stderr: "Error: volume with name supabase_db_proj already exists: volume already exists\n",
     }));
-    return legacyEnsureVolume(mock.spawner, "supabase_db_proj", {}).pipe(
-      Effect.map(() => {
-        // Just needs to not fail — no return value to assert on.
-      }),
-    );
+    return legacyEnsureVolume(mock.spawner, "supabase_db_proj", {}).pipe(Effect.asVoid);
   });
 
   it.live("treats an already-exists rejection without the trailing sentinel as success", () => {
@@ -690,11 +677,7 @@ describe("legacyEnsureVolume", () => {
       exitCode: 125,
       stderr: "volume with name supabase_db_proj already exists\n",
     }));
-    return legacyEnsureVolume(mock.spawner, "supabase_db_proj", {}).pipe(
-      Effect.map(() => {
-        // Just needs to not fail — no return value to assert on.
-      }),
-    );
+    return legacyEnsureVolume(mock.spawner, "supabase_db_proj", {}).pipe(Effect.asVoid);
   });
 
   it.live("fails with LegacyVolumeCreateError on any other failure", () => {

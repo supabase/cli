@@ -1,9 +1,20 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
-import { afterEach, describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from "effect";
+import { describe, expect, it } from "@effect/vitest";
+import {
+  Cause,
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Path,
+  PlatformError,
+  Sink,
+  Stream,
+} from "effect";
+import * as Formatter from "effect/Formatter";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -33,6 +44,7 @@ import {
   type LegacyDbSession,
 } from "../../../shared/legacy-db-connection.service.ts";
 import { legacyDockerRunLayer } from "../../../shared/legacy-docker-run.layer.ts";
+import { makeLegacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
 import { LegacyEdgeRuntimeScriptError } from "../../../shared/legacy-edge-runtime-script.errors.ts";
 import {
   LegacyEdgeRuntimeScript,
@@ -74,14 +86,12 @@ function mockContainerCliSpawner(route: (args: ReadonlyArray<string>) => RouteRe
         spawned.push({ args });
 
         if (command._tag !== "StandardCommand") {
-          return yield* Effect.fail(
-            PlatformError.systemError({
-              _tag: "NotFound",
-              module: "ChildProcess",
-              method: "spawn",
-              description: "spawn failed",
-            }),
-          );
+          return yield* PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            description: "spawn failed",
+          });
         }
 
         const result = route(args);
@@ -121,7 +131,7 @@ function containerNameFromCreateArgs(args: ReadonlyArray<string>): string {
 }
 
 function fakeContainerId(name: string): string {
-  return [...name]
+  return Array.from(name)
     .map((char) => (char.codePointAt(0) ?? 0).toString(16).padStart(2, "0"))
     .join("")
     .padEnd(64, "0")
@@ -258,10 +268,63 @@ function fakeDbSession() {
 }
 
 const tempRoot = useLegacyTempWorkdir("supabase-db-start-int-");
+const fixturePath = ManagedRuntime.make(BunServices.layer).runSync(Path.Path);
+const pendingWrites = new Map<
+  string,
+  Array<{ readonly path: string; readonly contents: string }>
+>();
+const join = (first: string, ...rest: ReadonlyArray<string>) => fixturePath.join(first, ...rest);
+
+function formatCause(cause: Cause.Cause<unknown>) {
+  return Formatter.formatJson(cause);
+}
+
+function queueWrite(path: string, contents: string) {
+  const workdir = fixturePath.dirname(fixturePath.dirname(path));
+  const writes = pendingWrites.get(workdir) ?? [];
+  writes.push({ path, contents });
+  pendingWrites.set(workdir, writes);
+}
+
+function writeFileSync(path: string, contents: string) {
+  queueWrite(path, contents);
+}
+
+function flushFixtureWrites(workdir: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const writes = pendingWrites.get(workdir) ?? [];
+    for (const write of writes) {
+      yield* fs.makeDirectory(fixturePath.dirname(write.path), { recursive: true });
+      yield* fs.writeFileString(write.path, write.contents);
+    }
+    pendingWrites.delete(workdir);
+  });
+}
+
+function readFile(path: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.readFileString(path);
+  }).pipe(Effect.provide(BunServices.layer));
+}
+
+function readDirectory(path: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.readDirectory(path);
+  }).pipe(Effect.provide(BunServices.layer));
+}
+
+function existsPath(path: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.exists(path).pipe(Effect.orElseSucceed(() => false));
+  }).pipe(Effect.provide(BunServices.layer));
+}
 
 function writeConfig(workdir: string, contents: string) {
-  mkdirSync(join(workdir, "supabase"), { recursive: true });
-  writeFileSync(join(workdir, "supabase", "config.toml"), contents);
+  queueWrite(join(workdir, "supabase", "config.toml"), contents);
 }
 
 interface SetupOpts {
@@ -280,6 +343,7 @@ interface SetupOpts {
   readonly experimental?: boolean;
   /** `--debug`. Defaults to `false`. */
   readonly debug?: boolean;
+  readonly env?: Readonly<Record<string, string | undefined>>;
   /** `LegacyEdgeRuntimeScript`'s mocked stdout for the pg-delta catalog-export call (`db-setup.ts`'s `legacyTryCacheMigrationsCatalog`). Only ever reached on a fresh volume with pg-delta enabled. */
   readonly catalogStdout?: string;
   /** Fails the mocked catalog-export call with this message instead of succeeding. */
@@ -295,7 +359,7 @@ function setup(opts: SetupOpts = {}) {
   if (opts.skipConfig !== true) {
     writeConfig(workdir, opts.configContents ?? 'project_id = "test"\n');
     if (opts.projectEnvContents !== undefined) {
-      writeFileSync(join(workdir, "supabase", ".env"), opts.projectEnvContents);
+      queueWrite(join(workdir, "supabase", ".env"), opts.projectEnvContents);
     }
   }
   const out = mockOutput({ format: opts.format ?? "text" });
@@ -326,6 +390,10 @@ function setup(opts: SetupOpts = {}) {
     requireSsl: () => Effect.succeed(false),
     requireSslForHost: () => Effect.succeed(false),
   });
+  const providerEnv: Record<string, string> = {};
+  for (const [key, value] of Object.entries(opts.env ?? {})) {
+    if (value !== undefined) providerEnv[key] = value;
+  }
 
   let connectAttempts = 0;
   const connectFailures = opts.connectFailures ?? 0;
@@ -347,7 +415,12 @@ function setup(opts: SetupOpts = {}) {
   });
 
   const layer = Layer.mergeAll(
-    BunServices.layer,
+    BunServices.layer.pipe(
+      Layer.tap((context) => flushFixtureWrites(workdir).pipe(Effect.provideContext(context))),
+    ),
+    makeLegacyViperEnvLayer(
+      ConfigProvider.fromEnv({ env: providerEnv, preserveEmptyStrings: true }),
+    ),
     out.layer,
     cliConfig,
     telemetry.layer,
@@ -387,10 +460,6 @@ const currentBranchPath = (workdir: string) =>
   join(workdir, "supabase", ".branches", "_current_branch");
 
 describe("legacy db start", () => {
-  afterEach(() => {
-    delete process.env["SUPABASE_NETWORK_ID"];
-  });
-
   it.live("reports an already-running database without starting a container", () => {
     const { layer, out, telemetry, child } = setup({ running: true });
     return Effect.gen(function* () {
@@ -401,7 +470,7 @@ describe("legacy db start", () => {
       // `initCurrentBranch` is inside `legacyStartDatabase`, never reached on
       // the already-running short-circuit — the already-running check
       // returns before `legacyStartDatabase` is ever called.
-      expect(existsSync(currentBranchPath(tempRoot.current))).toBe(false);
+      expect(yield* existsPath(currentBranchPath(tempRoot.current))).toBe(false);
     });
   });
 
@@ -417,7 +486,7 @@ describe("legacy db start", () => {
         expect(out.stderrText).toContain("Initialising schema...");
         // Default config: realtime, storage, and auth are all enabled (PG >= 15 default).
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readFile(currentBranchPath(tempRoot.current))).toBe("main");
         expect(out.stderrText).not.toContain("Finished");
       });
     },
@@ -430,7 +499,7 @@ describe("legacy db start", () => {
       return Effect.gen(function* () {
         yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(s.layer));
         expect(s.connectAttempts).toBe(3);
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readFile(currentBranchPath(tempRoot.current))).toBe("main");
       });
     },
     15_000,
@@ -463,7 +532,7 @@ describe("legacy db start", () => {
         // `LegacyDbConnection` session — no PG15+ one-shot `docker run --rm` migrate jobs at all.
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
         expect(dbSession.calls.length).toBeGreaterThan(0);
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readFile(currentBranchPath(tempRoot.current))).toBe("main");
       });
     },
   );
@@ -492,7 +561,7 @@ describe("legacy db start", () => {
         yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         // Default config: storage and auth stay enabled — only the realtime job is skipped.
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(2);
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readFile(currentBranchPath(tempRoot.current))).toBe("main");
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => {
@@ -519,7 +588,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyDbConfigLoadError");
+          expect(formatCause(exit.cause)).toContain("LegacyDbConfigLoadError");
         }
         // The container was already created/started/healthy by the time JWKS resolution runs
         // (deep inside the fresh-volume setup step) — the rollback still tears it down.
@@ -550,11 +619,11 @@ describe("legacy db start", () => {
         // catalog cache runs immediately after the migrate-and-seed step.
         expect(edgeRunCalls).toHaveLength(1);
         const tempDir = join(tempRoot.current, "supabase", ".temp", "pgdelta");
-        const catalogFiles = readdirSync(tempDir).filter((name) =>
+        const catalogFiles = (yield* readDirectory(tempDir)).filter((name) =>
           name.startsWith("catalog-local-migrations-"),
         );
         expect(catalogFiles).toHaveLength(1);
-        expect(readFileSync(join(tempDir, catalogFiles[0]!), "utf8")).toBe('{"snapshot":"ok"}');
+        expect(yield* readFile(join(tempDir, catalogFiles[0]!))).toBe('{"snapshot":"ok"}');
       });
     },
   );
@@ -574,7 +643,7 @@ describe("legacy db start", () => {
         expect(out.stderrText).toContain(
           "Warning: failed to cache migrations catalog: edge-runtime script produced no output",
         );
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readFile(currentBranchPath(tempRoot.current))).toBe("main");
       });
     },
   );
@@ -587,7 +656,9 @@ describe("legacy db start", () => {
         yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(edgeRunCalls).toHaveLength(0);
         expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-        expect(existsSync(join(tempRoot.current, "supabase", ".temp", "pgdelta"))).toBe(false);
+        expect(yield* existsPath(join(tempRoot.current, "supabase", ".temp", "pgdelta"))).toBe(
+          false,
+        );
       });
     },
   );
@@ -611,7 +682,7 @@ describe("legacy db start", () => {
         expect(dbSession.calls.some((call) => call.sql.includes(PG_NET_DROP_FINGERPRINT))).toBe(
           true,
         );
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readFile(currentBranchPath(tempRoot.current))).toBe("main");
       });
     },
   );
@@ -647,7 +718,7 @@ describe("legacy db start", () => {
           "/abs/host/backup.sql:/etc/backup.sql:ro",
         );
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readFile(currentBranchPath(tempRoot.current))).toBe("main");
       });
     },
   );
@@ -725,7 +796,7 @@ describe("legacy db start", () => {
       // the negative half.
       expect(volumePruneWasAttempted(child.spawned)).toBe(true);
       // The health-check timeout aborts before `SetupLocalDatabase`/`initCurrentBranch` ever run.
-      expect(existsSync(currentBranchPath(tempRoot.current))).toBe(false);
+      expect(yield* existsPath(currentBranchPath(tempRoot.current))).toBe(false);
     });
   });
 
@@ -738,8 +809,6 @@ describe("legacy db start", () => {
       // still gated the rollback's `Pruned …:` stderr reports. Delete any shell `SUPABASE_DEBUG`
       // first: shell *presence* (even `false`) suppresses the project value entirely, per
       // `legacyViperEnvBoolWithProjectFallback`'s own semantics.
-      const previous = process.env["SUPABASE_DEBUG"];
-      delete process.env["SUPABASE_DEBUG"];
       const { layer, child } = setup({
         configContents: 'project_id = "test"\n[db]\nhealth_timeout = "1s"\n',
         route: freshVolumeRoute(defaultRoute({ neverHealthy: true })),
@@ -763,8 +832,6 @@ describe("legacy db start", () => {
         Effect.ensuring(
           Effect.sync(() => {
             globalThis.process.stderr.write = originalWrite;
-            if (previous === undefined) delete process.env["SUPABASE_DEBUG"];
-            else process.env["SUPABASE_DEBUG"] = previous;
           }),
         ),
       );
@@ -785,7 +852,7 @@ describe("legacy db start", () => {
         // this test only asserts the command-level outcome that's specific to `--from-backup`.
         yield* legacyDbStart(flags("/abs/host/backup.sql")).pipe(Effect.provide(layer));
         expect(rollbackWasAttempted(child.spawned)).toBe(false);
-        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+        expect(yield* readFile(currentBranchPath(tempRoot.current))).toBe("main");
       });
     },
   );
@@ -807,7 +874,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyDbConfigLoadError");
+          expect(formatCause(exit.cause)).toContain("LegacyDbConfigLoadError");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
       });
@@ -820,7 +887,7 @@ describe("legacy db start", () => {
       const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to load config");
+        expect(formatCause(exit.cause)).toContain("failed to load config");
       }
       expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
       expect(telemetry.flushed).toBe(true);
@@ -836,7 +903,7 @@ describe("legacy db start", () => {
       const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to parse config: missing private key");
+        expect(formatCause(exit.cause)).toContain("failed to parse config: missing private key");
       }
       expect(out.stderrText).not.toContain("already running");
     });
@@ -866,8 +933,10 @@ describe("legacy db start", () => {
     // fallback, read fresh at its own call site — well after the config's
     // dotenv pass — so a shell/project-dotenv `SUPABASE_NETWORK_ID` is
     // effective when the flag itself is omitted (review: PRRT_kwDOErm0O86VlqIL).
-    process.env["SUPABASE_NETWORK_ID"] = "env-network";
-    const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
+    const { layer, child } = setup({
+      env: { SUPABASE_NETWORK_ID: "env-network" },
+      route: freshVolumeRoute(defaultRoute()),
+    });
     return Effect.gen(function* () {
       yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(
@@ -914,7 +983,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyDbConfigLoadError");
+          expect(formatCause(exit.cause)).toContain("LegacyDbConfigLoadError");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
       });
@@ -944,7 +1013,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = formatCause(exit.cause);
           expect(message).toContain("LegacyDbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
@@ -970,7 +1039,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = formatCause(exit.cause);
           expect(message).toContain("LegacyDbConfigLoadError");
           expect(message).toContain("auth.rate_limit");
         }
@@ -1007,7 +1076,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = formatCause(exit.cause);
           expect(message).toContain("LegacyDbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
@@ -1035,7 +1104,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = formatCause(exit.cause);
           expect(message).toContain("LegacyDbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
@@ -1064,7 +1133,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = formatCause(exit.cause);
           expect(message).toContain("LegacyDbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
@@ -1092,7 +1161,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = formatCause(exit.cause);
           expect(message).toContain("LegacyDbConfigLoadError");
           expect(message).toContain("storage.enabled");
         }
@@ -1124,7 +1193,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = formatCause(exit.cause);
           expect(message).toContain("LegacyDbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
@@ -1154,7 +1223,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = formatCause(exit.cause);
           expect(message).toContain("LegacyDbConfigLoadError");
           expect(message).toContain("Invalid config for studio.api_url");
         }
@@ -1182,7 +1251,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = formatCause(exit.cause);
           expect(message).toContain("LegacyDbConfigLoadError");
           expect(message).toContain("Missing required field in config: local_smtp.port");
         }
@@ -1210,7 +1279,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = formatCause(exit.cause);
           expect(message).toContain("LegacyDbConfigLoadError");
           expect(message).toContain("auth.jwt_expiry");
         }
@@ -1235,7 +1304,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = formatCause(exit.cause);
           expect(message).toContain("LegacyDbConfigLoadError");
           expect(message).toContain("api.port");
         }
@@ -1277,7 +1346,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = formatCause(exit.cause);
           expect(message).toContain("LegacyDbConfigLoadError");
           expect(message).toContain(dottedFieldPath);
         }
@@ -1304,7 +1373,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = formatCause(exit.cause);
           expect(message).toContain("LegacyDbConfigLoadError");
           expect(message).toContain("auth.passkey");
         }
@@ -1330,7 +1399,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = formatCause(exit.cause);
           expect(message).toContain("LegacyDbConfigLoadError");
           expect(message).toContain("auth.external");
         }
@@ -1364,7 +1433,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = formatCause(exit.cause);
           expect(message).toContain("LegacyDbConfigLoadError");
           expect(message).toContain("auth.hook");
         }
@@ -1396,7 +1465,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = formatCause(exit.cause);
           expect(message).toContain("LegacyDbConfigLoadError");
           expect(message).toContain("auth.email.smtp");
         }
@@ -1451,7 +1520,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = formatCause(exit.cause);
           expect(message).toContain("LegacyDbConfigLoadError");
           expect(message).toContain("storage.image_transformation.enabled");
         }
@@ -1501,7 +1570,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = formatCause(exit.cause);
           expect(message).toContain("LegacyDbConfigLoadError");
           expect(message).toContain("db.ssl_enforcement.enabled");
         }
@@ -1529,7 +1598,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = formatCause(exit.cause);
           expect(message).toContain("LegacyDbConfigLoadError");
           expect(message).toContain("db.ssl_enforcement.enabled");
         }
@@ -1581,7 +1650,7 @@ describe("legacy db start", () => {
         const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const message = JSON.stringify(exit.cause);
+          const message = formatCause(exit.cause);
           expect(message).toContain("LegacyDbConfigLoadError");
           expect(message).toContain(
             "Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined",
@@ -1696,7 +1765,7 @@ describe("legacy db start", () => {
       const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const message = JSON.stringify(exit.cause);
+        const message = formatCause(exit.cause);
         expect(message).toContain("LegacyDbConfigLoadError");
         expect(message).toContain("auth.email.max_frequency");
       }
@@ -1757,7 +1826,7 @@ describe("legacy db start", () => {
       const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to inspect service");
+        expect(formatCause(exit.cause)).toContain("failed to inspect service");
       }
     });
   });

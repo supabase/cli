@@ -1,23 +1,35 @@
-import { execSync } from "node:child_process";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, Exit, Layer } from "effect";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { prefetch } from "@supabase/stack";
 
-function hasDockerDaemon(): boolean {
-  try {
-    execSync("docker info", { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
+const hasDockerDaemon = Effect.scoped(
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const result = yield* spawner
+      .exitCode(ChildProcess.make("docker", ["info"], { stdout: "ignore", stderr: "ignore" }))
+      .pipe(Effect.exit);
+    return Exit.isSuccess(result) && result.value === 0;
+  }),
+);
 
-export default async function globalSetup() {
-  const dockerAvailable = hasDockerDaemon();
+const prefetchEffect = (mode?: "docker") =>
+  Effect.tryPromise(() => (mode ? prefetch({ mode }) : prefetch())).pipe(Effect.asVoid);
 
-  const warmups = [prefetch()];
+const globalSetupEffect = Effect.gen(function* () {
+  const dockerAvailable = yield* hasDockerDaemon;
+  const warmups = [prefetchEffect()];
 
   if (dockerAvailable) {
-    warmups.push(prefetch({ mode: "docker" }));
+    warmups.push(prefetchEffect("docker"));
   }
 
-  await Promise.all(warmups);
+  yield* Effect.all(warmups, { concurrency: "unbounded", discard: true });
+});
+
+export default function globalSetup() {
+  return Effect.runPromise(
+    globalSetupEffect.pipe(Effect.provide(Layer.mergeAll(BunServices.layer))),
+  );
 }

@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path, Redacted } from "effect";
+import { DateTime, Effect, FileSystem, Option, Path, Redacted, Schema } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
@@ -19,10 +19,32 @@ import {
   LegacyOutputFlag,
 } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { legacyErrorMessage } from "../../../shared/legacy-error-message.ts";
 import { Random } from "../../../../shared/runtime/random.service.ts";
 import { Stdin } from "../../../../shared/runtime/stdin.service.ts";
 import { AiTool } from "../../../../shared/telemetry/ai-tool.service.ts";
 import type { LegacyDbQueryFlags } from "./query.command.ts";
+
+const queryCellToString = (value: unknown): string => {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return value.toString();
+  }
+  if (typeof value === "symbol") return value.toString();
+  return Object.prototype.toString.call(value);
+};
+
+function isQueryRowArray(value: unknown): value is ReadonlyArray<Record<string, unknown> | null> {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (element) =>
+        element === null ||
+        (typeof element === "object" && element !== null && !Array.isArray(element)),
+    )
+  );
+}
 import { LEGACY_RLS_CHECK_SQL, legacyBuildRlsAdvisory } from "./query.advisory.ts";
 import {
   LegacyDbQueryExecError,
@@ -112,11 +134,9 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       // Checked before any output.
       const nonFinite = legacyFindNonFiniteJsonValue(data);
       if (nonFinite !== undefined) {
-        return yield* Effect.fail(
-          new LegacyDbQueryExecError({
-            message: `failed to encode JSON: json: unsupported value: ${nonFinite}`,
-          }),
-        );
+        return yield* new LegacyDbQueryExecError({
+          message: `failed to encode JSON: json: unsupported value: ${nonFinite}`,
+        });
       }
       const jsonData =
         fieldTypeIds === undefined ? data : legacyCoerceLocalJsonRows(data, fieldTypeIds);
@@ -124,8 +144,9 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       const rendered = legacyRenderJson(cols, jsonData, agentMode, boundary, advisory);
       if (output.format === "stream-json" && Option.getOrUndefined(outputFlag) !== "json") {
         const compactRendered = rendered.trimEnd().replaceAll("\n", "");
+        const timestamp = DateTime.formatIso(yield* DateTime.now);
         yield* output.raw(
-          `{"type":"result","data":${compactRendered},"timestamp":${JSON.stringify(new Date().toISOString())}}\n`,
+          `{"type":"result","data":${compactRendered},"timestamp":"${timestamp}"}\n`,
         );
         return;
       }
@@ -157,7 +178,7 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
         const advisory = agentMode
           ? yield* session.queryRaw(LEGACY_RLS_CHECK_SQL).pipe(
               Effect.map((rls) =>
-                legacyBuildRlsAdvisory(rls.rows.map((row) => String(row[0] ?? ""))),
+                legacyBuildRlsAdvisory(rls.rows.map((row) => queryCellToString(row[0]))),
               ),
               Effect.orElseSucceed(() => Option.none<LegacyAdvisory>()),
             )
@@ -202,38 +223,32 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
         Effect.mapError(
           (cause) =>
             new LegacyDbQueryExecError({
-              message: `failed to execute query: ${cause}`,
+              message: `failed to execute query: ${legacyErrorMessage(cause)}`,
               transport: true,
             }),
         ),
       );
       if (status !== 201) {
-        return yield* Effect.fail(
-          new LegacyDbQueryUnexpectedStatusError({
-            status,
-            message: `unexpected status ${status}: ${body}`,
-          }),
-        );
+        return yield* new LegacyDbQueryUnexpectedStatusError({
+          status,
+          message: `unexpected status ${status}: ${body}`,
+        });
       }
 
       // The API returns a JSON array of row objects for SELECT, or a plain
       // command tag for DDL/DML. Anything that is not a JSON array of objects
       // is printed verbatim (the array-of-maps decode fails → raw body).
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(body);
-      } catch {
+      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(body).pipe(
+        Effect.option,
+      );
+      if (Option.isNone(parsed)) {
         return yield* output.raw(`${body}\n`);
       }
-      const isRowArray =
-        Array.isArray(parsed) &&
-        parsed.every(
-          (element) => element === null || (typeof element === "object" && !Array.isArray(element)),
-        );
-      if (!isRowArray) {
+      const parsedValue = parsed.value;
+      if (!isQueryRowArray(parsedValue)) {
         return yield* output.raw(`${body}\n`);
       }
-      const rows = parsed as ReadonlyArray<Record<string, unknown> | null>;
+      const rows = parsedValue;
       if (rows.length === 0) {
         return yield* emit(format, [], [], agentMode, Option.none());
       }
@@ -252,23 +267,19 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     if (Option.isSome(flags.linked)) exclusive.push("linked");
     if (Option.isSome(flags.local)) exclusive.push("local");
     if (exclusive.length > 1) {
-      return yield* Effect.fail(
-        new LegacyDbQueryMutuallyExclusiveFlagsError({
-          message: `if any flags in the group [db-url linked local] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
-        }),
-      );
+      return yield* new LegacyDbQueryMutuallyExclusiveFlagsError({
+        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
+      });
     }
 
     // `--project-ref` never implies `--linked` and must not be silently
     // discarded on a non-linked target — see push.handler.ts's identical guard
     // for the full TS-only rationale.
     if (Option.isSome(flags.projectRef) && Option.isNone(flags.linked)) {
-      return yield* Effect.fail(
-        new LegacyDbQueryMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
+      return yield* new LegacyDbQueryMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      });
     }
 
     // PreRun parity: for --linked, the access token is checked and the
@@ -319,12 +330,10 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       //    `/database/query`.
       const tokenOpt = yield* credentials.getAccessToken;
       if (Option.isNone(tokenOpt)) {
-        return yield* Effect.fail(
-          new LegacyDbQueryLoginRequiredError({
-            message: MISSING_TOKEN_MESSAGE,
-            suggestion: "Run supabase login first.",
-          }),
-        );
+        return yield* new LegacyDbQueryLoginRequiredError({
+          message: MISSING_TOKEN_MESSAGE,
+          suggestion: "Run supabase login first.",
+        });
       }
       linkedAuth = { token: tokenOpt.value, ref };
     }
@@ -367,17 +376,13 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       if (!stdin.isTTY) {
         const piped = yield* stdin.readPipedText;
         if (Option.isNone(piped)) {
-          return yield* Effect.fail(
-            new LegacyDbQueryNoStdinSqlError({ message: "no SQL provided via stdin" }),
-          );
+          return yield* new LegacyDbQueryNoStdinSqlError({ message: "no SQL provided via stdin" });
         }
         return piped.value;
       }
-      return yield* Effect.fail(
-        new LegacyDbQueryNoSqlError({
-          message: "no SQL query provided. Pass SQL as an argument, via --file, or pipe to stdin",
-        }),
-      );
+      return yield* new LegacyDbQueryNoSqlError({
+        message: "no SQL query provided. Pass SQL as an argument, via --file, or pipe to stdin",
+      });
     });
 
     // 2. Agent mode + the resolved payload format: an explicit `-o

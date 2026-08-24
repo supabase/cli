@@ -15,7 +15,7 @@
  *   GCP service-account JSON).
  */
 
-import { join } from "node:path";
+import type { Path } from "effect";
 
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
@@ -55,6 +55,8 @@ const LEGACY_LOGFLARE_ENTRYPOINT_SCRIPT =
   "cat <<'EOF' > run.sh && sh run.sh\n./logflare eval Logflare.Release.migrate &&\n./logflare start --sname logflare\nEOF\n";
 
 export interface LegacyLogflareContainerSpecInput {
+  /** Platform path service used for host path derivation. */
+  readonly path: Path.Path;
   /**
    * The already-resolved `config.analytics.image`. Not part of the decoded
    * `@supabase/config` schema; resolution is the caller's responsibility.
@@ -122,7 +124,7 @@ export function legacyBuildLogflareContainerSpec(
   const binds: Array<string> = [];
 
   if (input.backend === "bigquery") {
-    const hostJwtPath = join(input.workdir, input.gcpJwtPath);
+    const hostJwtPath = input.path.join(input.workdir, input.gcpJwtPath);
     binds.push(`${hostJwtPath}:/opt/app/rel/logflare/bin/gcloud.json`);
     env.GOOGLE_DATASET_ID_APPEND = "_prod";
     env.GOOGLE_PROJECT_ID = input.gcpProjectId;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Effect, Exit, Formatter, Layer, Option } from "effect";
 
 import { mockOutput, mockStdin } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -127,7 +127,7 @@ describe("legacy encryption update-root-key integration", () => {
       const exit = yield* Effect.exit(legacyEncryptionUpdateRootKey(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyEncryptionNetworkError");
         expect(json).toContain("failed to update pgsodium config");
       }
@@ -140,7 +140,7 @@ describe("legacy encryption update-root-key integration", () => {
       const exit = yield* Effect.exit(legacyEncryptionUpdateRootKey(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyEncryptionUnexpectedStatusError");
         expect(json).toContain("unexpected update pgsodium config status 503");
       }
@@ -162,7 +162,7 @@ describe("legacy encryption update-root-key integration", () => {
       const exit = yield* Effect.exit(legacyEncryptionUpdateRootKey(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectNotLinkedError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyProjectNotLinkedError");
       }
     }).pipe(Effect.provide(layer));
   });

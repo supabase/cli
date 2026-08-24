@@ -1,6 +1,16 @@
 import * as net from "node:net";
 import { BunServices } from "@effect/platform-bun";
-import { Duration, Effect, FileSystem, Layer, Option, Path } from "effect";
+import {
+  Config,
+  ConfigProvider,
+  Crypto,
+  Duration,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+} from "effect";
 
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
@@ -17,7 +27,7 @@ import {
   LegacyWorkdirFlag,
 } from "../../shared/legacy/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
+import { RuntimeInfo, type RuntimeInfoShape } from "../../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
@@ -33,10 +43,13 @@ import {
 } from "./legacy-management-api-runtime.layer.ts";
 import * as Errors from "./legacy-db-config.errors.ts";
 import {
+  LEGACY_PARSE_ENV_NAMES,
+  legacyConnectionStringFilePaths,
   legacyLayeredParseEnv,
   legacyPoolerConfigFromConnectionString,
   parseLegacyConnectionString,
   redactLegacyConnectionString,
+  type LegacyDbConfigParseRuntime,
 } from "./legacy-db-config.parse.ts";
 import { LegacyDbConfigResolver, type LegacyDbConfigError } from "./legacy-db-config.service.ts";
 import { legacyLoadProjectEnv, legacyReadDbToml } from "./legacy-db-config.toml-read.ts";
@@ -44,12 +57,65 @@ import type { LegacyDbConfigFlags } from "./legacy-db-config.types.ts";
 import { LegacyDebugLogger } from "./legacy-debug-logger.service.ts";
 import { legacyGetHostname } from "./legacy-hostname.ts";
 import { mapLegacyHttpError } from "./legacy-http-errors.ts";
+import { LegacyViperEnv } from "../../shared/legacy/legacy-viper-env.ts";
 
 const DIRECT_PORT = 5432;
 const TCP_PROBE_TIMEOUT = Duration.seconds(5);
 const MAX_RETRIES = 8;
 const BACKOFF_INITIAL = Duration.seconds(3);
 const BACKOFF_MAX = Duration.seconds(60);
+
+/**
+ * Materialize libpq's host/filesystem/account defaults at the Effect boundary.
+ * The parser remains pure: service files and pgpass contents are read through
+ * the injected FileSystem, and the runtime receives the already-resolved
+ * project/shell environment rather than consulting process globals.
+ */
+export const legacyMakeDbConfigParseRuntime = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  runtimeInfo: RuntimeInfoShape,
+  env: (name: string) => string | undefined,
+  extraFilePaths: ReadonlyArray<string> = [],
+): Effect.Effect<LegacyDbConfigParseRuntime> =>
+  Effect.gen(function* () {
+    const homeDirectory = runtimeInfo.homeDir;
+    const defaultServiceFilePath =
+      homeDirectory.length > 0 ? path.join(homeDirectory, ".pg_service.conf") : undefined;
+    const defaultPassfilePath =
+      homeDirectory.length > 0 ? path.join(homeDirectory, ".pgpass") : undefined;
+    const serviceFilePath = env("PGSERVICEFILE") || defaultServiceFilePath;
+    const passfilePath = env("PGPASSFILE") || defaultPassfilePath;
+    const files = new Map<string, string>();
+    const candidates = [serviceFilePath, passfilePath, ...extraFilePaths].filter(
+      (value): value is string => value !== undefined,
+    );
+    for (const candidate of candidates) {
+      if (files.has(candidate)) continue;
+      const contents = yield* fs.readFileString(candidate).pipe(Effect.option);
+      if (Option.isSome(contents)) files.set(candidate, contents.value);
+    }
+
+    let defaultHost = "localhost";
+    if (runtimeInfo.platform !== "win32") {
+      for (const candidate of ["/var/run/postgresql", "/private/tmp", "/tmp"]) {
+        if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
+          defaultHost = candidate;
+          break;
+        }
+      }
+    }
+
+    return {
+      defaultHost,
+      defaultServiceFilePath,
+      homeDirectory,
+      join: path.join,
+      files,
+      serviceFiles: files,
+      osUser: runtimeInfo.osUser,
+    };
+  });
 
 const loginRoleErrorMapper = mapLegacyHttpError({
   networkError: Errors.LegacyDbConfigLoginRoleNetworkError,
@@ -212,9 +278,13 @@ const resolveDbPassword = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
+  const env = yield* LegacyViperEnv;
+  const shellPassword = yield* env
+    .get("SUPABASE_DB_PASSWORD")
+    .pipe(Effect.orElseSucceed(() => Option.none<string>()));
   return (
     Option.getOrUndefined(passwordFlag) ??
-    process.env["SUPABASE_DB_PASSWORD"] ??
+    Option.getOrUndefined(shellPassword) ??
     projectEnv["SUPABASE_DB_PASSWORD"] ??
     ""
   );
@@ -391,12 +461,10 @@ export const legacyResolveLinkedConn = Effect.fnUntraced(function* (
     resolveVaultSecrets,
   );
   if (Option.isNone(poolerConn)) {
-    return yield* Effect.fail(
-      new Errors.LegacyDbConfigIpv6Error({
-        message: "IPv6 is not supported on your current network",
-        suggestion: `Run supabase link --project-ref ${ref} to setup IPv4 connection.`,
-      }),
-    );
+    return yield* new Errors.LegacyDbConfigIpv6Error({
+      message: "IPv6 is not supported on your current network",
+      suggestion: `Run supabase link --project-ref ${ref} to setup IPv4 connection.`,
+    });
   }
   return poolerConn.value;
 });
@@ -407,9 +475,17 @@ export const legacyDbConfigLayer = Layer.effect(
     const cliConfig = yield* LegacyCliConfig;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const runtimeInfo = yield* RuntimeInfo;
     const debug = yield* LegacyDebugLogger;
     const output = yield* Output;
     const dbConn = yield* LegacyDbConnection;
+    const crypto = yield* Crypto.Crypto;
+    const viperEnv = yield* LegacyViperEnv;
+    // The lazy linked runtime rebuilds `legacyCliConfigLayer`, whose Config
+    // reads use Effect's ambient ConfigProvider. Capture the provider from the
+    // caller so test/embedded runtimes keep their explicit configuration rather
+    // than silently falling back to process.env when the nested layer is built.
+    const configProvider = yield* ConfigProvider.ConfigProvider;
     // `legacyResolveLinkedConn`/`resolvePoolerConn` (etc.) are standalone functions
     // that yield their own `FileSystem`/`Path`/`LegacyDebugLogger`/`Output`/
     // `LegacyDbConnection` (so bootstrap can call them directly from its own
@@ -424,6 +500,8 @@ export const legacyDbConfigLayer = Layer.effect(
       Layer.succeed(LegacyDebugLogger, debug),
       Layer.succeed(Output, output),
       Layer.succeed(LegacyDbConnection, dbConn),
+      Layer.succeed(Crypto.Crypto, crypto),
+      Layer.succeed(LegacyViperEnv, viperEnv),
     );
 
     // Profile context for the connect-failure suggestion (`SetConnectSuggestion`
@@ -461,6 +539,7 @@ export const legacyDbConfigLayer = Layer.effect(
       // platform-API factory + linked-project cache (Go's single root-context
       // `sync.Once`). Provided to this layer by each command runtime.
       Layer.succeed(LegacyIdentityStitch, yield* LegacyIdentityStitch),
+      Layer.succeed(ConfigProvider.ConfigProvider, configProvider),
       // Optional (absent in handler tests): the lazy rebuild of
       // `legacyCliConfigLayer` reads it for explicit `--profile` detection, so
       // the nested resolution matches the outer layer's.
@@ -494,31 +573,42 @@ export const legacyDbConfigLayer = Layer.effect(
         // `utils.Config.Hostname` (`GetHostname()`): honors
         // `SUPABASE_SERVICES_HOSTNAME` / a tcp `DOCKER_HOST` in dev-container or
         // remote-Docker setups, defaulting to 127.0.0.1.
-        const localHost = legacyGetHostname();
+        const localHost = yield* legacyGetHostname.pipe(Effect.provide(localAmbientServices));
 
         // --db-url (direct) takes precedence.
         if (flags.connType === "db-url" && Option.isSome(flags.dbUrl)) {
           const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir, undefined, {
             resolveVaultSecrets,
-          });
+          }).pipe(Effect.provide(localAmbientServices));
           // Go's direct path runs `LoadConfig` before `pgconn.ParseConfig`,
           // so the project `.env*` files
           // populate the environment that the libpq `PG*` fallbacks read. Layer the
           // project env under the shell env (`legacyLoadProjectEnv` already excludes
           // shell-set keys, so the shell still wins) and feed it to the parser.
           const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
-          const conn = parseLegacyConnectionString(
-            flags.dbUrl.value,
-            legacyLayeredParseEnv(projectEnv),
+          const shellValues = yield* Effect.forEach(LEGACY_PARSE_ENV_NAMES, (name) =>
+            viperEnv.get(name),
           );
+          const shellEnv: Record<string, string> = {};
+          for (const [index, value] of shellValues.entries()) {
+            const name = LEGACY_PARSE_ENV_NAMES[index];
+            if (name !== undefined && Option.isSome(value)) shellEnv[name] = value.value;
+          }
+          const parseEnv = legacyLayeredParseEnv(projectEnv, shellEnv);
+          const parseRuntime = yield* legacyMakeDbConfigParseRuntime(
+            fs,
+            path,
+            runtimeInfo,
+            parseEnv,
+            legacyConnectionStringFilePaths(flags.dbUrl.value),
+          );
+          const conn = parseLegacyConnectionString(flags.dbUrl.value, parseEnv, parseRuntime);
           if (conn === undefined) {
-            return yield* Effect.fail(
-              new Errors.LegacyDbConfigParseUrlError({
-                // Redact the password component before echoing the URL back
-                // (CWE-209): a malformed `--db-url` often still carries a secret.
-                message: `failed to parse connection string: ${redactLegacyConnectionString(flags.dbUrl.value)}`,
-              }),
-            );
+            return yield* new Errors.LegacyDbConfigParseUrlError({
+              // Redact the password component before echoing the URL back
+              // (CWE-209): a malformed `--db-url` often still carries a secret.
+              message: `failed to parse connection string: ${redactLegacyConnectionString(flags.dbUrl.value)}`,
+            });
           }
           const isLocal = isLocalDatabase(
             conn.host,
@@ -568,7 +658,7 @@ export const legacyDbConfigLayer = Layer.effect(
             // (or run side effects ahead of) the real config error.
             yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref, {
               resolveVaultSecrets,
-            });
+            }).pipe(Effect.provide(localAmbientServices));
             const resolved = yield* legacyResolveLinkedConn(
               ref,
               cliConfig.workdir,
@@ -611,7 +701,7 @@ export const legacyDbConfigLayer = Layer.effect(
         // --local (default).
         const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir, undefined, {
           resolveVaultSecrets,
-        });
+        }).pipe(Effect.provide(localAmbientServices));
         return {
           conn: {
             host: localHost,
@@ -674,11 +764,25 @@ export const legacyDbConfigLayer = Layer.effect(
       ...conn,
       suggestionContext,
     });
+    const mapConfigError = (
+      cause: LegacyDbConfigError | Config.ConfigError,
+    ): LegacyDbConfigError =>
+      cause instanceof Config.ConfigError
+        ? new Errors.LegacyDbConfigLoadError({ message: cause.message })
+        : cause;
     return LegacyDbConfigResolver.of({
       resolve: (flags) =>
-        resolve(flags).pipe(Effect.map((r) => ({ ...r, conn: withSuggestion(r.conn) }))),
+        resolve(flags).pipe(
+          Effect.provide(localAmbientServices),
+          Effect.map((r) => ({ ...r, conn: withSuggestion(r.conn) })),
+          Effect.mapError(mapConfigError),
+        ),
       resolvePoolerFallback: (flags) =>
-        resolvePoolerFallback(flags).pipe(Effect.map(Option.map(withSuggestion))),
+        resolvePoolerFallback(flags).pipe(
+          Effect.provide(localAmbientServices),
+          Effect.map(Option.map(withSuggestion)),
+          Effect.mapError(mapConfigError),
+        ),
     });
   }),
 );

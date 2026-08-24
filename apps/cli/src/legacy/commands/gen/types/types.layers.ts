@@ -80,7 +80,11 @@ export const legacyGenTypesRuntimeLayer = (() => {
     commandRuntimeLayer(["gen", "types"]),
   );
 
-  const _serviceCoverageCheck: Layer.Layer<LegacyGenTypesServices, unknown, unknown> = built;
+  const _serviceCoverageCheck: Layer.Layer<
+    LegacyGenTypesServices,
+    Layer.Error<typeof built>,
+    Layer.Services<typeof built>
+  > = built;
   void _serviceCoverageCheck;
 
   return built;

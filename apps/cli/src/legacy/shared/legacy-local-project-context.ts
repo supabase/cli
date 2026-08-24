@@ -1,16 +1,48 @@
 import {
+  ENV_CAPTURE_REGEX,
   loadProjectConfig,
   loadProjectEnvironment,
   ProjectConfigSchema,
   type LoadedProjectConfig,
   type ProjectConfig,
 } from "@supabase/config";
-import { Effect, FileSystem, Path, Schema } from "effect";
+import { Crypto, Effect, FileSystem, Option, Path, Schema } from "effect";
+import { parse as parseToml, type TomlTable, type TomlValue } from "smol-toml";
 
-import { LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY } from "./legacy-bitbucket-pipeline.ts";
 import { legacyResolveLocalProjectId, legacySanitizeProjectId } from "./legacy-docker-ids.ts";
 import { legacyGetHostname } from "./legacy-hostname.ts";
+import { LegacyViperEnv, legacyViperEnvEntries } from "../../shared/legacy/legacy-viper-env.ts";
 import { legacyResolveProjectEnvironmentValues } from "./legacy-project-environment.ts";
+
+const LEGACY_PROJECT_ENV_KEYS = [
+  "BITBUCKET_CLONE_DIR",
+  "KONG_NGINX_WORKER_PROCESSES",
+  "VECTOR_ENABLED",
+  "VECTOR_BUCKET_PROVIDER",
+  "VECTOR_STORE_MIGRATIONS_ENABLED",
+  "VECTOR_DATABASE_URL",
+] as const;
+
+function isTomlTable(value: TomlValue): value is TomlTable {
+  return (
+    typeof value === "object" && value !== null && !Array.isArray(value) && !(value instanceof Date)
+  );
+}
+
+function collectConfigEnvReferences(value: TomlValue, names: Set<string>): void {
+  if (typeof value === "string") {
+    const name = ENV_CAPTURE_REGEX.exec(value)?.[1];
+    if (name !== undefined) names.add(name);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const nested of value) collectConfigEnvReferences(nested, names);
+    return;
+  }
+  if (isTomlTable(value)) {
+    for (const nested of Object.values(value)) collectConfigEnvReferences(nested, names);
+  }
+}
 
 /**
  * The config-load/env/project-id resolution `stop` (its non-`--all`/non-`--project-id` branch)
@@ -62,8 +94,67 @@ export const legacyLoadLocalProjectContext = <E>(
   // when that default is itself empty. `db start`/`db reset`/`start`/`stop`/`status` never
   // pass this, so it defaults to `undefined` — no remote merge, unchanged from before.
   projectRef?: string,
-): Effect.Effect<LegacyLocalProjectContext, E, FileSystem.FileSystem | Path.Path> =>
+): Effect.Effect<
+  LegacyLocalProjectContext,
+  E,
+  FileSystem.FileSystem | Path.Path | Crypto.Crypto | LegacyViperEnv
+> =>
   Effect.gen(function* () {
+    const viperEnv = yield* LegacyViperEnv;
+    const environmentEntries = yield* Effect.forEach(LEGACY_PROJECT_ENV_KEYS, (name) =>
+      viperEnv.get(name).pipe(Effect.map((value) => [name, value] as const)),
+    ).pipe(
+      Effect.mapError((cause) =>
+        mapConfigLoadError(`failed to read environment: ${String(cause)}`),
+      ),
+    );
+    // Viper's AutomaticEnv exposes every ambient SUPABASE_* key, including
+    // port overrides needed when no config.toml exists. Keep non-SUPABASE
+    // compatibility entries explicit so project dotenv values remain scoped.
+    const ambientSupabaseEntries = yield* legacyViperEnvEntries("SUPABASE").pipe(
+      Effect.mapError((cause) =>
+        mapConfigLoadError(`failed to read environment: ${String(cause)}`),
+      ),
+    );
+    const environment = {
+      ...ambientSupabaseEntries,
+      ...Object.fromEntries(
+        environmentEntries.flatMap(([key, value]) =>
+          Option.isSome(value) ? [[key, value.value]] : [],
+        ),
+      ),
+    };
+    // `loadProjectConfig` resolves every `env(NAME)` reference against the
+    // supplied project environment. Keep that environment explicit while
+    // discovering the referenced shell keys from the TOML itself; the ambient
+    // SUPABASE_* enumeration above does not cover arbitrary config references.
+    const configEnvNames = yield* Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const configPath = path.join(workdir, "supabase", "config.toml");
+      if (!(yield* fs.exists(configPath))) return [];
+      const contents = yield* fs.readFileString(configPath);
+      const names = new Set<string>();
+      const document = yield* Effect.try({
+        try: () => parseToml(contents),
+        catch: (cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`),
+      });
+      collectConfigEnvReferences(document, names);
+      return Array.from(names);
+    }).pipe(
+      Effect.mapError((cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`)),
+    );
+    const configEnvironmentEntries = yield* Effect.forEach(configEnvNames, (name) =>
+      viperEnv.get(name).pipe(
+        Effect.map((value): readonly [string, Option.Option<string>] => [name, value]),
+        Effect.mapError((cause) =>
+          mapConfigLoadError(`failed to read environment: ${String(cause)}`),
+        ),
+      ),
+    );
+    for (const [name, value] of configEnvironmentEntries) {
+      if (Option.isSome(value)) environment[name] = value.value;
+    }
     // `search: false`: `workdir` already IS the fully-resolved chdir target (`legacy-cli-config.
     // layer.ts`'s `resolveWorkdir` mirrors `ChangeWorkDir`'s explicit-exact-vs-default-searched
     // resolution), so letting `@supabase/config`'s
@@ -73,7 +164,6 @@ export const legacyLoadLocalProjectContext = <E>(
     // defaulted) workdir (`NewPathBuilder`).
     const projectEnv = yield* loadProjectEnvironment({
       cwd: workdir,
-      baseEnv: process.env,
       search: false,
       // `loadDefaultEnv` omits `.env.local`
       // from its candidate list whenever `SUPABASE_ENV=test` — a malformed or intentionally
@@ -81,7 +171,7 @@ export const legacyLoadLocalProjectContext = <E>(
       // here either. `legacyResolveProjectEnvironmentValues` below already applies this same gate
       // for the project-root pass; this mirrors it for the `supabase/`-dir pass
       // `loadProjectEnvironment` itself performs.
-      skipEnvLocal: (process.env["SUPABASE_ENV"] || "development") === "test",
+      skipEnvLocal: (environment["SUPABASE_ENV"] ?? "development") === "test",
     }).pipe(
       Effect.mapError((cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`)),
     );
@@ -95,32 +185,11 @@ export const legacyLoadLocalProjectContext = <E>(
     // line. `workdir` is passed through so dotenv files under `<workdir>/supabase`/`workdir` are
     // still discovered even when `projectEnv` is `null` (no config.toml there) — Go's own
     // `loadNestedEnv` runs unconditionally, before `config.toml` is ever opened.
-    const projectEnvValues = yield* Effect.try({
-      try: () => legacyResolveProjectEnvironmentValues(projectEnv, workdir),
-      catch: (cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`),
-    });
-
-    // `godotenv.Load` (`loadEnvIfExists`, called by `loadNestedEnv` above this same
-    // config-load pass) installs every parsed dotenv key into
-    // the process's OWN environment via `os.Setenv` — never overriding an already-set key —
-    // so it's visible to every subsequent call in THIS process that reads `process.env` at
-    // CALL time, not just to config decoding. `BITBUCKET_CLONE_DIR` is the
-    // one key this applies to today: `os.Getenv("BITBUCKET_CLONE_DIR")` read
-    // lives inside `DockerStart`, a regular
-    // function invoked during the command's own `Run()`, well after config load has already
-    // installed dotenv keys into the process env — not in a
-    // package-level `var` initializer evaluated before that ever runs (see
-    // {@link LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY}'s own doc comment; review:
-    // PRRT_kwDOErm0O86VmHkm) — so a value set ONLY in a project `.env` file genuinely reaches
-    // it too. Deliberately permanent (unlike `legacyApplyProjectEnv`'s own narrower,
-    // explicitly-scoped opt-in around a single command's container work) — matching the
-    // established non-reverting `os.Setenv`, which persists for that single-command process's entire
-    // lifetime.
-    for (const [key, value] of Object.entries(projectEnvValues)) {
-      if (key === LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY && process.env[key] === undefined) {
-        process.env[key] = value;
-      }
-    }
+    const projectEnvValues = yield* legacyResolveProjectEnvironmentValues(
+      projectEnv,
+      workdir,
+      environment,
+    ).pipe(Effect.mapError((cause) => mapConfigLoadError(cause.message)));
 
     // Deliberately NOT extended to Docker-client keys (`DOCKER_HOST`/`DOCKER_CONTEXT`/
     // `DOCKER_CONFIG`/etc, `legacyIsDockerClientEnvKey`), unlike an earlier version of this
@@ -178,8 +247,12 @@ export const legacyLoadLocalProjectContext = <E>(
     }).pipe(
       Effect.mapError((cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`)),
     );
-    const config = loaded?.config ?? Schema.decodeUnknownSync(ProjectConfigSchema)({});
-    const hostname = legacyGetHostname();
+    const config =
+      loaded?.config ??
+      (yield* Schema.decodeEffect(ProjectConfigSchema)({}).pipe(
+        Effect.mapError((cause) => mapConfigLoadError(`failed to decode config: ${String(cause)}`)),
+      ));
+    const hostname = yield* legacyGetHostname;
     // `loaded?.appliedRemote !== undefined` means a `[remotes.<ref>]` block matched
     // `projectRef` above and `loadProjectConfig` merged it over the base document
     // (`packages/config/src/io.ts`'s `applyRemoteOverride`) — including that block's OWN
@@ -193,9 +266,7 @@ export const legacyLoadLocalProjectContext = <E>(
     // (review: PRRT_kwDOErm0O86XHGDL).
     const projectId = legacySanitizeProjectId(
       legacyResolveLocalProjectId(
-        loaded?.appliedRemote !== undefined
-          ? undefined
-          : (projectEnvValues["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"]),
+        loaded?.appliedRemote !== undefined ? undefined : projectEnvValues["SUPABASE_PROJECT_ID"],
         config.project_id,
         workdir,
         projectRef,

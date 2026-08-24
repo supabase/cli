@@ -1,5 +1,5 @@
 import { note } from "@clack/prompts";
-import { Effect, Layer, Option, Path } from "effect";
+import { Config, Crypto, Effect, Layer, Option, Path } from "effect";
 import { CliConfig } from "../../next/config/cli-config.service.ts";
 import { CLI_VERSION } from "../cli/version.ts";
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
@@ -11,23 +11,25 @@ import { TelemetryRuntime } from "./runtime.service.ts";
 
 const CI_ENV_VARS = ["CI", "GITHUB_ACTIONS", "GITLAB_CI", "CIRCLECI", "JENKINS_URL", "BUILDKITE"];
 
-function identityFromConfig(config: Option.Option<TelemetryConfig>) {
-  if (Option.isSome(config)) {
+const identityFromConfig = (config: Option.Option<TelemetryConfig>) =>
+  Effect.gen(function* () {
+    if (Option.isSome(config)) {
+      return {
+        deviceId: config.value.device_id,
+        sessionId: config.value.session_id,
+        distinctId: config.value.distinct_id,
+        isFirstRun: false,
+      } as const;
+    }
+
+    const crypto = yield* Crypto.Crypto;
     return {
-      deviceId: config.value.device_id,
-      sessionId: config.value.session_id,
-      distinctId: config.value.distinct_id,
+      deviceId: yield* crypto.randomUUIDv4,
+      sessionId: yield* crypto.randomUUIDv4,
+      distinctId: undefined,
       isFirstRun: false,
     } as const;
-  }
-
-  return {
-    deviceId: crypto.randomUUID(),
-    sessionId: crypto.randomUUID(),
-    distinctId: undefined,
-    isFirstRun: false,
-  } as const;
-}
+  });
 
 export const telemetryRuntimeLayer = Layer.effect(
   TelemetryRuntime,
@@ -55,20 +57,17 @@ export const telemetryRuntimeLayer = Layer.effect(
       }
       identity = yield* resolveIdentity(configDir);
     } else {
-      identity = identityFromConfig(config);
+      identity = yield* identityFromConfig(config);
     }
 
     const showDebug =
       (Option.isSome(cliConfig.debug) && cliConfig.debug.value === "1") ||
       (Option.isSome(cliConfig.telemetryDebug) && cliConfig.telemetryDebug.value === "1");
 
-    let isCi = false;
-    for (const envVar of CI_ENV_VARS) {
-      if (process.env[envVar] !== undefined) {
-        isCi = true;
-        break;
-      }
-    }
+    const ciValues = yield* Effect.all(
+      CI_ENV_VARS.map((envVar) => Config.option(Config.string(envVar))),
+    );
+    const isCi = ciValues.some(Option.isSome);
 
     return TelemetryRuntime.of({
       configDir,

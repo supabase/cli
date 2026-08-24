@@ -1,6 +1,7 @@
-import { parseArgs } from "node:util";
-import path from "node:path";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, FileSystem, Path, Schema } from "effect";
 import process from "node:process";
+import { parseArgs } from "node:util";
 
 const PACKAGE_PATHS = {
   cli: ["apps", "cli"],
@@ -24,20 +25,35 @@ const { values } = parseArgs({
 
 const version = values.version;
 if (!version) {
-  console.error("Usage: pnpm exec bun apps/cli/scripts/sync-versions.ts --version <version>");
+  process.stderr.write(
+    "Usage: pnpm exec bun apps/cli/scripts/sync-versions.ts --version <version>\n",
+  );
   process.exit(1);
 }
 
-const root = path.resolve(import.meta.dir, "../../..");
+const packageJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown));
 
-for (const pkg of ALL_PACKAGES) {
-  const pkgJsonPath = path.join(root, ...PACKAGE_PATHS[pkg], "package.json");
-  const pkgJson = await Bun.file(pkgJsonPath).json();
+const main = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = path.resolve(import.meta.dir, "../../..");
 
-  pkgJson.version = version;
+  for (const pkg of ALL_PACKAGES) {
+    const pkgJsonPath = path.join(root, ...PACKAGE_PATHS[pkg], "package.json");
+    const pkgJson: Record<string, unknown> = yield* Schema.decodeEffect(packageJson)(
+      yield* fs.readFileString(pkgJsonPath),
+    );
+    pkgJson.version = version;
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))(
+      pkgJson,
+    );
+    yield* fs.writeFileString(pkgJsonPath, `${encoded}\n`);
+    yield* Effect.sync(() => process.stdout.write(`Updated ${pkg} to v${version}\n`));
+  }
 
-  await Bun.write(pkgJsonPath, `${JSON.stringify(pkgJson, null, "\t")}\n`);
-  console.log(`Updated ${pkg} to v${version}`);
+  yield* Effect.sync(() => process.stdout.write(`\nAll packages synced to v${version}.\n`));
+});
+
+if (import.meta.main) {
+  await Effect.runPromise(main.pipe(Effect.provide(BunServices.layer)));
 }
-
-console.log(`\nAll packages synced to v${version}.`);

@@ -91,6 +91,7 @@ import {
 } from "../../../shared/telemetry/error-actionability.ts";
 import { legacyIsSqlState } from "../legacy-connect-errors.ts";
 import { legacyCheckDbToml } from "../legacy-db-config.toml-read.ts";
+import { LegacyViperEnv } from "../../../shared/legacy/legacy-viper-env.ts";
 import { LegacyDbConnection, type LegacyDbSession } from "../legacy-db-connection.service.ts";
 import { LegacyDbExecError, type LegacyDbConnectError } from "../legacy-db-connection.errors.ts";
 import { LEGACY_CLI_PROJECT_LABEL } from "../legacy-docker-ids.ts";
@@ -270,12 +271,10 @@ export const legacyResetDisconnectClients = Effect.fnUntraced(function* (session
       legacyIsSqlState(failure.code) &&
       failure.code !== PG_INVALID_CATALOG_NAME
     ) {
-      return yield* Effect.fail(
-        new LegacyDbSetupError({
-          message: `failed to disconnect clients: ${failure.message}`,
-          reason: "database",
-        }),
-      );
+      return yield* new LegacyDbSetupError({
+        message: `failed to disconnect clients: ${failure.message}`,
+        reason: "database",
+      });
     }
   }
 
@@ -368,6 +367,7 @@ const legacyRecreateLocalDatabase15 = <E>(
   | LegacyPgDeltaSslProbe
   | FileSystem.FileSystem
   | Path.Path
+  | LegacyViperEnv
 > =>
   Effect.gen(function* () {
     const output = yield* Output;
@@ -438,6 +438,7 @@ const legacyRecreateLocalDatabase14 = <E>(
   | LegacyPgDeltaSslProbe
   | FileSystem.FileSystem
   | Path.Path
+  | LegacyViperEnv
 > =>
   Effect.gen(function* () {
     const { setup, fs, path, workdir } = input;
@@ -510,6 +511,7 @@ const legacyRecreateLocalDatabase14 = <E>(
       Effect.gen(function* () {
         const session = yield* connectAs("postgres", "postgres");
         yield* legacyMigrateAndSeed(session, fs, path, workdir, input.version, {
+          projectEnv: toml.projectEnv,
           migrationsEnabled: toml.migrationsEnabled,
           seed: legacyResolveResetSeedConfig(toml.seed, input.seedFlags, path),
           experimental: setup.experimental,
@@ -544,6 +546,7 @@ export const legacyRecreateLocalDatabase = <E>(
   | LegacyPgDeltaSslProbe
   | FileSystem.FileSystem
   | Path.Path
+  | LegacyViperEnv
 > =>
   input.setup.majorVersion <= 14
     ? legacyRecreateLocalDatabase14(spawner, input)

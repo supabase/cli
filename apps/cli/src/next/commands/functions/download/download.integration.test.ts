@@ -1,11 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
+import { BunFileSystem, BunPath } from "@effect/platform-bun";
 import { FunctionResponse, makeApiClient } from "@supabase/api/effect";
 import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
-import { existsSync, mkdtempSync } from "node:fs";
-import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { Effect, Layer, Option, Stdio } from "effect";
+import { Effect, FileSystem, Layer, Option, Stdio } from "effect";
+import type { PlatformError } from "effect/PlatformError";
+import * as EffectPath from "effect/Path";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -34,10 +35,12 @@ import {
 } from "../../../../shared/functions/download.errors.ts";
 import { invalidFunctionSlugDetail } from "../../../../shared/functions/functions.shared.ts";
 import { functionsDownload } from "./download.handler.ts";
+import { legacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
 
 const PROJECT_REF = "abcdefghijklmnopqrst";
 const BRANCH_REF = "branchrefabcdefghij";
 type ResponseBody = string | Blob;
+const { join } = Effect.runSync(EffectPath.Path.pipe(Effect.provide(BunPath.layer)));
 
 const LINK_STATE: ProjectLinkStateValue = {
   project: {
@@ -64,12 +67,72 @@ const BASE_FLAGS: FunctionsDownloadFlags = {
 };
 
 function makeTempDir(): string {
-  return mkdtempSync(join(tmpdir(), "supabase-functions-download-"));
+  return join(tmpdir(), `supabase-functions-download-${randomUUID()}`);
 }
 
-async function writeProjectConfig(cwd: string) {
-  await mkdir(join(cwd, "supabase"), { recursive: true });
-  await writeFile(join(cwd, "supabase", "config.toml"), "");
+const withFileSystem = <A>(
+  effect: Effect.Effect<A, PlatformError, FileSystem.FileSystem>,
+): Effect.Effect<A, PlatformError, never> => effect.pipe(Effect.provide(BunFileSystem.layer));
+
+const mkdir = (path: string, options?: { readonly recursive?: boolean }) =>
+  withFileSystem(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(path, options);
+    }),
+  );
+
+function readFile(path: string, encoding: "utf8"): Effect.Effect<string, PlatformError, never>;
+function readFile(path: string): Effect.Effect<Uint8Array, PlatformError, never>;
+function readFile(path: string, encoding?: "utf8") {
+  return withFileSystem(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      return encoding === undefined ? yield* fs.readFile(path) : yield* fs.readFileString(path);
+    }),
+  );
+}
+
+const writeFile = (path: string, content: string) =>
+  withFileSystem(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(path, content);
+    }),
+  );
+
+const rm = (path: string, options?: { readonly recursive?: boolean; readonly force?: boolean }) =>
+  withFileSystem(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.remove(path, options);
+    }),
+  );
+
+const symlink = (target: string, path: string, _type?: "junction") =>
+  withFileSystem(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.symlink(target, path);
+    }),
+  );
+
+const exists = (path: string) =>
+  withFileSystem(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      return yield* fs.exists(path);
+    }),
+  );
+
+const cleanupTempDir = (path: string) =>
+  rm(path, { recursive: true, force: true }).pipe(Effect.orDie);
+
+function writeProjectConfig(cwd: string): Effect.Effect<void, PlatformError, never> {
+  return Effect.gen(function* () {
+    yield* mkdir(join(cwd, "supabase"), { recursive: true });
+    yield* writeFile(join(cwd, "supabase", "config.toml"), "");
+  });
 }
 
 function textResponse(
@@ -299,6 +362,7 @@ function setup(
   const proxy = mockLegacyGoProxy();
   const layer = Layer.mergeAll(
     emptyEnv(),
+    legacyViperEnvLayer,
     out.layer,
     api.layer,
     proxy.layer,
@@ -382,7 +446,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { out, api, layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": multipart,
@@ -396,14 +460,10 @@ describe("functions download", () => {
       );
       expect(api.acceptHeaders).toContain("multipart/form-data");
       expect(
-        yield* Effect.tryPromise(() =>
-          readFile(join(tempDir, "supabase", "functions", "hello-world", "index.ts"), "utf8"),
-        ),
+        yield* readFile(join(tempDir, "supabase", "functions", "hello-world", "index.ts"), "utf8"),
       ).toBe("console.log('hello')");
       expect(
-        yield* Effect.tryPromise(() =>
-          readFile(join(tempDir, "supabase", "functions", "hello-world", "utils.ts"), "utf8"),
-        ),
+        yield* readFile(join(tempDir, "supabase", "functions", "hello-world", "utils.ts"), "utf8"),
       ).toBe("export const value = 1;");
       expect(out.stderrText).toContain("Downloading Function: hello-world\n");
       expect(out.stderrText).toContain(
@@ -412,9 +472,7 @@ describe("functions download", () => {
       expect(out.stderrText).toContain(
         `Downloaded Function hello-world from project abcdefghijklmnopqrst.\n`,
       );
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("downloads multipart file parts under any field name", () => {
@@ -436,7 +494,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": multipart,
@@ -446,13 +504,9 @@ describe("functions download", () => {
       yield* functionsDownload(BASE_FLAGS).pipe(Effect.provide(layer));
 
       expect(
-        yield* Effect.tryPromise(() =>
-          readFile(join(tempDir, "supabase", "functions", "hello-world", "index.ts"), "utf8"),
-        ),
+        yield* readFile(join(tempDir, "supabase", "functions", "hello-world", "index.ts"), "utf8"),
       ).toBe("console.log('source')");
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live(
@@ -477,7 +531,7 @@ describe("functions download", () => {
       ]);
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        yield* writeProjectConfig(tempDir);
         const { layer } = setup(tempDir, {
           functionBySlug: {
             "hello-world": makeFunction({
@@ -493,16 +547,17 @@ describe("functions download", () => {
         yield* functionsDownload(BASE_FLAGS).pipe(Effect.provide(layer));
 
         expect(
-          yield* Effect.tryPromise(() =>
-            readFile(join(tempDir, "supabase", "functions", "hello-world", "index.ts"), "utf8"),
+          yield* readFile(
+            join(tempDir, "supabase", "functions", "hello-world", "index.ts"),
+            "utf8",
           ),
         ).toBe("console.log('empty metadata')");
         expect(
-          existsSync(join(tempDir, "supabase", "functions", "hello-world", "source", "index.ts")),
+          yield* exists(
+            join(tempDir, "supabase", "functions", "hello-world", "source", "index.ts"),
+          ),
         ).toBe(false);
-      }).pipe(
-        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-      );
+      }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
     },
   );
 
@@ -526,7 +581,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(subdirectory, { recursive: true }));
+      yield* mkdir(subdirectory, { recursive: true });
       const { layer } = setup(subdirectory, {
         projectRoot: tempDir,
         bodyBySlug: {
@@ -537,14 +592,10 @@ describe("functions download", () => {
       yield* functionsDownload(BASE_FLAGS).pipe(Effect.provide(layer));
 
       expect(
-        yield* Effect.tryPromise(() =>
-          readFile(join(tempDir, "supabase", "functions", "hello-world", "index.ts"), "utf8"),
-        ),
+        yield* readFile(join(tempDir, "supabase", "functions", "hello-world", "index.ts"), "utf8"),
       ).toBe("console.log('hello')");
-      expect(existsSync(join(subdirectory, "supabase", "functions"))).toBe(false);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+      expect(yield* exists(join(subdirectory, "supabase", "functions"))).toBe(false);
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("preserves binary file bytes from multipart responses", () => {
@@ -569,7 +620,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": multipart,
@@ -580,14 +631,10 @@ describe("functions download", () => {
 
       expect(
         new Uint8Array(
-          yield* Effect.tryPromise(() =>
-            readFile(join(tempDir, "supabase", "functions", "hello-world", "asset.bin")),
-          ),
+          yield* readFile(join(tempDir, "supabase", "functions", "hello-world", "asset.bin")),
         ),
       ).toEqual(binary);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live(
@@ -619,7 +666,7 @@ describe("functions download", () => {
       ]);
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        yield* writeProjectConfig(tempDir);
         const { layer } = setup(tempDir, {
           functionBySlug: {
             "hello-world": makeFunction({
@@ -635,21 +682,18 @@ describe("functions download", () => {
         yield* functionsDownload(BASE_FLAGS).pipe(Effect.provide(layer));
 
         expect(
-          yield* Effect.tryPromise(() =>
-            readFile(join(tempDir, "supabase", "functions", "hello-world", "index.ts"), "utf8"),
+          yield* readFile(
+            join(tempDir, "supabase", "functions", "hello-world", "index.ts"),
+            "utf8",
           ),
         ).toBe("console.log('abs')");
         expect(
-          yield* Effect.tryPromise(() =>
-            readFile(
-              join(tempDir, "supabase", "functions", "hello-world", "lib", "utils.ts"),
-              "utf8",
-            ),
+          yield* readFile(
+            join(tempDir, "supabase", "functions", "hello-world", "lib", "utils.ts"),
+            "utf8",
           ),
         ).toBe("export const util = 2;");
-      }).pipe(
-        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-      );
+      }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
     },
   );
 
@@ -687,7 +731,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { out, layer } = setup(tempDir, {
         list: [
           makeFunction({ slug: "hello-world", name: "Hello World" }),
@@ -705,22 +749,19 @@ describe("functions download", () => {
       }).pipe(Effect.provide(layer));
 
       expect(
-        yield* Effect.tryPromise(() =>
-          readFile(join(tempDir, "supabase", "functions", "hello-world", "index.ts"), "utf8"),
-        ),
+        yield* readFile(join(tempDir, "supabase", "functions", "hello-world", "index.ts"), "utf8"),
       ).toBe("console.log('hello')");
       expect(
-        yield* Effect.tryPromise(() =>
-          readFile(join(tempDir, "supabase", "functions", "goodbye-world", "index.ts"), "utf8"),
+        yield* readFile(
+          join(tempDir, "supabase", "functions", "goodbye-world", "index.ts"),
+          "utf8",
         ),
       ).toBe("console.log('bye')");
       expect(out.stderrText).toContain("Found 2 function(s) to download\n");
       expect(out.stderrText).toContain(
         "Successfully downloaded all functions from project abcdefghijklmnopqrst\n",
       );
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("rejects a malicious remote slug from download-all before any per-slug work", () => {
@@ -731,7 +772,7 @@ describe("functions download", () => {
     const maliciousSlug = "../../../../../poc-escaped-outside-project";
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { api, layer } = setup(tempDir, {
         list: [makeFunction({ slug: maliciousSlug })],
       });
@@ -756,10 +797,8 @@ describe("functions download", () => {
       expect(api.requests).toEqual([
         `https://api.supabase.com/v1/projects/${PROJECT_REF}/functions`,
       ]);
-      expect(existsSync(join(tempDir, "supabase", "functions"))).toBe(false);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+      expect(yield* exists(join(tempDir, "supabase", "functions"))).toBe(false);
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live(
@@ -768,7 +807,7 @@ describe("functions download", () => {
       const tempDir = makeTempDir();
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        yield* writeProjectConfig(tempDir);
         // Go's generated client unmarshals the whole `[]FunctionResponse`
         // array in one `json.Unmarshal` call
         // (`apps/cli-go/pkg/api/client.gen.go:22186-22208`); a type mismatch
@@ -798,10 +837,8 @@ describe("functions download", () => {
         expect(api.requests).toEqual([
           `https://api.supabase.com/v1/projects/${PROJECT_REF}/functions`,
         ]);
-        expect(existsSync(join(tempDir, "supabase", "functions"))).toBe(false);
-      }).pipe(
-        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-      );
+        expect(yield* exists(join(tempDir, "supabase", "functions"))).toBe(false);
+      }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
     },
   );
 
@@ -824,7 +861,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { out, layer } = setup(tempDir, {
         list: [makeFunction({ slug: "hello-world" })],
         bodyBySlug: {
@@ -840,9 +877,7 @@ describe("functions download", () => {
       expect(out.stderrText).toContain(
         "Successfully downloaded all functions from project abcdefghijklmnopqrst\n",
       );
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("uses --use-api without delegating to the Go proxy", () => {
@@ -864,7 +899,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { layer, proxy } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": multipart,
@@ -878,16 +913,14 @@ describe("functions download", () => {
       }).pipe(Effect.provide(layer));
 
       expect(proxy.calls).toEqual([]);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("delegates --legacy-bundle with the linked project ref to the Go proxy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { layer, proxy } = setup(tempDir, {
         rawArgs: ["functions", "download", "hello-world", "--legacy-bundle"],
       });
@@ -900,9 +933,7 @@ describe("functions download", () => {
       expect(proxy.calls).toEqual([
         ["functions", "download", "hello-world", "--project-ref", PROJECT_REF, "--legacy-bundle"],
       ]);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live(
@@ -912,7 +943,7 @@ describe("functions download", () => {
       const child = mockChildProcessSpawner({ exitCode: 0 });
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        yield* writeProjectConfig(tempDir);
         const { out, layer, proxy } = setup(tempDir, {
           bodyBySlug: {
             "hello-world": { body: "fake-eszip-bytes", contentType: "application/octet-stream" },
@@ -936,12 +967,10 @@ describe("functions download", () => {
         expect(runCommand?.args).toContain("unbundle");
         expect(out.stderrText).toContain("Downloading function: hello-world\n");
         // No `--debug` — the temp eszip file is removed after the run.
-        expect(existsSync(join(tempDir, "supabase", ".temp", "output_hello-world.eszip"))).toBe(
+        expect(yield* exists(join(tempDir, "supabase", ".temp", "output_hello-world.eszip"))).toBe(
           false,
         );
-      }).pipe(
-        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-      );
+      }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
     },
   );
 
@@ -950,7 +979,7 @@ describe("functions download", () => {
     const child = mockChildProcessSpawner({ exitCode: 0 });
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { out, layer, proxy } = setup(tempDir, {
         format: "json",
         bodyBySlug: {
@@ -983,9 +1012,7 @@ describe("functions download", () => {
           },
         }),
       );
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("lists remote functions and downloads each natively via Docker in machine mode", () => {
@@ -993,7 +1020,7 @@ describe("functions download", () => {
     const child = mockChildProcessSpawner({ exitCode: 0 });
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { out, layer, proxy } = setup(tempDir, {
         format: "json",
         list: [makeFunction({ slug: "hello-world" }), makeFunction({ slug: "goodbye-world" })],
@@ -1028,9 +1055,7 @@ describe("functions download", () => {
           },
         }),
       );
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live(
@@ -1040,7 +1065,7 @@ describe("functions download", () => {
       const child = mockChildProcessSpawner({ exitCode: 0 });
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        yield* writeProjectConfig(tempDir);
         const { layer, proxy } = setup(tempDir, {
           bodyBySlug: {
             "hello-world": { body: "fake-eszip-bytes", contentType: "application/octet-stream" },
@@ -1066,9 +1091,7 @@ describe("functions download", () => {
             (spawned) => spawned.command === "docker" && spawned.args[0] === "run",
           ),
         ).toBe(true);
-      }).pipe(
-        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-      );
+      }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
     },
   );
 
@@ -1094,7 +1117,7 @@ describe("functions download", () => {
       ]);
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        yield* writeProjectConfig(tempDir);
         const { out, layer } = setup(tempDir, {
           bodyBySlug: { "hello-world": multipart },
           rawArgs: ["functions", "download", "hello-world", "--use-docker"],
@@ -1109,13 +1132,12 @@ describe("functions download", () => {
         expect(child.spawned).toEqual([{ command: "docker", args: ["info"] }]);
         expect(out.stderrText).toContain("WARNING: Docker is not running\n");
         expect(
-          yield* Effect.tryPromise(() =>
-            readFile(join(tempDir, "supabase", "functions", "hello-world", "index.ts"), "utf8"),
+          yield* readFile(
+            join(tempDir, "supabase", "functions", "hello-world", "index.ts"),
+            "utf8",
           ),
         ).toBe("console.log('fallback')");
-      }).pipe(
-        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-      );
+      }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
     },
   );
 
@@ -1134,7 +1156,7 @@ describe("functions download", () => {
       const rawEszipBytes = new Uint8Array([0, 1, 2, 253, 254, 255, 10, 13, 0, 128, 200]);
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        yield* writeProjectConfig(tempDir);
         const { layer } = setup(tempDir, {
           bodyBySlug: {
             "hello-world": {
@@ -1154,13 +1176,11 @@ describe("functions download", () => {
           useDocker: true,
         }).pipe(Effect.provide(layer));
 
-        const written = yield* Effect.tryPromise(() =>
-          readFile(join(tempDir, "supabase", ".temp", "output_hello-world.eszip")),
+        const written = yield* readFile(
+          join(tempDir, "supabase", ".temp", "output_hello-world.eszip"),
         );
         expect(new Uint8Array(written)).toEqual(rawEszipBytes);
-      }).pipe(
-        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-      );
+      }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
     },
   );
 
@@ -1170,7 +1190,7 @@ describe("functions download", () => {
       const tempDir = makeTempDir();
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        yield* writeProjectConfig(tempDir);
         const { out, layer, proxy } = setup(tempDir, {
           format: "json",
           list: [],
@@ -1196,9 +1216,7 @@ describe("functions download", () => {
             data: { function_slugs: [], project_ref: PROJECT_REF },
           }),
         );
-      }).pipe(
-        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-      );
+      }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
     },
   );
 
@@ -1206,7 +1224,7 @@ describe("functions download", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { layer, proxy } = setup(tempDir, {
         format: "json",
         listStatus: 503,
@@ -1227,9 +1245,7 @@ describe("functions download", () => {
       expect(error).toBeInstanceOf(Error);
       expect(proxy.calls).toEqual([]);
       expect(proxy.captureCalls).toEqual([]);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("rejects mutually exclusive compatibility flags", () => {
@@ -1257,9 +1273,7 @@ describe("functions download", () => {
       );
       expect(api.requests).toHaveLength(0);
       expect(proxy.calls).toHaveLength(0);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("still rejects the bundler mutex when --use-docker=false is explicit", () => {
@@ -1289,16 +1303,14 @@ describe("functions download", () => {
       );
       expect(api.requests).toHaveLength(0);
       expect(proxy.calls).toHaveLength(0);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("rejects invalid slugs before calling the API", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { api, layer } = setup(tempDir);
 
       const error = yield* functionsDownload({
@@ -1308,31 +1320,27 @@ describe("functions download", () => {
 
       expect(error).toBeInstanceOf(InvalidFunctionSlugError);
       expect(api.requests).toHaveLength(0);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("fails when neither a linked project nor --project-ref is available", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { layer } = setup(tempDir, { linked: false });
 
       const error = yield* functionsDownload(BASE_FLAGS).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(ProjectNotLinkedError);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("prints the Go-style empty-state line when no functions exist", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { out, layer } = setup(tempDir, {
         list: [],
       });
@@ -1343,16 +1351,14 @@ describe("functions download", () => {
       }).pipe(Effect.provide(layer));
 
       expect(out.stderrText).toBe("No functions found in project  abcdefghijklmnopqrst\n");
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("fails when the response is not multipart", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": {
@@ -1365,16 +1371,14 @@ describe("functions download", () => {
       const error = yield* functionsDownload(BASE_FLAGS).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(InvalidFunctionDownloadResponseError);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("fails when the multipart boundary is absent from the response body", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": {
@@ -1390,9 +1394,7 @@ describe("functions download", () => {
       expect(error.message).toBe(
         "failed to read form: multipart response is missing its opening boundary",
       );
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("fails when a multipart file has malformed content disposition", () => {
@@ -1414,7 +1416,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": multipart,
@@ -1425,9 +1427,7 @@ describe("functions download", () => {
 
       expect(error).toBeInstanceOf(InvalidFunctionDownloadResponseError);
       expect(error.message).toBe("failed to parse content disposition: malformed filename");
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("writes structured success data in JSON mode for native downloads", () => {
@@ -1449,7 +1449,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { out, layer } = setup(tempDir, {
         format: "json",
         bodyBySlug: {
@@ -1469,16 +1469,14 @@ describe("functions download", () => {
           },
         }),
       );
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("maps list transport errors with Go-style wording", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { layer } = setup(tempDir, {
         listError: new Error("network error"),
       });
@@ -1490,16 +1488,14 @@ describe("functions download", () => {
 
       expect(error).toBeInstanceOf(Error);
       expect(error.message).toBe("failed to list functions: network error");
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("maps unexpected list statuses with Go-style wording", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { layer } = setup(tempDir, {
         listStatus: 503,
         listBody: { message: "unavailable" },
@@ -1512,16 +1508,14 @@ describe("functions download", () => {
 
       expect(error).toBeInstanceOf(Error);
       expect(error.message).toBe('unexpected list functions status 503: {"message":"unavailable"}');
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("maps body transport errors with Go-style wording", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { layer } = setup(tempDir, {
         bodyErrorBySlug: {
           "hello-world": new Error("network error"),
@@ -1532,16 +1526,14 @@ describe("functions download", () => {
 
       expect(error).toBeInstanceOf(Error);
       expect(error.message).toBe("failed to download function: network error");
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("maps unexpected body statuses with Go-style wording", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": {
@@ -1556,9 +1548,7 @@ describe("functions download", () => {
 
       expect(error).toBeInstanceOf(Error);
       expect(error.message).toBe("Error status 503: unavailable");
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("maps eszip body transport errors with Go-style wording (Docker path)", () => {
@@ -1566,7 +1556,7 @@ describe("functions download", () => {
     const child = mockChildProcessSpawner({ exitCode: 0 });
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { layer } = setup(tempDir, {
         bodyErrorBySlug: {
           "hello-world": new Error("network error"),
@@ -1585,9 +1575,7 @@ describe("functions download", () => {
 
       expect(error).toBeInstanceOf(Error);
       expect(error.message).toBe("failed to get function body: network error");
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("maps unexpected eszip body statuses with Go-style wording (Docker path)", () => {
@@ -1595,7 +1583,7 @@ describe("functions download", () => {
     const child = mockChildProcessSpawner({ exitCode: 0 });
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": {
@@ -1615,9 +1603,7 @@ describe("functions download", () => {
 
       expect(error).toBeInstanceOf(Error);
       expect(error.message).toBe("Error status 503: unavailable");
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("maps metadata fallback transport errors with Go-style wording", () => {
@@ -1639,7 +1625,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": multipart,
@@ -1658,9 +1644,7 @@ describe("functions download", () => {
       expect(error.message).toBe(
         'Failed to download Function hello-world on the Supabase project: {"message":"downstream unavailable"}',
       );
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("honors Supabase-Path headers for files shared across functions", () => {
@@ -1689,7 +1673,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": multipart,
@@ -1704,14 +1688,10 @@ describe("functions download", () => {
 
       yield* functionsDownload(BASE_FLAGS).pipe(Effect.provide(layer));
 
-      expect(
-        yield* Effect.tryPromise(() =>
-          readFile(join(tempDir, "supabase", "functions", "secret.env"), "utf8"),
-        ),
-      ).toBe("SECRET=1");
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+      expect(yield* readFile(join(tempDir, "supabase", "functions", "secret.env"), "utf8")).toBe(
+        "SECRET=1",
+      );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("rejects Supabase-Path headers that escape the functions directory", () => {
@@ -1734,7 +1714,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": multipart,
@@ -1744,9 +1724,7 @@ describe("functions download", () => {
       const error = yield* functionsDownload(BASE_FLAGS).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(UnsafeFunctionDownloadPathError);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("rejects a functions directory symlinked outside the project", () => {
@@ -1769,10 +1747,9 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
-      yield* Effect.tryPromise(() =>
-        symlink(outsideDir, join(tempDir, "supabase", "functions"), "junction"),
-      );
+      yield* writeProjectConfig(tempDir);
+      yield* mkdir(outsideDir, { recursive: true });
+      yield* symlink(outsideDir, join(tempDir, "supabase", "functions"), "junction");
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": multipart,
@@ -1785,8 +1762,8 @@ describe("functions download", () => {
     }).pipe(
       Effect.ensuring(
         Effect.all([
-          Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true })),
-          Effect.tryPromise(() => rm(outsideDir, { recursive: true, force: true })),
+          rm(tempDir, { recursive: true, force: true }),
+          rm(outsideDir, { recursive: true, force: true }),
         ]).pipe(Effect.orDie),
       ),
     );
@@ -1812,7 +1789,9 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => symlink(outsideDir, join(tempDir, "supabase"), "junction"));
+      yield* mkdir(tempDir, { recursive: true });
+      yield* mkdir(outsideDir, { recursive: true });
+      yield* symlink(outsideDir, join(tempDir, "supabase"), "junction");
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": multipart,
@@ -1822,12 +1801,12 @@ describe("functions download", () => {
       const error = yield* functionsDownload(BASE_FLAGS).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(UnsafeFunctionDownloadPathError);
-      expect(existsSync(join(outsideDir, "functions"))).toBe(false);
+      expect(yield* exists(join(outsideDir, "functions"))).toBe(false);
     }).pipe(
       Effect.ensuring(
         Effect.all([
-          Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true })),
-          Effect.tryPromise(() => rm(outsideDir, { recursive: true, force: true })),
+          rm(tempDir, { recursive: true, force: true }),
+          rm(outsideDir, { recursive: true, force: true }),
         ]).pipe(Effect.orDie),
       ),
     );
@@ -1855,8 +1834,9 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(functionDir, { recursive: true }));
-      yield* Effect.tryPromise(() => symlink(outsideDir, join(functionDir, "lib"), "junction"));
+      yield* mkdir(outsideDir, { recursive: true });
+      yield* mkdir(functionDir, { recursive: true });
+      yield* symlink(outsideDir, join(functionDir, "lib"), "junction");
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": multipart,
@@ -1866,12 +1846,12 @@ describe("functions download", () => {
       const error = yield* functionsDownload(BASE_FLAGS).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(UnsafeFunctionDownloadPathError);
-      expect(existsSync(join(outsideDir, "new-directory"))).toBe(false);
+      expect(yield* exists(join(outsideDir, "new-directory"))).toBe(false);
     }).pipe(
       Effect.ensuring(
         Effect.all([
-          Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true })),
-          Effect.tryPromise(() => rm(outsideDir, { recursive: true, force: true })),
+          rm(tempDir, { recursive: true, force: true }),
+          rm(outsideDir, { recursive: true, force: true }),
         ]).pipe(Effect.orDie),
       ),
     );
@@ -1881,7 +1861,7 @@ describe("functions download", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { out, layer } = setup(tempDir, {
         format: "json",
         bodyBySlug: {
@@ -1895,9 +1875,7 @@ describe("functions download", () => {
       yield* functionsDownload(BASE_FLAGS).pipe(withJsonErrorHandling, Effect.provide(layer));
 
       expect(out.messages).toContainEqual(expect.objectContaining({ type: "fail" }));
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   describe("Go's Config.Validate/env-override parity is legacy-only (CLI-1963)", () => {
@@ -1908,10 +1886,8 @@ describe("functions download", () => {
         const child = mockChildProcessSpawner({ exitCode: 0 });
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() => mkdir(join(tempDir, "supabase"), { recursive: true }));
-          yield* Effect.tryPromise(() =>
-            writeFile(join(tempDir, "supabase", "config.toml"), 'project_id = ""\n'),
-          );
+          yield* mkdir(join(tempDir, "supabase"), { recursive: true });
+          yield* writeFile(join(tempDir, "supabase", "config.toml"), 'project_id = ""\n');
           const { out, layer, proxy } = setup(tempDir, {
             bodyBySlug: {
               "hello-world": { body: "fake-eszip-bytes", contentType: "application/octet-stream" },
@@ -1929,9 +1905,7 @@ describe("functions download", () => {
             ),
           ).toBe(true);
           expect(out.stderrText).toContain("Downloading function: hello-world\n");
-        }).pipe(
-          Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-        );
+        }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
       },
     );
 
@@ -1942,12 +1916,10 @@ describe("functions download", () => {
         const child = mockChildProcessSpawner({ exitCode: 0 });
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() => mkdir(join(tempDir, "supabase"), { recursive: true }));
-          yield* Effect.tryPromise(() =>
-            writeFile(
-              join(tempDir, "supabase", "config.toml"),
-              ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
-            ),
+          yield* mkdir(join(tempDir, "supabase"), { recursive: true });
+          yield* writeFile(
+            join(tempDir, "supabase", "config.toml"),
+            ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
           );
           const { out, layer, proxy } = setup(tempDir, {
             bodyBySlug: {
@@ -1966,9 +1938,7 @@ describe("functions download", () => {
             ),
           ).toBe(true);
           expect(out.stderrText).toContain("Downloading function: hello-world\n");
-        }).pipe(
-          Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-        );
+        }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
       },
     );
 
@@ -1977,11 +1947,9 @@ describe("functions download", () => {
       () => {
         const tempDir = makeTempDir();
         const child = mockChildProcessSpawner({ exitCode: 0 });
-        const previous = process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
-        process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+          yield* writeProjectConfig(tempDir);
           const { layer, proxy } = setup(tempDir, {
             bodyBySlug: {
               "hello-world": { body: "fake-eszip-bytes", contentType: "application/octet-stream" },
@@ -1999,18 +1967,7 @@ describe("functions download", () => {
           expect(runCommand?.args).toContain(
             `public.ecr.aws/${dockerfileServiceImage("edgeruntime")}`,
           );
-        }).pipe(
-          Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (previous === undefined) {
-                delete process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
-              } else {
-                process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = previous;
-              }
-            }),
-          ),
-        );
+        }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
       },
     );
   });

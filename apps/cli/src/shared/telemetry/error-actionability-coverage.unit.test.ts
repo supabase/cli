@@ -1,5 +1,5 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { BunServices } from "@effect/platform-bun";
+import { Cause, Data, Effect, FileSystem, Path } from "effect";
 import * as ts from "typescript/unstable/ast";
 import type { ClassLikeDeclaration, Expression, Node, SourceFile } from "typescript/unstable/ast";
 import { createVirtualFileSystem } from "typescript/unstable/fs";
@@ -14,6 +14,38 @@ declare global {
     readonly glob: (patterns: ReadonlyArray<string>) => Record<string, () => Promise<unknown>>;
   }
 }
+
+class CoverageTestError extends Data.TaggedError("CoverageTestError")<{
+  readonly cause: unknown;
+}> {}
+
+const fsLayer = BunServices.layer;
+const pathJoin = (...parts: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    return path.join(...parts);
+  });
+const pathResolve = (...parts: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    return path.resolve(...parts);
+  });
+const readText = (pathname: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.readFileString(pathname);
+  });
+const readNames = (pathname: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.readDirectory(pathname);
+  });
+const isDirectory = (pathname: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const info = yield* fs.stat(pathname);
+    return info.type === "Directory";
+  });
 import { MANAGED_ERROR_CODES, MANAGED_ERROR_TAG_BY_CODE } from "@supabase/stack/managed-model";
 import {
   CliErrorCategory,
@@ -73,41 +105,65 @@ function extendsExpression(node: ClassLikeDeclaration): Expression | undefined {
   return clause?.types[0]?.expression;
 }
 
-async function withParsedSources<T>(
+function withParsedSources<T>(
   sources: ReadonlyArray<readonly [fileName: string, source: string]>,
   visit: (files: ReadonlyMap<string, SourceFile>) => T,
-): Promise<T> {
-  const normalizedSources = sources.map(
-    ([fileName, source]) => [resolve(fileName), source] as const,
-  );
-  for (const [fileName, source] of normalizedSources)
-    parserFileSystem.writeFile?.(fileName, source);
-  const snapshot = await parserApi.updateSnapshot({
-    openFiles: normalizedSources.map(([fileName]) => fileName),
-    fileChanges: { changed: normalizedSources.map(([fileName]) => fileName) },
+): Effect.Effect<T, CoverageTestError, Path.Path> {
+  return Effect.gen(function* () {
+    const normalizedSources = yield* Effect.all(
+      sources.map(([fileName, source]) =>
+        pathResolve(fileName).pipe(Effect.map((normalized) => [normalized, source] as const)),
+      ),
+    );
+    for (const [fileName, source] of normalizedSources)
+      parserFileSystem.writeFile?.(fileName, source);
+    return yield* Effect.acquireUseRelease(
+      Effect.tryPromise({
+        try: () =>
+          parserApi.updateSnapshot({
+            openFiles: normalizedSources.map(([fileName]) => fileName),
+            fileChanges: { changed: normalizedSources.map(([fileName]) => fileName) },
+          }),
+        catch: (cause) => new CoverageTestError({ cause }),
+      }),
+      (snapshot) =>
+        Effect.gen(function* () {
+          const files = new Map<string, SourceFile>();
+          for (const [index, [originalFileName]] of sources.entries()) {
+            const normalized = normalizedSources[index];
+            if (normalized === undefined)
+              return yield* Effect.die(`failed to normalize ${originalFileName}`);
+            const [fileName] = normalized;
+            const project = yield* Effect.tryPromise({
+              try: () => snapshot.getDefaultProjectForFile(fileName),
+              catch: (cause) => new CoverageTestError({ cause }),
+            });
+            const sourceFile =
+              project === undefined
+                ? undefined
+                : yield* Effect.tryPromise({
+                    try: () => project.program.getSourceFile(fileName),
+                    catch: (cause) => new Cause.UnknownError(cause),
+                  }).pipe(Effect.mapError((cause) => new CoverageTestError({ cause })));
+            if (sourceFile === undefined) return yield* Effect.die(`failed to parse ${fileName}`);
+            files.set(originalFileName, sourceFile);
+          }
+          return visit(files);
+        }),
+      (snapshot) =>
+        Effect.tryPromise({
+          try: () => snapshot.dispose(),
+          catch: (cause) => new CoverageTestError({ cause }),
+        }).pipe(Effect.orElseSucceed(() => undefined)),
+    );
   });
-  try {
-    const files = new Map<string, SourceFile>();
-    for (const [index, [originalFileName]] of sources.entries()) {
-      const normalized = normalizedSources[index];
-      if (normalized === undefined) throw new Error(`failed to normalize ${originalFileName}`);
-      const [fileName] = normalized;
-      const project = await snapshot.getDefaultProjectForFile(fileName);
-      const sourceFile = await project?.program.getSourceFile(fileName);
-      if (sourceFile === undefined) throw new Error(`failed to parse ${fileName}`);
-      files.set(originalFileName, sourceFile);
-    }
-    return visit(files);
-  } finally {
-    await snapshot.dispose();
-  }
 }
 
-async function withParsedSource<T>(
+function withParsedSource<T>(
   fileName: string,
   source: string,
   visit: (file: SourceFile) => T,
-): Promise<T> {
+): Effect.Effect<T, CoverageTestError, Path.Path> {
   return withParsedSources([[fileName, source]], (files) => visit(files.get(fileName)!));
 }
 
@@ -121,14 +177,16 @@ function hasExportModifier(node: ClassLikeDeclaration): boolean {
 // every plain `class X extends Error` (untagged classes are fingerprinted by
 // name). A tagged class contributes its tag once — the heritage call is
 // claimed by the class rule so the factory rule does not count it again.
-async function extractErrorTags(
+function extractErrorTags(
   source: string,
   fileName = "scan.ts",
   options: { readonly exportedOnly?: boolean } = {},
 ): Promise<Array<string>> {
   const parseFileName = fileName === "scan.ts" ? `scan-${syntheticFileId++}.ts` : fileName;
-  return withParsedSource(parseFileName, source, (sourceFile) =>
-    extractErrorTagsFromFile(sourceFile, options),
+  return Effect.runPromise(
+    withParsedSource(parseFileName, source, (sourceFile) =>
+      extractErrorTagsFromFile(sourceFile, options),
+    ).pipe(Effect.provide(fsLayer)),
   );
 }
 
@@ -176,31 +234,109 @@ function extractErrorTagsFromFile(
   return tags;
 }
 
-async function scanErrorTags(
+interface ErrorActionabilityDeclaration {
+  readonly tag: string;
+  readonly hasOwnGetter: boolean;
+}
+
+function hasOwnActionabilityGetter(node: ClassLikeDeclaration): boolean {
+  return node.members.some(
+    (member) =>
+      ts.isGetAccessorDeclaration(member) &&
+      ts.isComputedPropertyName(member.name) &&
+      ts.isIdentifier(member.name.expression) &&
+      member.name.expression.text === "ErrorActionabilityId",
+  );
+}
+
+function extractErrorActionabilityDeclarationsFromFile(
+  sourceFile: SourceFile,
+): Array<ErrorActionabilityDeclaration> {
+  const declarations: Array<ErrorActionabilityDeclaration> = [];
+  const visit = (node: Node): void => {
+    if (ts.isClassLikeDeclaration(node)) {
+      const heritage = extendsExpression(node);
+      let tag: string | undefined;
+      if (heritage !== undefined && ts.isCallExpression(heritage)) {
+        tag = calleeName(heritage.expression).endsWith("Error")
+          ? stringLiteralText(heritage.arguments[0])
+          : undefined;
+      } else if (
+        heritage !== undefined &&
+        ts.isIdentifier(heritage) &&
+        heritage.text === "Error" &&
+        node.name !== undefined
+      ) {
+        tag = node.name.text;
+      }
+      if (tag !== undefined) {
+        declarations.push({ tag, hasOwnGetter: hasOwnActionabilityGetter(node) });
+      }
+    }
+    node.forEachChild(visit);
+  };
+  sourceFile.forEachChild(visit);
+  return declarations;
+}
+
+function extractErrorActionabilityDeclarations(
+  source: string,
+  fileName = "scan.ts",
+): Promise<Array<ErrorActionabilityDeclaration>> {
+  const parseFileName = fileName === "scan.ts" ? `scan-${syntheticFileId++}.ts` : fileName;
+  return Effect.runPromise(
+    withParsedSource(parseFileName, source, (sourceFile) =>
+      extractErrorActionabilityDeclarationsFromFile(sourceFile),
+    ).pipe(Effect.provide(fsLayer)),
+  );
+}
+
+function scanErrorTags(
   root: string,
   options: { readonly exportedOnly?: boolean } = {},
 ): Promise<Map<string, Array<string>>> {
-  const tagsByFile = new Map<string, Array<string>>();
-  const sources: Array<readonly [string, string]> = [];
-  const walk = (dir: string) => {
-    for (const entry of readdirSync(dir)) {
-      const path = join(dir, entry);
-      if (statSync(path).isDirectory()) {
-        walk(path);
-        continue;
-      }
-      if (!path.endsWith(".ts") || path.endsWith(".test.ts")) continue;
-      sources.push([path, readFileSync(path, "utf8")]);
-    }
-  };
-  walk(root);
-  await withParsedSources(sources, (files) => {
-    for (const [fileName, sourceFile] of files) {
-      const tags = extractErrorTagsFromFile(sourceFile, options);
-      if (tags.length > 0) tagsByFile.set(fileName, tags);
-    }
-  });
-  return tagsByFile;
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const tagsByFile = new Map<string, Array<string>>();
+      const sources: Array<readonly [string, string]> = [];
+      const walk = (
+        dir: string,
+      ): Effect.Effect<void, CoverageTestError, FileSystem.FileSystem | Path.Path> =>
+        Effect.gen(function* () {
+          const entries = yield* readNames(dir).pipe(
+            Effect.mapError((cause) => new CoverageTestError({ cause })),
+          );
+          for (const entry of entries) {
+            const pathname = yield* pathJoin(dir, entry);
+            const directory = yield* isDirectory(pathname).pipe(
+              Effect.mapError((cause) => new CoverageTestError({ cause })),
+            );
+            if (directory) {
+              yield* walk(pathname);
+              continue;
+            }
+            // Deno's function-runtime entrypoint starts a server at import time
+            // and is not a Bun-loadable CLI module; its runtime errors are
+            // exercised by the functions integration tests instead.
+            if (pathname.endsWith("/shared/functions/serve.main.ts")) continue;
+            if (!pathname.endsWith(".ts") || pathname.endsWith(".test.ts")) continue;
+            const source = yield* readText(pathname).pipe(
+              Effect.mapError((cause) => new CoverageTestError({ cause })),
+            );
+            sources.push([pathname, source]);
+          }
+        });
+      yield* walk(root);
+      const parsed = yield* withParsedSources(sources, (files) => {
+        for (const [fileName, sourceFile] of files) {
+          const tags = extractErrorTagsFromFile(sourceFile, options);
+          if (tags.length > 0) tagsByFile.set(fileName, tags);
+        }
+        return tagsByFile;
+      });
+      return parsed;
+    }).pipe(Effect.provide(fsLayer)),
+  );
 }
 
 describe("extractErrorTags", () => {
@@ -276,14 +412,23 @@ function collectErrorClasses(module: Record<string, unknown>): Array<DeclaredErr
   return classes;
 }
 
-const srcRoot = resolve(import.meta.dirname, "../..");
-const repoRoot = resolve(import.meta.dirname, "../../../../..");
+const srcRoot = await Effect.runPromise(
+  pathResolve(import.meta.dirname, "../..").pipe(Effect.provide(fsLayer)),
+);
+const repoRoot = await Effect.runPromise(
+  pathResolve(import.meta.dirname, "../../../../..").pipe(Effect.provide(fsLayer)),
+);
 
 const moduleLoaders = new Map(
-  Object.entries(import.meta.glob(["../../**/*.ts", "!**/*.test.ts"])).map(([key, loader]) => [
-    resolve(import.meta.dirname, key),
-    loader,
-  ]),
+  await Effect.runPromise(
+    Effect.all(
+      Object.entries(import.meta.glob(["../../**/*.ts", "!**/*.test.ts"])).map(([key, loader]) =>
+        pathResolve(import.meta.dirname, key).pipe(
+          Effect.map((pathname) => [pathname, loader] as const),
+        ),
+      ),
+    ).pipe(Effect.provide(fsLayer)),
+  ),
 );
 
 const tagsByFile = await scanErrorTags(srcRoot);
@@ -293,61 +438,75 @@ describe("apps/cli error classes declare their actionability", () => {
     expect(tagsByFile.size).toBeGreaterThan(50);
   });
 
-  for (const [file, tags] of tagsByFile) {
+  for (const [file] of tagsByFile) {
     const relativePath = file.slice(srcRoot.length + 1);
     // Importing a command module can pull in a large transitive graph on first
     // load; give these dynamic-import tests more headroom than the default 5s.
-    it(relativePath, { timeout: 30_000 }, async () => {
-      const loader = moduleLoaders.get(file);
-      expect(loader, `no module loader for ${relativePath}`).toBeDefined();
-      const module = await loader?.();
-      expect(typeof module).toBe("object");
-      const classes = collectErrorClasses(Object(module));
+    it(relativePath, { timeout: 30_000 }, () =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const loader = moduleLoaders.get(file);
+          expect(loader, `no module loader for ${relativePath}`).toBeDefined();
+          if (loader === undefined) return;
+          const module = yield* Effect.tryPromise({
+            try: () => loader(),
+            catch: (cause) => new CoverageTestError({ cause }),
+          });
+          expect(typeof module).toBe("object");
+          const classes = collectErrorClasses(Object(module));
 
-      const exportedTags = new Set(classes.map((cls) => cls.tag));
-      for (const tag of tags) {
-        expect(
-          exportedTags.has(tag),
-          `error "${tag}" is defined in ${relativePath} but not exported — export it so its actionability declaration is verifiable`,
-        ).toBe(true);
-      }
-
-      for (const { constructor, exportName, isTagged, tag, prototype } of classes) {
-        const descriptor = Object.getOwnPropertyDescriptor(prototype, ErrorActionabilityId);
-        expect(
-          typeof descriptor?.get,
-          `${exportName} ("${tag}") does not declare an own [ErrorActionabilityId] getter — add one returning its CliErrorActionabilityDeclaration`,
-        ).toBe("function");
-
-        // Evaluate the getter against a field-less probe: instance-dependent
-        // declarations must degrade to a valid declaration when fields are
-        // absent, and static ones are checked directly.
-        const probe: object = Object.create(prototype);
-        const declaration: unknown = Reflect.get(probe, ErrorActionabilityId);
-        expect(
-          typeof declaration === "object" && declaration !== null,
-          `${exportName} ("${tag}") declaration is not an object`,
-        ).toBe(true);
-        const record: Record<string, unknown> = Object(declaration);
-        expect(kindValues.has(String(record["error_kind"]))).toBe(true);
-        expect(categoryValues.has(String(record["error_category"]))).toBe(true);
-        expect(typeof record["has_suggestion"]).toBe("boolean");
-        expect(suggestionValues.has(String(record["suggestion_type"]))).toBe(true);
-
-        if (!isTagged) {
-          const fingerprintDescriptor = Object.getOwnPropertyDescriptor(
-            constructor,
-            ErrorActionabilityFingerprintId,
+          const source = yield* readText(file).pipe(
+            Effect.mapError((cause) => new CoverageTestError({ cause })),
           );
-          expect(
-            fingerprintDescriptor !== undefined &&
-              "value" in fingerprintDescriptor &&
-              fingerprintDescriptor.value === exportName,
-            `${exportName} is an untagged Error and must declare its stable source identifier as an own static [ErrorActionabilityFingerprintId] value`,
-          ).toBe(true);
-        }
-      }
-    });
+          const declarations = yield* Effect.tryPromise({
+            try: () => extractErrorActionabilityDeclarations(source, file),
+            catch: (cause) => new CoverageTestError({ cause }),
+          });
+          for (const declaration of declarations) {
+            expect(
+              declaration.hasOwnGetter,
+              `${declaration.tag} in ${relativePath} must declare an own [ErrorActionabilityId] getter`,
+            ).toBe(true);
+          }
+
+          for (const { constructor, exportName, isTagged, tag, prototype } of classes) {
+            const descriptor = Object.getOwnPropertyDescriptor(prototype, ErrorActionabilityId);
+            expect(
+              typeof descriptor?.get,
+              `${exportName} ("${tag}") does not declare an own [ErrorActionabilityId] getter — add one returning its CliErrorActionabilityDeclaration`,
+            ).toBe("function");
+
+            // Evaluate the getter against a field-less probe: instance-dependent
+            // declarations must degrade to a valid declaration when fields are
+            // absent, and static ones are checked directly.
+            const probe: object = Object.create(prototype);
+            const declaration: unknown = Reflect.get(probe, ErrorActionabilityId);
+            expect(
+              typeof declaration === "object" && declaration !== null,
+              `${exportName} ("${tag}") declaration is not an object`,
+            ).toBe(true);
+            const record: Record<string, unknown> = Object(declaration);
+            expect(kindValues.has(String(record["error_kind"]))).toBe(true);
+            expect(categoryValues.has(String(record["error_category"]))).toBe(true);
+            expect(typeof record["has_suggestion"]).toBe("boolean");
+            expect(suggestionValues.has(String(record["suggestion_type"]))).toBe(true);
+
+            if (!isTagged) {
+              const fingerprintDescriptor = Object.getOwnPropertyDescriptor(
+                constructor,
+                ErrorActionabilityFingerprintId,
+              );
+              expect(
+                fingerprintDescriptor !== undefined &&
+                  "value" in fingerprintDescriptor &&
+                  fingerprintDescriptor.value === exportName,
+                `${exportName} is an untagged Error and must declare its stable source identifier as an own static [ErrorActionabilityFingerprintId] value`,
+              ).toBe(true);
+            }
+          }
+        }).pipe(Effect.provide(fsLayer)),
+      ),
+    );
   }
 });
 
@@ -360,20 +519,19 @@ describe("workspace package error tags have external adapters", () => {
   ];
 
   for (const packageRoot of packageRoots) {
-    it(packageRoot, { timeout: 30_000 }, async () => {
-      const tagsByFile = await scanErrorTags(resolve(repoRoot, packageRoot), {
-        exportedOnly: true,
-      });
-      expect(tagsByFile.size).toBeGreaterThan(0);
-      for (const [file, tags] of tagsByFile) {
-        for (const tag of tags) {
-          expect(
-            isClassifiedExternalErrorTag(tag),
-            `"${tag}" (${file.slice(repoRoot.length + 1)}) has no external adapter in error-actionability.ts`,
-          ).toBe(true);
+    it(packageRoot, { timeout: 30_000 }, () =>
+      scanErrorTags(`${repoRoot}/${packageRoot}`, { exportedOnly: true }).then((tagsByFile) => {
+        expect(tagsByFile.size).toBeGreaterThan(0);
+        for (const [file, tags] of tagsByFile) {
+          for (const tag of tags) {
+            expect(
+              isClassifiedExternalErrorTag(tag),
+              `"${tag}" (${file.slice(repoRoot.length + 1)}) has no external adapter in error-actionability.ts`,
+            ).toBe(true);
+          }
         }
-      }
-    });
+      }),
+    );
   }
 });
 
@@ -391,7 +549,7 @@ interface ManagedErrorClass {
 
 // Collects the (class, tag, code) triples of every `class X extends
 // Data.TaggedError("Tag")` that also declares a string-literal `code` member.
-async function scanManagedErrorClasses(path: string): Promise<Array<ManagedErrorClass>> {
+function scanManagedErrorClasses(path: string): Promise<Array<ManagedErrorClass>> {
   const classes: Array<ManagedErrorClass> = [];
   const visit = (node: ts.Node): void => {
     if (ts.isClassDeclaration(node) && node.name !== undefined) {
@@ -414,46 +572,50 @@ async function scanManagedErrorClasses(path: string): Promise<Array<ManagedError
     }
     node.forEachChild(visit);
   };
-  return withParsedSource(path, readFileSync(path, "utf8"), (sourceFile) => {
-    sourceFile.forEachChild(visit);
-    return classes;
-  });
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const source = yield* readText(path);
+      return yield* withParsedSource(path, source, (sourceFile) => {
+        sourceFile.forEachChild(visit);
+        return classes;
+      });
+    }).pipe(Effect.provide(fsLayer)),
+  );
 }
 
 describe("managed registry error codes are classified", () => {
-  it("packages/stack/src/managed/model.ts", async () => {
-    const modelPath = resolve(repoRoot, "packages/stack/src/managed/model.ts");
-    const scanned = await scanManagedErrorClasses(modelPath);
-    // One class per declared code: a class written in a shape this scan cannot
-    // see would otherwise pass vacuously instead of failing loudly.
-    expect(scanned.length).toBe(MANAGED_ERROR_CODES.length);
-    const declaredCodes = new Set<string>(MANAGED_ERROR_CODES);
-    const scannedCodes = new Set<string>();
-    for (const { className, tag, code } of scanned) {
-      scannedCodes.add(code);
-      expect(tag, `${className} is tagged "${tag}" rather than its own export name`).toBe(
-        className,
-      );
-      expect(
-        declaredCodes.has(code),
-        `${className}'s code "${code}" is missing from MANAGED_ERROR_CODES`,
-      ).toBe(true);
-      expect(
-        Reflect.get(MANAGED_ERROR_TAG_BY_CODE, code),
-        `MANAGED_ERROR_TAG_BY_CODE does not map "${code}" to ${className}`,
-      ).toBe(tag);
-      expect(
-        isClassifiedManagedErrorCode(code),
-        `${className} ("${code}") has no entry in managedActionabilityByCode in error-actionability.ts`,
-      ).toBe(true);
-      expect(
-        isClassifiedExternalErrorTag(tag),
-        `${className} ("${tag}") has no generated entry in externalActionabilityByTag in error-actionability.ts`,
-      ).toBe(true);
-    }
-    // Every declared code is backed by a class, not just the other way round.
-    expect([...scannedCodes].sort()).toEqual([...declaredCodes].sort());
-  });
+  it("packages/stack/src/managed/model.ts", () =>
+    scanManagedErrorClasses(`${repoRoot}/packages/stack/src/managed/model.ts`).then((scanned) => {
+      // One class per declared code: a class written in a shape this scan cannot
+      // see would otherwise pass vacuously instead of failing loudly.
+      expect(scanned.length).toBe(MANAGED_ERROR_CODES.length);
+      const declaredCodes = new Set<string>(MANAGED_ERROR_CODES);
+      const scannedCodes = new Set<string>();
+      for (const { className, tag, code } of scanned) {
+        scannedCodes.add(code);
+        expect(tag, `${className} is tagged "${tag}" rather than its own export name`).toBe(
+          className,
+        );
+        expect(
+          declaredCodes.has(code),
+          `${className}'s code "${code}" is missing from MANAGED_ERROR_CODES`,
+        ).toBe(true);
+        expect(
+          Reflect.get(MANAGED_ERROR_TAG_BY_CODE, code),
+          `MANAGED_ERROR_TAG_BY_CODE does not map "${code}" to ${className}`,
+        ).toBe(tag);
+        expect(
+          isClassifiedManagedErrorCode(code),
+          `${className} ("${code}") has no entry in managedActionabilityByCode in error-actionability.ts`,
+        ).toBe(true);
+        expect(
+          isClassifiedExternalErrorTag(tag),
+          `${className} ("${tag}") has no generated entry in externalActionabilityByTag in error-actionability.ts`,
+        ).toBe(true);
+      }
+      // Every declared code is backed by a class, not just the other way round.
+      expect([...scannedCodes].sort()).toEqual([...declaredCodes].sort());
+    }));
 });
 
 describe("Effect CLI parser errors have exhaustive handling", () => {

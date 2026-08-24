@@ -36,16 +36,16 @@ const runFetch = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
+  const projectRef = yield* LegacyProjectRefResolver;
+  const linkedProjectCache = yield* LegacyLinkedProjectCache;
 
   // Flag-group mutual-exclusion first: cobra's `MarkFlagsMutuallyExclusive` validates at
   // parse time, ahead of the root `PersistentPreRunE` (same ordering as `migration down`/
   // `repair`).
   if (target.setFlags.length > 1) {
-    return yield* Effect.fail(
-      new LegacyMigrationTargetFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-      }),
-    );
+    return yield* new LegacyMigrationTargetFlagsError({
+      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
+    });
   }
 
   const connType = target.connType ?? "linked"; // fetch defaults to `--linked`.
@@ -54,12 +54,10 @@ const runFetch = Effect.fnUntraced(function* (
   // discarded on a non-linked target — see push.handler.ts's identical guard
   // (db push) for the full TS-only rationale.
   if (Option.isSome(flags.projectRef) && connType !== "linked") {
-    return yield* Effect.fail(
-      new LegacyMigrationTargetFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      }),
-    );
+    return yield* new LegacyMigrationTargetFlagsError({
+      message:
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+    });
   }
 
   // Resolve the DB config BEFORE any filesystem/prompt side effects — an invalid
@@ -83,15 +81,9 @@ const runFetch = Effect.fnUntraced(function* (
   // Linked fetch caches the project ref on success. The ref is
   // loaded now (pre-run), but the cache write is attached to the body via `Effect.ensuring`,
   // so a declined prompt returns before it runs.
-  const cacheLinkedRef =
-    connType === "linked"
-      ? yield* Effect.gen(function* () {
-          const projectRef = yield* LegacyProjectRefResolver;
-          const linkedProjectCache = yield* LegacyLinkedProjectCache;
-          const ref = yield* projectRef.loadProjectRef(flags.projectRef);
-          return linkedProjectCache.cache(ref);
-        })
-      : undefined;
+  const linkedRef =
+    connType === "linked" ? yield* projectRef.loadProjectRef(flags.projectRef) : undefined;
+  const cacheLinkedRef = linkedRef === undefined ? undefined : linkedProjectCache.cache(linkedRef);
 
   const fetchBody = Effect.gen(function* () {
     const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
@@ -123,9 +115,7 @@ const runFetch = Effect.fnUntraced(function* (
       const title = `Do you want to overwrite existing files in ${legacyBold("supabase/migrations")} directory?`;
       const overwrite = yield* legacyMigrationConfirm(title, { defaultValue: true, yes });
       if (!overwrite) {
-        return yield* Effect.fail(
-          new LegacyOperationCanceledError({ message: CONTEXT_CANCELED_MESSAGE }),
-        );
+        return yield* new LegacyOperationCanceledError({ message: CONTEXT_CANCELED_MESSAGE });
       }
     }
 
@@ -156,11 +146,9 @@ const runFetch = Effect.fnUntraced(function* (
       const escapes = (segment: string) =>
         /[/\\]/u.test(segment) || segment.split(/[/\\]/u).includes("..");
       if (escapes(file.version) || escapes(file.name)) {
-        return yield* Effect.fail(
-          new LegacyMigrationFetchWriteError({
-            message: `failed to write migration: invalid version/name in history table: ${file.version}_${file.name}`,
-          }),
-        );
+        return yield* new LegacyMigrationFetchWriteError({
+          message: `failed to write migration: invalid version/name in history table: ${file.version}_${file.name}`,
+        });
       }
       const name = `${file.version}_${file.name}.sql`;
       const filePath = path.join(migrationsDir, name);

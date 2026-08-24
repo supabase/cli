@@ -1,14 +1,26 @@
 import { generateKeyPairSync } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 
-import { BunServices } from "@effect/platform-bun";
+import { BunPath, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Fiber, Layer, Option, PlatformError, Sink, Stream } from "effect";
+import {
+  Effect,
+  Exit,
+  FileSystem,
+  Fiber,
+  Layer,
+  Option,
+  Path,
+  PlatformError,
+  ConfigProvider,
+  Schema,
+  Sink,
+  Stream,
+} from "effect";
+import * as Formatter from "effect/Formatter";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import { vi } from "vitest";
+import { afterEach, vi } from "vitest";
 
 import {
   mockAnalytics,
@@ -32,6 +44,7 @@ import {
   LegacyNetworkIdFlag,
   LegacyYesFlag,
 } from "../../../shared/legacy/global-flags.ts";
+import { makeLegacyViperEnvLayer } from "../../../shared/legacy/legacy-viper-env.ts";
 import { LegacyPlatformApiFactory } from "../../auth/legacy-platform-api-factory.service.ts";
 import {
   legacyServiceContainerIds,
@@ -42,6 +55,7 @@ import {
   type LegacyDbSession,
 } from "../../shared/legacy-db-connection.service.ts";
 import { legacyDockerRunLayer } from "../../shared/legacy-docker-run.layer.ts";
+import { legacyLocalGatewayHttpClientTestLayer } from "../../shared/legacy-local-gateway-http-client.ts";
 import { LegacyEdgeRuntimeScriptError } from "../../shared/legacy-edge-runtime-script.errors.ts";
 import {
   LegacyEdgeRuntimeScript,
@@ -55,6 +69,64 @@ import {
   LEGACY_KONG_LOCAL_TLS_CERT,
   LEGACY_KONG_LOCAL_TLS_KEY,
 } from "./templates/kong-local-tls.ts";
+
+afterEach(() => vi.unstubAllEnvs());
+
+const testPath = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
+
+function join(...paths: ReadonlyArray<string>): string {
+  return testPath.join(...paths);
+}
+
+function fileExists(path: string): Effect.Effect<boolean, PlatformError.PlatformError> {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.exists(path);
+  }).pipe(Effect.provide(BunServices.layer));
+}
+
+function makeDirectory(
+  path: string,
+  options?: { readonly recursive?: boolean },
+): Effect.Effect<void, PlatformError.PlatformError> {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(path, options);
+  }).pipe(Effect.provide(BunServices.layer));
+}
+
+function readDirectory(
+  path: string,
+): Effect.Effect<ReadonlyArray<string>, PlatformError.PlatformError> {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.readDirectory(path);
+  }).pipe(Effect.provide(BunServices.layer));
+}
+
+function readFile(path: string): Effect.Effect<string, PlatformError.PlatformError> {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.readFileString(path);
+  }).pipe(Effect.provide(BunServices.layer));
+}
+
+function removePath(
+  path: string,
+  options?: { readonly recursive?: boolean; readonly force?: boolean },
+): Effect.Effect<void, PlatformError.PlatformError> {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.remove(path, options);
+  }).pipe(Effect.provide(BunServices.layer));
+}
+
+function writeFile(path: string, data: string): Effect.Effect<void, PlatformError.PlatformError> {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.writeFileString(path, data);
+  }).pipe(Effect.provide(BunServices.layer));
+}
 
 /**
  * Counts real invocations of `legacyResolveLocalConfigValues` across this
@@ -71,20 +143,21 @@ import {
  */
 const legacyResolveLocalConfigValuesCalls = vi.hoisted(() => ({ count: 0 }));
 
-vi.mock("../../shared/legacy-local-config-values.ts", async () => {
-  const actual = await vi.importActual<typeof import("../../shared/legacy-local-config-values.ts")>(
-    "../../shared/legacy-local-config-values.ts",
-  );
-  return {
-    ...actual,
-    legacyResolveLocalConfigValues: (
-      ...args: Parameters<typeof actual.legacyResolveLocalConfigValues>
-    ) => {
-      legacyResolveLocalConfigValuesCalls.count++;
-      return actual.legacyResolveLocalConfigValues(...args);
-    },
-  };
-});
+vi.mock("../../shared/legacy-local-config-values.ts", () =>
+  vi
+    .importActual<typeof import("../../shared/legacy-local-config-values.ts")>(
+      "../../shared/legacy-local-config-values.ts",
+    )
+    .then((actual) => ({
+      ...actual,
+      legacyResolveLocalConfigValues: (
+        ...args: Parameters<typeof actual.legacyResolveLocalConfigValues>
+      ) => {
+        legacyResolveLocalConfigValuesCalls.count++;
+        return actual.legacyResolveLocalConfigValues(...args);
+      },
+    })),
+);
 
 const tempRoot = useLegacyTempWorkdir("supabase-start-int-");
 
@@ -96,10 +169,15 @@ function flags(overrides: Partial<LegacyStartFlags> = {}): LegacyStartFlags {
   };
 }
 
-function writeConfig(workdir: string, contents: string) {
+function writeConfig(
+  workdir: string,
+  contents: string,
+): Effect.Effect<void, PlatformError.PlatformError> {
   const supabaseDir = join(workdir, "supabase");
-  mkdirSync(supabaseDir, { recursive: true });
-  writeFileSync(join(supabaseDir, "config.toml"), contents);
+  return Effect.gen(function* () {
+    yield* makeDirectory(supabaseDir, { recursive: true });
+    yield* writeFile(join(supabaseDir, "config.toml"), contents);
+  });
 }
 
 interface SpawnRecord {
@@ -147,6 +225,8 @@ function mockStartContainerCliSpawner(
   opts: {
     readonly failSpawn?: boolean;
     readonly onSecretCopy?: (containerPath: string, content: string) => void;
+    /** Paths removed after a container inspect, for stopped-stack validation fixtures. */
+    readonly removeOnInspect?: ReadonlyArray<string>;
   } = {},
 ) {
   const spawned: Array<SpawnRecord> = [];
@@ -164,14 +244,12 @@ function mockStartContainerCliSpawner(
         spawned.push({ command: cmd, args, env });
 
         if (opts.failSpawn === true) {
-          return yield* Effect.fail(
-            PlatformError.systemError({
-              _tag: "NotFound",
-              module: "ChildProcess",
-              method: "spawn",
-              description: "spawn failed",
-            }),
-          );
+          return yield* PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            description: "spawn failed",
+          });
         }
 
         if (onSecretCopy !== undefined && args[0] === "cp" && args[1] === "-") {
@@ -189,6 +267,12 @@ function mockStartContainerCliSpawner(
         }
 
         const result = route(args);
+        if (args[0] === "container" && args[1] === "inspect") {
+          const fs = yield* FileSystem.FileSystem;
+          for (const path of opts.removeOnInspect ?? []) {
+            yield* fs.remove(path, { force: true });
+          }
+        }
         const stdoutBytes = (result.stdout ?? []).map((line) => encoder.encode(`${line}\n`));
         const stderrBytes = (result.stderr ?? []).map((line) => encoder.encode(`${line}\n`));
         return ChildProcessSpawner.makeHandle({
@@ -204,7 +288,7 @@ function mockStartContainerCliSpawner(
           getInputFd: () => Sink.drain,
           getOutputFd: () => Stream.empty,
         });
-      }),
+      }).pipe(Effect.provide(BunServices.layer)),
     ),
   );
 
@@ -237,7 +321,7 @@ function isEdgeRuntimeCreate(args: ReadonlyArray<string>): boolean {
  * assertions here instead of shipping unreadable output to users.
  */
 function fakeContainerId(name: string): string {
-  return [...name]
+  return Array.from(name)
     .map((char) => (char.codePointAt(0) ?? 0).toString(16).padStart(2, "0"))
     .join("")
     .padEnd(64, "0")
@@ -321,7 +405,12 @@ function freshVolumeRoute(
 /** Storage's `/storage/v1/bucket` GET (list)/POST (create) endpoints — every other request answers a bare 200, matching `alwaysReadyHttpClientLayer`'s permissiveness for the PostgREST/Edge Runtime readiness probes some scenarios also exercise. */
 function mockStorageBucketHttpClient() {
   const createdBucketRequests: Array<string> = [];
-  const createdBucketBodies: Array<unknown> = [];
+  const bucketRequestSchema = Schema.Struct({
+    file_size_limit: Schema.optional(Schema.Finite),
+  });
+  const bucketRequestJsonSchema = Schema.fromJsonString(bucketRequestSchema);
+  type BucketRequest = Schema.Schema.Type<typeof bucketRequestSchema>;
+  const createdBucketBodies: Array<BucketRequest | undefined> = [];
   const layer = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) => {
@@ -339,18 +428,28 @@ function mockStorageBucketHttpClient() {
       if (request.method === "POST" && request.url.includes("/storage/v1/bucket")) {
         createdBucketRequests.push(request.url);
         if (request.body._tag === "Uint8Array") {
-          try {
-            createdBucketBodies.push(JSON.parse(new TextDecoder().decode(request.body.body)));
-          } catch {
-            createdBucketBodies.push(undefined);
-          }
+          return Schema.decodeEffect(bucketRequestJsonSchema)(
+            new TextDecoder().decode(request.body.body),
+          ).pipe(
+            Effect.option,
+            Effect.map((body) => {
+              createdBucketBodies.push(Option.getOrUndefined(body));
+              return HttpClientResponse.fromWeb(
+                request,
+                new Response(Formatter.formatJson({ name: "avatars" }), {
+                  status: 200,
+                  headers: { "content-type": "application/json" },
+                }),
+              );
+            }),
+          );
         } else {
           createdBucketBodies.push(undefined);
         }
         return Effect.succeed(
           HttpClientResponse.fromWeb(
             request,
-            new Response(JSON.stringify({ name: "avatars" }), {
+            new Response(Formatter.formatJson({ name: "avatars" }), {
               status: 200,
               headers: { "content-type": "application/json" },
             }),
@@ -396,6 +495,8 @@ function fakeDbSession() {
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
+  /** Explicit environment values for scenarios that must not mutate process-wide state. */
+  readonly env?: Record<string, string>;
   readonly route?: (args: ReadonlyArray<string>) => RouteResult;
   /** Observes files decoded from the in-memory tar stream passed to `docker cp -`. */
   readonly onSecretCopy?: (containerPath: string, content: string) => void;
@@ -417,16 +518,23 @@ interface SetupOpts {
   readonly catalogStdout?: string;
   /** Fails the mocked catalog-export call with this message instead of succeeding. */
   readonly catalogExportFailWith?: string;
+  /** Paths removed after a container inspect, for stopped-stack validation fixtures. */
+  readonly removeOnInspect?: ReadonlyArray<string>;
 }
 
 function setup(opts: SetupOpts = {}) {
   const workdir = opts.workdir ?? tempRoot.current;
-  if (opts.skipConfig !== true) {
-    writeConfig(
-      workdir,
-      opts.configContents ?? `project_id = "${opts.configuredProjectId ?? "demo"}"\n`,
-    );
-  }
+  const configProvider =
+    opts.env === undefined
+      ? ConfigProvider.fromEnv({ preserveEmptyStrings: true })
+      : ConfigProvider.fromEnv({ env: opts.env, preserveEmptyStrings: true });
+  const configSetup =
+    opts.skipConfig === true
+      ? Effect.void
+      : writeConfig(
+          workdir,
+          opts.configContents ?? `project_id = "${opts.configuredProjectId ?? "demo"}"\n`,
+        );
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockLegacyTelemetryStateTracked();
   const analytics = mockAnalytics();
@@ -434,6 +542,7 @@ function setup(opts: SetupOpts = {}) {
   const child = mockStartContainerCliSpawner(opts.route ?? defaultRoute(), {
     failSpawn: opts.failSpawn,
     onSecretCopy: opts.onSecretCopy,
+    removeOnInspect: opts.removeOnInspect,
   });
   const dbSession = fakeDbSession();
   const edgeRunCalls: Array<LegacyEdgeRuntimeRunOpts> = [];
@@ -455,12 +564,16 @@ function setup(opts: SetupOpts = {}) {
 
   const layer = Layer.mergeAll(
     BunServices.layer,
+    Layer.succeed(ConfigProvider.ConfigProvider, configProvider),
+    makeLegacyViperEnvLayer(configProvider),
+    Layer.effectDiscard(configSetup),
     out.layer,
     cliConfig,
     telemetry.layer,
     analytics.layer,
     child.layer,
     opts.httpClientLayer ?? alwaysReadyHttpClientLayer,
+    legacyLocalGatewayHttpClientTestLayer(opts.httpClientLayer ?? alwaysReadyHttpClientLayer),
     // Only ever exercised by a fresh-volume scenario (`volume inspect` exiting
     // non-zero) — every other scenario's default "volume already exists" route
     // never reaches `legacyStartSetupLocalDatabase`/`legacySeedBucketsRun`, but
@@ -670,7 +783,7 @@ describe("legacy start integration", () => {
             if (args[0] === "container" && args[1] === "inspect") {
               inspectCalls += 1;
               if (inspectCalls === 1) return { stdout: [HEALTHY_STATE] };
-              return { stdout: [JSON.stringify({ Status: "exited", Running: false })] };
+              return { stdout: [Formatter.formatJson({ Status: "exited", Running: false })] };
             }
             return { exitCode: 0 };
           },
@@ -679,7 +792,7 @@ describe("legacy start integration", () => {
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyStatusDbNotRunningError");
+            expect(Formatter.formatJson(exit.cause)).toContain("LegacyStatusDbNotRunningError");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
         }).pipe(Effect.provide(layer));
@@ -704,7 +817,7 @@ describe("legacy start integration", () => {
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyStatusDbNotReadyError");
+            expect(Formatter.formatJson(exit.cause)).toContain("LegacyStatusDbNotReadyError");
           }
         }).pipe(Effect.provide(layer));
       },
@@ -728,7 +841,7 @@ describe("legacy start integration", () => {
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStatusDbInspectError");
             expect(serialized).toContain("permission denied");
           }
@@ -750,7 +863,7 @@ describe("legacy start integration", () => {
         const exit = yield* Effect.exit(legacyStart(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyStatusListError");
+          expect(Formatter.formatJson(exit.cause)).toContain("LegacyStatusListError");
         }
       }).pipe(Effect.provide(layer));
     });
@@ -818,7 +931,7 @@ describe("legacy start integration", () => {
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyDbConfigLoadError");
             expect(serialized).toContain(
               "failed to parse config: invalid storage.buckets.avatars.file_size_limit.",
@@ -867,7 +980,8 @@ describe("legacy start integration", () => {
           child.spawned
             .filter((spawn) => spawn.args[0] === "stop")
             .map((spawn) => spawn.args[1])
-            .sort(),
+            .filter((id): id is string => id !== undefined)
+            .sort((a, b) => a.localeCompare(b)),
         ).toEqual(["db-id", "kong-id"]);
         expect(
           child.spawned.some(
@@ -914,7 +1028,7 @@ describe("legacy start integration", () => {
         const exit = yield* Effect.exit(legacyStart(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+          expect(Formatter.formatJson(exit.cause)).toContain("LegacyStartInvalidConfigError");
         }
         expect(
           child.spawned.some(
@@ -926,8 +1040,8 @@ describe("legacy start integration", () => {
     });
 
     it.live("preserves a stopped Bitbucket database container", () => {
-      const previous = process.env["BITBUCKET_CLONE_DIR"];
-      process.env["BITBUCKET_CLONE_DIR"] = "/opt/atlassian/pipelines/agent/build";
+      const previous = undefined;
+      vi.stubEnv("BITBUCKET_CLONE_DIR", "/opt/atlassian/pipelines/agent/build");
       const { layer, child } = setup({
         route: (args) => {
           if (args[0] === "container" && args[1] === "inspect") {
@@ -941,7 +1055,7 @@ describe("legacy start integration", () => {
         const exit = yield* Effect.exit(legacyStart(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyStatusDbNotRunningError");
+          expect(Formatter.formatJson(exit.cause)).toContain("LegacyStatusDbNotRunningError");
         }
         expect(
           child.spawned.some(
@@ -956,8 +1070,8 @@ describe("legacy start integration", () => {
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previous === undefined) delete process.env["BITBUCKET_CLONE_DIR"];
-            else process.env["BITBUCKET_CLONE_DIR"] = previous;
+            if (previous === undefined) vi.stubEnv("BITBUCKET_CLONE_DIR", undefined);
+            else vi.stubEnv("BITBUCKET_CLONE_DIR", previous);
           }),
         ),
       );
@@ -1001,7 +1115,7 @@ describe("legacy start integration", () => {
         const exit = yield* Effect.exit(legacyStart(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const serialized = JSON.stringify(exit.cause);
+          const serialized = Formatter.formatJson(exit.cause);
           expect(serialized).toContain("LegacyStatusDbNotRunningError");
           expect(serialized).toContain("container is not running: created");
         }
@@ -1021,27 +1135,27 @@ describe("legacy start integration", () => {
       const workdir = tempRoot.current;
       const certPath = join(workdir, "supabase", "certs", "server.crt");
       const keyPath = join(workdir, "supabase", "certs", "server.key");
-      mkdirSync(join(workdir, "supabase", "certs"), { recursive: true });
-      writeFileSync(certPath, "-----BEGIN CERTIFICATE-----");
-      writeFileSync(keyPath, "-----BEGIN PRIVATE KEY-----");
 
       const { layer, child } = setup({
         configContents:
           'project_id = "demo"\n[api.tls]\nenabled = true\ncert_path = "certs/server.crt"\nkey_path = "certs/server.key"\n',
         route: (args) => {
           if (args[0] === "container" && args[1] === "inspect") {
-            if (existsSync(certPath)) rmSync(certPath);
             return { stdout: [STOPPED_STATE] };
           }
           return { exitCode: 0 };
         },
+        removeOnInspect: [certPath],
       });
 
       return Effect.gen(function* () {
+        yield* makeDirectory(join(workdir, "supabase", "certs"), { recursive: true });
+        yield* writeFile(certPath, "-----BEGIN CERTIFICATE-----");
+        yield* writeFile(keyPath, "-----BEGIN PRIVATE KEY-----");
         const exit = yield* Effect.exit(legacyStart(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const serialized = JSON.stringify(exit.cause);
+          const serialized = Formatter.formatJson(exit.cause);
           expect(serialized).toContain("LegacyStartInvalidConfigError");
           expect(serialized).toContain("failed to read TLS cert");
         }
@@ -1060,22 +1174,22 @@ describe("legacy start integration", () => {
     it.live("validates function bind mounts before removing a stopped stack", () => {
       const workdir = tempRoot.current;
       const entrypointPath = join(workdir, "supabase", "functions", "foo", "index.ts");
-      mkdirSync(join(workdir, "supabase", "functions", "foo"), { recursive: true });
-      writeFileSync(entrypointPath, "export {};\n");
 
       const { layer, child } = setup({
         configContents:
           'project_id = "demo"\n[functions.foo]\nentrypoint = "./functions/foo/index.ts"\n',
         route: (args) => {
           if (args[0] === "container" && args[1] === "inspect") {
-            if (existsSync(entrypointPath)) rmSync(entrypointPath);
             return { stdout: [STOPPED_STATE] };
           }
           return { exitCode: 0 };
         },
+        removeOnInspect: [entrypointPath],
       });
 
       return Effect.gen(function* () {
+        yield* makeDirectory(join(workdir, "supabase", "functions", "foo"), { recursive: true });
+        yield* writeFile(entrypointPath, "export {};\n");
         const exit = yield* Effect.exit(legacyStart(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         expect(
@@ -1152,8 +1266,6 @@ describe("legacy start integration", () => {
         "supabase_db_demo",
       );
       const staleSecret = join(staleSecretDir, "stale-secret");
-      mkdirSync(staleSecretDir, { recursive: true });
-      writeFileSync(staleSecret, "stale");
       const foreignWorkdir = join(workdir, "foreign");
       const foreignSecretDir = join(
         foreignWorkdir,
@@ -1163,8 +1275,6 @@ describe("legacy start integration", () => {
         "supabase_kong_demo",
       );
       const foreignSecret = join(foreignSecretDir, "stale-secret");
-      mkdirSync(foreignSecretDir, { recursive: true });
-      writeFileSync(foreignSecret, "foreign");
 
       const { layer, child } = setup({
         route: (args) => {
@@ -1187,13 +1297,19 @@ describe("legacy start integration", () => {
       });
 
       return Effect.gen(function* () {
+        yield* makeDirectory(staleSecretDir, { recursive: true });
+        yield* writeFile(staleSecret, "stale");
+        yield* makeDirectory(foreignSecretDir, { recursive: true });
+        yield* writeFile(foreignSecret, "foreign");
         const exit = yield* Effect.exit(legacyStart(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyDockerRemoveAllNetworkPruneError");
+          expect(Formatter.formatJson(exit.cause)).toContain(
+            "LegacyDockerRemoveAllNetworkPruneError",
+          );
         }
-        expect(existsSync(staleSecret)).toBe(false);
-        expect(existsSync(foreignSecret)).toBe(true);
+        expect(yield* fileExists(staleSecret)).toBe(false);
+        expect(yield* fileExists(foreignSecret)).toBe(true);
         expect(createdContainerNames(child.spawned)).toEqual([]);
       }).pipe(Effect.provide(layer));
     });
@@ -1213,7 +1329,7 @@ describe("legacy start integration", () => {
         const exit = yield* Effect.exit(legacyStart(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+          expect(Formatter.formatJson(exit.cause)).toContain("LegacyStartInvalidConfigError");
         }
         expect(
           child.spawned.some(
@@ -1274,7 +1390,7 @@ describe("legacy start integration", () => {
         const exit = yield* Effect.exit(legacyStart(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const serialized = JSON.stringify(exit.cause);
+          const serialized = Formatter.formatJson(exit.cause);
           expect(serialized).toContain("LegacyStartWorkdirError");
           expect(serialized).toContain(
             `failed to change workdir: chdir ${missingWorkdir}: no such file or directory`,
@@ -1297,7 +1413,7 @@ describe("legacy start integration", () => {
         const exit = yield* Effect.exit(legacyStart(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const serialized = JSON.stringify(exit.cause);
+          const serialized = Formatter.formatJson(exit.cause);
           expect(serialized).toContain("LegacyDockerLifecycleInspectError");
           expect(serialized).toContain("permission denied");
         }
@@ -1313,7 +1429,7 @@ describe("legacy start integration", () => {
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyDockerLifecycleInspectError");
             expect(serialized).toContain("docker: command not found (podman also not found)");
             expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
@@ -1328,14 +1444,14 @@ describe("legacy start integration", () => {
 
     it.live("fails on a malformed config.toml", () => {
       const workdir = tempRoot.current;
-      mkdirSync(join(workdir, "supabase"), { recursive: true });
-      writeFileSync(join(workdir, "supabase", "config.toml"), "not valid toml =====");
       const { layer, child } = setup({ skipConfig: true });
       return Effect.gen(function* () {
+        yield* makeDirectory(join(workdir, "supabase"), { recursive: true });
+        yield* writeFile(join(workdir, "supabase", "config.toml"), "not valid toml =====");
         const exit = yield* Effect.exit(legacyStart(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyStartConfigLoadError");
+          expect(Formatter.formatJson(exit.cause)).toContain("LegacyStartConfigLoadError");
         }
         expect(child.spawned).toEqual([]);
       }).pipe(Effect.provide(layer));
@@ -1349,7 +1465,7 @@ describe("legacy start integration", () => {
         const exit = yield* Effect.exit(legacyStart(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const serialized = JSON.stringify(exit.cause);
+          const serialized = Formatter.formatJson(exit.cause);
           expect(serialized).toContain("LegacyStartInvalidConfigError");
           expect(serialized).toContain(
             "Invalid config for auth.jwt_secret. Must be at least 16 characters",
@@ -1473,10 +1589,13 @@ describe("legacy start integration", () => {
         });
         const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
         const jwk = { ...privateKey.export({ format: "jwk" }), alg: "RS256", kid: "test-kid" };
-        writeFileSync(join(workdir, "supabase", "signing_keys.json"), JSON.stringify([jwk]));
         legacyResolveLocalConfigValuesCalls.count = 0;
 
         return Effect.gen(function* () {
+          yield* writeFile(
+            join(workdir, "supabase", "signing_keys.json"),
+            Formatter.formatJson([jwk]),
+          );
           yield* legacyStart(flags());
           expect(legacyResolveLocalConfigValuesCalls.count).toBe(1);
         }).pipe(Effect.provide(layer));
@@ -1505,7 +1624,7 @@ describe("legacy start integration", () => {
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+            expect(Formatter.formatJson(exit.cause)).toContain("LegacyStartInvalidConfigError");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
         }).pipe(
@@ -1524,16 +1643,16 @@ describe("legacy start integration", () => {
         configContents:
           'project_id = "demo"\n[api.tls]\nenabled = true\ncert_path = "certs/server.crt"\nkey_path = "certs/server.key"\n',
       });
-      mkdirSync(join(workdir, "supabase", "certs"), { recursive: true });
-      writeFileSync(
-        join(workdir, "supabase", "certs", "server.crt"),
-        "-----BEGIN CERTIFICATE-----",
-      );
-      writeFileSync(
-        join(workdir, "supabase", "certs", "server.key"),
-        "-----BEGIN PRIVATE KEY-----",
-      );
       return Effect.gen(function* () {
+        yield* makeDirectory(join(workdir, "supabase", "certs"), { recursive: true });
+        yield* writeFile(
+          join(workdir, "supabase", "certs", "server.crt"),
+          "-----BEGIN CERTIFICATE-----",
+        );
+        yield* writeFile(
+          join(workdir, "supabase", "certs", "server.key"),
+          "-----BEGIN PRIVATE KEY-----",
+        );
         yield* legacyStart(flags());
         expect(createdContainerNames(child.spawned).some((name) => name.includes("_kong_"))).toBe(
           true,
@@ -1546,16 +1665,16 @@ describe("legacy start integration", () => {
         configContents:
           'project_id = "demo"\n[api.tls]\nenabled = true\ncert_path = "certs/server.crt"\nkey_path = "certs/server.key"\n',
       });
-      mkdirSync(join(workdir, "supabase", "certs"), { recursive: true });
-      writeFileSync(
-        join(workdir, "supabase", "certs", "server.key"),
-        "-----BEGIN PRIVATE KEY-----",
-      );
       return Effect.gen(function* () {
+        yield* makeDirectory(join(workdir, "supabase", "certs"), { recursive: true });
+        yield* writeFile(
+          join(workdir, "supabase", "certs", "server.key"),
+          "-----BEGIN PRIVATE KEY-----",
+        );
         const exit = yield* Effect.exit(legacyStart(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const serialized = JSON.stringify(exit.cause);
+          const serialized = Formatter.formatJson(exit.cause);
           expect(serialized).toContain("LegacyStartInvalidConfigError");
           expect(serialized).toContain("failed to read TLS cert");
         }
@@ -1568,16 +1687,16 @@ describe("legacy start integration", () => {
         configContents:
           'project_id = "demo"\n[api.tls]\nenabled = true\ncert_path = "certs/server.crt"\nkey_path = "certs/server.key"\n',
       });
-      mkdirSync(join(workdir, "supabase", "certs"), { recursive: true });
-      writeFileSync(
-        join(workdir, "supabase", "certs", "server.crt"),
-        "-----BEGIN CERTIFICATE-----",
-      );
       return Effect.gen(function* () {
+        yield* makeDirectory(join(workdir, "supabase", "certs"), { recursive: true });
+        yield* writeFile(
+          join(workdir, "supabase", "certs", "server.crt"),
+          "-----BEGIN CERTIFICATE-----",
+        );
         const exit = yield* Effect.exit(legacyStart(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const serialized = JSON.stringify(exit.cause);
+          const serialized = Formatter.formatJson(exit.cause);
           expect(serialized).toContain("LegacyStartInvalidConfigError");
           expect(serialized).toContain("failed to read TLS key");
         }
@@ -1638,13 +1757,16 @@ content_path = "./supabase/templates/custom_notice.html"
         });
         // `Config.Validate` (step 2, before this handler's own `buildKongEmailTemplateMounts`
         // ever runs) reads both content_path files from the project-root base.
-        mkdirSync(join(workdir, "supabase", "templates"), { recursive: true });
-        writeFileSync(join(workdir, "supabase", "templates", "confirmation.html"), "<html></html>");
-        writeFileSync(
-          join(workdir, "supabase", "templates", "custom_notice.html"),
-          "<html></html>",
-        );
         return Effect.gen(function* () {
+          yield* makeDirectory(join(workdir, "supabase", "templates"), { recursive: true });
+          yield* writeFile(
+            join(workdir, "supabase", "templates", "confirmation.html"),
+            "<html></html>",
+          );
+          yield* writeFile(
+            join(workdir, "supabase", "templates", "custom_notice.html"),
+            "<html></html>",
+          );
           yield* legacyStart(flags());
           const createdNames = createdContainerNames(child.spawned);
           expect(createdNames.some((name) => name.includes("_pooler_"))).toBe(true);
@@ -1675,9 +1797,7 @@ content_path = "./supabase/templates/custom_notice.html"
         const { layer } = setup({
           configContents: 'project_id = "demo"\n[db]\nhealth_timeout = "0s"\n[auth.webauthn]\n',
         });
-        return Effect.gen(function* () {
-          yield* legacyStart(flags());
-        }).pipe(Effect.provide(layer));
+        return legacyStart(flags()).pipe(Effect.provide(layer));
       },
     );
 
@@ -1696,7 +1816,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("failed to parse config");
           }
@@ -1719,7 +1839,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("invalid config for storage.file_size_limit");
           }
@@ -1734,14 +1854,14 @@ content_path = "./supabase/templates/custom_notice.html"
         // `storage.s3_protocol.enabled` is a plain bool decoded unconditionally at
         // config load — same class of gap as storage.file_size_limit above,
         // now fixed the same way (hoisted eager wrapConfigOverride in start.handler.ts).
-        const previous = process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"];
-        process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"] = "not-a-bool";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_STORAGE_S3_PROTOCOL_ENABLED", "not-a-bool");
         const { layer, child } = setup();
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("invalid config for storage.s3_protocol.enabled");
           }
@@ -1751,8 +1871,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.ensuring(
             Effect.sync(() => {
               if (previous === undefined)
-                delete process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"];
-              else process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"] = previous;
+                vi.stubEnv("SUPABASE_STORAGE_S3_PROTOCOL_ENABLED", undefined);
+              else vi.stubEnv("SUPABASE_STORAGE_S3_PROTOCOL_ENABLED", previous);
             }),
           ),
         );
@@ -1767,14 +1887,14 @@ content_path = "./supabase/templates/custom_notice.html"
         // unconditionally at config load — same class of gap as
         // storage.s3_protocol.enabled above, now fixed the same way (hoisted eager
         // wrapConfigOverride in start.handler.ts).
-        const previous = process.env["SUPABASE_STORAGE_ANALYTICS_ENABLED"];
-        process.env["SUPABASE_STORAGE_ANALYTICS_ENABLED"] = "not-a-bool";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_STORAGE_ANALYTICS_ENABLED", "not-a-bool");
         const { layer, child } = setup();
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("invalid config for storage.analytics.enabled");
           }
@@ -1783,8 +1903,9 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_STORAGE_ANALYTICS_ENABLED"];
-              else process.env["SUPABASE_STORAGE_ANALYTICS_ENABLED"] = previous;
+              if (previous === undefined)
+                vi.stubEnv("SUPABASE_STORAGE_ANALYTICS_ENABLED", undefined);
+              else vi.stubEnv("SUPABASE_STORAGE_ANALYTICS_ENABLED", previous);
             }),
           ),
         );
@@ -1798,14 +1919,14 @@ content_path = "./supabase/templates/custom_notice.html"
         // unconditionally at config load — same class of gap as
         // storage.s3_protocol.enabled above, now fixed the same way
         // (hoisted eager wrapConfigOverride in start.handler.ts).
-        const previous = process.env["SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES"];
-        process.env["SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES"] = "not-a-uint";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES", "not-a-uint");
         const { layer, child } = setup();
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("invalid config for storage.analytics.max_namespaces");
           }
@@ -1815,8 +1936,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.ensuring(
             Effect.sync(() => {
               if (previous === undefined)
-                delete process.env["SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES"];
-              else process.env["SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES"] = previous;
+                vi.stubEnv("SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES", undefined);
+              else vi.stubEnv("SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES", previous);
             }),
           ),
         );
@@ -1828,14 +1949,14 @@ content_path = "./supabase/templates/custom_notice.html"
       () => {
         // Same gap as storage.analytics.max_namespaces above — `storage.analytics.max_tables`
         // decodes in the same config-load pass.
-        const previous = process.env["SUPABASE_STORAGE_ANALYTICS_MAX_TABLES"];
-        process.env["SUPABASE_STORAGE_ANALYTICS_MAX_TABLES"] = "not-a-uint";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_STORAGE_ANALYTICS_MAX_TABLES", "not-a-uint");
         const { layer, child } = setup();
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("invalid config for storage.analytics.max_tables");
           }
@@ -1845,8 +1966,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.ensuring(
             Effect.sync(() => {
               if (previous === undefined)
-                delete process.env["SUPABASE_STORAGE_ANALYTICS_MAX_TABLES"];
-              else process.env["SUPABASE_STORAGE_ANALYTICS_MAX_TABLES"] = previous;
+                vi.stubEnv("SUPABASE_STORAGE_ANALYTICS_MAX_TABLES", undefined);
+              else vi.stubEnv("SUPABASE_STORAGE_ANALYTICS_MAX_TABLES", previous);
             }),
           ),
         );
@@ -1858,14 +1979,14 @@ content_path = "./supabase/templates/custom_notice.html"
       () => {
         // Same gap as storage.analytics.max_namespaces above — `storage.analytics.max_catalogs`
         // decodes in the same config-load pass.
-        const previous = process.env["SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS"];
-        process.env["SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS"] = "not-a-uint";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS", "not-a-uint");
         const { layer, child } = setup();
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("invalid config for storage.analytics.max_catalogs");
           }
@@ -1875,8 +1996,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.ensuring(
             Effect.sync(() => {
               if (previous === undefined)
-                delete process.env["SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS"];
-              else process.env["SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS"] = previous;
+                vi.stubEnv("SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS", undefined);
+              else vi.stubEnv("SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS", previous);
             }),
           ),
         );
@@ -1888,14 +2009,14 @@ content_path = "./supabase/templates/custom_notice.html"
       () => {
         // `storage.vector.max_buckets` is a plain uint decoded in the same config-load pass as
         // storage.analytics.* above, unconditionally.
-        const previous = process.env["SUPABASE_STORAGE_VECTOR_MAX_BUCKETS"];
-        process.env["SUPABASE_STORAGE_VECTOR_MAX_BUCKETS"] = "not-a-uint";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_STORAGE_VECTOR_MAX_BUCKETS", "not-a-uint");
         const { layer, child } = setup();
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("invalid config for storage.vector.max_buckets");
           }
@@ -1904,8 +2025,9 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_STORAGE_VECTOR_MAX_BUCKETS"];
-              else process.env["SUPABASE_STORAGE_VECTOR_MAX_BUCKETS"] = previous;
+              if (previous === undefined)
+                vi.stubEnv("SUPABASE_STORAGE_VECTOR_MAX_BUCKETS", undefined);
+              else vi.stubEnv("SUPABASE_STORAGE_VECTOR_MAX_BUCKETS", previous);
             }),
           ),
         );
@@ -1917,14 +2039,14 @@ content_path = "./supabase/templates/custom_notice.html"
       () => {
         // `storage.vector.max_indexes` is a plain uint decoded in the same config-load pass as
         // storage.vector.max_buckets above, unconditionally.
-        const previous = process.env["SUPABASE_STORAGE_VECTOR_MAX_INDEXES"];
-        process.env["SUPABASE_STORAGE_VECTOR_MAX_INDEXES"] = "not-a-uint";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_STORAGE_VECTOR_MAX_INDEXES", "not-a-uint");
         const { layer, child } = setup();
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["storage"] })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("invalid config for storage.vector.max_indexes");
           }
@@ -1933,8 +2055,9 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_STORAGE_VECTOR_MAX_INDEXES"];
-              else process.env["SUPABASE_STORAGE_VECTOR_MAX_INDEXES"] = previous;
+              if (previous === undefined)
+                vi.stubEnv("SUPABASE_STORAGE_VECTOR_MAX_INDEXES", undefined);
+              else vi.stubEnv("SUPABASE_STORAGE_VECTOR_MAX_INDEXES", previous);
             }),
           ),
         );
@@ -1955,7 +2078,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("invalid config for auth.sms.max_frequency");
           }
@@ -1971,8 +2094,8 @@ content_path = "./supabase/templates/custom_notice.html"
         // load — `resolveGotrueRateLimit` only throws via an env var
         // override (a bad TOML value is caught by @supabase/config's own schema first), so this
         // models the override directly, same as the storage.s3_protocol.enabled test above.
-        const previous = process.env["SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS"];
-        process.env["SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS"] = "not-a-uint";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS", "not-a-uint");
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
         });
@@ -1980,7 +2103,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("invalid config for auth.rate_limit");
           }
@@ -1990,8 +2113,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.ensuring(
             Effect.sync(() => {
               if (previous === undefined)
-                delete process.env["SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS"];
-              else process.env["SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS"] = previous;
+                vi.stubEnv("SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS", undefined);
+              else vi.stubEnv("SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS", previous);
             }),
           ),
         );
@@ -2004,8 +2127,8 @@ content_path = "./supabase/templates/custom_notice.html"
         // `auth.web3.*.enabled` are plain bools decoded unconditionally at
         // config load — same override-only-throw reasoning as the rate_limit
         // test above.
-        const previous = process.env["SUPABASE_AUTH_WEB3_SOLANA_ENABLED"];
-        process.env["SUPABASE_AUTH_WEB3_SOLANA_ENABLED"] = "not-a-bool";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_AUTH_WEB3_SOLANA_ENABLED", "not-a-bool");
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
         });
@@ -2013,7 +2136,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("invalid config for auth.web3");
           }
@@ -2022,8 +2145,9 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_AUTH_WEB3_SOLANA_ENABLED"];
-              else process.env["SUPABASE_AUTH_WEB3_SOLANA_ENABLED"] = previous;
+              if (previous === undefined)
+                vi.stubEnv("SUPABASE_AUTH_WEB3_SOLANA_ENABLED", undefined);
+              else vi.stubEnv("SUPABASE_AUTH_WEB3_SOLANA_ENABLED", previous);
             }),
           ),
         );
@@ -2036,8 +2160,8 @@ content_path = "./supabase/templates/custom_notice.html"
         // `auth.oauth_server.enabled`/`allow_dynamic_registration` are plain bools decoded
         // unconditionally at config load — same
         // override-only-throw reasoning as the two tests above.
-        const previous = process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"];
-        process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"] = "not-a-bool";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_AUTH_OAUTH_SERVER_ENABLED", "not-a-bool");
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
         });
@@ -2045,7 +2169,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("invalid config for auth.oauth_server");
           }
@@ -2054,8 +2178,9 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"];
-              else process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"] = previous;
+              if (previous === undefined)
+                vi.stubEnv("SUPABASE_AUTH_OAUTH_SERVER_ENABLED", undefined);
+              else vi.stubEnv("SUPABASE_AUTH_OAUTH_SERVER_ENABLED", previous);
             }),
           ),
         );
@@ -2068,8 +2193,8 @@ content_path = "./supabase/templates/custom_notice.html"
         // `auth.third_party.<provider>.enabled` are plain bools decoded unconditionally at
         // config load, same override-only-throw reasoning as the
         // web3/oauth_server tests above (review: PRRT_kwDOErm0O86WXFqj).
-        const previous = process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"];
-        process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"] = "not-a-bool";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED", "not-a-bool");
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
         });
@@ -2077,7 +2202,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("invalid config for auth.third_party");
           }
@@ -2087,8 +2212,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.ensuring(
             Effect.sync(() => {
               if (previous === undefined)
-                delete process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"];
-              else process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"] = previous;
+                vi.stubEnv("SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED", undefined);
+              else vi.stubEnv("SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED", previous);
             }),
           ),
         );
@@ -2112,7 +2237,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("invalid config for auth.passkey");
           }
@@ -2138,7 +2263,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("invalid config for auth.external");
           }
@@ -2163,7 +2288,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("'functions[foo]' has invalid keys: env");
           }
@@ -2180,14 +2305,14 @@ content_path = "./supabase/templates/custom_notice.html"
         // var override path (a plain string, unchecked by the schema) can reach
         // `legacyEnvOverrideEdgeRuntimePolicy`'s own throw, same reasoning as the GoTrue
         // override-only tests above.
-        const previous = process.env["SUPABASE_EDGE_RUNTIME_POLICY"];
-        process.env["SUPABASE_EDGE_RUNTIME_POLICY"] = "not-a-policy";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_EDGE_RUNTIME_POLICY", "not-a-policy");
         const { layer, child } = setup();
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["edge-runtime"] })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("invalid config for edge_runtime.policy");
           }
@@ -2196,8 +2321,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_EDGE_RUNTIME_POLICY"];
-              else process.env["SUPABASE_EDGE_RUNTIME_POLICY"] = previous;
+              if (previous === undefined) vi.stubEnv("SUPABASE_EDGE_RUNTIME_POLICY", undefined);
+              else vi.stubEnv("SUPABASE_EDGE_RUNTIME_POLICY", previous);
             }),
           ),
         );
@@ -2211,14 +2336,14 @@ content_path = "./supabase/templates/custom_notice.html"
         // TOML value is already rejected at config load — only the env var override path (a
         // string parsed by `envOverridePort`) can throw here, same reasoning as the policy test
         // above.
-        const previous = process.env["SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT"];
-        process.env["SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT"] = "not-a-port";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT", "not-a-port");
         const { layer, child } = setup();
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(legacyStart(flags({ exclude: ["edge-runtime"] })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("invalid config for edge_runtime.inspector_port");
           }
@@ -2228,8 +2353,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.ensuring(
             Effect.sync(() => {
               if (previous === undefined)
-                delete process.env["SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT"];
-              else process.env["SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT"] = previous;
+                vi.stubEnv("SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT", undefined);
+              else vi.stubEnv("SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT", previous);
             }),
           ),
         );
@@ -2242,8 +2367,8 @@ content_path = "./supabase/templates/custom_notice.html"
         // `legacyResolveDockerDaemonHost` checks `DOCKER_HOST` before ever shelling out to
         // `docker context inspect`, so setting it directly is a reliable way to force the
         // npipe branch without needing a real Windows Docker Desktop context.
-        const previousDockerHost = process.env["DOCKER_HOST"];
-        process.env["DOCKER_HOST"] = "npipe:////./pipe/docker_engine";
+        const previousDockerHost = undefined;
+        vi.stubEnv("DOCKER_HOST", "npipe:////./pipe/docker_engine");
         const { layer, out } = setup();
         return Effect.gen(function* () {
           yield* legacyStart(flags());
@@ -2255,8 +2380,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previousDockerHost === undefined) delete process.env["DOCKER_HOST"];
-              else process.env["DOCKER_HOST"] = previousDockerHost;
+              if (previousDockerHost === undefined) vi.stubEnv("DOCKER_HOST", undefined);
+              else vi.stubEnv("DOCKER_HOST", previousDockerHost);
             }),
           ),
         );
@@ -2311,8 +2436,8 @@ content_path = "./supabase/templates/custom_notice.html"
         // with no `[storage.image_transformation]` table, the env var is
         // never even looked up, so ImgProxy must stay off even though
         // storage itself is enabled.
-        const previous = process.env["SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED"];
-        process.env["SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED"] = "true";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED", "true");
         const { layer, child } = setup();
         return Effect.gen(function* () {
           yield* legacyStart(flags());
@@ -2324,9 +2449,9 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.ensuring(
             Effect.sync(() => {
               if (previous === undefined) {
-                delete process.env["SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED"];
+                vi.stubEnv("SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED", undefined);
               } else {
-                process.env["SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED"] = previous;
+                vi.stubEnv("SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED", previous);
               }
             }),
           ),
@@ -2416,18 +2541,18 @@ content_path = "./supabase/templates/custom_notice.html"
           route: freshVolumeRoute(defaultRoute()),
           catalogStdout: '{"snapshot":"ok"}',
         });
-        writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_USE_PG_DELTA_NEXT=false\n");
         return Effect.gen(function* () {
+          yield* writeFile(join(workdir, "supabase", ".env"), "SUPABASE_USE_PG_DELTA_NEXT=false\n");
           yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
           expect(out.stderrText).not.toContain("failed to cache migrations catalog");
           // Runs once, immediately AFTER the fresh-volume migrate+seed pipeline.
           expect(edgeRunCalls).toHaveLength(1);
           const tempDir = join(workdir, "supabase", ".temp", "pgdelta");
-          const catalogFiles = readdirSync(tempDir).filter((name) =>
+          const catalogFiles = (yield* readDirectory(tempDir)).filter((name) =>
             name.startsWith("catalog-local-migrations-"),
           );
           expect(catalogFiles).toHaveLength(1);
-          expect(readFileSync(join(tempDir, catalogFiles[0]!), "utf8")).toBe('{"snapshot":"ok"}');
+          expect(yield* readFile(join(tempDir, catalogFiles[0]!))).toBe('{"snapshot":"ok"}');
         }).pipe(Effect.provide(layer));
       },
     );
@@ -2440,8 +2565,8 @@ content_path = "./supabase/templates/custom_notice.html"
           route: freshVolumeRoute(defaultRoute()),
           catalogExportFailWith: "edge-runtime script produced no output",
         });
-        writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_USE_PG_DELTA_NEXT=false\n");
         return Effect.gen(function* () {
+          yield* writeFile(join(workdir, "supabase", ".env"), "SUPABASE_USE_PG_DELTA_NEXT=false\n");
           const exit = yield* legacyStart(flags({ exclude: ["edge-runtime"] })).pipe(Effect.exit);
           expect(Exit.isSuccess(exit)).toBe(true);
           expect(out.stderrText).toContain(
@@ -2475,11 +2600,11 @@ content_path = "./supabase/templates/custom_notice.html"
         const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
         // `loadProjectEnvironment`'s `envPath` is `<workdir>/supabase/.env` (`findProjectPaths`),
         // written after `setup()` so the `supabase/` dir (created by `writeConfig`) already exists.
-        writeFileSync(
-          join(workdir, "supabase", ".env"),
-          "SUPABASE_INTERNAL_IMAGE_REGISTRY=registry.example.com\n",
-        );
         return Effect.gen(function* () {
+          yield* writeFile(
+            join(workdir, "supabase", ".env"),
+            "SUPABASE_INTERNAL_IMAGE_REGISTRY=registry.example.com\n",
+          );
           yield* legacyStart(flags({ exclude: ["gotrue"] }));
           expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
           const authMigrateJob = dbSetupJobCalls(child.spawned).find((s) =>
@@ -2541,8 +2666,8 @@ content_path = "./supabase/templates/custom_notice.html"
         // `legacyCheckDbToml`'s pipeline does) must still fail eagerly, before any Docker work,
         // on an ordinary restart against an existing (non-fresh) volume: every `encrypted:`
         // value decrypts unconditionally regardless of volume state.
-        const previous = process.env["DOTENV_PRIVATE_KEY"];
-        delete process.env["DOTENV_PRIVATE_KEY"];
+        const previous = undefined;
+        vi.stubEnv("DOTENV_PRIVATE_KEY", undefined);
         const encrypted =
           "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
         const { layer, child } = setup({
@@ -2552,7 +2677,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("failed to parse config: missing private key");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -2560,8 +2685,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
-              else process.env["DOTENV_PRIVATE_KEY"] = previous;
+              if (previous === undefined) vi.stubEnv("DOTENV_PRIVATE_KEY", undefined);
+              else vi.stubEnv("DOTENV_PRIVATE_KEY", previous);
             }),
           ),
         );
@@ -2585,7 +2710,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyDbConfigLoadError");
             expect(serialized).toContain(
               "failed to parse config: invalid storage.buckets.avatars.file_size_limit.",
@@ -2626,9 +2751,8 @@ content_path = "./supabase/templates/custom_notice.html"
         const { layer, workdir } = setup();
         return Effect.gen(function* () {
           yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
-          const content = readFileSync(
+          const content = yield* readFile(
             join(workdir, "supabase", ".branches", "_current_branch"),
-            "utf8",
           );
           expect(content).toBe("main");
         }).pipe(Effect.provide(layer));
@@ -2670,8 +2794,8 @@ content_path = "./supabase/templates/custom_notice.html"
         // reusing start's own already env-overridden config, so a SUPABASE_API_PORT
         // override that actually brought Kong up on a different port never reached
         // the bucket-seeding gateway's base URL.
-        const previous = process.env["SUPABASE_API_PORT"];
-        process.env["SUPABASE_API_PORT"] = "65432";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_API_PORT", "65432");
         const http = mockStorageBucketHttpClient();
         const { layer } = setup({
           configContents: 'project_id = "demo"\n[storage.buckets.avatars]\npublic = false\n',
@@ -2686,8 +2810,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_API_PORT"];
-              else process.env["SUPABASE_API_PORT"] = previous;
+              if (previous === undefined) vi.stubEnv("SUPABASE_API_PORT", undefined);
+              else vi.stubEnv("SUPABASE_API_PORT", previous);
             }),
           ),
         );
@@ -2701,8 +2825,8 @@ content_path = "./supabase/templates/custom_notice.html"
         // un-overridden config value, so a `SUPABASE_API_EXTERNAL_URL` override that
         // actually brought Kong/GoTrue up under a different external URL never reached
         // the bucket-seeding gateway's base URL.
-        const previous = process.env["SUPABASE_API_EXTERNAL_URL"];
-        process.env["SUPABASE_API_EXTERNAL_URL"] = "http://override.example.com:9999";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_API_EXTERNAL_URL", "http://override.example.com:9999");
         const http = mockStorageBucketHttpClient();
         const { layer } = setup({
           configContents: 'project_id = "demo"\n[storage.buckets.avatars]\npublic = false\n',
@@ -2717,8 +2841,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_API_EXTERNAL_URL"];
-              else process.env["SUPABASE_API_EXTERNAL_URL"] = previous;
+              if (previous === undefined) vi.stubEnv("SUPABASE_API_EXTERNAL_URL", undefined);
+              else vi.stubEnv("SUPABASE_API_EXTERNAL_URL", previous);
             }),
           ),
         );
@@ -2732,8 +2856,8 @@ content_path = "./supabase/templates/custom_notice.html"
         // raw, un-overridden config value, so `legacySeedBucketsRun`'s per-bucket default
         // (for a bucket with no explicit `file_size_limit` of its own) never reflected an
         // env/dotenv-only `SUPABASE_STORAGE_FILE_SIZE_LIMIT` override.
-        const previous = process.env["SUPABASE_STORAGE_FILE_SIZE_LIMIT"];
-        process.env["SUPABASE_STORAGE_FILE_SIZE_LIMIT"] = "10MiB";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_STORAGE_FILE_SIZE_LIMIT", "10MiB");
         const http = mockStorageBucketHttpClient();
         const { layer } = setup({
           configContents: 'project_id = "demo"\n[storage.buckets.avatars]\npublic = false\n',
@@ -2743,15 +2867,13 @@ content_path = "./supabase/templates/custom_notice.html"
         return Effect.gen(function* () {
           yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
           expect(http.createdBucketBodies).toHaveLength(1);
-          expect(
-            (http.createdBucketBodies[0] as { file_size_limit?: number })?.file_size_limit,
-          ).toBe(10 * 1024 * 1024);
+          expect(http.createdBucketBodies[0]?.file_size_limit).toBe(10 * 1024 * 1024);
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_STORAGE_FILE_SIZE_LIMIT"];
-              else process.env["SUPABASE_STORAGE_FILE_SIZE_LIMIT"] = previous;
+              if (previous === undefined) vi.stubEnv("SUPABASE_STORAGE_FILE_SIZE_LIMIT", undefined);
+              else vi.stubEnv("SUPABASE_STORAGE_FILE_SIZE_LIMIT", previous);
             }),
           ),
         );
@@ -2811,12 +2933,12 @@ content_path = "./supabase/templates/custom_notice.html"
           const stagingRoot = join(workdir, "supabase", ".temp", "start-secrets");
           expect(envFilePath?.startsWith(stagingRoot)).toBe(true);
           try {
-            expect(existsSync(envFilePath ?? "")).toBe(true);
+            expect(yield* fileExists(envFilePath ?? "")).toBe(true);
             // `<stagingRoot>/<container>/env/docker.env` → the staging dir is two levels up.
             const containerStagingDir = join(envFilePath ?? "", "..", "..");
-            expect(existsSync(join(containerStagingDir, "main"))).toBe(false);
+            expect(yield* fileExists(join(containerStagingDir, "main"))).toBe(false);
           } finally {
-            rmSync(stagingRoot, { recursive: true, force: true });
+            yield* removePath(stagingRoot, { recursive: true, force: true });
           }
         }).pipe(Effect.provide(layer));
       },
@@ -2830,20 +2952,24 @@ content_path = "./supabase/templates/custom_notice.html"
         // `start.handler.ts`'s "studio" case doc comment) — the skip line still
         // logs via that path alone here, since Edge Runtime itself never runs to log it too.
         const workdir = tempRoot.current;
-        mkdirSync(join(workdir, "supabase", "functions", "foo"), { recursive: true });
-        writeFileSync(join(workdir, "supabase", "functions", "foo", "index.ts"), "export {};\n");
         const { layer, out } = setup({
           configContents: 'project_id = "demo"\n[functions.foo]\nenabled = false\n',
         });
         return Effect.gen(function* () {
+          yield* makeDirectory(join(workdir, "supabase", "functions", "foo"), { recursive: true });
+          yield* writeFile(
+            join(workdir, "supabase", "functions", "foo", "index.ts"),
+            "export {};\n",
+          );
           yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
           expect(out.stderrText).toContain("Skipped serving Function: foo");
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(
-            Effect.sync(() => {
-              rmSync(join(workdir, "supabase", "functions"), { recursive: true, force: true });
-            }),
+            removePath(join(workdir, "supabase", "functions"), {
+              recursive: true,
+              force: true,
+            }).pipe(Effect.ignore),
           ),
         );
       },
@@ -2861,20 +2987,22 @@ content_path = "./supabase/templates/custom_notice.html"
         // UNRELATED ancestor project's `supabase/functions` from silently
         // winning for this workdir, mirroring that same `search: false`.
         const ancestorRoot = tempRoot.current;
-        mkdirSync(join(ancestorRoot, "supabase", "functions", "foo"), { recursive: true });
-        writeFileSync(
-          join(ancestorRoot, "supabase", "functions", "foo", "index.ts"),
-          "export {};\n",
-        );
-        writeFileSync(
-          join(ancestorRoot, "supabase", "config.toml"),
-          'project_id = "ancestor"\n[functions.foo]\nenabled = true\n',
-        );
         const workdir = join(ancestorRoot, "nested", "workdir");
-        mkdirSync(workdir, { recursive: true });
 
         const { layer, out, child } = setup({ workdir, skipConfig: true });
         return Effect.gen(function* () {
+          yield* makeDirectory(join(ancestorRoot, "supabase", "functions", "foo"), {
+            recursive: true,
+          });
+          yield* writeFile(
+            join(ancestorRoot, "supabase", "functions", "foo", "index.ts"),
+            "export {};\n",
+          );
+          yield* writeFile(
+            join(ancestorRoot, "supabase", "config.toml"),
+            'project_id = "ancestor"\n[functions.foo]\nenabled = true\n',
+          );
+          yield* makeDirectory(workdir, { recursive: true });
           yield* legacyStart(flags());
           const runArgs = edgeRuntimeRunCalls(child.spawned)[0]?.args ?? [];
           const bindValues = runArgs.flatMap((arg, i) => (runArgs[i - 1] === "-v" ? [arg] : []));
@@ -2883,9 +3011,10 @@ content_path = "./supabase/templates/custom_notice.html"
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(
-            Effect.sync(() => {
-              rmSync(join(ancestorRoot, "supabase", "functions"), { recursive: true, force: true });
-            }),
+            removePath(join(ancestorRoot, "supabase", "functions"), {
+              recursive: true,
+              force: true,
+            }).pipe(Effect.ignore),
           ),
         );
       },
@@ -2966,7 +3095,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyImagePrepullError");
+            expect(Formatter.formatJson(exit.cause)).toContain("LegacyImagePrepullError");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
           expect(rollbackWasAttempted(child.spawned)).toBe(false);
@@ -3016,7 +3145,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags({ ignoreHealthCheck: true })));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyImagePrepullError");
+            expect(Formatter.formatJson(exit.cause)).toContain("LegacyImagePrepullError");
           }
           expect(out.stderrText).not.toContain("Started");
           expect(out.stderrText).not.toContain("Local dev security notice");
@@ -3169,7 +3298,7 @@ content_path = "./supabase/templates/custom_notice.html"
         const exit = yield* Effect.exit(legacyStart(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const serialized = JSON.stringify(exit.cause);
+          const serialized = Formatter.formatJson(exit.cause);
           expect(serialized).toContain("LegacyNetworkCreateError");
           expect(serialized).toContain("failed to create docker network");
         }
@@ -3194,7 +3323,7 @@ content_path = "./supabase/templates/custom_notice.html"
         const exit = yield* Effect.exit(legacyStart(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const serialized = JSON.stringify(exit.cause);
+          const serialized = Formatter.formatJson(exit.cause);
           expect(serialized).toContain("LegacyContainerCreateError");
           expect(serialized).toContain("failed to create docker container");
         }
@@ -3220,7 +3349,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyContainerStartError");
             expect(serialized).toContain("port is already allocated");
             expect(serialized).toContain(
@@ -3248,7 +3377,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("invalid config for auth.email.max_frequency");
           }
@@ -3268,8 +3397,8 @@ content_path = "./supabase/templates/custom_notice.html"
         // case above, this override is read before any network/container work starts, so
         // there is nothing yet for rollback to prune — the point of this test is solely that
         // the typed LegacyStartInvalidConfigError surfaces instead of a defect.
-        const previous = process.env["SUPABASE_AUTH_EMAIL_OTP_LENGTH"];
-        process.env["SUPABASE_AUTH_EMAIL_OTP_LENGTH"] = "abc";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_AUTH_EMAIL_OTP_LENGTH", "abc");
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
         });
@@ -3277,7 +3406,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
           }
           expect(child.spawned).toHaveLength(0);
@@ -3285,8 +3414,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_AUTH_EMAIL_OTP_LENGTH"];
-              else process.env["SUPABASE_AUTH_EMAIL_OTP_LENGTH"] = previous;
+              if (previous === undefined) vi.stubEnv("SUPABASE_AUTH_EMAIL_OTP_LENGTH", undefined);
+              else vi.stubEnv("SUPABASE_AUTH_EMAIL_OTP_LENGTH", previous);
             }),
           ),
         );
@@ -3305,8 +3434,8 @@ content_path = "./supabase/templates/custom_notice.html"
         // network/container work starts, so there is nothing yet for rollback to prune — the
         // point of this test is solely that the typed LegacyStartInvalidConfigError surfaces
         // instead of a defect.
-        const previous = process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"];
-        process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = "bad";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_AUTH_SMS_ENABLE_SIGNUP", "bad");
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
         });
@@ -3314,7 +3443,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
           }
           expect(child.spawned).toHaveLength(0);
@@ -3322,8 +3451,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"];
-              else process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = previous;
+              if (previous === undefined) vi.stubEnv("SUPABASE_AUTH_SMS_ENABLE_SIGNUP", undefined);
+              else vi.stubEnv("SUPABASE_AUTH_SMS_ENABLE_SIGNUP", previous);
             }),
           ),
         );
@@ -3353,7 +3482,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyHealthCheckTimeoutError");
+            expect(Formatter.formatJson(exit.cause)).toContain("LegacyHealthCheckTimeoutError");
           }
           expect(rollbackWasAttempted(child.spawned)).toBe(true);
           // Postgres's own health wait fails before any other service is ever created.
@@ -3448,7 +3577,7 @@ content_path = "./supabase/templates/custom_notice.html"
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyHealthCheckTimeoutError");
+            expect(Formatter.formatJson(exit.cause)).toContain("LegacyHealthCheckTimeoutError");
           }
           expect(out.stderrText).not.toContain("Started");
           expect(rollbackWasAttempted(child.spawned)).toBe(true);
@@ -3599,7 +3728,7 @@ content_path = "./supabase/templates/custom_notice.html"
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStorageGatewayStatusError");
             // The seed error REPLACES the original health-check timeout entirely.
             expect(serialized).not.toContain("LegacyHealthCheckTimeoutError");
@@ -3693,31 +3822,21 @@ content_path = "./supabase/templates/custom_notice.html"
       // `--network-id` falls back to the `SUPABASE_NETWORK_ID` shell/project-dotenv env var
       // ONLY when the flag was never passed (review: PRRT_kwDOErm0O86VlqIL) — see
       // `start.handler.ts`'s own comment on this resolution for the full precedence.
-      const previous = process.env["SUPABASE_NETWORK_ID"];
-      process.env["SUPABASE_NETWORK_ID"] = "env-net";
-      const { layer, child } = setup();
+      const { layer, child } = setup({ env: { SUPABASE_NETWORK_ID: "env-net" } });
       return Effect.gen(function* () {
         yield* legacyStart(flags());
         const networkCreate = child.spawned.find(
           (s) => s.args[0] === "network" && s.args[1] === "create",
         );
         expect(networkCreate?.args.at(-1)).toBe("env-net");
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_NETWORK_ID"];
-            else process.env["SUPABASE_NETWORK_ID"] = previous;
-          }),
-        ),
-      );
+      }).pipe(Effect.provide(layer));
     });
   });
 
   describe("SUPABASE_API_PORT override", () => {
     it.live("publishes Kong on the env-overridden API port, not config.api.port", () => {
-      const previous = process.env["SUPABASE_API_PORT"];
-      process.env["SUPABASE_API_PORT"] = "61234";
+      const previous = undefined;
+      vi.stubEnv("SUPABASE_API_PORT", "61234");
       const { layer, child } = setup();
       return Effect.gen(function* () {
         yield* legacyStart(flags());
@@ -3730,8 +3849,8 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_API_PORT"];
-            else process.env["SUPABASE_API_PORT"] = previous;
+            if (previous === undefined) vi.stubEnv("SUPABASE_API_PORT", undefined);
+            else vi.stubEnv("SUPABASE_API_PORT", previous);
           }),
         ),
       );
@@ -3743,9 +3862,12 @@ content_path = "./supabase/templates/custom_notice.html"
       "threads a linked project's supabase/.temp/storage-migration pin into DB_MIGRATIONS_FREEZE_AT",
       () => {
         const { layer, workdir, child } = setup();
-        mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
-        writeFileSync(join(workdir, "supabase", ".temp", "storage-migration"), "20240102030405\n");
         return Effect.gen(function* () {
+          yield* makeDirectory(join(workdir, "supabase", ".temp"), { recursive: true });
+          yield* writeFile(
+            join(workdir, "supabase", ".temp", "storage-migration"),
+            "20240102030405\n",
+          );
           yield* legacyStart(flags());
           const storageCreate = child.spawned.find(
             (s) =>
@@ -3774,9 +3896,9 @@ content_path = "./supabase/templates/custom_notice.html"
       "resolves a supabase/.temp/storage-version pin into the pulled/created storage image tag",
       () => {
         const { layer, workdir, child } = setup();
-        mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
-        writeFileSync(join(workdir, "supabase", ".temp", "storage-version"), "1.2.3\n");
         return Effect.gen(function* () {
+          yield* makeDirectory(join(workdir, "supabase", ".temp"), { recursive: true });
+          yield* writeFile(join(workdir, "supabase", ".temp", "storage-version"), "1.2.3\n");
           yield* legacyStart(flags());
           const storageImageInspect = child.spawned.find(
             (s) =>
@@ -3912,10 +4034,10 @@ content_path = "./supabase/templates/custom_notice.html"
 
   describe("SUPABASE_LOCAL_SMTP_ADMIN_EMAIL / SUPABASE_LOCAL_SMTP_SENDER_NAME overrides", () => {
     it.live("honors env overrides for the Mailpit fallback's admin email and sender name", () => {
-      const previousAdminEmail = process.env["SUPABASE_LOCAL_SMTP_ADMIN_EMAIL"];
-      const previousSenderName = process.env["SUPABASE_LOCAL_SMTP_SENDER_NAME"];
-      process.env["SUPABASE_LOCAL_SMTP_ADMIN_EMAIL"] = "override-admin@example.com";
-      process.env["SUPABASE_LOCAL_SMTP_SENDER_NAME"] = "Override Sender";
+      const previousAdminEmail = undefined;
+      const previousSenderName = undefined;
+      vi.stubEnv("SUPABASE_LOCAL_SMTP_ADMIN_EMAIL", "override-admin@example.com");
+      vi.stubEnv("SUPABASE_LOCAL_SMTP_SENDER_NAME", "Override Sender");
       const { layer, child } = setup();
       return Effect.gen(function* () {
         yield* legacyStart(flags());
@@ -3929,14 +4051,14 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.ensuring(
           Effect.sync(() => {
             if (previousAdminEmail === undefined) {
-              delete process.env["SUPABASE_LOCAL_SMTP_ADMIN_EMAIL"];
+              vi.stubEnv("SUPABASE_LOCAL_SMTP_ADMIN_EMAIL", undefined);
             } else {
-              process.env["SUPABASE_LOCAL_SMTP_ADMIN_EMAIL"] = previousAdminEmail;
+              vi.stubEnv("SUPABASE_LOCAL_SMTP_ADMIN_EMAIL", previousAdminEmail);
             }
             if (previousSenderName === undefined) {
-              delete process.env["SUPABASE_LOCAL_SMTP_SENDER_NAME"];
+              vi.stubEnv("SUPABASE_LOCAL_SMTP_SENDER_NAME", undefined);
             } else {
-              process.env["SUPABASE_LOCAL_SMTP_SENDER_NAME"] = previousSenderName;
+              vi.stubEnv("SUPABASE_LOCAL_SMTP_SENDER_NAME", previousSenderName);
             }
           }),
         ),
@@ -3948,22 +4070,22 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails with a typed config error, before any container is created, on an invalid SUPABASE_LOCAL_SMTP_SMTP_PORT",
       () => {
-        const previous = process.env["SUPABASE_LOCAL_SMTP_SMTP_PORT"];
-        process.env["SUPABASE_LOCAL_SMTP_SMTP_PORT"] = "not-a-port";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_LOCAL_SMTP_SMTP_PORT", "not-a-port");
         const { layer, child } = setup();
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+            expect(Formatter.formatJson(exit.cause)).toContain("LegacyStartInvalidConfigError");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_LOCAL_SMTP_SMTP_PORT"];
-              else process.env["SUPABASE_LOCAL_SMTP_SMTP_PORT"] = previous;
+              if (previous === undefined) vi.stubEnv("SUPABASE_LOCAL_SMTP_SMTP_PORT", undefined);
+              else vi.stubEnv("SUPABASE_LOCAL_SMTP_SMTP_PORT", previous);
             }),
           ),
         );
@@ -3981,12 +4103,11 @@ content_path = "./supabase/templates/custom_notice.html"
           "SUPABASE_AUTH_SMS_TWILIO_MESSAGE_SERVICE_SID",
           "SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN",
         ] as const;
-        const previous = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
-        process.env["SUPABASE_AUTH_SMS_TWILIO_ENABLED"] = "true";
-        process.env["SUPABASE_AUTH_SMS_TWILIO_ACCOUNT_SID"] = "override-account-sid";
-        process.env["SUPABASE_AUTH_SMS_TWILIO_MESSAGE_SERVICE_SID"] =
-          "override-message-service-sid";
-        process.env["SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN"] = "override-auth-token";
+        const previous: Partial<Record<(typeof envKeys)[number], string | undefined>> = {};
+        vi.stubEnv("SUPABASE_AUTH_SMS_TWILIO_ENABLED", "true");
+        vi.stubEnv("SUPABASE_AUTH_SMS_TWILIO_ACCOUNT_SID", "override-account-sid");
+        vi.stubEnv("SUPABASE_AUTH_SMS_TWILIO_MESSAGE_SERVICE_SID", "override-message-service-sid");
+        vi.stubEnv("SUPABASE_AUTH_SMS_TWILIO_AUTH_TOKEN", "override-auth-token");
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[auth.sms.twilio]\nenabled = false\n',
         });
@@ -4007,8 +4128,8 @@ content_path = "./supabase/templates/custom_notice.html"
             Effect.sync(() => {
               for (const key of envKeys) {
                 const value = previous[key];
-                if (value === undefined) delete process.env[key];
-                else process.env[key] = value;
+                if (value === undefined) vi.stubEnv(key, undefined);
+                else vi.stubEnv(key, value);
               }
             }),
           ),
@@ -4019,10 +4140,10 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "honors SUPABASE_AUTH_SMS_ENABLE_SIGNUP and SUPABASE_AUTH_SMS_MAX_FREQUENCY in GoTrue's env",
       () => {
-        const previousEnableSignup = process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"];
-        const previousMaxFrequency = process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"];
-        process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = "true";
-        process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"] = "10s";
+        const previousEnableSignup = undefined;
+        const previousMaxFrequency = undefined;
+        vi.stubEnv("SUPABASE_AUTH_SMS_ENABLE_SIGNUP", "true");
+        vi.stubEnv("SUPABASE_AUTH_SMS_MAX_FREQUENCY", "10s");
         // A complete, enabled provider is required, or SMS validation downgrades
         // enable_signup to false regardless of the override — see the "disables phone login"
         // test below for that behavior itself.
@@ -4042,14 +4163,14 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.ensuring(
             Effect.sync(() => {
               if (previousEnableSignup === undefined) {
-                delete process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"];
+                vi.stubEnv("SUPABASE_AUTH_SMS_ENABLE_SIGNUP", undefined);
               } else {
-                process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = previousEnableSignup;
+                vi.stubEnv("SUPABASE_AUTH_SMS_ENABLE_SIGNUP", previousEnableSignup);
               }
               if (previousMaxFrequency === undefined) {
-                delete process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"];
+                vi.stubEnv("SUPABASE_AUTH_SMS_MAX_FREQUENCY", undefined);
               } else {
-                process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"] = previousMaxFrequency;
+                vi.stubEnv("SUPABASE_AUTH_SMS_MAX_FREQUENCY", previousMaxFrequency);
               }
             }),
           ),
@@ -4063,8 +4184,8 @@ content_path = "./supabase/templates/custom_notice.html"
         // SMS validation downgrades `enable_signup` to `false` (plus a stderr warning) —
         // reached only when every named provider is disabled — before `legacyBuildGotrueEnv`
         // ever reads it.
-        const previous = process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"];
-        process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = "true";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_AUTH_SMS_ENABLE_SIGNUP", "true");
         const { layer, child, out } = setup();
         return Effect.gen(function* () {
           yield* legacyStart(flags());
@@ -4079,8 +4200,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"];
-              else process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = previous;
+              if (previous === undefined) vi.stubEnv("SUPABASE_AUTH_SMS_ENABLE_SIGNUP", undefined);
+              else vi.stubEnv("SUPABASE_AUTH_SMS_ENABLE_SIGNUP", previous);
             }),
           ),
         );
@@ -4092,10 +4213,10 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "honors SUPABASE_AUTH_EMAIL_ENABLE_SIGNUP and SUPABASE_AUTH_EMAIL_OTP_LENGTH in GoTrue's env",
       () => {
-        const previousEnableSignup = process.env["SUPABASE_AUTH_EMAIL_ENABLE_SIGNUP"];
-        const previousOtpLength = process.env["SUPABASE_AUTH_EMAIL_OTP_LENGTH"];
-        process.env["SUPABASE_AUTH_EMAIL_ENABLE_SIGNUP"] = "false";
-        process.env["SUPABASE_AUTH_EMAIL_OTP_LENGTH"] = "8";
+        const previousEnableSignup = undefined;
+        const previousOtpLength = undefined;
+        vi.stubEnv("SUPABASE_AUTH_EMAIL_ENABLE_SIGNUP", "false");
+        vi.stubEnv("SUPABASE_AUTH_EMAIL_OTP_LENGTH", "8");
         const { layer, child } = setup();
         return Effect.gen(function* () {
           yield* legacyStart(flags());
@@ -4109,14 +4230,14 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.ensuring(
             Effect.sync(() => {
               if (previousEnableSignup === undefined) {
-                delete process.env["SUPABASE_AUTH_EMAIL_ENABLE_SIGNUP"];
+                vi.stubEnv("SUPABASE_AUTH_EMAIL_ENABLE_SIGNUP", undefined);
               } else {
-                process.env["SUPABASE_AUTH_EMAIL_ENABLE_SIGNUP"] = previousEnableSignup;
+                vi.stubEnv("SUPABASE_AUTH_EMAIL_ENABLE_SIGNUP", previousEnableSignup);
               }
               if (previousOtpLength === undefined) {
-                delete process.env["SUPABASE_AUTH_EMAIL_OTP_LENGTH"];
+                vi.stubEnv("SUPABASE_AUTH_EMAIL_OTP_LENGTH", undefined);
               } else {
-                process.env["SUPABASE_AUTH_EMAIL_OTP_LENGTH"] = previousOtpLength;
+                vi.stubEnv("SUPABASE_AUTH_EMAIL_OTP_LENGTH", previousOtpLength);
               }
             }),
           ),
@@ -4127,15 +4248,15 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "honors SUPABASE_AUTH_EMAIL_TEMPLATE_<NAME>_SUBJECT in GoTrue's mailer subject env",
       () => {
-        const previous = process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_SUBJECT"];
-        process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_SUBJECT"] = "Override subject";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_SUBJECT", "Override subject");
         const { layer, workdir, child } = setup({
           configContents:
             'project_id = "demo"\n[auth.email.template.confirmation]\ncontent_path = "./templates/confirmation.html"\n',
         });
-        mkdirSync(join(workdir, "templates"), { recursive: true });
-        writeFileSync(join(workdir, "templates", "confirmation.html"), "<html></html>");
         return Effect.gen(function* () {
+          yield* makeDirectory(join(workdir, "templates"), { recursive: true });
+          yield* writeFile(join(workdir, "templates", "confirmation.html"), "<html></html>");
           yield* legacyStart(flags());
           const gotrueCreate = child.spawned.find(
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_auth_"),
@@ -4146,9 +4267,9 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.ensuring(
             Effect.sync(() => {
               if (previous === undefined) {
-                delete process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_SUBJECT"];
+                vi.stubEnv("SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_SUBJECT", undefined);
               } else {
-                process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_SUBJECT"] = previous;
+                vi.stubEnv("SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_SUBJECT", previous);
               }
             }),
           ),
@@ -4162,8 +4283,8 @@ content_path = "./supabase/templates/custom_notice.html"
         // The env override folds into the email template's content field before
         // validation runs, so it is rejected exactly like a raw TOML `content` key with
         // no `content_path` — before start touches Docker at all.
-        const previous = process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_CONTENT"];
-        process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_CONTENT"] = "<html>Hi</html>";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_CONTENT", "<html>Hi</html>");
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[auth.email.template.confirmation]\n',
         });
@@ -4171,7 +4292,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain(
               "Invalid config for auth.email.template.confirmation.content: please use content_path instead",
@@ -4183,9 +4304,9 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.ensuring(
             Effect.sync(() => {
               if (previous === undefined) {
-                delete process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_CONTENT"];
+                vi.stubEnv("SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_CONTENT", undefined);
               } else {
-                process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_CONTENT"] = previous;
+                vi.stubEnv("SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_CONTENT", previous);
               }
             }),
           ),
@@ -4196,8 +4317,8 @@ content_path = "./supabase/templates/custom_notice.html"
 
   describe("SUPABASE_DB_PORT override", () => {
     it.live("publishes Postgres on the env-overridden DB port, not config.db.port", () => {
-      const previous = process.env["SUPABASE_DB_PORT"];
-      process.env["SUPABASE_DB_PORT"] = "54329";
+      const previous = undefined;
+      vi.stubEnv("SUPABASE_DB_PORT", "54329");
       const { layer, child } = setup();
       return Effect.gen(function* () {
         yield* legacyStart(flags());
@@ -4210,8 +4331,8 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_DB_PORT"];
-            else process.env["SUPABASE_DB_PORT"] = previous;
+            if (previous === undefined) vi.stubEnv("SUPABASE_DB_PORT", undefined);
+            else vi.stubEnv("SUPABASE_DB_PORT", previous);
           }),
         ),
       );
@@ -4220,8 +4341,8 @@ content_path = "./supabase/templates/custom_notice.html"
 
   describe("SUPABASE_DB_SETTINGS_* env overrides", () => {
     it.live("honors SUPABASE_DB_SETTINGS_SHARED_BUFFERS in the rendered postgresql.conf", () => {
-      const previous = process.env["SUPABASE_DB_SETTINGS_SHARED_BUFFERS"];
-      process.env["SUPABASE_DB_SETTINGS_SHARED_BUFFERS"] = "256MB";
+      const previous = undefined;
+      vi.stubEnv("SUPABASE_DB_SETTINGS_SHARED_BUFFERS", "256MB");
       const { layer, child } = setup();
       return Effect.gen(function* () {
         yield* legacyStart(flags());
@@ -4233,8 +4354,9 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_DB_SETTINGS_SHARED_BUFFERS"];
-            else process.env["SUPABASE_DB_SETTINGS_SHARED_BUFFERS"] = previous;
+            if (previous === undefined)
+              vi.stubEnv("SUPABASE_DB_SETTINGS_SHARED_BUFFERS", undefined);
+            else vi.stubEnv("SUPABASE_DB_SETTINGS_SHARED_BUFFERS", previous);
           }),
         ),
       );
@@ -4245,10 +4367,10 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "honors SUPABASE_STORAGE_S3_PROTOCOL_ENABLED and SUPABASE_STORAGE_VECTOR_ENABLED",
       () => {
-        const previousS3 = process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"];
-        const previousVector = process.env["SUPABASE_STORAGE_VECTOR_ENABLED"];
-        process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"] = "false";
-        process.env["SUPABASE_STORAGE_VECTOR_ENABLED"] = "false";
+        const previousS3 = undefined;
+        const previousVector = undefined;
+        vi.stubEnv("SUPABASE_STORAGE_S3_PROTOCOL_ENABLED", "false");
+        vi.stubEnv("SUPABASE_STORAGE_VECTOR_ENABLED", "false");
         const { layer, child } = setup();
         return Effect.gen(function* () {
           yield* legacyStart(flags());
@@ -4262,11 +4384,11 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.ensuring(
             Effect.sync(() => {
               if (previousS3 === undefined)
-                delete process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"];
-              else process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"] = previousS3;
+                vi.stubEnv("SUPABASE_STORAGE_S3_PROTOCOL_ENABLED", undefined);
+              else vi.stubEnv("SUPABASE_STORAGE_S3_PROTOCOL_ENABLED", previousS3);
               if (previousVector === undefined)
-                delete process.env["SUPABASE_STORAGE_VECTOR_ENABLED"];
-              else process.env["SUPABASE_STORAGE_VECTOR_ENABLED"] = previousVector;
+                vi.stubEnv("SUPABASE_STORAGE_VECTOR_ENABLED", undefined);
+              else vi.stubEnv("SUPABASE_STORAGE_VECTOR_ENABLED", previousVector);
             }),
           ),
         );
@@ -4276,14 +4398,14 @@ content_path = "./supabase/templates/custom_notice.html"
 
   describe("SUPABASE_ANALYTICS_* env overrides", () => {
     it.live("honors SUPABASE_ANALYTICS_BACKEND/_GCP_* for both Logflare and Studio", () => {
-      const previousBackend = process.env["SUPABASE_ANALYTICS_BACKEND"];
-      const previousProjectId = process.env["SUPABASE_ANALYTICS_GCP_PROJECT_ID"];
-      const previousProjectNumber = process.env["SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER"];
-      const previousJwtPath = process.env["SUPABASE_ANALYTICS_GCP_JWT_PATH"];
-      process.env["SUPABASE_ANALYTICS_BACKEND"] = "bigquery";
-      process.env["SUPABASE_ANALYTICS_GCP_PROJECT_ID"] = "env-gcp-project";
-      process.env["SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER"] = "987654321";
-      process.env["SUPABASE_ANALYTICS_GCP_JWT_PATH"] = "gcp-key.json";
+      const previousBackend = undefined;
+      const previousProjectId = undefined;
+      const previousProjectNumber = undefined;
+      const previousJwtPath = undefined;
+      vi.stubEnv("SUPABASE_ANALYTICS_BACKEND", "bigquery");
+      vi.stubEnv("SUPABASE_ANALYTICS_GCP_PROJECT_ID", "env-gcp-project");
+      vi.stubEnv("SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER", "987654321");
+      vi.stubEnv("SUPABASE_ANALYTICS_GCP_JWT_PATH", "gcp-key.json");
       const { layer, child } = setup();
       return Effect.gen(function* () {
         yield* legacyStart(flags());
@@ -4301,17 +4423,17 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previousBackend === undefined) delete process.env["SUPABASE_ANALYTICS_BACKEND"];
-            else process.env["SUPABASE_ANALYTICS_BACKEND"] = previousBackend;
+            if (previousBackend === undefined) vi.stubEnv("SUPABASE_ANALYTICS_BACKEND", undefined);
+            else vi.stubEnv("SUPABASE_ANALYTICS_BACKEND", previousBackend);
             if (previousProjectId === undefined)
-              delete process.env["SUPABASE_ANALYTICS_GCP_PROJECT_ID"];
-            else process.env["SUPABASE_ANALYTICS_GCP_PROJECT_ID"] = previousProjectId;
+              vi.stubEnv("SUPABASE_ANALYTICS_GCP_PROJECT_ID", undefined);
+            else vi.stubEnv("SUPABASE_ANALYTICS_GCP_PROJECT_ID", previousProjectId);
             if (previousProjectNumber === undefined)
-              delete process.env["SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER"];
-            else process.env["SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER"] = previousProjectNumber;
+              vi.stubEnv("SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER", undefined);
+            else vi.stubEnv("SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER", previousProjectNumber);
             if (previousJwtPath === undefined)
-              delete process.env["SUPABASE_ANALYTICS_GCP_JWT_PATH"];
-            else process.env["SUPABASE_ANALYTICS_GCP_JWT_PATH"] = previousJwtPath;
+              vi.stubEnv("SUPABASE_ANALYTICS_GCP_JWT_PATH", undefined);
+            else vi.stubEnv("SUPABASE_ANALYTICS_GCP_JWT_PATH", previousJwtPath);
           }),
         ),
       );
@@ -4320,8 +4442,8 @@ content_path = "./supabase/templates/custom_notice.html"
 
   describe("auth.* env overrides reach GoTrue's container", () => {
     it.live("honors SUPABASE_AUTH_ENABLE_SIGNUP for GOTRUE_DISABLE_SIGNUP", () => {
-      const previous = process.env["SUPABASE_AUTH_ENABLE_SIGNUP"];
-      process.env["SUPABASE_AUTH_ENABLE_SIGNUP"] = "false";
+      const previous = undefined;
+      vi.stubEnv("SUPABASE_AUTH_ENABLE_SIGNUP", "false");
       const { layer, child } = setup();
       return Effect.gen(function* () {
         yield* legacyStart(flags());
@@ -4333,8 +4455,8 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_AUTH_ENABLE_SIGNUP"];
-            else process.env["SUPABASE_AUTH_ENABLE_SIGNUP"] = previous;
+            if (previous === undefined) vi.stubEnv("SUPABASE_AUTH_ENABLE_SIGNUP", undefined);
+            else vi.stubEnv("SUPABASE_AUTH_ENABLE_SIGNUP", previous);
           }),
         ),
       );
@@ -4343,8 +4465,8 @@ content_path = "./supabase/templates/custom_notice.html"
 
   describe("SUPABASE_EDGE_RUNTIME_DENO_VERSION override", () => {
     it.live("resolves the Deno 1 edge-runtime image tag, not the Deno 2 default", () => {
-      const previous = process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
-      process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
+      const previous = undefined;
+      vi.stubEnv("SUPABASE_EDGE_RUNTIME_DENO_VERSION", "1");
       const { layer, child } = setup();
       return Effect.gen(function* () {
         yield* legacyStart(flags());
@@ -4361,8 +4483,8 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
-            else process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = previous;
+            if (previous === undefined) vi.stubEnv("SUPABASE_EDGE_RUNTIME_DENO_VERSION", undefined);
+            else vi.stubEnv("SUPABASE_EDGE_RUNTIME_DENO_VERSION", previous);
           }),
         ),
       );
@@ -4373,10 +4495,10 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "honors SUPABASE_REALTIME_IP_VERSION/_MAX_HEADER_LENGTH for both the long-running container and the PG15+ setup job",
       () => {
-        const previousIpVersion = process.env["SUPABASE_REALTIME_IP_VERSION"];
-        const previousMaxHeaderLength = process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"];
-        process.env["SUPABASE_REALTIME_IP_VERSION"] = "IPv6";
-        process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"] = "8192";
+        const previousIpVersion = undefined;
+        const previousMaxHeaderLength = undefined;
+        vi.stubEnv("SUPABASE_REALTIME_IP_VERSION", "IPv6");
+        vi.stubEnv("SUPABASE_REALTIME_MAX_HEADER_LENGTH", "8192");
         const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
         return Effect.gen(function* () {
           yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
@@ -4400,11 +4522,11 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.ensuring(
             Effect.sync(() => {
               if (previousIpVersion === undefined)
-                delete process.env["SUPABASE_REALTIME_IP_VERSION"];
-              else process.env["SUPABASE_REALTIME_IP_VERSION"] = previousIpVersion;
+                vi.stubEnv("SUPABASE_REALTIME_IP_VERSION", undefined);
+              else vi.stubEnv("SUPABASE_REALTIME_IP_VERSION", previousIpVersion);
               if (previousMaxHeaderLength === undefined)
-                delete process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"];
-              else process.env["SUPABASE_REALTIME_MAX_HEADER_LENGTH"] = previousMaxHeaderLength;
+                vi.stubEnv("SUPABASE_REALTIME_MAX_HEADER_LENGTH", undefined);
+              else vi.stubEnv("SUPABASE_REALTIME_MAX_HEADER_LENGTH", previousMaxHeaderLength);
             }),
           ),
         );
@@ -4414,22 +4536,22 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails with a typed config error, before any container is created, on an invalid SUPABASE_REALTIME_IP_VERSION",
       () => {
-        const previous = process.env["SUPABASE_REALTIME_IP_VERSION"];
-        process.env["SUPABASE_REALTIME_IP_VERSION"] = "IPv5";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_REALTIME_IP_VERSION", "IPv5");
         const { layer, child } = setup();
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+            expect(Formatter.formatJson(exit.cause)).toContain("LegacyStartInvalidConfigError");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_REALTIME_IP_VERSION"];
-              else process.env["SUPABASE_REALTIME_IP_VERSION"] = previous;
+              if (previous === undefined) vi.stubEnv("SUPABASE_REALTIME_IP_VERSION", undefined);
+              else vi.stubEnv("SUPABASE_REALTIME_IP_VERSION", previous);
             }),
           ),
         );
@@ -4459,8 +4581,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "honors the override for both Storage's container and the fresh-volume migrate job",
       () => {
-        const previous = process.env["SUPABASE_STORAGE_FILE_SIZE_LIMIT"];
-        process.env["SUPABASE_STORAGE_FILE_SIZE_LIMIT"] = "5MiB";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_STORAGE_FILE_SIZE_LIMIT", "5MiB");
         const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
         return Effect.gen(function* () {
           yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
@@ -4479,8 +4601,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_STORAGE_FILE_SIZE_LIMIT"];
-              else process.env["SUPABASE_STORAGE_FILE_SIZE_LIMIT"] = previous;
+              if (previous === undefined) vi.stubEnv("SUPABASE_STORAGE_FILE_SIZE_LIMIT", undefined);
+              else vi.stubEnv("SUPABASE_STORAGE_FILE_SIZE_LIMIT", previous);
             }),
           ),
         );
@@ -4492,8 +4614,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "selects the OrioleDB Postgres image and enables the container's S3 env when set only via env",
       () => {
-        const previous = process.env["SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION"];
-        process.env["SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION"] = "16.0.0.1";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION", "16.0.0.1");
         const { layer, child } = setup();
         return Effect.gen(function* () {
           yield* legacyStart(flags());
@@ -4514,8 +4636,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.ensuring(
             Effect.sync(() => {
               if (previous === undefined)
-                delete process.env["SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION"];
-              else process.env["SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION"] = previous;
+                vi.stubEnv("SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION", undefined);
+              else vi.stubEnv("SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION", previous);
             }),
           ),
         );
@@ -4523,16 +4645,16 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.live("honors SUPABASE_EXPERIMENTAL_S3_HOST/_REGION/_ACCESS_KEY/_SECRET_KEY", () => {
-      const previousVersion = process.env["SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION"];
-      const previousHost = process.env["SUPABASE_EXPERIMENTAL_S3_HOST"];
-      const previousRegion = process.env["SUPABASE_EXPERIMENTAL_S3_REGION"];
-      const previousAccessKey = process.env["SUPABASE_EXPERIMENTAL_S3_ACCESS_KEY"];
-      const previousSecretKey = process.env["SUPABASE_EXPERIMENTAL_S3_SECRET_KEY"];
-      process.env["SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION"] = "16.0.0.1";
-      process.env["SUPABASE_EXPERIMENTAL_S3_HOST"] = "env-s3-host";
-      process.env["SUPABASE_EXPERIMENTAL_S3_REGION"] = "env-s3-region";
-      process.env["SUPABASE_EXPERIMENTAL_S3_ACCESS_KEY"] = "env-s3-access-key";
-      process.env["SUPABASE_EXPERIMENTAL_S3_SECRET_KEY"] = "env-s3-secret-key";
+      const previousVersion = undefined;
+      const previousHost = undefined;
+      const previousRegion = undefined;
+      const previousAccessKey = undefined;
+      const previousSecretKey = undefined;
+      vi.stubEnv("SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION", "16.0.0.1");
+      vi.stubEnv("SUPABASE_EXPERIMENTAL_S3_HOST", "env-s3-host");
+      vi.stubEnv("SUPABASE_EXPERIMENTAL_S3_REGION", "env-s3-region");
+      vi.stubEnv("SUPABASE_EXPERIMENTAL_S3_ACCESS_KEY", "env-s3-access-key");
+      vi.stubEnv("SUPABASE_EXPERIMENTAL_S3_SECRET_KEY", "env-s3-secret-key");
       const { layer, child } = setup();
       return Effect.gen(function* () {
         yield* legacyStart(flags());
@@ -4548,18 +4670,19 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.ensuring(
           Effect.sync(() => {
             if (previousVersion === undefined)
-              delete process.env["SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION"];
-            else process.env["SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION"] = previousVersion;
-            if (previousHost === undefined) delete process.env["SUPABASE_EXPERIMENTAL_S3_HOST"];
-            else process.env["SUPABASE_EXPERIMENTAL_S3_HOST"] = previousHost;
-            if (previousRegion === undefined) delete process.env["SUPABASE_EXPERIMENTAL_S3_REGION"];
-            else process.env["SUPABASE_EXPERIMENTAL_S3_REGION"] = previousRegion;
+              vi.stubEnv("SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION", undefined);
+            else vi.stubEnv("SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION", previousVersion);
+            if (previousHost === undefined) vi.stubEnv("SUPABASE_EXPERIMENTAL_S3_HOST", undefined);
+            else vi.stubEnv("SUPABASE_EXPERIMENTAL_S3_HOST", previousHost);
+            if (previousRegion === undefined)
+              vi.stubEnv("SUPABASE_EXPERIMENTAL_S3_REGION", undefined);
+            else vi.stubEnv("SUPABASE_EXPERIMENTAL_S3_REGION", previousRegion);
             if (previousAccessKey === undefined)
-              delete process.env["SUPABASE_EXPERIMENTAL_S3_ACCESS_KEY"];
-            else process.env["SUPABASE_EXPERIMENTAL_S3_ACCESS_KEY"] = previousAccessKey;
+              vi.stubEnv("SUPABASE_EXPERIMENTAL_S3_ACCESS_KEY", undefined);
+            else vi.stubEnv("SUPABASE_EXPERIMENTAL_S3_ACCESS_KEY", previousAccessKey);
             if (previousSecretKey === undefined)
-              delete process.env["SUPABASE_EXPERIMENTAL_S3_SECRET_KEY"];
-            else process.env["SUPABASE_EXPERIMENTAL_S3_SECRET_KEY"] = previousSecretKey;
+              vi.stubEnv("SUPABASE_EXPERIMENTAL_S3_SECRET_KEY", undefined);
+            else vi.stubEnv("SUPABASE_EXPERIMENTAL_S3_SECRET_KEY", previousSecretKey);
           }),
         ),
       );
@@ -4612,44 +4735,34 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "reads the env-overridden cert/key paths for Kong, not the (absent) TOML fields",
       () => {
-        const previousCert = process.env["SUPABASE_API_TLS_CERT_PATH"];
-        const previousKey = process.env["SUPABASE_API_TLS_KEY_PATH"];
         const copied = new Map<string, string>();
         const { layer, workdir, child } = setup({
           configContents: 'project_id = "demo"\n[api.tls]\nenabled = true\n',
+          env: {
+            SUPABASE_API_TLS_CERT_PATH: "certs/env-server.crt",
+            SUPABASE_API_TLS_KEY_PATH: "certs/env-server.key",
+          },
           onSecretCopy: (containerPath, content) => {
             copied.set(containerPath, content);
           },
         });
-        mkdirSync(join(workdir, "supabase", "certs"), { recursive: true });
-        writeFileSync(
-          join(workdir, "supabase", "certs", "env-server.crt"),
-          "-----BEGIN CERTIFICATE-----env-cert",
-        );
-        writeFileSync(
-          join(workdir, "supabase", "certs", "env-server.key"),
-          "-----BEGIN PRIVATE KEY-----env-key",
-        );
-        process.env["SUPABASE_API_TLS_CERT_PATH"] = "certs/env-server.crt";
-        process.env["SUPABASE_API_TLS_KEY_PATH"] = "certs/env-server.key";
         return Effect.gen(function* () {
+          yield* makeDirectory(join(workdir, "supabase", "certs"), { recursive: true });
+          yield* writeFile(
+            join(workdir, "supabase", "certs", "env-server.crt"),
+            "-----BEGIN CERTIFICATE-----env-cert",
+          );
+          yield* writeFile(
+            join(workdir, "supabase", "certs", "env-server.key"),
+            "-----BEGIN PRIVATE KEY-----env-key",
+          );
           yield* legacyStart(flags());
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
           expect(copied.get("/home/kong/localhost.crt")).toBe(
             "-----BEGIN CERTIFICATE-----env-cert",
           );
           expect(copied.get("/home/kong/localhost.key")).toBe("-----BEGIN PRIVATE KEY-----env-key");
-        }).pipe(
-          Effect.provide(layer),
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (previousCert === undefined) delete process.env["SUPABASE_API_TLS_CERT_PATH"];
-              else process.env["SUPABASE_API_TLS_CERT_PATH"] = previousCert;
-              if (previousKey === undefined) delete process.env["SUPABASE_API_TLS_KEY_PATH"];
-              else process.env["SUPABASE_API_TLS_KEY_PATH"] = previousKey;
-            }),
-          ),
-        );
+        }).pipe(Effect.provide(layer));
       },
     );
   });
@@ -4661,71 +4774,52 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "skips the configured cert/key read for Kong when API is disabled only via env override",
       () => {
-        const previous = process.env["SUPABASE_API_ENABLED"];
-        process.env["SUPABASE_API_ENABLED"] = "false";
         const copied = new Map<string, string>();
         const { layer, workdir, child } = setup({
           configContents: 'project_id = "demo"\n[api.tls]\nenabled = true\n',
+          env: { SUPABASE_API_ENABLED: "false" },
           onSecretCopy: (containerPath, content) => {
             copied.set(containerPath, content);
           },
         });
-        mkdirSync(join(workdir, "supabase", "certs"), { recursive: true });
-        writeFileSync(
-          join(workdir, "supabase", "certs", "server.crt"),
-          "-----BEGIN CERTIFICATE-----custom-cert",
-        );
-        writeFileSync(
-          join(workdir, "supabase", "certs", "server.key"),
-          "-----BEGIN PRIVATE KEY-----custom-key",
-        );
         return Effect.gen(function* () {
+          yield* makeDirectory(join(workdir, "supabase", "certs"), { recursive: true });
+          yield* writeFile(
+            join(workdir, "supabase", "certs", "server.crt"),
+            "-----BEGIN CERTIFICATE-----custom-cert",
+          );
+          yield* writeFile(
+            join(workdir, "supabase", "certs", "server.key"),
+            "-----BEGIN PRIVATE KEY-----custom-key",
+          );
           yield* legacyStart(flags());
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
           expect(copied.get("/home/kong/localhost.crt")).toBe(LEGACY_KONG_LOCAL_TLS_CERT);
           expect(copied.get("/home/kong/localhost.key")).toBe(LEGACY_KONG_LOCAL_TLS_KEY);
-        }).pipe(
-          Effect.provide(layer),
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_API_ENABLED"];
-              else process.env["SUPABASE_API_ENABLED"] = previous;
-            }),
-          ),
-        );
+        }).pipe(Effect.provide(layer));
       },
     );
 
     it.live(
       "fails with a typed config error, before any container is created, on an invalid SUPABASE_API_ENABLED",
       () => {
-        const previous = process.env["SUPABASE_API_ENABLED"];
-        process.env["SUPABASE_API_ENABLED"] = "not-a-bool";
-        const { layer, child } = setup();
+        const { layer, child } = setup({ env: { SUPABASE_API_ENABLED: "not-a-bool" } });
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+            expect(Formatter.formatJson(exit.cause)).toContain("LegacyStartInvalidConfigError");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        }).pipe(
-          Effect.provide(layer),
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_API_ENABLED"];
-              else process.env["SUPABASE_API_ENABLED"] = previous;
-            }),
-          ),
-        );
+        }).pipe(Effect.provide(layer));
       },
     );
   });
 
   describe("SUPABASE_AUTH_JWT_EXPIRY reaches Postgres init", () => {
     it.live("honors the override for Postgres's JWT_EXP, not just GoTrue's GOTRUE_JWT_EXP", () => {
-      const previous = process.env["SUPABASE_AUTH_JWT_EXPIRY"];
-      process.env["SUPABASE_AUTH_JWT_EXPIRY"] = "7200";
+      const previous = undefined;
+      vi.stubEnv("SUPABASE_AUTH_JWT_EXPIRY", "7200");
       const { layer, child } = setup();
       return Effect.gen(function* () {
         yield* legacyStart(flags());
@@ -4741,8 +4835,8 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_AUTH_JWT_EXPIRY"];
-            else process.env["SUPABASE_AUTH_JWT_EXPIRY"] = previous;
+            if (previous === undefined) vi.stubEnv("SUPABASE_AUTH_JWT_EXPIRY", undefined);
+            else vi.stubEnv("SUPABASE_AUTH_JWT_EXPIRY", previous);
           }),
         ),
       );
@@ -4751,8 +4845,8 @@ content_path = "./supabase/templates/custom_notice.html"
 
   describe("encrypted secrets reach GoTrue's container", () => {
     it.live("decrypts an encrypted external OAuth provider secret (known provider)", () => {
-      const previous = process.env["DOTENV_PRIVATE_KEY"];
-      process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
+      const previous = undefined;
+      vi.stubEnv("DOTENV_PRIVATE_KEY", VAULT_PRIVATE_KEY);
       const { layer, child } = setup({
         configContents: `project_id = "demo"\n[auth.external.github]\nenabled = true\nclient_id = "gh-client-id"\nsecret = "${VAULT_ENCRYPTED}"\n`,
       });
@@ -4766,8 +4860,8 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previous === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
-            else process.env["DOTENV_PRIVATE_KEY"] = previous;
+            if (previous === undefined) vi.stubEnv("DOTENV_PRIVATE_KEY", undefined);
+            else vi.stubEnv("DOTENV_PRIVATE_KEY", previous);
           }),
         ),
       );
@@ -4776,8 +4870,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "decrypts an encrypted external OAuth provider secret (custom/unmodeled provider)",
       () => {
-        const previous = process.env["DOTENV_PRIVATE_KEY"];
-        process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
+        const previous = undefined;
+        vi.stubEnv("DOTENV_PRIVATE_KEY", VAULT_PRIVATE_KEY);
         const { layer, child } = setup({
           configContents: `project_id = "demo"\n[auth.external.my_oidc]\nenabled = true\nclient_id = "custom-client-id"\nsecret = "${VAULT_ENCRYPTED}"\n`,
         });
@@ -4791,8 +4885,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
-              else process.env["DOTENV_PRIVATE_KEY"] = previous;
+              if (previous === undefined) vi.stubEnv("DOTENV_PRIVATE_KEY", undefined);
+              else vi.stubEnv("DOTENV_PRIVATE_KEY", previous);
             }),
           ),
         );
@@ -4800,8 +4894,8 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.live("decrypts an encrypted Twilio SMS auth_token", () => {
-      const previous = process.env["DOTENV_PRIVATE_KEY"];
-      process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
+      const previous = undefined;
+      vi.stubEnv("DOTENV_PRIVATE_KEY", VAULT_PRIVATE_KEY);
       const { layer, child } = setup({
         configContents: `project_id = "demo"\n[auth.sms.twilio]\nenabled = true\naccount_sid = "AC123"\nauth_token = "${VAULT_ENCRYPTED}"\nmessage_service_sid = "MG123"\n`,
       });
@@ -4815,8 +4909,8 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previous === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
-            else process.env["DOTENV_PRIVATE_KEY"] = previous;
+            if (previous === undefined) vi.stubEnv("DOTENV_PRIVATE_KEY", undefined);
+            else vi.stubEnv("DOTENV_PRIVATE_KEY", previous);
           }),
         ),
       );
@@ -4838,7 +4932,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const envFileIndex = args.indexOf("--env-file");
           const envFilePath = envFileIndex !== -1 ? args[envFileIndex + 1] : undefined;
           expect(envFilePath).toBeDefined();
-          const envFileContent = readFileSync(envFilePath ?? "", "utf-8");
+          const envFileContent = yield* readFile(envFilePath ?? "");
           expect(envFileContent).toContain("MY_SECRET=shh-do-not-tell");
           // Names reach the container UPPERCASED — every secret key is uppercased
           // — and empty values are skipped, shared with
@@ -4857,8 +4951,8 @@ content_path = "./supabase/templates/custom_notice.html"
         // `edge_runtime.secrets` — this field decrypts during config load too, so the real
         // Edge Runtime container's env file must contain the decrypted "value", never the
         // literal `encrypted:...` string.
-        const previous = process.env["DOTENV_PRIVATE_KEY"];
-        process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
+        const previous = undefined;
+        vi.stubEnv("DOTENV_PRIVATE_KEY", VAULT_PRIVATE_KEY);
         const { layer, child } = setup({
           configContents: `project_id = "demo"\n[edge_runtime.secrets]\nMY_SECRET = "${VAULT_ENCRYPTED}"\n`,
         });
@@ -4869,15 +4963,15 @@ content_path = "./supabase/templates/custom_notice.html"
           const envFileIndex = args.indexOf("--env-file");
           const envFilePath = envFileIndex !== -1 ? args[envFileIndex + 1] : undefined;
           expect(envFilePath).toBeDefined();
-          const envFileContent = readFileSync(envFilePath ?? "", "utf-8");
+          const envFileContent = yield* readFile(envFilePath ?? "");
           expect(envFileContent).toContain("MY_SECRET=value");
           expect(envFileContent).not.toContain("encrypted:");
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
-              else process.env["DOTENV_PRIVATE_KEY"] = previous;
+              if (previous === undefined) vi.stubEnv("DOTENV_PRIVATE_KEY", undefined);
+              else vi.stubEnv("DOTENV_PRIVATE_KEY", previous);
             }),
           ),
         );
@@ -4891,8 +4985,8 @@ content_path = "./supabase/templates/custom_notice.html"
         // (`edge_runtime.secrets.*` is one of `LEGACY_SECRET_PATHS`), well before the bring-up
         // loop's own edge-runtime-specific decrypt — same shape as the sibling `[db.vault]`
         // "even on a non-fresh volume" test above.
-        const previous = process.env["DOTENV_PRIVATE_KEY"];
-        delete process.env["DOTENV_PRIVATE_KEY"];
+        const previous = undefined;
+        vi.stubEnv("DOTENV_PRIVATE_KEY", undefined);
         const { layer, child } = setup({
           configContents: `project_id = "demo"\n[edge_runtime.secrets]\nMY_SECRET = "${VAULT_ENCRYPTED}"\n`,
         });
@@ -4900,7 +4994,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyDbConfigLoadError");
             expect(serialized).toContain("failed to parse config: missing private key");
           }
@@ -4909,8 +5003,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
-              else process.env["DOTENV_PRIVATE_KEY"] = previous;
+              if (previous === undefined) vi.stubEnv("DOTENV_PRIVATE_KEY", undefined);
+              else vi.stubEnv("DOTENV_PRIVATE_KEY", previous);
             }),
           ),
         );
@@ -4920,12 +5014,12 @@ content_path = "./supabase/templates/custom_notice.html"
 
   describe("SUPABASE_API_* env overrides reach PostgREST and Studio", () => {
     it.live("honors SUPABASE_API_SCHEMAS/_EXTRA_SEARCH_PATH/_MAX_ROWS in both containers", () => {
-      const previousSchemas = process.env["SUPABASE_API_SCHEMAS"];
-      const previousSearchPath = process.env["SUPABASE_API_EXTRA_SEARCH_PATH"];
-      const previousMaxRows = process.env["SUPABASE_API_MAX_ROWS"];
-      process.env["SUPABASE_API_SCHEMAS"] = "public,custom";
-      process.env["SUPABASE_API_EXTRA_SEARCH_PATH"] = "extensions,other";
-      process.env["SUPABASE_API_MAX_ROWS"] = "500";
+      const previousSchemas = undefined;
+      const previousSearchPath = undefined;
+      const previousMaxRows = undefined;
+      vi.stubEnv("SUPABASE_API_SCHEMAS", "public,custom");
+      vi.stubEnv("SUPABASE_API_EXTRA_SEARCH_PATH", "extensions,other");
+      vi.stubEnv("SUPABASE_API_MAX_ROWS", "500");
       const { layer, child } = setup();
       return Effect.gen(function* () {
         yield* legacyStart(flags());
@@ -4945,13 +5039,13 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previousSchemas === undefined) delete process.env["SUPABASE_API_SCHEMAS"];
-            else process.env["SUPABASE_API_SCHEMAS"] = previousSchemas;
+            if (previousSchemas === undefined) vi.stubEnv("SUPABASE_API_SCHEMAS", undefined);
+            else vi.stubEnv("SUPABASE_API_SCHEMAS", previousSchemas);
             if (previousSearchPath === undefined)
-              delete process.env["SUPABASE_API_EXTRA_SEARCH_PATH"];
-            else process.env["SUPABASE_API_EXTRA_SEARCH_PATH"] = previousSearchPath;
-            if (previousMaxRows === undefined) delete process.env["SUPABASE_API_MAX_ROWS"];
-            else process.env["SUPABASE_API_MAX_ROWS"] = previousMaxRows;
+              vi.stubEnv("SUPABASE_API_EXTRA_SEARCH_PATH", undefined);
+            else vi.stubEnv("SUPABASE_API_EXTRA_SEARCH_PATH", previousSearchPath);
+            if (previousMaxRows === undefined) vi.stubEnv("SUPABASE_API_MAX_ROWS", undefined);
+            else vi.stubEnv("SUPABASE_API_MAX_ROWS", previousMaxRows);
           }),
         ),
       );
@@ -4960,22 +5054,22 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails with a typed config error, before any container is created, on an invalid SUPABASE_API_MAX_ROWS",
       () => {
-        const previous = process.env["SUPABASE_API_MAX_ROWS"];
-        process.env["SUPABASE_API_MAX_ROWS"] = "not-a-number";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_API_MAX_ROWS", "not-a-number");
         const { layer, child } = setup();
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+            expect(Formatter.formatJson(exit.cause)).toContain("LegacyStartInvalidConfigError");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_API_MAX_ROWS"];
-              else process.env["SUPABASE_API_MAX_ROWS"] = previous;
+              if (previous === undefined) vi.stubEnv("SUPABASE_API_MAX_ROWS", undefined);
+              else vi.stubEnv("SUPABASE_API_MAX_ROWS", previous);
             }),
           ),
         );
@@ -4985,8 +5079,8 @@ content_path = "./supabase/templates/custom_notice.html"
 
   describe("SUPABASE_DB_POOLER_* env overrides reach Supavisor", () => {
     it.live("SUPABASE_DB_POOLER_POOL_MODE=session flips the published host port to 5432", () => {
-      const previous = process.env["SUPABASE_DB_POOLER_POOL_MODE"];
-      process.env["SUPABASE_DB_POOLER_POOL_MODE"] = "session";
+      const previous = undefined;
+      vi.stubEnv("SUPABASE_DB_POOLER_POOL_MODE", "session");
       const { layer, child } = setup({
         configContents: 'project_id = "demo"\n[db.pooler]\nenabled = true\n',
       });
@@ -5005,8 +5099,8 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_DB_POOLER_POOL_MODE"];
-            else process.env["SUPABASE_DB_POOLER_POOL_MODE"] = previous;
+            if (previous === undefined) vi.stubEnv("SUPABASE_DB_POOLER_POOL_MODE", undefined);
+            else vi.stubEnv("SUPABASE_DB_POOLER_POOL_MODE", previous);
           }),
         ),
       );
@@ -5015,8 +5109,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails with a typed config error, before any container is created, on an invalid SUPABASE_DB_POOLER_POOL_MODE",
       () => {
-        const previous = process.env["SUPABASE_DB_POOLER_POOL_MODE"];
-        process.env["SUPABASE_DB_POOLER_POOL_MODE"] = "bogus";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_DB_POOLER_POOL_MODE", "bogus");
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[db.pooler]\nenabled = true\n',
         });
@@ -5024,15 +5118,15 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+            expect(Formatter.formatJson(exit.cause)).toContain("LegacyStartInvalidConfigError");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_DB_POOLER_POOL_MODE"];
-              else process.env["SUPABASE_DB_POOLER_POOL_MODE"] = previous;
+              if (previous === undefined) vi.stubEnv("SUPABASE_DB_POOLER_POOL_MODE", undefined);
+              else vi.stubEnv("SUPABASE_DB_POOLER_POOL_MODE", previous);
             }),
           ),
         );
@@ -5042,22 +5136,22 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails with a typed config error, before any container is created, on an invalid SUPABASE_REALTIME_ENABLED",
       () => {
-        const previous = process.env["SUPABASE_REALTIME_ENABLED"];
-        process.env["SUPABASE_REALTIME_ENABLED"] = "maybe";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_REALTIME_ENABLED", "maybe");
         const { layer, child } = setup({ configContents: 'project_id = "demo"\n' });
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyStartInvalidConfigError");
+            expect(Formatter.formatJson(exit.cause)).toContain("LegacyStartInvalidConfigError");
           }
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_REALTIME_ENABLED"];
-              else process.env["SUPABASE_REALTIME_ENABLED"] = previous;
+              if (previous === undefined) vi.stubEnv("SUPABASE_REALTIME_ENABLED", undefined);
+              else vi.stubEnv("SUPABASE_REALTIME_ENABLED", previous);
             }),
           ),
         );
@@ -5065,8 +5159,8 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.live("SUPABASE_DB_POOLER_PORT overrides the published host port", () => {
-      const previous = process.env["SUPABASE_DB_POOLER_PORT"];
-      process.env["SUPABASE_DB_POOLER_PORT"] = "60001";
+      const previous = undefined;
+      vi.stubEnv("SUPABASE_DB_POOLER_PORT", "60001");
       const { layer, child } = setup({
         configContents: 'project_id = "demo"\n[db.pooler]\nenabled = true\n',
       });
@@ -5083,8 +5177,8 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_DB_POOLER_PORT"];
-            else process.env["SUPABASE_DB_POOLER_PORT"] = previous;
+            if (previous === undefined) vi.stubEnv("SUPABASE_DB_POOLER_PORT", undefined);
+            else vi.stubEnv("SUPABASE_DB_POOLER_PORT", previous);
           }),
         ),
       );
@@ -5093,8 +5187,8 @@ content_path = "./supabase/templates/custom_notice.html"
 
   describe("SUPABASE_ANALYTICS_PORT override", () => {
     it.live("overrides the published Logflare host port", () => {
-      const previous = process.env["SUPABASE_ANALYTICS_PORT"];
-      process.env["SUPABASE_ANALYTICS_PORT"] = "60002";
+      const previous = undefined;
+      vi.stubEnv("SUPABASE_ANALYTICS_PORT", "60002");
       const { layer, child } = setup();
       return Effect.gen(function* () {
         yield* legacyStart(flags());
@@ -5108,8 +5202,8 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_ANALYTICS_PORT"];
-            else process.env["SUPABASE_ANALYTICS_PORT"] = previous;
+            if (previous === undefined) vi.stubEnv("SUPABASE_ANALYTICS_PORT", undefined);
+            else vi.stubEnv("SUPABASE_ANALYTICS_PORT", previous);
           }),
         ),
       );
@@ -5123,14 +5217,14 @@ content_path = "./supabase/templates/custom_notice.html"
         // resolved value, but a malformed override must still fail eagerly, same reasoning as
         // the SUPABASE_LOCAL_SMTP_SMTP_PORT/SUPABASE_EDGE_RUNTIME_INSPECTOR_PORT tests elsewhere
         // in this file.
-        const previous = process.env["SUPABASE_ANALYTICS_VECTOR_PORT"];
-        process.env["SUPABASE_ANALYTICS_VECTOR_PORT"] = "not-a-port";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_ANALYTICS_VECTOR_PORT", "not-a-port");
         const { layer, child } = setup();
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const serialized = JSON.stringify(exit.cause);
+            const serialized = Formatter.formatJson(exit.cause);
             expect(serialized).toContain("LegacyStartInvalidConfigError");
             expect(serialized).toContain("invalid config for analytics.vector_port");
           }
@@ -5139,8 +5233,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_ANALYTICS_VECTOR_PORT"];
-              else process.env["SUPABASE_ANALYTICS_VECTOR_PORT"] = previous;
+              if (previous === undefined) vi.stubEnv("SUPABASE_ANALYTICS_VECTOR_PORT", undefined);
+              else vi.stubEnv("SUPABASE_ANALYTICS_VECTOR_PORT", previous);
             }),
           ),
         );
@@ -5152,8 +5246,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "honors an env-overridden health_timeout, not just the config.toml/default value",
       () => {
-        const previous = process.env["SUPABASE_DB_HEALTH_TIMEOUT"];
-        process.env["SUPABASE_DB_HEALTH_TIMEOUT"] = "2s";
+        const previous = undefined;
+        vi.stubEnv("SUPABASE_DB_HEALTH_TIMEOUT", "2s");
         const neverHealthy = new Set<string>();
         const base = defaultRoute({ neverHealthy });
         const route = (args: ReadonlyArray<string>): RouteResult => {
@@ -5168,7 +5262,7 @@ content_path = "./supabase/templates/custom_notice.html"
           const exit = yield* Effect.exit(legacyStart(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyHealthCheckTimeoutError");
+            expect(Formatter.formatJson(exit.cause)).toContain("LegacyHealthCheckTimeoutError");
           }
           // Postgres's own health wait fails before any other service is ever created —
           // proving the short env-overridden timeout took effect (the default is much longer).
@@ -5177,8 +5271,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["SUPABASE_DB_HEALTH_TIMEOUT"];
-              else process.env["SUPABASE_DB_HEALTH_TIMEOUT"] = previous;
+              if (previous === undefined) vi.stubEnv("SUPABASE_DB_HEALTH_TIMEOUT", undefined);
+              else vi.stubEnv("SUPABASE_DB_HEALTH_TIMEOUT", previous);
             }),
           ),
         );
@@ -5189,14 +5283,16 @@ content_path = "./supabase/templates/custom_notice.html"
 
   describe("auth.hook.* env overrides reach GoTrue's container", () => {
     it.live("honors SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED/_URI", () => {
-      const previousEnabled = process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"];
-      const previousUri = process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI"];
-      process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"] = "true";
+      const previousEnabled = undefined;
+      const previousUri = undefined;
+      vi.stubEnv("SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED", "true");
       // A pg-functions URI needs no `secrets` (unlike http/https, validated by
       // `legacyValidateResolvedConfig`), keeping this scenario focused on the
       // enabled/uri override reaching GoTrue.
-      process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI"] =
-        "pg-functions://postgres/auth/custom-access-token-hook";
+      vi.stubEnv(
+        "SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI",
+        "pg-functions://postgres/auth/custom-access-token-hook",
+      );
       const { layer, child } = setup({
         configContents: 'project_id = "demo"\n[auth.hook.custom_access_token]\nenabled = false\n',
       });
@@ -5214,11 +5310,11 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.ensuring(
           Effect.sync(() => {
             if (previousEnabled === undefined)
-              delete process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"];
-            else process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED"] = previousEnabled;
+              vi.stubEnv("SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED", undefined);
+            else vi.stubEnv("SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED", previousEnabled);
             if (previousUri === undefined)
-              delete process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI"];
-            else process.env["SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI"] = previousUri;
+              vi.stubEnv("SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI", undefined);
+            else vi.stubEnv("SUPABASE_AUTH_HOOK_CUSTOM_ACCESS_TOKEN_URI", previousUri);
           }),
         ),
       );
@@ -5227,10 +5323,10 @@ content_path = "./supabase/templates/custom_notice.html"
 
   describe("auth.captcha.* env overrides reach GoTrue's container", () => {
     it.live("honors SUPABASE_AUTH_CAPTCHA_ENABLED/_PROVIDER", () => {
-      const previousEnabled = process.env["SUPABASE_AUTH_CAPTCHA_ENABLED"];
-      const previousProvider = process.env["SUPABASE_AUTH_CAPTCHA_PROVIDER"];
-      process.env["SUPABASE_AUTH_CAPTCHA_ENABLED"] = "true";
-      process.env["SUPABASE_AUTH_CAPTCHA_PROVIDER"] = "turnstile";
+      const previousEnabled = undefined;
+      const previousProvider = undefined;
+      vi.stubEnv("SUPABASE_AUTH_CAPTCHA_ENABLED", "true");
+      vi.stubEnv("SUPABASE_AUTH_CAPTCHA_PROVIDER", "turnstile");
       const { layer, child } = setup({
         configContents:
           'project_id = "demo"\n[auth.captcha]\nenabled = false\nprovider = "hcaptcha"\nsecret = "test-secret"\n',
@@ -5246,11 +5342,12 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previousEnabled === undefined) delete process.env["SUPABASE_AUTH_CAPTCHA_ENABLED"];
-            else process.env["SUPABASE_AUTH_CAPTCHA_ENABLED"] = previousEnabled;
+            if (previousEnabled === undefined)
+              vi.stubEnv("SUPABASE_AUTH_CAPTCHA_ENABLED", undefined);
+            else vi.stubEnv("SUPABASE_AUTH_CAPTCHA_ENABLED", previousEnabled);
             if (previousProvider === undefined)
-              delete process.env["SUPABASE_AUTH_CAPTCHA_PROVIDER"];
-            else process.env["SUPABASE_AUTH_CAPTCHA_PROVIDER"] = previousProvider;
+              vi.stubEnv("SUPABASE_AUTH_CAPTCHA_PROVIDER", undefined);
+            else vi.stubEnv("SUPABASE_AUTH_CAPTCHA_PROVIDER", previousProvider);
           }),
         ),
       );
@@ -5259,8 +5356,8 @@ content_path = "./supabase/templates/custom_notice.html"
 
   describe("nested auth security env overrides reach GoTrue's container", () => {
     it.live("honors SUPABASE_AUTH_SESSIONS_TIMEBOX", () => {
-      const previous = process.env["SUPABASE_AUTH_SESSIONS_TIMEBOX"];
-      process.env["SUPABASE_AUTH_SESSIONS_TIMEBOX"] = "24h";
+      const previous = undefined;
+      vi.stubEnv("SUPABASE_AUTH_SESSIONS_TIMEBOX", "24h");
       const { layer, child } = setup({ configContents: 'project_id = "demo"\n' });
       return Effect.gen(function* () {
         yield* legacyStart(flags());
@@ -5272,18 +5369,18 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_AUTH_SESSIONS_TIMEBOX"];
-            else process.env["SUPABASE_AUTH_SESSIONS_TIMEBOX"] = previous;
+            if (previous === undefined) vi.stubEnv("SUPABASE_AUTH_SESSIONS_TIMEBOX", undefined);
+            else vi.stubEnv("SUPABASE_AUTH_SESSIONS_TIMEBOX", previous);
           }),
         ),
       );
     });
 
     it.live("honors SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED/_VERIFY_ENABLED", () => {
-      const previousEnroll = process.env["SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED"];
-      const previousVerify = process.env["SUPABASE_AUTH_MFA_TOTP_VERIFY_ENABLED"];
-      process.env["SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED"] = "true";
-      process.env["SUPABASE_AUTH_MFA_TOTP_VERIFY_ENABLED"] = "true";
+      const previousEnroll = undefined;
+      const previousVerify = undefined;
+      vi.stubEnv("SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED", "true");
+      vi.stubEnv("SUPABASE_AUTH_MFA_TOTP_VERIFY_ENABLED", "true");
       const { layer, child } = setup({
         configContents: 'project_id = "demo"\n[auth.mfa.totp]\nenroll_enabled = false\n',
       });
@@ -5299,19 +5396,19 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.ensuring(
           Effect.sync(() => {
             if (previousEnroll === undefined)
-              delete process.env["SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED"];
-            else process.env["SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED"] = previousEnroll;
+              vi.stubEnv("SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED", undefined);
+            else vi.stubEnv("SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED", previousEnroll);
             if (previousVerify === undefined)
-              delete process.env["SUPABASE_AUTH_MFA_TOTP_VERIFY_ENABLED"];
-            else process.env["SUPABASE_AUTH_MFA_TOTP_VERIFY_ENABLED"] = previousVerify;
+              vi.stubEnv("SUPABASE_AUTH_MFA_TOTP_VERIFY_ENABLED", undefined);
+            else vi.stubEnv("SUPABASE_AUTH_MFA_TOTP_VERIFY_ENABLED", previousVerify);
           }),
         ),
       );
     });
 
     it.live("honors SUPABASE_AUTH_RATE_LIMIT_SMS_SENT", () => {
-      const previous = process.env["SUPABASE_AUTH_RATE_LIMIT_SMS_SENT"];
-      process.env["SUPABASE_AUTH_RATE_LIMIT_SMS_SENT"] = "99";
+      const previous = undefined;
+      vi.stubEnv("SUPABASE_AUTH_RATE_LIMIT_SMS_SENT", "99");
       const { layer, child } = setup({ configContents: 'project_id = "demo"\n' });
       return Effect.gen(function* () {
         yield* legacyStart(flags());
@@ -5323,16 +5420,16 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_AUTH_RATE_LIMIT_SMS_SENT"];
-            else process.env["SUPABASE_AUTH_RATE_LIMIT_SMS_SENT"] = previous;
+            if (previous === undefined) vi.stubEnv("SUPABASE_AUTH_RATE_LIMIT_SMS_SENT", undefined);
+            else vi.stubEnv("SUPABASE_AUTH_RATE_LIMIT_SMS_SENT", previous);
           }),
         ),
       );
     });
 
     it.live("honors SUPABASE_AUTH_WEB3_SOLANA_ENABLED", () => {
-      const previous = process.env["SUPABASE_AUTH_WEB3_SOLANA_ENABLED"];
-      process.env["SUPABASE_AUTH_WEB3_SOLANA_ENABLED"] = "true";
+      const previous = undefined;
+      vi.stubEnv("SUPABASE_AUTH_WEB3_SOLANA_ENABLED", "true");
       const { layer, child } = setup({ configContents: 'project_id = "demo"\n' });
       return Effect.gen(function* () {
         yield* legacyStart(flags());
@@ -5344,16 +5441,16 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_AUTH_WEB3_SOLANA_ENABLED"];
-            else process.env["SUPABASE_AUTH_WEB3_SOLANA_ENABLED"] = previous;
+            if (previous === undefined) vi.stubEnv("SUPABASE_AUTH_WEB3_SOLANA_ENABLED", undefined);
+            else vi.stubEnv("SUPABASE_AUTH_WEB3_SOLANA_ENABLED", previous);
           }),
         ),
       );
     });
 
     it.live("honors SUPABASE_AUTH_OAUTH_SERVER_ENABLED", () => {
-      const previous = process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"];
-      process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"] = "true";
+      const previous = undefined;
+      vi.stubEnv("SUPABASE_AUTH_OAUTH_SERVER_ENABLED", "true");
       const { layer, child } = setup({ configContents: 'project_id = "demo"\n' });
       return Effect.gen(function* () {
         yield* legacyStart(flags());
@@ -5365,8 +5462,8 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"];
-            else process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"] = previous;
+            if (previous === undefined) vi.stubEnv("SUPABASE_AUTH_OAUTH_SERVER_ENABLED", undefined);
+            else vi.stubEnv("SUPABASE_AUTH_OAUTH_SERVER_ENABLED", previous);
           }),
         ),
       );
@@ -5375,8 +5472,8 @@ content_path = "./supabase/templates/custom_notice.html"
 
   describe("auth.passkey/auth.webauthn env overrides reach GoTrue's container", () => {
     it.live("honors SUPABASE_AUTH_PASSKEY_ENABLED", () => {
-      const previous = process.env["SUPABASE_AUTH_PASSKEY_ENABLED"];
-      process.env["SUPABASE_AUTH_PASSKEY_ENABLED"] = "true";
+      const previous = undefined;
+      vi.stubEnv("SUPABASE_AUTH_PASSKEY_ENABLED", "true");
       const { layer, child } = setup({
         configContents:
           'project_id = "demo"\n[auth.passkey]\nenabled = false\n[auth.webauthn]\nrp_id = "localhost"\nrp_origins = ["http://localhost:3000"]\n',
@@ -5391,20 +5488,20 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_AUTH_PASSKEY_ENABLED"];
-            else process.env["SUPABASE_AUTH_PASSKEY_ENABLED"] = previous;
+            if (previous === undefined) vi.stubEnv("SUPABASE_AUTH_PASSKEY_ENABLED", undefined);
+            else vi.stubEnv("SUPABASE_AUTH_PASSKEY_ENABLED", previous);
           }),
         ),
       );
     });
 
     it.live("honors SUPABASE_AUTH_WEBAUTHN_RP_ID/_RP_DISPLAY_NAME/_RP_ORIGINS", () => {
-      const previousRpId = process.env["SUPABASE_AUTH_WEBAUTHN_RP_ID"];
-      const previousDisplayName = process.env["SUPABASE_AUTH_WEBAUTHN_RP_DISPLAY_NAME"];
-      const previousOrigins = process.env["SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS"];
-      process.env["SUPABASE_AUTH_WEBAUTHN_RP_ID"] = "env-rp-id";
-      process.env["SUPABASE_AUTH_WEBAUTHN_RP_DISPLAY_NAME"] = "Env Display Name";
-      process.env["SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS"] = "http://a.example,http://b.example";
+      const previousRpId = undefined;
+      const previousDisplayName = undefined;
+      const previousOrigins = undefined;
+      vi.stubEnv("SUPABASE_AUTH_WEBAUTHN_RP_ID", "env-rp-id");
+      vi.stubEnv("SUPABASE_AUTH_WEBAUTHN_RP_DISPLAY_NAME", "Env Display Name");
+      vi.stubEnv("SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS", "http://a.example,http://b.example");
       const { layer, child } = setup({
         configContents:
           'project_id = "demo"\n[auth.webauthn]\nrp_id = "toml-rp-id"\nrp_display_name = "TOML Display Name"\nrp_origins = ["http://toml.example"]\n',
@@ -5423,14 +5520,14 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previousRpId === undefined) delete process.env["SUPABASE_AUTH_WEBAUTHN_RP_ID"];
-            else process.env["SUPABASE_AUTH_WEBAUTHN_RP_ID"] = previousRpId;
+            if (previousRpId === undefined) vi.stubEnv("SUPABASE_AUTH_WEBAUTHN_RP_ID", undefined);
+            else vi.stubEnv("SUPABASE_AUTH_WEBAUTHN_RP_ID", previousRpId);
             if (previousDisplayName === undefined)
-              delete process.env["SUPABASE_AUTH_WEBAUTHN_RP_DISPLAY_NAME"];
-            else process.env["SUPABASE_AUTH_WEBAUTHN_RP_DISPLAY_NAME"] = previousDisplayName;
+              vi.stubEnv("SUPABASE_AUTH_WEBAUTHN_RP_DISPLAY_NAME", undefined);
+            else vi.stubEnv("SUPABASE_AUTH_WEBAUTHN_RP_DISPLAY_NAME", previousDisplayName);
             if (previousOrigins === undefined)
-              delete process.env["SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS"];
-            else process.env["SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS"] = previousOrigins;
+              vi.stubEnv("SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS", undefined);
+            else vi.stubEnv("SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS", previousOrigins);
           }),
         ),
       );
@@ -5443,8 +5540,8 @@ content_path = "./supabase/templates/custom_notice.html"
         // `env(...)` walker substitutes the real value but leaves it a raw string (no type
         // coercion for schema-unmodeled paths) — a strict `=== true` check would silently read
         // this valid config as disabled.
-        const previous = process.env["PASSKEY_ENABLED"];
-        process.env["PASSKEY_ENABLED"] = "true";
+        const previous = undefined;
+        vi.stubEnv("PASSKEY_ENABLED", "true");
         const { layer, child } = setup({
           configContents:
             'project_id = "demo"\n[auth.passkey]\nenabled = "env(PASSKEY_ENABLED)"\n[auth.webauthn]\nrp_id = "localhost"\nrp_origins = ["http://localhost:3000"]\n',
@@ -5459,8 +5556,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["PASSKEY_ENABLED"];
-              else process.env["PASSKEY_ENABLED"] = previous;
+              if (previous === undefined) vi.stubEnv("PASSKEY_ENABLED", undefined);
+              else vi.stubEnv("PASSKEY_ENABLED", previous);
             }),
           ),
         );
@@ -5470,8 +5567,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "splits an env(...)-resolved comma-separated rp_origins string instead of dropping it to []",
       () => {
-        const previous = process.env["RP_ORIGINS"];
-        process.env["RP_ORIGINS"] = "http://a.example,http://b.example";
+        const previous = undefined;
+        vi.stubEnv("RP_ORIGINS", "http://a.example,http://b.example");
         const { layer, child } = setup({
           configContents:
             'project_id = "demo"\n[auth.passkey]\nenabled = true\n[auth.webauthn]\nrp_id = "localhost"\nrp_origins = "env(RP_ORIGINS)"\n',
@@ -5488,8 +5585,8 @@ content_path = "./supabase/templates/custom_notice.html"
           Effect.provide(layer),
           Effect.ensuring(
             Effect.sync(() => {
-              if (previous === undefined) delete process.env["RP_ORIGINS"];
-              else process.env["RP_ORIGINS"] = previous;
+              if (previous === undefined) vi.stubEnv("RP_ORIGINS", undefined);
+              else vi.stubEnv("RP_ORIGINS", previous);
             }),
           ),
         );
@@ -5499,8 +5596,8 @@ content_path = "./supabase/templates/custom_notice.html"
 
   describe("SUPABASE_EDGE_RUNTIME_POLICY override", () => {
     it.live("honors the env-overridden Edge Runtime request policy", () => {
-      const previous = process.env["SUPABASE_EDGE_RUNTIME_POLICY"];
-      process.env["SUPABASE_EDGE_RUNTIME_POLICY"] = "per_worker";
+      const previous = undefined;
+      vi.stubEnv("SUPABASE_EDGE_RUNTIME_POLICY", "per_worker");
       const { layer, child } = setup({
         configContents: 'project_id = "demo"\n[edge_runtime]\npolicy = "oneshot"\n',
       });
@@ -5514,8 +5611,8 @@ content_path = "./supabase/templates/custom_notice.html"
         Effect.provide(layer),
         Effect.ensuring(
           Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_EDGE_RUNTIME_POLICY"];
-            else process.env["SUPABASE_EDGE_RUNTIME_POLICY"] = previous;
+            if (previous === undefined) vi.stubEnv("SUPABASE_EDGE_RUNTIME_POLICY", undefined);
+            else vi.stubEnv("SUPABASE_EDGE_RUNTIME_POLICY", previous);
           }),
         ),
       );

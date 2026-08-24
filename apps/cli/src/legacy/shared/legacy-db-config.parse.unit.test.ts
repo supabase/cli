@@ -1,13 +1,18 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir, userInfo } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, ManagedRuntime, Path } from "effect";
+import type { PlatformError } from "effect/PlatformError";
+import { afterEach, beforeEach } from "vitest";
 
 import {
   legacyPoolerConfigFromConnectionString,
-  parseLegacyConnectionString,
+  parseLegacyConnectionString as parseLegacyConnectionStringImpl,
   redactLegacyConnectionString,
 } from "./legacy-db-config.parse.ts";
+import type { LegacyDbConfigParseRuntime, LegacyParseEnv } from "./legacy-db-config.parse.ts";
+import { useLegacyTempWorkdir } from "../../../tests/helpers/legacy-mocks.ts";
+
+import { userInfo } from "node:os";
 
 // Mirrors the parser's default-user resolution: PGUSER (env) else the actual OS
 // account (os.userInfo().username, NOT $USER/$USERNAME) else "postgres".
@@ -18,7 +23,59 @@ const osAccount = (() => {
     return undefined;
   }
 })();
-const osUser = process.env["PGUSER"] ?? osAccount ?? "postgres";
+const osUser = osAccount ?? "postgres";
+
+const testPlatform = ManagedRuntime.make(BunServices.layer);
+const testPath = testPlatform.runSync(Path.Path);
+const tempRoot = useLegacyTempWorkdir("legacy-db-config-parse-");
+let fixtureCounter = 0;
+
+function join(...paths: ReadonlyArray<string>): string {
+  return testPath.join(...paths);
+}
+
+const emptyEnv: LegacyParseEnv = () => undefined;
+
+function parseLegacyConnectionString(
+  value: string,
+  env: LegacyParseEnv = emptyEnv,
+  runtime: Partial<LegacyDbConfigParseRuntime> = {},
+) {
+  return parseLegacyConnectionStringImpl(value, env, {
+    osUser,
+    join,
+    files: new Map(),
+    serviceFiles: new Map(),
+    ...runtime,
+  });
+}
+
+const createFixture = (
+  prefix: string,
+  files: ReadonlyArray<Readonly<{ readonly path: string; readonly content: string }>>,
+): Effect.Effect<string, PlatformError, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = path.join(tempRoot.current, `${prefix}${fixtureCounter++}`);
+    yield* fs.makeDirectory(dir, { recursive: true });
+    for (const file of files) {
+      const absolute = path.join(dir, file.path);
+      yield* fs.makeDirectory(path.dirname(absolute), { recursive: true });
+      yield* fs.writeFileString(absolute, file.content);
+    }
+    return dir;
+  });
+
+const removeFixture = (dir: string): Effect.Effect<void, PlatformError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.remove(dir, { recursive: true, force: true });
+  });
+
+const runFixture = <A, E>(
+  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
+): Promise<A> => Effect.runPromise(effect.pipe(Effect.provide(BunServices.layer)));
 
 describe("parseLegacyConnectionString (URL form)", () => {
   it("parses host/port/user/password/database and percent-decodes userinfo", () => {
@@ -62,39 +119,26 @@ describe("parseLegacyConnectionString (URL form)", () => {
   });
 
   it("fills omitted URL fields from PG* env vars, with explicit fields winning", () => {
-    const prev = {
-      PGPASSWORD: process.env["PGPASSWORD"],
-      PGPORT: process.env["PGPORT"],
-      PGDATABASE: process.env["PGDATABASE"],
-    };
-    process.env["PGPASSWORD"] = "env-secret";
-    process.env["PGPORT"] = "6543";
-    process.env["PGDATABASE"] = "envdb";
-    try {
-      // Password/port/database omitted from the URL → taken from PG* env.
-      expect(parseLegacyConnectionString("postgresql://alice@db.example.com")).toEqual({
-        host: "db.example.com",
-        port: 6543,
-        user: "alice",
-        password: "env-secret",
-        database: "envdb",
-      });
-      // Explicit URL fields override the env defaults (connStringSettings win).
-      expect(
-        parseLegacyConnectionString("postgresql://alice:pw@db.example.com:5555/appdb"),
-      ).toEqual({
-        host: "db.example.com",
-        port: 5555,
-        user: "alice",
-        password: "pw",
-        database: "appdb",
-      });
-    } finally {
-      for (const [k, v] of Object.entries(prev)) {
-        if (v === undefined) delete process.env[k];
-        else process.env[k] = v;
-      }
-    }
+    const env: LegacyParseEnv = (name) =>
+      ({ PGPASSWORD: "env-secret", PGPORT: "6543", PGDATABASE: "envdb" })[name];
+    // Password/port/database omitted from the URL → taken from PG* env.
+    expect(parseLegacyConnectionString("postgresql://alice@db.example.com", env)).toEqual({
+      host: "db.example.com",
+      port: 6543,
+      user: "alice",
+      password: "env-secret",
+      database: "envdb",
+    });
+    // Explicit URL fields override the env defaults (connStringSettings win).
+    expect(
+      parseLegacyConnectionString("postgresql://alice:pw@db.example.com:5555/appdb", env),
+    ).toEqual({
+      host: "db.example.com",
+      port: 5555,
+      user: "alice",
+      password: "pw",
+      database: "appdb",
+    });
   });
 
   it("honors libpq query params (host/dbname) over the structural URL (pgconn parity)", () => {
@@ -176,18 +220,26 @@ describe("parseLegacyConnectionString (URL form)", () => {
     expect(parsed?.runtimeParams?.application_name).toBe("from-url");
   });
 
-  it("merges a pg_service.conf runtime setting (search_path) into runtimeParams", () => {
-    const dir = mkdtempSync(join(tmpdir(), "pgservice-"));
-    const file = join(dir, "pg_service.conf");
-    writeFileSync(file, "[tenant]\nhost=svc.example.com\nsearch_path=tenant_schema\n");
-    const parsed = parseLegacyConnectionString(
-      `postgres:///db?service=tenant&servicefile=${file}`,
-      () => undefined,
-    );
-    expect(parsed?.host).toBe("svc.example.com");
-    expect(parsed?.runtimeParams?.search_path).toBe("tenant_schema");
-    rmSync(dir, { recursive: true, force: true });
-  });
+  it.effect("merges a pg_service.conf runtime setting (search_path) into runtimeParams", () =>
+    Effect.gen(function* () {
+      const dir = yield* createFixture("pgservice-", [
+        {
+          path: "pg_service.conf",
+          content: "[tenant]\nhost=svc.example.com\nsearch_path=tenant_schema\n",
+        },
+      ]);
+      const file = join(dir, "pg_service.conf");
+      const serviceContent = "[tenant]\nhost=svc.example.com\nsearch_path=tenant_schema\n";
+      const parsed = parseLegacyConnectionString(
+        `postgres:///db?service=tenant&servicefile=${file}`,
+        () => undefined,
+        { serviceFiles: new Map([[file, serviceContent]]) },
+      );
+      expect(parsed?.host).toBe("svc.example.com");
+      expect(parsed?.runtimeParams?.search_path).toBe("tenant_schema");
+      yield* removeFixture(dir);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it("carries client sslcert/sslkey (and sslpassword) from a --db-url", () => {
     const parsed = parseLegacyConnectionString(
@@ -230,16 +282,10 @@ describe("parseLegacyConnectionString (URL form)", () => {
   });
 
   it("rejects an invalid PGPORT fallback instead of defaulting to 5432", () => {
-    const prev = process.env["PGPORT"];
-    process.env["PGPORT"] = "abc";
-    try {
-      // No port in the URL or DSN → falls back to PGPORT, which is invalid → reject.
-      expect(parseLegacyConnectionString("postgresql://host/db")).toBeUndefined();
-      expect(parseLegacyConnectionString("host=pg.example.com user=admin")).toBeUndefined();
-    } finally {
-      if (prev === undefined) delete process.env["PGPORT"];
-      else process.env["PGPORT"] = prev;
-    }
+    const env: LegacyParseEnv = (name) => (name === "PGPORT" ? "abc" : undefined);
+    // No port in the URL or DSN → falls back to PGPORT, which is invalid → reject.
+    expect(parseLegacyConnectionString("postgresql://host/db", env)).toBeUndefined();
+    expect(parseLegacyConnectionString("host=pg.example.com user=admin", env)).toBeUndefined();
   });
 
   it("rejects an invalid sslmode value (pgconn 'sslmode is invalid')", () => {
@@ -257,18 +303,14 @@ describe("parseLegacyConnectionString (URL form)", () => {
   });
 
   it("fills sslmode from PGSSLMODE when the URL omits it (pgconn env default)", () => {
-    const prev = process.env["PGSSLMODE"];
-    process.env["PGSSLMODE"] = "verify-full";
-    try {
-      expect(parseLegacyConnectionString("postgres://u:pw@h:5432/db")?.sslmode).toBe("verify-full");
-      // An explicit query sslmode still wins over PGSSLMODE.
-      expect(
-        parseLegacyConnectionString("postgres://u:pw@h:5432/db?sslmode=disable")?.sslmode,
-      ).toBe("disable");
-    } finally {
-      if (prev === undefined) delete process.env["PGSSLMODE"];
-      else process.env["PGSSLMODE"] = prev;
-    }
+    const env: LegacyParseEnv = (name) => (name === "PGSSLMODE" ? "verify-full" : undefined);
+    expect(parseLegacyConnectionString("postgres://u:pw@h:5432/db", env)?.sslmode).toBe(
+      "verify-full",
+    );
+    // An explicit query sslmode still wins over PGSSLMODE.
+    expect(
+      parseLegacyConnectionString("postgres://u:pw@h:5432/db?sslmode=disable", env)?.sslmode,
+    ).toBe("disable");
   });
 
   it("rejects a non-Postgres URL scheme instead of connecting to a bogus host", () => {
@@ -319,76 +361,50 @@ describe("parseLegacyConnectionString (libpq keyword/value DSN)", () => {
   });
 
   it("prefers PGUSER over the OS account for the default user (pgconn env precedence)", () => {
-    const prev = process.env["PGUSER"];
-    process.env["PGUSER"] = "pg_role";
-    try {
-      // No user= keyword: PGUSER wins over USER/USERNAME, and the database
-      // defaults to that resolved user — matching pgconn's
-      // mergeSettings(defaultSettings, envSettings, connStringSettings) order.
-      expect(parseLegacyConnectionString("host=pg.example.com")).toEqual({
-        host: "pg.example.com",
-        port: 5432,
-        user: "pg_role",
-        database: "pg_role",
-        password: "",
-      });
-      // An explicit user= still wins over PGUSER (connStringSettings override env).
-      expect(parseLegacyConnectionString("host=h user=explicit")?.user).toBe("explicit");
-      // The URL form without userinfo also honors PGUSER.
-      expect(parseLegacyConnectionString("postgresql://localhost/mydb")?.user).toBe("pg_role");
-    } finally {
-      if (prev === undefined) delete process.env["PGUSER"];
-      else process.env["PGUSER"] = prev;
-    }
+    const env: LegacyParseEnv = (name) => (name === "PGUSER" ? "pg_role" : undefined);
+    // No user= keyword: PGUSER wins over USER/USERNAME, and the database
+    // defaults to that resolved user — matching pgconn's
+    // mergeSettings(defaultSettings, envSettings, connStringSettings) order.
+    expect(parseLegacyConnectionString("host=pg.example.com", env)).toEqual({
+      host: "pg.example.com",
+      port: 5432,
+      user: "pg_role",
+      database: "pg_role",
+      password: "",
+    });
+    // An explicit user= still wins over PGUSER (connStringSettings override env).
+    expect(parseLegacyConnectionString("host=h user=explicit", env)?.user).toBe("explicit");
+    // The URL form without userinfo also honors PGUSER.
+    expect(parseLegacyConnectionString("postgresql://localhost/mydb", env)?.user).toBe("pg_role");
   });
 
   it("fills omitted DSN fields from PG* env vars (pgconn env defaults)", () => {
-    const prev = {
-      PGHOST: process.env["PGHOST"],
-      PGPORT: process.env["PGPORT"],
-      PGPASSWORD: process.env["PGPASSWORD"],
-      PGDATABASE: process.env["PGDATABASE"],
-    };
-    process.env["PGHOST"] = "pg.env.com";
-    process.env["PGPORT"] = "6543";
-    process.env["PGPASSWORD"] = "env-secret";
-    process.env["PGDATABASE"] = "envdb";
-    try {
-      expect(parseLegacyConnectionString("user=admin")).toEqual({
-        host: "pg.env.com",
-        port: 6543,
-        user: "admin",
-        password: "env-secret",
-        database: "envdb",
-      });
-      // Explicit keywords override the env defaults.
-      expect(
-        parseLegacyConnectionString("host=h port=1234 user=admin dbname=db password=pw"),
-      ).toEqual({
-        host: "h",
-        port: 1234,
-        user: "admin",
-        password: "pw",
-        database: "db",
-      });
-    } finally {
-      for (const [k, v] of Object.entries(prev)) {
-        if (v === undefined) delete process.env[k];
-        else process.env[k] = v;
-      }
-    }
+    const env: LegacyParseEnv = (name) =>
+      ({ PGHOST: "pg.env.com", PGPORT: "6543", PGPASSWORD: "env-secret", PGDATABASE: "envdb" })[
+        name
+      ];
+    expect(parseLegacyConnectionString("user=admin", env)).toEqual({
+      host: "pg.env.com",
+      port: 6543,
+      user: "admin",
+      password: "env-secret",
+      database: "envdb",
+    });
+    // Explicit keywords override the env defaults.
+    expect(
+      parseLegacyConnectionString("host=h port=1234 user=admin dbname=db password=pw", env),
+    ).toEqual({
+      host: "h",
+      port: 1234,
+      user: "admin",
+      password: "pw",
+      database: "db",
+    });
   });
 
   it("falls back to a libpq default host when host and PGHOST are absent", () => {
-    const prev = process.env["PGHOST"];
-    delete process.env["PGHOST"];
-    try {
-      // No host= and no PGHOST → libpq default (a unix-socket dir or "localhost").
-      expect(parseLegacyConnectionString("user=admin")?.host).toMatch(/^(\/|localhost)/);
-    } finally {
-      if (prev === undefined) delete process.env["PGHOST"];
-      else process.env["PGHOST"] = prev;
-    }
+    // No host= and no PGHOST → libpq default (a unix-socket dir or "localhost").
+    expect(parseLegacyConnectionString("user=admin")?.host).toMatch(/^(\/|localhost)/);
   });
 
   it("returns undefined when a keyword has no '=' value", () => {
@@ -407,59 +423,79 @@ describe("empty-password precedence (pgconn parity)", () => {
   // PGPASSFILE at a temp file we control and set PGPASSWORD to prove which one wins.
   let tmp: string;
   let pgpassPath: string;
-  const prev: Record<string, string | undefined> = {};
+  let pgpassRuntime: Partial<LegacyDbConfigParseRuntime>;
+  let pgpassEnv: LegacyParseEnv;
 
-  beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), "pgpass-"));
-    pgpassPath = join(tmp, ".pgpass");
-    for (const k of ["PGPASSWORD", "PGPASSFILE", "PGPORT", "PGDATABASE", "PGHOST"]) {
-      prev[k] = process.env[k];
-      delete process.env[k];
-    }
-    process.env["PGPASSWORD"] = "env-secret";
-    process.env["PGPASSFILE"] = pgpassPath;
-    // host db.example.com, port 6543, db appdb, user alice.
-    writeFileSync(pgpassPath, "db.example.com:6543:appdb:alice:pgpass-secret\n");
-  });
+  beforeEach(() =>
+    runFixture(
+      Effect.gen(function* () {
+        tmp = yield* createFixture("pgpass-", [
+          {
+            path: ".pgpass",
+            content: "db.example.com:6543:appdb:alice:pgpass-secret\n",
+          },
+        ]);
+        pgpassPath = join(tmp, ".pgpass");
+        pgpassRuntime = {
+          files: new Map([[pgpassPath, "db.example.com:6543:appdb:alice:pgpass-secret\n"]]),
+        };
+        pgpassEnv = (name) =>
+          name === "PGPASSWORD" ? "env-secret" : name === "PGPASSFILE" ? pgpassPath : undefined;
+      }),
+    ),
+  );
 
-  afterEach(() => {
-    for (const [k, v] of Object.entries(prev)) {
-      if (v === undefined) delete process.env[k];
-      else process.env[k] = v;
-    }
-    rmSync(tmp, { recursive: true, force: true });
-  });
+  afterEach(() => runFixture(removeFixture(tmp)));
 
   it("uses PGPASSWORD when the URL has no password component at all (user@host)", () => {
     expect(
-      parseLegacyConnectionString("postgres://alice@db.example.com:6543/appdb")?.password,
+      parseLegacyConnectionString(
+        "postgres://alice@db.example.com:6543/appdb",
+        pgpassEnv,
+        pgpassRuntime,
+      )?.password,
     ).toBe("env-secret");
   });
 
   it("an explicit empty URL userinfo password (user:@host) suppresses PGPASSWORD → .pgpass", () => {
     expect(
-      parseLegacyConnectionString("postgres://alice:@db.example.com:6543/appdb")?.password,
+      parseLegacyConnectionString(
+        "postgres://alice:@db.example.com:6543/appdb",
+        pgpassEnv,
+        pgpassRuntime,
+      )?.password,
     ).toBe("pgpass-secret");
   });
 
   it("an explicit empty ?password= suppresses PGPASSWORD → .pgpass", () => {
     expect(
-      parseLegacyConnectionString("postgres://alice@db.example.com:6543/appdb?password=")?.password,
+      parseLegacyConnectionString(
+        "postgres://alice@db.example.com:6543/appdb?password=",
+        pgpassEnv,
+        pgpassRuntime,
+      )?.password,
     ).toBe("pgpass-secret");
   });
 
   it("an explicit empty DSN password= suppresses PGPASSWORD → .pgpass", () => {
     expect(
-      parseLegacyConnectionString("host=db.example.com port=6543 dbname=appdb user=alice password=")
-        ?.password,
+      parseLegacyConnectionString(
+        "host=db.example.com port=6543 dbname=appdb user=alice password=",
+        pgpassEnv,
+        pgpassRuntime,
+      )?.password,
     ).toBe("pgpass-secret");
   });
 
   it("falls through to an empty password when neither PGPASSWORD nor .pgpass match", () => {
-    delete process.env["PGPASSWORD"];
+    const env: LegacyParseEnv = (name) => (name === "PGPASSFILE" ? pgpassPath : undefined);
     // No matching .pgpass line for this host → empty.
     expect(
-      parseLegacyConnectionString("postgres://alice:@other.example.com:6543/appdb")?.password,
+      parseLegacyConnectionString(
+        "postgres://alice:@other.example.com:6543/appdb",
+        env,
+        pgpassRuntime,
+      )?.password,
     ).toBe("");
   });
 });
@@ -544,33 +580,44 @@ describe("passfile= DSN setting (pgconn parity)", () => {
   // different one to prove the connection-string setting wins.
   let tmp: string;
   let customPath: string;
-  const prev: Record<string, string | undefined> = {};
+  let envPath: string;
+  let passfileRuntime: Partial<LegacyDbConfigParseRuntime>;
+  let passfileEnv: LegacyParseEnv;
 
-  beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), "passfile-"));
-    customPath = join(tmp, "custom-pgpass");
-    const envPath = join(tmp, "env-pgpass");
-    for (const k of ["PGPASSWORD", "PGPASSFILE", "PGPORT", "PGDATABASE", "PGHOST"]) {
-      prev[k] = process.env[k];
-      delete process.env[k];
-    }
-    process.env["PGPASSFILE"] = envPath;
-    writeFileSync(envPath, "db.example.com:6543:appdb:alice:env-file-secret\n");
-    writeFileSync(customPath, "db.example.com:6543:appdb:alice:custom-file-secret\n");
-  });
+  beforeEach(() =>
+    runFixture(
+      Effect.gen(function* () {
+        tmp = yield* createFixture("passfile-", [
+          {
+            path: "env-pgpass",
+            content: "db.example.com:6543:appdb:alice:env-file-secret\n",
+          },
+          {
+            path: "custom-pgpass",
+            content: "db.example.com:6543:appdb:alice:custom-file-secret\n",
+          },
+        ]);
+        customPath = join(tmp, "custom-pgpass");
+        envPath = join(tmp, "env-pgpass");
+        passfileRuntime = {
+          files: new Map([
+            [envPath, "db.example.com:6543:appdb:alice:env-file-secret\n"],
+            [customPath, "db.example.com:6543:appdb:alice:custom-file-secret\n"],
+          ]),
+        };
+        passfileEnv = (name) => (name === "PGPASSFILE" ? envPath : undefined);
+      }),
+    ),
+  );
 
-  afterEach(() => {
-    for (const [k, v] of Object.entries(prev)) {
-      if (v === undefined) delete process.env[k];
-      else process.env[k] = v;
-    }
-    rmSync(tmp, { recursive: true, force: true });
-  });
+  afterEach(() => runFixture(removeFixture(tmp)));
 
   it("resolves the password from a ?passfile= URL setting over PGPASSFILE", () => {
     expect(
       parseLegacyConnectionString(
         `postgres://alice@db.example.com:6543/appdb?passfile=${customPath}`,
+        passfileEnv,
+        passfileRuntime,
       )?.password,
     ).toBe("custom-file-secret");
   });
@@ -579,13 +626,19 @@ describe("passfile= DSN setting (pgconn parity)", () => {
     expect(
       parseLegacyConnectionString(
         `host=db.example.com port=6543 dbname=appdb user=alice passfile=${customPath}`,
+        passfileEnv,
+        passfileRuntime,
       )?.password,
     ).toBe("custom-file-secret");
   });
 
   it("falls back to PGPASSFILE when no passfile= setting is present", () => {
     expect(
-      parseLegacyConnectionString("postgres://alice@db.example.com:6543/appdb")?.password,
+      parseLegacyConnectionString(
+        "postgres://alice@db.example.com:6543/appdb",
+        passfileEnv,
+        passfileRuntime,
+      )?.password,
     ).toBe("env-file-secret");
   });
 
@@ -593,11 +646,18 @@ describe("passfile= DSN setting (pgconn parity)", () => {
     // pgconn: present-empty passfile overrides PGPASSFILE, then ReadPassfile("") fails
     // → no .pgpass lookup → empty password (not the env-file credential).
     expect(
-      parseLegacyConnectionString("postgres://alice@db.example.com:6543/appdb?passfile=")?.password,
+      parseLegacyConnectionString(
+        "postgres://alice@db.example.com:6543/appdb?passfile=",
+        passfileEnv,
+        passfileRuntime,
+      )?.password,
     ).toBe("");
     expect(
-      parseLegacyConnectionString("host=db.example.com port=6543 dbname=appdb user=alice passfile=")
-        ?.password,
+      parseLegacyConnectionString(
+        "host=db.example.com port=6543 dbname=appdb user=alice passfile=",
+        passfileEnv,
+        passfileRuntime,
+      )?.password,
     ).toBe("");
   });
 });
@@ -647,23 +707,40 @@ describe("pgservice resolution (pgconn parity)", () => {
   // is a hard parse error.
   let tmp: string;
   let servicefile: string;
+  let serviceRuntime: Partial<LegacyDbConfigParseRuntime>;
 
-  beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), "pgservice-parse-"));
-    servicefile = join(tmp, "pg_service.conf");
-    writeFileSync(
-      servicefile,
-      "[prod]\nhost=db.example.com\nport=6543\nuser=alice\npassword=svc-secret\ndbname=appdb\nsslmode=require\n",
-    );
-  });
+  beforeEach(() =>
+    runFixture(
+      Effect.gen(function* () {
+        tmp = yield* createFixture("pgservice-parse-", [
+          {
+            path: "pg_service.conf",
+            content:
+              "[prod]\nhost=db.example.com\nport=6543\nuser=alice\npassword=svc-secret\ndbname=appdb\nsslmode=require\n",
+          },
+        ]);
+        servicefile = join(tmp, "pg_service.conf");
+        serviceRuntime = {
+          serviceFiles: new Map([
+            [
+              servicefile,
+              "[prod]\nhost=db.example.com\nport=6543\nuser=alice\npassword=svc-secret\ndbname=appdb\nsslmode=require\n",
+            ],
+          ]),
+        };
+      }),
+    ),
+  );
 
-  afterEach(() => {
-    rmSync(tmp, { recursive: true, force: true });
-  });
+  afterEach(() => runFixture(removeFixture(tmp)));
 
   it("resolves host/port/user/password/database/sslmode from the named service", () => {
     expect(
-      parseLegacyConnectionString(`postgresql:///?service=prod&servicefile=${servicefile}`),
+      parseLegacyConnectionString(
+        `postgresql:///?service=prod&servicefile=${servicefile}`,
+        emptyEnv,
+        serviceRuntime,
+      ),
     ).toEqual({
       host: "db.example.com",
       port: 6543,
@@ -675,7 +752,13 @@ describe("pgservice resolution (pgconn parity)", () => {
   });
 
   it("resolves a service from the keyword/value DSN form too", () => {
-    expect(parseLegacyConnectionString(`service=prod servicefile=${servicefile}`)).toEqual({
+    expect(
+      parseLegacyConnectionString(
+        `service=prod servicefile=${servicefile}`,
+        emptyEnv,
+        serviceRuntime,
+      ),
+    ).toEqual({
       host: "db.example.com",
       port: 6543,
       user: "alice",
@@ -689,6 +772,8 @@ describe("pgservice resolution (pgconn parity)", () => {
     expect(
       parseLegacyConnectionString(
         `postgresql://bob:pw@real.example.com:5555/realdb?service=prod&servicefile=${servicefile}`,
+        emptyEnv,
+        serviceRuntime,
       ),
     ).toEqual({
       host: "real.example.com",
@@ -703,18 +788,28 @@ describe("pgservice resolution (pgconn parity)", () => {
   it("resolves the service from the injected env (PGSERVICE/PGSERVICEFILE)", () => {
     const env = (name: string): string | undefined =>
       ({ PGSERVICE: "prod", PGSERVICEFILE: servicefile })[name];
-    expect(parseLegacyConnectionString("postgresql:///", env)?.host).toBe("db.example.com");
+    expect(parseLegacyConnectionString("postgresql:///", env, serviceRuntime)?.host).toBe(
+      "db.example.com",
+    );
   });
 
   it("fails to parse (undefined) when the service is unknown", () => {
     expect(
-      parseLegacyConnectionString(`postgresql:///?service=missing&servicefile=${servicefile}`),
+      parseLegacyConnectionString(
+        `postgresql:///?service=missing&servicefile=${servicefile}`,
+        emptyEnv,
+        serviceRuntime,
+      ),
     ).toBeUndefined();
   });
 
   it("fails to parse (undefined) when the service file does not exist", () => {
     expect(
-      parseLegacyConnectionString(`postgresql:///?service=prod&servicefile=${join(tmp, "nope")}`),
+      parseLegacyConnectionString(
+        `postgresql:///?service=prod&servicefile=${join(tmp, "nope")}`,
+        emptyEnv,
+        serviceRuntime,
+      ),
     ).toBeUndefined();
   });
 });
@@ -861,12 +956,14 @@ describe("pgconn parse refinements", () => {
 describe("database= alias and empty service values (pgconn parity)", () => {
   let tmp: string;
 
-  beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), "svc-empty-"));
-  });
-  afterEach(() => {
-    rmSync(tmp, { recursive: true, force: true });
-  });
+  beforeEach(() =>
+    runFixture(
+      Effect.gen(function* () {
+        tmp = yield* createFixture("svc-empty-", []);
+      }),
+    ),
+  );
+  afterEach(() => runFixture(removeFixture(tmp)));
 
   it("honors a `database=` query key as an alias for dbname", () => {
     expect(parseLegacyConnectionString("postgres://host/postgres?database=prod")).toMatchObject({
@@ -889,37 +986,59 @@ describe("database= alias and empty service values (pgconn parity)", () => {
     ).toMatchObject({ database: "template1" });
   });
 
-  it("an empty service password= suppresses PGPASSWORD (falls through to .pgpass)", () => {
-    const sf = join(tmp, "svc.conf");
-    writeFileSync(sf, "[s]\nhost=h\nport=5432\nuser=u\ndbname=d\npassword=\n");
-    const env = (name: string): string | undefined =>
-      name === "PGPASSWORD"
-        ? "env-secret"
-        : name === "PGPASSFILE"
-          ? join(tmp, "no-pgpass")
-          : undefined;
-    // Empty service password overrides PGPASSWORD; no .pgpass match → "".
-    expect(
-      parseLegacyConnectionString(`postgres:///?service=s&servicefile=${sf}`, env)?.password,
-    ).toBe("");
-  });
+  it.effect("an empty service password= suppresses PGPASSWORD (falls through to .pgpass)", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const sf = join(tmp, "svc.conf");
+      const serviceContent = "[s]\nhost=h\nport=5432\nuser=u\ndbname=d\npassword=\n";
+      yield* fs.writeFileString(sf, serviceContent);
+      const env = (name: string): string | undefined =>
+        name === "PGPASSWORD"
+          ? "env-secret"
+          : name === "PGPASSFILE"
+            ? join(tmp, "no-pgpass")
+            : undefined;
+      // Empty service password overrides PGPASSWORD; no .pgpass match → "".
+      expect(
+        parseLegacyConnectionString(`postgres:///?service=s&servicefile=${sf}`, env, {
+          serviceFiles: new Map([[sf, serviceContent]]),
+        })?.password,
+      ).toBe("");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it("an empty service connect_timeout= is a parse error", () => {
-    const sf = join(tmp, "svc.conf");
-    writeFileSync(sf, "[s]\nhost=h\nport=5432\nuser=u\nconnect_timeout=\n");
-    expect(parseLegacyConnectionString(`postgres:///?service=s&servicefile=${sf}`)).toBeUndefined();
-  });
+  it.effect("an empty service connect_timeout= is a parse error", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const sf = join(tmp, "svc.conf");
+      const serviceContent = "[s]\nhost=h\nport=5432\nuser=u\nconnect_timeout=\n";
+      yield* fs.writeFileString(sf, serviceContent);
+      expect(
+        parseLegacyConnectionString(`postgres:///?service=s&servicefile=${sf}`, emptyEnv, {
+          serviceFiles: new Map([[sf, serviceContent]]),
+        }),
+      ).toBeUndefined();
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it("still uses a non-empty service value normally", () => {
-    const sf = join(tmp, "svc.conf");
-    writeFileSync(sf, "[s]\nhost=svc.example.com\nport=6543\nuser=alice\ndbname=appdb\n");
-    expect(parseLegacyConnectionString(`postgres:///?service=s&servicefile=${sf}`)).toMatchObject({
-      host: "svc.example.com",
-      port: 6543,
-      user: "alice",
-      database: "appdb",
-    });
-  });
+  it.effect("still uses a non-empty service value normally", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const sf = join(tmp, "svc.conf");
+      const serviceContent = "[s]\nhost=svc.example.com\nport=6543\nuser=alice\ndbname=appdb\n";
+      yield* fs.writeFileString(sf, serviceContent);
+      expect(
+        parseLegacyConnectionString(`postgres:///?service=s&servicefile=${sf}`, emptyEnv, {
+          serviceFiles: new Map([[sf, serviceContent]]),
+        }),
+      ).toMatchObject({
+        host: "svc.example.com",
+        port: 6543,
+        user: "alice",
+        database: "appdb",
+      });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });
 
 describe("more pgconn parse refinements", () => {

@@ -112,12 +112,10 @@ export function legacyEnsureImagesCached(
       const hint = failures.some(legacyIsDockerDaemonUnreachable)
         ? `\n\n${LEGACY_SUGGEST_DOCKER_INSTALL}`
         : "";
-      return yield* Effect.fail(
-        new LegacyImagePrepullError({
-          message: `${failures.join("\n")}${hint}`,
-          reason: failureReason,
-        }),
-      );
+      return yield* new LegacyImagePrepullError({
+        message: `${failures.join("\n")}${hint}`,
+        reason: failureReason,
+      });
     }
 
     return resolved;

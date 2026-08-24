@@ -11,6 +11,7 @@ import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.la
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
 import { legacyDockerRunLayer } from "../../../shared/legacy-docker-run.layer.ts";
 import { legacyEdgeRuntimeScriptLayer } from "../../../shared/legacy-edge-runtime-script.layer.ts";
+import { legacyLocalGatewayHttpClientLayer } from "../../../shared/legacy-local-gateway-http-client.ts";
 import { legacyPgDeltaSslProbeLayer } from "../../../shared/legacy-pgdelta-ssl-probe.layer.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { legacyIdentityStitchLayer } from "../../../shared/legacy-identity-stitch.ts";
@@ -102,5 +103,6 @@ export const legacyDbResetRuntimeLayer = Layer.mergeAll(
   legacyDockerRunLayer,
   edgeRuntime,
   legacyPgDeltaSslProbeLayer,
+  legacyLocalGatewayHttpClientLayer,
   commandRuntimeLayer(["db", "reset"]),
 );

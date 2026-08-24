@@ -20,7 +20,7 @@
  * and {@link legacyBuildStudioEnv}'s `SNIPPETS_MANAGEMENT_FOLDER`.
  */
 
-import { join } from "node:path";
+import type { Path } from "effect";
 
 import { legacyToDockerPath } from "../../../shared/legacy-docker-path.ts";
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
@@ -41,6 +41,8 @@ const STUDIO_NETWORK_ALIASES = ["studio"];
 const LOGFLARE_PRIVATE_ACCESS_TOKEN = "api-key";
 
 export interface LegacyBuildStudioEnvInput {
+  /** Platform path service used for host path derivation. */
+  readonly path: Path.Path;
   /** The db password — becomes `POSTGRES_PASSWORD`. */
   readonly dbPassword: string;
   /**
@@ -134,7 +136,7 @@ export function legacyBuildStudioEnv(input: LegacyBuildStudioEnvInput): Record<s
     NEXT_PUBLIC_ENABLE_LOGS: String(input.analyticsEnabled),
     NEXT_ANALYTICS_BACKEND_PROVIDER: input.analyticsBackend,
     EDGE_FUNCTIONS_MANAGEMENT_FOLDER: legacyToDockerPath(
-      join(input.workdir, "supabase", "functions"),
+      input.path.join(input.workdir, "supabase", "functions"),
     ),
     SNIPPETS_MANAGEMENT_FOLDER: input.containerSnippetsPath,
     // Ref: https://github.com/vercel/next.js/issues/51684#issuecomment-1612834913
@@ -144,6 +146,8 @@ export function legacyBuildStudioEnv(input: LegacyBuildStudioEnvInput): Record<s
 }
 
 export interface LegacyStudioContainerInput {
+  /** Platform path service used for host path derivation. */
+  readonly path: Path.Path;
   /** `config.studio.image`, already resolved/pulled by the caller. */
   readonly image: string;
   /** `legacyServiceContainerName("studio", projectId)`. */
@@ -161,7 +165,7 @@ export interface LegacyStudioContainerInput {
    */
   readonly functionBinds: ReadonlyArray<string>;
   /** Every value {@link legacyBuildStudioEnv} needs, minus the path this builder derives itself. */
-  readonly env: Omit<LegacyBuildStudioEnvInput, "containerSnippetsPath">;
+  readonly env: Omit<LegacyBuildStudioEnvInput, "containerSnippetsPath" | "path">;
 }
 
 /**
@@ -173,7 +177,7 @@ export interface LegacyStudioContainerInput {
 export function legacyBuildStudioContainerSpec(
   input: LegacyStudioContainerInput,
 ): LegacyStartContainerSpec {
-  const hostSnippetsPath = join(input.env.workdir, "supabase", "snippets");
+  const hostSnippetsPath = input.path.join(input.env.workdir, "supabase", "snippets");
   const containerSnippetsPath = legacyToDockerPath(hostSnippetsPath);
 
   // Order-preserving dedup; `Set` iteration order is first-seen-wins.
@@ -184,7 +188,7 @@ export function legacyBuildStudioContainerSpec(
   return {
     image: input.image,
     containerName: input.containerName,
-    env: legacyBuildStudioEnv({ ...input.env, containerSnippetsPath }),
+    env: legacyBuildStudioEnv({ ...input.env, path: input.path, containerSnippetsPath }),
     binds,
     healthcheck: {
       test: [

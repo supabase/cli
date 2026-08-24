@@ -79,6 +79,7 @@ export const legacyApplySeedFiles = (
   path: Path.Path,
   workdir: string,
   config: LegacySeedConfig,
+  projectEnv: Readonly<Record<string, string>>,
 ) =>
   Effect.gen(function* () {
     const output = yield* Output;
@@ -157,6 +158,7 @@ export const legacyApplySeedFiles = (
         yield* checkScannerBufferSize(
           content,
           (message) => new LegacyMigrationSeedError({ message }),
+          projectEnv,
         );
         statements = legacySplitAndTrim(content);
       }

@@ -684,7 +684,7 @@ function readDeclaration(error: unknown): CliErrorActionabilityDeclaration | und
     if (!isErrorRecord(prototype)) return undefined;
     const descriptor = Object.getOwnPropertyDescriptor(prototype, ErrorActionabilityId);
     if (descriptor?.get === undefined) return undefined;
-    return sanitizeDeclaration(Reflect.apply(descriptor.get, error, []));
+    return sanitizeDeclaration(Reflect.get(error, ErrorActionabilityId));
   } catch {
     return undefined;
   }
@@ -942,6 +942,7 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   MissingProjectConfigValueError: () => actionability.invalidConfig,
   DuplicateRemoteProjectIdError: () => actionability.invalidConfig,
   InvalidRemoteProjectIdError: () => actionability.invalidConfig,
+  ProjectConfigStoreError: () => actionability.invalidConfig,
 
   // @supabase/api — client construction failed before any request (missing
   // access token / bad configuration); remediation is the token env var.
@@ -991,6 +992,7 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   BinaryManifestError: () => actionability.externalNetwork,
   BinaryRuntimeError: () => actionability.externalNetwork,
   BinaryHostCompatibilityError: () => actionability.invalidConfig,
+  FunctionsBundlePathError: () => actionability.invalidInput,
   DownloadError: () => actionability.externalNetwork,
   ChecksumMismatchError: () => ({
     ...actionability.externalNetwork,
@@ -1098,6 +1100,10 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
     fingerprint_suffix: "managed_workspace_repair",
   }),
   DaemonStartError: () => actionability.unknown,
+  DaemonLaunchUpdateError: () => ({
+    ...actionability.startStack,
+    fingerprint_suffix: "daemon_start",
+  }),
   SupervisorStartError: () => ({
     ...actionability.startStack,
     fingerprint_suffix: "daemon_start",
@@ -1128,6 +1134,8 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   MissingDependencyError: () => actionability.impossibleState,
   ServiceNotFoundError: () => actionability.impossibleState,
   SpawnError: () => actionability.startStack,
+  HookExecutionError: () => actionability.impossibleState,
+  CleanupExecutionError: () => actionability.impossibleState,
   ShutdownTimeoutError: () => actionability.stopStack,
   ServiceReadyError: () => actionability.startStack,
 };
@@ -1198,7 +1206,12 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
   if (declared !== undefined) {
     const stableTaggedName = readStableTaggedPrototypeName(error);
     const tag = readErrorTag(error);
-    if (stableTaggedName !== undefined && tag === stableTaggedName) {
+    const declaredFingerprint = readDeclaredErrorFingerprintId(error);
+    if (
+      declaredFingerprint === undefined &&
+      stableTaggedName !== undefined &&
+      tag === stableTaggedName
+    ) {
       return toActionability(declared, "tag", tag);
     }
     // The declared static identifier outranks the prototype walk: a class
@@ -1207,7 +1220,11 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
     return toActionability(
       declared,
       "error",
-      readDeclaredErrorFingerprintId(error) ?? stableTaggedName ?? "DeclaredError",
+      declaredFingerprint ??
+        (stableTaggedName !== undefined && tag === stableTaggedName
+          ? stableTaggedName
+          : undefined) ??
+        "DeclaredError",
     );
   }
 

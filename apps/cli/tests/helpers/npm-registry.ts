@@ -1,21 +1,19 @@
-import { $ } from "bun";
-import {
-  lstat,
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  readlink,
-  rm,
-  stat,
-  writeFile,
-} from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import process from "node:process";
+import { BunPath, BunServices } from "@effect/platform-bun";
+import { Data, Effect, FileSystem, Option, Schedule, Schema, Stream } from "effect";
+import * as EffectPath from "effect/Path";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import type { PlatformError } from "effect/PlatformError";
+import type * as Scope from "effect/Scope";
 import { runCli, verifyExpectedShell } from "./release-shell.ts";
 
-const root = path.resolve(import.meta.dir, "../../../..");
+const { resolve, join, relative } = Effect.runSync(
+  EffectPath.Path.pipe(Effect.provide(BunPath.layer)),
+);
+const root = resolve(import.meta.dir, "../../../..");
 
 const PACKAGE_PATHS = {
   "cli-darwin-arm64": ["packages", "cli-darwin-arm64"],
@@ -29,367 +27,534 @@ const PACKAGE_PATHS = {
   cli: ["apps", "cli"],
 } as const;
 
-const ALL_PACKAGES = Object.keys(PACKAGE_PATHS) as Array<keyof typeof PACKAGE_PATHS>;
+const ALL_PACKAGES = [
+  "cli-darwin-arm64",
+  "cli-darwin-x64",
+  "cli-linux-arm64",
+  "cli-linux-arm64-musl",
+  "cli-linux-x64",
+  "cli-linux-x64-musl",
+  "cli-windows-arm64",
+  "cli-windows-x64",
+  "cli",
+] as const;
 
-export async function createTmpDir(prefix: string): Promise<AsyncDisposable & { path: string }> {
-  const dir = await mkdtemp(path.join(tmpdir(), prefix));
-  return {
-    path: dir,
-    async [Symbol.asyncDispose]() {
-      await rm(dir, { recursive: true });
-    },
-  };
+type PackageName = (typeof ALL_PACKAGES)[number];
+
+class NpmRegistryError extends Data.TaggedError("NpmRegistryError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
+
+interface CommandResult {
+  readonly status: number;
+  readonly stdout: string;
+  readonly stderr: string;
 }
 
-async function startVerdaccio(
-  configPath: string,
-  port: number,
-): Promise<AsyncDisposable & { url: string }> {
-  const url = `http://localhost:${port}`;
-  const proc = Bun.spawn(["bunx", "verdaccio", "--config", configPath], {
-    stdout: "ignore",
-    stderr: "ignore",
+interface CommandOptions {
+  readonly ignoreOutput?: boolean;
+  readonly cwd?: string;
+  readonly env?: Record<string, string | undefined>;
+  readonly extendEnv?: boolean;
+}
+
+const runCommand = (
+  command: string | ReadonlyArray<string>,
+  args: ReadonlyArray<string> = [],
+  options: CommandOptions = {},
+): Effect.Effect<CommandResult, PlatformError, never> => {
+  const cmd = typeof command === "string" ? [command, ...args] : [...command];
+  const executable = cmd[0];
+  if (executable === undefined) {
+    return Effect.die("command cannot be empty");
+  }
+  const captureOutput = options.ignoreOutput !== true;
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const handle = yield* spawner.spawn(
+        ChildProcess.make(executable, cmd.slice(1), {
+          cwd: options.cwd,
+          env: options.env,
+          extendEnv: options.extendEnv,
+          stdout: captureOutput ? "pipe" : "ignore",
+          stderr: captureOutput ? "pipe" : "ignore",
+        }),
+      );
+      return yield* Effect.all(
+        {
+          status: handle.exitCode,
+          stdout: captureOutput
+            ? Stream.mkString(Stream.decodeText(handle.stdout))
+            : Effect.succeed(""),
+          stderr: captureOutput
+            ? Stream.mkString(Stream.decodeText(handle.stderr))
+            : Effect.succeed(""),
+        },
+        { concurrency: "unbounded" },
+      );
+    }),
+  ).pipe(Effect.provide(BunServices.layer));
+};
+
+const readFileString = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.readFileString(path, "utf8");
   });
 
-  const timeout = 120_000;
-  const deadline = Date.now() + timeout;
-  while (Date.now() < deadline) {
-    try {
-      const res = await fetch(`${url}/-/ping`);
-      if (res.ok) return { url, [Symbol.asyncDispose]: async () => proc.kill() };
-    } catch {
-      // not ready yet
-    }
-    await Bun.sleep(500);
-  }
+const writeFileString = (path: string, contents: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.writeFileString(path, contents);
+  });
 
-  proc.kill();
-  throw new Error(`Verdaccio failed to start within ${timeout / 1000}s`);
+const remove = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.remove(path, { recursive: true, force: true });
+  });
+
+const encodeJson = (value: unknown) =>
+  Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(value).pipe(
+    Effect.mapError((cause) => new NpmRegistryError({ message: "JSON encoding failed", cause })),
+  );
+
+interface TmpDir {
+  readonly path: string;
+  readonly [Symbol.asyncDispose]: () => Promise<void>;
 }
 
-async function savePackageJsons() {
-  const originals = new Map<string, string>();
-  for (const pkg of ALL_PACKAGES) {
-    const p = path.join(root, ...PACKAGE_PATHS[pkg], "package.json");
-    originals.set(p, await readFile(p, "utf-8"));
-  }
-  return {
-    async [Symbol.asyncDispose]() {
-      for (const [p, content] of originals) {
-        await writeFile(p, content);
+const createTmpDirEffect = (
+  prefix: string,
+): Effect.Effect<TmpDir, PlatformError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* fs.makeTempDirectory({ prefix });
+    return {
+      path,
+      [Symbol.asyncDispose]: () => disposeTmpDir(path),
+    } satisfies TmpDir;
+  });
+
+const disposeTmpDir = (path: string): Promise<void> =>
+  Effect.runPromise(remove(path).pipe(Effect.provide(BunServices.layer)));
+
+/** Promise facade consumed by the outer smoke scripts. Core setup is Effect-native. */
+export function createTmpDir(prefix: string): Promise<TmpDir> {
+  return Effect.runPromise(createTmpDirEffect(prefix).pipe(Effect.provide(BunServices.layer)));
+}
+
+const httpPing = (url: string): Effect.Effect<void, NpmRegistryError, HttpClient.HttpClient> =>
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    const response = yield* client
+      .execute(HttpClientRequest.get(`${url}/-/ping`))
+      .pipe(
+        Effect.mapError(
+          (cause) => new NpmRegistryError({ message: "registry readiness request failed", cause }),
+        ),
+      );
+    if (response.status < 200 || response.status >= 300) {
+      return yield* new NpmRegistryError({ message: `registry returned HTTP ${response.status}` });
+    }
+    yield* response.text.pipe(
+      Effect.mapError(
+        (cause) => new NpmRegistryError({ message: "registry readiness body failed", cause }),
+      ),
+    );
+  });
+
+const startVerdaccio = (
+  configPath: string,
+  port: number,
+): Effect.Effect<
+  { readonly url: string },
+  PlatformError | NpmRegistryError,
+  ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
+> =>
+  Effect.gen(function* () {
+    const url = `http://localhost:${port}`;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    yield* spawner.spawn(
+      ChildProcess.make("bunx", ["verdaccio", "--config", configPath], {
+        stdout: "ignore",
+        stderr: "ignore",
+      }),
+    );
+    const readiness = Schedule.recurs(240).pipe(Schedule.addDelay(() => Effect.succeed(500)));
+    yield* httpPing(url).pipe(Effect.retry(readiness), Effect.provide(FetchHttpClient.layer));
+    return { url };
+  });
+
+const packageJsonPath = (pkg: PackageName): string =>
+  join(root, ...PACKAGE_PATHS[pkg], "package.json");
+
+const savePackageJsons = () =>
+  Effect.gen(function* () {
+    const originals = new Map<string, string>();
+    for (const pkg of ALL_PACKAGES) {
+      const path = packageJsonPath(pkg);
+      originals.set(path, yield* readFileString(path));
+    }
+    return originals;
+  });
+
+const restorePackageJsons = (originals: ReadonlyMap<string, string>) =>
+  Effect.forEach(originals, ([path, content]) => writeFileString(path, content), {
+    concurrency: "unbounded",
+    discard: true,
+  });
+
+const modeOctal = (mode: number): string => `0${(mode & 0o777).toString(8).padStart(3, "0")}`;
+
+const describePath = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const info = yield* fs.stat(path);
+    const link = yield* fs.readLink(path).pipe(Effect.option);
+    if (Option.isSome(link)) {
+      return `symlink ${modeOctal(info.mode)} -> ${link.value} (${info.size}B)`;
+    }
+    return `file ${modeOctal(info.mode)} ${info.size}B`;
+  }).pipe(
+    Effect.catch((error) =>
+      error instanceof Error && error.message.includes("NotFound")
+        ? Effect.succeed("MISSING")
+        : Effect.succeed(`unstattable: ${String(error)}`),
+    ),
+  );
+
+const dumpInstalledTree = (
+  testDir: string,
+  ext: string,
+): Effect.Effect<void, never, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* Effect.log("\nInstalled tree state:");
+    const interesting = [
+      join(testDir, "node_modules", ".bin", `supabase${ext}`),
+      join(testDir, "node_modules", "supabase", "package.json"),
+      join(testDir, "node_modules", "supabase", "dist", "supabase.js"),
+    ];
+    for (const path of interesting) {
+      yield* Effect.log(`  ${relative(testDir, path)}: ${yield* describePath(path)}`);
+    }
+
+    const supabaseScope = join(testDir, "node_modules", "@supabase");
+    const scopeEntries = yield* fs
+      .readDirectory(supabaseScope)
+      .pipe(Effect.orElseSucceed(() => []));
+    if (scopeEntries.length === 0) {
+      yield* Effect.log("  node_modules/@supabase: MISSING");
+      return;
+    }
+    for (const entry of scopeEntries.sort((left, right) => left.localeCompare(right))) {
+      const pkgDir = join(supabaseScope, entry);
+      const pkgJsonPath = join(pkgDir, "package.json");
+      const pkgJsonText = yield* readFileString(pkgJsonPath).pipe(Effect.orElseSucceed(() => ""));
+      const pkgJson = yield* Schema.decodeEffect(
+        Schema.fromJsonString(Schema.Struct({ name: Schema.String, version: Schema.String })),
+      )(pkgJsonText).pipe(
+        Effect.mapError(
+          (cause) => new NpmRegistryError({ message: "package JSON decoding failed", cause }),
+        ),
+        Effect.option,
+      );
+      if (Option.isSome(pkgJson)) {
+        yield* Effect.log(
+          `  node_modules/@supabase/${entry}: ${pkgJson.value.name}@${pkgJson.value.version}`,
+        );
+      } else {
+        yield* Effect.log(`  node_modules/@supabase/${entry}: <unreadable package.json>`);
       }
-    },
-  };
-}
-
-function modeOctal(mode: number): string {
-  return `0${(mode & 0o777).toString(8).padStart(3, "0")}`;
-}
-
-async function describePath(p: string): Promise<string> {
-  try {
-    const ls = await lstat(p);
-    if (ls.isSymbolicLink()) {
-      const target = await readlink(p);
-      try {
-        const st = await stat(p);
-        return `symlink ${modeOctal(ls.mode)} -> ${target} (target ${modeOctal(st.mode)} ${st.size}B)`;
-      } catch (e) {
-        return `symlink ${modeOctal(ls.mode)} -> ${target} (target unreadable: ${e})`;
+      const binDir = join(pkgDir, "bin");
+      const binEntries = yield* fs.readDirectory(binDir).pipe(Effect.orElseSucceed(() => []));
+      for (const bin of binEntries.sort((left, right) => left.localeCompare(right))) {
+        const binPath = join(binDir, bin);
+        yield* Effect.log(`    bin/${bin}: ${yield* describePath(binPath)}`);
       }
     }
-    return `file ${modeOctal(ls.mode)} ${ls.size}B`;
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return "MISSING";
-    return `unstattable: ${e}`;
-  }
-}
+  });
 
-async function dumpInstalledTree(testDir: string, ext: string): Promise<void> {
-  console.log("\nInstalled tree state:");
-  const interesting = [
-    path.join(testDir, "node_modules", ".bin", `supabase${ext}`),
-    path.join(testDir, "node_modules", "supabase", "package.json"),
-    path.join(testDir, "node_modules", "supabase", "dist", "supabase.js"),
-  ];
-  for (const p of interesting) {
-    console.log(`  ${path.relative(testDir, p)}: ${await describePath(p)}`);
-  }
-
-  const supabaseScope = path.join(testDir, "node_modules", "@supabase");
-  let scopeEntries: string[] = [];
-  try {
-    scopeEntries = await readdir(supabaseScope);
-  } catch {
-    console.log(`  node_modules/@supabase: MISSING`);
-    return;
-  }
-  for (const entry of scopeEntries.sort()) {
-    const pkgDir = path.join(supabaseScope, entry);
-    const pkgJsonPath = path.join(pkgDir, "package.json");
-    try {
-      const pkgJson = JSON.parse(await readFile(pkgJsonPath, "utf-8"));
-      console.log(`  node_modules/@supabase/${entry}: ${pkgJson.name}@${pkgJson.version}`);
-    } catch {
-      console.log(`  node_modules/@supabase/${entry}: <unreadable package.json>`);
-    }
-    const binDir = path.join(pkgDir, "bin");
-    try {
-      const binEntries = await readdir(binDir);
-      for (const b of binEntries.sort()) {
-        const bp = path.join(binDir, b);
-        console.log(`    bin/${b}: ${await describePath(bp)}`);
+const findPlatformBinary = (testDir: string, ext: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const supabaseScope = join(testDir, "node_modules", "@supabase");
+    const entries = yield* fs.readDirectory(supabaseScope).pipe(Effect.orElseSucceed(() => []));
+    for (const entry of entries) {
+      const candidate = join(supabaseScope, entry, "bin", `supabase${ext}`);
+      if (yield* fs.exists(candidate)) {
+        return Option.some(candidate);
       }
-    } catch {
-      // no bin/
     }
-  }
-}
+    return Option.none<string>();
+  });
 
-async function findPlatformBinary(testDir: string, ext: string): Promise<string | null> {
-  const supabaseScope = path.join(testDir, "node_modules", "@supabase");
-  let entries: string[] = [];
-  try {
-    entries = await readdir(supabaseScope);
-  } catch {
-    return null;
-  }
-  for (const entry of entries) {
-    const candidate = path.join(supabaseScope, entry, "bin", `supabase${ext}`);
-    try {
-      await stat(candidate);
-      return candidate;
-    } catch {
-      // not this one
+const inspectVerdaccioTarball = (storageDir: string, pkg: string) =>
+  Effect.gen(function* () {
+    const storage = join(storageDir, "@supabase", pkg);
+    const fs = yield* FileSystem.FileSystem;
+    const files = yield* fs.readDirectory(storage).pipe(Effect.orElseSucceed(() => []));
+    const tarball = files.find((file) => file.endsWith(".tgz"));
+    if (tarball === undefined) {
+      yield* Effect.log(`  @supabase/${pkg}: <no tarball in verdaccio storage>`);
+      return;
     }
-  }
-  return null;
-}
+    const listing = yield* runCommand("tar", ["-tvf", join(storage, tarball)]);
+    const binLines = listing.stdout
+      .split("\n")
+      .filter((line) => line.includes("/bin/"))
+      .map((line) => `    ${line.trim()}`);
+    if (binLines.length === 0) {
+      yield* Effect.log(`  @supabase/${pkg} (${tarball}): <no bin/ entries>`);
+      return;
+    }
+    yield* Effect.log(`  @supabase/${pkg} (${tarball}):`);
+    yield* Effect.forEach(binLines, (line) => Effect.log(line), { discard: true });
+  });
 
-async function inspectVerdaccioTarball(storageDir: string, pkg: string): Promise<void> {
-  const pkgStorage = path.join(storageDir, "@supabase", pkg);
-  let files: string[] = [];
-  try {
-    files = await readdir(pkgStorage);
-  } catch {
-    console.log(`  @supabase/${pkg}: <no tarball in verdaccio storage>`);
-    return;
-  }
-  const tarball = files.find((f) => f.endsWith(".tgz"));
-  if (!tarball) {
-    console.log(`  @supabase/${pkg}: <no .tgz under ${pkgStorage}>`);
-    return;
-  }
-  const tarballPath = path.join(pkgStorage, tarball);
-  const listing = await $`tar -tvf ${tarballPath}`.text();
-  // Surface only the bin entries — full listings drown the log.
-  const binLines = listing
-    .split("\n")
-    .filter((line) => line.includes("/bin/"))
-    .map((line) => `    ${line.trim()}`);
-  if (binLines.length === 0) {
-    console.log(`  @supabase/${pkg} (${tarball}): <no bin/ entries>`);
-    return;
-  }
-  console.log(`  @supabase/${pkg} (${tarball}):`);
-  for (const line of binLines) console.log(line);
-}
+const hasVerdaccioTarball = (
+  storageDir: string,
+  pkg: string,
+): Effect.Effect<boolean, never, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const files = yield* fs
+      .readDirectory(join(storageDir, "@supabase", pkg))
+      .pipe(Effect.orElseSucceed(() => []));
+    return files.some((file) => file.endsWith(".tgz"));
+  });
 
-async function hasVerdaccioTarball(storageDir: string, pkg: string): Promise<boolean> {
-  const pkgStorage = path.join(storageDir, "@supabase", pkg);
-  try {
-    const files = await readdir(pkgStorage);
-    return files.some((f) => f.endsWith(".tgz"));
-  } catch {
-    return false;
-  }
-}
-
-export function describeError(e: unknown): string {
-  if (e instanceof Error) {
-    const parts = [e.stack ?? `${e.name}: ${e.message}`];
-    const stdout = (e as { stdout?: unknown }).stdout;
-    const stderr = (e as { stderr?: unknown }).stderr;
+export function describeError(error: unknown): string {
+  if (error instanceof Error) {
+    const parts = [error.stack ?? `${error.name}: ${error.message}`];
+    const stdout = Reflect.get(error, "stdout");
+    const stderr = Reflect.get(error, "stderr");
     if (stdout != null) parts.push(`stdout: ${String(stdout).trim()}`);
     if (stderr != null) parts.push(`stderr: ${String(stderr).trim()}`);
     return parts.join("\n");
   }
-  return String(e);
+  return String(error);
 }
 
-export async function runNpmTest(
+const PackageManifest = Schema.Struct({ name: Schema.String, version: Schema.String });
+
+const runNpmTestEffect = (
+  version: string,
+  tag: "latest" | "alpha" | "beta",
+): Effect.Effect<
+  boolean,
+  NpmRegistryError | PlatformError,
+  FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner
+> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const originals = yield* savePackageJsons();
+      yield* Effect.addFinalizer(() => restorePackageJsons(originals).pipe(Effect.ignoreCause));
+
+      const tmpPath = yield* fs.makeTempDirectoryScoped({ prefix: "npm-smoke-" });
+      const port = 4873;
+      const configPath = join(tmpPath, "config.yaml");
+      const storageDir = join(tmpPath, "storage");
+      const configLines = [
+        `storage: ${storageDir}`,
+        "auth:",
+        "  htpasswd:",
+        `    file: ${join(tmpPath, "htpasswd")}`,
+        "    max_users: 100",
+        "uplinks:",
+        "  npmjs:",
+        "    url: https://registry.npmjs.org/",
+        "packages:",
+        '  "supabase":',
+        "    access: $all",
+        "    publish: $all",
+        '  "@supabase/*":',
+        "    access: $all",
+        "    publish: $all",
+        '  "**":',
+        "    access: $all",
+        "    publish: $all",
+        "    proxy: npmjs",
+        "max_body_size: 200mb",
+        `listen: 0.0.0.0:${port}`,
+        "",
+      ];
+      yield* writeFileString(configPath, configLines.join("\n"));
+      const publishNpmrc = join(tmpPath, "publish.npmrc");
+      yield* writeFileString(publishNpmrc, `//localhost:${port}/:_authToken=dummy\n`);
+
+      yield* Effect.log(`Syncing versions to ${version}...`);
+      const syncResult = yield* runCommand(
+        "pnpm",
+        ["exec", "bun", "apps/cli/scripts/sync-versions.ts", "--version", version],
+        { cwd: root },
+      );
+      if (syncResult.status !== 0) {
+        return yield* new NpmRegistryError({ message: syncResult.stderr || "version sync failed" });
+      }
+
+      yield* Effect.log("Starting local npm registry...");
+      const registry = yield* startVerdaccio(configPath, port);
+      yield* Effect.log(`Registry ready at ${registry.url}\n`);
+
+      const platformPackages = ALL_PACKAGES.filter((pkg) => pkg !== "cli");
+      yield* Effect.log("Publishing platform packages...");
+      for (const pkg of platformPackages) {
+        const pkgDir = join(root, "packages", pkg);
+        const publish = yield* runCommand(
+          "pnpm",
+          ["publish", "--registry", registry.url, "--tag", tag, "--no-git-checks"],
+          {
+            cwd: pkgDir,
+            env: { npm_config_userconfig: publishNpmrc },
+            extendEnv: true,
+          },
+        );
+        if (publish.status !== 0 && !(yield* hasVerdaccioTarball(storageDir, pkg))) {
+          return yield* new NpmRegistryError({
+            message: publish.stderr || `publishing @supabase/${pkg} failed`,
+          });
+        }
+        yield* Effect.log(
+          publish.status === 0
+            ? `  @supabase/${pkg}`
+            : `  @supabase/${pkg} (already present in local registry)`,
+        );
+      }
+
+      yield* Effect.log("\nVerdaccio tarball contents (bin entries only):");
+      yield* Effect.forEach(platformPackages, (pkg) => inspectVerdaccioTarball(storageDir, pkg), {
+        discard: true,
+      });
+
+      const cliDir = join(root, "apps", "cli");
+      yield* Effect.log("\nBuilding umbrella package shim...");
+      const shim = yield* runCommand("pnpm", ["build:shim"], { cwd: cliDir, ignoreOutput: true });
+      if (shim.status !== 0) {
+        return yield* new NpmRegistryError({
+          message: shim.stderr || "building umbrella shim failed",
+        });
+      }
+      const cliManifest = yield* Schema.decodeEffect(Schema.fromJsonString(PackageManifest))(
+        yield* readFileString(join(cliDir, "package.json")),
+      ).pipe(
+        Effect.mapError(
+          (cause) => new NpmRegistryError({ message: "CLI package JSON decoding failed", cause }),
+        ),
+      );
+      yield* Effect.log("Publishing umbrella package...");
+      const umbrellaPublish = yield* runCommand(
+        "pnpm",
+        ["publish", "--registry", registry.url, "--tag", tag, "--no-git-checks"],
+        {
+          cwd: cliDir,
+          env: { npm_config_userconfig: publishNpmrc },
+          extendEnv: true,
+        },
+      );
+      if (umbrellaPublish.status !== 0) {
+        return yield* new NpmRegistryError({
+          message: umbrellaPublish.stderr || "publishing umbrella package failed",
+        });
+      }
+      yield* Effect.log(`  ${cliManifest.name}\n`);
+
+      yield* Effect.log("Verdaccio umbrella tarball contents:");
+      const umbrellaStorage = join(storageDir, cliManifest.name);
+      const umbrellaFiles = yield* fs
+        .readDirectory(umbrellaStorage)
+        .pipe(Effect.orElseSucceed(() => []));
+      const umbrellaTarball = umbrellaFiles.find((file) => file.endsWith(".tgz"));
+      if (umbrellaTarball !== undefined) {
+        const listing = yield* runCommand("tar", ["-tvf", join(umbrellaStorage, umbrellaTarball)]);
+        yield* Effect.forEach(
+          listing.stdout.split("\n").filter(Boolean),
+          (line) => Effect.log(`    ${line.trim()}`),
+          { discard: true },
+        );
+      } else {
+        yield* Effect.log(`  <no .tgz under ${umbrellaStorage}>`);
+      }
+
+      const testDir = join(tmpPath, "test-project");
+      yield* fs.makeDirectory(testDir);
+      yield* writeFileString(
+        join(testDir, "package.json"),
+        yield* encodeJson({ name: "test-npm-smoke", version: "0.0.0", private: true }),
+      );
+      yield* writeFileString(
+        join(testDir, ".npmrc"),
+        `registry=${registry.url}\n//localhost:${port}/:_authToken=dummy\n`,
+      );
+
+      const installSpec = tag === "latest" ? cliManifest.name : `${cliManifest.name}@${tag}`;
+      yield* Effect.log(`\nInstalling ${installSpec}...`);
+      const install = yield* runCommand(
+        "npm",
+        ["install", "--registry", registry.url, installSpec],
+        {
+          cwd: testDir,
+        },
+      );
+      if (install.status !== 0) {
+        return yield* new NpmRegistryError({ message: install.stderr || "npm install failed" });
+      }
+
+      yield* Effect.log("\nVerifying...");
+      const ext = process.platform === "win32" ? ".cmd" : "";
+      const binPath = join(testDir, "node_modules", ".bin", `supabase${ext}`);
+      yield* dumpInstalledTree(testDir, ext);
+
+      const versionResult = yield* Effect.tryPromise({
+        try: () => runCli(binPath, ["--version"]),
+        catch: (cause) => new NpmRegistryError({ message: "running installed CLI failed", cause }),
+      });
+      const hasValidVersion =
+        versionResult.exitCode === 0 && /^\d+\.\d+\.\d+/.test(versionResult.stdout);
+      if (!hasValidVersion) {
+        yield* Effect.log("\n[verify] supabase --version FAILED:");
+        yield* Effect.log(`  exit=${versionResult.exitCode}`);
+        yield* Effect.log(`  stdout=${versionResult.stdout}`);
+        yield* Effect.log(`  stderr=${versionResult.stderr}`);
+
+        const platformBin = yield* findPlatformBinary(testDir, ext);
+        if (Option.isSome(platformBin)) {
+          yield* Effect.log(`\n[verify] retrying via platform binary: ${platformBin.value}`);
+          const direct = yield* Effect.tryPromise({
+            try: () => runCli(platformBin.value, ["--version"]),
+            catch: (cause) =>
+              new NpmRegistryError({ message: "running platform CLI failed", cause }),
+          });
+          yield* Effect.log(`  exit=${direct.exitCode}`);
+          yield* Effect.log(`  stdout=${direct.stdout}`);
+          yield* Effect.log(`  stderr=${direct.stderr}`);
+        } else {
+          yield* Effect.log(
+            "\n[verify] no platform binary found under node_modules/@supabase/*/bin/",
+          );
+        }
+      }
+
+      const shellCheck = yield* Effect.tryPromise({
+        try: () => verifyExpectedShell(binPath),
+        catch: (cause) => new NpmRegistryError({ message: "shell verification failed", cause }),
+      });
+      const passed = hasValidVersion && shellCheck.passed;
+      yield* Effect.log(
+        `\n${passed ? "PASS" : "FAIL"} — supabase --version exit=${versionResult.exitCode} stdout=${versionResult.stdout}`,
+      );
+      yield* Effect.log(shellCheck.detail);
+      return passed;
+    }),
+  );
+
+export function runNpmTest(
   version: string,
   tag: "latest" | "alpha" | "beta" = "latest",
 ): Promise<boolean> {
-  await using _pkgJsons = await savePackageJsons();
-  await using tmp = await createTmpDir("npm-smoke-");
-
-  const PORT = 4873;
-  const configPath = path.join(tmp.path, "config.yaml");
-  const storageDir = path.join(tmp.path, "storage");
-
-  // Verdaccio config: store our published tarballs locally. The umbrella
-  // package is shim-only at runtime and should resolve only our own
-  // `@supabase/cli-*` optional dependencies from this registry; the public npm
-  // uplink is retained for npm installer internals and any incidental tooling.
-  await writeFile(
-    configPath,
-    `storage: ${storageDir}
-auth:
-  htpasswd:
-    file: ${path.join(tmp.path, "htpasswd")}
-    max_users: 100
-uplinks:
-  npmjs:
-    url: https://registry.npmjs.org/
-packages:
-  "supabase":
-    access: $all
-    publish: $all
-  "@supabase/*":
-    access: $all
-    publish: $all
-  "**":
-    access: $all
-    publish: $all
-    proxy: npmjs
-max_body_size: 200mb
-listen: 0.0.0.0:${PORT}
-`,
-  );
-
-  // pnpm publish delegates to npm internals, which only honor per-registry auth
-  // configured in an .npmrc — `NPM_CONFIG_TOKEN` is not consulted. Write a temp
-  // .npmrc with `_authToken` for the verdaccio host and point npm at it via
-  // `npm_config_userconfig` so every publish call sees credentials.
-  const publishNpmrc = path.join(tmp.path, "publish.npmrc");
-  await writeFile(publishNpmrc, `//localhost:${PORT}/:_authToken=dummy\n`);
-  const publishEnv = { ...process.env, npm_config_userconfig: publishNpmrc };
-
-  // Sync versions across all packages
-  console.log(`Syncing versions to ${version}...`);
-  await $`pnpm exec bun apps/cli/scripts/sync-versions.ts --version ${version}`.cwd(root).quiet();
-
-  console.log("Starting local npm registry...");
-  await using registry = await startVerdaccio(configPath, PORT);
-  console.log(`Registry ready at ${registry.url}\n`);
-
-  const platformPackages = ALL_PACKAGES.filter((p) => p !== "cli");
-  console.log("Publishing platform packages...");
-  for (const pkg of platformPackages) {
-    const pkgDir = path.join(root, "packages", pkg);
-    try {
-      await $`pnpm publish --registry ${registry.url} --tag ${tag} --no-git-checks`
-        .cwd(pkgDir)
-        .env(publishEnv);
-      console.log(`  @supabase/${pkg}`);
-    } catch (e) {
-      if (await hasVerdaccioTarball(storageDir, pkg)) {
-        console.log(`  @supabase/${pkg} (already present in local registry)`);
-        continue;
-      }
-      throw e;
-    }
-  }
-
-  // Inspect what Verdaccio actually received — directly answers whether
-  // `publishConfig.executableFiles` is being applied to the published tarball.
-  console.log("\nVerdaccio tarball contents (bin entries only):");
-  for (const pkg of platformPackages) {
-    await inspectVerdaccioTarball(storageDir, pkg);
-  }
-
-  // Build and publish umbrella package
-  const cliDir = path.join(root, "apps", "cli");
-  console.log("\nBuilding umbrella package shim...");
-  await $`pnpm build:shim`.cwd(cliDir).quiet();
-
-  const cliPkgJson = await readFile(path.join(cliDir, "package.json"), "utf-8").then(JSON.parse);
-  const umbrellaName: string = cliPkgJson.name;
-
-  console.log("Publishing umbrella package...");
-  await $`pnpm publish --registry ${registry.url} --tag ${tag} --no-git-checks`
-    .cwd(cliDir)
-    .env(publishEnv);
-  console.log(`  ${umbrellaName}\n`);
-
-  console.log("Verdaccio umbrella tarball contents:");
-  const umbrellaStorage = path.join(storageDir, umbrellaName);
-  try {
-    const files = await readdir(umbrellaStorage);
-    const tarball = files.find((f) => f.endsWith(".tgz"));
-    if (tarball) {
-      const listing = await $`tar -tvf ${path.join(umbrellaStorage, tarball)}`.text();
-      for (const line of listing.split("\n").filter(Boolean)) {
-        console.log(`    ${line.trim()}`);
-      }
-    } else {
-      console.log(`  <no .tgz under ${umbrellaStorage}>`);
-    }
-  } catch {
-    console.log(`  <no umbrella tarball storage at ${umbrellaStorage}>`);
-  }
-
-  // Create test project
-  const testDir = path.join(tmp.path, "test-project");
-  await mkdir(testDir);
-  await writeFile(
-    path.join(testDir, "package.json"),
-    JSON.stringify({ name: "test-npm-smoke", version: "0.0.0", private: true }),
-  );
-  await writeFile(
-    path.join(testDir, ".npmrc"),
-    `registry=${registry.url}\n//localhost:${PORT}/:_authToken=dummy\n`,
-  );
-
-  // Install. Pass --registry explicitly: in some environments (notably ones
-  // where pnpm has set `npm_config_*` env vars) those override the project
-  // .npmrc, and `npm install supabase` silently fetches from registry.npmjs.org
-  // instead — the test then accidentally exercises the published 2.x CLI rather
-  // than the umbrella we just packed. The CLI flag wins over both env vars and
-  // .npmrc, so it is the only resolution path that is actually safe here.
-  const installSpec = tag === "latest" ? umbrellaName : `${umbrellaName}@${tag}`;
-  console.log(`\nInstalling ${installSpec}...`);
-  await $`npm install --registry ${registry.url} ${installSpec}`.cwd(testDir);
-
-  // Verify
-  console.log("\nVerifying...");
-  const ext = process.platform === "win32" ? ".cmd" : "";
-  const binPath = path.join(testDir, "node_modules", ".bin", `supabase${ext}`);
-
-  await dumpInstalledTree(testDir, ext);
-
-  const versionResult = await runCli(binPath, ["--version"]);
-  const hasValidVersion =
-    versionResult.exitCode === 0 && /^\d+\.\d+\.\d+/.test(versionResult.stdout);
-
-  if (!hasValidVersion) {
-    console.log(`\n[verify] supabase --version FAILED:`);
-    console.log(`  exit=${versionResult.exitCode}`);
-    console.log(`  stdout=${JSON.stringify(versionResult.stdout)}`);
-    console.log(`  stderr=${JSON.stringify(versionResult.stderr)}`);
-
-    // Isolate "shim broken" vs "platform binary broken" by trying the
-    // platform binary directly.
-    const platformBin = await findPlatformBinary(testDir, ext);
-    if (platformBin) {
-      console.log(`\n[verify] retrying via platform binary: ${platformBin}`);
-      const direct = await runCli(platformBin, ["--version"]);
-      console.log(`  exit=${direct.exitCode}`);
-      console.log(`  stdout=${JSON.stringify(direct.stdout)}`);
-      console.log(`  stderr=${JSON.stringify(direct.stderr)}`);
-    } else {
-      console.log(`\n[verify] no platform binary found under node_modules/@supabase/*/bin/`);
-    }
-  }
-
-  const shellCheck = await verifyExpectedShell(binPath);
-  const passed = hasValidVersion && shellCheck.passed;
-
-  console.log(
-    `\n${passed ? "PASS" : "FAIL"} — supabase --version exit=${versionResult.exitCode} stdout=${JSON.stringify(versionResult.stdout)}`,
-  );
-  console.log(shellCheck.detail);
-
-  return passed;
+  return Effect.runPromise(runNpmTestEffect(version, tag).pipe(Effect.provide(BunServices.layer)));
 }

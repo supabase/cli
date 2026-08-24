@@ -105,11 +105,9 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       if (Option.isSome(flags.linked)) exclusive.push("linked");
       if (Option.isSome(flags.local)) exclusive.push("local");
       if (exclusive.length > 1) {
-        return yield* Effect.fail(
-          new LegacyDeclarativeMutuallyExclusiveFlagsError({
-            message: `if any flags in the group [db-url linked local] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
-          }),
-        );
+        return yield* new LegacyDeclarativeMutuallyExclusiveFlagsError({
+          message: `if any flags in the group [db-url linked local] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
+        });
       }
 
       // Explicit `--linked`: Go re-loads config with the resolved ref (root
@@ -148,12 +146,10 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           workdirFromOutput !== ".." &&
           !workdirFromOutput.startsWith(`..${path.sep}`));
       if (declarativeDirRel.trim().length === 0 || outputContainsWorkdir) {
-        return yield* Effect.fail(
-          new LegacyDeclarativeWriteError({
-            message:
-              "declarative output directory must not be empty, resolve to the project directory, or contain the project directory",
-          }),
-        );
+        return yield* new LegacyDeclarativeWriteError({
+          message:
+            "declarative output directory must not be empty, resolve to the project directory, or contain the project directory",
+        });
       }
       yield* legacyWarnFormerDeclarativeDefault(fs, path, cliConfig.workdir, toml.pgDelta);
       const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
@@ -181,7 +177,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
         declarativeDirDisplay: declarativeDirRel,
         schema: flags.schema,
         noCache: flags.noCache,
-        debug: legacyIsPgDeltaDebugEnabled(),
+        debug: legacyIsPgDeltaDebugEnabled(toml.projectEnv),
         strictCoverage: flags.strictCoverage,
         dnsResolver,
         ...(linkedProjectRef !== undefined ? { linkedProjectRef } : {}),
@@ -200,22 +196,20 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           // `ensureLocalDatabaseStarted` (`db_schema_declarative.go:190`), which
           // short-circuits `if !local { return nil }` (`:127-128`). So `--local=false`
           // selects the local target but must NOT start a stopped stack.
-          yield* seam.ensureLocalPostgresImageCurrent();
+          yield* seam.ensureLocalPostgresImageCurrent;
           if (Option.getOrElse(flags.local, () => false)) {
-            yield* seam.ensureLocalDatabaseStarted();
+            yield* seam.ensureLocalDatabaseStarted;
           }
-          target = legacyLocalEndpoint(local, dnsResolver);
+          target = yield* legacyLocalEndpoint(local, dnsResolver);
         } else {
           target = yield* legacyResolveRemoteEndpoint(flags);
         }
         overwrite = flags.overwrite;
       } else {
         if (!tty.stdinIsTty && !yes) {
-          return yield* Effect.fail(
-            new LegacyDeclarativeNonInteractiveError({
-              message: "in non-interactive mode, specify a target: --local, --linked, or --db-url",
-            }),
-          );
+          return yield* new LegacyDeclarativeNonInteractiveError({
+            message: "in non-interactive mode, specify a target: --local, --linked, or --db-url",
+          });
         }
         if ((yield* hasDeclarativeFiles(fs, declarativeDir)) && !flags.overwrite) {
           // Go asks via Console.PromptYesNo (db_schema_declarative.go:268-270,
@@ -270,7 +264,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           path,
           cliConfig.workdir,
           linkedRef,
-          (yield* LegacyDeclarativeSeam).ensureLocalPostgresImageCurrent(),
+          (yield* LegacyDeclarativeSeam).ensureLocalPostgresImageCurrent,
         );
         overwrite = true;
       }

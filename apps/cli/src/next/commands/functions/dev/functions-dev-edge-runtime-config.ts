@@ -5,8 +5,9 @@ import {
   type ProjectConfig,
 } from "@supabase/config";
 import type { EdgeRuntimeConfig } from "@supabase/stack/effect";
-import { Data, Effect, Redacted } from "effect";
+import { ConfigProvider, Data, Effect, Redacted } from "effect";
 import { ProjectHome } from "../../../config/project-home.service.ts";
+import { collectConfigEnvironment } from "../../../../shared/runtime/config-environment.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -93,7 +94,15 @@ function toStackEdgeRuntimeConfig(config: ResolvedProjectEdgeRuntimeConfig): Edg
 
 export const resolveFunctionsDevEdgeRuntimeConfig = Effect.fnUntraced(function* () {
   const projectHome = yield* ProjectHome;
-  const loadedConfig = yield* loadProjectConfig(projectHome.projectRoot);
+  const provider = yield* ConfigProvider.ConfigProvider;
+  const baseEnv = yield* collectConfigEnvironment(provider);
+  const projectEnv = yield* loadProjectEnvironment({
+    cwd: projectHome.projectRoot,
+    baseEnv,
+  });
+  const loadedConfig = yield* loadProjectConfig(projectHome.projectRoot, {
+    projectEnv: projectEnv ?? undefined,
+  });
 
   if (loadedConfig === null) {
     const config = {};
@@ -102,11 +111,6 @@ export const resolveFunctionsDevEdgeRuntimeConfig = Effect.fnUntraced(function* 
       fingerprint: fingerprintEdgeRuntimeConfig(config),
     };
   }
-
-  const projectEnv = yield* loadProjectEnvironment({
-    cwd: projectHome.projectRoot,
-    baseEnv: process.env,
-  });
 
   if (projectEnv === null) {
     const config = {};
@@ -124,12 +128,10 @@ export const resolveFunctionsDevEdgeRuntimeConfig = Effect.fnUntraced(function* 
   const config = toStackEdgeRuntimeConfig(resolved);
 
   if (config.enabled === false) {
-    return yield* Effect.fail(
-      new FunctionsDevEdgeRuntimeDisabledError({
-        detail: "`supabase functions dev` requires edge_runtime.enabled to be true.",
-        suggestion: "Set edge_runtime.enabled to true or remove the override, then save again.",
-      }),
-    );
+    return yield* new FunctionsDevEdgeRuntimeDisabledError({
+      detail: "`supabase functions dev` requires edge_runtime.enabled to be true.",
+      suggestion: "Set edge_runtime.enabled to true or remove the override, then save again.",
+    });
   }
 
   return {

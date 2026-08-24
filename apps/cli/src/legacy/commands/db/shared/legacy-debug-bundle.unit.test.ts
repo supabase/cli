@@ -1,6 +1,3 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Path } from "effect";
@@ -8,91 +5,75 @@ import { Effect, Exit, FileSystem, Layer, Path } from "effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { legacyCollectMigrationsList, legacySaveDebugBundle } from "./legacy-debug-bundle.ts";
 
-const save = (workdir: string, tempDir: string, migrationsDir: string, id: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    return yield* legacySaveDebugBundle(fs, path, workdir, tempDir, migrationsDir, {
-      id,
-      error: "boom",
-      migrationSql: "create table t();",
-    });
-  }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, mockOutput().layer)));
-
 describe("legacySaveDebugBundle", () => {
-  it.effect("writes artifacts and returns the debug directory", () => {
-    const root = mkdtempSync(join(tmpdir(), "legacy-debug-"));
-    const tempDir = join(root, "supabase", ".temp", "pgdelta");
-    return save(root, tempDir, join(root, "supabase", "migrations"), "20240101-000000").pipe(
-      Effect.tap((debugDir) =>
-        Effect.sync(() => {
-          expect(debugDir).toBe(join(tempDir, "debug", "20240101-000000"));
-          expect(existsSync(join(debugDir, "generated-migration.sql"))).toBe(true);
-          expect(readFileSync(join(debugDir, "error.txt"), "utf8")).toBe("boom");
-          rmSync(root, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
+  it.effect("writes artifacts and returns the debug directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "legacy-debug-" });
+      const tempDir = path.join(root, "supabase", ".temp", "pgdelta");
+      const debugDir = yield* legacySaveDebugBundle(
+        fs,
+        path,
+        root,
+        tempDir,
+        path.join(root, "supabase", "migrations"),
+        { id: "20240101-000000", error: "boom", migrationSql: "create table t();" },
+      );
+      expect(debugDir).toBe(path.join(tempDir, "debug", "20240101-000000"));
+      expect(yield* fs.exists(path.join(debugDir, "generated-migration.sql"))).toBe(true);
+      expect(yield* fs.readFileString(path.join(debugDir, "error.txt"))).toBe("boom");
+    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, mockOutput().layer))),
+  );
 
-  it.effect("fails (does not return a path) when the debug directory cannot be created", () => {
-    // Plant a regular file where the `debug` directory needs to be, so the recursive
-    // makeDirectory fails — Go's SaveDebugBundle returns an error here rather than
-    // claiming a bundle was saved.
-    const root = mkdtempSync(join(tmpdir(), "legacy-debug-fail-"));
-    const tempDir = join(root, "pgdelta");
-    writeFileSync(join(root, "pgdelta"), "not a directory");
-    return save(root, tempDir, join(root, "migrations"), "20240101-000000").pipe(
-      Effect.exit,
-      Effect.tap((exit) =>
-        Effect.sync(() => {
-          expect(Exit.isFailure(exit)).toBe(true);
-          rmSync(root, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
+  it.effect("fails (does not return a path) when the debug directory cannot be created", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "legacy-debug-fail-" });
+      const tempDir = path.join(root, "pgdelta");
+      yield* fs.writeFileString(tempDir, "not a directory");
+      const exit = yield* legacySaveDebugBundle(
+        fs,
+        path,
+        root,
+        tempDir,
+        path.join(root, "migrations"),
+        { id: "20240101-000000", error: "boom", migrationSql: "create table t();" },
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, mockOutput().layer))),
+  );
 });
 
-const collect = (migrationsDir: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    return yield* legacyCollectMigrationsList(fs, path, migrationsDir);
-  }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, mockOutput().layer)));
-
 describe("legacyCollectMigrationsList", () => {
-  it.effect("returns migration filenames when the dir is readable", () => {
-    const root = mkdtempSync(join(tmpdir(), "legacy-collect-"));
-    const migrationsDir = join(root, "supabase", "migrations");
-    mkdirSync(migrationsDir, { recursive: true });
-    writeFileSync(join(migrationsDir, "20240101120000_create.sql"), "create table x();");
-    return collect(migrationsDir).pipe(
-      Effect.tap((names) =>
-        Effect.sync(() => {
-          expect(names).toEqual(["20240101120000_create.sql"]);
-          rmSync(root, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
+  it.effect("returns migration filenames when the dir is readable", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "legacy-collect-" });
+      const migrationsDir = path.join(root, "supabase", "migrations");
+      yield* fs.makeDirectory(migrationsDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(migrationsDir, "20240101120000_create.sql"),
+        "create table x();",
+      );
+      expect(yield* legacyCollectMigrationsList(fs, path, migrationsDir)).toEqual([
+        "20240101120000_create.sql",
+      ]);
+    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, mockOutput().layer))),
+  );
 
   it.effect(
     "swallows an unreadable migrations dir (returns []) so it never masks the primary error",
-    () => {
-      // Go's CollectMigrationsList returns nil on a read error; the debug bundle just
-      // omits migration copies rather than replacing the in-flight diff/apply error.
-      const root = mkdtempSync(join(tmpdir(), "legacy-collect-fail-"));
-      const migrationsPath = join(root, "migrations");
-      writeFileSync(migrationsPath, "not a directory");
-      return collect(migrationsPath).pipe(
-        Effect.tap((names) =>
-          Effect.sync(() => {
-            expect(names).toEqual([]);
-            rmSync(root, { recursive: true, force: true });
-          }),
-        ),
-      );
-    },
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "legacy-collect-fail-" });
+        const migrationsPath = path.join(root, "migrations");
+        yield* fs.writeFileString(migrationsPath, "not a directory");
+        expect(yield* legacyCollectMigrationsList(fs, path, migrationsPath)).toEqual([]);
+      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, mockOutput().layer))),
   );
 });

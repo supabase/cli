@@ -1,5 +1,5 @@
 import { DEFAULT_VERSIONS } from "@supabase/stack/effect";
-import { describe, expect, test } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import {
   mockProjectLinkState,
@@ -11,19 +11,22 @@ import {
 } from "../../config/service-version-resolution.ts";
 
 describe("service version overrides", () => {
-  test("canonicalizes repeated flag overrides to published service tags", async () => {
-    await expect(
-      Effect.runPromise(
-        parseServiceVersionOverrides(["postgrest=v14.5", "mailpit=1.30.2", "auth=2.180.0"]),
-      ),
-    ).resolves.toEqual({
-      postgrest: "v14.5",
-      mailpit: "v1.30.2",
-      auth: "v2.180.0",
-    });
-  });
+  it.effect("canonicalizes repeated flag overrides to published service tags", () =>
+    Effect.gen(function* () {
+      const result = yield* parseServiceVersionOverrides([
+        "postgrest=v14.5",
+        "mailpit=1.30.2",
+        "auth=2.180.0",
+      ]);
+      expect(result).toEqual({
+        postgrest: "v14.5",
+        mailpit: "v1.30.2",
+        auth: "v2.180.0",
+      });
+    }),
+  );
 
-  test("resolves flag > local file > link state precedence", async () => {
+  it.effect("resolves flag > local file > link state precedence", () => {
     const candidateBaseline = {
       ...DEFAULT_VERSIONS,
       postgres: "17.6.1.090",
@@ -56,28 +59,25 @@ describe("service version overrides", () => {
       }),
     );
 
-    await expect(
-      Effect.runPromise(
-        resolveServiceVersionContext(["auth=v2.170.0", "postgres=17.4.1.045"]).pipe(
-          Effect.provide(layer),
-        ),
-      ),
-    ).resolves.toEqual({
-      candidateBaseline,
-      pinnedBaseline: candidateBaseline,
-      runtimeVersions: {
-        ...candidateBaseline,
-        postgres: "17.4.1.045",
-        auth: "v2.170.0",
-        storage: "v1.40.0",
-      },
-      activeOverrides: [
-        { service: "postgres", version: "17.4.1.045", source: "flag" },
-        { service: "auth", version: "v2.170.0", source: "flag" },
-        { service: "storage", version: "v1.40.0", source: "local" },
-      ],
-      availableUpdates: [],
-      updateFingerprint: undefined,
-    });
+    return Effect.gen(function* () {
+      const result = yield* resolveServiceVersionContext(["auth=v2.170.0", "postgres=17.4.1.045"]);
+      expect(result).toEqual({
+        candidateBaseline,
+        pinnedBaseline: candidateBaseline,
+        runtimeVersions: {
+          ...candidateBaseline,
+          postgres: "17.4.1.045",
+          auth: "v2.170.0",
+          storage: "v1.40.0",
+        },
+        activeOverrides: [
+          { service: "postgres", version: "17.4.1.045", source: "flag" },
+          { service: "auth", version: "v2.170.0", source: "flag" },
+          { service: "storage", version: "v1.40.0", source: "local" },
+        ],
+        availableUpdates: [],
+        updateFingerprint: undefined,
+      });
+    }).pipe(Effect.provide(layer));
   });
 });

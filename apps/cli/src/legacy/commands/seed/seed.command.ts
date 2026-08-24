@@ -8,6 +8,6 @@ export const legacySeedCommand = Command.make("seed").pipe(
   Command.withShortDescription("Seed a Supabase project"),
   // Persistent `--linked`/`--local` (Go `seedCmd.PersistentFlags()`), accepted
   // before or after the subcommand. See `seed.flags.ts`.
-  Command.withGlobalFlags([LegacySeedLinkedFlag, LegacySeedLocalFlag]),
   Command.withSubcommands([legacyBucketsCommand]),
+  Command.withGlobalFlags([LegacySeedLinkedFlag, LegacySeedLocalFlag]),
 );

@@ -326,7 +326,7 @@ const fetchPostgrestVersion = Effect.fnUntraced(function* (
 
   const normalized = version?.trim().split(/\s+/)[0];
   if (normalized === undefined || normalized.length === 0) {
-    return yield* Effect.fail(new ServiceVersionNotFoundError({ service: "postgrest" }));
+    return yield* new ServiceVersionNotFoundError({ service: "postgrest" });
   }
 
   return normalized.startsWith("v") ? normalized : `v${normalized}`;
@@ -341,7 +341,7 @@ const fetchAuthVersion = Effect.fnUntraced(function* (
   const version = stringField(body, "version")?.trim();
 
   if (version === undefined || version.length === 0) {
-    return yield* Effect.fail(new ServiceVersionNotFoundError({ service: "auth" }));
+    return yield* new ServiceVersionNotFoundError({ service: "auth" });
   }
 
   return version;
@@ -354,7 +354,7 @@ const fetchStorageVersion = Effect.fnUntraced(function* (
 ) {
   const version = (yield* fetchText(client, `${baseUrl}/storage/v1/version`, accessKey)).trim();
   if (version.length === 0 || version === "0.0.0") {
-    return yield* Effect.fail(new ServiceVersionNotFoundError({ service: "storage" }));
+    return yield* new ServiceVersionNotFoundError({ service: "storage" });
   }
 
   return version.startsWith("v") ? version : `v${version}`;
@@ -362,7 +362,7 @@ const fetchStorageVersion = Effect.fnUntraced(function* (
 
 const fetchOptionalVersion = (
   service: OptionalRemoteServiceName,
-  effect: Effect.Effect<string, unknown>,
+  effect: Effect.Effect<string, Error>,
 ) =>
   effect.pipe(
     Effect.exit,

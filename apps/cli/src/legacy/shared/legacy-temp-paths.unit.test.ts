@@ -1,9 +1,6 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Option, Path } from "effect";
+import { Effect, Exit, FileSystem, Formatter, Option, Path } from "effect";
 
 import { classifyCliErrorActionability } from "../../shared/telemetry/error-actionability.ts";
 import {
@@ -56,43 +53,41 @@ describe("legacyTempPaths", () => {
 
 describe("legacyReadProjectRefFile", () => {
   it.effect("returns None when the project-ref file is absent (not linked)", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-ref-"));
-    return readRef(dir).pipe(
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(Option.isNone(v)).toBe(true);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* fs.makeTempDirectory({ prefix: "legacy-ref-" });
+      const value = yield* readRef(dir);
+      expect(Option.isNone(value)).toBe(true);
+      yield* fs.remove(dir, { recursive: true });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.effect("returns the trimmed ref when the file holds a value", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-ref-"));
-    mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
-    writeFileSync(join(dir, "supabase", ".temp", "project-ref"), `  ${REF}\n`);
-    return readRef(dir).pipe(
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(Option.getOrNull(v)).toBe(REF);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectory({ prefix: "legacy-ref-" });
+      const tempDir = path.join(dir, "supabase", ".temp");
+      yield* fs.makeDirectory(tempDir, { recursive: true });
+      yield* fs.writeFileString(path.join(tempDir, "project-ref"), `  ${REF}\n`);
+      const value = yield* readRef(dir);
+      expect(Option.getOrNull(value)).toBe(REF);
+      yield* fs.remove(dir, { recursive: true });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.effect("treats a blank project-ref file as None", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-ref-"));
-    mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
-    writeFileSync(join(dir, "supabase", ".temp", "project-ref"), "   \n");
-    return readRef(dir).pipe(
-      Effect.tap((v) =>
-        Effect.sync(() => {
-          expect(Option.isNone(v)).toBe(true);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectory({ prefix: "legacy-ref-" });
+      const tempDir = path.join(dir, "supabase", ".temp");
+      yield* fs.makeDirectory(tempDir, { recursive: true });
+      yield* fs.writeFileString(path.join(tempDir, "project-ref"), "   \n");
+      const value = yield* readRef(dir);
+      expect(Option.isNone(value)).toBe(true);
+      yield* fs.remove(dir, { recursive: true });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.effect("fails with LegacyProjectRefReadError when the ref path is unreadable", () => {
@@ -100,22 +95,22 @@ describe("legacyReadProjectRefFile", () => {
     // read error. Seeding project-ref as a DIRECTORY makes the
     // read fail with EISDIR (a non-NotFound PlatformError), so it must surface, not
     // collapse to "unlinked".
-    const dir = mkdtempSync(join(tmpdir(), "legacy-ref-"));
-    mkdirSync(join(dir, "supabase", ".temp", "project-ref"), { recursive: true });
-    return readRef(dir).pipe(
-      Effect.exit,
-      Effect.tap((exit) =>
-        Effect.sync(() => {
-          expect(Exit.isFailure(exit)).toBe(true);
-          if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
-            expect(json).toContain("LegacyProjectRefReadError");
-            expect(json).toContain("failed to load project ref");
-          }
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectory({ prefix: "legacy-ref-" });
+      yield* fs.makeDirectory(path.join(dir, "supabase", ".temp", "project-ref"), {
+        recursive: true,
+      });
+      const exit = yield* readRef(dir).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const json = Formatter.formatJson(exit.cause);
+        expect(json).toContain("LegacyProjectRefReadError");
+        expect(json).toContain("failed to load project ref");
+      }
+      yield* fs.remove(dir, { recursive: true });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it("classifies an unreadable ref file as permission without an unrelated command", () => {

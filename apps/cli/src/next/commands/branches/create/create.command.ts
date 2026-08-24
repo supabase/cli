@@ -10,10 +10,8 @@ import { withCommandInstrumentation } from "../../../../shared/telemetry/command
 import { create } from "./create.handler.ts";
 
 const branchesPlatformApiLayer = platformApiLayer.pipe(Layer.provide(credentialsLayer));
-const branchesRuntimeLayer = Layer.mergeAll(
-  branchesPlatformApiLayer,
-  projectLinkStateLayer,
-  commandRuntimeLayer(["branches", "create"]),
+const branchesRuntimeLayer = Layer.mergeAll(branchesPlatformApiLayer, projectLinkStateLayer).pipe(
+  Layer.provideMerge(commandRuntimeLayer(["branches", "create"])),
 );
 
 const BRANCH_REGIONS = [

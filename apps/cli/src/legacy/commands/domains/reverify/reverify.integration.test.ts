@@ -1,6 +1,6 @@
 import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Option, Formatter } from "effect";
 
 import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -140,7 +140,9 @@ describe("legacy domains reverify integration", () => {
       const exit = yield* Effect.exit(legacyDomainsReverify(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("unexpected re-verify hostname status 503");
+        expect(Formatter.formatJson(exit.cause)).toContain(
+          "unexpected re-verify hostname status 503",
+        );
       }
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -152,7 +154,7 @@ describe("legacy domains reverify integration", () => {
       const exit = yield* Effect.exit(legacyDomainsReverify(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to re-verify custom hostname");
+        expect(Formatter.formatJson(exit.cause)).toContain("failed to re-verify custom hostname");
       }
     }).pipe(Effect.provide(layer));
   });

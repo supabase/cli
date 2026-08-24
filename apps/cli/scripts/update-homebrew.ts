@@ -1,9 +1,23 @@
+#!/usr/bin/env bun
 import { $ } from "bun";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import process from "node:process";
+import { BunPath, BunServices } from "@effect/platform-bun";
+import { Data, Effect, FileSystem, Layer } from "effect";
+import * as EffectPath from "effect/Path";
 import { parseArgs } from "node:util";
+
+class HomebrewUpdateError extends Data.TaggedError("HomebrewUpdateError")<{
+  readonly operation: string;
+  readonly cause: string;
+}> {}
+
+const causeMessage = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
+const fail = (operation: string, cause: unknown) =>
+  new HomebrewUpdateError({ operation, cause: causeMessage(cause) });
+
+const shell = <A>(operation: string, command: () => PromiseLike<A>) =>
+  Effect.tryPromise({ try: command, catch: (cause) => fail(operation, cause) });
+
+const output = (message: string) => Effect.sync(() => process.stdout.write(`${message}\n`));
 
 const { values } = parseArgs({
   options: {
@@ -18,63 +32,57 @@ const { values } = parseArgs({
 
 const version = values.version;
 if (!version) {
-  console.error(
-    "Usage: bun run scripts/update-homebrew.ts --version <version> [--repo <owner/repo>] [--tap <owner/repo>] [--name <formula-name>] [--local] [--dry-run]",
+  process.stderr.write(
+    "Usage: bun run scripts/update-homebrew.ts --version <version> [--repo <owner/repo>] [--tap <owner/repo>] [--name <formula-name>] [--local] [--dry-run]\n",
   );
   process.exit(1);
 }
 
-const repo = values.repo!;
-const tap = values.tap!;
-const name = values.name!;
-const local = values.local!;
-const dryRun = values["dry-run"]!;
-const root = path.resolve(import.meta.dir, "../../..");
-const distDir = path.join(root, "dist");
+const repo = values.repo ?? "supabase/cli";
+const tap = values.tap ?? "supabase/homebrew-tap";
+const name = values.name ?? "supabase";
+const local = values.local ?? false;
+const dryRun = values["dry-run"] ?? false;
 
-// Convert name (e.g. "supabase-beta") to the Ruby class name Homebrew
-// expects (e.g. "SupabaseBeta"). The class + filename differ by channel so
-// `supabase` and `supabase-beta` can coexist as separate formulas in the
-// same tap, but the installed binary is always `supabase` (matching the
-// Go CLI's historical behaviour).
-const className = name
-  .split(/[-_]/)
-  .filter(Boolean)
-  .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-  .join("");
-
-// `supabase-go` is the Go sidecar the legacy shell spawns via
-// apps/cli/src/shared/legacy/go-proxy.layer.ts. It is looked up by exact
-// filename colocated with process.execPath, so we MUST install it with its
-// original name right next to the SFE. The `if File.exist?` guard makes the
-// formula work for both the `legacy` shell (ships both binaries) and the
-// future `next` shell (SFE only).
 const installBlock = [
   `    bin.install "supabase"`,
   `    bin.install "supabase-go" if File.exist?("supabase-go")`,
 ].join("\n");
-
 const testInvocation = `#{bin}/supabase`;
 
-// Parse checksums
-const checksums = new Map<string, string>();
-const checksumsText = await readFile(path.join(distDir, "checksums.txt"), "utf-8");
-for (const line of checksumsText.trim().split("\n")) {
-  const [hash, file] = line.split(/\s+/) as [string, string];
-  checksums.set(file, hash);
-}
+const main = Effect.gen(function* () {
+  const path = yield* EffectPath.Path;
+  const fs = yield* FileSystem.FileSystem;
+  const root = path.resolve(import.meta.dir, "../../..");
+  const distDir = path.join(root, "dist");
+  const checksumsText = yield* fs
+    .readFileString(path.join(distDir, "checksums.txt"), "utf8")
+    .pipe(Effect.mapError((cause) => fail("read checksums", cause)));
+  const checksums = new Map<string, string>();
+  for (const line of checksumsText.trim().split("\n")) {
+    const [hash, file] = line.split(/\s+/);
+    if (hash !== undefined && file !== undefined) checksums.set(file, hash);
+  }
 
-function sha(file: string): string {
-  const hash = checksums.get(file);
-  if (!hash) throw new Error(`Checksum not found for ${file}`);
-  return hash;
-}
-
-const baseUrl = local
-  ? `file://${distDir}`
-  : `https://github.com/${repo}/releases/download/v${version}`;
-
-const formula = `class ${className} < Formula
+  const sha = (file: string) => {
+    const hash = checksums.get(file);
+    return hash === undefined
+      ? Effect.fail(fail("read checksums", `Checksum not found for ${file}`))
+      : Effect.succeed(hash);
+  };
+  const className = name
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join("");
+  const baseUrl = local
+    ? `file://${distDir}`
+    : `https://github.com/${repo}/releases/download/v${version}`;
+  const darwinArmSha = yield* sha(`supabase_${version}_darwin_arm64.tar.gz`);
+  const darwinX64Sha = yield* sha(`supabase_${version}_darwin_amd64.tar.gz`);
+  const linuxArmSha = yield* sha(`supabase_${version}_linux_arm64.tar.gz`);
+  const linuxX64Sha = yield* sha(`supabase_${version}_linux_amd64.tar.gz`);
+  const formula = `class ${className} < Formula
   desc "Supabase CLI"
   homepage "https://supabase.com"
   version "${version}"
@@ -83,20 +91,20 @@ const formula = `class ${className} < Formula
   on_macos do
     if Hardware::CPU.arm?
       url "${baseUrl}/supabase_${version}_darwin_arm64.tar.gz"
-      sha256 "${sha(`supabase_${version}_darwin_arm64.tar.gz`)}"
+      sha256 "${darwinArmSha}"
     else
       url "${baseUrl}/supabase_${version}_darwin_amd64.tar.gz"
-      sha256 "${sha(`supabase_${version}_darwin_amd64.tar.gz`)}"
+      sha256 "${darwinX64Sha}"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
       url "${baseUrl}/supabase_${version}_linux_arm64.tar.gz"
-      sha256 "${sha(`supabase_${version}_linux_arm64.tar.gz`)}"
+      sha256 "${linuxArmSha}"
     else
       url "${baseUrl}/supabase_${version}_linux_amd64.tar.gz"
-      sha256 "${sha(`supabase_${version}_linux_amd64.tar.gz`)}"
+      sha256 "${linuxX64Sha}"
     end
   end
 
@@ -109,45 +117,62 @@ ${installBlock}
   end
 end
 `;
+  const formulaFileName = `${name}.rb`;
+  const formulaOut = path.join(distDir, formulaFileName);
+  yield* fs
+    .writeFileString(formulaOut, formula)
+    .pipe(Effect.mapError((cause) => fail("write formula", cause)));
+  yield* output(`Formula written to ${formulaOut}`);
 
-const formulaFileName = `${name}.rb`;
-const formulaOut = path.join(distDir, formulaFileName);
-await writeFile(formulaOut, formula);
-console.log(`Formula written to ${formulaOut}`);
-
-if (local || dryRun) {
-  console.log(formula);
-  process.exit(0);
-}
-
-async function hasStagedChanges(repoDir: string, repoPath: string): Promise<boolean> {
-  const diff =
-    await $`git -C ${repoDir} diff --cached --quiet --exit-code -- ${repoPath}`.nothrow();
-  if (diff.exitCode === 0) return false;
-  if (diff.exitCode === 1) return true;
-  throw new Error(`Failed to inspect staged changes for ${repoPath}`);
-}
-
-// Clone tap repo, update formula, commit, push
-const tmpDir = await mkdtemp(path.join(tmpdir(), "homebrew-tap-"));
-try {
-  const tapUrl = `https://github.com/${tap}.git`;
-  await $`git clone ${tapUrl} ${tmpDir}`;
-
-  const formulaDir = path.join(tmpDir, "Formula");
-  await $`mkdir -p ${formulaDir}`;
-  const tapFormulaPath = path.join(formulaDir, formulaFileName);
-  const tapFormulaRepoPath = `Formula/${formulaFileName}`;
-  await writeFile(tapFormulaPath, formula);
-
-  await $`git -C ${tmpDir} add ${tapFormulaRepoPath}`;
-  if (await hasStagedChanges(tmpDir, tapFormulaRepoPath)) {
-    await $`git -C ${tmpDir} commit -m ${name + " " + version}`;
-    await $`git -C ${tmpDir} push`;
-    console.log(`Pushed formula update to ${tap}`);
-  } else {
-    console.log(`Formula ${formulaFileName} is already up to date in ${tap}`);
+  if (local || dryRun) {
+    yield* output(formula);
+    return;
   }
-} finally {
-  await rm(tmpDir, { recursive: true });
+
+  const hasStagedChanges = (repoDir: string, repoPath: string) =>
+    shell("inspect staged changes", () =>
+      $`git -C ${repoDir} diff --cached --quiet --exit-code -- ${repoPath}`.nothrow(),
+    ).pipe(
+      Effect.flatMap((diff) =>
+        diff.exitCode === 0
+          ? Effect.succeed(false)
+          : diff.exitCode === 1
+            ? Effect.succeed(true)
+            : Effect.fail(fail("inspect staged changes", `Failed to inspect ${repoPath}`)),
+      ),
+    );
+
+  const tmpDir = yield* fs
+    .makeTempDirectory({ prefix: "homebrew-tap-" })
+    .pipe(Effect.mapError((cause) => fail("create temporary directory", cause)));
+  yield* Effect.gen(function* () {
+    const tapUrl = `https://github.com/${tap}.git`;
+    yield* shell("clone Homebrew tap", () => $`git clone ${tapUrl} ${tmpDir}`);
+    const formulaDir = path.join(tmpDir, "Formula");
+    yield* fs
+      .makeDirectory(formulaDir, { recursive: true })
+      .pipe(Effect.mapError((cause) => fail("create formula directory", cause)));
+    const tapFormulaPath = path.join(formulaDir, formulaFileName);
+    const tapFormulaRepoPath = `Formula/${formulaFileName}`;
+    yield* fs
+      .writeFileString(tapFormulaPath, formula)
+      .pipe(Effect.mapError((cause) => fail("write tap formula", cause)));
+    yield* shell("stage formula", () => $`git -C ${tmpDir} add ${tapFormulaRepoPath}`);
+    if (yield* hasStagedChanges(tmpDir, tapFormulaRepoPath)) {
+      yield* shell("commit formula", () => $`git -C ${tmpDir} commit -m ${name + " " + version}`);
+      yield* shell("push formula", () => $`git -C ${tmpDir} push`);
+      yield* output(`Pushed formula update to ${tap}`);
+    } else {
+      yield* output(`Formula ${formulaFileName} is already up to date in ${tap}`);
+    }
+  }).pipe(Effect.ensuring(fs.remove(tmpDir, { recursive: true, force: true }).pipe(Effect.ignore)));
+});
+
+if (import.meta.main) {
+  await Effect.runPromise(
+    main.pipe(Effect.provide(Layer.mergeAll(BunServices.layer, BunPath.layer))),
+  ).catch((error: unknown) => {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  });
 }

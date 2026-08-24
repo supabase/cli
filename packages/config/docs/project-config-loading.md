@@ -81,11 +81,16 @@ participate in runtime config semantics.
 
 1. `supabase/.env`
 2. `supabase/.env.local`
-3. `process.env` passed in as `baseEnv`
+3. An explicit `baseEnv` map, when supplied
+
+The core loader does not read process-global environment state when `baseEnv` is
+omitted. Node and Bun convenience adapters opt into ambient values by passing
+`process.env` explicitly; direct Effect callers must do the same when they need
+that behavior.
 
 The resulting precedence is:
 
-- `process.env` wins over `.env.local`
+- `baseEnv` wins over `.env.local`
 - `.env.local` wins over `.env`
 - `.env` provides the lowest-priority project values
 
@@ -96,7 +101,8 @@ The loader returns a `ProjectEnvironment` object containing:
 - `loadedPaths`
 - `sources`: per-key provenance (`.env`, `.env.local`, or `ambient`)
 
-The `ambient` source label just means the value came from `process.env`.
+The `ambient` source label means the value came from the explicit `baseEnv` map
+(the Node/Bun adapters populate that map from `process.env`).
 
 ## Raw Config Loading
 

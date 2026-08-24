@@ -1,3 +1,4 @@
+import { DateTime } from "effect";
 import { legacyParseGoDuration } from "../../../shared/legacy-go-duration.ts";
 import { legacyBearerJwtErrorMessage } from "./bearer-jwt.errors.ts";
 
@@ -215,10 +216,16 @@ export function legacyParseBearerJwtExp(value: string): LegacyBearerJwtInstant {
   // `wholeSeconds` needs no fractional handling at all. Only the fractional-second
   // digits themselves need a dedicated integer field: truncate (not round) to 9
   // digits, matching the truncation of excess fractional digits described above.
-  const parsedDate = new Date(0);
-  parsedDate.setUTCFullYear(Number(year), Number(month) - 1, Number(day));
-  parsedDate.setUTCHours(Number(hour), Number(minute), Number(second), 0);
-  const wholeSeconds = parsedDate.getTime() / 1000 - offsetSeconds;
+  const parsedDate = DateTime.makeUnsafe({
+    year: Number(year),
+    month: Number(month),
+    day: Number(day),
+    hour: Number(hour),
+    minute: Number(minute),
+    second: Number(second),
+    millisecond: 0,
+  });
+  const wholeSeconds = DateTime.toEpochMillis(parsedDate) / 1000 - offsetSeconds;
   const nanos = fraction === undefined ? 0 : Number(fraction.slice(0, 9).padEnd(9, "0"));
   return { wholeSeconds, nanos };
 }

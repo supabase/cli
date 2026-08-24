@@ -1,6 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, Layer } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
+import * as TestClock from "effect/testing/TestClock";
 
-import { parseResolvedIps } from "./legacy-db-dns.ts";
+import { legacyResolveHostsOverHttps, parseResolvedIps } from "./legacy-db-dns.ts";
 
 describe("parseResolvedIps", () => {
   it("returns every A/AAAA address in order, skipping non-address records", () => {
@@ -47,4 +50,36 @@ describe("parseResolvedIps", () => {
   it("throws when the payload is not a DNS-JSON object", () => {
     expect(() => parseResolvedIps(null, "db.example.com")).toThrow("failed to locate valid IP");
   });
+});
+
+describe("legacyResolveHostsOverHttps", () => {
+  it.effect("aborts the DNS-over-HTTPS body read when its deadline expires", () =>
+    Effect.gen(function* () {
+      let requestSignal: AbortSignal | undefined;
+      const fetchFn = Object.assign(
+        (
+          _input: Parameters<typeof globalThis.fetch>[0],
+          init?: Parameters<typeof globalThis.fetch>[1],
+        ) => {
+          requestSignal = init?.signal ?? undefined;
+          const response = new Response("{}", { status: 200 });
+          Object.defineProperty(response, "json", {
+            value: () => Promise.race([]),
+          });
+          return Promise.resolve(response);
+        },
+        { preconnect: globalThis.fetch.preconnect },
+      );
+      const fiber = yield* legacyResolveHostsOverHttps("db.example.com").pipe(
+        Effect.provide(Layer.succeed(FetchHttpClient.Fetch, fetchFn)),
+        Effect.forkChild({ startImmediately: true }),
+      );
+
+      yield* TestClock.adjust("11 seconds");
+
+      expect(fiber.pollUnsafe()).toBeDefined();
+      expect(requestSignal).toBeDefined();
+      expect(requestSignal?.aborted).toBe(true);
+    }),
+  );
 });

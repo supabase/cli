@@ -88,7 +88,7 @@ describe("legacyServicesRuntimeLayer — LegacyIdentityStitch exposure", () => {
       return Effect.gen(function* () {
         const stitch = yield* Effect.serviceOption(LegacyIdentityStitch);
         expect(Option.isSome(stitch)).toBe(true);
-      }).pipe(Effect.provide(legacyServicesRuntimeLayer), Effect.provide(ambientStubs()));
+      }).pipe(Effect.provide(legacyServicesRuntimeLayer.pipe(Layer.provideMerge(ambientStubs()))));
     },
   );
 });

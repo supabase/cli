@@ -55,11 +55,9 @@ export const validateMetadataUrl = (
     // URL.protocol is already lowercased, so a direct compare against
     // "https:" is safe.
     if (parsed.protocol !== "https:") {
-      return yield* Effect.fail(
-        new LegacySsoMetadataUrlInvalidError({
-          message: "only HTTPS Metadata URLs are supported",
-        }),
-      );
+      return yield* new LegacySsoMetadataUrlInvalidError({
+        message: "only HTTPS Metadata URLs are supported",
+      });
     }
 
     const httpClient = yield* HttpClient.HttpClient;
@@ -71,28 +69,26 @@ export const validateMetadataUrl = (
       // Refuse redirects so the HTTPS-only guard above can't be sidestepped via 3xx → http://internal/.
       Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
       Effect.timeout(METADATA_URL_TIMEOUT),
-      Effect.catchTag("TimeoutError", () =>
-        Effect.fail(
-          new LegacySsoMetadataUrlNetworkError({
-            message: "failed to fetch metadata url: timeout",
-          }),
-        ),
-      ),
-      Effect.catchTag("HttpClientError", (cause) =>
-        Effect.fail(
-          new LegacySsoMetadataUrlNetworkError({
-            message: `failed to fetch metadata url: ${String(cause)}`,
-          }),
-        ),
-      ),
+      Effect.catchTags({
+        TimeoutError: () =>
+          Effect.fail(
+            new LegacySsoMetadataUrlNetworkError({
+              message: "failed to fetch metadata url: timeout",
+            }),
+          ),
+        HttpClientError: (cause) =>
+          Effect.fail(
+            new LegacySsoMetadataUrlNetworkError({
+              message: `failed to fetch metadata url: ${String(cause)}`,
+            }),
+          ),
+      }),
     );
 
     if (response.status !== 200) {
-      return yield* Effect.fail(
-        new LegacySsoMetadataUrlNetworkError({
-          message: `unexpected metadata url status: ${response.status}`,
-        }),
-      );
+      return yield* new LegacySsoMetadataUrlNetworkError({
+        message: `unexpected metadata url status: ${response.status}`,
+      });
     }
 
     const arrayBuffer = yield* response.arrayBuffer.pipe(
@@ -105,11 +101,9 @@ export const validateMetadataUrl = (
     );
 
     if (arrayBuffer.byteLength > METADATA_URL_MAX_BYTES) {
-      return yield* Effect.fail(
-        new LegacySsoMetadataUrlNetworkError({
-          message: `metadata url response exceeds maximum allowed size (${METADATA_URL_MAX_BYTES} bytes)`,
-        }),
-      );
+      return yield* new LegacySsoMetadataUrlNetworkError({
+        message: `metadata url response exceeds maximum allowed size (${METADATA_URL_MAX_BYTES} bytes)`,
+      });
     }
 
     yield* validateMetadataXmlBytes(

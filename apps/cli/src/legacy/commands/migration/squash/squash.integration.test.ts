@@ -1,8 +1,16 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option } from "effect";
+import {
+  Cause,
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Path,
+} from "effect";
 import { PlatformError, SystemError } from "effect/PlatformError";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -27,6 +35,7 @@ import {
 import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
+import { makeLegacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
 import {
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
@@ -215,6 +224,37 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
   ),
 );
 
+const fixturePath = ManagedRuntime.make(BunServices.layer).runSync(Path.Path);
+const join = (first: string, ...rest: ReadonlyArray<string>) => fixturePath.join(first, ...rest);
+const pendingDirectories: string[] = [];
+const pendingWrites: Array<{ readonly path: string; readonly contents: string | Uint8Array }> = [];
+const mkdirSync = (_path: string, _options?: { readonly recursive?: boolean }) => {
+  pendingDirectories.push(_path);
+};
+const writeFileSync = (path: string, contents: string | Uint8Array) => {
+  pendingWrites.push({ path, contents });
+};
+const flushFixtureWrites = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  for (const directory of pendingDirectories) {
+    yield* fs.makeDirectory(directory, { recursive: true });
+  }
+  for (const write of pendingWrites) {
+    yield* fs.makeDirectory(fixturePath.dirname(write.path), { recursive: true });
+    yield* fs.writeFile(
+      write.path,
+      typeof write.contents === "string"
+        ? new TextEncoder().encode(write.contents)
+        : write.contents,
+    );
+  }
+  pendingDirectories.length = 0;
+  pendingWrites.length = 0;
+});
+const existsPath = (path: string) => Effect.flatMap(FileSystem.FileSystem, (fs) => fs.exists(path));
+const readTextPath = (path: string) =>
+  Effect.flatMap(FileSystem.FileSystem, (fs) => fs.readFileString(path));
+
 interface SetupOpts {
   readonly format?: OutputFormat;
   readonly isTTY?: boolean;
@@ -238,9 +278,14 @@ interface SetupOpts {
   readonly fullDumpSql?: string;
   readonly failDumpKind?: "before" | "after" | "full";
   readonly fsFaults?: FsFaultOpts;
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
+  const configProvider = ConfigProvider.fromEnv({
+    env: opts.env ?? {},
+    preserveEmptyStrings: true,
+  });
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
@@ -355,10 +400,13 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
 
   const baseLayer = Layer.mergeAll(
+    Layer.effectDiscard(flushFixtureWrites.pipe(Effect.provide(BunServices.layer))),
     // Listed first so every fake service layer below overrides its real
     // implementation — `Layer.mergeAll` is last-wins on a shared service,
     // matching `diff.integration.test.ts`'s own established ordering.
     BunServices.layer,
+    ConfigProvider.layer(configProvider),
+    makeLegacyViperEnvLayer(configProvider),
     out.layer,
     telemetry.layer,
     cache.layer,
@@ -392,6 +440,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   return {
     layer,
+    configProvider,
     out,
     telemetry,
     cache,
@@ -691,8 +740,8 @@ describe("legacy migration squash", () => {
           );
 
           const migrationsDir = join(tmp.current, "supabase", "migrations");
-          expect(existsSync(join(migrationsDir, "0_init.sql"))).toBe(false);
-          expect(existsSync(join(migrationsDir, "1_target.sql"))).toBe(true);
+          expect(yield* existsPath(join(migrationsDir, "0_init.sql"))).toBe(false);
+          expect(yield* existsPath(join(migrationsDir, "1_target.sql"))).toBe(true);
 
           // Hardcoded (not recomputed via `squash.diff.ts`'s own helpers) so a
           // regression in the separator constant or the diff algorithm itself
@@ -700,7 +749,7 @@ describe("legacy migration squash", () => {
           // fails this assertion.
           const expectedTail =
             "\n--\n-- Dumped schema changes for auth and storage\n--\n\n" + "new auth object;\n";
-          expect(readFileSync(join(migrationsDir, "1_target.sql"), "utf8")).toBe(
+          expect(yield* readTextPath(join(migrationsDir, "1_target.sql"))).toBe(
             FULL_SQL + expectedTail,
           );
 
@@ -743,7 +792,7 @@ describe("legacy migration squash", () => {
             // `legacyStreamPgDump` applies the registry mirror itself —
             // the default (no override) registry rewrites
             // to the ECR mirror, not the bare Dockerfile-manifest tag.
-            expect(call.image).toBe(legacyGetRegistryImageUrl(dockerfileServiceImage("pg")));
+            expect(call.image).toBe(legacyGetRegistryImageUrl(dockerfileServiceImage("pg"), {}));
           }
           // Every dump dials the SAME shadow host, whatever this machine's Docker
           // context resolves it to (`legacyGetHostname`) — self-consistency avoids
@@ -804,8 +853,6 @@ describe("legacy migration squash", () => {
         // the same registry-mirror lookup — so a registry mirror set only in `supabase/.env`
         // reaches all three. The handler applies that with `legacyApplyProjectEnv`, scoped to
         // the run and reverted when it completes.
-        const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-        delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
         const s = setupHappyPath();
         writeFileSync(
           join(tmp.current, "supabase", ".env"),
@@ -817,18 +864,7 @@ describe("legacy migration squash", () => {
           for (const call of s.dumpCalls) {
             expect(call.image).toMatch(/^my-mirror\.example\.com\/supabase\//u);
           }
-          // Reverted once the command's own scope closes (`Effect.scoped` on `runSquash`'s
-          // terminal pipe) — never leaks into a later command in the same process.
-          expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
-        }).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (prev === undefined) delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-              else process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = prev;
-            }),
-          ),
-          Effect.provide(s.layer),
-        );
+        }).pipe(Effect.provide(s.layer));
       },
     );
 
@@ -838,8 +874,6 @@ describe("legacy migration squash", () => {
         // Host networking is the default, but an explicit network id
         // overrides it whenever that resolves non-empty — a value sourced only from
         // `supabase/.env` still wins over host.
-        const prev = process.env["SUPABASE_NETWORK_ID"];
-        delete process.env["SUPABASE_NETWORK_ID"];
         const s = setupHappyPath();
         writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_NETWORK_ID=dotenv-net\n");
         return Effect.gen(function* () {
@@ -848,15 +882,7 @@ describe("legacy migration squash", () => {
           for (const call of s.dumpCalls) {
             expect(call.network).toEqual({ _tag: "named", name: "dotenv-net" });
           }
-        }).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (prev === undefined) delete process.env["SUPABASE_NETWORK_ID"];
-              else process.env["SUPABASE_NETWORK_ID"] = prev;
-            }),
-          ),
-          Effect.provide(s.layer),
-        );
+        }).pipe(Effect.provide(s.layer));
       },
     );
 
@@ -872,10 +898,10 @@ describe("legacy migration squash", () => {
       return Effect.gen(function* () {
         yield* legacyMigrationSquash(flags({ version: Option.some("1") }));
         const migrationsDir = join(tmp.current, "supabase", "migrations");
-        expect(existsSync(join(migrationsDir, "0_init.sql"))).toBe(false);
-        expect(existsSync(join(migrationsDir, "1_target.sql"))).toBe(true);
+        expect(yield* existsPath(join(migrationsDir, "0_init.sql"))).toBe(false);
+        expect(yield* existsPath(join(migrationsDir, "1_target.sql"))).toBe(true);
         // The newer file was never touched — outside the `--version 1` window.
-        expect(readFileSync(join(migrationsDir, "2_after.sql"), "utf8")).toBe(
+        expect(yield* readTextPath(join(migrationsDir, "2_after.sql"))).toBe(
           "create table c (id int);\n",
         );
       }).pipe(Effect.provide(s.layer));
@@ -991,7 +1017,7 @@ describe("legacy migration squash", () => {
           // Truncated (by the earlier `O_TRUNC`), then only the partial stream the
           // dying container managed to write before failing — no separator/diff
           // was ever appended, since the whole operation aborted first.
-          expect(readFileSync(targetPath, "utf8")).toBe("partial output before the container died");
+          expect(yield* readTextPath(targetPath)).toBe("partial output before the container died");
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -1083,7 +1109,7 @@ describe("legacy migration squash", () => {
           }
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
           // The full dump itself made it onto disk before the tail write failed.
-          expect(readFileSync(targetPath, "utf8")).toBe("full;\n");
+          expect(yield* readTextPath(targetPath)).toBe("full;\n");
         }).pipe(Effect.provide(s.layer));
       },
     );
@@ -1106,7 +1132,7 @@ describe("legacy migration squash", () => {
         // "non-empty", and proves the workdir-relative path (never the absolute one).
         expect(stderr(s.out)).toContain("FileSystem.remove (supabase/migrations/0_init.sql)");
         // The file that failed to be removed is still on disk.
-        expect(existsSync(earlierPath)).toBe(true);
+        expect(yield* existsPath(earlierPath)).toBe(true);
       }).pipe(Effect.provide(s.layer));
     });
 

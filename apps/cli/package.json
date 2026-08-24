@@ -49,6 +49,7 @@
     "@clack/prompts": "^1.7.0",
     "@effect/atom-react": "catalog:",
     "@effect/platform-bun": "catalog:",
+    "@effect/platform-node": "catalog:",
     "@effect/sql-pg": "catalog:",
     "@effect/vitest": "catalog:",
     "@modelcontextprotocol/sdk": "^1.30.0",

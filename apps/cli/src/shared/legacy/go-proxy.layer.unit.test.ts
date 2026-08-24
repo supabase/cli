@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "@effect/vitest";
-import { Cause, Deferred, Effect, Exit, Fiber, Layer, Sink, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { Cause, Data, Deferred, Effect, Exit, Fiber, Layer, Sink, Stream } from "effect";
+import { PlatformError, SystemError } from "effect/PlatformError";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { type CliProcessSignal, ProcessControl } from "../runtime/process-control.service.ts";
 import { LegacyGoChildExitError } from "./legacy-go-child-exit.error.ts";
 import { GoProxyInvocation, goProxyInvocationLayer } from "./go-proxy-invocation.ts";
@@ -31,15 +32,7 @@ import { formatGoBinaryNotFoundError, makeGoProxyLayer } from "./go-proxy.layer.
 type CapturedCommand = {
   command: string;
   args: readonly string[];
-  options: {
-    detached?: boolean;
-    stdin?: unknown;
-    stdout?: unknown;
-    stderr?: unknown;
-    cwd?: string;
-    env?: Record<string, string>;
-    extendEnv?: boolean;
-  };
+  options: ChildProcess.CommandOptions;
 };
 
 type ExitBehavior =
@@ -99,7 +92,7 @@ function mockProcessControl() {
           ).pipe(Effect.asVoid),
         exit,
         setExitCode: () => Effect.void,
-        getExitCode: Effect.succeed(undefined),
+        getExitCode: Effect.as(Effect.void, undefined),
       }),
     ),
   };
@@ -114,13 +107,15 @@ function mockSpawner(exit: ExitBehavior, spawnedBeforeExit?: Deferred.Deferred<v
   const spawned: CapturedCommand[] = [];
   const layer = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make((command: any) =>
-      Effect.sync(() => {
-        const cmd = command as CapturedCommand & { _tag: string };
+    ChildProcessSpawner.make((command: ChildProcess.Command) =>
+      Effect.gen(function* () {
+        if (command._tag !== "StandardCommand") {
+          return yield* Effect.die("go proxy test received a piped command");
+        }
         spawned.push({
-          command: cmd.command,
-          args: cmd.args,
-          options: cmd.options,
+          command: command.command,
+          args: command.args,
+          options: command.options,
         });
         if (spawnedBeforeExit !== undefined) {
           Deferred.doneUnsafe(spawnedBeforeExit, Effect.void);
@@ -130,18 +125,27 @@ function mockSpawner(exit: ExitBehavior, spawnedBeforeExit?: Deferred.Deferred<v
             ? Effect.succeed(ChildProcessSpawner.ExitCode(exit.code))
             : exit.kind === "never"
               ? Effect.never
-              : Effect.fail(new Error(exit.error) as any);
+              : Effect.fail(
+                  new PlatformError(
+                    new SystemError({
+                      _tag: "Unknown",
+                      module: "ChildProcess",
+                      method: "spawn",
+                      description: exit.error,
+                    }),
+                  ),
+                );
         return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(42_424),
           exitCode,
           isRunning: Effect.succeed(false),
           kill: () => Effect.void,
           unref: Effect.succeed(Effect.void),
-          stdin: Sink.drain as any,
+          stdin: Sink.drain,
           stdout: Stream.empty,
           stderr: Stream.empty,
           all: Stream.empty,
-          getInputFd: () => Sink.drain as any,
+          getInputFd: () => Sink.drain,
           getOutputFd: () => Stream.empty,
         });
       }),
@@ -193,69 +197,84 @@ describe("formatGoBinaryNotFoundError - pinned snippet", () => {
   const TRIED = ["$SUPABASE_GO_BINARY (unset)"];
   const PINNED_VERSION = "2.100.0";
 
-  async function withMockedHost(
+  class PinnedHostImportError extends Data.TaggedError("PinnedHostImportError")<{
+    readonly message: string;
+  }> {}
+
+  function withMockedHost(
     opts: { platform: NodeJS.Platform; arch: NodeJS.Architecture },
-    fn: (mod: typeof import("./go-proxy.layer.ts")) => void | Promise<void>,
-  ): Promise<void> {
-    vi.resetModules();
-    vi.doMock("../cli/version.ts", () => ({ CLI_VERSION: PINNED_VERSION }));
-    const originalPlatform = process.platform;
-    const originalArch = process.arch;
-    Object.defineProperty(process, "platform", { value: opts.platform, configurable: true });
-    Object.defineProperty(process, "arch", { value: opts.arch, configurable: true });
-    try {
-      const mod = await import("./go-proxy.layer.ts");
-      await fn(mod);
-    } finally {
-      Object.defineProperty(process, "platform", {
-        value: originalPlatform,
-        configurable: true,
-      });
-      Object.defineProperty(process, "arch", { value: originalArch, configurable: true });
-      vi.doUnmock("../cli/version.ts");
-      vi.resetModules();
-    }
+    fn: (mod: typeof import("./go-proxy.layer.ts")) => void,
+  ): Effect.Effect<void, PinnedHostImportError> {
+    return Effect.acquireUseRelease(
+      Effect.sync(() => {
+        vi.resetModules();
+        vi.doMock("../cli/version.ts", () => ({ CLI_VERSION: PINNED_VERSION }));
+        const originalPlatform = process.platform;
+        const originalArch = process.arch;
+        Object.defineProperty(process, "platform", { value: opts.platform, configurable: true });
+        Object.defineProperty(process, "arch", { value: opts.arch, configurable: true });
+        return { originalPlatform, originalArch };
+      }),
+      () =>
+        Effect.tryPromise({
+          try: () => import("./go-proxy.layer.ts"),
+          catch: (cause) =>
+            new PinnedHostImportError({
+              message: cause instanceof Error ? cause.message : String(cause),
+            }),
+        }).pipe(Effect.tap((mod) => Effect.sync(() => fn(mod)))),
+      ({ originalPlatform, originalArch }) =>
+        Effect.sync(() => {
+          Object.defineProperty(process, "platform", {
+            value: originalPlatform,
+            configurable: true,
+          });
+          Object.defineProperty(process, "arch", { value: originalArch, configurable: true });
+          vi.doUnmock("../cli/version.ts");
+          vi.resetModules();
+        }),
+    );
   }
 
-  it("renders a copy-pasteable install snippet for linux x64", async () => {
-    await withMockedHost({ platform: "linux", arch: "x64" }, (mod) => {
+  it.effect("renders a copy-pasteable install snippet for linux x64", () =>
+    withMockedHost({ platform: "linux", arch: "x64" }, (mod) => {
       const message = mod.formatGoBinaryNotFoundError(TRIED);
       expect(message).toContain(
         `https://github.com/supabase/cli/releases/download/v${PINNED_VERSION}/supabase_${PINNED_VERSION}_linux_amd64.tar.gz`,
       );
       expect(message).toContain(`mkdir -p "$HOME/.local/share/supabase"`);
       expect(message).toContain(`export PATH="$HOME/.local/share/supabase:$PATH"`);
-    });
-  });
+    }),
+  );
 
-  it("maps Node's win32 platform to the release asset's `windows` slug", async () => {
+  it.effect("maps Node's win32 platform to the release asset's `windows` slug", () =>
     // Release pipeline publishes `.tar.gz` for every (platform, arch) pair,
     // Windows included, so the snippet renders on win32 too — just with the
     // modern `windows` slug instead of Node's historical `win32`.
-    await withMockedHost({ platform: "win32", arch: "x64" }, (mod) => {
+    withMockedHost({ platform: "win32", arch: "x64" }, (mod) => {
       const message = mod.formatGoBinaryNotFoundError(TRIED);
       expect(message).toContain(
         `https://github.com/supabase/cli/releases/download/v${PINNED_VERSION}/supabase_${PINNED_VERSION}_windows_amd64.tar.gz`,
       );
       // Never emit Node's internal `win32` token in the user-facing URL.
       expect(message).not.toContain("win32");
-    });
-  });
+    }),
+  );
 
-  it("maps darwin arm64 to the matching release asset", async () => {
-    await withMockedHost({ platform: "darwin", arch: "arm64" }, (mod) => {
+  it.effect("maps darwin arm64 to the matching release asset", () =>
+    withMockedHost({ platform: "darwin", arch: "arm64" }, (mod) => {
       expect(mod.formatGoBinaryNotFoundError(TRIED)).toContain(
         `supabase_${PINNED_VERSION}_darwin_arm64.tar.gz`,
       );
-    });
-  });
+    }),
+  );
 
-  it("omits the snippet on unsupported architectures (no release asset)", async () => {
+  it.effect("omits the snippet on unsupported architectures (no release asset)", () =>
     // ia32 has never been a release target — the snippet should not invent a URL.
-    await withMockedHost({ platform: "linux", arch: "ia32" }, (mod) => {
+    withMockedHost({ platform: "linux", arch: "ia32" }, (mod) => {
       expect(mod.formatGoBinaryNotFoundError(TRIED)).not.toContain("curl -sL");
-    });
-  });
+    }),
+  );
 });
 
 describe("makeGoProxyLayer", () => {

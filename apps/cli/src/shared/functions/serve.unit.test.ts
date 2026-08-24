@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Effect } from "effect";
 
 import { bundleServeMainTemplate } from "./serve-main-bundler.ts";
 import { dockerBindContainerPath } from "./deploy.ts";
@@ -16,12 +17,15 @@ describe("buildServeEntrypointCommand", () => {
     expect(script).toContain(". /root/env.sh\nedge-runtime start");
   });
 
-  it("keeps the spawned command short even with the real bundled template", async () => {
-    const bundled = await bundleServeMainTemplate();
-    const script = buildServeEntrypointCommand(["edge-runtime", "start"]);
-    expect(bundled.length).toBeGreaterThan(20_000);
-    expect(script.length).toBeLessThan(128);
-  });
+  it("keeps the spawned command short even with the real bundled template", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const bundled = yield* bundleServeMainTemplate();
+        const script = buildServeEntrypointCommand(["edge-runtime", "start"]);
+        expect(bundled.length).toBeGreaterThan(20_000);
+        expect(script.length).toBeLessThan(128);
+      }),
+    ));
 });
 
 describe("dockerBindContainerPath", () => {

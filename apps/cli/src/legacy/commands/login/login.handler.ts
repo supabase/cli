@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path, Redacted } from "effect";
+import { Config, Effect, FileSystem, Option, Path, Redacted } from "effect";
 
 import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
@@ -12,6 +12,7 @@ import {
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { lastExplicitLongFlagValue } from "../../../shared/cli/cobra-flag-groups.ts";
 import { LegacyProfileFlag } from "../../../shared/legacy/global-flags.ts";
+import { LegacyViperEnv } from "../../../shared/legacy/legacy-viper-env.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { Stdin } from "../../../shared/runtime/stdin.service.ts";
@@ -33,8 +34,18 @@ export const legacyLogin = Effect.fn("legacy.login")(function* (flags: LegacyLog
   const path = yield* Path.Path;
   const runtimeInfo = yield* RuntimeInfo;
   const profileFlag = yield* LegacyProfileFlag;
+  const configuredHome = yield* Config.option(Config.string("SUPABASE_HOME"));
+  const legacyEnv = yield* LegacyViperEnv;
+  const claudeCode = yield* legacyEnv.get("CLAUDECODE");
+  const claudeCodeAlt = yield* legacyEnv.get("CLAUDE_CODE");
 
-  const claudeHint = legacySuggestClaudePlugin({ stdoutIsTty: tty.stdoutIsTty });
+  const claudeHint = legacySuggestClaudePlugin({
+    stdoutIsTty: tty.stdoutIsTty,
+    env: {
+      CLAUDECODE: Option.getOrUndefined(claudeCode),
+      CLAUDE_CODE: Option.getOrUndefined(claudeCodeAlt),
+    },
+  });
 
   // Mirrors login's `PostRunE` (`cmd/login.go:42-48`): persist the chosen
   // profile to `<SUPABASE_HOME or ~/.supabase>/profile` on success. The raw
@@ -49,7 +60,7 @@ export const legacyLogin = Effect.fn("legacy.login")(function* (flags: LegacyLog
     onNone: () => undefined,
     onSome: ({ args }) => lastExplicitLongFlagValue(args, [], "profile"),
   });
-  const envProfile = process.env["SUPABASE_PROFILE"];
+  const envProfile = Option.getOrUndefined(yield* Config.option(Config.string("SUPABASE_PROFILE")));
   const profileToken =
     explicitProfileFlag !== undefined
       ? explicitProfileFlag
@@ -61,7 +72,13 @@ export const legacyLogin = Effect.fn("legacy.login")(function* (flags: LegacyLog
   const saveProfileName =
     profileToken === undefined
       ? Effect.void
-      : saveLegacyProfileName(fs, path, runtimeInfo.homeDir, profileToken);
+      : saveLegacyProfileName(
+          fs,
+          path,
+          runtimeInfo.homeDir,
+          profileToken,
+          Option.getOrUndefined(configuredHome),
+        );
 
   const tokenPath = (token: string) =>
     Effect.gen(function* () {
@@ -113,9 +130,7 @@ const resolveToken = Effect.fnUntraced(function* (flags: LegacyLoginFlags) {
   if (!stdin.isTTY) {
     const piped = yield* stdin.readPipedText;
     if (Option.isSome(piped)) return Option.some(piped.value);
-    return yield* Effect.fail(
-      new LegacyLoginMissingTokenError({ message: LEGACY_LOGIN_MISSING_TOKEN_MESSAGE }),
-    );
+    return yield* new LegacyLoginMissingTokenError({ message: LEGACY_LOGIN_MISSING_TOKEN_MESSAGE });
   }
   return Option.none<string>();
 });

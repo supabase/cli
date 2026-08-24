@@ -1,4 +1,23 @@
+import { Data, Duration, Effect, Schema } from "effect";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../telemetry/error-actionability.ts";
+
 const remoteJwksTimeoutMs = 10_000;
+
+class RemoteJwksError extends Data.TaggedError("RemoteJwksError")<{
+  readonly message: string;
+  readonly cause?: Error;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 
 /**
  * Structural JWK shape shared by both shells' own JWK types
@@ -228,34 +247,55 @@ export function thirdPartyIssuerUrlUnchecked(
  * caller-side leniency (continuing with zero remote keys) is a `functions serve`-only choice made
  * at the call site, not part of this function's contract.
  */
-export async function resolveRemoteJwks(issuerUrl: string): Promise<ReadonlyArray<unknown>> {
-  const discoveryResponse = await fetch(`${issuerUrl}/.well-known/openid-configuration`, {
-    signal: AbortSignal.timeout(remoteJwksTimeoutMs),
+const DiscoverySchema = Schema.Struct({ jwks_uri: Schema.optional(Schema.String) });
+const JwksSchema = Schema.Struct({ keys: Schema.optional(Schema.Array(Schema.Unknown)) });
+
+const toRemoteJwksError = (cause: unknown): RemoteJwksError => {
+  if (cause instanceof RemoteJwksError) return cause;
+  const transportCause =
+    HttpClientError.isHttpClientError(cause) && "cause" in cause.reason
+      ? cause.reason.cause
+      : undefined;
+  const error = transportCause instanceof Error ? transportCause : cause;
+  return new RemoteJwksError({
+    message: error instanceof Error ? error.message : String(error),
+    cause: error instanceof Error ? error : undefined,
   });
-  if (!discoveryResponse.ok) {
-    throw new Error(`Failed to fetch ${issuerUrl}/.well-known/openid-configuration`);
-  }
+};
 
-  const discovery = (await discoveryResponse.json()) as { jwks_uri?: string };
-  if (typeof discovery.jwks_uri !== "string" || discovery.jwks_uri.length === 0) {
-    throw new Error(
-      `auth.third_party: OIDC configuration at URL "${issuerUrl}/.well-known/openid-configuration" does not expose a jwks_uri property`,
+const fetchJson = Effect.fnUntraced(function* (client: HttpClient.HttpClient, url: string) {
+  return yield* Effect.gen(function* () {
+    const response = yield* client.execute(
+      HttpClientRequest.get(url).pipe(HttpClientRequest.acceptJson),
     );
+    if (response.status < 200 || response.status >= 300) {
+      return yield* new RemoteJwksError({ message: `Failed to fetch ${url}` });
+    }
+    return yield* response.json;
+  }).pipe(Effect.timeout(Duration.millis(remoteJwksTimeoutMs)), Effect.mapError(toRemoteJwksError));
+});
+
+export const resolveRemoteJwks = Effect.fnUntraced(function* (issuerUrl: string) {
+  const client = yield* HttpClient.HttpClient;
+  const discoveryUrl = `${issuerUrl}/.well-known/openid-configuration`;
+  const discovery = yield* Schema.decodeUnknownEffect(DiscoverySchema)(
+    yield* fetchJson(client, discoveryUrl),
+  ).pipe(Effect.mapError(toRemoteJwksError));
+  if (discovery.jwks_uri === undefined || discovery.jwks_uri.length === 0) {
+    return yield* new RemoteJwksError({
+      message: `auth.third_party: OIDC configuration at URL "${discoveryUrl}" does not expose a jwks_uri property`,
+    });
   }
 
-  const jwksResponse = await fetch(discovery.jwks_uri, {
-    signal: AbortSignal.timeout(remoteJwksTimeoutMs),
-  });
-  if (!jwksResponse.ok) {
-    throw new Error(`Failed to fetch ${discovery.jwks_uri}`);
-  }
-
-  const jwks = (await jwksResponse.json()) as { keys?: ReadonlyArray<unknown> };
-  if (!Array.isArray(jwks.keys) || jwks.keys.length === 0) {
-    throw new Error(
-      `auth.third_party: JWKS at URL "${discovery.jwks_uri}" as discovered from "${issuerUrl}/.well-known/openid-configuration" does not contain any JWK keys`,
-    );
+  const jwksUrl = discovery.jwks_uri;
+  const jwks = yield* Schema.decodeUnknownEffect(JwksSchema)(
+    yield* fetchJson(client, jwksUrl),
+  ).pipe(Effect.mapError(toRemoteJwksError));
+  if (jwks.keys === undefined || jwks.keys.length === 0) {
+    return yield* new RemoteJwksError({
+      message: `auth.third_party: JWKS at URL "${jwksUrl}" as discovered from "${discoveryUrl}" does not contain any JWK keys`,
+    });
   }
 
   return jwks.keys;
-}
+});

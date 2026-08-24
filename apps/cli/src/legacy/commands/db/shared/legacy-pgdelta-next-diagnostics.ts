@@ -216,14 +216,12 @@ export const legacyReportPgDeltaNextDiagnostics = Effect.fnUntraced(function* (
   if (feedback !== undefined) yield* output.info(feedback);
 
   if (report.blocking.length > 0) {
-    return yield* Effect.fail(
-      new LegacyPgDeltaEngineError({
-        message: legacyPgDeltaNextBlockingDiagnosticMessage(
-          operation,
-          strictCoverage && report.coverage.length > 0,
-        ),
-        cause: report.blocking,
-      }),
-    );
+    return yield* new LegacyPgDeltaEngineError({
+      message: legacyPgDeltaNextBlockingDiagnosticMessage(
+        operation,
+        strictCoverage && report.coverage.length > 0,
+      ),
+      cause: report.blocking,
+    });
   }
 });

@@ -205,23 +205,19 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
         const local = yield* legacyListLocalMigrations(fs, path, migrationsDir);
         const result = legacyFindPendingMigrations(local, remote);
         if (result.kind === "missing-local") {
-          return yield* Effect.fail(
-            new LegacyDbPushMissingLocalError({
-              message: LEGACY_ERR_MISSING_LOCAL,
-              suggestion: legacySuggestRevertHistory(result.versions, repairSuggestsLocalFlag),
-            }),
-          );
+          return yield* new LegacyDbPushMissingLocalError({
+            message: LEGACY_ERR_MISSING_LOCAL,
+            suggestion: legacySuggestRevertHistory(result.versions, repairSuggestsLocalFlag),
+          });
         }
         if (result.kind === "missing-remote") {
           if (!includeAll) {
             // Go's suggestIgnoreFlag lists the workdir-relative paths.
             const relPaths = result.paths.map((p) => toSlash(path.relative(workdir, p)));
-            return yield* Effect.fail(
-              new LegacyDbPushMissingRemoteError({
-                message: LEGACY_ERR_MISSING_REMOTE,
-                suggestion: legacySuggestIgnoreFlag(relPaths),
-              }),
-            );
+            return yield* new LegacyDbPushMissingRemoteError({
+              message: LEGACY_ERR_MISSING_REMOTE,
+              suggestion: legacySuggestIgnoreFlag(relPaths),
+            });
           }
           pending = legacyIncludeAllPending(local, remote.length, result.paths);
         } else {
@@ -294,9 +290,7 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
             true,
           );
           if (!ok) {
-            return yield* Effect.fail(
-              new LegacyDbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
-            );
+            return yield* new LegacyDbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
           }
           yield* legacySeedGlobals(
             session,
@@ -316,9 +310,7 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
             true,
           );
           if (!ok) {
-            return yield* Effect.fail(
-              new LegacyDbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
-            );
+            return yield* new LegacyDbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
           }
           if (includeVault) {
             yield* legacyUpsertVaultSecrets(session, vaultSecrets);
@@ -329,7 +321,7 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
             legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA"));
           const pgDeltaImplementation = legacyResolvePgDeltaImplementation(
             legacyPgDeltaImplementationFlag(
-              process.env[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
+              toml.envLookup(LEGACY_PG_DELTA_NEXT_FLAG_NAME),
               toml.projectEnv[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
             ),
           );
@@ -386,11 +378,9 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
             true,
           );
           if (!ok) {
-            return yield* Effect.fail(
-              new LegacyDbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
-            );
+            return yield* new LegacyDbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
           }
-          yield* legacySeedData(session, fs, workdir, path, seeds, applyError);
+          yield* legacySeedData(session, fs, workdir, path, seeds, toml.projectEnv, applyError);
         } else if (includeSeed) {
           yield* output.raw("Seed files are up to date.\n", "stderr");
         }

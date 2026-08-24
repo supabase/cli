@@ -5,7 +5,9 @@ import type {
   V1GetProjectApiKeysOutput,
 } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Option, Schema } from "effect";
+
+const stringifyJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -290,7 +292,7 @@ describe("legacy branches get integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = stringifyJson(exit.cause);
         expect(json).toContain("LegacyBranchesPrimaryNotFoundError");
         expect(json).toContain("primary database not found");
       }
@@ -305,7 +307,7 @@ describe("legacy branches get integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = stringifyJson(exit.cause);
         expect(json).toContain("LegacyBranchesFindUnexpectedStatusError");
         expect(json).toContain("unexpected find branch status 404");
       }
@@ -320,7 +322,7 @@ describe("legacy branches get integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = stringifyJson(exit.cause);
         expect(json).toContain("LegacyBranchesGetUnexpectedStatusError");
         expect(json).toContain("unexpected get branch status 503");
       }
@@ -335,7 +337,7 @@ describe("legacy branches get integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = stringifyJson(exit.cause);
         expect(json).toContain("LegacyBranchesApiKeysUnexpectedStatusError");
       }
     }).pipe(Effect.provide(layer));

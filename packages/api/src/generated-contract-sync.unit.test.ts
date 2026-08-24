@@ -1,7 +1,6 @@
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-
+import { BunServices } from "@effect/platform-bun";
+import { Effect, FileSystem, Path } from "effect";
+import * as Schema from "effect/Schema";
 import { describe, expect, test } from "vitest";
 
 import { openApiOperationIdMap, operationDefinitions } from "./generated/contracts.ts";
@@ -25,9 +24,21 @@ interface SnapshotOperation {
   readonly operationId: string;
 }
 
-const openApiJsonPath = join(dirname(fileURLToPath(import.meta.url)), "generated/openapi.json");
-const rawOpenApiJson = readFileSync(openApiJsonPath, "utf8");
-const openApiDocument = JSON.parse(rawOpenApiJson) as OpenApiDocumentShape;
+const openApiSnapshot = await Effect.gen(function* () {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  const openApiJsonPath = yield* path.fromFileUrl(
+    new URL("./generated/openapi.json", import.meta.url),
+  );
+  return {
+    raw: yield* fs.readFileString(openApiJsonPath),
+  };
+}).pipe(Effect.provide(BunServices.layer), Effect.runPromise);
+
+const rawOpenApiJson = openApiSnapshot.raw;
+const parsedOpenApiDocument = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown))(
+  rawOpenApiJson,
+);
 
 function extractSnapshotOperations(
   document: OpenApiDocumentShape,
@@ -68,6 +79,16 @@ function methodNameFromSdkOperationId(sdkOperationId: string): string {
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null;
 }
+
+function isOpenApiDocument(value: unknown): value is OpenApiDocumentShape {
+  return isRecord(value) && isRecord(value.paths);
+}
+
+if (!isOpenApiDocument(parsedOpenApiDocument)) {
+  throw new Error("Expected an OpenAPI document with a paths object");
+}
+
+const openApiDocument = parsedOpenApiDocument;
 
 function stringProperty(value: unknown, key: string): string {
   if (!isRecord(value)) {
@@ -176,7 +197,14 @@ describe("generated client drift against the committed openapi.json snapshot", (
   // instead checks that the committed bytes parse deterministically and keep
   // the single trailing newline `scripts/generate.ts` writes.
   test("parses the committed snapshot deterministically and keeps a single trailing newline", () => {
-    const reparsed = JSON.parse(readFileSync(openApiJsonPath, "utf8")) as OpenApiDocumentShape;
+    const reparsedUnknown = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown))(
+      rawOpenApiJson,
+    );
+    expect(isOpenApiDocument(reparsedUnknown)).toBe(true);
+    if (!isOpenApiDocument(reparsedUnknown)) {
+      return;
+    }
+    const reparsed = reparsedUnknown;
     expect(reparsed).toEqual(openApiDocument);
     expect(rawOpenApiJson.endsWith("\n")).toBe(true);
     expect(rawOpenApiJson.endsWith("\n\n")).toBe(false);

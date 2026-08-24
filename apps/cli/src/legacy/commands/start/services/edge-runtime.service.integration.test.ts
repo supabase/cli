@@ -1,9 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { describe, expect, it } from "@effect/vitest";
+import { BunServices } from "@effect/platform-bun";
 import { edgeRuntimeNofileUlimit } from "@supabase/stack/effect";
-import { Deferred, Effect, Exit, Sink, Stream } from "effect";
+import { Deferred, Effect, Exit, FileSystem, Layer, Path, Sink, Stream } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 import { type ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { beforeEach } from "vitest";
 
@@ -79,6 +78,16 @@ function mockDockerSpawner(
   };
 }
 
+const testServices = (
+  mock: ReturnType<typeof mockDockerSpawner>,
+  out: ReturnType<typeof mockOutput>,
+) =>
+  Layer.mergeAll(
+    BunServices.layer,
+    out.layer,
+    Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+  );
+
 function baseInput(workdir: string): LegacyEdgeRuntimeBringUpInput {
   return {
     projectId: "proj",
@@ -111,13 +120,14 @@ function baseInput(workdir: string): LegacyEdgeRuntimeBringUpInput {
 function envEntries(runCall: {
   args: ReadonlyArray<string>;
   env?: Readonly<Record<string, string>>;
-}) {
+}): Effect.Effect<ReadonlyArray<string>, PlatformError> {
   const envFileArgIndex = runCall.args.indexOf("--env-file");
   const envFilePath = runCall.args[envFileArgIndex + 1];
-  expect(envFilePath).toBeDefined();
-  return readFileSync(envFilePath!, "utf8")
-    .split("\n")
-    .filter((line) => line.length > 0);
+  return Effect.gen(function* () {
+    expect(envFilePath).toBeDefined();
+    const fs = yield* FileSystem.FileSystem.pipe(Effect.provide(BunServices.layer));
+    return (yield* fs.readFileString(envFilePath!)).split("\n").filter((line) => line.length > 0);
+  }).pipe(Effect.provide(BunServices.layer));
 }
 
 describe("legacyStartEdgeRuntimeContainer", () => {
@@ -126,9 +136,17 @@ describe("legacyStartEdgeRuntimeContainer", () => {
   // An empty functions directory — every scenario here has zero declared
   // functions (`configDeclaredFunctions`/`configFunctions` in `baseInput`),
   // so nothing under it is ever read; it only needs to exist.
-  beforeEach(() => {
-    mkdirSync(join(tempWorkdir.current, "supabase", "functions"), { recursive: true });
-  });
+  beforeEach(() =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem.pipe(Effect.provide(BunServices.layer));
+        const path = yield* Path.Path.pipe(Effect.provide(BunServices.layer));
+        yield* fs.makeDirectory(path.join(tempWorkdir.current, "supabase", "functions"), {
+          recursive: true,
+        });
+      }).pipe(Effect.provide(BunServices.layer)),
+    ),
+  );
 
   it.effect(
     "sends the real internal db url (db container name, port 5432, config.db.password) — NOT functions serve's `db`-alias default",
@@ -138,11 +156,10 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         const out = mockOutput();
 
         yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
-          Effect.provide(out.layer),
+          Effect.provide(testServices(mock, out)),
         );
 
-        const entries = envEntries(mock.runCall!);
+        const entries = yield* envEntries(mock.runCall!);
         expect(entries).toContain(
           "SUPABASE_DB_URL=postgresql://postgres:postgres@supabase_db_proj:5432/postgres",
         );
@@ -155,11 +172,10 @@ describe("legacyStartEdgeRuntimeContainer", () => {
       const out = mockOutput();
 
       yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
-        Effect.provide(out.layer),
+        Effect.provide(testServices(mock, out)),
       );
 
-      const entries = envEntries(mock.runCall!);
+      const entries = yield* envEntries(mock.runCall!);
       expect(entries).toContain("SUPABASE_ANON_KEY=anon.jwt.value");
       expect(entries).toContain("SUPABASE_SERVICE_ROLE_KEY=service-role.jwt.value");
       expect(entries).toContain(
@@ -180,8 +196,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         const out = mockOutput();
 
         yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
-          Effect.provide(out.layer),
+          Effect.provide(testServices(mock, out)),
         );
 
         const runCall = mock.runCall!;
@@ -198,8 +213,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         const out = mockOutput();
 
         yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
-          Effect.provide(out.layer),
+          Effect.provide(testServices(mock, out)),
         );
 
         const runCall = mock.runCall!;
@@ -213,9 +227,11 @@ describe("legacyStartEdgeRuntimeContainer", () => {
   it.effect("sets --workdir once an enabled function mounts the project root (#6035)", () =>
     Effect.gen(function* () {
       const slug = "hello";
-      const entrypoint = join(tempWorkdir.current, "supabase", "functions", slug, "index.ts");
-      mkdirSync(join(tempWorkdir.current, "supabase", "functions", slug), { recursive: true });
-      writeFileSync(entrypoint, "Deno.serve(() => new Response('ok'));");
+      const fs = yield* FileSystem.FileSystem.pipe(Effect.provide(BunServices.layer));
+      const path = yield* Path.Path.pipe(Effect.provide(BunServices.layer));
+      const entrypoint = path.join(tempWorkdir.current, "supabase", "functions", slug, "index.ts");
+      yield* fs.makeDirectory(path.dirname(entrypoint), { recursive: true });
+      yield* fs.writeFileString(entrypoint, "Deno.serve(() => new Response('ok'));");
 
       const fnConfig = {
         enabled: true,
@@ -234,10 +250,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         configDeclaredFunctions: { [slug]: fnConfig },
         configFunctions: { [slug]: fnConfig },
         rawConfigFunctions: { [slug]: fnConfig },
-      }).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
-        Effect.provide(out.layer),
-      );
+      }).pipe(Effect.provide(testServices(mock, out)));
 
       const args = mock.runCall!.args;
       expect(args[args.indexOf("--workdir") + 1]).toBe(tempWorkdir.current);
@@ -250,8 +263,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
       const out = mockOutput();
 
       yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
-        Effect.provide(out.layer),
+        Effect.provide(testServices(mock, out)),
       );
 
       expect(mock.runCall!.args).not.toContain("--workdir");
@@ -266,8 +278,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         const out = mockOutput();
 
         yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
-          Effect.provide(out.layer),
+          Effect.provide(testServices(mock, out)),
         );
 
         const runCall = mock.runCall!;
@@ -287,10 +298,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
           image: "registry.example.com/supabase/edge-runtime:v1.99.9",
         };
 
-        yield* legacyStartEdgeRuntimeContainer(input).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
-          Effect.provide(out.layer),
-        );
+        yield* legacyStartEdgeRuntimeContainer(input).pipe(Effect.provide(testServices(mock, out)));
 
         const runCall = mock.runCall!;
         const networkIndex = runCall.args.indexOf("--network");
@@ -307,8 +315,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         const out = mockOutput();
 
         yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
-          Effect.provide(out.layer),
+          Effect.provide(testServices(mock, out)),
         );
 
         const containerSteps = mock.calls
@@ -358,8 +365,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         const out = mockOutput();
 
         const error = yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
-          Effect.provide(out.layer),
+          Effect.provide(testServices(mock, out)),
           Effect.flip,
         );
 
@@ -386,8 +392,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         const out = mockOutput();
 
         const error = yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
-          Effect.provide(out.layer),
+          Effect.provide(testServices(mock, out)),
           Effect.flip,
         );
 
@@ -409,8 +414,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         const out = mockOutput();
 
         const started = yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
-          Effect.provide(out.layer),
+          Effect.provide(testServices(mock, out)),
         );
 
         expect(started.containerId).toBe("supabase_edge_runtime_proj");
@@ -424,7 +428,9 @@ describe("legacyStartEdgeRuntimeContainer", () => {
       Effect.gen(function* () {
         const mock = mockDockerSpawner();
         const out = mockOutput();
-        const stagingDir = join(
+        const fs = yield* FileSystem.FileSystem.pipe(Effect.provide(BunServices.layer));
+        const path = yield* Path.Path.pipe(Effect.provide(BunServices.layer));
+        const stagingDir = path.join(
           tempWorkdir.current,
           "supabase",
           ".temp",
@@ -434,8 +440,8 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         // Simulates a leftover from an earlier invocation (e.g. `functions serve`'s watch-mode
         // restart loop) that was never reclaimed — `writeDockerEnvFile`'s own header explains why
         // this path is deterministic/reused rather than a fresh mkdtemp per call.
-        mkdirSync(join(stagingDir, "env"), { recursive: true });
-        writeFileSync(join(stagingDir, "env", "docker.env"), "STALE=1");
+        yield* fs.makeDirectory(path.join(stagingDir, "env"), { recursive: true });
+        yield* fs.writeFileString(path.join(stagingDir, "env", "docker.env"), "STALE=1");
 
         const input = {
           ...baseInput(tempWorkdir.current),
@@ -447,14 +453,11 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         };
 
         const exit = yield* Effect.exit(
-          legacyStartEdgeRuntimeContainer(input).pipe(
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
-            Effect.provide(out.layer),
-          ),
+          legacyStartEdgeRuntimeContainer(input).pipe(Effect.provide(testServices(mock, out))),
         );
 
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(existsSync(stagingDir)).toBe(false);
+        expect(yield* fs.exists(stagingDir)).toBe(false);
       }),
   );
 
@@ -466,8 +469,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         const out = mockOutput();
 
         yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
-          Effect.provide(out.layer),
+          Effect.provide(testServices(mock, out)),
         );
 
         expect(
@@ -484,8 +486,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         const out = mockOutput();
 
         yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
-          Effect.provide(out.layer),
+          Effect.provide(testServices(mock, out)),
         );
 
         expect(out.stderrText).not.toContain("Setting up Edge Functions runtime...");

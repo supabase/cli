@@ -1,9 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Option, Formatter } from "effect";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
@@ -151,7 +147,7 @@ describe("legacy backups restore integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacyBackupRestoreUnexpectedStatusError");
         expect(errorJson).toContain("unexpected restore backup status 503");
       }
@@ -166,7 +162,7 @@ describe("legacy backups restore integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacyBackupRestoreNetworkError");
         expect(errorJson).toContain("failed to restore backup");
       }
@@ -174,11 +170,10 @@ describe("legacy backups restore integration", () => {
   });
 
   it.live("fails with LegacyProjectNotLinkedError non-interactively when no ref source", () => {
-    const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-backups-restore-int-noref-"));
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({});
     const cliConfig = mockLegacyCliConfig({
-      workdir: localTempRoot,
+      workdir: tempRoot.current,
       projectId: Option.none(),
     });
     const layer = buildLegacyTestRuntime({ out, api, cliConfig });
@@ -191,15 +186,12 @@ describe("legacy backups restore integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectNotLinkedError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyProjectNotLinkedError");
       }
-    }).pipe(
-      Effect.ensuring(Effect.sync(() => rmSync(localTempRoot, { recursive: true, force: true }))),
-    );
+    });
   });
 
   it.live("prompts via TTY when no ref source matches and stdin is a TTY", () => {
-    const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-backups-restore-int-prompt-"));
     const out = mockOutput({
       format: "text",
       promptSelectResponses: [LEGACY_VALID_REF],
@@ -214,7 +206,7 @@ describe("legacy backups restore integration", () => {
             HttpClientResponse.fromWeb(
               request,
               new Response(
-                JSON.stringify([
+                Formatter.formatJson([
                   {
                     id: LEGACY_VALID_REF,
                     ref: LEGACY_VALID_REF,
@@ -241,7 +233,7 @@ describe("legacy backups restore integration", () => {
       },
     });
     const cliConfig = mockLegacyCliConfig({
-      workdir: localTempRoot,
+      workdir: tempRoot.current,
       projectId: Option.none(),
     });
     const layer = buildLegacyTestRuntime({
@@ -257,9 +249,7 @@ describe("legacy backups restore integration", () => {
       );
       expect(out.promptSelectCalls).toHaveLength(1);
       expect(out.stderrText).toContain(`Started PITR restore: ${LEGACY_VALID_REF}\n`);
-    }).pipe(
-      Effect.ensuring(Effect.sync(() => rmSync(localTempRoot, { recursive: true, force: true }))),
-    );
+    });
   });
 
   it.live("accepts --timestamp short alias -t in the same way (no separate parse path)", () => {

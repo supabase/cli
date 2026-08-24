@@ -57,11 +57,9 @@ export const legacyVanitySubdomainsCheckAvailability = Effect.fn(
       // Cobra checks the flag was *changed*, not non-empty, so
       // `--desired-subdomain ""` passes and reaches the API.
       if (Option.isNone(flags.desiredSubdomain)) {
-        return yield* Effect.fail(
-          new LegacyDesiredSubdomainRequiredError({
-            message: `required flag(s) "desired-subdomain" not set`,
-          }),
-        );
+        return yield* new LegacyDesiredSubdomainRequiredError({
+          message: `required flag(s) "desired-subdomain" not set`,
+        });
       }
       const desiredSubdomain = flags.desiredSubdomain.value;
       const checking =
@@ -90,16 +88,14 @@ export const legacyVanitySubdomainsCheckAvailability = Effect.fn(
                   response: legacyGateResponse(cause),
                   trackAnalytics: false,
                 });
-                return yield* Effect.fail(
-                  new LegacyVanitySubdomainsCheckUnexpectedStatusError({
-                    status: mapped.status,
-                    body: mapped.body,
-                    message: mapped.message,
-                    upgradeSuggested,
-                  }),
-                );
+                return yield* new LegacyVanitySubdomainsCheckUnexpectedStatusError({
+                  status: mapped.status,
+                  body: mapped.body,
+                  message: mapped.message,
+                  upgradeSuggested,
+                });
               }
-              return yield* Effect.fail(mapped);
+              return yield* mapped;
             }),
           ),
         );

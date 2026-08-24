@@ -1,6 +1,6 @@
 import type { V1CreateAnOrganizationOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Formatter, Option } from "effect";
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -166,7 +166,7 @@ describe("legacy orgs create integration", () => {
       const exit = yield* Effect.exit(legacyOrgsCreate({ name: "Acme" }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyOrgsCreateUnexpectedStatusError");
         expect(json).toContain("unexpected create organization status 503");
       }
@@ -179,7 +179,7 @@ describe("legacy orgs create integration", () => {
       const exit = yield* Effect.exit(legacyOrgsCreate({ name: "Acme" }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyOrgsCreateNetworkError");
         expect(json).toContain("failed to create organization");
       }
@@ -194,7 +194,7 @@ describe("legacy orgs create integration", () => {
       const exit = yield* Effect.exit(legacyOrgsCreate({ name: "Acme" }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyOrgsCreateNetworkError");
       }
     }).pipe(Effect.provide(layer));

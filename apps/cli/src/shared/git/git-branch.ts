@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Config, Effect, FileSystem, Option, Path } from "effect";
 
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 
@@ -22,9 +22,11 @@ export const detectGitBranch = (
   startDir?: string,
 ): Effect.Effect<Option.Option<string>, never, RuntimeInfo | FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
-    const githubHeadRef = process.env["GITHUB_HEAD_REF"];
-    if (githubHeadRef !== undefined && githubHeadRef.length > 0) {
-      return Option.some(githubHeadRef);
+    const githubHeadRef = yield* Config.option(Config.string("GITHUB_HEAD_REF")).pipe(
+      Effect.orElseSucceed(() => Option.none<string>()),
+    );
+    if (Option.isSome(githubHeadRef) && githubHeadRef.value.length > 0) {
+      return githubHeadRef;
     }
 
     const runtimeInfo = yield* RuntimeInfo;

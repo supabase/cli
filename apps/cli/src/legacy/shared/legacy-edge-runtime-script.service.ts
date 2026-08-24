@@ -34,6 +34,8 @@ export interface LegacyEdgeRuntimeRunOpts {
   readonly extraFiles?: ReadonlyArray<LegacyEdgeRuntimeFile>;
   /** Extra container env appended after `env` (`WithExtraEnv`). */
   readonly extraEnv?: Readonly<Record<string, string>>;
+  /** Explicitly merged project environment used for registry/image resolution. */
+  readonly projectEnvValues?: Readonly<Record<string, string>>;
   /**
    * Effective `edge_runtime.deno_version` for this run, used to pick the image tag
    * (`1` → the `deno1` image). Lets a caller that has the remote-merged config (e.g.

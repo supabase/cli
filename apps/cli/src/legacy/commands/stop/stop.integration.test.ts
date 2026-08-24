@@ -1,9 +1,20 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from "effect";
+import {
+  ConfigProvider,
+  Deferred,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Path,
+  PlatformError,
+  Sink,
+  Stream,
+} from "effect";
+import * as Formatter from "effect/Formatter";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { vi } from "vitest";
 
@@ -14,10 +25,20 @@ import {
   useLegacyTempWorkdir,
 } from "../../../../tests/helpers/legacy-mocks.ts";
 import { LegacyDebugFlag } from "../../../shared/legacy/global-flags.ts";
+import { makeLegacyViperEnvLayer } from "../../../shared/legacy/legacy-viper-env.ts";
 import { legacyStop } from "./stop.handler.ts";
 import type { LegacyStopFlags } from "./stop.command.ts";
 
 const tempRoot = useLegacyTempWorkdir("supabase-stop-int-");
+const fixturePath = ManagedRuntime.make(BunServices.layer).runSync(Path.Path);
+const pendingWrites = new Map<
+  string,
+  Array<{ readonly path: string; readonly contents: string }>
+>();
+const pendingFileWrites: Array<{ readonly path: string; readonly contents: string }> = [];
+const pendingDirectories = new Set<string>();
+const join = (first: string, ...rest: ReadonlyArray<string>) => fixturePath.join(first, ...rest);
+const basename = (path: string) => fixturePath.basename(path);
 
 function flags(overrides: Partial<LegacyStopFlags> = {}): LegacyStopFlags {
   return {
@@ -30,15 +51,59 @@ function flags(overrides: Partial<LegacyStopFlags> = {}): LegacyStopFlags {
 }
 
 function writeConfig(workdir: string, projectId: string) {
-  const supabaseDir = join(workdir, "supabase");
-  mkdirSync(supabaseDir, { recursive: true });
-  writeFileSync(join(supabaseDir, "config.toml"), `project_id = "${projectId}"\n`);
+  writeFile(workdir, "config.toml", `project_id = "${projectId}"\n`);
 }
 
 function writeEnvFile(workdir: string, fileName: ".env" | ".env.local", contents: string) {
-  const supabaseDir = join(workdir, "supabase");
-  mkdirSync(supabaseDir, { recursive: true });
-  writeFileSync(join(supabaseDir, fileName), contents);
+  writeFile(workdir, fileName, contents);
+}
+
+function writeFile(workdir: string, fileName: string, contents: string) {
+  const path = fixturePath.join(workdir, "supabase", fileName);
+  const writes = pendingWrites.get(workdir) ?? [];
+  writes.push({ path, contents });
+  pendingWrites.set(workdir, writes);
+}
+
+function mkdirSync(path: string, _options?: { readonly recursive?: boolean }) {
+  queueDirectory(path);
+}
+
+function writeFileSync(path: string, contents: string) {
+  pendingFileWrites.push({ path, contents });
+}
+
+function queueDirectory(path: string) {
+  pendingDirectories.add(path);
+}
+
+function flushFixtureWrites() {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    for (const path of pendingDirectories) {
+      yield* fs.makeDirectory(path, { recursive: true });
+    }
+    pendingDirectories.clear();
+    for (const writes of pendingWrites.values()) {
+      for (const write of writes) {
+        yield* fs.makeDirectory(fixturePath.dirname(write.path), { recursive: true });
+        yield* fs.writeFileString(write.path, write.contents);
+      }
+    }
+    pendingWrites.clear();
+    for (const write of pendingFileWrites) {
+      yield* fs.makeDirectory(fixturePath.dirname(write.path), { recursive: true });
+      yield* fs.writeFileString(write.path, write.contents);
+    }
+    pendingFileWrites.length = 0;
+  });
+}
+
+function existsPath(path: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.exists(path).pipe(Effect.orElseSucceed(() => false));
+  });
 }
 
 interface SpawnRecord {
@@ -92,25 +157,21 @@ function mockRoutedContainerCliSpawner(
         spawned.push({ command: cmd, args });
 
         if (opts.dockerMissing === true && cmd === "docker") {
-          return yield* Effect.fail(
-            PlatformError.systemError({
-              _tag: "NotFound",
-              module: "ChildProcess",
-              method: "spawn",
-              description: "docker not found",
-            }),
-          );
+          return yield* PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            description: "docker not found",
+          });
         }
 
         if (opts.failSpawnFor?.(args) === true) {
-          return yield* Effect.fail(
-            PlatformError.systemError({
-              _tag: "NotFound",
-              module: "ChildProcess",
-              method: "spawn",
-              description: "spawn failed",
-            }),
-          );
+          return yield* PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            description: "spawn failed",
+          });
         }
 
         const encoder = new TextEncoder();
@@ -187,6 +248,7 @@ interface SetupOpts {
   readonly workdir?: string;
   /** `--debug` — gates `legacyDockerRemoveAll`'s `Pruned …:` stderr reports. */
   readonly debug?: boolean;
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -204,9 +266,16 @@ function setup(opts: SetupOpts = {}) {
     dockerMissing: opts.dockerMissing,
     failSpawnFor: opts.failSpawnFor,
   });
+  const configProvider = ConfigProvider.fromEnv({
+    env: opts.env ?? {},
+    preserveEmptyStrings: true,
+  });
 
   const layer = Layer.mergeAll(
     BunServices.layer,
+    Layer.effectDiscard(flushFixtureWrites().pipe(Effect.provide(BunServices.layer))),
+    ConfigProvider.layer(configProvider),
+    makeLegacyViperEnvLayer(configProvider),
     out.layer,
     cliConfig,
     telemetry.layer,
@@ -280,8 +349,8 @@ describe("legacy stop integration", () => {
       writeFileSync(join(unmatchedDir, "secret-0"), "unrelated project's secret");
       return Effect.gen(function* () {
         yield* legacyStop(flags());
-        expect(existsSync(matchedDir)).toBe(false);
-        expect(existsSync(unmatchedDir)).toBe(true);
+        expect(yield* existsPath(matchedDir)).toBe(false);
+        expect(yield* existsPath(unmatchedDir)).toBe(true);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -323,8 +392,8 @@ describe("legacy stop integration", () => {
       writeFileSync(join(wrongDir, "secret-0"), "must not be touched");
       return Effect.gen(function* () {
         yield* legacyStop(flags({ all: Option.some(true) }));
-        expect(existsSync(correctDir)).toBe(false);
-        expect(existsSync(wrongDir)).toBe(true);
+        expect(yield* existsPath(correctDir)).toBe(false);
+        expect(yield* existsPath(wrongDir)).toBe(true);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -473,9 +542,12 @@ describe("legacy stop integration", () => {
   });
 
   it.live("prefers ambient SUPABASE_PROJECT_ID over supabase/.env", () => {
-    const { layer, child } = setup({ configuredProjectId: "toml-project", route: defaultRoute() });
+    const { layer, child } = setup({
+      configuredProjectId: "toml-project",
+      route: defaultRoute(),
+      env: { SUPABASE_PROJECT_ID: "ambient-project" },
+    });
     writeEnvFile(tempRoot.current, ".env", "SUPABASE_PROJECT_ID=env-file-project\n");
-    process.env["SUPABASE_PROJECT_ID"] = "ambient-project";
     return Effect.gen(function* () {
       yield* legacyStop(flags());
       const psCall = child.spawned.find((s) => s.args[0] === "ps");
@@ -487,10 +559,7 @@ describe("legacy stop integration", () => {
         "--format",
         '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
       ]);
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(Effect.sync(() => delete process.env["SUPABASE_PROJECT_ID"])),
-    );
+    }).pipe(Effect.provide(layer));
   });
 
   it.live(
@@ -578,8 +647,8 @@ describe("legacy stop integration", () => {
       const exit = yield* Effect.exit(legacyStop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopWorkdirError");
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStopWorkdirError");
+        expect(Formatter.formatJson(exit.cause)).toContain(
           `failed to change workdir: chdir ${missingWorkdir}: no such file or directory`,
         );
       }
@@ -595,8 +664,8 @@ describe("legacy stop integration", () => {
       const exit = yield* Effect.exit(legacyStop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopWorkdirError");
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStopWorkdirError");
+        expect(Formatter.formatJson(exit.cause)).toContain(
           `failed to change workdir: chdir ${filePath}: not a directory`,
         );
       }
@@ -612,7 +681,7 @@ describe("legacy stop integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopMutuallyExclusiveError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStopMutuallyExclusiveError");
       }
       expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -629,7 +698,7 @@ describe("legacy stop integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopMutuallyExclusiveError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStopMutuallyExclusiveError");
       }
       expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -752,7 +821,7 @@ describe("legacy stop integration", () => {
       const exit = yield* Effect.exit(legacyStop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopConfigLoadError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStopConfigLoadError");
       }
       expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -781,7 +850,7 @@ project_id = "aaaaaaaaaaaaaaaaaaaa"
       const exit = yield* Effect.exit(legacyStop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopConfigLoadError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStopConfigLoadError");
       }
       expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -806,7 +875,7 @@ project_id = "short"
       const exit = yield* Effect.exit(legacyStop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopConfigLoadError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStopConfigLoadError");
       }
       expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -890,8 +959,10 @@ enabled = true
         const exit = yield* Effect.exit(legacyStop(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyStopConfigLoadError");
-          expect(JSON.stringify(exit.cause)).toContain("Postgres version 12.x is unsupported");
+          expect(Formatter.formatJson(exit.cause)).toContain("LegacyStopConfigLoadError");
+          expect(Formatter.formatJson(exit.cause)).toContain(
+            "Postgres version 12.x is unsupported",
+          );
         }
         expect(child.spawned).toEqual([]);
       }).pipe(Effect.provide(layer));
@@ -946,7 +1017,7 @@ enabled = true
       const exit = yield* Effect.exit(legacyStop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopContainerError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStopContainerError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -973,9 +1044,9 @@ enabled = true
         const exit = yield* Effect.exit(legacyStop(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyStopContainerError");
+          expect(Formatter.formatJson(exit.cause)).toContain("LegacyStopContainerError");
         }
-        expect(existsSync(stagedDir)).toBe(true);
+        expect(yield* existsPath(stagedDir)).toBe(true);
       }).pipe(Effect.provide(layer));
     },
   );
@@ -993,7 +1064,7 @@ enabled = true
       const exit = yield* Effect.exit(legacyStop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopContainerError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStopContainerError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1017,7 +1088,7 @@ enabled = true
         const exit = yield* Effect.exit(legacyStop(flags()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyStopContainerError");
+          expect(Formatter.formatJson(exit.cause)).toContain("LegacyStopContainerError");
         }
       }).pipe(Effect.provide(layer));
     },
@@ -1035,7 +1106,7 @@ enabled = true
       const exit = yield* Effect.exit(legacyStop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopContainerPruneError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStopContainerPruneError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1052,7 +1123,7 @@ enabled = true
       const exit = yield* Effect.exit(legacyStop(flags({ noBackup: true })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopVolumePruneError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStopVolumePruneError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1069,7 +1140,7 @@ enabled = true
       const exit = yield* Effect.exit(legacyStop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopNetworkPruneError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStopNetworkPruneError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1092,7 +1163,7 @@ enabled = true
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyStop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(existsSync(matchedDir)).toBe(false);
+      expect(yield* existsPath(matchedDir)).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
@@ -1108,7 +1179,7 @@ enabled = true
       const exit = yield* Effect.exit(legacyStop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopListError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStopListError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1204,7 +1275,7 @@ enabled = true
       const exit = yield* Effect.exit(legacyStop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopContainerPruneError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStopContainerPruneError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1219,7 +1290,7 @@ enabled = true
       const exit = yield* Effect.exit(legacyStop(flags({ noBackup: true })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopVolumePruneError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStopVolumePruneError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1234,7 +1305,7 @@ enabled = true
       const exit = yield* Effect.exit(legacyStop(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStopNetworkPruneError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStopNetworkPruneError");
       }
     }).pipe(Effect.provide(layer));
   });

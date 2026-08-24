@@ -218,7 +218,10 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     // Make an allowlisted `supabase/.env` registry override visible to the
     // synchronous `process.env` reader in `legacyGetRegistryImageUrl` (the pg_dump
     // seed + migra/pg-delta diff images), reverted when this scope closes.
-    yield* legacyApplyProjectEnv(projectEnv);
+    const effectiveProjectEnv = {
+      ...projectEnv,
+      ...(yield* legacyApplyProjectEnv(projectEnv)),
+    };
     const name = Option.getOrElse(flags.name, () => "remote_schema");
     // `--declarative` and the deprecated `--use-pg-delta` both bind to the same
     // `useDeclarative` outcome, so when BOTH are passed the LAST occurrence in
@@ -251,22 +254,18 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     if (Option.isSome(flags.linked)) targetSet.push("linked");
     if (Option.isSome(flags.local)) targetSet.push("local");
     if (targetSet.length > 1) {
-      return yield* Effect.fail(
-        new LegacyDbPullTargetFlagsError({
-          message: `if any flags in the group [db-url linked local] are set none of the others can be; [${[...targetSet].sort().join(" ")}] were all set`,
-        }),
-      );
+      return yield* new LegacyDbPullTargetFlagsError({
+        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${[...targetSet].sort().join(" ")}] were all set`,
+      });
     }
     for (const [flagName, present] of [
       ["declarative", Option.isSome(flags.declarative)],
       ["use-pg-delta", Option.isSome(flags.usePgDelta)],
     ] as const) {
       if (present && Option.isSome(flags.diffEngine)) {
-        return yield* Effect.fail(
-          new LegacyDbPullEngineConflictError({
-            message: `if any flags in the group [${flagName} diff-engine] are set none of the others can be; [${[flagName, "diff-engine"].sort().join(" ")}] were all set`,
-          }),
-        );
+        return yield* new LegacyDbPullEngineConflictError({
+          message: `if any flags in the group [${flagName} diff-engine] are set none of the others can be; [${[flagName, "diff-engine"].sort().join(" ")}] were all set`,
+        });
       }
     }
 
@@ -280,12 +279,10 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     // discarded on a non-linked target — see push.handler.ts's identical guard
     // for the full TS-only rationale.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* Effect.fail(
-        new LegacyDbPullTargetFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
+      return yield* new LegacyDbPullTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      });
     }
 
     // `--experimental`'s structured-dump mode delegates the whole pull to the
@@ -302,12 +299,10 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     // avoids (see `LegacyProjectRefResolver`'s use below). Mirrors
     // `diff.handler.ts`'s identical `--use-pg-schema` guard.
     if (Option.isSome(flags.projectRef) && delegatesExperimentalPull) {
-      return yield* Effect.fail(
-        new LegacyDbPullTargetFlagsError({
-          message:
-            "--project-ref is not supported with the --experimental structured-dump pull; use --declarative instead",
-        }),
-      );
+      return yield* new LegacyDbPullTargetFlagsError({
+        message:
+          "--project-ref is not supported with the --experimental structured-dump pull; use --declarative instead",
+      });
     }
 
     // Go's `ParseDatabaseConfig` resolves the linked ref via the hard `LoadProjectRef`, THEN
@@ -382,7 +377,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
       cwd: cliConfig.workdir,
       npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
       denoVersion: toml.denoVersion,
-      projectEnv: toml.projectEnv,
+      projectEnv: { ...toml.projectEnv, ...effectiveProjectEnv },
     };
     const formatOptions = Option.getOrElse(toml.pgDelta.formatOptions, () => "");
 
@@ -515,7 +510,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
               ...(connType === "linked" && linkedRef !== undefined
                 ? { projectRef: linkedRef }
                 : {}),
-              debug: legacyIsPgDeltaDebugEnabled(),
+              debug: legacyIsPgDeltaDebugEnabled({ ...toml.projectEnv, ...effectiveProjectEnv }),
               strictCoverage: flags.strictCoverage,
               noCache: false,
             });
@@ -629,13 +624,11 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         );
         const sync = legacyReconcileMigrations(remote, local, connType === "local");
         if (sync.kind === "conflict") {
-          return yield* Effect.fail(
-            new LegacyDbPullMigrationConflictError({
-              message:
-                "The remote database's migration history does not match local files in supabase/migrations directory.",
-              suggestion: sync.suggestion,
-            }),
-          );
+          return yield* new LegacyDbPullMigrationConflictError({
+            message:
+              "The remote database's migration history does not match local files in supabase/migrations directory.",
+            suggestion: sync.suggestion,
+          });
         }
         // Initial pull, migra engine: seed the migration file with a pg_dump of the
         // remote schema, then run the migra diff below as a second pass appended to
@@ -689,8 +682,8 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             seedWroteBytes = false;
             return fs
               .writeFile(migrationPath, new Uint8Array(0), { mode: MIGRATION_FILE_MODE })
-              .pipe(Effect.mapError(toDumpOpenError))
               .pipe(
+                Effect.mapError(toDumpOpenError),
                 Effect.andThen(
                   Effect.scoped(
                     Effect.gen(function* () {
@@ -701,7 +694,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                         image,
                         script: legacyDumpSchemaScript,
                         env: legacyBuildSchemaDumpEnv(target, dumpEnvOpt),
-                        projectEnvValues: projectEnv,
+                        projectEnvValues: effectiveProjectEnv,
                         onStdout: (chunk) => {
                           if (chunk.length > 0) seedWroteBytes = true;
                           return file.writeAll(chunk).pipe(
@@ -744,14 +737,12 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             reprintOnRetry: Effect.void,
           });
           if (dumpResult.exitCode !== 0) {
-            return yield* Effect.fail(
-              new LegacyDbPullDumpError({
-                message: `error running container: exit ${dumpResult.exitCode}`,
-                ...(legacyIsIPv6ConnectivityError(dumpResult.stderr)
-                  ? { suggestion: legacyIpv6Suggestion() }
-                  : {}),
-              }),
-            );
+            return yield* new LegacyDbPullDumpError({
+              message: `error running container: exit ${dumpResult.exitCode}`,
+              ...(legacyIsIPv6ConnectivityError(dumpResult.stderr)
+                ? { suggestion: legacyIpv6Suggestion() }
+                : {}),
+            });
           }
         }
 
@@ -823,7 +814,10 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                       },
                       schema: diffSchema,
                       formatOptions,
-                      debug: legacyIsPgDeltaDebugEnabled(),
+                      debug: legacyIsPgDeltaDebugEnabled({
+                        ...toml.projectEnv,
+                        ...effectiveProjectEnv,
+                      }),
                       strictCoverage: flags.strictCoverage,
                     });
                   }
@@ -872,12 +866,10 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
               ),
             );
             if (debugDir !== undefined) {
-              return yield* Effect.fail(
-                new LegacyDbPullInSyncError({
-                  message: `No schema changes found (debug bundle: ${debugDir})`,
-                  suggestion: IN_SYNC_SUGGESTION,
-                }),
-              );
+              return yield* new LegacyDbPullInSyncError({
+                message: `No schema changes found (debug bundle: ${debugDir})`,
+                suggestion: IN_SYNC_SUGGESTION,
+              });
             }
           }
           if (
@@ -885,19 +877,15 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             diffOutcome.debug?.directory !== undefined
           ) {
             yield* output.raw(legacyDebugBundleMessage(diffOutcome.debug.directory), "stderr");
-            return yield* Effect.fail(
-              new LegacyDbPullInSyncError({
-                message: `No schema changes found (debug bundle: ${diffOutcome.debug.directory})`,
-                suggestion: IN_SYNC_SUGGESTION,
-              }),
-            );
-          }
-          return yield* Effect.fail(
-            new LegacyDbPullInSyncError({
-              message: "No schema changes found",
+            return yield* new LegacyDbPullInSyncError({
+              message: `No schema changes found (debug bundle: ${diffOutcome.debug.directory})`,
               suggestion: IN_SYNC_SUGGESTION,
-            }),
-          );
+            });
+          }
+          return yield* new LegacyDbPullInSyncError({
+            message: "No schema changes found",
+            suggestion: IN_SYNC_SUGGESTION,
+          });
         }
 
         // Build the list of migration files to record in the remote history. The
@@ -973,12 +961,10 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           // A dump that produced nothing followed by an empty diff leaves the file
           // empty → in sync.
           if (seededFromDump && !seedWroteBytes && diffEmpty) {
-            return yield* Effect.fail(
-              new LegacyDbPullInSyncError({
-                message: "No schema changes found",
-                suggestion: IN_SYNC_SUGGESTION,
-              }),
-            );
+            return yield* new LegacyDbPullInSyncError({
+              message: "No schema changes found",
+              suggestion: IN_SYNC_SUGGESTION,
+            });
           }
           writtenMigrations.push({ path: migrationPath, version: timestamp });
         }

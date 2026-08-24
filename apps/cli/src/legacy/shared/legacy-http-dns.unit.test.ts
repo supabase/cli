@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, Exit, Layer } from "effect";
 import * as net from "node:net";
 
 import { LegacyDnsResolverFlag } from "../../shared/legacy/global-flags.ts";
@@ -59,10 +59,10 @@ describe("legacyDohFetch", () => {
   };
 
   function makeFakeFetch(captured: CapturedCall[]): typeof globalThis.fetch {
-    const fn = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const fn = (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       captured.push({ url, init: (init ?? {}) as CapturedCall["init"] });
-      return new Response("ok", { status: 200 });
+      return Promise.resolve(new Response("ok", { status: 200 }));
     };
     return fn as typeof globalThis.fetch;
   }
@@ -71,98 +71,113 @@ describe("legacyDohFetch", () => {
     return (_host: string) => Effect.succeed(ips);
   }
 
-  it("dials the first resolved IP, sets tls.serverName, and injects Host header", async () => {
-    const captured: CapturedCall[] = [];
-    const fetchFn = legacyDohFetch({
-      dnsResolver: "https",
-      resolver: makeFakeResolver(["203.0.113.10", "203.0.113.11"]),
-      innerFetch: makeFakeFetch(captured),
-    });
+  it.effect("dials the first resolved IP, sets tls.serverName, and injects Host header", () =>
+    Effect.gen(function* () {
+      const captured: CapturedCall[] = [];
+      const fetchFn = legacyDohFetch({
+        dnsResolver: "https",
+        resolver: makeFakeResolver(["203.0.113.10", "203.0.113.11"]),
+        innerFetch: makeFakeFetch(captured),
+      });
 
-    await fetchFn("https://api.supabase.com/v1/projects", {
-      method: "GET",
-      headers: { authorization: "Bearer tok" },
-    });
+      yield* Effect.promise(() =>
+        fetchFn("https://api.supabase.com/v1/projects", {
+          method: "GET",
+          headers: { authorization: "Bearer tok" },
+        }),
+      );
 
-    expect(captured).toHaveLength(1);
-    const call = captured[0]!;
-    // URL authority is the first resolved IP.
-    expect(new URL(call.url).hostname).toBe("203.0.113.10");
-    // Path preserved.
-    expect(new URL(call.url).pathname).toBe("/v1/projects");
-    // TLS SNI set to original hostname (CWE-350 guard).
-    expect(call.init.tls?.serverName).toBe("api.supabase.com");
-    // Host header pinned to original hostname.
-    const headers = call.init.headers as Record<string, string>;
-    expect(headers["Host"]).toBe("api.supabase.com");
-    // Other headers preserved.
-    expect(headers["authorization"]).toBe("Bearer tok");
-  });
+      expect(captured).toHaveLength(1);
+      const call = captured[0]!;
+      // URL authority is the first resolved IP.
+      expect(new URL(call.url).hostname).toBe("203.0.113.10");
+      // Path preserved.
+      expect(new URL(call.url).pathname).toBe("/v1/projects");
+      // TLS SNI set to original hostname (CWE-350 guard).
+      expect(call.init.tls?.serverName).toBe("api.supabase.com");
+      // Host header pinned to original hostname.
+      const headers = new Headers(call.init.headers);
+      expect(headers.get("Host")).toBe("api.supabase.com");
+      // Other headers preserved.
+      expect(headers.get("authorization")).toBe("Bearer tok");
+    }),
+  );
 
-  it("passes through without DoH when dnsResolver is 'native'", async () => {
-    const captured: CapturedCall[] = [];
-    const resolverCalls: string[] = [];
-    const fetchFn = legacyDohFetch({
-      dnsResolver: "native",
-      resolver: (host) => {
-        resolverCalls.push(host);
-        return Effect.succeed(["203.0.113.10"]);
-      },
-      innerFetch: makeFakeFetch(captured),
-    });
+  it.effect("passes through without DoH when dnsResolver is 'native'", () =>
+    Effect.gen(function* () {
+      const captured: CapturedCall[] = [];
+      const resolverCalls: string[] = [];
+      const fetchFn = legacyDohFetch({
+        dnsResolver: "native",
+        resolver: (host) => {
+          resolverCalls.push(host);
+          return Effect.succeed(["203.0.113.10"]);
+        },
+        innerFetch: makeFakeFetch(captured),
+      });
 
-    await fetchFn("https://api.supabase.com/v1/projects");
+      yield* Effect.promise(() => fetchFn("https://api.supabase.com/v1/projects"));
 
-    // Original URL passed through unchanged.
-    expect(captured[0]?.url).toBe("https://api.supabase.com/v1/projects");
-    expect(resolverCalls).toHaveLength(0);
-  });
+      // Original URL passed through unchanged.
+      expect(captured[0]?.url).toBe("https://api.supabase.com/v1/projects");
+      expect(resolverCalls).toHaveLength(0);
+    }),
+  );
 
-  it("passes through without DoH when the URL host is already an IPv4 literal", async () => {
-    const captured: CapturedCall[] = [];
-    const resolverCalls: string[] = [];
-    const fetchFn = legacyDohFetch({
-      dnsResolver: "https",
-      resolver: (host) => {
-        resolverCalls.push(host);
-        return Effect.succeed(["203.0.113.10"]);
-      },
-      innerFetch: makeFakeFetch(captured),
-    });
+  it.effect("passes through without DoH when the URL host is already an IPv4 literal", () =>
+    Effect.gen(function* () {
+      const captured: CapturedCall[] = [];
+      const resolverCalls: string[] = [];
+      const fetchFn = legacyDohFetch({
+        dnsResolver: "https",
+        resolver: (host) => {
+          resolverCalls.push(host);
+          return Effect.succeed(["203.0.113.10"]);
+        },
+        innerFetch: makeFakeFetch(captured),
+      });
 
-    await fetchFn("https://203.0.113.99/v1/projects");
+      yield* Effect.promise(() => fetchFn("https://203.0.113.99/v1/projects"));
 
-    expect(captured[0]?.url).toBe("https://203.0.113.99/v1/projects");
-    expect(resolverCalls).toHaveLength(0);
-  });
+      expect(captured[0]?.url).toBe("https://203.0.113.99/v1/projects");
+      expect(resolverCalls).toHaveLength(0);
+    }),
+  );
 
-  it("passes through without DoH when the URL host is already an IPv6 literal", async () => {
-    const captured: CapturedCall[] = [];
-    const resolverCalls: string[] = [];
-    const fetchFn = legacyDohFetch({
-      dnsResolver: "https",
-      resolver: (host) => {
-        resolverCalls.push(host);
-        return Effect.succeed(["2001:db8::1"]);
-      },
-      innerFetch: makeFakeFetch(captured),
-    });
+  it.effect("passes through without DoH when the URL host is already an IPv6 literal", () =>
+    Effect.gen(function* () {
+      const captured: CapturedCall[] = [];
+      const resolverCalls: string[] = [];
+      const fetchFn = legacyDohFetch({
+        dnsResolver: "https",
+        resolver: (host) => {
+          resolverCalls.push(host);
+          return Effect.succeed(["2001:db8::1"]);
+        },
+        innerFetch: makeFakeFetch(captured),
+      });
 
-    await fetchFn("https://[2001:db8::1]/v1/projects");
+      yield* Effect.promise(() => fetchFn("https://[2001:db8::1]/v1/projects"));
 
-    expect(captured[0]?.url).toBe("https://[2001:db8::1]/v1/projects");
-    expect(resolverCalls).toHaveLength(0);
-  });
+      expect(captured[0]?.url).toBe("https://[2001:db8::1]/v1/projects");
+      expect(resolverCalls).toHaveLength(0);
+    }),
+  );
 
-  it("propagates resolver failures as rejected promises", async () => {
-    const fetchFn = legacyDohFetch({
-      dnsResolver: "https",
-      resolver: (_host) => Effect.fail(new LegacyDbConnectError({ message: "DoH timed out" })),
-      innerFetch: makeFakeFetch([]),
-    });
+  it.effect("propagates resolver failures as rejected promises", () =>
+    Effect.gen(function* () {
+      const fetchFn = legacyDohFetch({
+        dnsResolver: "https",
+        resolver: (_host) => Effect.fail(new LegacyDbConnectError({ message: "DoH timed out" })),
+        innerFetch: makeFakeFetch([]),
+      });
 
-    await expect(fetchFn("https://api.supabase.com/v1/projects")).rejects.toThrow();
-  });
+      const exit = yield* Effect.promise(() =>
+        fetchFn("https://api.supabase.com/v1/projects"),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+    }),
+  );
 });
 
 describe("legacyDohFetchLayer (Effect layer integration)", () => {
@@ -172,7 +187,7 @@ describe("legacyDohFetchLayer (Effect layer integration)", () => {
     const fakeFetch = legacyDohFetch({
       dnsResolver: "https",
       resolver: (_host) => Effect.succeed(["203.0.113.10"]),
-      innerFetch: (async (input: string | URL | Request, init?: RequestInit) => {
+      innerFetch: (input: string | URL | Request, init?: RequestInit) => {
         const url =
           typeof input === "string"
             ? input
@@ -180,8 +195,8 @@ describe("legacyDohFetchLayer (Effect layer integration)", () => {
               ? input.href
               : (input as Request).url;
         captured.push({ url, tls: (init as { tls?: { serverName: string } })?.tls });
-        return new Response("ok", { status: 200 });
-      }) as typeof globalThis.fetch,
+        return Promise.resolve(new Response("ok", { status: 200 }));
+      },
     });
 
     return Effect.gen(function* () {

@@ -66,10 +66,8 @@ const config = {
 } as const;
 
 const requestPlatformApiLayer = platformApiLayer.pipe(Layer.provide(credentialsLayer));
-const requestRuntimeLayer = Layer.mergeAll(
-  requestPlatformApiLayer,
-  stdinLayer,
-  commandRuntimeLayer(["api", "request"]),
+const requestRuntimeLayer = Layer.mergeAll(requestPlatformApiLayer, stdinLayer).pipe(
+  Layer.provideMerge(commandRuntimeLayer(["api", "request"])),
 );
 
 function resolveDescriptor(route: string, method: Option.Option<PlatformHttpMethod>) {
@@ -117,7 +115,7 @@ export const apiRequestCommand = Command.make("request", config).pipe(
         resolved instanceof PlatformRouteNotFoundError ||
         resolved instanceof PlatformMethodSelectionError
       ) {
-        return yield* Effect.fail(resolved);
+        return yield* resolved;
       }
 
       return yield* runPlatformOperation({ descriptor: resolved })({

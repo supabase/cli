@@ -1,5 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import path from "node:path";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, FileSystem, Path, Schema } from "effect";
 import process from "node:process";
 import { PROJECT_CONFIG_SCHEMA_URL, toProjectConfigJsonSchema } from "@supabase/config";
 import { nextRoot } from "../src/next/cli/root.ts";
@@ -7,13 +7,15 @@ import { collectCommands, getHelpDoc } from "../src/next/docs/command-docs.ts";
 import { formatHelpDocAsMarkdown } from "../src/next/docs/markdown-formatter.ts";
 
 const BINARY_NAME = "supabase";
-const defaultContentDir = path.resolve(import.meta.dir, "../../../apps/docs/content/docs/commands");
-const defaultDocsPublicDir = path.resolve(import.meta.dir, "../../../apps/docs/public");
-const contentDir = process.argv[2]
-  ? path.resolve(process.cwd(), process.argv[2])
-  : defaultContentDir;
 
-function generateCommandDocs() {
+const encodeJson = (value: unknown) =>
+  Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))(value);
+
+const generateCommandDocs = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  contentDir: string,
+) {
   const leaves = collectCommands(nextRoot, [BINARY_NAME]).filter(
     ({ command, commandPath }) => commandPath.length > 1 && command.subcommands.length === 0,
   );
@@ -39,11 +41,11 @@ function generateCommandDocs() {
     const mdxContent = `${frontmatter}\n\n${body}`;
 
     const filePath = path.join(contentDir, `${slug}.mdx`);
-    mkdirSync(path.dirname(filePath), { recursive: true });
-    writeFileSync(filePath, mdxContent);
+    yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+    yield* fs.writeFileString(filePath, mdxContent);
     pages.push({ slug, title, description });
 
-    console.log(`Generated: commands/${slug}.mdx`);
+    yield* Effect.sync(() => process.stdout.write(`Generated: commands/${slug}.mdx\n`));
   }
 
   const indexFrontmatter = [
@@ -60,28 +62,54 @@ function generateCommandDocs() {
   const table = `| Command | Description |\n| --- | --- |\n${rows.join("\n")}`;
   const indexContent = `${indexFrontmatter}\n\n${table}\n`;
 
-  writeFileSync(path.join(contentDir, "index.mdx"), indexContent);
-  console.log("Generated: commands/index.mdx");
+  yield* fs.writeFileString(path.join(contentDir, "index.mdx"), indexContent);
+  yield* Effect.sync(() => process.stdout.write("Generated: commands/index.mdx\n"));
 
   const metaContent = {
     title: "Commands",
     pages: ["index", ...pages.map((page) => page.slug.split("/").pop())],
   };
-  writeFileSync(path.join(contentDir, "meta.json"), JSON.stringify(metaContent, null, 2));
+  const encodedMeta = yield* encodeJson(metaContent);
+  yield* fs.writeFileString(path.join(contentDir, "meta.json"), `${encodedMeta}\n`);
 
-  console.log(`\nGenerated ${pages.length} command page(s)`);
-}
+  yield* Effect.sync(() => process.stdout.write(`\nGenerated ${pages.length} command page(s)\n`));
+});
 
-function generateConfigSchemaAsset() {
+const generateConfigSchemaAsset = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  defaultDocsPublicDir: string,
+) {
   const schema = toProjectConfigJsonSchema();
   const schemaPathname = new URL(PROJECT_CONFIG_SCHEMA_URL).pathname.replace(/^\/docs/, "");
   const filePath = path.join(defaultDocsPublicDir, schemaPathname);
 
-  mkdirSync(path.dirname(filePath), { recursive: true });
-  writeFileSync(filePath, `${JSON.stringify(schema, null, 2)}\n`);
+  yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
+  const encodedSchema = yield* encodeJson(schema);
+  yield* fs.writeFileString(filePath, `${encodedSchema}\n`);
 
-  console.log(`Generated: ${path.relative(path.resolve(import.meta.dir, "../../.."), filePath)}`);
+  yield* Effect.sync(() =>
+    process.stdout.write(
+      `Generated: ${path.relative(path.resolve(import.meta.dir, "../../.."), filePath)}\n`,
+    ),
+  );
+});
+
+const main = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const defaultContentDir = path.resolve(
+    import.meta.dir,
+    "../../../apps/docs/content/docs/commands",
+  );
+  const defaultDocsPublicDir = path.resolve(import.meta.dir, "../../../apps/docs/public");
+  const contentDir = process.argv[2]
+    ? path.resolve(process.cwd(), process.argv[2])
+    : defaultContentDir;
+  yield* generateCommandDocs(fs, path, contentDir);
+  yield* generateConfigSchemaAsset(fs, path, defaultDocsPublicDir);
+});
+
+if (import.meta.main) {
+  await Effect.runPromise(main.pipe(Effect.provide(BunServices.layer)));
 }
-
-generateCommandDocs();
-generateConfigSchemaAsset();

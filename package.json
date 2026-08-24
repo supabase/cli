@@ -8,6 +8,7 @@
     }
   },
   "scripts": {
+    "prepare": "effect-tsgo patch --no-typescript --oxlint",
     "test:core": "nx run-many -t test:unit test:integration --coverage.enabled",
     "test:e2e": "nx run-many -t test:e2e",
     "affected:test:e2e": "nx affected -t test:e2e",
@@ -20,6 +21,7 @@
   },
   "packageManager": "pnpm@11.4.0",
   "devDependencies": {
+    "@effect/tsgo": "catalog:",
     "nx": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",

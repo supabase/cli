@@ -1,11 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Path } from "effect";
+import { DateTime, Effect, FileSystem, Option, Path, Schema } from "effect";
 
-import { useLegacyTempWorkdir } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import type { LegacyDeclarativeOutput } from "../../../shared/legacy-pgdelta.ts";
 import { LegacyDeclarativeWriteError } from "./legacy-pgdelta.errors.ts";
@@ -23,7 +19,7 @@ const write = (
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, output);
-  }).pipe(Effect.provide(BunServices.layer));
+  });
 
 const nextOutput = (files: LegacyPgDeltaDeclarativeExportResult["files"]) => ({
   files,
@@ -31,36 +27,38 @@ const nextOutput = (files: LegacyPgDeltaDeclarativeExportResult["files"]) => ({
 });
 
 describe("legacyWriteDeclarativeSchemas", () => {
-  const tmp = useLegacyTempWorkdir("legacy-decl-write-");
-  const declarativeDir = () => join(tmp.current, "supabase", "database");
+  it.effect("keeps the legacy wipe-and-rewrite behavior", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "legacy-decl-write-" });
+      const dir = path.join(root, "supabase", "database");
+      yield* fs.makeDirectory(dir, { recursive: true });
+      yield* fs.writeFileString(path.join(dir, "stale.sql"), "-- should be removed");
+      const written = yield* write(dir, {
+        version: 1,
+        mode: "declarative",
+        files: [
+          { path: "public.sql", order: 0, statements: 1, sql: "create table a();" },
+          { path: "auth/roles.sql", order: 1, statements: 1, sql: "create role app;" },
+        ],
+      });
+      expect(written.preservedUnmanagedFiles).toEqual([]);
+      expect(yield* fs.exists(path.join(dir, "stale.sql"))).toBe(false);
+      expect(yield* fs.readFileString(path.join(dir, "public.sql"))).toBe("create table a();");
+      expect(yield* fs.readFileString(path.join(dir, "auth", "roles.sql"))).toBe(
+        "create role app;",
+      );
+      expect(yield* fs.exists(path.join(dir, ".pgdelta-export.json"))).toBe(false);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.effect("keeps the legacy wipe-and-rewrite behavior", () => {
-    const dir = declarativeDir();
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, "stale.sql"), "-- should be removed");
-    return write(dir, {
-      version: 1,
-      mode: "declarative",
-      files: [
-        { path: "public.sql", order: 0, statements: 1, sql: "create table a();" },
-        { path: "auth/roles.sql", order: 1, statements: 1, sql: "create role app;" },
-      ],
-    }).pipe(
-      Effect.tap((written) =>
-        Effect.sync(() => {
-          expect(written.preservedUnmanagedFiles).toEqual([]);
-          expect(existsSync(join(dir, "stale.sql"))).toBe(false);
-          expect(readFileSync(join(dir, "public.sql"), "utf8")).toBe("create table a();");
-          expect(readFileSync(join(dir, "auth", "roles.sql"), "utf8")).toBe("create role app;");
-          expect(existsSync(join(dir, ".pgdelta-export.json"))).toBe(false);
-        }),
-      ),
-    );
-  });
-
-  it.effect("tracks next-engine ownership while preserving custom and unmanaged files", () => {
-    const dir = declarativeDir();
-    return Effect.gen(function* () {
+  it.effect("tracks next-engine ownership while preserving custom and unmanaged files", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "legacy-decl-write-" });
+      const dir = path.join(root, "supabase", "database");
       yield* write(
         dir,
         nextOutput([
@@ -68,9 +66,12 @@ describe("legacyWriteDeclarativeSchemas", () => {
           { name: "stale.sql", sql: "select 'remove later';" },
         ]),
       );
-      mkdirSync(join(dir, "_custom"), { recursive: true });
-      writeFileSync(join(dir, "_custom", "casts.sql"), "create cast (int as text);");
-      writeFileSync(join(dir, "unmanaged.sql"), "select 'keep me';");
+      yield* fs.makeDirectory(path.join(dir, "_custom"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(dir, "_custom", "casts.sql"),
+        "create cast (int as text);",
+      );
+      yield* fs.writeFileString(path.join(dir, "unmanaged.sql"), "select 'keep me';");
 
       const written = yield* write(
         dir,
@@ -85,86 +86,95 @@ describe("legacyWriteDeclarativeSchemas", () => {
       );
 
       expect(written.preservedUnmanagedFiles).toEqual([]);
-      expect(existsSync(join(dir, "stale.sql"))).toBe(false);
-      expect(readFileSync(join(dir, "_cluster", "roles.sql"), "utf8")).toBe("create role app;");
-      expect(readFileSync(join(dir, "unmanaged.sql"), "utf8")).toBe("select 'keep me';");
-      expect(readFileSync(join(dir, "_custom", "casts.sql"), "utf8")).toBe(
+      expect(yield* fs.exists(path.join(dir, "stale.sql"))).toBe(false);
+      expect(yield* fs.readFileString(path.join(dir, "_cluster", "roles.sql"))).toBe(
+        "create role app;",
+      );
+      expect(yield* fs.readFileString(path.join(dir, "unmanaged.sql"))).toBe("select 'keep me';");
+      expect(yield* fs.readFileString(path.join(dir, "_custom", "casts.sql"))).toBe(
         "create cast (int as text);",
       );
-      expect(JSON.parse(readFileSync(join(dir, ".pgdelta-export.json"), "utf8"))).toEqual({
+      expect(
+        yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+          yield* fs.readFileString(path.join(dir, ".pgdelta-export.json")),
+        ),
+      ).toEqual({
         formatVersion: 1,
         redactSecrets: true,
         scope: "database",
         profile: "supabase",
         files: ["_cluster/roles.sql", "app/tables/a.sql", "app/tables/z.sql"],
       });
-    });
-  });
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-  it.effect("reports manifestless files that the next writer preserves", () => {
-    const dir = declarativeDir();
-    mkdirSync(join(dir, "_custom"), { recursive: true });
-    writeFileSync(join(dir, "_custom", "casts.sql"), "select 'custom';");
-    writeFileSync(join(dir, "legacy-b.sql"), "select 'b';");
-    writeFileSync(join(dir, "legacy-a.sql"), "select 'a';");
-    writeFileSync(join(dir, "replaced.sql"), "-- old");
+  it.effect("reports manifestless files that the next writer preserves", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "legacy-decl-write-" });
+      const dir = path.join(root, "supabase", "database");
+      yield* fs.makeDirectory(path.join(dir, "_custom"), { recursive: true });
+      yield* fs.writeFileString(path.join(dir, "_custom", "casts.sql"), "select 'custom';");
+      yield* fs.writeFileString(path.join(dir, "legacy-b.sql"), "select 'b';");
+      yield* fs.writeFileString(path.join(dir, "legacy-a.sql"), "select 'a';");
+      yield* fs.writeFileString(path.join(dir, "replaced.sql"), "-- old");
+      const written = yield* write(
+        dir,
+        nextOutput([{ name: "replaced.sql", sql: "create table public.example(id int);" }]),
+      );
+      expect(written.preservedUnmanagedFiles).toEqual(["legacy-a.sql", "legacy-b.sql"]);
+      expect(yield* fs.readFileString(path.join(dir, "replaced.sql"))).toContain("create table");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
-    return write(
-      dir,
-      nextOutput([{ name: "replaced.sql", sql: "create table public.example(id int);" }]),
-    ).pipe(
-      Effect.tap((written) =>
-        Effect.sync(() => {
-          expect(written.preservedUnmanagedFiles).toEqual(["legacy-a.sql", "legacy-b.sql"]);
-          expect(readFileSync(join(dir, "replaced.sql"), "utf8")).toContain("create table");
-        }),
-      ),
-    );
-  });
-
-  it.effect("does not rewrite unchanged next-engine files or manifests", () => {
-    const dir = declarativeDir();
-    const schemaPath = join(dir, "public", "schema.sql");
-    const manifestPath = join(dir, ".pgdelta-export.json");
-    const output = nextOutput([
-      { name: "public/schema.sql", sql: "create table public.example(id int);" },
-    ]);
-
-    return write(dir, output).pipe(
-      Effect.tap(() =>
-        Effect.sync(() => {
-          const old = new Date("2020-01-01T00:00:00.000Z");
-          utimesSync(schemaPath, old, old);
-          utimesSync(manifestPath, old, old);
-        }),
-      ),
-      Effect.andThen(write(dir, output)),
-      Effect.tap(() =>
-        Effect.sync(() => {
-          expect(statSync(schemaPath).mtime.toISOString()).toBe("2020-01-01T00:00:00.000Z");
-          expect(statSync(manifestPath).mtime.toISOString()).toBe("2020-01-01T00:00:00.000Z");
-        }),
-      ),
-    );
-  });
+  it.effect("does not rewrite unchanged next-engine files or manifests", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "legacy-decl-write-" });
+      const dir = path.join(root, "supabase", "database");
+      const schemaPath = path.join(dir, "public", "schema.sql");
+      const manifestPath = path.join(dir, ".pgdelta-export.json");
+      const output = nextOutput([
+        { name: "public/schema.sql", sql: "create table public.example(id int);" },
+      ]);
+      yield* write(dir, output);
+      const old = DateTime.toDate(DateTime.makeUnsafe({ year: 2020, month: 1, day: 1 }));
+      yield* fs.utimes(schemaPath, old, old);
+      yield* fs.utimes(manifestPath, old, old);
+      yield* write(dir, output);
+      const schemaInfo = yield* fs.stat(schemaPath);
+      const manifestInfo = yield* fs.stat(manifestPath);
+      expect(
+        Option.isSome(schemaInfo.mtime) ? schemaInfo.mtime.value.toISOString() : undefined,
+      ).toBe("2020-01-01T00:00:00.000Z");
+      expect(
+        Option.isSome(manifestInfo.mtime) ? manifestInfo.mtime.value.toISOString() : undefined,
+      ).toBe("2020-01-01T00:00:00.000Z");
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it.effect("rejects reserved and escaping export paths", () =>
     Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "legacy-decl-write-" });
       const reserved = yield* write(
-        join(tmp.current, "reserved"),
+        path.join(root, "reserved"),
         nextOutput([{ name: "_custom/generated.sql", sql: "select 1;" }]),
       ).pipe(Effect.flip);
       expect(reserved).toBeInstanceOf(LegacyDeclarativeWriteError);
       expect(reserved.message).toContain("reserved declarative schema path");
 
-      const escaping = yield* write(join(tmp.current, "escaping"), {
+      const escaping = yield* write(path.join(root, "escaping"), {
         version: 1,
         mode: "declarative",
         files: [{ path: "../escape.sql", order: 0, statements: 0, sql: "x" }],
       }).pipe(Effect.flip);
       expect(escaping).toBeInstanceOf(LegacyDeclarativeWriteError);
       expect(escaping.message).toContain("unsafe declarative export path");
-    }),
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 });
 

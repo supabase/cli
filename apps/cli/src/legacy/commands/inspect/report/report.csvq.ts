@@ -1,4 +1,4 @@
-import { Option } from "effect";
+import { Data, Option } from "effect";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -52,9 +52,13 @@ import {
  */
 
 /** Thrown for grammar or evaluation outside the supported csvq subset. */
-export class LegacyInspectCsvqError extends Error {
+export class LegacyInspectCsvqError extends Data.TaggedError("LegacyInspectCsvqError")<{
+  readonly message: string;
+}> {
   static readonly [ErrorActionabilityFingerprintId] = "LegacyInspectCsvqError";
-  override readonly name = "LegacyInspectCsvqError";
+  constructor(message: string) {
+    super({ message });
+  }
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.impossibleState;

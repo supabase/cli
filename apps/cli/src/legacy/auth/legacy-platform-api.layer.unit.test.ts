@@ -1,12 +1,20 @@
+import { BunPath, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Option, Path, Redacted } from "effect";
+import {
+  DateTime,
+  Effect,
+  Exit,
+  FileSystem,
+  Formatter,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+  Schema,
+} from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { vi } from "vitest";
 
 import { LegacyDebugFlag, LegacyDnsResolverFlag } from "../../shared/legacy/global-flags.ts";
@@ -21,9 +29,23 @@ import { legacyPlatformApiFactoryLayer } from "./legacy-platform-api-factory.lay
 import { LegacyPlatformApiFactory } from "./legacy-platform-api-factory.service.ts";
 import { legacyPlatformApiLayer } from "./legacy-platform-api.layer.ts";
 import { LegacyPlatformApi } from "./legacy-platform-api.service.ts";
+import { useLegacyTempWorkdir } from "../../../tests/helpers/legacy-mocks.ts";
 
 const VALID_TOKEN = "sbp_" + "a".repeat(40);
 const SESSION_LAST_ACTIVE = 1_777_200_000_000;
+const temp = useLegacyTempWorkdir("supabase-legacy-platform-api-");
+const path = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
+const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const TelemetryStateSchema = Schema.Struct({
+  enabled: Schema.optional(Schema.Boolean),
+  distinct_id: Schema.optional(Schema.String),
+  schema_version: Schema.optional(Schema.Finite),
+  device_id: Schema.optional(Schema.String),
+  session_id: Schema.optional(Schema.String),
+  session_last_active: Schema.optional(Schema.String),
+});
+const encodeTelemetryState = Schema.encodeUnknownSync(Schema.fromJsonString(TelemetryStateSchema));
+const decodeTelemetryState = Schema.decodeUnknownSync(Schema.fromJsonString(TelemetryStateSchema));
 
 function mockCliConfig(opts: {
   accessToken?: string;
@@ -65,6 +87,7 @@ function mockTelemetryRuntime(
     isTty?: boolean;
     isCi?: boolean;
     debug?: boolean;
+    telemetryState?: { distinctId?: string; enabled?: boolean };
   } = {},
 ) {
   return Layer.succeed(
@@ -110,55 +133,34 @@ function mockAnalytics() {
   return { layer, aliases, identifies };
 }
 
-function nodeFileSystemLayer() {
-  return Layer.succeed(FileSystem.FileSystem, {
-    [FileSystem.FileSystem.key]: FileSystem.FileSystem.key,
-    exists: (filePath: string) =>
-      Effect.tryPromise(() =>
-        access(filePath)
-          .then(() => true)
-          .catch(() => false),
-      ),
-    makeDirectory: (dirPath: string, opts?: { recursive?: boolean; mode?: number }) =>
-      Effect.tryPromise(() =>
-        mkdir(dirPath, { recursive: opts?.recursive, mode: opts?.mode }).then(() => undefined),
-      ),
-    readFileString: (filePath: string) => Effect.tryPromise(() => readFile(filePath, "utf8")),
-    writeFileString: (filePath: string, content: string, opts?: { mode?: number }) =>
-      Effect.tryPromise(() => writeFile(filePath, content, { mode: opts?.mode })),
-  } as unknown as FileSystem.FileSystem);
-}
-
-function nodePathLayer() {
-  return Layer.succeed(Path.Path, {
-    [Path.Path.key]: Path.Path.key,
-    ...path,
-  } as unknown as Path.Path);
-}
-
-function tempTelemetryConfig(opts: { distinctId?: string; enabled?: boolean } = {}) {
-  const dir = mkdtempSync(path.join(tmpdir(), "supabase-legacy-platform-api-"));
-  writeFileSync(
-    path.join(dir, "telemetry.json"),
-    JSON.stringify({
-      enabled: opts.enabled ?? true,
-      device_id: "device-123",
-      session_id: "session-123",
-      session_last_active: new Date(SESSION_LAST_ACTIVE).toISOString(),
-      ...(opts.distinctId === undefined ? {} : { distinct_id: opts.distinctId }),
-      schema_version: 1,
-    }),
+function telemetryFixtureLayer(
+  configDir: string,
+  opts: { distinctId?: string; enabled?: boolean } = {},
+) {
+  return Layer.effectDiscard(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(configDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(configDir, "telemetry.json"),
+        encodeTelemetryState({
+          enabled: opts.enabled ?? true,
+          device_id: "device-123",
+          session_id: "session-123",
+          session_last_active: DateTime.formatIso(DateTime.makeUnsafe(SESSION_LAST_ACTIVE)),
+          ...(opts.distinctId === undefined ? {} : { distinct_id: opts.distinctId }),
+          schema_version: 1,
+        }),
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
   );
-  return dir;
 }
 
-function readTelemetryConfig(configDir: string) {
-  return JSON.parse(readFileSync(path.join(configDir, "telemetry.json"), "utf8")) as {
-    enabled?: boolean;
-    distinct_id?: string;
-    schema_version?: number;
-  };
-}
+const readTelemetryConfig = (configDir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return decodeTelemetryState(yield* fs.readFileString(path.join(configDir, "telemetry.json")));
+  });
 
 function withBaseDeps(
   opts: {
@@ -169,6 +171,7 @@ function withBaseDeps(
     isTty?: boolean;
     isCi?: boolean;
     debug?: boolean;
+    telemetryState?: { distinctId?: string; enabled?: boolean };
   } = {},
 ) {
   const analytics = opts.analytics ?? mockAnalytics();
@@ -188,17 +191,22 @@ function withBaseDeps(
         isCi: opts.isCi,
       }),
     ),
-    Layer.provide(nodeFileSystemLayer()),
-    Layer.provide(nodePathLayer()),
+    Layer.provide(BunServices.layer),
   );
-  return <ROut, E, RIn>(layer: Layer.Layer<ROut, E, RIn>) =>
-    layer.pipe(
+  return <ROut, E, RIn>(layer: Layer.Layer<ROut, E, RIn>) => {
+    const configured = layer.pipe(
       Layer.provide(identityStitch),
       Layer.provide(legacyDebugLoggerLayer),
       Layer.provide(Layer.succeed(LegacyDebugFlag, opts.debug ?? false)),
       // The lazy platform-API factory's DoH fetch layer reads the DNS-resolver flag.
       Layer.provide(Layer.succeed(LegacyDnsResolverFlag, "native")),
     );
+    const withFixture =
+      opts.configDir !== undefined && opts.telemetryState !== undefined
+        ? configured.pipe(Layer.provide(telemetryFixtureLayer(opts.configDir, opts.telemetryState)))
+        : configured;
+    return Layer.mergeAll(withFixture, BunServices.layer);
+  };
 }
 
 function captureRequests(responseHeaders: Record<string, string> = {}) {
@@ -211,7 +219,7 @@ function captureRequests(responseHeaders: Record<string, string> = {}) {
     return Effect.succeed(
       HttpClientResponse.fromWeb(
         request,
-        new Response(JSON.stringify([]), {
+        new Response(encodeJson([]), {
           status: 200,
           headers: { "content-type": "application/json", ...responseHeaders },
         }),
@@ -270,7 +278,7 @@ describe("legacyPlatformApiLayer", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacyPlatformAuthRequiredError");
         expect(errorJson).toContain("Access token not provided");
       }
@@ -299,7 +307,7 @@ describe("legacyPlatformApiLayer", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const errorJson = JSON.stringify(exit.cause);
+          const errorJson = Formatter.formatJson(exit.cause);
           expect(errorJson).toContain("LegacyInvalidAccessTokenError");
           expect(errorJson).toContain("Invalid access token format");
         }
@@ -372,60 +380,52 @@ describe("legacyPlatformApiLayer", () => {
   });
 
   it.effect("stitches identity from X-Gotrue-Id responses outside CI", () => {
-    const configDir = tempTelemetryConfig();
+    const configDir = temp.current;
     const analytics = mockAnalytics();
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = legacyPlatformApiLayer.pipe(
       Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
-      withBaseDeps({ analytics, configDir }),
+      withBaseDeps({ analytics, configDir, telemetryState: {} }),
     );
 
     return Effect.gen(function* () {
-      try {
-        const api = yield* LegacyPlatformApi;
-        yield* api.v1.listAllProjects();
+      const api = yield* LegacyPlatformApi;
+      yield* api.v1.listAllProjects();
 
-        expect(analytics.aliases).toEqual([{ distinctId: "user-123", alias: "device-123" }]);
-        expect(analytics.identifies).toEqual([]);
-        const telemetry = readTelemetryConfig(configDir);
-        expect(telemetry.distinct_id).toBe("user-123");
-        expect(telemetry.enabled).toBe(true);
-        expect(telemetry.schema_version).toBe(1);
-      } finally {
-        rmSync(configDir, { recursive: true, force: true });
-      }
+      expect(analytics.aliases).toEqual([{ distinctId: "user-123", alias: "device-123" }]);
+      expect(analytics.identifies).toEqual([]);
+      const telemetry = yield* readTelemetryConfig(configDir);
+      expect(telemetry.distinct_id).toBe("user-123");
+      expect(telemetry.enabled).toBe(true);
+      expect(telemetry.schema_version).toBe(1);
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("does not stitch identity from X-Gotrue-Id responses in CI", () => {
-    const configDir = tempTelemetryConfig();
+    const configDir = temp.current;
     const analytics = mockAnalytics();
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = legacyPlatformApiLayer.pipe(
       Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
-      withBaseDeps({ analytics, configDir, isCi: true }),
+      withBaseDeps({ analytics, configDir, isCi: true, telemetryState: {} }),
     );
 
     return Effect.gen(function* () {
-      try {
-        const api = yield* LegacyPlatformApi;
-        yield* api.v1.listAllProjects();
+      const api = yield* LegacyPlatformApi;
+      yield* api.v1.listAllProjects();
 
-        expect(analytics.aliases).toEqual([]);
-        expect(analytics.identifies).toEqual([]);
-        expect(readTelemetryConfig(configDir).distinct_id).toBeUndefined();
-      } finally {
-        rmSync(configDir, { recursive: true, force: true });
-      }
+      expect(analytics.aliases).toEqual([]);
+      expect(analytics.identifies).toEqual([]);
+      expect((yield* readTelemetryConfig(configDir)).distinct_id).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("does not stitch identity in a first-run non-TTY runtime", () => {
-    const configDir = mkdtempSync(path.join(tmpdir(), "supabase-legacy-platform-api-"));
+    const configDir = temp.current;
     const analytics = mockAnalytics();
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = legacyPlatformApiLayer.pipe(
@@ -436,21 +436,18 @@ describe("legacyPlatformApiLayer", () => {
     );
 
     return Effect.gen(function* () {
-      try {
-        const api = yield* LegacyPlatformApi;
-        yield* api.v1.listAllProjects();
+      const api = yield* LegacyPlatformApi;
+      yield* api.v1.listAllProjects();
 
-        expect(analytics.aliases).toEqual([]);
-        expect(analytics.identifies).toEqual([]);
-        expect(existsSync(path.join(configDir, "telemetry.json"))).toBe(false);
-      } finally {
-        rmSync(configDir, { recursive: true, force: true });
-      }
+      expect(analytics.aliases).toEqual([]);
+      expect(analytics.identifies).toEqual([]);
+      const fs = yield* FileSystem.FileSystem;
+      expect(yield* fs.exists(path.join(configDir, "telemetry.json"))).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("stitches identity in a first-run TTY runtime", () => {
-    const configDir = mkdtempSync(path.join(tmpdir(), "supabase-legacy-platform-api-"));
+    const configDir = temp.current;
     const analytics = mockAnalytics();
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = legacyPlatformApiLayer.pipe(
@@ -461,68 +458,61 @@ describe("legacyPlatformApiLayer", () => {
     );
 
     return Effect.gen(function* () {
-      try {
-        const api = yield* LegacyPlatformApi;
-        yield* api.v1.listAllProjects();
+      const api = yield* LegacyPlatformApi;
+      yield* api.v1.listAllProjects();
 
-        expect(analytics.aliases).toEqual([{ distinctId: "user-123", alias: "device-123" }]);
-        expect(analytics.identifies).toEqual([]);
-        expect(readTelemetryConfig(configDir).distinct_id).toBe("user-123");
-      } finally {
-        rmSync(configDir, { recursive: true, force: true });
-      }
+      expect(analytics.aliases).toEqual([{ distinctId: "user-123", alias: "device-123" }]);
+      expect(analytics.identifies).toEqual([]);
+      expect((yield* readTelemetryConfig(configDir)).distinct_id).toBe("user-123");
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("does not stitch identity when a distinct_id is already known", () => {
-    const configDir = tempTelemetryConfig({ distinctId: "existing-user" });
+    const configDir = temp.current;
     const analytics = mockAnalytics();
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = legacyPlatformApiLayer.pipe(
       Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
-      withBaseDeps({ analytics, configDir, distinctId: "existing-user" }),
+      withBaseDeps({
+        analytics,
+        configDir,
+        distinctId: "existing-user",
+        telemetryState: { distinctId: "existing-user" },
+      }),
     );
 
     return Effect.gen(function* () {
-      try {
-        const api = yield* LegacyPlatformApi;
-        yield* api.v1.listAllProjects();
+      const api = yield* LegacyPlatformApi;
+      yield* api.v1.listAllProjects();
 
-        expect(analytics.aliases).toEqual([]);
-        expect(analytics.identifies).toEqual([]);
-        expect(readTelemetryConfig(configDir).distinct_id).toBe("existing-user");
-      } finally {
-        rmSync(configDir, { recursive: true, force: true });
-      }
+      expect(analytics.aliases).toEqual([]);
+      expect(analytics.identifies).toEqual([]);
+      expect((yield* readTelemetryConfig(configDir)).distinct_id).toBe("existing-user");
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("does not stitch identity when legacy telemetry state is disabled", () => {
-    const configDir = tempTelemetryConfig({ enabled: false });
+    const configDir = temp.current;
     const analytics = mockAnalytics();
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = legacyPlatformApiLayer.pipe(
       Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
-      withBaseDeps({ analytics, configDir }),
+      withBaseDeps({ analytics, configDir, telemetryState: { enabled: false } }),
     );
 
     return Effect.gen(function* () {
-      try {
-        const api = yield* LegacyPlatformApi;
-        yield* api.v1.listAllProjects();
+      const api = yield* LegacyPlatformApi;
+      yield* api.v1.listAllProjects();
 
-        expect(analytics.aliases).toEqual([]);
-        expect(analytics.identifies).toEqual([]);
-        const telemetry = readTelemetryConfig(configDir);
-        expect(telemetry.enabled).toBe(false);
-        expect(telemetry.distinct_id).toBeUndefined();
-      } finally {
-        rmSync(configDir, { recursive: true, force: true });
-      }
+      expect(analytics.aliases).toEqual([]);
+      expect(analytics.identifies).toEqual([]);
+      const telemetry = yield* readTelemetryConfig(configDir);
+      expect(telemetry.enabled).toBe(false);
+      expect(telemetry.distinct_id).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 });
@@ -559,7 +549,7 @@ describe("legacyPlatformApiFactoryLayer (lazy token)", () => {
       const exit = yield* Effect.exit(factory.make);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacyPlatformAuthRequiredError");
         expect(errorJson).toContain("Access token not provided");
       }

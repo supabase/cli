@@ -13,6 +13,7 @@ import {
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 import { legacyProfileFilePath } from "../config/legacy-profile-file.ts";
+import { LegacyViperEnv } from "../../shared/legacy/legacy-viper-env.ts";
 import { legacyLoadProfile, type LegacyLoadedProfile } from "./legacy-profile-load.ts";
 import { legacyParseStringSliceFlag } from "./legacy-string-slice-flag.ts";
 import { legacyValidateWorkdirIsDirectory } from "./legacy-workdir-validation.ts";
@@ -173,7 +174,11 @@ export const legacyValidatePflagWorkdir = Effect.fnUntraced(function* (
   // `serviceOption`: absent outside the real CLI tree (handler-level tests
   // provide argv via `Stdio.layerTest`, not the global flag settings).
   const parsedWorkdir = Option.flatten(yield* Effect.serviceOption(LegacyWorkdirFlag));
-  const workdir = legacyPflagWorkdirValue(scan, parsedWorkdir, process.env["SUPABASE_WORKDIR"]);
+  const env = yield* LegacyViperEnv;
+  const envWorkdir = yield* env
+    .get("SUPABASE_WORKDIR")
+    .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+  const workdir = legacyPflagWorkdirValue(scan, parsedWorkdir, Option.getOrUndefined(envWorkdir));
   if (Option.isNone(workdir)) {
     return;
   }
@@ -270,8 +275,17 @@ export const legacyResolvePflagProfile = Effect.fnUntraced(function* (
 ) {
   const parsedRaw = yield* Effect.serviceOption(LegacyProfileFlag);
   const parsedProfile = Option.filter(parsedRaw, (value) => value !== "supabase");
-  const env = process.env["SUPABASE_PROFILE"];
-  const envProfile = env !== undefined && env.length > 0 ? env : undefined;
+  const envService = yield* LegacyViperEnv;
+  const envHome = yield* envService
+    .get("SUPABASE_HOME")
+    .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+  const envValue = yield* envService
+    .get("SUPABASE_PROFILE")
+    .pipe(Effect.orElseSucceed(() => Option.none<string>()));
+  const envProfile = Option.match(envValue, {
+    onNone: () => undefined,
+    onSome: (value) => (value.length > 0 ? value : undefined),
+  });
 
   // viper-effective explicit token vs the config layer's explicit token.
   // The layer-model MUST mirror `resolveProfile` exactly (raw argv scan →
@@ -317,7 +331,9 @@ export const legacyResolvePflagProfile = Effect.fnUntraced(function* (
   // comparison below surfaces (e.g. a trailing newline fails with
   // `Unsupported Config Type ""`, binary-verified).
   const fileRaw = yield* fs.value
-    .readFileString(legacyProfileFilePath(path.value, runtimeInfo.value.homeDir))
+    .readFileString(
+      legacyProfileFilePath(path.value, runtimeInfo.value.homeDir, Option.getOrUndefined(envHome)),
+    )
     .pipe(Effect.option);
 
   const goToken = Option.isSome(goExplicit)

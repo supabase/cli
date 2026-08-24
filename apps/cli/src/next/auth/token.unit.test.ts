@@ -17,21 +17,15 @@ function expectInvalidTokenError(exit: Exit.Exit<unknown, unknown>) {
 describe("validateToken", () => {
   describe("valid tokens", () => {
     it.live("accepts sbp_ prefix with 40 lowercase hex chars", () =>
-      Effect.gen(function* () {
-        yield* validateToken(`sbp_${VALID_HEX_40}`);
-      }),
+      validateToken(`sbp_${VALID_HEX_40}`),
     );
 
     it.live("accepts sbp_oauth_ prefix with 40 lowercase hex chars", () =>
-      Effect.gen(function* () {
-        yield* validateToken(`sbp_oauth_${VALID_HEX_40}`);
-      }),
+      validateToken(`sbp_oauth_${VALID_HEX_40}`),
     );
 
     it.live("accepts all valid hex characters (a-f, 0-9)", () =>
-      Effect.gen(function* () {
-        yield* validateToken("sbp_abcdef0123456789abcdef0123456789abcdef01");
-      }),
+      validateToken("sbp_abcdef0123456789abcdef0123456789abcdef01"),
     );
   });
 

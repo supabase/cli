@@ -1,6 +1,5 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, FileSystem, Path } from "effect";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import { runSupabase } from "../../../../../tests/helpers/cli.ts";
@@ -20,25 +19,37 @@ describe("supabase config push (legacy)", () => {
   let projectDir: string;
 
   beforeAll(() => {
-    projectDir = mkdtempSync(join(tmpdir(), "supabase-config-push-e2e-"));
-    mkdirSync(join(projectDir, "supabase"), { recursive: true });
-    writeFileSync(join(projectDir, "supabase", "config.toml"), "malformed");
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        projectDir = yield* fs.makeTempDirectory({ prefix: "supabase-config-push-e2e-" });
+        yield* fs.makeDirectory(path.join(projectDir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(path.join(projectDir, "supabase", "config.toml"), "malformed");
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
   });
 
   afterAll(() => {
-    rmSync(projectDir, { recursive: true, force: true });
+    return Effect.runPromise(
+      FileSystem.FileSystem.pipe(
+        Effect.flatMap((fs) => fs.remove(projectDir, { recursive: true })),
+        Effect.provide(BunServices.layer),
+      ),
+    );
   });
 
   test(
     "aborts with exit 1 on a malformed config.toml before any network call",
     { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      const { exitCode, stdout, stderr } = await runSupabase(
-        ["config", "push", "--project-ref", TEST_PROJECT_REF],
-        { entrypoint: "legacy", cwd: projectDir, env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
-      );
-      expect(exitCode).toBe(1);
-      expect(`${stdout}${stderr}`).toContain("config.toml");
-    },
+    () =>
+      runSupabase(["config", "push", "--project-ref", TEST_PROJECT_REF], {
+        entrypoint: "legacy",
+        cwd: projectDir,
+        env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN },
+      }).then(({ exitCode, stdout, stderr }) => {
+        expect(exitCode).toBe(1);
+        expect(`${stdout}${stderr}`).toContain("config.toml");
+      }),
   );
 });

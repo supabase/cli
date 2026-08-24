@@ -1,3 +1,4 @@
+import { Data } from "effect";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -38,13 +39,12 @@ const lengthNL = (b: Uint8Array): number => (b.length > 0 && b[b.length - 1] ===
  * - the literal `EOF` when the value contains only blank lines (pflag's
  * `readAsCSV` propagates `csv.Reader.Read`'s `io.EOF` unchanged).
  */
-export class LegacyStringSliceFlagParseError extends Error {
+export class LegacyStringSliceFlagParseError extends Data.TaggedError(
+  "LegacyStringSliceFlagParseError",
+)<{ readonly message: string; readonly value: string }> {
   static readonly [ErrorActionabilityFingerprintId] = "LegacyStringSliceFlagParseError";
-  readonly value: string;
   private constructor(value: string, message: string) {
-    super(message);
-    this.name = "LegacyStringSliceFlagParseError";
-    this.value = value;
+    super({ message, value });
   }
   /** Mirrors Go `csv.ParseError.Error()`. Line/column are 1-based; column is a byte offset within the physical line. */
   static parse(

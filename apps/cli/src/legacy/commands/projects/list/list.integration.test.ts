@@ -1,9 +1,6 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import type { V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, FileSystem, Option, Path, Schema } from "effect";
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -55,6 +52,9 @@ const PARENT_PROJECT: Projects[number] = {
 };
 
 const tempRoot = useLegacyTempWorkdir("supabase-projects-list-int-");
+const pathService = Effect.runSync(Effect.provide(Path.Path, Path.layer));
+const join = pathService.join;
+const stringifyJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 // Distinct 20-lowercase-letter refs for the parent-fallback marker tests
 // below (CLI-2167 follow-up).
@@ -65,20 +65,23 @@ function tempFile(workdir: string, name: string): string {
   return join(workdir, "supabase", ".temp", name);
 }
 
-function writeTempContent(workdir: string, name: string, content: string): void {
-  mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
-  writeFileSync(tempFile(workdir, name), content);
+function writeTempContent(workdir: string, name: string, content: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(join(workdir, "supabase", ".temp"), { recursive: true });
+    yield* fs.writeFileString(tempFile(workdir, name), content);
+  });
 }
 
-function writeProjectRefFile(workdir: string, ref: string): void {
-  writeTempContent(workdir, "project-ref", ref);
+function writeProjectRefFile(workdir: string, ref: string) {
+  return writeTempContent(workdir, "project-ref", ref);
 }
 
-function writeLinkedProjectCacheFile(workdir: string, ref: string): void {
-  writeTempContent(
+function writeLinkedProjectCacheFile(workdir: string, ref: string) {
+  return writeTempContent(
     workdir,
     "linked-project.json",
-    JSON.stringify({
+    stringifyJson({
       ref,
       name: "Parent Project",
       organization_id: "org_1",
@@ -200,9 +203,9 @@ describe("legacy projects list integration", () => {
           projectId: Option.none(),
           response: [SAMPLE_PROJECT, PARENT_PROJECT],
         });
-        writeProjectRefFile(workdir, BRANCH_OWN_REF);
-        writeLinkedProjectCacheFile(workdir, PARENT_PROJECT.id);
         return Effect.gen(function* () {
+          yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
+          yield* writeLinkedProjectCacheFile(workdir, PARENT_PROJECT.id);
           yield* legacyProjectsList({});
           expect(out.stdoutText).toContain("●");
           expect(out.stdoutText).toContain("parent");
@@ -216,9 +219,9 @@ describe("legacy projects list integration", () => {
         projectId: Option.none(),
         response: [SAMPLE_PROJECT, PARENT_PROJECT],
       });
-      writeProjectRefFile(workdir, BRANCH_OWN_REF);
-      writeLinkedProjectCacheFile(workdir, PARENT_PROJECT.id);
       return Effect.gen(function* () {
+        yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
+        yield* writeLinkedProjectCacheFile(workdir, PARENT_PROJECT.id);
         yield* legacyProjectsList({});
         const success = out.messages.find((m) => m.type === "success");
         const projects = success?.data?.projects as ReadonlyArray<{
@@ -239,9 +242,9 @@ describe("legacy projects list integration", () => {
         });
         // Directly linked to SAMPLE_PROJECT (a real row) — the cache pointing
         // elsewhere must be irrelevant since the exact match short-circuits.
-        writeProjectRefFile(workdir, SAMPLE_PROJECT.id);
-        writeLinkedProjectCacheFile(workdir, OTHER_CACHE_REF);
         return Effect.gen(function* () {
+          yield* writeProjectRefFile(workdir, SAMPLE_PROJECT.id);
+          yield* writeLinkedProjectCacheFile(workdir, OTHER_CACHE_REF);
           yield* legacyProjectsList({});
           expect(out.stdoutText).toContain("●");
         }).pipe(Effect.provide(layer));
@@ -323,7 +326,7 @@ describe("legacy projects list integration", () => {
       const exit = yield* Effect.exit(legacyProjectsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = stringifyJson(exit.cause);
         expect(json).toContain("LegacyProjectsEnvNotSupportedError");
         expect(json).toContain("--output env flag is not supported");
       }
@@ -336,7 +339,7 @@ describe("legacy projects list integration", () => {
       const exit = yield* Effect.exit(legacyProjectsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = stringifyJson(exit.cause);
         expect(json).toContain("LegacyProjectsListNetworkError");
         expect(json).toContain("failed to list projects");
       }
@@ -349,7 +352,7 @@ describe("legacy projects list integration", () => {
       const exit = yield* Effect.exit(legacyProjectsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectsListUnexpectedStatusError");
+        expect(stringifyJson(exit.cause)).toContain("LegacyProjectsListUnexpectedStatusError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -360,7 +363,7 @@ describe("legacy projects list integration", () => {
       const exit = yield* Effect.exit(legacyProjectsList({}));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectsListUnexpectedStatusError");
+        expect(stringifyJson(exit.cause)).toContain("LegacyProjectsListUnexpectedStatusError");
       }
     }).pipe(Effect.provide(layer));
   });

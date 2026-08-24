@@ -112,6 +112,16 @@ export interface LegacySeedRow {
   readonly hash: string;
 }
 
+const legacyMigrationCell = (value: unknown): string => {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return value.toString();
+  }
+  if (typeof value === "symbol") return value.toString();
+  return Object.prototype.toString.call(value);
+};
+
 /**
  * Reads `supabase_migrations.seed_files` (path → hash). Mirrors Go's
  * `getRemoteSeeds`: a missing table (42P01) means no
@@ -121,8 +131,8 @@ export const legacyReadSeedTable = (session: LegacyDbSession) =>
   session.query(SELECT_SEED_TABLE).pipe(
     Effect.map((rows) =>
       rows.map<LegacySeedRow>((row) => ({
-        path: String(row["path"] ?? ""),
-        hash: String(row["hash"] ?? ""),
+        path: legacyMigrationCell(row["path"]),
+        hash: legacyMigrationCell(row["hash"]),
       })),
     ),
     Effect.catch((error) =>
@@ -411,7 +421,7 @@ export interface LegacyMigrationFile {
 
 /** Coerce a Postgres `text[]` column value into a string array. */
 const toStatements = (value: unknown): ReadonlyArray<string> =>
-  Array.isArray(value) ? value.map((entry) => String(entry)) : [];
+  Array.isArray(value) ? value.map(legacyMigrationCell) : [];
 
 /**
  * Reads the full migration-history rows (version, name, statements). Mirrors Go's
@@ -421,8 +431,8 @@ export const legacyReadMigrationTable = (session: LegacyDbSession) =>
   session.query(SELECT_VERSION_TABLE).pipe(
     Effect.map((rows) =>
       rows.map<LegacyMigrationFile>((row) => ({
-        version: String(row["version"] ?? ""),
-        name: String(row["name"] ?? ""),
+        version: legacyMigrationCell(row["version"]),
+        name: legacyMigrationCell(row["name"]),
         statements: toStatements(row["statements"]),
       })),
     ),

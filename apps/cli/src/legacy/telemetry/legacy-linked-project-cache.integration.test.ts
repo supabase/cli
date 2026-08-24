@@ -1,9 +1,6 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { BunServices } from "@effect/platform-bun";
+import { BunPath, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, FileSystem, Layer, Path, Schema } from "effect";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { mockAnalytics, mockTelemetryRuntime } from "../../../tests/helpers/mocks.ts";
@@ -12,19 +9,35 @@ import {
   mockLegacyCliConfig,
   mockLegacyCredentialsLayer,
   mockLegacyPlatformApi,
+  useLegacyTempWorkdir,
 } from "../../../tests/helpers/legacy-mocks.ts";
 import { legacyIdentityStitchLayer } from "../shared/legacy-identity-stitch.ts";
 import { legacyLinkedProjectCacheLayer } from "./legacy-linked-project-cache.layer.ts";
 import { LegacyLinkedProjectCache } from "./legacy-linked-project-cache.service.ts";
 
 describe("legacyLinkedProjectCacheLayer", () => {
+  const temp = useLegacyTempWorkdir("legacy-linked-cache-");
+  const path = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
+  const LinkedProjectCacheSchema = Schema.Struct({
+    ref: Schema.String,
+    name: Schema.String,
+    organization_id: Schema.String,
+    organization_slug: Schema.String,
+  });
+  const encodeLinkedProject = Schema.encodeUnknownSync(
+    Schema.fromJsonString(LinkedProjectCacheSchema),
+  );
+  const decodeLinkedProject = Schema.decodeUnknownSync(
+    Schema.fromJsonString(LinkedProjectCacheSchema),
+  );
+
   it.live(
     "stitches session identity from the cache GET's X-Gotrue-Id (Go identityTransport)",
     () => {
       // Go runs ensureProjectGroupsCached's GET through GetSupabase()'s
       // identityTransport, so the X-Gotrue-Id stitches the session identity — the
       // only stitch opportunity for a password-only `--linked` run. Mirror that here.
-      const workdir = mkdtempSync(join(tmpdir(), "legacy-linked-cache-"));
+      const workdir = temp.current;
       const analytics = mockAnalytics();
       const api = mockLegacyPlatformApi({
         handler: (request) =>
@@ -32,7 +45,7 @@ describe("legacyLinkedProjectCacheLayer", () => {
             HttpClientResponse.fromWeb(
               request,
               new Response(
-                JSON.stringify({
+                encodeLinkedProject({
                   ref: LEGACY_VALID_REF,
                   name: "proj",
                   organization_id: "org-1",
@@ -53,7 +66,7 @@ describe("legacyLinkedProjectCacheLayer", () => {
         Layer.provide(analytics.layer),
         Layer.provide(
           mockTelemetryRuntime({
-            configDir: join(workdir, ".supabase"),
+            configDir: path.join(workdir, ".supabase"),
             consent: "granted",
             distinctId: undefined,
             isCi: false,
@@ -77,12 +90,13 @@ describe("legacyLinkedProjectCacheLayer", () => {
         const cache = yield* LegacyLinkedProjectCache;
         yield* cache.cache(LEGACY_VALID_REF, workdir);
         // Identity stitched from the cache response's X-Gotrue-Id.
-        expect(JSON.stringify(analytics.aliased)).toContain("gotrue-abc");
+        expect(analytics.aliased.some(({ distinctId }) => distinctId === "gotrue-abc")).toBe(true);
         // The linked-project cache is still written.
-        const written: unknown = JSON.parse(
-          readFileSync(join(workdir, "supabase", ".temp", "linked-project.json"), "utf8"),
+        const fs = yield* FileSystem.FileSystem;
+        const written = yield* fs.readFileString(
+          path.join(workdir, "supabase", ".temp", "linked-project.json"),
         );
-        expect((written as { ref: string }).ref).toBe(LEGACY_VALID_REF);
+        expect(decodeLinkedProject(written).ref).toBe(LEGACY_VALID_REF);
         // Go's CacheProjectAndIdentifyGroups also publishes org + project groups on
         // the same cache miss (telemetry/project.go:66-88).
         expect(analytics.groupIdentified).toEqual([
@@ -97,25 +111,14 @@ describe("legacyLinkedProjectCacheLayer", () => {
             properties: { name: "proj", organization_slug: "acme" },
           },
         ]);
-        rmSync(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(Layer.mergeAll(layer, BunServices.layer)));
     },
   );
 
   it.live("does not re-identify groups when the linked-project cache already exists", () => {
     // Cache hit → Go's HasLinkedProject guard returns early, so no write and no
     // GroupIdentify. The TS `exists` early-return must match.
-    const workdir = mkdtempSync(join(tmpdir(), "legacy-linked-cache-hit-"));
-    mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
-    writeFileSync(
-      join(workdir, "supabase", ".temp", "linked-project.json"),
-      JSON.stringify({
-        ref: LEGACY_VALID_REF,
-        name: "proj",
-        organization_id: "org-1",
-        organization_slug: "acme",
-      }),
-    );
+    const workdir = temp.current;
     const analytics = mockAnalytics();
     const api = mockLegacyPlatformApi({
       handler: () => Effect.die("cache GET must not run on a cache hit"),
@@ -123,7 +126,7 @@ describe("legacyLinkedProjectCacheLayer", () => {
     const identityStitch = legacyIdentityStitchLayer.pipe(
       Layer.provide(analytics.layer),
       Layer.provide(
-        mockTelemetryRuntime({ configDir: join(workdir, ".supabase"), consent: "granted" }),
+        mockTelemetryRuntime({ configDir: path.join(workdir, ".supabase"), consent: "granted" }),
       ),
       Layer.provide(BunServices.layer),
     );
@@ -136,12 +139,23 @@ describe("legacyLinkedProjectCacheLayer", () => {
       Layer.provide(BunServices.layer),
     );
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const cachePath = path.join(workdir, "supabase", ".temp", "linked-project.json");
+      yield* fs.makeDirectory(path.dirname(cachePath), { recursive: true });
+      yield* fs.writeFileString(
+        cachePath,
+        encodeLinkedProject({
+          ref: LEGACY_VALID_REF,
+          name: "proj",
+          organization_id: "org-1",
+          organization_slug: "acme",
+        }),
+      );
       const cache = yield* LegacyLinkedProjectCache;
       yield* cache.cache(LEGACY_VALID_REF, workdir);
       expect(analytics.groupIdentified).toEqual([]);
       expect(analytics.aliased).toEqual([]);
-      rmSync(workdir, { recursive: true, force: true });
-    }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(Layer.mergeAll(layer, BunServices.layer)));
   });
 
   it.live(
@@ -152,9 +166,7 @@ describe("legacyLinkedProjectCacheLayer", () => {
       // would make the parent chain prefer a never-linked project. The guard
       // runs before any token/network work, so the GET must never fire.
       const OTHER_REF = "otherprojectrefabcde";
-      const workdir = mkdtempSync(join(tmpdir(), "legacy-linked-cache-diverge-"));
-      mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
-      writeFileSync(join(workdir, "supabase", ".temp", "project-ref"), LEGACY_VALID_REF);
+      const workdir = temp.current;
       const analytics = mockAnalytics();
       const api = mockLegacyPlatformApi({
         handler: () => Effect.die("cache GET must not run when project-ref diverges"),
@@ -162,7 +174,7 @@ describe("legacyLinkedProjectCacheLayer", () => {
       const identityStitch = legacyIdentityStitchLayer.pipe(
         Layer.provide(analytics.layer),
         Layer.provide(
-          mockTelemetryRuntime({ configDir: join(workdir, ".supabase"), consent: "granted" }),
+          mockTelemetryRuntime({ configDir: path.join(workdir, ".supabase"), consent: "granted" }),
         ),
         Layer.provide(BunServices.layer),
       );
@@ -175,12 +187,17 @@ describe("legacyLinkedProjectCacheLayer", () => {
         Layer.provide(BunServices.layer),
       );
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const refPath = path.join(workdir, "supabase", ".temp", "project-ref");
+        yield* fs.makeDirectory(path.dirname(refPath), { recursive: true });
+        yield* fs.writeFileString(refPath, LEGACY_VALID_REF);
         const cache = yield* LegacyLinkedProjectCache;
         yield* cache.cache(OTHER_REF, workdir);
-        expect(existsSync(join(workdir, "supabase", ".temp", "linked-project.json"))).toBe(false);
+        expect(
+          yield* fs.exists(path.join(workdir, "supabase", ".temp", "linked-project.json")),
+        ).toBe(false);
         expect(analytics.groupIdentified).toEqual([]);
-        rmSync(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(Layer.mergeAll(layer, BunServices.layer)));
     },
   );
 });

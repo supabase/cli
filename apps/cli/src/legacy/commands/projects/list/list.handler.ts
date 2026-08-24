@@ -20,6 +20,7 @@ import {
   legacyGoTomlListWrapper,
 } from "../../../shared/legacy-go-struct-output.encoders.ts";
 import { sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
+import { legacyErrorMessage } from "../../../shared/legacy-error-message.ts";
 import {
   LegacyProjectsEnvNotSupportedError,
   LegacyProjectsListNetworkError,
@@ -91,7 +92,9 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.mapError(
         (cause) =>
-          new LegacyProjectsListNetworkError({ message: `failed to list projects: ${cause}` }),
+          new LegacyProjectsListNetworkError({
+            message: `failed to list projects: ${legacyErrorMessage(cause)}`,
+          }),
       ),
     );
 
@@ -114,7 +117,7 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
           new LegacyProjectsListUnexpectedStatusError({
             status: response.status,
             body: "",
-            message: `Unexpected error retrieving projects: ${cause}`,
+            message: `Unexpected error retrieving projects: ${legacyErrorMessage(cause)}`,
             decode: true,
           }),
       ),

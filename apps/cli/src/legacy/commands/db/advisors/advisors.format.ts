@@ -39,8 +39,15 @@ export interface LegacyAdvisorLint {
   readonly cacheKey: string;
 }
 
-const asString = (value: unknown): string =>
-  value === null || value === undefined ? "" : String(value);
+const asString = (value: unknown): string => {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return value.toString();
+  }
+  if (typeof value === "symbol") return value.toString();
+  return Object.prototype.toString.call(value);
+};
 
 const asStringArray = (value: unknown): ReadonlyArray<string> =>
   Array.isArray(value) ? value.map(asString) : [];

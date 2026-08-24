@@ -42,11 +42,9 @@ export const legacyUpdateMigrationHistory = (
     for (const migration of migrations) {
       const match = MIGRATE_FILE_PATTERN.exec(path.basename(migration.path));
       if (match === null || match[1] !== migration.version) {
-        return yield* Effect.fail(
-          new LegacyDbPullWriteError({
-            message: `glob supabase/migrations/${migration.version}_*.sql: file does not exist`,
-          }),
-        );
+        return yield* new LegacyDbPullWriteError({
+          message: `glob supabase/migrations/${migration.version}_*.sql: file does not exist`,
+        });
       }
       resolved.push({
         version: migration.version,

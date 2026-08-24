@@ -12,28 +12,25 @@ describe("supabase completion (legacy)", () => {
   test(
     "bash --no-descriptions is accepted and produces the native no-descriptions script",
     { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      const { exitCode, stdout } = await runSupabase(["completion", "bash", "--no-descriptions"], {
+    () =>
+      runSupabase(["completion", "bash", "--no-descriptions"], {
         entrypoint: "legacy",
-      });
-      expect(exitCode).toBe(0);
-      expect(stdout).toContain("__completeNoDesc");
-    },
+      }).then(({ exitCode, stdout }) => {
+        expect(exitCode).toBe(0);
+        expect(stdout).toContain("__completeNoDesc");
+      }),
   );
 
   // Minimal cross-shell smoke coverage: proves the default (with-descriptions)
   // code path also works end-to-end through a real subprocess, for a shell
   // other than bash.
-  test(
-    "zsh with no flags produces the native default script",
-    { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      const { exitCode, stdout } = await runSupabase(["completion", "zsh"], {
-        entrypoint: "legacy",
-      });
+  test("zsh with no flags produces the native default script", { timeout: E2E_TIMEOUT_MS }, () =>
+    runSupabase(["completion", "zsh"], {
+      entrypoint: "legacy",
+    }).then(({ exitCode, stdout }) => {
       expect(exitCode).toBe(0);
       expect(stdout).toContain("#compdef supabase");
       expect(stdout).toContain("__complete");
-    },
+    }),
   );
 });

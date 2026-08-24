@@ -1,6 +1,3 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
@@ -40,23 +37,24 @@ function mockSession(opts: { readonly failUpsertAt?: number } = {}) {
   return { session, calls };
 }
 
-function writeMigrations(dir: string): ReadonlyArray<LegacyPulledMigration> {
-  const migrations: ReadonlyArray<LegacyPulledMigration> = [
-    { path: join(dir, "20240101000000_a.sql"), version: "20240101000000" },
-    { path: join(dir, "20240101000001_b.sql"), version: "20240101000001" },
-  ];
-  writeFileSync(migrations[0]!.path, "create table a ();");
-  writeFileSync(migrations[1]!.path, "create table b ();");
-  return migrations;
-}
+const writeMigrations = (fs: FileSystem.FileSystem, path: Path.Path, dir: string) =>
+  Effect.gen(function* () {
+    const migrations: ReadonlyArray<LegacyPulledMigration> = [
+      { path: path.join(dir, "20240101000000_a.sql"), version: "20240101000000" },
+      { path: path.join(dir, "20240101000001_b.sql"), version: "20240101000001" },
+    ];
+    yield* fs.writeFileString(migrations[0]!.path, "create table a ();");
+    yield* fs.writeFileString(migrations[1]!.path, "create table b ();");
+    return migrations;
+  });
 
 describe("legacyUpdateMigrationHistory", () => {
   it.effect("wraps the upserts in one BEGIN + N upserts + COMMIT transaction", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const dir = mkdtempSync(join(tmpdir(), "pull-sync-"));
-      const migrations = writeMigrations(dir);
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "pull-sync-" });
+      const migrations = yield* writeMigrations(fs, path, dir);
       const out = mockOutput();
       const { session, calls } = mockSession();
 
@@ -79,8 +77,8 @@ describe("legacyUpdateMigrationHistory", () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const dir = mkdtempSync(join(tmpdir(), "pull-sync-"));
-      const migrations = writeMigrations(dir);
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "pull-sync-" });
+      const migrations = yield* writeMigrations(fs, path, dir);
       const out = mockOutput();
       const { session, calls } = mockSession({ failUpsertAt: 2 });
 

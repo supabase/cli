@@ -1,13 +1,13 @@
-import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { BunPath, BunServices } from "@effect/platform-bun";
 import { Command, Flag } from "effect/unstable/cli";
-import { describe, expect, it } from "vitest";
+import { Effect, FileSystem, Path } from "effect";
+import type * as PlatformError from "effect/PlatformError";
+import { describe, expect, it } from "@effect/vitest";
 
 import { LegacyExperimentalFlag } from "../../shared/legacy/global-flags.ts";
 
 import { legacyRoot } from "../cli/root.ts";
-import { legacyReadDocsContent } from "./legacy-docs-spec.content.ts";
+import { legacyReadDocsContent, type LegacyDocsContent } from "./legacy-docs-spec.content.ts";
 import {
   legacyBuildDocsSpec,
   legacyDocsOverlayPath,
@@ -18,29 +18,33 @@ import type { LegacyDocsCommand } from "./legacy-docs-spec.ts";
 import { LEGACY_DOCS_EXCLUDED, LEGACY_DOCS_EXPERIMENTAL } from "./legacy-docs-spec.tables.ts";
 
 interface LegacyBuiltSpecFixture {
-  readonly content: ReturnType<typeof legacyReadDocsContent>;
+  readonly content: LegacyDocsContent;
   readonly spec: ReturnType<typeof legacyBuildDocsSpec>;
   readonly byId: ReadonlyMap<string, LegacyDocsCommand>;
 }
 
-let legacyBuiltSpecCache: LegacyBuiltSpecFixture | undefined;
+const path = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
 
-/** Lazily built once, so runs filtered to the pure helpers skip the tree walk and disk reads. */
+const legacyBuiltSpecCache: LegacyBuiltSpecFixture = await Effect.runPromise(
+  legacyReadDocsContent(path.resolve(import.meta.dirname, "../../../docs")).pipe(
+    Effect.provide(BunServices.layer),
+    Effect.map((content) => {
+      const spec = legacyBuildDocsSpec({
+        root: legacyRoot,
+        version: "1.2.3",
+        overlays: content.overlays,
+        examples: content.examples,
+      });
+      return {
+        content,
+        spec,
+        byId: new Map(spec.commands.map((command) => [command.id, command])),
+      };
+    }),
+  ),
+);
+
 function legacyBuiltSpec(): LegacyBuiltSpecFixture {
-  if (legacyBuiltSpecCache === undefined) {
-    const content = legacyReadDocsContent(path.resolve(import.meta.dirname, "../../../docs"));
-    const spec = legacyBuildDocsSpec({
-      root: legacyRoot,
-      version: "1.2.3",
-      overlays: content.overlays,
-      examples: content.examples,
-    });
-    legacyBuiltSpecCache = {
-      content,
-      spec,
-      byId: new Map(spec.commands.map((command) => [command.id, command])),
-    };
-  }
   return legacyBuiltSpecCache;
 }
 
@@ -369,57 +373,77 @@ describe("build guards fail loudly", () => {
 });
 
 describe("legacyReadDocsContent rejects malformed examples.yaml", () => {
-  function withTempDocs(examplesYaml: string): () => void {
-    const dir = mkdtempSync(path.join(tmpdir(), "docs-spec-test-"));
-    mkdirSync(path.join(dir, "supabase"), { recursive: true });
-    mkdirSync(path.join(dir, "templates"), { recursive: true });
-    writeFileSync(path.join(dir, "supabase", "link.md"), "## supabase-link\n\nBody.\n");
-    writeFileSync(path.join(dir, "templates", "examples.yaml"), examplesYaml);
-    return () => {
-      try {
-        legacyReadDocsContent(dir);
-      } finally {
-        rmSync(dir, { recursive: true, force: true });
-      }
-    };
+  function withTempDocs(examplesYaml: string): Promise<void> {
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const pathService = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectory({ prefix: "docs-spec-test-" });
+        const overlayPath = pathService.join(dir, "supabase", "link.md");
+        const examplesPath = pathService.join(dir, "templates", "examples.yaml");
+        yield* fs.makeDirectory(pathService.dirname(overlayPath), { recursive: true });
+        yield* fs.makeDirectory(pathService.dirname(examplesPath), { recursive: true });
+        yield* fs.writeFileString(overlayPath, "## supabase-link\n\nBody.\n");
+        yield* fs.writeFileString(examplesPath, examplesYaml);
+        yield* legacyReadDocsContent(dir).pipe(
+          Effect.ensuring(fs.remove(dir, { recursive: true, force: true }).pipe(Effect.ignore)),
+        );
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
   }
 
   it("rejects a non-mapping document", () => {
-    expect(withTempDocs("- just\n- a list\n")).toThrow(/must be a mapping of doc ids/);
+    return expect(withTempDocs("- just\n- a list\n")).rejects.toThrow(
+      /must be a mapping of doc ids/,
+    );
   });
 
   it("rejects a nested-array entry (mis-indented list)", () => {
-    expect(withTempDocs("supabase-link:\n  - - id: oops\n")).toThrow(/must be a mapping/);
+    return expect(withTempDocs("supabase-link:\n  - - id: oops\n")).rejects.toThrow(
+      /must be a mapping/,
+    );
   });
 
   it("rejects unknown fields (typo'd keys)", () => {
-    expect(withTempDocs("supabase-link:\n  - titel: typo\n    code: x\n")).toThrow(
+    return expect(withTempDocs("supabase-link:\n  - titel: typo\n    code: x\n")).rejects.toThrow(
       /unknown field "titel"/,
     );
   });
 
   it("rejects non-string field values", () => {
-    expect(withTempDocs("supabase-link:\n  - id: 5\n")).toThrow(/id must be a string/);
+    return expect(withTempDocs("supabase-link:\n  - id: 5\n")).rejects.toThrow(
+      /id must be a string/,
+    );
   });
 });
 
 describe("LEGACY_DOCS_EXPERIMENTAL mirrors the runtime gate", () => {
-  it("matches the legacyRequireExperimental call sites exactly", () => {
-    const commandsDir = path.resolve(import.meta.dirname, "../commands");
-    const gated = new Set<string>();
-    const walk = (dir: string): void => {
-      for (const entry of readdirSync(dir, { withFileTypes: true })) {
-        const entryPath = path.join(dir, entry.name);
-        if (entry.isDirectory()) walk(entryPath);
-        else if (entry.name.endsWith(".command.ts")) {
-          if (readFileSync(entryPath, "utf8").includes("yield* legacyRequireExperimental")) {
-            const relative = path.relative(commandsDir, path.dirname(entryPath));
-            gated.add(`supabase-${relative.split(path.sep).join("-")}`);
+  it.effect("matches the legacyRequireExperimental call sites exactly", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
+      const commandsDir = pathService.resolve(import.meta.dirname, "../commands");
+      const gated = new Set<string>();
+      const walk = (
+        dir: string,
+      ): Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem | Path.Path> =>
+        Effect.gen(function* () {
+          for (const entry of yield* fs.readDirectory(dir)) {
+            const entryPath = pathService.join(dir, entry);
+            const info = yield* fs.stat(entryPath);
+            if (info.type === "Directory") yield* walk(entryPath);
+            else if (entry.endsWith(".command.ts")) {
+              if (
+                (yield* fs.readFileString(entryPath)).includes("yield* legacyRequireExperimental")
+              ) {
+                const relative = pathService.relative(commandsDir, pathService.dirname(entryPath));
+                gated.add(`supabase-${relative.split(pathService.sep).join("-")}`);
+              }
+            }
           }
-        }
-      }
-    };
-    walk(commandsDir);
-    expect([...gated].sort()).toEqual([...LEGACY_DOCS_EXPERIMENTAL].sort());
-  });
+        });
+      yield* walk(commandsDir);
+      expect([...gated].sort()).toEqual([...LEGACY_DOCS_EXPERIMENTAL].sort());
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });

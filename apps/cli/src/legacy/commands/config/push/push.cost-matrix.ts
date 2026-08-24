@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -56,24 +56,23 @@ export const getCostMatrix = Effect.fn("legacy.config.push.cost-matrix")(functio
   if (response.status !== 200) {
     const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
     const body = sanitizeLegacyErrorBody(rawBody);
-    return yield* Effect.fail(
-      new LegacyConfigPushListAddonsStatusError({
-        status: response.status,
-        body,
-        message: `unexpected list addons status ${response.status}: ${body}`,
-      }),
-    );
+    return yield* new LegacyConfigPushListAddonsStatusError({
+      status: response.status,
+      body,
+      message: `unexpected list addons status ${response.status}: ${body}`,
+    });
   }
 
   const rawBody = yield* response.text;
-  const parsed = yield* Effect.try({
-    try: () => JSON.parse(rawBody) as unknown,
-    catch: (cause) =>
-      new LegacyConfigPushListAddonsNetworkError({
-        message: `failed to list addons: ${String(cause)}`,
-        decode: true,
-      }),
-  });
+  const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(rawBody).pipe(
+    Effect.mapError(
+      (cause) =>
+        new LegacyConfigPushListAddonsNetworkError({
+          message: `failed to list addons: ${String(cause)}`,
+          decode: true,
+        }),
+    ),
+  );
 
   const costMatrix = new Map<string, LegacyCostItem>();
   for (const addon of readAddons(parsed)) {

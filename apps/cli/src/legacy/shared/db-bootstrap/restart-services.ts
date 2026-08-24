@@ -136,7 +136,7 @@ function legacyRestartSatelliteServices(
     );
     const failures = results.filter(Option.isSome).map((result) => result.value);
     if (failures.length > 0) {
-      return yield* Effect.fail(new LegacyRestartServicesError({ message: failures.join("\n") }));
+      return yield* new LegacyRestartServicesError({ message: failures.join("\n") });
     }
   });
 }
@@ -216,12 +216,10 @@ function legacyReloadKong(
     const inspected = yield* legacyInspectContainerState(spawner, kongId).pipe(Effect.result);
     if (Result.isFailure(inspected)) {
       if (legacyIsContainerNotFoundMessage(inspected.failure.message)) return;
-      return yield* Effect.fail(
-        new LegacyKongReloadError({
-          message: `failed to inspect kong: ${inspected.failure.message}`,
-          suggestion: legacyKongRecoverySuggestion(kongId),
-        }),
-      );
+      return yield* new LegacyKongReloadError({
+        message: `failed to inspect kong: ${inspected.failure.message}`,
+        suggestion: legacyKongRecoverySuggestion(kongId),
+      });
     }
     if (!inspected.success.running) return;
     const result = yield* legacyExecCaptureCombined(spawner, kongId, [
@@ -236,15 +234,13 @@ function legacyReloadKong(
       // error, `errors.New("error executing command")`, for `iresp.ExitCode > 0` — not the
       // exit code itself. `reloadKong` then wraps it as `failed to reload kong: %w[:\n%s]`
       // (`reset.go:269-274`), so the `%w` slot is always this exact string, never `exit N`.
-      return yield* Effect.fail(
-        new LegacyKongReloadError({
-          message:
-            trimmed.length > 0
-              ? `failed to reload kong: error executing command:\n${trimmed}`
-              : "failed to reload kong: error executing command",
-          suggestion: legacyKongRecoverySuggestion(kongId),
-        }),
-      );
+      return yield* new LegacyKongReloadError({
+        message:
+          trimmed.length > 0
+            ? `failed to reload kong: error executing command:\n${trimmed}`
+            : "failed to reload kong: error executing command",
+        suggestion: legacyKongRecoverySuggestion(kongId),
+      });
     }
   });
 }

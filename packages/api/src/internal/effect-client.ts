@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import type * as EffectModule from "effect/Effect";
 
-import { type SupabaseApiClientShape, SupabaseApiClient } from "./client.ts";
+import { type SupabaseApiClientShape, type SupabaseApiError, SupabaseApiClient } from "./client.ts";
 
 export type EffectClient<Operations extends object> = {
   readonly [Key in keyof Operations]: Operations[Key] extends (
@@ -27,7 +27,7 @@ export function makeEffectApiClient<Operations extends object>(
         (
           value as (
             ...args: ReadonlyArray<unknown>
-          ) => Effect.Effect<unknown, unknown, SupabaseApiClient>
+          ) => Effect.Effect<unknown, SupabaseApiError, SupabaseApiClient>
         )(...args).pipe(Effect.provideService(SupabaseApiClient, client));
     }
     if (isRecord(value)) {

@@ -362,7 +362,8 @@ export function legacySignJwtWithJwk(jwk: LegacyJwk, payloadJson: string): strin
 export function legacyGenerateAsymmetricGoJwt(
   jwk: LegacyJwk,
   role: "anon" | "service_role",
+  nowSeconds: number,
 ): string {
-  const expiresAt = Math.floor(Date.now() / 1000) + GO_JWT_ASYMMETRIC_EXPIRY_SECONDS;
+  const expiresAt = nowSeconds + GO_JWT_ASYMMETRIC_EXPIRY_SECONDS;
   return legacySignJwtWithJwk(jwk, JSON.stringify({ iss: GO_JWT_ISSUER, role, exp: expiresAt }));
 }

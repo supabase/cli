@@ -1,4 +1,4 @@
-import { Console, Effect, FileSystem, Path, Redacted, Schema } from "effect";
+import { Clock, Console, Effect, FileSystem, Path, Redacted, Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { ProjectConfigSchema, RemotesSchema, type ProjectConfig } from "./base.ts";
 import {
@@ -87,10 +87,11 @@ export interface LoadProjectConfigOptions {
   /**
    * Pre-resolved project environment used to interpolate `env()` references.
    * When omitted, the environment is resolved internally from `.env`/`.env.local`
-   * layered over `process.env` (the default for most callers). Callers that need
-   * Go-accurate, environment-specific resolution (e.g. `functions serve`, which
-   * also reads `.env.<SUPABASE_ENV>` files) resolve it themselves and pass it in
-   * so loading does not re-read those files or depend on `process.env` mutation.
+   * with no ambient process environment. Runtime adapters that intentionally include
+   * ambient values pass them as `baseEnv` when loading the environment first, then
+   * provide the resulting `projectEnv`. Callers that need Go-accurate,
+   * environment-specific resolution (e.g. `functions serve`, which also reads
+   * `.env.<SUPABASE_ENV>` files) resolve it themselves and pass it in.
    */
   readonly projectEnv?: ProjectEnvironment;
   /** See {@link FindProjectPathsOptions.search}. */
@@ -749,7 +750,7 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
     ).pipe(Effect.provideService(Console.Console, globalThis.console));
   }
 
-  // Substitute `env(VAR)` references against `.env`/`.env.local`/ambient env
+  // Substitute `env(VAR)` references against the explicitly resolved project env
   // before schema decode. Required for numeric/boolean fields, which would
   // otherwise crash the strict decoder with `Expected number` (CLI-1489).
   // The config file lives at `<projectRoot>/supabase/config.{toml,json}`, so
@@ -760,7 +761,6 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
     options?.projectEnv ??
     (yield* loadProjectEnvironment({
       cwd: projectRoot,
-      baseEnv: process.env,
       search: options?.search,
     }));
   const goViperCompat = options?.goViperCompat ?? false;
@@ -942,7 +942,7 @@ function writeFileAtomic(
 ): Effect.Effect<void, never, FileSystem.FileSystem> {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const tmpPath = `${filePath}.tmp.${Date.now()}`;
+    const tmpPath = `${filePath}.tmp.${yield* Clock.currentTimeMillis}`;
     yield* fs.writeFileString(tmpPath, content);
     yield* fs.rename(tmpPath, filePath);
   }).pipe(Effect.catchTag("PlatformError", (e) => Effect.die(e)));

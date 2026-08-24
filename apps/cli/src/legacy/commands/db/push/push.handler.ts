@@ -46,16 +46,17 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
   let linkedRefForCache: string | undefined;
 
   const body = Effect.gen(function* () {
-    yield* legacyApplyProjectEnv(projectEnv);
+    const effectiveProjectEnv = {
+      ...projectEnv,
+      ...(yield* legacyApplyProjectEnv(projectEnv)),
+    };
     const target = resolveLegacyDbTargetFlags(cliArgs.args);
     // Mutually-exclusive db-url/linked/local group, keyed off the
     // explicitly-set flags, not the `--linked` default value.
     if (target.setFlags.length > 1) {
-      return yield* Effect.fail(
-        new LegacyDbPushTargetFlagsError({
-          message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-        }),
-      );
+      return yield* new LegacyDbPushTargetFlagsError({
+        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
+      });
     }
     // push defaults `--linked` to true, so no target flag → linked.
     const connType = target.connType ?? "linked";
@@ -67,12 +68,10 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
     // typed `--project-ref` flag silently doing nothing on e.g. `db push
     // --local` is a footgun the env var doesn't share, so this errors instead.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* Effect.fail(
-        new LegacyDbPushTargetFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
+      return yield* new LegacyDbPushTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      });
     }
 
     // The linked path resolves the project ref before loading config so a
@@ -128,7 +127,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
       includeVault: !flags.skipVault,
       dnsResolver,
       projectId: cliConfig.projectId,
-      toml,
+      toml: { ...toml, projectEnv: { ...toml.projectEnv, ...effectiveProjectEnv } },
       yes,
       emitStructuredResult: true,
     });

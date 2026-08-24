@@ -1,7 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { BunPath, BunServices } from "@effect/platform-bun";
 import { describe, expect, test } from "vitest";
+import { Effect, FileSystem, Path } from "effect";
+import * as EffectPath from "effect/Path";
 
 import {
   legacyBuildKongBearerToken,
@@ -13,6 +14,8 @@ import {
   type LegacyKongApiKeys,
   type LegacyKongContainerSpecInput,
 } from "./kong.service.ts";
+
+const testPath = Effect.runSync(EffectPath.Path.pipe(Effect.provide(BunPath.layer)));
 
 const apiKeys: LegacyKongApiKeys = {
   secretKey: "sb_secret_abc",
@@ -57,48 +60,73 @@ describe("legacyResolveKongNginxWorkerProcesses", () => {
 describe("legacyBuildKongEmailTemplateBind", () => {
   test("returns undefined for an empty contentPath (start.go:528-530)", () => {
     expect(
-      legacyBuildKongEmailTemplateBind({ id: "invite", contentPath: "" }, "/work"),
+      legacyBuildKongEmailTemplateBind({ id: "invite", contentPath: "" }, "/work", testPath),
     ).toBeUndefined();
   });
 
   test("resolves a relative contentPath against workdir (start.go:531-538)", () => {
     expect(
-      legacyBuildKongEmailTemplateBind({ id: "invite", contentPath: "invite.html" }, "/work"),
+      legacyBuildKongEmailTemplateBind(
+        { id: "invite", contentPath: "invite.html" },
+        "/work",
+        testPath,
+      ),
     ).toBe("/work/invite.html:/home/kong/templates/email/invite.html:rw");
   });
 
   test("notification mounts fall back to the legacy supabase-relative file", () => {
-    const workdir = mkdtempSync(join(tmpdir(), "kong-email-bind-"));
-    try {
-      mkdirSync(join(workdir, "supabase", "templates"), { recursive: true });
-      writeFileSync(join(workdir, "supabase", "templates", "n.html"), "<p>x</p>");
-      expect(
-        legacyBuildKongEmailTemplateBind(
-          {
-            id: "password_changed_notification",
-            contentPath: "./templates/n.html",
-            notification: true,
-          },
-          workdir,
-        ),
-      ).toBe(
-        `${join(workdir, "supabase", "templates", "n.html")}:/home/kong/templates/email/password_changed_notification.html:rw`,
-      );
-      // template mounts keep plain workdir resolution even when the file is absent
-      expect(
-        legacyBuildKongEmailTemplateBind(
-          { id: "invite", contentPath: "./templates/n.html" },
-          workdir,
-        ),
-      ).toBe(`${join(workdir, "templates", "n.html")}:/home/kong/templates/email/invite.html:rw`);
-    } finally {
-      rmSync(workdir, { recursive: true, force: true });
-    }
+    return Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const workdir = yield* Effect.acquireRelease(
+            fs.makeTempDirectory({ directory: tmpdir(), prefix: "kong-email-bind-" }),
+            (directory) =>
+              fs.remove(directory, { recursive: true, force: true }).pipe(Effect.ignore),
+          );
+          const path = yield* Path.Path;
+          yield* fs.makeDirectory(path.join(workdir, "supabase", "templates"), {
+            recursive: true,
+          });
+          yield* fs.writeFileString(
+            path.join(workdir, "supabase", "templates", "n.html"),
+            "<p>x</p>",
+          );
+          expect(
+            legacyBuildKongEmailTemplateBind(
+              {
+                id: "password_changed_notification",
+                contentPath: "./templates/n.html",
+                notification: true,
+              },
+              workdir,
+              testPath,
+            ),
+          ).toBe(
+            `${path.join(workdir, "supabase", "templates", "n.html")}:/home/kong/templates/email/password_changed_notification.html:rw`,
+          );
+          // template mounts keep plain workdir resolution even when the file is absent
+          expect(
+            legacyBuildKongEmailTemplateBind(
+              { id: "invite", contentPath: "./templates/n.html" },
+              workdir,
+              testPath,
+            ),
+          ).toBe(
+            `${path.join(workdir, "templates", "n.html")}:/home/kong/templates/email/invite.html:rw`,
+          );
+        }),
+      ).pipe(Effect.provide(BunServices.layer)),
+    );
   });
 
   test("leaves an absolute contentPath untouched", () => {
     expect(
-      legacyBuildKongEmailTemplateBind({ id: "invite", contentPath: "/abs/invite.html" }, "/work"),
+      legacyBuildKongEmailTemplateBind(
+        { id: "invite", contentPath: "/abs/invite.html" },
+        "/work",
+        testPath,
+      ),
     ).toBe("/abs/invite.html:/home/kong/templates/email/invite.html:rw");
   });
 
@@ -107,6 +135,7 @@ describe("legacyBuildKongEmailTemplateBind", () => {
       legacyBuildKongEmailTemplateBind(
         { id: "invite_notification", contentPath: "invite" },
         "/work",
+        testPath,
       ),
     ).toBe("/work/invite:/home/kong/templates/email/invite_notification:rw");
   });
@@ -131,6 +160,7 @@ describe("legacyBuildKongEntrypointScript", () => {
 });
 
 const base: LegacyKongContainerSpecInput = {
+  path: testPath,
   image: "supabase/kong:3.0.0",
   containerName: "supabase_kong_proj",
   networkId: "supabase_network_proj",

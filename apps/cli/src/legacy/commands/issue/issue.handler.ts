@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Config, Effect, Option } from "effect";
 import {
   buildIssueUrl,
   inferIssueInstallMethod,
@@ -28,9 +28,19 @@ const legacyOpenIssueUrl = Effect.fnUntraced(function* (url: string, noBrowser: 
   }
 });
 
+const issueInstallEnvironment = Effect.gen(function* () {
+  const installMethod = yield* Config.option(Config.string("SUPABASE_INSTALL_METHOD"));
+  const userAgent = yield* Config.option(Config.string("npm_config_user_agent"));
+  return {
+    SUPABASE_INSTALL_METHOD: Option.getOrUndefined(installMethod),
+    npm_config_user_agent: Option.getOrUndefined(userAgent),
+  };
+});
+
 export const legacyIssueBug = Effect.fn("legacy.issue.bug")(function* (flags: LegacyIssueBugFlags) {
   const runtimeInfo = yield* RuntimeInfo;
   const telemetryRuntime = yield* TelemetryRuntime;
+  const environment = yield* issueInstallEnvironment;
 
   const url = buildIssueUrl({
     template: issueTemplateContract.bug.template,
@@ -38,7 +48,7 @@ export const legacyIssueBug = Effect.fn("legacy.issue.bug")(function* (flags: Le
       "affected-area": readIssueFlagValue(flags.area),
       "cli-version": telemetryRuntime.cliVersion,
       os: `${runtimeInfo.platform} ${runtimeInfo.arch}`,
-      "install-method": inferIssueInstallMethod(runtimeInfo),
+      "install-method": inferIssueInstallMethod(runtimeInfo, environment),
       command: readIssueFlagValue(flags.command),
       "actual-output": readIssueFlagValue(flags.actualOutput),
       "expected-behavior": readIssueFlagValue(flags.expectedBehavior),

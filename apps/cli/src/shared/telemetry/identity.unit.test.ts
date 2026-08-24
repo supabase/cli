@@ -1,185 +1,185 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { Effect } from "effect";
+import { Clock, Effect, FileSystem, Schema } from "effect";
 import { makeTelemetryIdentity, resetIdentity, resolveIdentity } from "./identity.ts";
-import type { TelemetryConfig } from "./types.ts";
+import { TelemetryConfigSchema, type TelemetryConfig } from "./types.ts";
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-function makeTempDir(): string {
-  return mkdtempSync(path.join(tmpdir(), "supabase-identity-test-"));
-}
+const makeTempDir = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  return yield* fs.makeTempDirectory({ prefix: "supabase-identity-test-" });
+});
 
-function writeConfig(dir: string, config: TelemetryConfig): void {
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, "telemetry.json"), JSON.stringify(config));
-}
+const writeConfig = (dir: string, config: TelemetryConfig) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const encoded = yield* Schema.encodeUnknownEffect(Schema.fromJsonString(TelemetryConfigSchema))(
+      config,
+    );
+    yield* fs.makeDirectory(dir, { recursive: true });
+    yield* fs.writeFileString(`${dir}/telemetry.json`, encoded);
+  });
 
-function readConfig(dir: string): TelemetryConfig {
-  return JSON.parse(readFileSync(path.join(dir, "telemetry.json"), "utf8"));
-}
+const readConfig = (dir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const content = yield* fs.readFileString(`${dir}/telemetry.json`);
+    return yield* Schema.decodeEffect(Schema.fromJsonString(TelemetryConfigSchema))(content);
+  });
+
+const removeTempDir = (dir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.remove(dir, { recursive: true, force: true });
+  }).pipe(Effect.ignore);
 
 const fsLayer = BunServices.layer;
 
+const withTempDir = <A, E, R>(use: (dir: string) => Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const dir = yield* makeTempDir;
+    return yield* use(dir).pipe(Effect.ensuring(removeTempDir(dir)));
+  }).pipe(Effect.provide(fsLayer));
+
 describe("resolveIdentity", () => {
   it.live("generates new device_id on first run", () => {
-    const dir = makeTempDir();
-    return Effect.gen(function* () {
-      const { deviceId } = yield* resolveIdentity(dir);
-      expect(deviceId).toMatch(UUID_PATTERN);
-    }).pipe(
-      Effect.provide(fsLayer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    return withTempDir((dir) =>
+      Effect.gen(function* () {
+        const { deviceId } = yield* resolveIdentity(dir);
+        expect(deviceId).toMatch(UUID_PATTERN);
+      }),
     );
   });
 
   it.live("generates new session_id on first run", () => {
-    const dir = makeTempDir();
-    return Effect.gen(function* () {
-      const { sessionId } = yield* resolveIdentity(dir);
-      expect(sessionId).toMatch(UUID_PATTERN);
-    }).pipe(
-      Effect.provide(fsLayer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    return withTempDir((dir) =>
+      Effect.gen(function* () {
+        const { sessionId } = yield* resolveIdentity(dir);
+        expect(sessionId).toMatch(UUID_PATTERN);
+      }),
     );
   });
 
   it.live("isFirstRun is true on first call", () => {
-    const dir = makeTempDir();
-    return Effect.gen(function* () {
-      const { isFirstRun } = yield* resolveIdentity(dir);
-      expect(isFirstRun).toBe(true);
-    }).pipe(
-      Effect.provide(fsLayer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    return withTempDir((dir) =>
+      Effect.gen(function* () {
+        const { isFirstRun } = yield* resolveIdentity(dir);
+        expect(isFirstRun).toBe(true);
+      }),
     );
   });
 
   it.live("writes config on first run with granted consent", () => {
-    const dir = makeTempDir();
-    return Effect.gen(function* () {
-      yield* resolveIdentity(dir);
-      const config = readConfig(dir);
-      expect(config.consent).toBe("granted");
-      expect(config.device_id).toMatch(UUID_PATTERN);
-      expect(config.session_id).toMatch(UUID_PATTERN);
-    }).pipe(
-      Effect.provide(fsLayer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    return withTempDir((dir) =>
+      Effect.gen(function* () {
+        yield* resolveIdentity(dir);
+        const config = yield* readConfig(dir);
+        expect(config.consent).toBe("granted");
+        expect(config.device_id).toMatch(UUID_PATTERN);
+        expect(config.session_id).toMatch(UUID_PATTERN);
+      }),
     );
   });
 
   it.live("preserves device_id across runs", () => {
-    const dir = makeTempDir();
-    writeConfig(dir, {
-      consent: "granted",
-      device_id: "existing-device-id",
-      session_id: "existing-session-id",
-      session_last_active: Date.now(),
-    });
-    return Effect.gen(function* () {
-      const { deviceId } = yield* resolveIdentity(dir);
-      expect(deviceId).toBe("existing-device-id");
-    }).pipe(
-      Effect.provide(fsLayer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    return withTempDir((dir) =>
+      Effect.gen(function* () {
+        yield* writeConfig(dir, {
+          consent: "granted",
+          device_id: "existing-device-id",
+          session_id: "existing-session-id",
+          session_last_active: yield* Clock.currentTimeMillis,
+        });
+        const { deviceId } = yield* resolveIdentity(dir);
+        expect(deviceId).toBe("existing-device-id");
+      }),
     );
   });
 
   it.live("isFirstRun is false on subsequent runs", () => {
-    const dir = makeTempDir();
-    writeConfig(dir, {
-      consent: "granted",
-      device_id: "existing-device-id",
-      session_id: "existing-session-id",
-      session_last_active: Date.now(),
-    });
-    return Effect.gen(function* () {
-      const { isFirstRun } = yield* resolveIdentity(dir);
-      expect(isFirstRun).toBe(false);
-    }).pipe(
-      Effect.provide(fsLayer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    return withTempDir((dir) =>
+      Effect.gen(function* () {
+        yield* writeConfig(dir, {
+          consent: "granted",
+          device_id: "existing-device-id",
+          session_id: "existing-session-id",
+          session_last_active: yield* Clock.currentTimeMillis,
+        });
+        const { isFirstRun } = yield* resolveIdentity(dir);
+        expect(isFirstRun).toBe(false);
+      }),
     );
   });
 
   it.live("preserves session_id within 30min", () => {
-    const dir = makeTempDir();
-    writeConfig(dir, {
-      consent: "granted",
-      device_id: "existing-device-id",
-      session_id: "existing-session-id",
-      session_last_active: Date.now() - 10 * 60 * 1000,
-    });
-    return Effect.gen(function* () {
-      const { sessionId } = yield* resolveIdentity(dir);
-      expect(sessionId).toBe("existing-session-id");
-    }).pipe(
-      Effect.provide(fsLayer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    return withTempDir((dir) =>
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        yield* writeConfig(dir, {
+          consent: "granted",
+          device_id: "existing-device-id",
+          session_id: "existing-session-id",
+          session_last_active: now - 10 * 60 * 1000,
+        });
+        const { sessionId } = yield* resolveIdentity(dir);
+        expect(sessionId).toBe("existing-session-id");
+      }),
     );
   });
 
   it.live("rotates session_id after 30min idle", () => {
-    const dir = makeTempDir();
-    writeConfig(dir, {
-      consent: "granted",
-      device_id: "existing-device-id",
-      session_id: "old-session-id",
-      session_last_active: Date.now() - 31 * 60 * 1000,
-    });
-    return Effect.gen(function* () {
-      const { sessionId } = yield* resolveIdentity(dir);
-      expect(sessionId).not.toBe("old-session-id");
-      expect(sessionId).toMatch(UUID_PATTERN);
-    }).pipe(
-      Effect.provide(fsLayer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    return withTempDir((dir) =>
+      Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis;
+        yield* writeConfig(dir, {
+          consent: "granted",
+          device_id: "existing-device-id",
+          session_id: "old-session-id",
+          session_last_active: now - 31 * 60 * 1000,
+        });
+        const { sessionId } = yield* resolveIdentity(dir);
+        expect(sessionId).not.toBe("old-session-id");
+        expect(sessionId).toMatch(UUID_PATTERN);
+      }),
     );
   });
 
   it.live("updates session_last_active on every call", () => {
-    const dir = makeTempDir();
-    const before = Date.now();
-    writeConfig(dir, {
-      consent: "granted",
-      device_id: "existing-device-id",
-      session_id: "existing-session-id",
-      session_last_active: Date.now() - 5000,
-    });
-    return Effect.gen(function* () {
-      yield* resolveIdentity(dir);
-      const config = readConfig(dir);
-      expect(config.session_last_active).toBeGreaterThanOrEqual(before);
-    }).pipe(
-      Effect.provide(fsLayer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    return withTempDir((dir) =>
+      Effect.gen(function* () {
+        const before = yield* Clock.currentTimeMillis;
+        yield* writeConfig(dir, {
+          consent: "granted",
+          device_id: "existing-device-id",
+          session_id: "existing-session-id",
+          session_last_active: before - 5000,
+        });
+        yield* resolveIdentity(dir);
+        const config = yield* readConfig(dir);
+        expect(config.session_last_active).toBeGreaterThanOrEqual(before);
+      }),
     );
   });
 });
 
 describe("resetIdentity", () => {
   it.live("rotates the persisted device_id and drops the distinct_id", () => {
-    const dir = makeTempDir();
-    writeConfig(dir, {
-      consent: "granted",
-      device_id: "old-device-id",
-      session_id: "session-id",
-      session_last_active: Date.now(),
-      distinct_id: "user-a",
-    });
-    return Effect.gen(function* () {
-      yield* resetIdentity(dir);
-      const config = readConfig(dir);
-      expect(config.distinct_id).toBeUndefined();
-      expect(config.device_id).not.toBe("old-device-id");
-      expect(config.consent).toBe("granted");
-    }).pipe(
-      Effect.provide(fsLayer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    return withTempDir((dir) =>
+      Effect.gen(function* () {
+        yield* writeConfig(dir, {
+          consent: "granted",
+          device_id: "old-device-id",
+          session_id: "session-id",
+          session_last_active: yield* Clock.currentTimeMillis,
+          distinct_id: "user-a",
+        });
+        yield* resetIdentity(dir);
+        const config = yield* readConfig(dir);
+        expect(config.distinct_id).toBeUndefined();
+        expect(config.device_id).not.toBe("old-device-id");
+        expect(config.consent).toBe("granted");
+      }),
     );
   });
 });

@@ -1,8 +1,16 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Fiber, Layer, Option } from "effect";
+import {
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Fiber,
+  Layer,
+  Option,
+  Path,
+  Schema,
+} from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
@@ -18,6 +26,9 @@ import {
   useLegacyTempWorkdir,
   legacySequentialExecBatch,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+
+const stringifyJson = (value: unknown): string =>
+  Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown))(value);
 import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
 import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
@@ -28,6 +39,7 @@ import {
   LegacyNetworkIdFlag,
 } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
+import { makeLegacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
 import {
@@ -117,6 +129,8 @@ interface SetupOpts {
   // Makes every differ `runCapture` call fail at the docker boundary instead of
   // returning a result — `"spawn"` (daemon unreachable) or `"pull"` (registry failure).
   readonly pgadminDockerFail?: "spawn" | "pull";
+  /** Explicit registry value observed by the differ's image resolver seam. */
+  readonly pgadminRegistryEnv?: string;
   // Makes the pre-flight `docker container inspect supabase_db_<projectId>` probe
   // (`legacyIsLocalDbRunning`, run before `--use-pgadmin` provisions anything) report
   // "container not found" — surfaces as "supabase start is not running.".
@@ -293,10 +307,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // never teed to the parent terminal (see `legacy-pgadmin-diff.ts`'s own doc
   // comment).
   const differCaptureOpts: Array<{ readonly teeStderr?: boolean } | undefined> = [];
-  // Snapshots `process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]` at the moment each
-  // differ `runCapture` call is made — the real `legacyDockerRunLayer`'s own image
-  // resolver reads that key straight off `process.env` at call time (no
-  // `projectEnvValues` threaded through), so this stands in for it here.
+  // Snapshots the explicit registry value at the moment each differ `runCapture`
+  // call is made, matching the resolver's injected project-environment input.
   const differRegistryEnvAtCall: Array<string | undefined> = [];
   const shadowSetupJobCalls: Array<{ readonly env: Readonly<Record<string, string>> }> = [];
   const docker = Layer.succeed(LegacyDockerRun, {
@@ -305,7 +317,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       if (dockerOpts.image.includes("pgadmin-schema-diff")) {
         differCalls.push(dockerOpts);
         differCaptureOpts.push(captureOpts);
-        differRegistryEnvAtCall.push(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]);
+        differRegistryEnvAtCall.push(opts.pgadminRegistryEnv);
         if (opts.pgadminDockerFail !== undefined) {
           return Effect.fail(
             new LegacyDockerRunError({
@@ -397,13 +409,18 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         return opts.delegateStdout ?? "";
       }),
   });
+  const configProvider = ConfigProvider.fromEnv({ preserveEmptyStrings: true });
 
   const baseLayer = Layer.mergeAll(
     // `BunServices.layer` is listed FIRST so every fake service layer below (most
     // importantly `shadowSpawner.layer`'s fake `ChildProcessSpawner`) OVERRIDES its
     // real implementation — `Layer.mergeAll` is last-wins on a shared service,
     // matching `start.integration.test.ts`'s own established ordering.
-    BunServices.layer,
+    BunServices.layer.pipe(
+      Layer.tap((context) => flushFixtureFiles(workdir).pipe(Effect.provideContext(context))),
+    ),
+    ConfigProvider.layer(configProvider),
+    makeLegacyViperEnvLayer(configProvider),
     out.layer,
     telemetry.layer,
     cache.layer,
@@ -439,6 +456,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   return {
     layer,
+    configProvider,
     out,
     cache,
     telemetry,
@@ -492,6 +510,45 @@ const stderr = (out: ReturnType<typeof mockOutput>) =>
   );
 
 const tmp = useLegacyTempWorkdir();
+
+// Fixture writes are queued synchronously at the test declaration site and flushed
+// through the Effect FileSystem service when the command layer is provided. This
+// keeps the fixture ergonomics while ensuring every actual filesystem operation is
+// scoped and typed.
+const fixturePath = Effect.runSync(Effect.provide(Path.Path, Path.layer));
+const join = fixturePath.join;
+const basename = fixturePath.basename;
+const pendingFixtureDirectories = new Map<string, Set<string>>();
+const pendingFixtureWrites = new Map<string, Map<string, string>>();
+
+function mkdirSync(path: string, _options?: { readonly recursive?: boolean }): void {
+  const workdir = tmp.current;
+  const paths = pendingFixtureDirectories.get(workdir) ?? new Set<string>();
+  paths.add(path);
+  pendingFixtureDirectories.set(workdir, paths);
+}
+
+function writeFileSync(path: string, contents: string): void {
+  const workdir = tmp.current;
+  const writes = pendingFixtureWrites.get(workdir) ?? new Map<string, string>();
+  writes.set(path, contents);
+  pendingFixtureWrites.set(workdir, writes);
+}
+
+function flushFixtureFiles(workdir: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    for (const directory of pendingFixtureDirectories.get(workdir) ?? []) {
+      yield* fs.makeDirectory(directory, { recursive: true });
+    }
+    for (const [path, contents] of pendingFixtureWrites.get(workdir) ?? []) {
+      yield* fs.makeDirectory(fixturePath.dirname(path), { recursive: true });
+      yield* fs.writeFileString(path, contents);
+    }
+    pendingFixtureDirectories.delete(workdir);
+    pendingFixtureWrites.delete(workdir);
+  });
+}
 
 // --- native --use-pgadmin fixtures ---
 
@@ -556,7 +613,13 @@ describe("legacy db diff", () => {
         }
       }
       expect(sawHost).toBe(true);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provideService<ConfigProvider.ConfigProvider, ConfigProvider.ConfigProvider>(
+        ConfigProvider.ConfigProvider,
+        s.configProvider,
+      ),
+      Effect.provide(s.layer),
+    );
   });
 
   it.effect("diffs local with pgdelta when --use-pg-delta is set", () => {
@@ -590,32 +653,40 @@ describe("legacy db diff", () => {
       expect(s.edgeCalls).toEqual([]);
       expect(stderr(s.out)).toContain("Diffing schemas: public");
       expect(stdout(s.out)).toBe("create table p ();\n\n");
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("next local diff ignores schema_paths and declarative files", () => {
-    mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      [
-        "[db.migrations]",
-        'schema_paths = ["configured.sql"]',
-        "",
-        "[experimental.pgdelta]",
-        "enabled = true",
-        "",
-      ].join("\n"),
-    );
-    writeFileSync(join(tmp.current, "supabase", "configured.sql"), "create table configured ();\n");
-    writeFileSync(
-      join(tmp.current, "supabase", "schemas", "ignored.sql"),
-      "create table ignored ();\n",
-    );
     const s = setup(tmp.current, {
       pgDeltaImplementation: "next",
       diffSql: "create table result ();\n",
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase", "schemas"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "config.toml"),
+        [
+          "[db.migrations]",
+          'schema_paths = ["configured.sql"]',
+          "",
+          "[experimental.pgdelta]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+      );
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "configured.sql"),
+        "create table configured ();\n",
+      );
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "schemas", "ignored.sql"),
+        "create table ignored ();\n",
+      );
       yield* legacyDbDiff(flags({ usePgDelta: Option.some(true) }));
       expect(s.databaseDiffCalls[0]).not.toHaveProperty("declarativeFiles");
       expect(s.databaseDiffCalls[0]).not.toHaveProperty("declarativeManifest");
@@ -634,49 +705,72 @@ describe("legacy db diff", () => {
       expect(stderr(s.out)).toContain("schema_paths no longer changes the migrations baseline");
       expect(stderr(s.out)).not.toContain("db diff -f uses supabase/migrations");
       expect(stdout(s.out)).toBe("create table result ();\n\n");
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   // The transition warning is only true for the bundled next engine. Every other
   // engine still routes a local target with declarative files through the
   // declared-schema `contrib_regression` override, so schema_paths DOES still shape
   // their output and claiming otherwise would be a lie.
-  const writeSchemaPathsConfig = (pgDeltaEnabled: boolean) => {
-    mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      [
-        "[db.migrations]",
-        'schema_paths = ["configured.sql"]',
-        "",
-        "[experimental.pgdelta]",
-        `enabled = ${pgDeltaEnabled}`,
-        "",
-      ].join("\n"),
-    );
-    writeFileSync(join(tmp.current, "supabase", "configured.sql"), "create table configured ();\n");
-  };
+  const writeSchemaPathsConfig = (
+    fs: FileSystem.FileSystem,
+    path: Path.Path,
+    pgDeltaEnabled: boolean,
+  ) =>
+    Effect.gen(function* () {
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase", "database"), {
+        recursive: true,
+      });
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "config.toml"),
+        [
+          "[db.migrations]",
+          'schema_paths = ["configured.sql"]',
+          "",
+          "[experimental.pgdelta]",
+          `enabled = ${pgDeltaEnabled}`,
+          "",
+        ].join("\n"),
+      );
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "configured.sql"),
+        "create table configured ();\n",
+      );
+    });
 
   it.effect("legacy pg-delta local diff does not print the schema_paths transition warning", () => {
-    writeSchemaPathsConfig(true);
     const s = setup(tmp.current, {
       pgDeltaImplementation: "legacy",
       diffSql: "create table result ();\n",
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* writeSchemaPathsConfig(fs, path, true);
       yield* legacyDbDiff(flags({ usePgDelta: Option.some(true) }));
       expect(stderr(s.out)).not.toContain("schema_paths no longer changes the migrations baseline");
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("PG14: provisions a shadow via the SQL-exec init path (no PG15+ one-shot jobs)", () => {
     // This covers the PG14 branch of the `legacySetupDatabase` pipeline, which execs
     // SQL directly via the session instead of the three one-shot `LegacyDockerRun`
     // jobs (the PG15+ short-id DNS resolution path is covered separately).
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "config.toml"), "[db]\nmajor_version = 14\n");
     const s = setup(tmp.current, { diffSql: "create table pg14 ();\n" });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "config.toml"),
+        "[db]\nmajor_version = 14\n",
+      );
       yield* legacyDbDiff(flags());
       expect(stdout(s.out)).toBe("create table pg14 ();\n\n");
       expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
@@ -685,7 +779,10 @@ describe("legacy db diff", () => {
       // no one-shot `LegacyDockerRun` jobs run for this branch.
       expect(s.dockerCalls).toEqual([]);
       expect(s.shadowExecCalls.length).toBeGreaterThan(0);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect(
@@ -699,7 +796,10 @@ describe("legacy db diff", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     },
   );
   it.effect("a linked [remotes.<ref>] block enabling pg-delta selects the pg-delta engine", () => {
@@ -707,31 +807,36 @@ describe("legacy db diff", () => {
     // experimental.pgdelta.enabled is read. The default db diff target is local (no
     // merge), so this only applies with --linked; base config disables pg-delta, the
     // remote override enables it, so the diff must pick the pg-delta engine.
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      [
-        "[experimental.pgdelta]",
-        "enabled = false",
-        "",
-        "[remotes.staging]",
-        'project_id = "abcdefghijklmnopqrst"',
-        "",
-        "[remotes.staging.experimental.pgdelta]",
-        "enabled = true",
-        "",
-      ].join("\n"),
-    );
     const s = setup(tmp.current, {
       isLocal: false,
       linkedRef: "abcdefghijklmnopqrst",
       diffSql: "alter table x;\n",
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "config.toml"),
+        [
+          "[experimental.pgdelta]",
+          "enabled = false",
+          "",
+          "[remotes.staging]",
+          'project_id = "abcdefghijklmnopqrst"',
+          "",
+          "[remotes.staging.experimental.pgdelta]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+      );
       yield* legacyDbDiff(flags({ linked: Option.some(true) }));
       expect(s.databaseDiffCalls[0]?.target.connectOptions.isLocal).toBe(false);
       expect(s.databaseDiffCalls[0]?.source.connectOptions.isLocal).toBe(true);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect(
@@ -745,61 +850,71 @@ describe("legacy db diff", () => {
       // is the ONLY branch that emits a `--tmpfs` flag on the shadow's `docker create` argv
       // (`legacyBuildShadowPostgresContainerSpec`) — a base config of 17 (>= 15, no tmpfs)
       // overridden by a remote block's `major_version = 14` must flip that flag on.
-      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-      writeFileSync(
-        join(tmp.current, "supabase", "config.toml"),
-        [
-          "[db]",
-          "major_version = 17",
-          "",
-          "[remotes.staging]",
-          'project_id = "abcdefghijklmnopqrst"',
-          "",
-          "[remotes.staging.db]",
-          "major_version = 14",
-          "",
-        ].join("\n"),
-      );
       const s = setup(tmp.current, {
         isLocal: false,
         linkedRef: "abcdefghijklmnopqrst",
         diffSql: "alter table x;\n",
       });
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(tmp.current, "supabase", "config.toml"),
+          [
+            "[db]",
+            "major_version = 17",
+            "",
+            "[remotes.staging]",
+            'project_id = "abcdefghijklmnopqrst"',
+            "",
+            "[remotes.staging.db]",
+            "major_version = 14",
+            "",
+          ].join("\n"),
+        );
         yield* legacyDbDiff(flags({ linked: Option.some(true) }));
         const createArgs = s.shadowSpawned.find((c) => c.args[0] === "create")?.args ?? [];
         expect(createArgs).toContain("--tmpfs");
         // The PG15+ one-shot platform-baseline jobs (`initSchema15`) never run for PG14 —
         // it execs SQL directly over the session instead — corroborating the same override.
         expect(s.dockerCalls).toEqual([]);
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     },
   );
 
   it.effect("the base config (default local target) does not merge a remote block", () => {
     // The default db diff target is local; Go never calls LoadProjectRef for local,
     // so a [remotes.<ref>] override must be ignored and the base engine (migra) wins.
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      [
-        "[experimental.pgdelta]",
-        "enabled = false",
-        "",
-        "[remotes.staging]",
-        'project_id = "abcdefghijklmnopqrst"',
-        "",
-        "[remotes.staging.experimental.pgdelta]",
-        "enabled = true",
-        "",
-      ].join("\n"),
-    );
     const s = setup(tmp.current, { diffSql: "create table players ();\n" });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "config.toml"),
+        [
+          "[experimental.pgdelta]",
+          "enabled = false",
+          "",
+          "[remotes.staging]",
+          'project_id = "abcdefghijklmnopqrst"',
+          "",
+          "[remotes.staging.experimental.pgdelta]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+      );
       yield* legacyDbDiff(flags());
       // The local default never merges a remote block, so the base (migra) engine wins.
       expect(s.edgeCalls[0]?.script).not.toContain("renderPlanFiles");
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("diffs the linked project and writes the linked-project cache", () => {
@@ -811,7 +926,10 @@ describe("legacy db diff", () => {
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ linked: Option.some(true) }));
       expect(s.cache.cached).toBe(true);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("diffs the project given via --project-ref without a linked workdir", () => {
@@ -827,7 +945,10 @@ describe("legacy db diff", () => {
       yield* legacyDbDiff(flags({ linked: Option.some(true), projectRef: Option.some(FLAG_REF) }));
       expect(s.cache.cached).toBe(true);
       expect(s.cache.cachedRef).toBe(FLAG_REF);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("--project-ref overrides an already-linked workdir's project ref", () => {
@@ -844,7 +965,10 @@ describe("legacy db diff", () => {
       expect(s.cache.cached).toBe(true);
       expect(s.cache.cachedRef).toBe(FLAG_REF);
       expect(s.cache.cachedRef).not.toBe("abcdefghijklmnopqrst");
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("rejects --project-ref combined with an explicit --local target", () => {
@@ -855,13 +979,16 @@ describe("legacy db diff", () => {
         legacyDbDiff(flags({ local: Option.some(true), projectRef: Option.some(FLAG_REF) })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain(
+      expect(stringifyJson(exit)).toContain(
         "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
       );
       // The guard fires before any connection resolution or cache write.
       expect(s.resolverCalls).toEqual([]);
       expect(s.cache.cached).toBe(false);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect(
@@ -901,7 +1028,10 @@ describe("legacy db diff", () => {
           projectRef: "flagflagflagflagflag",
         });
         expect(s.cache.cachedRef).toBe("flagflagflagflagflag");
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     },
   );
 
@@ -944,7 +1074,10 @@ describe("legacy db diff", () => {
           projectRef: "flagflagflagflagflag",
         });
         expect(s.cache.cachedRef).toBe("flagflagflagflagflag");
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     },
   );
 
@@ -966,11 +1099,14 @@ describe("legacy db diff", () => {
           ),
         );
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain(
+        expect(stringifyJson(exit)).toContain(
           "--project-ref only applies when targeting the linked project; use it with --linked, or --from/--to linked, in explicit mode",
         );
         expect(s.resolverCalls).toEqual([]);
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     },
   );
 
@@ -996,7 +1132,10 @@ describe("legacy db diff", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         expect(s.cache.cached).toBe(true);
         expect(s.cache.cachedRef).toBe("abcdefghijklmnopqrst");
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     },
   );
 
@@ -1015,7 +1154,10 @@ describe("legacy db diff", () => {
         // The declarative-schema file was migrated into the contrib_regression override.
         expect(s.shadowConnectedDatabases).toContain("contrib_regression");
         expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     },
   );
 
@@ -1044,7 +1186,10 @@ describe("legacy db diff", () => {
         expect(err).not.toContain("Diffing local database with current migrations...");
         expect(err).not.toContain("Diffing schemas");
         expect(err).not.toContain("Finished");
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     },
   );
 
@@ -1060,10 +1205,13 @@ describe("legacy db diff", () => {
         legacyDbDiff(flags({ usePgSchema: Option.some(true), projectRef: Option.some(FLAG_REF) })),
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("--project-ref is not supported with --use-pg-schema");
+      expect(stringifyJson(exit)).toContain("--project-ref is not supported with --use-pg-schema");
       expect(s.proxyCalls).toEqual([]);
       expect(s.proxyCaptureCalls).toEqual([]);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("--use-pgadmin --linked honors --project-ref like the other native engines", () => {
@@ -1087,7 +1235,10 @@ describe("legacy db diff", () => {
       expect(s.differCalls).toHaveLength(1);
       expect(s.cache.cached).toBe(true);
       expect(s.cache.cachedRef).toBe(FLAG_REF);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect(
@@ -1122,7 +1273,10 @@ describe("legacy db diff", () => {
         expect(stderr(s.out)).toContain("Loading config override: [remotes.staging]");
         expect(s.proxyCalls).toEqual([]);
         expect(s.differCalls).toHaveLength(1);
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     },
   );
 
@@ -1158,7 +1312,10 @@ describe("legacy db diff", () => {
           .map((c) => c.args[2]);
         expect(inspectTargets).toContain("supabase_db_abcdefghijklmnopqrst");
         expect(inspectTargets).not.toContain("supabase_db_test");
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     },
   );
 
@@ -1175,7 +1332,10 @@ describe("legacy db diff", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         expect(s.resolverCalls).toHaveLength(0);
         expect(s.differCalls).toEqual([]);
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     },
   );
 
@@ -1189,7 +1349,10 @@ describe("legacy db diff", () => {
     return Effect.gen(function* () {
       const exit = yield* legacyDbDiff(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect(
@@ -1224,7 +1387,10 @@ describe("legacy db diff", () => {
           expect(error.message).toContain("failed to read TLS cert");
         }
         expect(s.resolverCalls).toHaveLength(0);
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     },
   );
 
@@ -1239,7 +1405,10 @@ describe("legacy db diff", () => {
       const args = s.proxyCalls[0]?.args ?? [];
       const idx = args.indexOf("--schema");
       expect(args[idx + 1]).toBe('"tenant,one"');
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect(
@@ -1254,7 +1423,10 @@ describe("legacy db diff", () => {
         const call = s.differCalls[0];
         const idx = call?.cmd.indexOf("--schema") ?? -1;
         expect(call?.cmd[idx + 1]).toBe("tenant,one");
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     },
   );
 
@@ -1277,7 +1449,10 @@ describe("legacy db diff", () => {
         // The child's own telemetry is disabled so the single `cli_command_executed`
         // event comes from this TS command's instrumentation, not the delegated child.
         expect(s.proxyCalls[0]?.env).toEqual({ SUPABASE_TELEMETRY_DISABLED: "1" });
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     },
   );
 
@@ -1286,7 +1461,10 @@ describe("legacy db diff", () => {
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags());
       expect(stderr(s.out)).not.toContain('"--use-pg-schema" is deprecated');
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect(
@@ -1296,7 +1474,10 @@ describe("legacy db diff", () => {
       return Effect.gen(function* () {
         yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
         expect(stderr(s.out)).not.toContain('"--use-pg-schema" is deprecated');
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     },
   );
 
@@ -1328,7 +1509,10 @@ describe("legacy db diff", () => {
           engine: "pgadmin",
           dropStatements: [],
         });
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     },
   );
 
@@ -1343,12 +1527,16 @@ describe("legacy db diff", () => {
         yield* legacyDbDiff(
           flags({ usePgAdmin: Option.some(true), file: Option.some("pgadmin_diff") }),
         );
+        const fs = yield* FileSystem.FileSystem;
         const success = s.out.messages.find((m) => m.type === "success");
         const data = success?.data as { file: string; files: ReadonlyArray<string> };
         expect(data.file).toMatch(/\d{14}_pgadmin_diff\.sql$/);
         expect(data.files).toEqual([data.file]);
-        expect(existsSync(data.file)).toBe(true);
-      }).pipe(Effect.provide(s.layer));
+        expect(yield* fs.exists(data.file)).toBe(true);
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     },
   );
 
@@ -1361,7 +1549,10 @@ describe("legacy db diff", () => {
       yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
       const success = s.out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ diff: PGADMIN_DIFF_SQL, engine: "pgadmin" });
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("--use-pg-schema in json mode wraps the captured SQL in a structured envelope", () => {
@@ -1378,43 +1569,53 @@ describe("legacy db diff", () => {
       expect(stderr(s.out)).toContain('"--use-pg-schema" is deprecated');
       // The child's own telemetry is disabled here too, same as the text-mode delegate.
       expect(s.proxyCaptureCalls[0]?.env).toEqual({ SUPABASE_TELEMETRY_DISABLED: "1" });
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("writes live-only SQL with --file even when declarative targets are configured", () => {
-    mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "config.toml"),
-      [
-        "[db.migrations]",
-        'schema_paths = ["schemas/*.sql"]',
-        "",
-        "[experimental.pgdelta]",
-        "enabled = true",
-        "",
-      ].join("\n"),
-    );
-    writeFileSync(
-      join(tmp.current, "supabase", "schemas", "declarative.sql"),
-      "create table declarative_only ();\n",
-    );
     const s = setup(tmp.current, {
       pgDeltaImplementation: "next",
       diffSql: "create table live_only ();\n",
     });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tmp.current, "supabase", "schemas"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "config.toml"),
+        [
+          "[db.migrations]",
+          'schema_paths = ["schemas/*.sql"]',
+          "",
+          "[experimental.pgdelta]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+      );
+      yield* fs.writeFileString(
+        path.join(tmp.current, "supabase", "schemas", "declarative.sql"),
+        "create table declarative_only ();\n",
+      );
       yield* legacyDbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("my_diff") }));
       expect(stdout(s.out)).toBe("");
       expect(stderr(s.out)).toContain("schema_paths no longer changes the migrations baseline");
       expect(stderr(s.out)).toContain("db diff -f uses supabase/migrations as its baseline");
       expect(stderr(s.out)).toContain("-f names the migration; it does not filter objects");
       expect(stderr(s.out)).toContain("WARNING: The diff tool is not foolproof");
-      const dir = join(tmp.current, "supabase", "migrations");
-      const files = readdirSync(dir);
+      const dir = path.join(tmp.current, "supabase", "migrations");
+      const files = yield* fs.readDirectory(dir);
       expect(files).toHaveLength(1);
       expect(files[0]).toMatch(/^\d{14}_my_diff\.sql$/);
-      expect(readFileSync(join(dir, files[0]!), "utf8")).toBe("create table live_only ();\n");
-    }).pipe(Effect.provide(s.layer));
+      expect(yield* fs.readFileString(path.join(dir, files[0]!))).toBe(
+        "create table live_only ();\n",
+      );
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("includes the ignored declarative baseline advisory in JSON output", () => {
@@ -1449,7 +1650,10 @@ describe("legacy db diff", () => {
         ],
       });
       expect(stderr(s.out)).toContain("db diff -f uses supabase/migrations as its baseline");
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("ignores declarative inspection errors without changing diff success", () => {
@@ -1477,7 +1681,10 @@ describe("legacy db diff", () => {
       expect(success?.data).not.toHaveProperty("advisories");
       expect(success?.data).toMatchObject({ diff: "create table dogfood_note ();\n" });
       expect(stderr(s.out)).not.toContain("db diff -f uses supabase/migrations");
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("writes one migration file per unit for a multi-unit pg-delta plan", () => {
@@ -1491,17 +1698,24 @@ describe("legacy db diff", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("my_diff") }));
-      const dir = join(tmp.current, "supabase", "migrations");
-      const files = readdirSync(dir).sort();
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = path.join(tmp.current, "supabase", "migrations");
+      const files = (yield* fs.readDirectory(dir)).sort();
       expect(files).toHaveLength(2);
       expect(files[0]).toBe("19700101000000_my_diff_1.sql");
       expect(files[1]).toBe("19700101000001_my_diff_2.sql");
-      expect(readFileSync(join(dir, files[0]!), "utf8")).toBe("alter type mood add value 'ok';\n");
+      expect(yield* fs.readFileString(path.join(dir, files[0]!))).toBe(
+        "alter type mood add value 'ok';\n",
+      );
       const success = s.out.messages.find((m) => m.type === "success");
       const data = success?.data as { file: string; files: ReadonlyArray<string> };
       expect(data.files).toHaveLength(2);
       expect(data.file).toBe(data.files[0]);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("creates nested parent directories for a nested single-unit --file name", () => {
@@ -1510,12 +1724,17 @@ describe("legacy db diff", () => {
     const s = setup(tmp.current, { diffSql: "create table g ();\n" });
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ file: Option.some("snapshots/remote") }));
-      const migrationsRoot = join(tmp.current, "supabase", "migrations");
-      const dirs = readdirSync(migrationsRoot);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const migrationsRoot = path.join(tmp.current, "supabase", "migrations");
+      const dirs = yield* fs.readDirectory(migrationsRoot);
       expect(dirs).toHaveLength(1);
       expect(dirs[0]).toMatch(/^\d{14}_snapshots$/);
-      expect(readdirSync(join(migrationsRoot, dirs[0]!))).toEqual(["remote.sql"]);
-    }).pipe(Effect.provide(s.layer));
+      expect(yield* fs.readDirectory(path.join(migrationsRoot, dirs[0]!))).toEqual(["remote.sql"]);
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("explicit --from local --to linked prints the diff to stdout", () => {
@@ -1547,7 +1766,10 @@ describe("legacy db diff", () => {
       });
       expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toEqual([]);
       expect(stdout(s.out)).toBe("create table e ();\n");
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("explicit URL endpoints retain the raw ref and remote connection options", () => {
@@ -1569,7 +1791,10 @@ describe("legacy db diff", () => {
         ref: "postgresql://desired.example/postgres",
         connectOptions: { isLocal: false, dnsResolver: "native" },
       });
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("explicit --output writes raw SQL to the given path", () => {
@@ -1582,9 +1807,14 @@ describe("legacy db diff", () => {
           output: Option.some("out.sql"),
         }),
       );
-      expect(existsSync(join(tmp.current, "out.sql"))).toBe(true);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      expect(yield* fs.exists(path.join(tmp.current, "out.sql"))).toBe(true);
       expect(stdout(s.out)).toBe("");
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect(
@@ -1598,7 +1828,10 @@ describe("legacy db diff", () => {
       return Effect.gen(function* () {
         yield* legacyDbDiff(flags({ usePgSchema: Option.some(true), linked: Option.some(false) }));
         expect(s.proxyCalls[0]?.args).toEqual(["db", "diff", "--use-pg-schema", "--linked=false"]);
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     },
   );
 
@@ -1612,9 +1845,16 @@ describe("legacy db diff", () => {
       return Effect.gen(function* () {
         yield* legacyDbDiff(flags({ file: Option.some("") }));
         expect(stdout(s.out)).toContain("create table y ();");
-        const migrationsDir = join(tmp.current, "supabase", "migrations");
-        expect(existsSync(migrationsDir) ? readdirSync(migrationsDir) : []).toEqual([]);
-      }).pipe(Effect.provide(s.layer));
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const migrationsDir = path.join(tmp.current, "supabase", "migrations");
+        expect(
+          (yield* fs.exists(migrationsDir)) ? yield* fs.readDirectory(migrationsDir) : [],
+        ).toEqual([]);
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     },
   );
 
@@ -1630,7 +1870,10 @@ describe("legacy db diff", () => {
         );
         // Reaching stdout proves it didn't try to write SQL to the resolved workdir.
         expect(stdout(s.out)).toBe("create table z ();\n");
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     },
   );
 
@@ -1640,7 +1883,10 @@ describe("legacy db diff", () => {
       yield* legacyDbDiff(flags({ from: Option.some("migrations"), to: Option.some("local") }));
       expect(s.explicitDiffCalls[0]?.source).toEqual({ kind: "migrations" });
       expect(s.edgeCalls).toEqual([]);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("explicit --from linked --to migrations passes the linked ref to the strategy", () => {
@@ -1676,7 +1922,10 @@ describe("legacy db diff", () => {
       // resolves FIRST here, so the remote-merged config (major_version = 14) is what
       // must reach the migrations shadow/catalog.
       expect(s.explicitDiffCalls[0]?.toml?.majorVersion).toBe(14);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("explicit --from migrations --to linked passes base config to the strategy", () => {
@@ -1713,7 +1962,10 @@ describe("legacy db diff", () => {
       expect(s.explicitDiffCalls[0]?.source).toEqual({ kind: "migrations" });
       expect(s.explicitDiffCalls[0]?.toml?.majorVersion).toBe(17);
       expect(s.explicitDiffCalls[0]?.toml?.webhooksEnabled).toBe(false);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("explicit --from local --to migrations --linked seeds the merged config", () => {
@@ -1753,7 +2005,10 @@ describe("legacy db diff", () => {
         kind: "migrations",
         projectRef: "abcdefghijklmnopqrst",
       });
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("explicit --from local --to migrations --linked validates the merged config", () => {
@@ -1789,7 +2044,10 @@ describe("legacy db diff", () => {
         }),
       ).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("empty --from/--to (shell vars) fall through to the normal diff", () => {
@@ -1801,7 +2059,10 @@ describe("legacy db diff", () => {
       // Reaching the native path proves it didn't enter explicit mode and error.
       expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
       expect(stdout(s.out)).toBe("create table e ();\n\n");
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("an explicit --from with an empty --to still errors 'must set both'", () => {
@@ -1811,7 +2072,10 @@ describe("legacy db diff", () => {
         flags({ from: Option.some("local"), to: Option.some("") }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("explicit mode still runs the target-flag preflight on a changed --db-url", () => {
@@ -1829,7 +2093,10 @@ describe("legacy db diff", () => {
         }),
       );
       expect(s.resolverCalls).toContainEqual(expect.objectContaining({ connType: "db-url" }));
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("fails when --from is set without --to", () => {
@@ -1837,7 +2104,10 @@ describe("legacy db diff", () => {
     return Effect.gen(function* () {
       const exit = yield* legacyDbDiff(flags({ from: Option.some("local") })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("fails on engine-flag conflict (--use-migra with --use-pg-delta)", () => {
@@ -1847,7 +2117,10 @@ describe("legacy db diff", () => {
         flags({ useMigra: Option.some(true), usePgDelta: Option.some(true) }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("fails on target mutex (--linked with --local)", () => {
@@ -1857,7 +2130,10 @@ describe("legacy db diff", () => {
         flags({ linked: Option.some(true), local: Option.some(true) }),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("warns on drop statements in the diff", () => {
@@ -1866,7 +2142,10 @@ describe("legacy db diff", () => {
       yield* legacyDbDiff(flags());
       expect(stderr(s.out)).toContain("Found drop statements in schema diff");
       expect(stderr(s.out)).toContain("drop table gone");
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("warns on semantic data-loss hazards without a DROP statement", () => {
@@ -1885,7 +2164,10 @@ describe("legacy db diff", () => {
       yield* legacyDbDiff(flags({ usePgDelta: Option.some(true) }));
       expect(stderr(s.out)).toContain("Found destructive changes in schema diff");
       expect(stderr(s.out)).toContain(sql);
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("emits a json envelope with --output-format json (payload-only stdout)", () => {
@@ -1900,7 +2182,10 @@ describe("legacy db diff", () => {
         file: null,
         engine: "migra",
       });
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("prints 'No schema changes found' and exits 0 on an empty diff", () => {
@@ -1909,7 +2194,10 @@ describe("legacy db diff", () => {
       yield* legacyDbDiff(flags());
       expect(stderr(s.out)).toContain("No schema changes found");
       expect(stdout(s.out)).toBe("");
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("surfaces a crashed migra script instead of reporting no schema changes", () => {
@@ -1921,7 +2209,10 @@ describe("legacy db diff", () => {
       const exit = yield* legacyDbDiff(flags()).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(stderr(s.out)).not.toContain("No schema changes found");
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("falls back to the migra Docker image when edge-runtime OOMs", () => {
@@ -1931,7 +2222,10 @@ describe("legacy db diff", () => {
       yield* legacyDbDiff(flags({ schema: ["public"] }));
       expect(s.dockerCalls).toHaveLength(1);
       expect(stdout(s.out)).toBe("create table fb ();\n\n");
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.effect("the migra OOM fallback honors --network-id over host networking", () => {
@@ -1950,7 +2244,10 @@ describe("legacy db diff", () => {
         _tag: "named",
         name: "my-net",
       });
-    }).pipe(Effect.provide(s.layer));
+    }).pipe(
+      Effect.provide(s.layer),
+      Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+    );
   });
 
   it.live(
@@ -1971,6 +2268,7 @@ describe("legacy db diff", () => {
       return Effect.gen(function* () {
         const fiber = yield* legacyDbDiff(flags()).pipe(
           Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
           Effect.forkChild({ startImmediately: true }),
         );
         // Wait until the shadow's own health check has actually probed the
@@ -2005,9 +2303,16 @@ describe("legacy db diff", () => {
           expect(stdout(s.out)).toBe(
             "Creating shadow database...\nDiffing local database with current migrations...\n",
           );
-          const migrationsDir = join(tmp.current, "supabase", "migrations");
-          expect(existsSync(migrationsDir) ? readdirSync(migrationsDir) : []).toEqual([]);
-        }).pipe(Effect.provide(s.layer));
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const migrationsDir = path.join(tmp.current, "supabase", "migrations");
+          expect(
+            (yield* fs.exists(migrationsDir)) ? yield* fs.readDirectory(migrationsDir) : [],
+          ).toEqual([]);
+        }).pipe(
+          Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+        );
       },
     );
 
@@ -2020,7 +2325,10 @@ describe("legacy db diff", () => {
         return Effect.gen(function* () {
           yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
           expect(stderr(s.out)).toContain("No schema changes found");
-        }).pipe(Effect.provide(s.layer));
+        }).pipe(
+          Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+        );
       },
     );
 
@@ -2030,14 +2338,19 @@ describe("legacy db diff", () => {
         yield* legacyDbDiff(
           flags({ usePgAdmin: Option.some(true), file: Option.some("pgadmin_diff") }),
         );
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         expect(stdout(s.out)).not.toContain("ALTER TABLE");
         expect(stderr(s.out)).toContain("WARNING: The diff tool is not foolproof");
-        const dir = join(tmp.current, "supabase", "migrations");
-        const files = readdirSync(dir);
+        const dir = path.join(tmp.current, "supabase", "migrations");
+        const files = yield* fs.readDirectory(dir);
         expect(files).toHaveLength(1);
         expect(files[0]).toMatch(/^\d{14}_pgadmin_diff\.sql$/);
-        expect(readFileSync(join(dir, files[0]!), "utf8")).toBe(PGADMIN_DIFF_SQL);
-      }).pipe(Effect.provide(s.layer));
+        expect(yield* fs.readFileString(path.join(dir, files[0]!))).toBe(PGADMIN_DIFF_SQL);
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     });
 
     it.effect("creates nested parent directories for a nested --use-pgadmin --file name", () => {
@@ -2046,12 +2359,19 @@ describe("legacy db diff", () => {
         yield* legacyDbDiff(
           flags({ usePgAdmin: Option.some(true), file: Option.some("snapshots/remote") }),
         );
-        const migrationsRoot = join(tmp.current, "supabase", "migrations");
-        const dirs = readdirSync(migrationsRoot);
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const migrationsRoot = path.join(tmp.current, "supabase", "migrations");
+        const dirs = yield* fs.readDirectory(migrationsRoot);
         expect(dirs).toHaveLength(1);
         expect(dirs[0]).toMatch(/^\d{14}_snapshots$/);
-        expect(readdirSync(join(migrationsRoot, dirs[0]!))).toEqual(["remote.sql"]);
-      }).pipe(Effect.provide(s.layer));
+        expect(yield* fs.readDirectory(path.join(migrationsRoot, dirs[0]!))).toEqual([
+          "remote.sql",
+        ]);
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     });
 
     it.effect(
@@ -2061,9 +2381,16 @@ describe("legacy db diff", () => {
         return Effect.gen(function* () {
           yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true), file: Option.some("") }));
           expect(stdout(s.out)).toContain("ALTER TABLE test;");
-          const migrationsDir = join(tmp.current, "supabase", "migrations");
-          expect(existsSync(migrationsDir) ? readdirSync(migrationsDir) : []).toEqual([]);
-        }).pipe(Effect.provide(s.layer));
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const migrationsDir = path.join(tmp.current, "supabase", "migrations");
+          expect(
+            (yield* fs.exists(migrationsDir)) ? yield* fs.readDirectory(migrationsDir) : [],
+          ).toEqual([]);
+        }).pipe(
+          Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+        );
       },
     );
 
@@ -2078,7 +2405,10 @@ describe("legacy db diff", () => {
           expect(stderr(s.out)).not.toContain("Finished");
           expect(stderr(s.out)).not.toContain("Found drop statements");
           expect(stdout(s.out)).toContain("drop table gone;");
-        }).pipe(Effect.provide(s.layer));
+        }).pipe(
+          Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+        );
       },
     );
 
@@ -2113,7 +2443,10 @@ describe("legacy db diff", () => {
           // Go never tees the differ's raw stderr to the parent terminal — the
           // `runCapture` options argument must stay unset.
           expect(s.differCaptureOpts[0]).toBeUndefined();
-        }).pipe(Effect.provide(s.layer));
+        }).pipe(
+          Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+        );
       },
     );
 
@@ -2126,7 +2459,10 @@ describe("legacy db diff", () => {
         yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
         const call = s.differCalls[0] as LegacyDockerRunOpts;
         expect(call.network).toEqual({ _tag: "named", name: "custom-net" });
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     });
 
     it.effect(
@@ -2140,7 +2476,10 @@ describe("legacy db diff", () => {
           yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
           const call = s.differCalls[0] as LegacyDockerRunOpts;
           expect(call.extraHosts).toEqual([]);
-        }).pipe(Effect.provide(s.layer));
+        }).pipe(
+          Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+        );
       },
     );
 
@@ -2158,40 +2497,33 @@ describe("legacy db diff", () => {
           const call = s.differCalls[0] as LegacyDockerRunOpts;
           expect(call.cmd.at(-1)).toBe(PGADMIN_TARGET_URL);
           expect(call.cmd.join(" ")).not.toContain("distinctive-pw");
-        }).pipe(Effect.provide(s.layer));
+        }).pipe(
+          Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+        );
       },
     );
 
     it.effect(
       "a supabase/.env-only SUPABASE_INTERNAL_IMAGE_REGISTRY reaches the differ's image resolver during the run, and reverts after",
       () => {
-        // `legacyDockerRunLayer`'s own image resolver has no `projectEnvValues` in
-        // scope, so it falls back to reading `process.env` directly at `runCapture`
-        // call time; this mock docker layer records that same read
-        // (`differRegistryEnvAtCall`) since it replaces the real resolver wholesale
-        // and can't observe an already-rewritten image.
-        const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-        delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
+        // The resolver receives project `.env` values explicitly for this run; no
+        // ambient shell mutation is needed, and the scoped value does not leak.
         mkdirSync(join(tmp.current, "supabase"), { recursive: true });
         writeFileSync(
           join(tmp.current, "supabase", ".env"),
           "SUPABASE_INTERNAL_IMAGE_REGISTRY=registry.example.com\n",
         );
-        const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
+        const s = setup(tmp.current, {
+          pgadminStdout: [JSON.stringify([pgadminEntry()])],
+          pgadminRegistryEnv: "registry.example.com",
+        });
         return Effect.gen(function* () {
           yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
           expect(s.differRegistryEnvAtCall).toEqual(["registry.example.com"]);
-          // Reverted once the handler's scope closes — no leak into a later command
-          // (or a later test) sharing this process.
-          expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
         }).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (prev === undefined) delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-              else process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = prev;
-            }),
-          ),
           Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
         );
       },
     );
@@ -2212,7 +2544,10 @@ describe("legacy db diff", () => {
           expect(text).toContain("Diffing 1\n");
           expect(text).not.toContain("Starting schema diff...");
           expect(text).not.toContain("noise line");
-        }).pipe(Effect.provide(s.layer));
+        }).pipe(
+          Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+        );
       },
     );
 
@@ -2223,7 +2558,10 @@ describe("legacy db diff", () => {
       return Effect.gen(function* () {
         yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
         expect(stdout(s.out)).toContain("ALTER TABLE test;");
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     });
 
     it.effect(
@@ -2255,7 +2593,10 @@ describe("legacy db diff", () => {
           expect(idxPublic).toBeGreaterThanOrEqual(0);
           expect(idxApp).toBeGreaterThan(idxPublic);
           expect(text).toContain("create table pub ();");
-        }).pipe(Effect.provide(s.layer));
+        }).pipe(
+          Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+        );
       },
     );
 
@@ -2289,7 +2630,10 @@ describe("legacy db diff", () => {
           expect(idxApp).toBeGreaterThan(idxPublic);
           // Neither run's raw NOTE prefix leaked into the rendered diff.
           expect(text).not.toContain("NOTE: Configuring authentication for DESKTOP mode.");
-        }).pipe(Effect.provide(s.layer));
+        }).pipe(
+          Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+        );
       },
     );
 
@@ -2306,7 +2650,10 @@ describe("legacy db diff", () => {
         expect((error as { message: string }).message).toContain(
           "failed to parse schema diff output:",
         );
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     });
 
     it.effect(
@@ -2331,7 +2678,10 @@ describe("legacy db diff", () => {
           const text = stdout(s.out);
           expect(text).toContain("Comparing Tables \n");
           expect(text).toContain("Diffing 1\n");
-        }).pipe(Effect.provide(s.layer));
+        }).pipe(
+          Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+        );
       },
     );
 
@@ -2350,7 +2700,10 @@ describe("legacy db diff", () => {
           expect(error).toMatchObject({ _tag: "LegacyDbDiffPgAdminError", reason: "differ" });
           expect(stderr(s.out)).toContain("Comparing Tables \n");
           expect(stdout(s.out)).toBe("");
-        }).pipe(Effect.provide(s.layer));
+        }).pipe(
+          Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+        );
       },
     );
 
@@ -2374,7 +2727,10 @@ describe("legacy db diff", () => {
           // only ever fed the progress-line filter).
           expect((error as { message: string }).message).not.toContain("some differ crash text");
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
-        }).pipe(Effect.provide(s.layer));
+        }).pipe(
+          Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+        );
       },
     );
 
@@ -2389,7 +2745,10 @@ describe("legacy db diff", () => {
           reason: "differ",
           message: "error running container: exit 137",
         });
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     });
 
     it.effect("classifies a differ spawn failure as docker_daemon", () => {
@@ -2399,7 +2758,10 @@ describe("legacy db diff", () => {
           Effect.flip,
         );
         expect(error).toMatchObject({ _tag: "LegacyDbDiffPgAdminError", reason: "docker_daemon" });
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     });
 
     it.effect("classifies a differ image-pull failure as registry_pull", () => {
@@ -2409,7 +2771,10 @@ describe("legacy db diff", () => {
           Effect.flip,
         );
         expect(error).toMatchObject({ _tag: "LegacyDbDiffPgAdminError", reason: "registry_pull" });
-      }).pipe(Effect.provide(s.layer));
+      }).pipe(
+        Effect.provide(s.layer),
+        Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+      );
     });
 
     it.effect(
@@ -2430,7 +2795,10 @@ describe("legacy db diff", () => {
           // resolves the target in the root PersistentPreRunE, strictly before
           // RunPgAdmin's AssertSupabaseDbIsRunning.
           expect(s.resolverCalls.length).toBeGreaterThan(0);
-        }).pipe(Effect.provide(s.layer));
+        }).pipe(
+          Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+        );
       },
     );
 
@@ -2447,7 +2815,10 @@ describe("legacy db diff", () => {
           );
           expect(error).toMatchObject({ _tag: "LegacyDbDiffDbNotRunningError", daemonDown: true });
           expect((error as { suggestion?: string }).suggestion).toContain("Docker Desktop");
-        }).pipe(Effect.provide(s.layer));
+        }).pipe(
+          Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+        );
       },
     );
 
@@ -2462,7 +2833,10 @@ describe("legacy db diff", () => {
           expect(Exit.isFailure(exit)).toBe(true);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
           expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
-        }).pipe(Effect.provide(s.layer));
+        }).pipe(
+          Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+        );
       },
     );
 
@@ -2481,7 +2855,10 @@ describe("legacy db diff", () => {
             flags({ usePgAdmin: Option.some(true), file: Option.some("pgadmin_diff") }),
           ).pipe(Effect.flip);
           expect(error).toMatchObject({ _tag: "LegacyDbDiffWriteError" });
-        }).pipe(Effect.provide(s.layer));
+        }).pipe(
+          Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+        );
       },
     );
 
@@ -2496,7 +2873,10 @@ describe("legacy db diff", () => {
           expect((error as { message: string }).message).toBe(
             "if any flags in the group [use-migra use-pgadmin use-pg-schema use-pg-delta] are set none of the others can be; [use-pg-delta use-pgadmin] were all set",
           );
-        }).pipe(Effect.provide(s.layer));
+        }).pipe(
+          Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+        );
       },
     );
 
@@ -2513,7 +2893,10 @@ describe("legacy db diff", () => {
             }),
           ).pipe(Effect.exit);
           expect(Exit.isFailure(exit)).toBe(true);
-        }).pipe(Effect.provide(s.layer));
+        }).pipe(
+          Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+        );
       },
     );
 
@@ -2532,7 +2915,10 @@ describe("legacy db diff", () => {
           expect(s.differCalls).toEqual([]);
           expect(s.explicitDiffCalls).toHaveLength(1);
           expect(stdout(s.out)).toBe("create table explicit ();\n");
-        }).pipe(Effect.provide(s.layer));
+        }).pipe(
+          Effect.provide(s.layer),
+          Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
+        );
       },
     );
 
@@ -2543,6 +2929,7 @@ describe("legacy db diff", () => {
         return Effect.gen(function* () {
           const fiber = yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
             Effect.provide(s.layer),
+            Effect.provideService(ConfigProvider.ConfigProvider, s.configProvider),
             Effect.forkChild({ startImmediately: true }),
           );
           // Wait for the SHADOW's own health probe specifically (its 64-hex id) —

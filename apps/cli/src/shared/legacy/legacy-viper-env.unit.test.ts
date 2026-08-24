@@ -1,112 +1,139 @@
-import { afterEach, describe, expect, it } from "vitest";
-
+import { describe, expect, it } from "@effect/vitest";
+import { ConfigProvider, Effect } from "effect";
 import {
+  makeLegacyViperEnvLayer,
   legacyViperEnvBool,
   legacyViperEnvBoolWithProjectFallback,
+  legacyViperEnvEntries,
   legacyViperEnvStringWithProjectFallback,
 } from "./legacy-viper-env.ts";
 
 const KEY = "SUPABASE_TEST_VIPER_BOOL";
 const STRING_KEY = "SUPABASE_TEST_VIPER_STRING";
+const PRIVATE_KEY_PREFIX = "DOTENV_PRIVATE_KEY";
+
+const withEnv = (env: Record<string, string>) =>
+  makeLegacyViperEnvLayer(ConfigProvider.fromEnv({ env, preserveEmptyStrings: true }));
 
 describe("legacyViperEnvBool", () => {
-  afterEach(() => {
-    delete process.env[KEY];
-  });
+  it.live("is true only for strconv.ParseBool's true set (viper.GetBool parity)", () =>
+    Effect.gen(function* () {
+      for (const value of ["1", "t", "T", "TRUE", "true", "True"]) {
+        expect(yield* legacyViperEnvBool(KEY).pipe(Effect.provide(withEnv({ [KEY]: value })))).toBe(
+          true,
+        );
+      }
+    }),
+  );
 
-  it("is true only for strconv.ParseBool's true set (viper.GetBool parity)", () => {
-    for (const value of ["1", "t", "T", "TRUE", "true", "True"]) {
-      process.env[KEY] = value;
-      expect(legacyViperEnvBool(KEY)).toBe(true);
-    }
-  });
+  it.live("is false for the false set and any unrecognized value", () =>
+    Effect.gen(function* () {
+      for (const value of ["0", "f", "F", "FALSE", "false", "False", "yes", "on", "", "nope"]) {
+        expect(yield* legacyViperEnvBool(KEY).pipe(Effect.provide(withEnv({ [KEY]: value })))).toBe(
+          false,
+        );
+      }
+    }),
+  );
 
-  it("is false for the false set and any unrecognized value", () => {
-    // viper casts via strconv.ParseBool and swallows the error to `false`, so
-    // `yes`/`on`/`""`/garbage are NOT truthy (unlike some bool parsers).
-    for (const value of ["0", "f", "F", "FALSE", "false", "False", "yes", "on", "", "nope"]) {
-      process.env[KEY] = value;
-      expect(legacyViperEnvBool(KEY)).toBe(false);
-    }
-  });
+  it.live("is false when the env var is absent", () =>
+    Effect.gen(function* () {
+      expect(yield* legacyViperEnvBool(KEY)).toBe(false);
+    }).pipe(Effect.provide(withEnv({}))),
+  );
+});
 
-  it("is false when the env var is absent", () => {
-    delete process.env[KEY];
-    expect(legacyViperEnvBool(KEY)).toBe(false);
-  });
+describe("legacyViperEnvEntries", () => {
+  it.live("returns every shell entry with the requested prefix", () =>
+    Effect.gen(function* () {
+      expect(yield* legacyViperEnvEntries(PRIVATE_KEY_PREFIX)).toEqual({
+        DOTENV_PRIVATE_KEY: "base",
+        DOTENV_PRIVATE_KEY_PRODUCTION: "production",
+        DOTENV_PRIVATE_KEY_STAGING: "staging",
+      });
+    }).pipe(
+      Effect.provide(
+        withEnv({
+          DOTENV_PRIVATE_KEY: "base",
+          DOTENV_PRIVATE_KEY_PRODUCTION: "production",
+          DOTENV_PRIVATE_KEY_STAGING: "staging",
+          DOTENV_PRIVATE_KEYX: "not-a-match",
+          OTHER: "ignored",
+        }),
+      ),
+    ),
+  );
 });
 
 describe("legacyViperEnvBoolWithProjectFallback", () => {
-  afterEach(() => {
-    delete process.env[KEY];
-  });
+  it.live("falls back to the project value only when the shell var is absent", () =>
+    Effect.gen(function* () {
+      expect(yield* legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "true" })).toBe(true);
+      expect(yield* legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "false" })).toBe(false);
+      expect(yield* legacyViperEnvBoolWithProjectFallback(KEY, {})).toBe(false);
+    }).pipe(Effect.provide(withEnv({}))),
+  );
 
-  // Go truth table: godotenv.Load only sets project-.env keys ABSENT from the
-  // shell env (presence is key-existence, so even an empty shell value blocks
-  // the file value), then viper.GetBool reads the merged env
-  // (godotenv@v1.5.1/godotenv.go:184-200, apps/cli-go/pkg/config/config.go).
+  it.live("keeps a false shell override even when the project .env says true", () =>
+    Effect.gen(function* () {
+      expect(yield* legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "true" })).toBe(false);
+    }).pipe(Effect.provide(withEnv({ [KEY]: "false" }))),
+  );
 
-  it("falls back to the project value only when the shell var is absent", () => {
-    delete process.env[KEY];
-    expect(legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "true" })).toBe(true);
-    expect(legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "false" })).toBe(false);
-    expect(legacyViperEnvBoolWithProjectFallback(KEY, {})).toBe(false);
-  });
+  it.live("treats an empty shell value as present and false", () =>
+    Effect.gen(function* () {
+      expect(yield* legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "true" })).toBe(false);
+    }).pipe(Effect.provide(withEnv({ [KEY]: "" }))),
+  );
 
-  it("keeps a false shell override even when the project .env says true", () => {
-    process.env[KEY] = "false";
-    expect(legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "true" })).toBe(false);
-  });
+  it.live("treats an unparsable shell value as present and false", () =>
+    Effect.gen(function* () {
+      expect(yield* legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "true" })).toBe(false);
+    }).pipe(Effect.provide(withEnv({ [KEY]: "banana" }))),
+  );
 
-  it("treats an empty shell value as present (blocks the project value) and false", () => {
-    // godotenv's presence check is key-existence in os.Environ(), and viper
-    // without AllowEmptyEnv resolves "" to the false default.
-    process.env[KEY] = "";
-    expect(legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "true" })).toBe(false);
-  });
-
-  it("treats an unparsable shell value as present and false (cast.ToBool swallows the error)", () => {
-    process.env[KEY] = "banana";
-    expect(legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "true" })).toBe(false);
-  });
-
-  it("keeps a true shell value over a false project value", () => {
-    process.env[KEY] = "true";
-    expect(legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "false" })).toBe(true);
-  });
+  it.live("keeps a true shell value over a false project value", () =>
+    Effect.gen(function* () {
+      expect(yield* legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "false" })).toBe(true);
+    }).pipe(Effect.provide(withEnv({ [KEY]: "true" }))),
+  );
 });
 
 describe("legacyViperEnvStringWithProjectFallback", () => {
-  afterEach(() => {
-    delete process.env[STRING_KEY];
-  });
+  it.live("falls back to the project value only when the shell var is absent", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* legacyViperEnvStringWithProjectFallback(STRING_KEY, {
+          [STRING_KEY]: "project-value",
+        }),
+      ).toBe("project-value");
+      expect(yield* legacyViperEnvStringWithProjectFallback(STRING_KEY, {})).toBe("");
+    }).pipe(Effect.provide(withEnv({}))),
+  );
 
-  it("falls back to the project value only when the shell var is absent", () => {
-    delete process.env[STRING_KEY];
-    expect(
-      legacyViperEnvStringWithProjectFallback(STRING_KEY, { [STRING_KEY]: "project-value" }),
-    ).toBe("project-value");
-    expect(legacyViperEnvStringWithProjectFallback(STRING_KEY, {})).toBe("");
-  });
+  it.live("keeps the shell value over a project value", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* legacyViperEnvStringWithProjectFallback(STRING_KEY, {
+          [STRING_KEY]: "project-value",
+        }),
+      ).toBe("shell-value");
+    }).pipe(Effect.provide(withEnv({ [STRING_KEY]: "shell-value" }))),
+  );
 
-  it("keeps the shell value over a project value", () => {
-    process.env[STRING_KEY] = "shell-value";
-    expect(
-      legacyViperEnvStringWithProjectFallback(STRING_KEY, { [STRING_KEY]: "project-value" }),
-    ).toBe("shell-value");
-  });
+  it.live("treats an empty shell value as present and blocks the project value", () =>
+    Effect.gen(function* () {
+      expect(
+        yield* legacyViperEnvStringWithProjectFallback(STRING_KEY, {
+          [STRING_KEY]: "project-value",
+        }),
+      ).toBe("");
+    }).pipe(Effect.provide(withEnv({ [STRING_KEY]: "" }))),
+  );
 
-  it("treats an empty shell value as present (blocks the project value)", () => {
-    // Same presence-based semantics as legacyViperEnvBoolWithProjectFallback: godotenv.Load's
-    // "don't override a key already in os.Environ()" check is key-existence, not value-truthiness.
-    process.env[STRING_KEY] = "";
-    expect(
-      legacyViperEnvStringWithProjectFallback(STRING_KEY, { [STRING_KEY]: "project-value" }),
-    ).toBe("");
-  });
-
-  it("returns an empty string (not undefined) when absent from both, matching viper.GetString", () => {
-    delete process.env[STRING_KEY];
-    expect(legacyViperEnvStringWithProjectFallback(STRING_KEY, {})).toBe("");
-  });
+  it.live("returns an empty string when absent from both", () =>
+    Effect.gen(function* () {
+      expect(yield* legacyViperEnvStringWithProjectFallback(STRING_KEY, {})).toBe("");
+    }).pipe(Effect.provide(withEnv({}))),
+  );
 });

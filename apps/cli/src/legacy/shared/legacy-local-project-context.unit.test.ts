@@ -1,10 +1,11 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
-import { afterEach, describe, expect, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { describe, expect, it } from "@effect/vitest";
+import { Cause, Config, ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import { useLegacyTempWorkdir } from "../../../tests/helpers/legacy-mocks.ts";
+import { makeLegacyViperEnvLayer } from "../../shared/legacy/legacy-viper-env.ts";
+import { LegacyViperEnv } from "../../shared/legacy/legacy-viper-env.ts";
+import { legacyResolveLocalConfigValues } from "./legacy-local-config-values.ts";
 import { legacyLoadLocalProjectContext } from "./legacy-local-project-context.ts";
 
 /**
@@ -19,38 +20,81 @@ import { legacyLoadLocalProjectContext } from "./legacy-local-project-context.ts
 const DOCKER_HOST_KEY = "DOCKER_HOST";
 
 /**
- * `BITBUCKET_CLONE_DIR` is installed alongside the Docker-client keys even though it isn't one
- * itself — see `LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY`'s doc comment (review:
- * PRRT_kwDOErm0O86VmHkm) for why this key, unlike `SUPABASE_SERVICES_HOSTNAME`, must reach
- * `process.env` from a project-only dotenv file.
+ * `BITBUCKET_CLONE_DIR` remains in the resolved project environment map so
+ * container boundaries can consume it without mutating global process state.
  */
 const BITBUCKET_CLONE_DIR_KEY = "BITBUCKET_CLONE_DIR";
 
-function writeDotEnv(workdir: string, contents: string): void {
-  mkdirSync(workdir, { recursive: true });
-  writeFileSync(join(workdir, ".env"), contents);
+function testLayer(env: Readonly<Record<string, string>> = {}) {
+  const provider = ConfigProvider.fromEnv({ env, preserveEmptyStrings: true });
+  return Layer.mergeAll(
+    BunServices.layer,
+    ConfigProvider.layer(provider),
+    makeLegacyViperEnvLayer(provider),
+  );
 }
 
-function writeConfigToml(workdir: string, contents: string): void {
-  const supabaseDir = join(workdir, "supabase");
-  mkdirSync(supabaseDir, { recursive: true });
-  writeFileSync(join(supabaseDir, "config.toml"), contents);
+function writeDotEnv(workdir: string, contents: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.makeDirectory(workdir, { recursive: true });
+    yield* fs.writeFileString(path.join(workdir, ".env"), contents);
+  });
+}
+
+function writeConfigToml(workdir: string, contents: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const supabaseDir = path.join(workdir, "supabase");
+    yield* fs.makeDirectory(supabaseDir, { recursive: true });
+    yield* fs.writeFileString(path.join(supabaseDir, "config.toml"), contents);
+  });
 }
 
 const tempRoot = useLegacyTempWorkdir("supabase-legacy-project-context-");
 
 describe("legacyLoadLocalProjectContext", () => {
-  const previousDockerHost = process.env[DOCKER_HOST_KEY];
-  const previousBitbucketCloneDir = process.env[BITBUCKET_CLONE_DIR_KEY];
-  const previousProjectId = process.env["SUPABASE_PROJECT_ID"];
-
-  afterEach(() => {
-    if (previousDockerHost === undefined) delete process.env[DOCKER_HOST_KEY];
-    else process.env[DOCKER_HOST_KEY] = previousDockerHost;
-    if (previousBitbucketCloneDir === undefined) delete process.env[BITBUCKET_CLONE_DIR_KEY];
-    else process.env[BITBUCKET_CLONE_DIR_KEY] = previousBitbucketCloneDir;
-    if (previousProjectId === undefined) delete process.env["SUPABASE_PROJECT_ID"];
-    else process.env["SUPABASE_PROJECT_ID"] = previousProjectId;
+  it.effect("resolves nested env references while ignoring TOML comments", () => {
+    const workdir = tempRoot.current;
+    const queried: Array<string> = [];
+    const provider = ConfigProvider.fromEnv({
+      env: { COMMENT_ONLY: "9999", NESTED_PORT: "5544" },
+      preserveEmptyStrings: true,
+    });
+    const layer = Layer.mergeAll(
+      BunServices.layer,
+      ConfigProvider.layer(provider),
+      Layer.succeed(LegacyViperEnv, {
+        get: (name) =>
+          Effect.sync(() => {
+            queried.push(name);
+            const value = { COMMENT_ONLY: "9999", NESTED_PORT: "5544" }[name];
+            return value === undefined ? Option.none() : Option.some(value);
+          }),
+        entries: () => Effect.succeed({}),
+      }),
+    );
+    return Effect.gen(function* () {
+      yield* writeConfigToml(
+        workdir,
+        [
+          "# env(COMMENT_ONLY) is documentation, not a config reference",
+          'project_id = "nested-project"',
+          "[api]",
+          'port = "env(NESTED_PORT)"',
+          "",
+        ].join("\n"),
+      );
+      const context = yield* legacyLoadLocalProjectContext(
+        workdir,
+        (message) => new Cause.UnknownError(undefined, String(message)),
+      );
+      expect(context.config.api.port).toBe(5544);
+      expect(queried).toContain("NESTED_PORT");
+      expect(queried).not.toContain("COMMENT_ONLY");
+    }).pipe(Effect.provide(layer));
   });
 
   it.effect(
@@ -61,100 +105,134 @@ describe("legacyLoadLocalProjectContext", () => {
       // Go's viper override tier before this reads it; letting an unrelated
       // `SUPABASE_PROJECT_ID` win here would resolve the WRONG project id for the shadow's
       // own network id/container labels on a linked `db diff`/`db pull`.
-      process.env["SUPABASE_PROJECT_ID"] = "local";
       const ref = "abcdefghijklmnopqrst";
       const workdir = tempRoot.current;
-      writeConfigToml(
-        workdir,
-        ['project_id = "toml-project"', "[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"),
-      );
-
-      return legacyLoadLocalProjectContext(workdir, (message) => new Error(message), ref).pipe(
-        Effect.map((context) => {
-          expect(context.loaded?.appliedRemote).toBe("prod");
-          expect(context.projectId).toBe(ref);
-        }),
-        Effect.provide(BunServices.layer),
-      );
+      return Effect.gen(function* () {
+        yield* writeConfigToml(
+          workdir,
+          ['project_id = "toml-project"', "[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"),
+        );
+        const context = yield* legacyLoadLocalProjectContext(
+          workdir,
+          (message) => new Cause.UnknownError(undefined, String(message)),
+          ref,
+        );
+        expect(context.loaded?.appliedRemote).toBe("prod");
+        expect(context.projectId).toBe(ref);
+      }).pipe(Effect.provide(testLayer({ SUPABASE_PROJECT_ID: "local" })));
     },
   );
 
   it.effect("still applies SUPABASE_PROJECT_ID when no [remotes.*] block matches the ref", () => {
-    process.env["SUPABASE_PROJECT_ID"] = "env-project";
     const ref = "abcdefghijklmnopqrst";
     const workdir = tempRoot.current;
-    writeConfigToml(workdir, ['project_id = "toml-project"', ""].join("\n"));
+    return Effect.gen(function* () {
+      yield* writeConfigToml(workdir, ['project_id = "toml-project"', ""].join("\n"));
+      const context = yield* legacyLoadLocalProjectContext(
+        workdir,
+        (message) => new Cause.UnknownError(undefined, String(message)),
+        ref,
+      );
+      expect(context.loaded?.appliedRemote).toBeUndefined();
+      expect(context.projectId).toBe("env-project");
+    }).pipe(Effect.provide(testLayer({ SUPABASE_PROJECT_ID: "env-project" })));
+  });
 
-    return legacyLoadLocalProjectContext(workdir, (message) => new Error(message), ref).pipe(
-      Effect.map((context) => {
-        expect(context.loaded?.appliedRemote).toBeUndefined();
-        expect(context.projectId).toBe("env-project");
-      }),
-      Effect.provide(BunServices.layer),
-    );
+  it.effect("preserves ambient API and DB port overrides without config.toml", () => {
+    const workdir = tempRoot.current;
+    return Effect.gen(function* () {
+      const context = yield* legacyLoadLocalProjectContext(
+        workdir,
+        (message) => new Cause.UnknownError(undefined, String(message)),
+      );
+      const values = yield* legacyResolveLocalConfigValues(
+        context.config,
+        context.hostname,
+        workdir,
+        context.projectEnvValues,
+        context.loaded?.document,
+      );
+      expect(values.apiPort).toBe(65431);
+      expect(values.dbPort).toBe(65432);
+    }).pipe(Effect.provide(testLayer({ SUPABASE_API_PORT: "65431", SUPABASE_DB_PORT: "65432" })));
   });
 
   it.effect(
     "does NOT install a project .env's DOCKER_HOST into process.env, matching Go's Docker client being frozen at binary startup, before godotenv.Load ever runs",
     () => {
-      delete process.env[DOCKER_HOST_KEY];
       const workdir = tempRoot.current;
-      writeDotEnv(workdir, `DOCKER_HOST=tcp://project-dotenv-host:2375\n`);
-
-      return legacyLoadLocalProjectContext(workdir, (message) => new Error(message)).pipe(
-        Effect.map(() => {
-          expect(process.env[DOCKER_HOST_KEY]).toBeUndefined();
-        }),
-        Effect.provide(BunServices.layer),
-      );
+      return Effect.gen(function* () {
+        yield* writeDotEnv(workdir, `DOCKER_HOST=tcp://project-dotenv-host:2375\n`);
+        yield* legacyLoadLocalProjectContext(
+          workdir,
+          (message) => new Cause.UnknownError(undefined, String(message)),
+        );
+        const dockerHost = yield* Config.option(Config.string(DOCKER_HOST_KEY));
+        expect(Option.isNone(dockerHost)).toBe(true);
+      }).pipe(Effect.provide(testLayer()));
     },
   );
 
   it.effect(
     "leaves an already-set shell DOCKER_HOST untouched regardless of a conflicting project .env value",
     () => {
-      process.env[DOCKER_HOST_KEY] = "tcp://real-shell-host:2375";
       const workdir = tempRoot.current;
-      writeDotEnv(workdir, `DOCKER_HOST=tcp://project-dotenv-host:2375\n`);
-
-      return legacyLoadLocalProjectContext(workdir, (message) => new Error(message)).pipe(
-        Effect.map(() => {
-          expect(process.env[DOCKER_HOST_KEY]).toBe("tcp://real-shell-host:2375");
-        }),
-        Effect.provide(BunServices.layer),
-      );
+      return Effect.gen(function* () {
+        yield* writeDotEnv(workdir, `DOCKER_HOST=tcp://project-dotenv-host:2375\n`);
+        yield* legacyLoadLocalProjectContext(
+          workdir,
+          (message) => new Cause.UnknownError(undefined, String(message)),
+        );
+        const dockerHost = yield* Config.option(Config.string(DOCKER_HOST_KEY));
+        expect(Option.getOrUndefined(dockerHost)).toBe("tcp://real-shell-host:2375");
+      }).pipe(Effect.provide(testLayer({ [DOCKER_HOST_KEY]: "tcp://real-shell-host:2375" })));
     },
   );
+
+  it.effect("resolves a project .env's BITBUCKET_CLONE_DIR for container boundaries", () => {
+    const workdir = tempRoot.current;
+    return Effect.gen(function* () {
+      yield* writeDotEnv(workdir, `BITBUCKET_CLONE_DIR=/opt/atlassian/pipelines/agent/build\n`);
+      const context = yield* legacyLoadLocalProjectContext(
+        workdir,
+        (message) => new Cause.UnknownError(undefined, String(message)),
+      );
+      expect(context.projectEnvValues[BITBUCKET_CLONE_DIR_KEY]).toBe(
+        "/opt/atlassian/pipelines/agent/build",
+      );
+    }).pipe(Effect.provide(testLayer()));
+  });
 
   it.effect(
-    "installs a project .env's BITBUCKET_CLONE_DIR into process.env, matching Go's godotenv.Load preceding DockerStart's os.Getenv read",
+    "preserves an ambient BITBUCKET_CLONE_DIR over a conflicting project dotenv value",
     () => {
-      delete process.env[BITBUCKET_CLONE_DIR_KEY];
       const workdir = tempRoot.current;
-      writeDotEnv(workdir, `BITBUCKET_CLONE_DIR=/opt/atlassian/pipelines/agent/build\n`);
-
-      return legacyLoadLocalProjectContext(workdir, (message) => new Error(message)).pipe(
-        Effect.map(() => {
-          expect(process.env[BITBUCKET_CLONE_DIR_KEY]).toBe("/opt/atlassian/pipelines/agent/build");
-        }),
-        Effect.provide(BunServices.layer),
-      );
+      return Effect.gen(function* () {
+        yield* writeDotEnv(workdir, `BITBUCKET_CLONE_DIR=/opt/atlassian/pipelines/agent/build\n`);
+        const context = yield* legacyLoadLocalProjectContext(
+          workdir,
+          (message) => new Cause.UnknownError(undefined, String(message)),
+        );
+        expect(context.projectEnvValues[BITBUCKET_CLONE_DIR_KEY]).toBe("/real-shell-clone-dir");
+      }).pipe(Effect.provide(testLayer({ BITBUCKET_CLONE_DIR: "/real-shell-clone-dir" })));
     },
   );
 
-  it.effect(
-    "never overrides an already-set BITBUCKET_CLONE_DIR, matching godotenv.Load's shell-env-wins semantics",
-    () => {
-      process.env[BITBUCKET_CLONE_DIR_KEY] = "/real-shell-clone-dir";
-      const workdir = tempRoot.current;
-      writeDotEnv(workdir, `BITBUCKET_CLONE_DIR=/opt/atlassian/pipelines/agent/build\n`);
-
-      return legacyLoadLocalProjectContext(workdir, (message) => new Error(message)).pipe(
-        Effect.map(() => {
-          expect(process.env[BITBUCKET_CLONE_DIR_KEY]).toBe("/real-shell-clone-dir");
-        }),
-        Effect.provide(BunServices.layer),
+  it.effect("captures ambient unprefixed start service overrides", () => {
+    const workdir = tempRoot.current;
+    const overrides = {
+      KONG_NGINX_WORKER_PROCESSES: "auto",
+      VECTOR_ENABLED: "false",
+      VECTOR_BUCKET_PROVIDER: "custom",
+      VECTOR_STORE_MIGRATIONS_ENABLED: "false",
+      VECTOR_DATABASE_URL: "postgresql://vector.example.test/postgres",
+    };
+    return Effect.gen(function* () {
+      const context = yield* legacyLoadLocalProjectContext(
+        workdir,
+        (message) => new Cause.UnknownError(undefined, String(message)),
       );
-    },
-  );
+      expect(context.projectEnvValues).toMatchObject(overrides);
+    }).pipe(Effect.provide(testLayer(overrides)));
+  });
 });

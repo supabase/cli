@@ -1,4 +1,3 @@
-import { dirname } from "node:path";
 import {
   edgeFunctionDenoConfigFileName,
   edgeFunctionEntrypointFileName,
@@ -62,17 +61,15 @@ function resolveSlug(slug: Option.Option<string>) {
       return yield* output.promptText("Function name", { validate: validateSlugMessage });
     }
 
-    return yield* Effect.fail(
-      new MissingFunctionSlugError({
-        detail: "Function name is required in non-interactive mode.",
-        suggestion: "Pass a function name, for example `supabase functions new hello-world`.",
-      }),
-    );
+    return yield* new MissingFunctionSlugError({
+      detail: "Function name is required in non-interactive mode.",
+      suggestion: "Pass a function name, for example `supabase functions new hello-world`.",
+    });
   });
 }
 
-function projectRootForConfigPath(configPath: string): string {
-  return dirname(dirname(configPath));
+function projectRootForConfigPath(path: Path.Path, configPath: string): string {
+  return path.dirname(path.dirname(configPath));
 }
 
 export const functionsNew = Effect.fnUntraced(function* (slugInput: Option.Option<string>) {
@@ -88,18 +85,18 @@ export const functionsNew = Effect.fnUntraced(function* (slugInput: Option.Optio
 
   const projectPaths = yield* findProjectPaths(runtimeInfo.cwd);
   const projectRoot =
-    projectPaths === null ? runtimeInfo.cwd : projectRootForConfigPath(projectPaths.configPath);
+    projectPaths === null
+      ? runtimeInfo.cwd
+      : projectRootForConfigPath(path, projectPaths.configPath);
   const functionDir = path.join(projectRoot, "supabase", edgeFunctionsDirectoryName, slug);
   const entrypointPath = path.join(functionDir, edgeFunctionEntrypointFileName);
   const denoConfigPath = path.join(functionDir, edgeFunctionDenoConfigFileName);
 
   if (yield* fs.exists(entrypointPath)) {
-    return yield* Effect.fail(
-      new FunctionEntrypointExistsError({
-        detail: `Function entrypoint already exists at ${entrypointPath}.`,
-        suggestion: "Choose a different function name or remove the existing entrypoint first.",
-      }),
-    );
+    return yield* new FunctionEntrypointExistsError({
+      detail: `Function entrypoint already exists at ${entrypointPath}.`,
+      suggestion: "Choose a different function name or remove the existing entrypoint first.",
+    });
   }
 
   yield* fs.makeDirectory(functionDir, { recursive: true });

@@ -26,12 +26,10 @@ const resolveBranchName = Effect.fnUntraced(function* (nameOpt: Option.Option<st
   const maybeGitBranch = yield* detectGitBranch();
 
   if (Option.isNone(maybeGitBranch)) {
-    return yield* Effect.fail(
-      new NoBranchNameError({
-        detail: "No branch name provided and no git branch detected.",
-        suggestion: "Provide a branch name: `supabase branches create <name>`",
-      }),
-    );
+    return yield* new NoBranchNameError({
+      detail: "No branch name provided and no git branch detected.",
+      suggestion: "Provide a branch name: `supabase branches create <name>`",
+    });
   }
 
   const gitBranch = maybeGitBranch.value;
@@ -52,13 +50,11 @@ const resolveBranchName = Effect.fnUntraced(function* (nameOpt: Option.Option<st
   );
 
   if (!confirmed) {
-    return yield* Effect.fail(
-      new NoBranchNameError({
-        detail: "Branch creation cancelled.",
-        suggestion: "Provide a branch name: `supabase branches create <name>`",
-        cancelled: true,
-      }),
-    );
+    return yield* new NoBranchNameError({
+      detail: "Branch creation cancelled.",
+      suggestion: "Provide a branch name: `supabase branches create <name>`",
+      cancelled: true,
+    });
   }
 
   return { branchName: gitBranch, gitBranch: Option.some(gitBranch) };
@@ -75,12 +71,10 @@ export const create = Effect.fn("branches.create")(function* (flags: CreateFlags
 
   const maybeLinkState = yield* projectLinkState.load;
   if (Option.isNone(maybeLinkState)) {
-    return yield* Effect.fail(
-      new ProjectNotLinkedError({
-        detail: "No project is linked in this directory.",
-        suggestion: "Run `supabase link` first.",
-      }),
-    );
+    return yield* new ProjectNotLinkedError({
+      detail: "No project is linked in this directory.",
+      suggestion: "Run `supabase link` first.",
+    });
   }
 
   const { project } = maybeLinkState.value;

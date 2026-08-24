@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach, beforeEach, vi } from "vitest";
-import { Cause, Effect, Exit, Layer, Sink, Stdio, Stream } from "effect";
+import { Cause, Effect, Exit, Layer, Schema, Sink, Stdio, Stream } from "effect";
+import * as TestClock from "effect/testing/TestClock";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
 import { mockTty } from "../../../tests/helpers/mocks.ts";
 import { machineErrorContextLayer } from "./machine-error-context.layer.ts";
@@ -104,6 +105,10 @@ function getFailError(exit: Exit.Exit<unknown, unknown>): unknown {
   return fail.error;
 }
 
+const decodeJsonObject = Schema.decodeSync(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+);
+
 describe("Output", () => {
   describe("text layer", () => {
     const layer = textOutputLayer.pipe(
@@ -112,11 +117,10 @@ describe("Output", () => {
 
     it.effect("task uses clack spinner and can resolve into info", () =>
       Effect.gen(function* () {
-        vi.useFakeTimers();
         const out = yield* Output;
         const task = yield* out.task("Loading organizations...");
         yield* task.message("Still loading...");
-        vi.advanceTimersByTime(200);
+        yield* TestClock.adjust("200 millis");
         yield* task.info("Loaded organizations.");
 
         expect(mockClack.spinnerFactory).toHaveBeenCalledTimes(1);
@@ -129,11 +133,10 @@ describe("Output", () => {
 
     it.effect("task skips the spinner when it completes quickly", () =>
       Effect.gen(function* () {
-        vi.useFakeTimers();
         const out = yield* Output;
         const task = yield* out.task("Loading organizations...");
         yield* task.succeed("Loaded organizations.");
-        vi.advanceTimersByTime(200);
+        yield* TestClock.adjust("200 millis");
 
         expect(mockClack.spinnerFactory).not.toHaveBeenCalled();
         expect(mockClack.spinnerHandle.start).not.toHaveBeenCalled();
@@ -145,11 +148,10 @@ describe("Output", () => {
       "task keeps raw multiline formatting when it completes before the spinner shows",
       () =>
         Effect.gen(function* () {
-          vi.useFakeTimers();
           const out = yield* Output;
           const task = yield* out.task("Loading organizations...");
           yield* task.succeed("- name: Supabase\n- name: Supabase Dev");
-          vi.advanceTimersByTime(200);
+          yield* TestClock.adjust("200 millis");
 
           expect(mockClack.spinnerFactory).not.toHaveBeenCalled();
           expect(mockClack.log.success).toHaveBeenCalledWith(
@@ -160,10 +162,9 @@ describe("Output", () => {
 
     it.effect("task prefixes continuation lines for multiline completions", () =>
       Effect.gen(function* () {
-        vi.useFakeTimers();
         const out = yield* Output;
         const task = yield* out.task("Loading organizations...");
-        vi.advanceTimersByTime(200);
+        yield* TestClock.adjust("200 millis");
         yield* task.succeed("- name: Supabase\n- name: Supabase Dev");
 
         expect(mockClack.spinnerHandle.stop).toHaveBeenCalledWith(
@@ -705,7 +706,7 @@ describe("Output", () => {
         const out = yield* Output;
         yield* out.success("ok", { id: 42 });
         expect(mock.stdout).toHaveLength(1);
-        const parsed = JSON.parse(mock.stdout[0]!);
+        const parsed = decodeJsonObject(mock.stdout[0]!);
         expect(parsed).toEqual({ id: 42, message: "ok" });
       }).pipe(Effect.provide(layer));
     });
@@ -717,7 +718,7 @@ describe("Output", () => {
         const out = yield* Output;
         yield* out.fail({ code: "E_TEST", message: "failed", detail: "details" });
         expect(mock.stdout).toHaveLength(1);
-        const parsed = JSON.parse(mock.stdout[0]!);
+        const parsed = decodeJsonObject(mock.stdout[0]!);
         expect(parsed).toEqual({
           _tag: "Error",
           error: { code: "E_TEST", message: "failed", detail: "details" },
@@ -744,7 +745,7 @@ describe("Output", () => {
           yield* context.set({ linked_project: { project_ref: "abc" } });
           yield* out.fail({ code: "E_TEST", message: "failed" });
           expect(mock.stdout).toHaveLength(1);
-          const parsed = JSON.parse(mock.stdout[0]!);
+          const parsed = decodeJsonObject(mock.stdout[0]!);
           expect(parsed).toEqual({
             _tag: "Error",
             error: { code: "E_TEST", message: "failed" },
@@ -760,7 +761,7 @@ describe("Output", () => {
       return Effect.gen(function* () {
         const out = yield* Output;
         yield* out.fail({ code: "E_TEST", message: "failed" });
-        const parsed = JSON.parse(mock.stdout[0]!);
+        const parsed = decodeJsonObject(mock.stdout[0]!);
         expect(parsed).toEqual({
           _tag: "Error",
           error: { code: "E_TEST", message: "failed" },
@@ -785,7 +786,7 @@ describe("Output", () => {
           const context = yield* MachineErrorContext;
           yield* context.set({ _tag: "Hacked", error: "Hacked", safe_field: "ok" });
           yield* out.fail({ code: "E_TEST", message: "failed" });
-          const parsed = JSON.parse(mock.stdout[0]!);
+          const parsed = decodeJsonObject(mock.stdout[0]!);
           expect(parsed).toEqual({
             _tag: "Error",
             error: { code: "E_TEST", message: "failed" },
@@ -813,7 +814,7 @@ describe("Output", () => {
         const out = yield* Output;
         yield* out.intro("Starting up");
         expect(mock.stdout).toHaveLength(1);
-        const parsed = JSON.parse(mock.stdout[0]!);
+        const parsed = decodeJsonObject(mock.stdout[0]!);
         expect(parsed.type).toBe("log");
         expect(parsed.level).toBe("info");
         expect(parsed.message).toBe("Starting up");
@@ -828,7 +829,7 @@ describe("Output", () => {
         const out = yield* Output;
         yield* out.outro("All done");
         expect(mock.stdout).toHaveLength(1);
-        const parsed = JSON.parse(mock.stdout[0]!);
+        const parsed = decodeJsonObject(mock.stdout[0]!);
         expect(parsed.type).toBe("log");
         expect(parsed.level).toBe("info");
         expect(parsed.message).toBe("All done");
@@ -843,7 +844,7 @@ describe("Output", () => {
         const out = yield* Output;
         yield* out.info("stream info");
         expect(mock.stdout).toHaveLength(1);
-        const parsed = JSON.parse(mock.stdout[0]!);
+        const parsed = decodeJsonObject(mock.stdout[0]!);
         expect(parsed.type).toBe("log");
         expect(parsed.level).toBe("info");
         expect(parsed.message).toBe("stream info");
@@ -857,7 +858,7 @@ describe("Output", () => {
       return Effect.gen(function* () {
         const out = yield* Output;
         yield* out.warn("stream warn");
-        const parsed = JSON.parse(mock.stdout[0]!);
+        const parsed = decodeJsonObject(mock.stdout[0]!);
         expect(parsed.type).toBe("log");
         expect(parsed.level).toBe("warn");
         expect(parsed.message).toBe("stream warn");
@@ -870,7 +871,7 @@ describe("Output", () => {
       return Effect.gen(function* () {
         const out = yield* Output;
         yield* out.error("stream error");
-        const parsed = JSON.parse(mock.stdout[0]!);
+        const parsed = decodeJsonObject(mock.stdout[0]!);
         expect(parsed.type).toBe("log");
         expect(parsed.level).toBe("error");
         expect(parsed.message).toBe("stream error");
@@ -890,7 +891,7 @@ describe("Output", () => {
           line: "checkpoint complete",
           source: "live",
         });
-        const parsed = JSON.parse(mock.stdout[0]!);
+        const parsed = decodeJsonObject(mock.stdout[0]!);
         expect(parsed).toEqual({
           type: "log-entry",
           timestamp: "2026-03-11T00:00:00.000Z",
@@ -911,8 +912,8 @@ describe("Output", () => {
         yield* task.succeed("Loaded organizations.");
 
         expect(mock.stdout).toHaveLength(2);
-        const started = JSON.parse(mock.stdout[0]!);
-        const finished = JSON.parse(mock.stdout[1]!);
+        const started = decodeJsonObject(mock.stdout[0]!);
+        const finished = decodeJsonObject(mock.stdout[1]!);
         expect(started).toEqual(
           expect.objectContaining({
             type: "log",
@@ -990,7 +991,7 @@ describe("Output", () => {
       return Effect.gen(function* () {
         const out = yield* Output;
         yield* out.success("done", { key: "value" });
-        const parsed = JSON.parse(mock.stdout[0]!);
+        const parsed = decodeJsonObject(mock.stdout[0]!);
         expect(parsed.type).toBe("result");
         expect(parsed.data).toEqual({ key: "value", message: "done" });
         expect(parsed.timestamp).toBeDefined();
@@ -1003,7 +1004,7 @@ describe("Output", () => {
       return Effect.gen(function* () {
         const out = yield* Output;
         yield* out.fail({ code: "E_FAIL", message: "boom", suggestion: "try again" });
-        const parsed = JSON.parse(mock.stdout[0]!);
+        const parsed = decodeJsonObject(mock.stdout[0]!);
         expect(parsed.type).toBe("error");
         expect(parsed.error).toEqual({
           code: "E_FAIL",
@@ -1028,7 +1029,7 @@ describe("Output", () => {
         const context = yield* MachineErrorContext;
         yield* context.set({ linked_project: { project_ref: "abc" } });
         yield* out.fail({ code: "E_FAIL", message: "boom" });
-        const parsed = JSON.parse(mock.stdout[0]!);
+        const parsed = decodeJsonObject(mock.stdout[0]!);
         expect(parsed.type).toBe("error");
         expect(parsed.error).toEqual({ code: "E_FAIL", message: "boom" });
         expect(parsed.linked_project).toEqual({ project_ref: "abc" });
@@ -1047,7 +1048,7 @@ describe("Output", () => {
       return Effect.gen(function* () {
         const out = yield* Output;
         yield* out.fail({ code: "E_FAIL", message: "boom" });
-        const parsed = JSON.parse(mock.stdout[0]!);
+        const parsed = decodeJsonObject(mock.stdout[0]!);
         expect(Object.keys(parsed).sort()).toEqual(["error", "timestamp", "type"]);
       }).pipe(Effect.provide(layer));
     });
@@ -1073,7 +1074,7 @@ describe("Output", () => {
             safe_field: "ok",
           });
           yield* out.fail({ code: "E_FAIL", message: "boom" });
-          const parsed = JSON.parse(mock.stdout[0]!);
+          const parsed = decodeJsonObject(mock.stdout[0]!);
           expect(parsed.type).toBe("error");
           expect(parsed.error).toEqual({ code: "E_FAIL", message: "boom" });
           expect(typeof parsed.timestamp).toBe("string");

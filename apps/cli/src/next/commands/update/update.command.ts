@@ -36,8 +36,7 @@ const updateRuntimeLayer = provideProjectCommandRuntime(
     projectLinkStateLayer,
     projectLocalServiceVersionsLayer,
     updateProjectLinkRemoteLayer,
-    commandRuntimeLayer(["stack", "update"]),
-  ),
+  ).pipe(Layer.provideMerge(commandRuntimeLayer(["stack", "update"]))),
 );
 
 export const updateCommand = Command.make("update", flags).pipe(

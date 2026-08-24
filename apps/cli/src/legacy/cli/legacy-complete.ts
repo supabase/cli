@@ -1,5 +1,6 @@
-import { BunServices } from "@effect/platform-bun";
-import { Effect, Layer, Option } from "effect";
+import { BunCrypto, BunServices } from "@effect/platform-bun";
+import { Clock, Crypto, DateTime, Effect, Layer, Option } from "effect";
+import type * as PlatformError from "effect/PlatformError";
 import { GlobalFlag } from "effect/unstable/cli";
 import type { Command, Param, Primitive } from "effect/unstable/cli";
 import process from "node:process";
@@ -907,12 +908,8 @@ function legacyIsValidGoRfc3339(value: string): boolean {
   if (offsetHour !== undefined && (Number(offsetHour) > 24 || Number(offsetMinute) > 60))
     return false;
 
-  const roundTrip = new Date(0);
-  roundTrip.setUTCFullYear(y, mo - 1, d);
-  return (
-    roundTrip.getUTCFullYear() === y &&
-    roundTrip.getUTCMonth() === mo - 1 &&
-    roundTrip.getUTCDate() === d
+  return Option.isSome(
+    DateTime.make({ year: y, month: mo, day: d, hour: 0, minute: 0, second: 0, millisecond: 0 }),
   );
 }
 
@@ -1685,21 +1682,25 @@ export function legacyFormatCompletionResponse(
 export function legacyCaptureCompleteTelemetryEffect(
   exitCode: number,
   durationMs: number,
-): Effect.Effect<void, never, Analytics> {
+): Effect.Effect<void, PlatformError.PlatformError, Analytics | Crypto.Crypto> {
   return Effect.gen(function* () {
     const analytics = yield* Analytics;
-    yield* analytics.capture(EventCommandExecuted, {
-      [PropExitCode]: exitCode,
-      [PropDurationMs]: durationMs,
-      [PropOutputFormat]: "text",
-    });
-  }).pipe(
-    withAnalyticsContext({
-      command_run_id: crypto.randomUUID(),
-      command: "__complete",
-      flags: undefined,
-    }),
-  );
+    const crypto = yield* Crypto.Crypto;
+    const commandRunId = yield* crypto.randomUUIDv4;
+    yield* analytics
+      .capture(EventCommandExecuted, {
+        [PropExitCode]: exitCode,
+        [PropDurationMs]: durationMs,
+        [PropOutputFormat]: "text",
+      })
+      .pipe(
+        withAnalyticsContext({
+          command_run_id: commandRunId,
+          command: "__complete",
+          flags: undefined,
+        }),
+      );
+  });
 }
 
 const LEGACY_COMPLETE_TELEMETRY_TIMEOUT = "2 seconds";
@@ -1713,6 +1714,7 @@ const legacyCompleteAnalyticsLayer = legacyAnalyticsLayer.pipe(
   Layer.provide(standaloneAnalyticsConfigLayer),
   Layer.provide(BunServices.layer),
 );
+const legacyCompleteRuntimeLayer = Layer.mergeAll(legacyCompleteAnalyticsLayer, BunCrypto.layer);
 
 /**
  * Production default for `LegacyCompleteDeps.captureTelemetry`: runs
@@ -1729,7 +1731,7 @@ const legacyCompleteAnalyticsLayer = legacyAnalyticsLayer.pipe(
 function legacyCaptureCompleteTelemetry(exitCode: number, durationMs: number): Promise<void> {
   return Effect.runPromise(
     legacyCaptureCompleteTelemetryEffect(exitCode, durationMs).pipe(
-      Effect.provide(legacyCompleteAnalyticsLayer),
+      Effect.provide(legacyCompleteRuntimeLayer),
       Effect.timeout(LEGACY_COMPLETE_TELEMETRY_TIMEOUT),
       Effect.ignore,
     ),
@@ -1747,22 +1749,34 @@ function legacyCaptureCompleteTelemetry(exitCode: number, durationMs: number): P
  * lets it actually reach PostHog (see `legacyCaptureCompleteTelemetry`'s doc
  * comment).
  */
-export async function legacyTryComplete(deps: LegacyCompleteDeps): Promise<boolean> {
-  if (deps.argv[0] !== "__complete" && deps.argv[0] !== "__completeNoDesc") return false;
+export function legacyTryComplete(deps: LegacyCompleteDeps): Promise<boolean> {
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      if (deps.argv[0] !== "__complete" && deps.argv[0] !== "__completeNoDesc") return false;
 
-  const startedAt = Date.now();
-  const response = legacyRespondToComplete(deps.root, deps.argv);
-  if (response === undefined) {
-    await deps.captureTelemetry(1, Date.now() - startedAt);
-    deps.exit(1);
-    return true;
-  }
+      const startedAt = yield* Clock.currentTimeMillis;
+      const response = legacyRespondToComplete(deps.root, deps.argv);
+      if (response === undefined) {
+        const finishedAt = yield* Clock.currentTimeMillis;
+        yield* Effect.tryPromise({
+          try: () => deps.captureTelemetry(1, finishedAt - startedAt),
+          catch: () => undefined,
+        }).pipe(Effect.ignore);
+        deps.exit(1);
+        return true;
+      }
 
-  const includeDescriptions = legacyResolveIncludeDescriptions(deps.argv[0], deps.env);
-  deps.stdoutWrite(legacyFormatCompletionResponse(response, includeDescriptions));
-  await deps.captureTelemetry(0, Date.now() - startedAt);
-  deps.exit(0);
-  return true;
+      const includeDescriptions = legacyResolveIncludeDescriptions(deps.argv[0], deps.env);
+      deps.stdoutWrite(legacyFormatCompletionResponse(response, includeDescriptions));
+      const finishedAt = yield* Clock.currentTimeMillis;
+      yield* Effect.tryPromise({
+        try: () => deps.captureTelemetry(0, finishedAt - startedAt),
+        catch: () => undefined,
+      }).pipe(Effect.ignore);
+      deps.exit(0);
+      return true;
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 }
 
 export function legacyDefaultCompleteDeps(root: Command.Command.Any): LegacyCompleteDeps {

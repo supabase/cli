@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, ConfigProvider, Effect, Exit, Formatter, Layer, Option } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
@@ -17,6 +17,7 @@ import {
 } from "../../../../../tests/helpers/mocks.ts";
 import { makeTelemetryIdentity } from "../../../../shared/telemetry/identity.ts";
 import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.ts";
+import { makeLegacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
 import { legacyStorageCommand } from "../storage.command.ts";
 
 // `--jobs` is a pflag-style uint: a negative value fails
@@ -50,6 +51,7 @@ function setup(args: ReadonlyArray<string>) {
     mockProcessControl().layer,
     mockTty({ stdinIsTty: false, stdoutIsTty: false }),
     mockAnalytics().layer,
+    makeLegacyViperEnvLayer(ConfigProvider.fromEnv({ env: {}, preserveEmptyStrings: true })),
     Layer.succeed(
       TelemetryRuntime,
       TelemetryRuntime.of({
@@ -100,10 +102,12 @@ describe("legacy storage cp --jobs negative rejection (command-tree wiring)", ()
           expect(Option.isSome(failure)).toBe(true);
           // The parse failure must never reach the handler: neither the
           // experimental gate nor the mutex check may fire.
-          expect(JSON.stringify(exit.cause)).not.toContain(
+          expect(Formatter.formatJson(exit.cause)).not.toContain(
             "must set the --experimental flag to run this command",
           );
-          expect(JSON.stringify(exit.cause)).not.toContain("LegacyStorageMutuallyExclusiveFlags");
+          expect(Formatter.formatJson(exit.cause)).not.toContain(
+            "LegacyStorageMutuallyExclusiveFlags",
+          );
           // `normalizeCause` is the exact rendering path `runCli` uses for
           // parse failures — the user-visible line must be pflag's message,
           // byte-identical, with no `Invalid value for flag --jobs:` wrapper.
@@ -173,7 +177,7 @@ describe("legacy storage cp --jobs negative rejection (command-tree wiring)", ()
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).not.toContain(
+          expect(Formatter.formatJson(exit.cause)).not.toContain(
             "must set the --experimental flag to run this command",
           );
           expect(normalizeCause(exit.cause).message).toBe(message);
@@ -194,7 +198,7 @@ describe("legacy storage cp --jobs negative rejection (command-tree wiring)", ()
         const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain(
+          expect(Formatter.formatJson(exit.cause)).toContain(
             "must set the --experimental flag to run this command",
           );
         }
@@ -215,7 +219,7 @@ describe("legacy storage cp --jobs negative rejection (command-tree wiring)", ()
       const exit = yield* Effect.exit(Command.runWith(testRoot, { version: "0.0.0-test" })(args));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).not.toContain("MissingArgument");
+        expect(Formatter.formatJson(exit.cause)).not.toContain("MissingArgument");
         expect(normalizeCause(exit.cause).message).toBe(
           'invalid argument "-1" for "-j, --jobs" flag: strconv.ParseUint: parsing "-1": invalid syntax',
         );

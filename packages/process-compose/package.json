@@ -13,10 +13,10 @@
     "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name"
   },
   "dependencies": {
+    "@effect/platform-bun": "catalog:",
     "effect": "catalog:"
   },
   "devDependencies": {
-    "@effect/platform-bun": "catalog:",
     "@effect/vitest": "catalog:",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",

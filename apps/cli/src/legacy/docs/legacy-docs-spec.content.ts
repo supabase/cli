@@ -1,7 +1,12 @@
-import { readdirSync, readFileSync } from "node:fs";
-import path from "node:path";
+import { Data, Effect, FileSystem, Path } from "effect";
+import type * as PlatformError from "effect/PlatformError";
 import { parse } from "yaml";
 import type { LegacyDocsExample } from "./legacy-docs-spec.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 
 /**
  * Loads the docs-spec content inputs from `apps/cli/docs/`: the description
@@ -16,22 +21,57 @@ export interface LegacyDocsContent {
   readonly examples: Readonly<Record<string, ReadonlyArray<LegacyDocsExample>>>;
 }
 
-export function legacyReadDocsContent(docsDir: string): LegacyDocsContent {
-  const overlays = new Map<string, string>();
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const entryPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) walk(entryPath);
-      else if (entry.name.endsWith(".md")) {
-        const key = path.relative(docsDir, entryPath).split(path.sep).join("/");
-        overlays.set(key, readFileSync(entryPath, "utf8"));
-      }
-    }
-  };
-  walk(path.join(docsDir, "supabase"));
+export class LegacyDocsContentParseError extends Data.TaggedError("LegacyDocsContentParseError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
 
-  const examplesPath = path.join(docsDir, "templates/examples.yaml");
-  return { overlays, examples: legacyParseExamples(parse(readFileSync(examplesPath, "utf8"))) };
+export function legacyReadDocsContent(
+  docsDir: string,
+): Effect.Effect<
+  LegacyDocsContent,
+  PlatformError.PlatformError | LegacyDocsContentParseError,
+  FileSystem.FileSystem | Path.Path
+> {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const overlays = new Map<string, string>();
+    const walk = (dir: string): Effect.Effect<void, PlatformError.PlatformError> =>
+      Effect.gen(function* () {
+        const entries = yield* fs.readDirectory(dir);
+        for (const name of entries) {
+          const entryPath = path.join(dir, name);
+          const info = yield* fs.stat(entryPath);
+          if (info.type === "Directory") {
+            yield* walk(entryPath);
+          } else if (name.endsWith(".md")) {
+            const key = path.relative(docsDir, entryPath).split(path.sep).join("/");
+            overlays.set(key, yield* fs.readFileString(entryPath));
+          }
+        }
+      });
+    yield* walk(path.join(docsDir, "supabase"));
+    const examplesPath = path.join(docsDir, "templates/examples.yaml");
+    const examplesText = yield* fs.readFileString(examplesPath);
+    const examples = yield* Effect.try({
+      try: () => parse(examplesText),
+      catch: (cause) =>
+        new LegacyDocsContentParseError({
+          message: String(cause),
+        }),
+    });
+    return yield* Effect.try({
+      try: () => ({ overlays, examples: legacyParseExamples(examples) }),
+      catch: (cause) =>
+        new LegacyDocsContentParseError({
+          message: String(cause),
+        }),
+    });
+  });
 }
 
 /**

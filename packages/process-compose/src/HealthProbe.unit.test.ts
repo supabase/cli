@@ -1,44 +1,60 @@
-import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import * as Net from "node:net";
 import { describe, expect, it } from "@effect/vitest";
 import { layer as BunChildProcessSpawnerLayer } from "@effect/platform-bun/BunChildProcessSpawner";
 import { layer as BunFileSystemLayer } from "@effect/platform-bun/BunFileSystem";
 import { layer as BunPathLayer } from "@effect/platform-bun/BunPath";
-import { Deferred, Duration, Effect, Exit, Fiber, Layer, Predicate, Sink, Stream } from "effect";
+import {
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  Path,
+  Predicate,
+  Sink,
+  Stream,
+} from "effect";
+import { FetchHttpClient, HttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { runHealthProbe } from "./HealthProbe.ts";
 import type { HealthCheckConfig, ProbeConfig } from "./ServiceDef.ts";
 
-const platformLayer = BunChildProcessSpawnerLayer.pipe(
-  Layer.provide(Layer.mergeAll(BunFileSystemLayer, BunPathLayer)),
+const platformLayer = Layer.mergeAll(
+  BunChildProcessSpawnerLayer.pipe(Layer.provide(Layer.mergeAll(BunFileSystemLayer, BunPathLayer))),
+  BunFileSystemLayer,
+  BunPathLayer,
+  FetchHttpClient.layer,
 );
 
 const sequenceProbeLayer = (results: ReadonlyArray<boolean>) => {
   let calls = 0;
   return {
-    layer: Layer.succeed(
-      ChildProcessSpawner.ChildProcessSpawner,
-      ChildProcessSpawner.make(() =>
-        Effect.sync(() => {
-          const result = results[calls] ?? results.at(-1) ?? false;
-          calls++;
-          return ChildProcessSpawner.makeHandle({
-            pid: ChildProcessSpawner.ProcessId(2000 + calls),
-            stdout: Stream.empty,
-            stderr: Stream.empty,
-            all: Stream.empty,
-            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result ? 0 : 1)),
-            isRunning: Effect.succeed(false),
-            stdin: Sink.drain,
-            kill: () => Effect.void,
-            unref: Effect.succeed(Effect.void),
-            getInputFd: () => Sink.drain,
-            getOutputFd: () => Stream.empty,
-          });
-        }),
+    layer: Layer.mergeAll(
+      Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.sync(() => {
+            const result = results[calls] ?? results.at(-1) ?? false;
+            calls++;
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(2000 + calls),
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result ? 0 : 1)),
+              isRunning: Effect.succeed(false),
+              stdin: Sink.drain,
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            });
+          }),
+        ),
       ),
+      FetchHttpClient.layer,
     ),
     get calls() {
       return calls;
@@ -63,16 +79,14 @@ const setupProbe = (probe: ProbeConfig, overrides?: Partial<HealthCheckConfig>) 
         ...overrides,
       },
       callbacks: {
-        onHealthy: () =>
-          Effect.gen(function* () {
-            healthy = true;
-            yield* Deferred.succeed(healthySignal, void 0);
-          }),
-        onUnhealthy: () =>
-          Effect.gen(function* () {
-            healthy = false;
-            yield* Deferred.succeed(unhealthySignal, void 0);
-          }),
+        onHealthy: Effect.gen(function* () {
+          healthy = true;
+          yield* Deferred.succeed(healthySignal, void 0);
+        }),
+        onUnhealthy: Effect.gen(function* () {
+          healthy = false;
+          yield* Deferred.succeed(unhealthySignal, void 0);
+        }),
       },
     };
     return { healthySignal, unhealthySignal, config, isHealthy: () => healthy };
@@ -80,17 +94,25 @@ const setupProbe = (probe: ProbeConfig, overrides?: Partial<HealthCheckConfig>) 
 
 describe("HealthProbe", () => {
   it.live("aborts an in-flight HTTP probe when its fiber is interrupted", () => {
-    const originalFetch = globalThis.fetch;
     return Effect.gen(function* () {
       const started = yield* Deferred.make<void>();
       let aborted = false;
-      globalThis.fetch = ((_input: RequestInfo | URL, init?: RequestInit) => {
-        init?.signal?.addEventListener("abort", () => {
-          aborted = true;
-        });
-        Effect.runSync(Deferred.succeed(started, void 0));
-        return new Promise<Response>(() => undefined);
-      }) as typeof fetch;
+      const client = HttpClient.make((_request, _url, signal) =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(started, void 0);
+          return yield* Effect.callback<never>((_resume, callbackSignal) => {
+            const onAbort = () => {
+              aborted = true;
+            };
+            callbackSignal.addEventListener("abort", onAbort, { once: true });
+            signal.addEventListener("abort", onAbort, { once: true });
+            return Effect.sync(() => {
+              callbackSignal.removeEventListener("abort", onAbort);
+              signal.removeEventListener("abort", onAbort);
+            });
+          });
+        }),
+      );
 
       const { config } = yield* setupProbe({
         _tag: "Http",
@@ -99,15 +121,15 @@ describe("HealthProbe", () => {
         port: 80,
         path: "/health",
       });
-      const fiber = yield* Effect.forkChild(runHealthProbe(config), { startImmediately: true });
+      const fiber = yield* runHealthProbe(config).pipe(
+        Effect.provideService(HttpClient.HttpClient, client),
+        Effect.forkChild({ startImmediately: true }),
+      );
       yield* Deferred.await(started);
       yield* Fiber.interrupt(fiber);
 
       expect(aborted).toBe(true);
-    }).pipe(
-      Effect.ensuring(Effect.sync(() => (globalThis.fetch = originalFetch))),
-      Effect.provide(platformLayer),
-    );
+    }).pipe(Effect.provide(platformLayer));
   });
 
   it.live("Exec probes require explicit args", () =>
@@ -156,32 +178,35 @@ describe("HealthProbe", () => {
         readonly command: string;
         readonly args: ReadonlyArray<string>;
       }> = [];
-      const layer = Layer.succeed(
-        ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make((command) =>
-          Effect.sync(() => {
-            if (Predicate.isTagged(command, "StandardCommand")) {
-              spawned.push({
-                command: command.command,
-                args: command.args,
-              });
-            }
+      const layer = Layer.mergeAll(
+        Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) =>
+            Effect.sync(() => {
+              if (Predicate.isTagged(command, "StandardCommand")) {
+                spawned.push({
+                  command: command.command,
+                  args: command.args,
+                });
+              }
 
-            return ChildProcessSpawner.makeHandle({
-              pid: ChildProcessSpawner.ProcessId(1234),
-              stdout: Stream.empty,
-              stderr: Stream.empty,
-              all: Stream.empty,
-              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-              isRunning: Effect.succeed(false),
-              stdin: Sink.drain,
-              kill: () => Effect.void,
-              unref: Effect.succeed(Effect.void),
-              getInputFd: () => Sink.drain,
-              getOutputFd: () => Stream.empty,
-            });
-          }),
+              return ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(1234),
+                stdout: Stream.empty,
+                stderr: Stream.empty,
+                all: Stream.empty,
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                isRunning: Effect.succeed(false),
+                stdin: Sink.drain,
+                kill: () => Effect.void,
+                unref: Effect.succeed(Effect.void),
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+              });
+            }),
+          ),
         ),
+        FetchHttpClient.layer,
       );
 
       return Effect.gen(function* () {
@@ -326,17 +351,15 @@ describe("HealthProbe", () => {
             failureThreshold: 2,
           },
           callbacks: {
-            onHealthy: () =>
-              Effect.sync(() => {
-                healthyTransitions++;
-              }),
-            onUnhealthy: () =>
-              Effect.gen(function* () {
-                unhealthyTransitions++;
-                if (unhealthyTransitions === 2) {
-                  yield* Deferred.succeed(secondUnhealthy, void 0);
-                }
-              }),
+            onHealthy: Effect.sync(() => {
+              healthyTransitions++;
+            }),
+            onUnhealthy: Effect.gen(function* () {
+              unhealthyTransitions++;
+              if (unhealthyTransitions === 2) {
+                yield* Deferred.succeed(secondUnhealthy, void 0);
+              }
+            }),
           },
         }),
       );
@@ -447,11 +470,13 @@ describe("HealthProbe", () => {
 
   it.live("transitions to Unhealthy after failureThreshold failures following Healthy", () =>
     Effect.gen(function* () {
-      const tempDir = mkdtempSync(join(tmpdir(), "health-probe-test-"));
-      const flagFile = join(tempDir, "healthy");
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "health-probe-test-" });
+      const flagFile = path.join(tempDir, "healthy");
 
       // Create the flag file so probe succeeds initially
-      writeFileSync(flagFile, "");
+      yield* fs.writeFileString(flagFile, "");
 
       const { healthySignal, unhealthySignal, config, isHealthy } = yield* setupProbe(
         { _tag: "Exec", command: "test", args: ["-f", flagFile] },
@@ -464,17 +489,12 @@ describe("HealthProbe", () => {
       expect(isHealthy()).toBe(true);
 
       // Remove the flag file so probe starts failing
-      try {
-        unlinkSync(flagFile);
-      } catch {
-        /* ignore */
-      }
+      yield* fs.remove(flagFile, { force: true }).pipe(Effect.ignore);
 
       yield* Deferred.await(unhealthySignal).pipe(Effect.timeout(Duration.seconds(5)));
 
       expect(isHealthy()).toBe(false);
       yield* Fiber.interrupt(fiber);
-      rmSync(tempDir, { recursive: true, force: true });
     }).pipe(Effect.provide(platformLayer)),
   );
 });

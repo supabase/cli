@@ -12,12 +12,10 @@ export const resolveProjectRef = Effect.fnUntraced(function* (projectRef: Option
   const projectLinkState = yield* ProjectLinkState;
   const maybeLinkState = yield* projectLinkState.load;
   if (Option.isNone(maybeLinkState)) {
-    return yield* Effect.fail(
-      new ProjectNotLinkedError({
-        detail: "No project is linked in this directory.",
-        suggestion: "Run `supabase link` first or pass `--project-ref`.",
-      }),
-    );
+    return yield* new ProjectNotLinkedError({
+      detail: "No project is linked in this directory.",
+      suggestion: "Run `supabase link` first or pass `--project-ref`.",
+    });
   }
 
   return maybeLinkState.value.project.ref;

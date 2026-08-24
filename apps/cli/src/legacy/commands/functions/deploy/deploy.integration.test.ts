@@ -1,8 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { Effect, Exit, Layer, Option, Stdio } from "effect";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, Exit, FileSystem, Layer, Option, Path, Schema, Stdio } from "effect";
 
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import {
@@ -46,26 +44,57 @@ const baseFlags: LegacyFunctionsDeployFlags = {
   legacyBundle: false,
 };
 
-async function writeProjectConfig(cwd: string, content = 'project_id = "test-project"\n') {
-  await mkdir(join(cwd, "supabase"), { recursive: true });
-  await writeFile(join(cwd, "supabase", "config.toml"), content);
+const pathService = Effect.runSync(Path.Path.pipe(Effect.provide(BunServices.layer)));
+const join = (...parts: ReadonlyArray<string>) => pathService.join(...parts);
+const dirname = (path: string) => pathService.dirname(path);
+const withBunServices = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem>) =>
+  effect.pipe(Effect.provide(BunServices.layer));
+const makeDirectory = (path: string) =>
+  withBunServices(
+    Effect.gen(function* () {
+      yield* (yield* FileSystem.FileSystem).makeDirectory(path, { recursive: true });
+    }),
+  );
+const writeText = (path: string, contents: string) =>
+  withBunServices(
+    Effect.gen(function* () {
+      yield* (yield* FileSystem.FileSystem).writeFileString(path, contents);
+    }),
+  );
+const removeTree = (path: string) =>
+  withBunServices(
+    Effect.gen(function* () {
+      yield* (yield* FileSystem.FileSystem).remove(path, { recursive: true, force: true });
+    }),
+  ).pipe(Effect.orDie);
+const encodeImportMap = Schema.encodeSync(
+  Schema.fromJsonString(Schema.Struct({ imports: Schema.Record(Schema.String, Schema.String) })),
+);
+
+function writeProjectConfig(cwd: string, content = 'project_id = "test-project"\n') {
+  return Effect.gen(function* () {
+    yield* makeDirectory(join(cwd, "supabase"));
+    yield* writeText(join(cwd, "supabase", "config.toml"), content);
+  });
 }
 
-async function writeLocalFunction(
+function writeLocalFunction(
   cwd: string,
   slug: string,
   source = "Deno.serve(() => new Response())\n",
 ) {
   const functionDir = join(cwd, "supabase", "functions", slug);
-  await mkdir(functionDir, { recursive: true });
-  await writeFile(join(functionDir, "index.ts"), source);
-  await writeFile(join(functionDir, "deno.json"), '{"imports":{}}\n');
+  return Effect.gen(function* () {
+    yield* makeDirectory(functionDir);
+    yield* writeText(join(functionDir, "index.ts"), source);
+    yield* writeText(join(functionDir, "deno.json"), '{"imports":{}}\n');
+  });
 }
 
 // Strip ANSI SGR (color/bold) sequences — `legacyBold` styles the pruned slugs
 // only when stderr supports color, so byte-assertions normalize first.
-// eslint-disable-next-line no-control-regex
-const stripSgr = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
+const stripSgr = (text: string) =>
+  text.replace(new RegExp(`${String.fromCharCode(0x1b)}\\[[0-9;]*m`, "gu"), "");
 
 function resolveDockerOutputPath(args: ReadonlyArray<string>): string {
   const outputIndex = args.indexOf("--output");
@@ -87,15 +116,19 @@ function mockDockerBundleSpawner() {
     exitCode?: number;
     onSpawn?: (record: { command: string; args: ReadonlyArray<string> }) => void;
   } = { exitCode: 0 };
-  spawnerOpts.onSpawn = (record) => {
-    if (record.command !== "docker" || record.args[0] !== "run") {
-      return;
-    }
-    const outputPath = resolveDockerOutputPath(record.args);
-    mkdirSync(dirname(outputPath), { recursive: true });
-    writeFileSync(outputPath, "eszip-test-output");
-  };
-  return mockChildProcessSpawner(spawnerOpts);
+  return mockChildProcessSpawner({
+    ...spawnerOpts,
+    beforeSpawn: (record) => {
+      if (record.command !== "docker" || record.args[0] !== "run") {
+        return Effect.void;
+      }
+      const outputPath = resolveDockerOutputPath(record.args);
+      return Effect.gen(function* () {
+        yield* makeDirectory(dirname(outputPath));
+        yield* writeText(outputPath, "eszip-test-output");
+      }).pipe(Effect.orDie);
+    },
+  });
 }
 
 describe("legacy functions deploy", () => {
@@ -144,8 +177,8 @@ describe("legacy functions deploy", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
-      yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+      yield* writeProjectConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
 
       yield* legacyFunctionsDeploy(baseFlags);
 
@@ -162,12 +195,7 @@ describe("legacy functions deploy", () => {
       );
       expect(linkedProjectCache.cached).toBe(true);
       expect(telemetry.flushed).toBe(true);
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
-    );
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
   });
 
   it.live("prints a duplicated slug argument verbatim, matching Go's raw strings.Join", () => {
@@ -214,8 +242,8 @@ describe("legacy functions deploy", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
-      yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+      yield* writeProjectConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
 
       yield* legacyFunctionsDeploy({
         ...baseFlags,
@@ -230,12 +258,7 @@ describe("legacy functions deploy", () => {
       expect(stripSgr(out.stdoutText)).toContain(
         "Deployed Functions on project abcdefghijklmnopqrst: hello-world, hello-world\n",
       );
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
-    );
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
   });
 
   it.live("uses an explicit project ref when provided", () => {
@@ -286,8 +309,8 @@ describe("legacy functions deploy", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
-      yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+      yield* writeProjectConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
 
       yield* legacyFunctionsDeploy({
         ...baseFlags,
@@ -298,12 +321,7 @@ describe("legacy functions deploy", () => {
         (request) => request.method === "POST" && request.url.endsWith("/functions/deploy"),
       );
       expect(deployRequest?.url).toContain("/projects/qrstuvwxyzabcdefghij/functions/deploy");
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
-    );
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
   });
 
   it.live("resolves --import-map relative to the caller cwd", () => {
@@ -352,12 +370,10 @@ describe("legacy functions deploy", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
-      yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
-      yield* Effect.tryPromise(() => mkdir(callerDir, { recursive: true }));
-      yield* Effect.tryPromise(() =>
-        writeFile(join(callerDir, "import_map.json"), '{"imports":{}}'),
-      );
+      yield* writeProjectConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
+      yield* makeDirectory(callerDir);
+      yield* writeText(join(callerDir, "import_map.json"), '{"imports":{}}');
 
       yield* legacyFunctionsDeploy({
         ...baseFlags,
@@ -368,12 +384,7 @@ describe("legacy functions deploy", () => {
       expect(stripSgr(out.stdoutText)).toContain(
         "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
       );
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
-    );
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
   });
 
   it.live("loads project config from the resolved workdir", () => {
@@ -411,16 +422,14 @@ describe("legacy functions deploy", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeProjectConfig(
-          tempRoot.current,
-          ['project_id = "test-project"', "[functions.configured]", "verify_jwt = false", ""].join(
-            "\n",
-          ),
+      yield* writeProjectConfig(
+        tempRoot.current,
+        ['project_id = "test-project"', "[functions.configured]", "verify_jwt = false", ""].join(
+          "\n",
         ),
       );
-      yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "configured"));
-      yield* Effect.tryPromise(() => mkdir(callerDir, { recursive: true }));
+      yield* writeLocalFunction(tempRoot.current, "configured");
+      yield* makeDirectory(callerDir);
 
       yield* legacyFunctionsDeploy({
         ...baseFlags,
@@ -429,12 +438,7 @@ describe("legacy functions deploy", () => {
 
       expect(api.requests).toHaveLength(1);
       expect(api.requests[0]?.urlParams).toContain("slug=configured");
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
-    );
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
   });
 
   it.live("rejects a bundled file whose workdir-relative name escapes with a `..` segment", () => {
@@ -497,31 +501,23 @@ describe("legacy functions deploy", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(repoRoot, ".git"), { recursive: true }));
-      yield* Effect.tryPromise(() => writeProjectConfig(workdir));
-      yield* Effect.tryPromise(() =>
-        writeLocalFunction(
-          workdir,
-          "hello-world",
-          'import { shared } from "@repo/shared"\nDeno.serve(() => new Response(shared))\n',
-        ),
+      yield* makeDirectory(join(repoRoot, ".git"));
+      yield* writeProjectConfig(workdir);
+      yield* writeLocalFunction(
+        workdir,
+        "hello-world",
+        'import { shared } from "@repo/shared"\nDeno.serve(() => new Response(shared))\n',
       );
-      yield* Effect.tryPromise(() =>
-        mkdir(join(repoRoot, "packages", "shared", "src"), { recursive: true }),
+      yield* makeDirectory(join(repoRoot, "packages", "shared", "src"));
+      yield* writeText(
+        join(repoRoot, "packages", "shared", "src", "index.ts"),
+        'export const shared = "ok"\n',
       );
-      yield* Effect.tryPromise(() =>
-        writeFile(
-          join(repoRoot, "packages", "shared", "src", "index.ts"),
-          'export const shared = "ok"\n',
-        ),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(
-          join(workdir, "supabase", "functions", "hello-world", "deno.json"),
-          JSON.stringify({
-            imports: { "@repo/shared": "../../../../packages/shared/src/index.ts" },
-          }),
-        ),
+      yield* writeText(
+        join(workdir, "supabase", "functions", "hello-world", "deno.json"),
+        encodeImportMap({
+          imports: { "@repo/shared": "../../../../packages/shared/src/index.ts" },
+        }),
       );
 
       const exit = yield* Effect.exit(legacyFunctionsDeploy(baseFlags));
@@ -533,12 +529,7 @@ describe("legacy functions deploy", () => {
         );
       }
       expect(multiparts).toHaveLength(0);
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
-    );
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
   });
 
   it.live("deploys config-declared custom entrypoints when deploying all functions", () => {
@@ -579,33 +570,23 @@ describe("legacy functions deploy", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        writeProjectConfig(
-          tempRoot.current,
-          [
-            'project_id = "test-project"',
-            '[functions."custom-entry"]',
-            'entrypoint = "./functions/custom-entry/handler.ts"',
-            "",
-          ].join("\n"),
-        ),
+      yield* writeProjectConfig(
+        tempRoot.current,
+        [
+          'project_id = "test-project"',
+          '[functions."custom-entry"]',
+          'entrypoint = "./functions/custom-entry/handler.ts"',
+          "",
+        ].join("\n"),
       );
-      yield* Effect.tryPromise(() =>
-        mkdir(join(tempRoot.current, "supabase", "functions", "custom-entry"), {
-          recursive: true,
-        }),
+      yield* makeDirectory(join(tempRoot.current, "supabase", "functions", "custom-entry"));
+      yield* writeText(
+        join(tempRoot.current, "supabase", "functions", "custom-entry", "handler.ts"),
+        'Deno.serve(() => new Response("custom"))\n',
       );
-      yield* Effect.tryPromise(() =>
-        writeFile(
-          join(tempRoot.current, "supabase", "functions", "custom-entry", "handler.ts"),
-          'Deno.serve(() => new Response("custom"))\n',
-        ),
-      );
-      yield* Effect.tryPromise(() =>
-        writeFile(
-          join(tempRoot.current, "supabase", "functions", "custom-entry", "deno.json"),
-          '{"imports":{}}\n',
-        ),
+      yield* writeText(
+        join(tempRoot.current, "supabase", "functions", "custom-entry", "deno.json"),
+        '{"imports":{}}\n',
       );
 
       yield* legacyFunctionsDeploy({
@@ -621,12 +602,7 @@ describe("legacy functions deploy", () => {
       expect(stripSgr(out.stdoutText)).toContain(
         "Deployed Functions on project abcdefghijklmnopqrst: custom-entry\n",
       );
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
-    );
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
   });
 
   it.live("honors global --yes when pruning remote functions", () => {
@@ -691,8 +667,8 @@ describe("legacy functions deploy", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
-      yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+      yield* writeProjectConfig(tempRoot.current);
+      yield* writeLocalFunction(tempRoot.current, "hello-world");
 
       yield* legacyFunctionsDeploy({ ...baseFlags, prune: true });
 
@@ -704,12 +680,7 @@ describe("legacy functions deploy", () => {
         "Do you want to delete the following Functions from your project?\n • remote-only\n\n [y/N] y\n",
       );
       expect(api.requests.some((request) => request.method === "DELETE")).toBe(true);
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(
-        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-      ),
-    );
+    }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
   });
 
   // INC-699: a `bundleOnly` upload bumps the remote version without persisting
@@ -787,9 +758,9 @@ describe("legacy functions deploy", () => {
       const { out, api, layer } = setupBulkDeploy({ deployStatuses: [201, 409] });
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
-        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
-        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "bye-world"));
+        yield* writeProjectConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* writeLocalFunction(tempRoot.current, "bye-world");
 
         const error = yield* legacyFunctionsDeploy({
           ...baseFlags,
@@ -810,21 +781,16 @@ describe("legacy functions deploy", () => {
         const bulkUpdate = api.requests.find((request) => request.method === "PUT");
         expect(bulkUpdate?.body).toMatchObject([{ slug: "hello-world" }]);
         expect(out.stdoutText).not.toContain("Deployed Functions on project");
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-        ),
-      );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
     });
 
     it.live("skips the bulk update entirely when every upload fails", () => {
       const { out, api, layer } = setupBulkDeploy({ deployStatuses: [409, 400] });
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
-        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
-        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "bye-world"));
+        yield* writeProjectConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* writeLocalFunction(tempRoot.current, "bye-world");
 
         const error = yield* legacyFunctionsDeploy({
           ...baseFlags,
@@ -840,12 +806,7 @@ describe("legacy functions deploy", () => {
         );
         expect(api.requests.some((request) => request.method === "PUT")).toBe(false);
         expect(out.stdoutText).not.toContain("Deployed Functions on project");
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-        ),
-      );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
     });
 
     it.live("reports the upload failure and the bulk update failure together", () => {
@@ -855,9 +816,9 @@ describe("legacy functions deploy", () => {
       });
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
-        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
-        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "bye-world"));
+        yield* writeProjectConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+        yield* writeLocalFunction(tempRoot.current, "bye-world");
 
         const error = yield* legacyFunctionsDeploy({
           ...baseFlags,
@@ -872,12 +833,7 @@ describe("legacy functions deploy", () => {
           ].join("\n"),
         );
         expect(api.requests.filter((request) => request.method === "PUT")).toHaveLength(1);
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-        ),
-      );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
     });
   });
 
@@ -1012,8 +968,8 @@ describe("legacy functions deploy", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
-        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+        yield* writeProjectConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
 
         yield* legacyFunctionsDeploy({
           ...baseFlags,
@@ -1024,12 +980,7 @@ describe("legacy functions deploy", () => {
         expect(stripSgr(out.stdoutText)).toContain(
           "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
         );
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-        ),
-      );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
     });
 
     it.live("treats --jobs 0 as 1 and does not require --use-api", () => {
@@ -1070,8 +1021,8 @@ describe("legacy functions deploy", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
-        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+        yield* writeProjectConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
 
         yield* legacyFunctionsDeploy({
           ...baseFlags,
@@ -1082,12 +1033,7 @@ describe("legacy functions deploy", () => {
         expect(stripSgr(out.stdoutText)).toContain(
           "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
         );
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-        ),
-      );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
     });
   });
 
@@ -1137,8 +1083,8 @@ describe("legacy functions deploy", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
-        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+        yield* writeProjectConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
 
         yield* legacyFunctionsDeploy({
           ...baseFlags,
@@ -1153,12 +1099,7 @@ describe("legacy functions deploy", () => {
         expect(stripSgr(out.stdoutText)).toContain(
           "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
         );
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-        ),
-      );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
     });
   });
 
@@ -1192,6 +1133,7 @@ describe("legacy functions deploy", () => {
       );
       const deployNoFunctions = Effect.gen(function* () {
         const platformApi = yield* LegacyPlatformApi;
+        const goConfigCompat = yield* legacyFunctionsGoConfigCompat;
         return yield* deployFunctions(
           { ...baseFlags, functionNames: [] },
           {
@@ -1201,7 +1143,7 @@ describe("legacy functions deploy", () => {
             projectRoot: tempRoot.current,
             supabaseDir: join(tempRoot.current, "supabase"),
             dashboardUrl: "https://supabase.com/dashboard",
-            goConfigCompat: legacyFunctionsGoConfigCompat,
+            goConfigCompat,
             yes: false,
             rawArgs: ["functions", "deploy"],
             edgeRuntimeVersion: "1.69.12",
@@ -1216,7 +1158,7 @@ describe("legacy functions deploy", () => {
     it.live("keeps the injected styling out of the json error payload", () => {
       const { out, layer, deployNoFunctions } = setupNoFunctionsTest("json");
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+        yield* writeProjectConfig(tempRoot.current);
 
         yield* deployNoFunctions.pipe(withJsonErrorHandling);
 
@@ -1224,18 +1166,13 @@ describe("legacy functions deploy", () => {
           type: "fail",
           message: "No Functions specified or found in supabase/functions",
         });
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-        ),
-      );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
     });
 
     it.live("still emphasizes the functions dir in the text-mode error", () => {
       const { layer, deployNoFunctions } = setupNoFunctionsTest("text");
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+        yield* writeProjectConfig(tempRoot.current);
 
         const error = yield* deployNoFunctions.pipe(Effect.flip);
 
@@ -1246,12 +1183,7 @@ describe("legacy functions deploy", () => {
         expect(error.message).toBe(
           "No Functions specified or found in <sgr>supabase/functions</sgr>",
         );
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-        ),
-      );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
     });
   });
 
@@ -1275,20 +1207,15 @@ describe("legacy functions deploy", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current, 'project_id = ""\n'));
-          yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+          yield* writeProjectConfig(tempRoot.current, 'project_id = ""\n');
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
 
           const error = yield* legacyFunctionsDeploy(baseFlags).pipe(Effect.flip);
 
           expect(error).toBeInstanceOf(Error);
           expect((error as Error).message).toBe("Missing required field in config: project_id");
           expect(api.requests).toEqual([]);
-        }).pipe(
-          Effect.provide(layer),
-          Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-          ),
-        );
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
       },
     );
 
@@ -1314,13 +1241,11 @@ describe("legacy functions deploy", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() =>
-            writeProjectConfig(
-              tempRoot.current,
-              ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
-            ),
+          yield* writeProjectConfig(
+            tempRoot.current,
+            ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
           );
-          yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
 
           const error = yield* legacyFunctionsDeploy(baseFlags).pipe(Effect.flip);
 
@@ -1329,12 +1254,7 @@ describe("legacy functions deploy", () => {
             "Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.",
           );
           expect(api.requests).toEqual([]);
-        }).pipe(
-          Effect.provide(layer),
-          Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-          ),
-        );
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
       },
     );
 
@@ -1357,7 +1277,7 @@ describe("legacy functions deploy", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current, 'project_id = ""\n'));
+          yield* writeProjectConfig(tempRoot.current, 'project_id = ""\n');
 
           const error = yield* legacyFunctionsDeploy({
             ...baseFlags,
@@ -1367,12 +1287,7 @@ describe("legacy functions deploy", () => {
           expect(error).toBeInstanceOf(Error);
           expect((error as Error).message).toBe("Missing required field in config: project_id");
           expect(api.requests).toEqual([]);
-        }).pipe(
-          Effect.provide(layer),
-          Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-          ),
-        );
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
       },
     );
 
@@ -1393,7 +1308,7 @@ describe("legacy functions deploy", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+        yield* writeProjectConfig(tempRoot.current);
 
         const error = yield* legacyFunctionsDeploy({
           ...baseFlags,
@@ -1402,12 +1317,7 @@ describe("legacy functions deploy", () => {
 
         expect(error).toBeInstanceOf(InvalidFunctionDeploySlugError);
         expect(api.requests).toEqual([]);
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-        ),
-      );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
     });
   });
 
@@ -1448,6 +1358,7 @@ describe("legacy functions deploy", () => {
             api,
             cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+            env: { SUPABASE_EDGE_RUNTIME_DENO_VERSION: "1" },
           }),
           Layer.succeed(LegacyYesFlag, false),
           child.layer,
@@ -1456,12 +1367,9 @@ describe("legacy functions deploy", () => {
           }),
         );
 
-        const previous = process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
-        process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
-
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
-          yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+          yield* writeProjectConfig(tempRoot.current);
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
 
           yield* legacyFunctionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
 
@@ -1471,21 +1379,7 @@ describe("legacy functions deploy", () => {
             command: "docker",
             args: ["image", "inspect", "public.ecr.aws/supabase/edge-runtime:v1.68.4"],
           });
-        }).pipe(
-          Effect.provide(layer),
-          Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-          ),
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (previous === undefined) {
-                delete process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
-              } else {
-                process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = previous;
-              }
-            }),
-          ),
-        );
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
       },
     );
 
@@ -1501,6 +1395,7 @@ describe("legacy functions deploy", () => {
             api,
             cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+            env: { SUPABASE_NETWORK_ID: "env-network" },
           }),
           Layer.succeed(LegacyYesFlag, false),
           child.layer,
@@ -1509,12 +1404,9 @@ describe("legacy functions deploy", () => {
           }),
         );
 
-        const previous = process.env["SUPABASE_NETWORK_ID"];
-        process.env["SUPABASE_NETWORK_ID"] = "env-network";
-
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
-          yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+          yield* writeProjectConfig(tempRoot.current);
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
 
           yield* legacyFunctionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
 
@@ -1524,23 +1416,45 @@ describe("legacy functions deploy", () => {
           });
           const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
           expect(runCommand?.args).toContain("env-network");
-        }).pipe(
-          Effect.provide(layer),
-          Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-          ),
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (previous === undefined) {
-                delete process.env["SUPABASE_NETWORK_ID"];
-              } else {
-                process.env["SUPABASE_NETWORK_ID"] = previous;
-              }
-            }),
-          ),
-        );
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
       },
     );
+
+    it.live("uses project dotenv Bitbucket settings for Docker volume creation and mounts", () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockFunctionCreateApi();
+      const child = mockDockerBundleSpawner();
+      const layer = Layer.mergeAll(
+        buildLegacyTestRuntime({
+          out,
+          api,
+          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(LegacyYesFlag, false),
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* writeProjectConfig(tempRoot.current);
+        yield* writeText(
+          join(tempRoot.current, "supabase", ".env"),
+          "BITBUCKET_CLONE_DIR=/opt/bitbucket\n",
+        );
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
+
+        yield* legacyFunctionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
+
+        expect(child.spawned.some((spawned) => spawned.args[0] === "volume")).toBe(false);
+        const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+        expect(runCommand?.args).not.toContain(
+          "supabase_edge_runtime_test-project:/root/.cache/deno:rw",
+        );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
+    });
 
     it.live(
       "prefers an explicit --network-id flag over SUPABASE_NETWORK_ID for the bundler container",
@@ -1554,6 +1468,7 @@ describe("legacy functions deploy", () => {
             api,
             cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+            env: { SUPABASE_NETWORK_ID: "env-network" },
           }),
           Layer.succeed(LegacyYesFlag, false),
           child.layer,
@@ -1569,12 +1484,9 @@ describe("legacy functions deploy", () => {
           }),
         );
 
-        const previous = process.env["SUPABASE_NETWORK_ID"];
-        process.env["SUPABASE_NETWORK_ID"] = "env-network";
-
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
-          yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+          yield* writeProjectConfig(tempRoot.current);
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
 
           yield* legacyFunctionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
 
@@ -1585,21 +1497,7 @@ describe("legacy functions deploy", () => {
           const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
           expect(runCommand?.args).toContain("flag-network");
           expect(runCommand?.args).not.toContain("env-network");
-        }).pipe(
-          Effect.provide(layer),
-          Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-          ),
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (previous === undefined) {
-                delete process.env["SUPABASE_NETWORK_ID"];
-              } else {
-                process.env["SUPABASE_NETWORK_ID"] = previous;
-              }
-            }),
-          ),
-        );
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
       },
     );
 
@@ -1624,10 +1522,8 @@ describe("legacy functions deploy", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() =>
-            writeProjectConfig(tempRoot.current, 'project_id = "test-project"\n'),
-          );
-          yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+          yield* writeProjectConfig(tempRoot.current, 'project_id = "test-project"\n');
+          yield* writeLocalFunction(tempRoot.current, "hello-world");
 
           yield* legacyFunctionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
 
@@ -1658,12 +1554,7 @@ describe("legacy functions deploy", () => {
             "-w",
             toDockerPath(tempRoot.current),
           ]);
-        }).pipe(
-          Effect.provide(layer),
-          Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-          ),
-        );
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
       },
     );
 
@@ -1694,10 +1585,8 @@ describe("legacy functions deploy", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() =>
-            writeProjectConfig(tempRoot.current, 'project_id = "ancestor-project"\n'),
-          );
-          yield* Effect.tryPromise(() => writeLocalFunction(nestedWorkdir, "hello-world"));
+          yield* writeProjectConfig(tempRoot.current, 'project_id = "ancestor-project"\n');
+          yield* writeLocalFunction(nestedWorkdir, "hello-world");
 
           yield* legacyFunctionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
 
@@ -1708,12 +1597,7 @@ describe("legacy functions deploy", () => {
           const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
           expect(runCommand?.args).toContain("supabase_network_abcdefghijklmnopqrst");
           expect(runCommand?.args).not.toContain("supabase_network_ancestor-project");
-        }).pipe(
-          Effect.provide(layer),
-          Effect.ensuring(
-            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-          ),
-        );
+        }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
       },
     );
   });
@@ -1763,10 +1647,11 @@ describe("legacy functions deploy", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
-        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+        yield* writeProjectConfig(tempRoot.current);
+        yield* writeLocalFunction(tempRoot.current, "hello-world");
 
         const platformApi = yield* LegacyPlatformApi;
+        const goConfigCompat = yield* legacyFunctionsGoConfigCompat;
         yield* deployFunctions(
           { ...baseFlags, useApi: false, useDocker: true },
           {
@@ -1776,7 +1661,7 @@ describe("legacy functions deploy", () => {
             projectRoot: tempRoot.current,
             supabaseDir: join(tempRoot.current, "supabase"),
             dashboardUrl: "https://supabase.com/dashboard",
-            goConfigCompat: legacyFunctionsGoConfigCompat,
+            goConfigCompat,
             yes: false,
             rawArgs: ["functions", "deploy", "hello-world", "--use-api=false"],
             edgeRuntimeVersion: "1.69.12",
@@ -1786,12 +1671,7 @@ describe("legacy functions deploy", () => {
         );
 
         expect(out.stderrText).toContain("<warn>WARNING:</warn> Docker is not running\n");
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
-        ),
-      );
+      }).pipe(Effect.provide(layer), Effect.ensuring(removeTree(tempRoot.current)));
     });
   });
 });

@@ -1,6 +1,6 @@
 import { type V1ListAllSnippetsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Option, Formatter } from "effect";
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -196,7 +196,7 @@ describe("legacy snippets list integration", () => {
       const exit = yield* Effect.exit(legacySnippetsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySnippetsTomlEncodeError");
         expect(dump).toContain(
           "failed to output toml: toml: cannot encode a map with non-string key type",
@@ -247,7 +247,7 @@ describe("legacy snippets list integration", () => {
         const exit = yield* Effect.exit(legacySnippetsList({ projectRef: Option.none() }));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const dump = JSON.stringify(exit.cause);
+          const dump = Formatter.formatJson(exit.cause);
           expect(dump).toContain("LegacySnippetsEnvNotSupportedError");
           expect(dump).toContain("--output env flag is not supported");
         }
@@ -303,7 +303,7 @@ describe("legacy snippets list integration", () => {
       const exit = yield* Effect.exit(legacySnippetsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySnippetsListUnexpectedStatusError");
         expect(dump).toContain("unexpected list snippets status 503");
       }
@@ -316,7 +316,7 @@ describe("legacy snippets list integration", () => {
       const exit = yield* Effect.exit(legacySnippetsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySnippetsListNetworkError");
         expect(dump).toContain("failed to list snippets");
       }

@@ -24,6 +24,7 @@
     "smol-toml": "^1.8.0"
   },
   "devDependencies": {
+    "@effect/vitest": "catalog:",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@vitest/coverage-istanbul": "catalog:",

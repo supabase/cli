@@ -10,6 +10,10 @@ import { legacyProjectRefLayer } from "../config/legacy-project-ref.layer.ts";
 import { LegacyProjectRefResolver } from "../config/legacy-project-ref.service.ts";
 import { legacyDebugLoggerLayer } from "./legacy-debug-logger.layer.ts";
 import { LegacyIdentityStitch, legacyIdentityStitchLayer } from "./legacy-identity-stitch.ts";
+import {
+  LegacyLocalGatewayHttpClient,
+  legacyLocalGatewayHttpClientLayer,
+} from "./legacy-local-gateway-http-client.ts";
 import { legacyHttpClientLayer } from "../auth/legacy-http-debug.layer.ts";
 import { legacyLinkedProjectCacheLayer } from "../telemetry/legacy-linked-project-cache.layer.ts";
 import { LegacyLinkedProjectCache } from "../telemetry/legacy-linked-project-cache.service.ts";
@@ -52,6 +56,7 @@ export function legacyStorageGatewayRuntimeLayer(subcommand: ReadonlyArray<strin
     cliConfig,
     platformApiFactory,
     httpClient,
+    legacyLocalGatewayHttpClientLayer,
     legacyProjectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliConfig)),
     legacyLinkedProjectCacheLayer.pipe(
       Layer.provide(credentials),
@@ -64,7 +69,11 @@ export function legacyStorageGatewayRuntimeLayer(subcommand: ReadonlyArray<strin
     commandRuntimeLayer([...subcommand]),
   );
 
-  const _serviceCoverageCheck: Layer.Layer<LegacyStorageGatewayServices, unknown, unknown> = built;
+  const _serviceCoverageCheck: Layer.Layer<
+    LegacyStorageGatewayServices,
+    Layer.Error<typeof built>,
+    Layer.Services<typeof built>
+  > = built;
   void _serviceCoverageCheck;
 
   return built;
@@ -78,4 +87,5 @@ type LegacyStorageGatewayServices =
   | LegacyTelemetryState
   | LegacyIdentityStitch
   | CommandRuntime
-  | HttpClient.HttpClient;
+  | HttpClient.HttpClient
+  | LegacyLocalGatewayHttpClient;

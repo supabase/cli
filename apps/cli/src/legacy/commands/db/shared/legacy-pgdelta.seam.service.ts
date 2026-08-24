@@ -35,16 +35,13 @@ interface LegacyDeclarativeSeamShape {
    * `db schema declarative generate --local`/`sync` can bootstrap a stopped stack instead of
    * failing to connect. A no-op, silently, when the container is already running.
    */
-  readonly ensureLocalDatabaseStarted: () => Effect.Effect<void, LegacyDeclarativeShadowDbError>;
+  readonly ensureLocalDatabaseStarted: Effect.Effect<void, LegacyDeclarativeShadowDbError>;
   /**
    * Checks the running local Postgres container image tag against the currently
    * resolved Postgres image. A missing container is accepted: catalog cache keys
    * self-invalidate on setup inputs, and local-apply paths will start/connect later.
    */
-  readonly ensureLocalPostgresImageCurrent: () => Effect.Effect<
-    void,
-    LegacyDeclarativeShadowDbError
-  >;
+  readonly ensureLocalPostgresImageCurrent: Effect.Effect<void, LegacyDeclarativeShadowDbError>;
 }
 
 export class LegacyDeclarativeSeam extends Context.Service<

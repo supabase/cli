@@ -1,14 +1,11 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option, Result } from "effect";
+import { ConfigProvider, Effect, FileSystem, Layer, Option, Path, Result } from "effect";
 
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { LegacyProfileFlag } from "../../shared/legacy/global-flags.ts";
 import { mockRuntimeInfo } from "../../../tests/helpers/mocks.ts";
+import { makeLegacyViperEnvLayer } from "../../shared/legacy/legacy-viper-env.ts";
 import {
   legacyPflagBoolValue,
   legacyPflagEnumValue,
@@ -357,25 +354,17 @@ describe("legacyPflagProfileValue", () => {
 });
 
 describe("legacyResolvePflagProfile", () => {
-  const withEnvProfile = <A, E, R>(value: string, effect: Effect.Effect<A, E, R>) => {
-    const prev = process.env["SUPABASE_PROFILE"];
-    process.env["SUPABASE_PROFILE"] = value;
-    return effect.pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_PROFILE"];
-          else process.env["SUPABASE_PROFILE"] = prev;
-        }),
-      ),
-    );
-  };
-
-  const services = (args: ReadonlyArray<string>, homeDir: string) =>
+  const services = (
+    args: ReadonlyArray<string>,
+    homeDir: string,
+    env: Readonly<Record<string, string>>,
+  ) =>
     Layer.mergeAll(
       BunServices.layer,
       Layer.succeed(LegacyProfileFlag, "supabase"),
       Layer.succeed(CliArgs, { args }),
       mockRuntimeInfo({ homeDir }),
+      makeLegacyViperEnvLayer(ConfigProvider.fromEnv({ env, preserveEmptyStrings: true })),
     );
 
   // `--domains --profile supabase`: pflag consumes the `--profile` token, so
@@ -385,55 +374,66 @@ describe("legacyResolvePflagProfile", () => {
   it.effect(
     "re-loads the env profile when the layer's scan wrongly shadowed a consumed token",
     () => {
-      const dir = mkdtempSync(join(tmpdir(), "supabase-pflag-reconcile-"));
-      const profilePath = join(dir, "env.yml");
-      writeFileSync(
-        profilePath,
-        [
-          "name: harness",
-          "api_url: http://127.0.0.1:45555",
-          "dashboard_url: http://127.0.0.1:45555",
-          "project_host: localhost",
-        ].join("\n"),
-      );
-      return withEnvProfile(
-        profilePath,
+      return Effect.scoped(
         Effect.gen(function* () {
-          const resolved = yield* legacyResolvePflagProfile({
-            occurrences: new Map(),
-            consumedFlagNames: new Set(["profile"]),
-            prePathOccurrences: new Map(),
-          });
-          expect(Option.isSome(resolved)).toBe(true);
-          if (Option.isSome(resolved)) {
-            expect(resolved.value.name).toBe("harness");
-            expect(resolved.value.apiUrl).toBe("http://127.0.0.1:45555");
-          }
-        }).pipe(
-          Effect.provide(
-            services(["sso", "add", "--type", "saml", "--domains", "--profile", "supabase"], dir),
-          ),
-          Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
-        ),
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const dir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-pflag-reconcile-" });
+          const profilePath = path.join(dir, "env.yml");
+          yield* fs.writeFileString(
+            profilePath,
+            [
+              "name: harness",
+              "api_url: http://127.0.0.1:45555",
+              "dashboard_url: http://127.0.0.1:45555",
+              "project_host: localhost",
+            ].join("\n"),
+          );
+          yield* Effect.gen(function* () {
+            const resolved = yield* legacyResolvePflagProfile({
+              occurrences: new Map(),
+              consumedFlagNames: new Set(["profile"]),
+              prePathOccurrences: new Map(),
+            });
+            expect(Option.isSome(resolved)).toBe(true);
+            if (Option.isSome(resolved)) {
+              expect(resolved.value.name).toBe("harness");
+              expect(resolved.value.apiUrl).toBe("http://127.0.0.1:45555");
+            }
+          }).pipe(
+            Effect.provide(
+              services(
+                ["sso", "add", "--type", "saml", "--domains", "--profile", "supabase"],
+                dir,
+                { SUPABASE_PROFILE: profilePath },
+              ),
+            ),
+          );
+        }).pipe(Effect.provide(BunServices.layer)),
       );
     },
   );
 
   it.effect("returns none when the scan and the layer agree on an explicit supabase", () => {
-    const dir = mkdtempSync(join(tmpdir(), "supabase-pflag-reconcile-"));
-    return withEnvProfile(
-      "rogue-profile",
+    return Effect.scoped(
       Effect.gen(function* () {
-        const resolved = yield* legacyResolvePflagProfile({
-          occurrences: new Map([["profile", ["supabase"]]]),
-          consumedFlagNames: new Set<string>(),
-          prePathOccurrences: new Map(),
-        });
-        expect(Option.isNone(resolved)).toBe(true);
-      }).pipe(
-        Effect.provide(services(["sso", "add", "--profile", "supabase"], dir)),
-        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
-      ),
+        const fs = yield* FileSystem.FileSystem;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-pflag-reconcile-" });
+        yield* Effect.gen(function* () {
+          const resolved = yield* legacyResolvePflagProfile({
+            occurrences: new Map([["profile", ["supabase"]]]),
+            consumedFlagNames: new Set<string>(),
+            prePathOccurrences: new Map(),
+          });
+          expect(Option.isNone(resolved)).toBe(true);
+        }).pipe(
+          Effect.provide(
+            services(["sso", "add", "--profile", "supabase"], dir, {
+              SUPABASE_PROFILE: "rogue-profile",
+            }),
+          ),
+        );
+      }).pipe(Effect.provide(BunServices.layer)),
     );
   });
 });

@@ -1,5 +1,5 @@
 import { NodeServices } from "@effect/platform-node";
-import { Layer, ManagedRuntime } from "effect";
+import { Effect, Layer, ManagedRuntime } from "effect";
 import type {
   LoadedProjectConfig,
   LoadProjectConfigOptions,
@@ -22,7 +22,7 @@ function makeRuntime() {
   );
 }
 
-export async function loadProjectConfig(
+export function loadProjectConfig(
   cwd: string,
   options?: LoadProjectConfigOptions,
 ): Promise<LoadedProjectConfig | null> {
@@ -30,22 +30,22 @@ export async function loadProjectConfig(
   return runtime.runPromise(ProjectConfigStore.use((store) => store.load(cwd, options)));
 }
 
-export async function findProjectRootFor(cwd: string): Promise<string | null> {
+export function findProjectRootFor(cwd: string): Promise<string | null> {
   const runtime = makeRuntime();
   return runtime.runPromise(findProjectRoot(cwd));
 }
 
-export async function findProjectPathsFor(cwd: string): Promise<ProjectPaths | null> {
+export function findProjectPathsFor(cwd: string): Promise<ProjectPaths | null> {
   const runtime = makeRuntime();
   return runtime.runPromise(findProjectPaths(cwd));
 }
 
-export async function loadProjectConfigFile(path: string): Promise<LoadedProjectConfig> {
+export function loadProjectConfigFile(path: string): Promise<LoadedProjectConfig> {
   const runtime = makeRuntime();
   return runtime.runPromise(ProjectConfigStore.use((store) => store.loadFile(path)));
 }
 
-export async function loadProjectEnvironmentFor(
+export function loadProjectEnvironmentFor(
   options: LoadProjectEnvironmentOptions,
 ): Promise<ProjectEnvironment | null> {
   const runtime = makeRuntime();
@@ -54,14 +54,20 @@ export async function loadProjectEnvironmentFor(
   );
 }
 
-export async function saveProjectConfig(
-  options: SaveProjectConfigOptions,
-): Promise<LoadedProjectConfig> {
+export function saveProjectConfig(options: SaveProjectConfigOptions): Promise<LoadedProjectConfig> {
   const runtime = makeRuntime();
   return runtime.runPromise(ProjectConfigStore.use((store) => store.save(options)));
 }
 
-export async function loadFunctionsManifest(cwd: string): Promise<FunctionsManifest> {
+export function loadFunctionsManifest(cwd: string): Promise<FunctionsManifest> {
   const runtime = makeRuntime();
-  return runtime.runPromise(inferFunctionsManifest({ cwd }));
+  return runtime.runPromise(
+    Effect.gen(function* () {
+      const projectEnv = yield* loadProjectEnvironment({ cwd, baseEnv: process.env });
+      return yield* inferFunctionsManifest({
+        cwd,
+        ...(projectEnv === null ? {} : { projectEnv }),
+      });
+    }),
+  );
 }

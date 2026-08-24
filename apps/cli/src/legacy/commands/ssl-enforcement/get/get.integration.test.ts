@@ -1,10 +1,7 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
+import { BunServices } from "@effect/platform-bun";
 import { type V1GetSslEnforcementConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path, Formatter } from "effect";
 
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
@@ -202,34 +199,36 @@ describe("legacy ssl-enforcement get integration", () => {
     // This test owns its own workdir because it writes a project-ref file
     // before the layer is constructed (the resolver reads from
     // <workdir>/supabase/.temp/project-ref on layer-effect resolution).
-    const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-ssl-get-int-fileref-"));
     const fileRef = "filerefabcdefghijklm";
-    mkdirSync(join(localTempRoot, "supabase", ".temp"), { recursive: true });
-    writeFileSync(join(localTempRoot, "supabase", ".temp", "project-ref"), fileRef);
 
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
     const cliConfig = mockLegacyCliConfig({
-      workdir: localTempRoot,
+      workdir: tempRoot.current,
       projectId: Option.none(),
     });
     const layer = buildLegacyTestRuntime({ out, api, cliConfig });
 
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.makeDirectory(path.join(tempRoot.current, "supabase", ".temp"), {
+        recursive: true,
+      });
+      yield* fs.writeFileString(
+        path.join(tempRoot.current, "supabase", ".temp", "project-ref"),
+        fileRef,
+      );
       yield* legacySslEnforcementGet({ projectRef: Option.none() });
       expect(api.requests[0]?.url).toContain(`/v1/projects/${fileRef}/`);
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(Effect.sync(() => rmSync(localTempRoot, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(Layer.mergeAll(layer, BunServices.layer)));
   });
 
   it.live("fails with LegacyProjectNotLinkedError when no ref source matches off-TTY", () => {
-    const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-ssl-get-int-no-ref-"));
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
     const cliConfig = mockLegacyCliConfig({
-      workdir: localTempRoot,
+      workdir: tempRoot.current,
       projectId: Option.none(),
     });
     const layer = buildLegacyTestRuntime({ out, api, cliConfig });
@@ -240,11 +239,9 @@ describe("legacy ssl-enforcement get integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectNotLinkedError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyProjectNotLinkedError");
       }
-    }).pipe(
-      Effect.ensuring(Effect.sync(() => rmSync(localTempRoot, { recursive: true, force: true }))),
-    );
+    });
   });
 
   it.live("fails with LegacyInvalidProjectRefError when the resolved ref is malformed", () => {
@@ -255,7 +252,7 @@ describe("legacy ssl-enforcement get integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidProjectRefError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyInvalidProjectRefError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -266,7 +263,7 @@ describe("legacy ssl-enforcement get integration", () => {
       const exit = yield* Effect.exit(legacySslEnforcementGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacySslEnforcementGetUnexpectedStatusError");
         expect(errorJson).toContain("unexpected SSL enforcement status 503");
       }
@@ -279,7 +276,7 @@ describe("legacy ssl-enforcement get integration", () => {
       const exit = yield* Effect.exit(legacySslEnforcementGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacySslEnforcementGetNetworkError");
         expect(errorJson).toContain("failed to retrieve SSL enforcement config");
       }
@@ -317,13 +314,12 @@ describe("legacy ssl-enforcement get integration", () => {
   it.live("flushes telemetry even when ref resolution fails (no cache write)", () => {
     // Pre-PersistentPostRun-fix regression guard: telemetry must flush whether or not the
     // resolver succeeds. The linked-project cache only writes after a ref is resolved.
-    const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-ssl-get-int-postrun-"));
     const telemetry = mockLegacyTelemetryStateTracked();
     const cache = mockLegacyLinkedProjectCacheTracked();
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
     const cliConfig = mockLegacyCliConfig({
-      workdir: localTempRoot,
+      workdir: tempRoot.current,
       projectId: Option.none(),
     });
     const layer = buildLegacyTestRuntime({
@@ -340,8 +336,6 @@ describe("legacy ssl-enforcement get integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(telemetry.flushed).toBe(true);
       expect(cache.cached).toBe(false);
-    }).pipe(
-      Effect.ensuring(Effect.sync(() => rmSync(localTempRoot, { recursive: true, force: true }))),
-    );
+    });
   });
 });

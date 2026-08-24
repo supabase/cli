@@ -1,5 +1,5 @@
 import type { ApiClient, V1ListAllBranchesOutput } from "@supabase/api/effect";
-import { Duration, Effect, FileSystem, Option, Path } from "effect";
+import { Duration, Effect, FileSystem, Option, Path, Schema } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
@@ -56,6 +56,16 @@ import type { LegacyLinkFlags } from "./link.command.ts";
 type LegacyLinkProject = Effect.Success<ReturnType<ApiClient["v1"]["getProject"]>>;
 type LegacyLinkBranches = typeof V1ListAllBranchesOutput.Type;
 type LegacyLinkBranch = LegacyLinkBranches[number];
+
+const LegacyLinkedProjectCacheWriteSchema = Schema.Struct({
+  ref: Schema.String,
+  name: Schema.optional(Schema.String),
+  organization_id: Schema.optional(Schema.String),
+  organization_slug: Schema.optional(Schema.String),
+});
+
+const encodeLinkedProjectCache = (value: typeof LegacyLinkedProjectCacheWriteSchema.Type) =>
+  Schema.encodeEffect(Schema.fromJsonString(LegacyLinkedProjectCacheWriteSchema))(value);
 
 /** Result of resolving a branch name/UUID to its project ref, threaded into the
  * machine payload (`branch`, `parent_project_ref`) alongside the plain ref. */
@@ -201,16 +211,14 @@ const resolveLegacyLinkBranchRef = Effect.fnUntraced(function* (value: string) {
 
   const parent = yield* legacyResolveLinkedParentRef();
   if (parent.kind === "absent") {
-    return yield* Effect.fail(
-      new LegacyLinkBranchNotLinkedError({ message: legacyLinkNotLinkedMessage(value) }),
-    );
+    return yield* new LegacyLinkBranchNotLinkedError({
+      message: legacyLinkNotLinkedMessage(value),
+    });
   }
   if (parent.kind === "invalid") {
-    return yield* Effect.fail(
-      new LegacyLinkParentRefInvalidError({
-        message: `Cannot resolve branch "${value}": the linked project ref is invalid (checked SUPABASE_PROJECT_ID, supabase/.temp/linked-project.json, supabase/.temp/project-ref). Relink the parent project first: supabase link --project-ref <parent-ref>`,
-      }),
-    );
+    return yield* new LegacyLinkParentRefInvalidError({
+      message: `Cannot resolve branch "${value}": the linked project ref is invalid (checked SUPABASE_PROJECT_ID, supabase/.temp/linked-project.json, supabase/.temp/project-ref). Relink the parent project first: supabase link --project-ref <parent-ref>`,
+    });
   }
   const parentRef = parent.ref;
 
@@ -238,21 +246,17 @@ const resolveLegacyLinkBranchRef = Effect.fnUntraced(function* (value: string) {
     (branch) => branch.name === value || branch.id.toLowerCase() === value.toLowerCase(),
   );
   if (found === undefined) {
-    return yield* Effect.fail(
-      new LegacyLinkBranchNotFoundError({
-        message: legacyLinkBranchNotFoundMessage(value, parentRef, branches),
-      }),
-    );
+    return yield* new LegacyLinkBranchNotFoundError({
+      message: legacyLinkBranchNotFoundMessage(value, parentRef, branches),
+    });
   }
 
   if (!PROJECT_REF_PATTERN.test(found.project_ref)) {
-    return yield* Effect.fail(
-      new LegacyLinkBranchNotReadyError({
-        branch: found.name,
-        status: found.status,
-        message: `Branch "${legacySanitizeInlineName(found.name)}" has no project ref yet (status: ${found.status}). Wait for it to finish provisioning, then retry.`,
-      }),
-    );
+    return yield* new LegacyLinkBranchNotReadyError({
+      branch: found.name,
+      status: found.status,
+      message: `Branch "${legacySanitizeInlineName(found.name)}" has no project ref yet (status: ${found.status}). Wait for it to finish provisioning, then retry.`,
+    });
   }
 
   const line = `Resolved branch "${legacySanitizeInlineName(found.name)}" of project ${parentRef} to project ref ${found.project_ref}.`;
@@ -294,12 +298,10 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
     const projectRefFlag = Option.filter(flags.projectRef, (value) => value.length > 0);
 
     if (Option.isSome(refArg) && Option.isSome(projectRefFlag)) {
-      return yield* Effect.fail(
-        new LegacyLinkRefArgConflictError({
-          message:
-            "Cannot use both the [ref-or-branch] argument and the --project-ref flag. Specify the project ref or branch name once.",
-        }),
-      );
+      return yield* new LegacyLinkRefArgConflictError({
+        message:
+          "Cannot use both the [ref-or-branch] argument and the --project-ref flag. Specify the project ref or branch name once.",
+      });
     }
 
     const requested = Option.isSome(refArg) ? refArg : projectRefFlag;
@@ -332,14 +334,12 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
     if (Option.isSome(project)) {
       const status = project.value.status;
       if (status === "INACTIVE") {
-        return yield* Effect.fail(
-          new LegacyProjectPausedError({
-            message: "project is paused",
-            suggestion: `An admin must unpause it from the Supabase dashboard at ${legacyDashboardUrl(
-              cliConfig.profile,
-            )}/project/${ref}`,
-          }),
-        );
+        return yield* new LegacyProjectPausedError({
+          message: "project is paused",
+          suggestion: `An admin must unpause it from the Supabase dashboard at ${legacyDashboardUrl(
+            cliConfig.profile,
+          )}/project/${ref}`,
+        });
       }
       if (status !== "ACTIVE_HEALTHY") {
         yield* output.raw(
@@ -360,7 +360,7 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
       .pipe(Effect.catch(mapApiKeysError));
     const { anon, serviceRole } = legacyExtractServiceKeys(keys);
     if (anon.length === 0 && serviceRole.length === 0) {
-      return yield* Effect.fail(new LegacyLinkMissingKeyError({ message: "Anon key not found." }));
+      return yield* new LegacyLinkMissingKeyError({ message: "Anon key not found." });
     }
 
     // 3. Link services — best-effort, using the service-role key for tenant probes.
@@ -383,15 +383,13 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
       // rewrite fails while a stale cache for a DIFFERENT project survives,
       // delete it rather than leave the parent chain trusting the old
       // project — no cache beats a wrong one.
-      yield* writeTempFile(
-        paths.linkedProjectCache,
-        JSON.stringify({
-          ref: p.ref,
-          name: p.name,
-          organization_id: p.organization_id,
-          organization_slug: p.organization_slug,
-        }),
-      ).pipe(
+      const encodedCache = yield* encodeLinkedProjectCache({
+        ref: p.ref,
+        name: p.name,
+        organization_id: p.organization_id,
+        organization_slug: p.organization_slug,
+      });
+      yield* writeTempFile(paths.linkedProjectCache, encodedCache).pipe(
         Effect.catch(() => fs.remove(paths.linkedProjectCache, { force: true })),
         Effect.ignore,
       );
@@ -455,7 +453,8 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
           // best-effort; the mandatory `project-ref` write in the same
           // directory already succeeded, so a residual double-failure here
           // is practically unreachable.
-          yield* writeTempFile(paths.linkedProjectCache, JSON.stringify({ ref: parentRef })).pipe(
+          const encodedCache = yield* encodeLinkedProjectCache({ ref: parentRef });
+          yield* writeTempFile(paths.linkedProjectCache, encodedCache).pipe(
             Effect.catch(() => fs.remove(paths.linkedProjectCache, { force: true })),
             Effect.ignore,
           );
@@ -505,7 +504,7 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
         const verified = yield* api.v1.listAllBranches({ ref: cachedParent.value.ref }).pipe(
           Effect.timeout(LEGACY_LINK_CACHE_CORRELATION_TIMEOUT),
           Effect.map((branches) => branches.some((branch) => branch.project_ref === ref)),
-          Effect.catch(() => Effect.succeed(false)),
+          Effect.orElseSucceed(() => false),
           Effect.ensuring(correlating?.clear() ?? Effect.void),
         );
         if (!verified) {

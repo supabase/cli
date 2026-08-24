@@ -52,17 +52,13 @@ export const legacyMakePlatformApi = Effect.gen(function* () {
 
   const authGateToken = yield* resolveAccessToken;
   if (Option.isNone(authGateToken)) {
-    return yield* Effect.fail(
-      new LegacyPlatformAuthRequiredError({ message: MISSING_TOKEN_MESSAGE }),
-    );
+    return yield* new LegacyPlatformAuthRequiredError({ message: MISSING_TOKEN_MESSAGE });
   }
   yield* debugLogger.debug(`Supabase CLI ${CLI_VERSION}`);
   yield* debugLogger.debug(`Using profile: ${cliConfig.profile} (${cliConfig.projectHost})`);
   const storedToken = yield* resolveAccessToken;
   if (Option.isNone(storedToken)) {
-    return yield* Effect.fail(
-      new LegacyPlatformAuthRequiredError({ message: MISSING_TOKEN_MESSAGE }),
-    );
+    return yield* new LegacyPlatformAuthRequiredError({ message: MISSING_TOKEN_MESSAGE });
   }
 
   return yield* makeApiClient(

@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import {
   applyOpenApiOverrides,
@@ -312,14 +312,9 @@ describe("download-openapi", () => {
 
   test("warns instead of throwing when an operation has no operationId", () => {
     const document = { paths: { "/v1/a": { get: {} } } };
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-
-    expect(() => assertMergedOpenApiDocument(document)).not.toThrow();
-    expect(warnSpy).toHaveBeenCalledWith(
+    expect(assertMergedOpenApiDocument(document)).toEqual([
       "OpenAPI operation GET /v1/a has no operationId; generate.ts will skip it.",
-    );
-
-    warnSpy.mockRestore();
+    ]);
   });
 
   test("applyOpenApiOverrides tolerantly removes JSON pointers that no longer exist", () => {

@@ -1,7 +1,48 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { tmpdir, platform as osPlatform } from "node:os";
 import { randomUUID } from "node:crypto";
+import { BunServices } from "@effect/platform-bun";
+import { Data, Effect, FileSystem, Path } from "effect";
+import type { PlatformError } from "effect/PlatformError";
+
+const runBunSync = <A, E extends Error>(
+  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
+): A => Effect.runSync(effect.pipe(Effect.orDie, Effect.provide(BunServices.layer)));
+
+const runBunPromise = <A, E extends Error>(
+  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
+): Promise<A> => Effect.runPromise(effect.pipe(Effect.orDie, Effect.provide(BunServices.layer)));
+
+const join = (...parts: ReadonlyArray<string>): string =>
+  runBunSync(
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      return path.join(...parts);
+    }),
+  );
+
+const exists = (path: string): Effect.Effect<boolean, PlatformError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.exists(path);
+  });
+
+const mkdtemp = (prefix: string): Effect.Effect<string, PlatformError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.makeTempDirectory({ directory: tmpdir(), prefix });
+  });
+
+const rm = (
+  path: string,
+  options?: { readonly recursive?: boolean; readonly force?: boolean },
+): Effect.Effect<void, PlatformError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.remove(path, {
+      recursive: options?.recursive ?? false,
+      force: options?.force ?? false,
+    });
+  });
 
 export type CLITarget = "ts-legacy" | "ts-next";
 
@@ -17,6 +58,8 @@ export interface HarnessOptions {
   apiUrl: string;
   /** Access token injected as SUPABASE_ACCESS_TOKEN */
   accessToken: string;
+  /** Monorepo root containing apps/cli/dist. Defaults to this workspace root. */
+  workspaceRoot?: string;
   /** Working directory for the subprocess. Defaults to a fresh temp dir. */
   cwd?: string;
   /** Set as SUPABASE_PROJECT_ID in the subprocess env. Storage commands read
@@ -37,19 +80,38 @@ export interface CLIHarness {
 /** A temporary directory that is removed when disposed. */
 export interface TempDir {
   readonly path: string;
-  [Symbol.dispose](): void;
+  [Symbol.asyncDispose](): Promise<void>;
+}
+
+class MissingCliBuildError extends Data.TaggedError("MissingCliBuildError")<{
+  readonly shimPath: string;
+  readonly binaryPath: string;
+  readonly message: string;
+}> {
+  constructor(shimPath: string, binaryPath: string) {
+    super({
+      shimPath,
+      binaryPath,
+      message:
+        `Missing CLI build artifacts. Run \`pnpm --filter supabase build\` before running e2e tests.\n` +
+        `  expected shim:   ${shimPath}\n` +
+        `  expected binary: ${binaryPath}`,
+    });
+  }
 }
 
 /** Create a unique temporary directory under os.tmpdir() for use as a CLI
  *  working directory. Dispose it after the test to clean up. */
-export function makeTempDir(prefix = "cli-e2e-"): TempDir {
-  const path = mkdtempSync(join(tmpdir(), prefix));
-  return {
-    path,
-    [Symbol.dispose]() {
-      rmSync(path, { recursive: true, force: true });
-    },
-  };
+export function makeTempDir(prefix = "cli-e2e-"): Promise<TempDir> {
+  return runBunPromise(
+    Effect.gen(function* () {
+      const path = yield* mkdtemp(prefix);
+      return {
+        path,
+        [Symbol.asyncDispose]: () => runBunPromise(rm(path, { recursive: true, force: true })),
+      } satisfies TempDir;
+    }),
+  );
 }
 
 // Resolve the monorepo root from this file's location:
@@ -57,7 +119,6 @@ export function makeTempDir(prefix = "cli-e2e-"): TempDir {
 const WORKSPACE_ROOT = new URL("../../../", import.meta.url).pathname.replace(/\/$/, "");
 
 const BINARY_EXT = osPlatform() === "win32" ? ".exe" : "";
-const TS_CLI_SHIM = join(WORKSPACE_ROOT, "apps/cli/dist/supabase.js");
 
 // E2E subprocesses should only enter agent output mode when a test explicitly
 // opts in via `opts.env`. Keep this list aligned with @vercel/detect-agent env
@@ -94,51 +155,51 @@ export function createSubprocessBaseEnv(
   return env;
 }
 
-function tsCliBinary(shell: "next" | "legacy"): string {
-  return join(WORKSPACE_ROOT, `apps/cli/dist/supabase-${shell}${BINARY_EXT}`);
+function tsCliShim(workspaceRoot: string): string {
+  return join(workspaceRoot, "apps/cli/dist/supabase.js");
 }
 
-function assertTsCliBuilt(binaryPath: string): void {
-  if (!existsSync(TS_CLI_SHIM) || !existsSync(binaryPath)) {
-    throw new Error(
-      `Missing CLI build artifacts. Run \`pnpm --filter supabase build\` before running e2e tests.\n` +
-        `  expected shim:   ${TS_CLI_SHIM}\n` +
-        `  expected binary: ${binaryPath}`,
-    );
-  }
+function tsCliBinary(workspaceRoot: string, shell: "next" | "legacy"): string {
+  return join(workspaceRoot, `apps/cli/dist/supabase-${shell}${BINARY_EXT}`);
 }
+
+const assertTsCliBuilt = (shimPath: string, binaryPath: string) =>
+  Effect.gen(function* () {
+    const shimExists = yield* exists(shimPath);
+    const binaryExists = yield* exists(binaryPath);
+    if (!shimExists || !binaryExists) {
+      return yield* new MissingCliBuildError(shimPath, binaryPath);
+    }
+  });
 
 interface BuiltCommand {
   cmd: string[];
   binaryOverride?: string;
 }
 
-function buildCommand(target: CLITarget): BuiltCommand {
-  switch (target) {
-    case "ts-legacy": {
-      const binaryPath = tsCliBinary("legacy");
-      assertTsCliBuilt(binaryPath);
-      return { cmd: ["node", TS_CLI_SHIM], binaryOverride: binaryPath };
-    }
-    case "ts-next": {
-      const binaryPath = tsCliBinary("next");
-      assertTsCliBuilt(binaryPath);
-      return { cmd: ["node", TS_CLI_SHIM], binaryOverride: binaryPath };
-    }
-  }
-}
+const buildCommand = (target: CLITarget, workspaceRoot: string) =>
+  Effect.gen(function* () {
+    const shell = target === "ts-legacy" ? "legacy" : "next";
+    const shimPath = tsCliShim(workspaceRoot);
+    const binaryPath = tsCliBinary(workspaceRoot, shell);
+    yield* assertTsCliBuilt(shimPath, binaryPath);
+    return { cmd: ["node", shimPath], binaryOverride: binaryPath } satisfies BuiltCommand;
+  });
 
 export function createHarness(target: CLITarget, options: HarnessOptions): CLIHarness {
   return { target, options };
 }
 
+// oxlint-disable-next-line effecttsgo/async-function -- Promise facade intentionally consumed by non-Effect e2e tests.
 export async function exec(
   harness: CLIHarness,
   args: string[],
   opts?: { env?: Record<string, string> },
 ): Promise<CLIResult> {
   const start = performance.now();
-  const built = buildCommand(harness.target);
+  const built = await runBunPromise(
+    buildCommand(harness.target, harness.options.workspaceRoot ?? WORKSPACE_ROOT),
+  );
 
   const env: Record<string, string> = {
     ...createSubprocessBaseEnv(),
@@ -168,16 +229,22 @@ export async function exec(
   // - ts-next reads SUPABASE_API_URL directly, so it doesn't need a profile file.
   let profilePath: string | undefined;
   if (harness.target === "ts-legacy") {
-    profilePath = join(tmpdir(), `cli-e2e-profile-${randomUUID()}.yaml`);
+    const nextProfilePath = join(tmpdir(), `cli-e2e-profile-${randomUUID()}.yaml`);
+    profilePath = nextProfilePath;
     const url = harness.options.apiUrl;
-    writeFileSync(
-      profilePath,
-      [
-        `name: test`,
-        `api_url: "${url}"`,
-        `dashboard_url: "${url}"`,
-        `project_host: ${harness.options.projectHost ?? "localhost"}`,
-      ].join("\n"),
+    await runBunPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.writeFileString(
+          nextProfilePath,
+          [
+            `name: test`,
+            `api_url: "${url}"`,
+            `dashboard_url: "${url}"`,
+            `project_host: ${harness.options.projectHost ?? "localhost"}`,
+          ].join("\n"),
+        );
+      }),
     );
     env["SUPABASE_PROFILE"] = profilePath;
   } else {
@@ -201,7 +268,7 @@ export async function exec(
   const exitCode = await proc.exited;
   const durationMs = performance.now() - start;
 
-  if (profilePath) rmSync(profilePath, { force: true });
+  if (profilePath) await runBunPromise(rm(profilePath, { force: true }));
 
   return { stdout, stderr, exitCode, durationMs };
 }

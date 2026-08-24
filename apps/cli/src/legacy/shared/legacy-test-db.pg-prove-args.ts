@@ -1,5 +1,4 @@
-import * as nodePath from "node:path";
-import { Option } from "effect";
+import { Option, type Path } from "effect";
 
 import { legacyToDockerPath } from "./legacy-docker-path.ts";
 
@@ -35,13 +34,14 @@ export interface LegacyPgProveArgs {
  * Output is unchanged — the full file path is still passed to `pg_prove`.
  */
 export function buildLegacyPgProveArgs(opts: {
+  readonly path: Path.Path;
   readonly paths: ReadonlyArray<string>;
   readonly cwd: string;
   readonly workdir: string;
   readonly debug: boolean;
 }): LegacyPgProveArgs {
   const testFiles =
-    opts.paths.length > 0 ? opts.paths : [nodePath.resolve(opts.workdir, "supabase", "tests")];
+    opts.paths.length > 0 ? opts.paths : [opts.path.resolve(opts.workdir, "supabase", "tests")];
 
   const cmd: string[] = ["pg_prove", "--ext", ".pg", "--ext", ".sql", "-r"];
   const binds: string[] = [];
@@ -52,7 +52,7 @@ export function buildLegacyPgProveArgs(opts: {
   let workingDir = "";
 
   for (const candidate of testFiles) {
-    const fp = nodePath.isAbsolute(candidate) ? candidate : nodePath.join(opts.cwd, candidate);
+    const fp = opts.path.isAbsolute(candidate) ? candidate : opts.path.join(opts.cwd, candidate);
     const dockerPath = legacyToDockerPath(fp);
     cmd.push(dockerPath);
     hostPaths.push(fp);
@@ -62,8 +62,8 @@ export function buildLegacyPgProveArgs(opts: {
     // own directory, and a single-file bind leaves siblings absent in the
     // container (CLI-1139). Directories are mounted as-is. The file-vs-directory
     // heuristic (presence of an extension) matches Go's workingDir logic.
-    const isFile = nodePath.posix.extname(dockerPath) !== "";
-    const hostMount = isFile ? nodePath.dirname(fp) : fp;
+    const isFile = opts.path.extname(dockerPath) !== "";
+    const hostMount = isFile ? opts.path.dirname(fp) : fp;
     const dockerMount = legacyToDockerPath(hostMount);
 
     // Dedupe by container target: two files in the same directory (or a file plus

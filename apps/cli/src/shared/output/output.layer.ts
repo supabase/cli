@@ -14,7 +14,7 @@ import {
   text,
 } from "@clack/prompts";
 import { styleText } from "node:util";
-import { Effect, Layer, Option, Stdio, Stream } from "effect";
+import { DateTime, Duration, Effect, Fiber, Layer, Option, Schema, Stdio, Stream } from "effect";
 
 import { Tty } from "../runtime/tty.service.ts";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
@@ -23,6 +23,7 @@ import { Output } from "./output.service.ts";
 import type { OutputFormat, StreamEvent } from "./types.ts";
 
 const TASK_SPINNER_DELAY_MS = 200;
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 // Reads the opt-in `MachineErrorContext` cell, if any command in this run
 // provided it — see that service's doc comment for the envelope contract.
@@ -211,37 +212,37 @@ export const textOutputLayer = Layer.effect(
       event: (event: StreamEvent) =>
         event.type === "log-entry"
           ? Effect.sync(() => log.info(`[${event.service}] ${event.line}`))
-          : Effect.sync(() => log.info(JSON.stringify(event))),
+          : Effect.sync(() => log.info(encodeJson(event))),
       task: (message: string) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           let shown = false;
           let settled = false;
           let currentMessage = message;
           let task: ReturnType<typeof spinner> | undefined;
-          let timeout: ReturnType<typeof setTimeout> | undefined;
 
-          const cancelPendingStart = () => {
-            if (timeout !== undefined) {
-              clearTimeout(timeout);
-              timeout = undefined;
-            }
-          };
+          const startFiber = yield* Effect.sleep(Duration.millis(TASK_SPINNER_DELAY_MS)).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                if (settled) {
+                  return;
+                }
+                task = spinner();
+                shown = true;
+                task.start(currentMessage);
+              }),
+            ),
+            Effect.forkChild,
+          );
 
-          const finish = (render: () => void) => {
-            settled = true;
-            cancelPendingStart();
-            render();
-          };
-
-          timeout = setTimeout(() => {
-            if (settled) {
-              return;
-            }
-            task = spinner();
-            shown = true;
-            task.start(currentMessage);
-            timeout = undefined;
-          }, TASK_SPINNER_DELAY_MS);
+          const finish = (render: () => void) =>
+            Effect.gen(function* () {
+              if (settled) {
+                return;
+              }
+              settled = true;
+              yield* Fiber.interrupt(startFiber);
+              yield* Effect.sync(render);
+            });
 
           return {
             message: (nextMessage: string) =>
@@ -255,60 +256,50 @@ export const textOutputLayer = Layer.effect(
                 }
               }),
             succeed: (nextMessage?: string) =>
-              Effect.sync(() =>
-                finish(() => {
-                  if (shown) {
-                    task?.stop(formatTaskMessage(nextMessage));
-                    return;
-                  }
-                  if (nextMessage !== undefined) {
-                    log.success(nextMessage);
-                  }
-                }),
-              ),
+              finish(() => {
+                if (shown) {
+                  task?.stop(formatTaskMessage(nextMessage));
+                  return;
+                }
+                if (nextMessage !== undefined) {
+                  log.success(nextMessage);
+                }
+              }),
             fail: (nextMessage?: string) =>
-              Effect.sync(() =>
-                finish(() => {
-                  if (shown) {
-                    task?.error(formatTaskMessage(nextMessage));
-                    return;
-                  }
-                  if (nextMessage !== undefined) {
-                    log.error(nextMessage);
-                  }
-                }),
-              ),
+              finish(() => {
+                if (shown) {
+                  task?.error(formatTaskMessage(nextMessage));
+                  return;
+                }
+                if (nextMessage !== undefined) {
+                  log.error(nextMessage);
+                }
+              }),
             info: (nextMessage?: string) =>
-              Effect.sync(() =>
-                finish(() => {
-                  if (shown) {
-                    task?.clear();
-                  }
-                  if (nextMessage !== undefined) {
-                    log.info(nextMessage);
-                  }
-                }),
-              ),
+              finish(() => {
+                if (shown) {
+                  task?.clear();
+                }
+                if (nextMessage !== undefined) {
+                  log.info(nextMessage);
+                }
+              }),
             cancel: (nextMessage?: string) =>
-              Effect.sync(() =>
-                finish(() => {
-                  if (shown) {
-                    task?.cancel(formatTaskMessage(nextMessage));
-                    return;
-                  }
-                  if (nextMessage !== undefined) {
-                    cancel(nextMessage);
-                  }
-                }),
-              ),
+              finish(() => {
+                if (shown) {
+                  task?.cancel(formatTaskMessage(nextMessage));
+                  return;
+                }
+                if (nextMessage !== undefined) {
+                  cancel(nextMessage);
+                }
+              }),
             clear: () =>
-              Effect.sync(() =>
-                finish(() => {
-                  if (shown) {
-                    task?.clear();
-                  }
-                }),
-              ),
+              finish(() => {
+                if (shown) {
+                  task?.clear();
+                }
+              }),
           };
         }),
       promptText: (
@@ -423,7 +414,7 @@ export const jsonOutputLayer = Layer.effect(
       info: (message: string) => writeStderr(`${message}\n`),
       warn: (message: string) => writeStderr(`${message}\n`),
       error: (message: string) => writeStderr(`${message}\n`),
-      event: (event: StreamEvent) => writeStderr(`${JSON.stringify(event)}\n`),
+      event: (event: StreamEvent) => writeStderr(`${encodeJson(event)}\n`),
       task: (message: string) =>
         Effect.sync(() => ({
           message: (nextMessage: string) => writeStderr(`[task] ${nextMessage}\n`),
@@ -456,7 +447,7 @@ export const jsonOutputLayer = Layer.effect(
           };
         }),
       success: (message: string, data?: Record<string, unknown>) =>
-        writeStdout(JSON.stringify({ ...data, message }) + "\n"),
+        writeStdout(encodeJson({ ...data, message }) + "\n"),
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
         Effect.gen(function* () {
           const extra = yield* readMachineErrorContext();
@@ -464,7 +455,7 @@ export const jsonOutputLayer = Layer.effect(
           // never be clobbered by a context field of the same name (PR #6168
           // review) — this is opt-in, command-contributed data; the envelope
           // shape it's decorating always wins.
-          yield* writeStdout(JSON.stringify({ ...extra, _tag: "Error", error: err }) + "\n");
+          yield* writeStdout(encodeJson({ ...extra, _tag: "Error", error: err }) + "\n");
         }),
       raw: (text: string, stream: "stdout" | "stderr" = "stdout") => write(text, stream),
       rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") => write(bytes, stream),
@@ -479,13 +470,15 @@ export const streamJsonOutputLayer = Layer.effect(
     const write = stdioWriter(yield* Stdio.Stdio);
     const writeStdout = (s: string) => write(s, "stdout");
     const emitLog = (level: "info" | "warn" | "success" | "error", message: string) => {
-      const event: StreamEvent = {
-        type: "log",
-        level,
-        message,
-        timestamp: new Date().toISOString(),
-      };
-      return writeStdout(JSON.stringify(event) + "\n");
+      return Effect.gen(function* () {
+        const event: StreamEvent = {
+          type: "log",
+          level,
+          message,
+          timestamp: DateTime.formatIso(yield* DateTime.now),
+        };
+        yield* writeStdout(encodeJson(event) + "\n");
+      });
     };
 
     const nonInteractive = (action: string) =>
@@ -504,7 +497,7 @@ export const streamJsonOutputLayer = Layer.effect(
       info: (message: string) => emitLog("info", message),
       warn: (message: string) => emitLog("warn", message),
       error: (message: string) => emitLog("error", message),
-      event: (event: StreamEvent) => writeStdout(JSON.stringify(event) + "\n"),
+      event: (event: StreamEvent) => writeStdout(encodeJson(event) + "\n"),
       task: (message: string) =>
         Effect.sync(() => ({
           message: (nextMessage: string) => emitLog("info", nextMessage),
@@ -523,15 +516,17 @@ export const streamJsonOutputLayer = Layer.effect(
         Effect.sync(() => {
           let current = 0;
           const emit = (status: "start" | "active" | "done", message: string) => {
-            const event: StreamEvent = {
-              type: "progress",
-              status,
-              current,
-              max: opts.max,
-              message,
-              timestamp: new Date().toISOString(),
-            };
-            return writeStdout(JSON.stringify(event) + "\n");
+            return Effect.gen(function* () {
+              const event: StreamEvent = {
+                type: "progress",
+                status,
+                current,
+                max: opts.max,
+                message,
+                timestamp: DateTime.formatIso(yield* DateTime.now),
+              };
+              yield* writeStdout(encodeJson(event) + "\n");
+            });
           };
 
           return {
@@ -545,25 +540,27 @@ export const streamJsonOutputLayer = Layer.effect(
           };
         }),
       success: (message: string, data?: Record<string, unknown>) =>
-        writeStdout(
-          JSON.stringify({
-            type: "result",
-            data: { ...data, message },
-            timestamp: new Date().toISOString(),
-          }) + "\n",
-        ),
+        Effect.gen(function* () {
+          yield* writeStdout(
+            encodeJson({
+              type: "result",
+              data: { ...data, message },
+              timestamp: DateTime.formatIso(yield* DateTime.now),
+            }) + "\n",
+          );
+        }),
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
         Effect.gen(function* () {
           const extra = yield* readMachineErrorContext();
           const event: StreamEvent = {
             type: "error",
             error: err,
-            timestamp: new Date().toISOString(),
+            timestamp: DateTime.formatIso(yield* DateTime.now),
           };
           // `extra` spreads FIRST — same reasoning as the json layer's `fail`
           // above: the event's own `type`/`error`/`timestamp` must always win
           // over an opt-in context field of the same name (PR #6168 review).
-          yield* writeStdout(JSON.stringify({ ...extra, ...event }) + "\n");
+          yield* writeStdout(encodeJson({ ...extra, ...event }) + "\n");
         }),
       raw: (text: string, stream: "stdout" | "stderr" = "stdout") => write(text, stream),
       rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") => write(bytes, stream),

@@ -1,9 +1,18 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunPath, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Option, Path } from "effect";
+import {
+  Config,
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Path,
+} from "effect";
+import type { PlatformError } from "effect/PlatformError";
+import * as Formatter from "effect/Formatter";
 
 import {
   legacyApplyProjectEnv,
@@ -13,9 +22,95 @@ import {
   legacyResolveDeclarativeDir,
   legacyResolveSeedSqlPath,
 } from "./legacy-db-config.toml-read.ts";
+import { useLegacyTempWorkdir } from "../../../tests/helpers/legacy-mocks.ts";
+import {
+  makeLegacyViperEnvLayer,
+  type LegacyViperEnv,
+} from "../../shared/legacy/legacy-viper-env.ts";
+
+const testPlatform = ManagedRuntime.make(BunServices.layer);
+const testPath = testPlatform.runSync(Path.Path);
+const tempRoot = useLegacyTempWorkdir("legacy-db-toml-");
+const testServices = (env: Readonly<Record<string, string>> = {}) =>
+  Layer.mergeAll(BunServices.layer, makeLegacyViperEnvLayer(ConfigProvider.fromEnv({ env })));
+
+function join(...paths: ReadonlyArray<string>): string {
+  return testPath.join(...paths);
+}
+
+type FixtureOperation = Effect.Effect<void, PlatformError, FileSystem.FileSystem>;
+const fixtureOperations = new Map<string, Array<FixtureOperation>>();
+let fixtureCounter = 0;
+
+function fixtureRoot(path: string): string | undefined {
+  return [...fixtureOperations.keys()]
+    .filter((root) => path === root || path.startsWith(`${root}/`))
+    .sort((a, b) => b.length - a.length)[0];
+}
+
+function enqueueFixtureOperation(path: string, operation: FixtureOperation): void {
+  const root = fixtureRoot(path);
+  if (root === undefined) throw new Error(`fixture root not registered for ${path}`);
+  fixtureOperations.get(root)?.push(operation);
+}
+
+function flushFixture(path: string): Effect.Effect<void, PlatformError, FileSystem.FileSystem> {
+  const root = fixtureRoot(path);
+  if (root === undefined) return Effect.void;
+  const operations = fixtureOperations.get(root) ?? [];
+  fixtureOperations.delete(root);
+  return Effect.forEach(operations, (operation) => operation).pipe(Effect.asVoid);
+}
+
+function mkdirSync(path: string, options?: { readonly recursive?: boolean }): void {
+  enqueueFixtureOperation(
+    path,
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(path, options);
+    }),
+  );
+}
+
+function mkdtempSync(prefix: string): string {
+  const path = join(tempRoot.current, `${prefix}${fixtureCounter++}`);
+  fixtureOperations.set(path, []);
+  return path;
+}
+
+function rmSync(
+  path: string,
+  options?: { readonly recursive?: boolean; readonly force?: boolean },
+): void {
+  const root = fixtureRoot(path);
+  if (root !== undefined) {
+    enqueueFixtureOperation(
+      path,
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.remove(path, options);
+      }),
+    );
+  }
+}
+
+function writeFileSync(path: string, data: string): void {
+  enqueueFixtureOperation(
+    path,
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(path, data);
+    }),
+  );
+}
+
+const readEnvironment = (name: string, env: Readonly<Record<string, string>> = {}) =>
+  Config.option(Config.string(name)).pipe(
+    Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env }))),
+  );
 
 function withConfig(content: string | undefined, poolerUrl?: string) {
-  const dir = mkdtempSync(join(tmpdir(), "legacy-db-toml-"));
+  const dir = mkdtempSync("legacy-db-toml-");
   if (content !== undefined) {
     mkdirSync(join(dir, "supabase"), { recursive: true });
     writeFileSync(join(dir, "supabase", "config.toml"), content);
@@ -27,37 +122,59 @@ function withConfig(content: string | undefined, poolerUrl?: string) {
   return dir;
 }
 
-const read = (workdir: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    return yield* legacyReadDbToml(fs, path, workdir);
-  }).pipe(Effect.provide(BunServices.layer));
+const read = (workdir: string, env: Readonly<Record<string, string>> = {}) =>
+  flushFixture(workdir).pipe(
+    Effect.flatMap(() =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        return yield* legacyReadDbToml(fs, path, workdir);
+      }),
+    ),
+    Effect.provide(testServices(env)),
+  );
 
-const readRef = (workdir: string, ref: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    return yield* legacyReadDbToml(fs, path, workdir, ref);
-  }).pipe(Effect.provide(BunServices.layer));
+const readRef = (workdir: string, ref: string, env: Readonly<Record<string, string>> = {}) =>
+  flushFixture(workdir).pipe(
+    Effect.flatMap(() =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        return yield* legacyReadDbToml(fs, path, workdir, ref);
+      }),
+    ),
+    Effect.provide(testServices(env)),
+  );
 
-const loadEnv = (workdir: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    return yield* legacyLoadProjectEnv(fs, path, workdir);
-  }).pipe(Effect.provide(BunServices.layer));
+const loadEnv = (workdir: string, env: Readonly<Record<string, string>> = {}) =>
+  flushFixture(workdir).pipe(
+    Effect.flatMap(() =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        return yield* legacyLoadProjectEnv(fs, path, workdir);
+      }),
+    ),
+    Effect.provide(testServices(env)),
+  );
 
 describe("read (lenient) vs check (throws) split", () => {
-  const withServices = <A, E>(
+  type TomlServices = FileSystem.FileSystem | Path.Path | LegacyViperEnv;
+  const withServices = <A, E extends Error>(
     dir: string,
-    run: (fs: FileSystem.FileSystem, path: Path.Path) => Effect.Effect<A, E, never>,
+    run: (fs: FileSystem.FileSystem, path: Path.Path) => Effect.Effect<A, E, TomlServices>,
+    env: Readonly<Record<string, string>> = {},
   ) =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      return yield* run(fs, path);
-    }).pipe(Effect.provide(BunServices.layer));
+    flushFixture(dir).pipe(
+      Effect.flatMap(() =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          return yield* run(fs, path);
+        }),
+      ),
+      Effect.provide(testServices(env)),
+    );
 
   it.effect("legacyCheckDbToml throws on an undecryptable secret", () => {
     const dir = withConfig('[db]\nroot_key = "encrypted:anything"\n');
@@ -67,7 +184,7 @@ describe("read (lenient) vs check (throws) split", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain(
+            expect(Formatter.formatJson(exit.cause)).toContain(
               "failed to parse config: missing private key",
             );
           }
@@ -161,49 +278,46 @@ describe("legacyReadDbToml", () => {
     "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
 
   it.effect("decrypts an encrypted: [db.vault] secret when DOTENV_PRIVATE_KEY is set", () => {
-    const previous = process.env["DOTENV_PRIVATE_KEY"];
-    process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
     const dir = withConfig(["[db.vault]", `my_secret = "${VAULT_ENCRYPTED}"`, ""].join("\n"));
-    return read(dir).pipe(
+    return read(dir, { DOTENV_PRIVATE_KEY: VAULT_PRIVATE_KEY }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.vault).toEqual([{ name: "my_secret", value: "value", resolved: true }]);
         }),
       ),
-      Effect.ensuring(
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("decrypts an encrypted: [db.vault] secret with a suffixed shell key", () => {
+    const dir = withConfig(["[db.vault]", `my_secret = "${VAULT_ENCRYPTED}"`, ""].join("\n"));
+    return read(dir, { DOTENV_PRIVATE_KEY_PRODUCTION: VAULT_PRIVATE_KEY }).pipe(
+      Effect.tap((v) =>
         Effect.sync(() => {
-          if (previous === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
-          else process.env["DOTENV_PRIVATE_KEY"] = previous;
-          rmSync(dir, { recursive: true, force: true });
+          expect(v.vault).toEqual([{ name: "my_secret", value: "value", resolved: true }]);
         }),
       ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
   it.effect("fails the load for an encrypted: [db.vault] secret with no private key", () => {
     // Go aborts the whole command (`failed to parse config: missing private key`)
     // rather than silently skipping the secret.
-    const previous = process.env["DOTENV_PRIVATE_KEY"];
-    delete process.env["DOTENV_PRIVATE_KEY"];
     const dir = withConfig(["[db.vault]", `my_secret = "${VAULT_ENCRYPTED}"`, ""].join("\n"));
-    return read(dir).pipe(
+    return read(dir, {}).pipe(
       Effect.exit,
       Effect.tap((exit) =>
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain(
+            expect(Formatter.formatJson(exit.cause)).toContain(
               "failed to parse config: missing private key",
             );
           }
         }),
       ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous !== undefined) process.env["DOTENV_PRIVATE_KEY"] = previous;
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
@@ -227,22 +341,14 @@ describe("legacyReadDbToml", () => {
 
   it.effect("honors SUPABASE_DB_SEED_SQL_PATHS over the TOML array (comma split, no trim)", () => {
     // Go's StringToSliceHookFunc(",") splits without trimming, so " b.sql" keeps its space.
-    const previous = process.env["SUPABASE_DB_SEED_SQL_PATHS"];
-    process.env["SUPABASE_DB_SEED_SQL_PATHS"] = "a.sql, b.sql";
     const dir = withConfig(["[db.seed]", 'sql_paths = ["ignored.sql"]', ""].join("\n"));
-    return read(dir).pipe(
+    return read(dir, { SUPABASE_DB_SEED_SQL_PATHS: "a.sql, b.sql" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.seed.sqlPaths).toEqual(["supabase/a.sql", "supabase/ b.sql"]);
         }),
       ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_DB_SEED_SQL_PATHS"];
-          else process.env["SUPABASE_DB_SEED_SQL_PATHS"] = previous;
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
@@ -277,22 +383,14 @@ describe("legacyReadDbToml", () => {
     () => {
       // Go runs LoadEnvHook before StringToSliceHookFunc(","), so env(SEEDS)=a.sql,b.sql
       // expands first and then splits into two patterns.
-      const previous = process.env["SEEDS"];
-      process.env["SEEDS"] = "a.sql,b.sql";
       const dir = withConfig(["[db.seed]", 'sql_paths = "env(SEEDS)"', ""].join("\n"));
-      return read(dir).pipe(
+      return read(dir, { SEEDS: "a.sql,b.sql" }).pipe(
         Effect.tap((v) =>
           Effect.sync(() => {
             expect(v.seed.sqlPaths).toEqual(["supabase/a.sql", "supabase/b.sql"]);
           }),
         ),
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["SEEDS"];
-            else process.env["SEEDS"] = previous;
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
       );
     },
   );
@@ -300,22 +398,14 @@ describe("legacyReadDbToml", () => {
   it.effect("expands an env() array element but does NOT split it (Go array asymmetry)", () => {
     // A TOML array element is decoded string→string: LoadEnvHook expands it, but
     // StringToSliceHookFunc does not fire, so it stays one (comma-containing) pattern.
-    const previous = process.env["SEEDS"];
-    process.env["SEEDS"] = "a.sql,b.sql";
     const dir = withConfig(["[db.seed]", 'sql_paths = ["env(SEEDS)"]', ""].join("\n"));
-    return read(dir).pipe(
+    return read(dir, { SEEDS: "a.sql,b.sql" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.seed.sqlPaths).toEqual(["supabase/a.sql,b.sql"]);
         }),
       ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SEEDS"];
-          else process.env["SEEDS"] = previous;
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
@@ -340,22 +430,14 @@ describe("legacyReadDbToml", () => {
   it.effect(
     "honors SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS over the TOML array (comma split, no trim)",
     () => {
-      const previous = process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
-      process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = "a.sql, b.sql";
       const dir = withConfig(["[db.migrations]", 'schema_paths = ["ignored.sql"]', ""].join("\n"));
-      return read(dir).pipe(
+      return read(dir, { SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS: "a.sql, b.sql" }).pipe(
         Effect.tap((v) =>
           Effect.sync(() => {
             expect(v.schemaPaths).toEqual(["supabase/a.sql", "supabase/ b.sql"]);
           }),
         ),
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
-            else process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = previous;
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
       );
     },
   );
@@ -544,7 +626,7 @@ describe("legacyReadDbToml", () => {
           Effect.sync(() => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
-              expect(JSON.stringify(exit.cause)).toContain(
+              expect(Formatter.formatJson(exit.cause)).toContain(
                 `'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type '${goType}'`,
               );
             }
@@ -574,7 +656,7 @@ describe("legacyReadDbToml", () => {
           Effect.sync(() => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
-              expect(JSON.stringify(exit.cause)).toContain(
+              expect(Formatter.formatJson(exit.cause)).toContain(
                 "'db.migrations.schema_paths[1]' expected type 'string', got unconvertible type 'time.Time'",
               );
             }
@@ -595,7 +677,7 @@ describe("legacyReadDbToml", () => {
           Effect.sync(() => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
-              expect(JSON.stringify(exit.cause)).toContain(
+              expect(Formatter.formatJson(exit.cause)).toContain(
                 "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type 'time.Time'",
               );
             }
@@ -620,7 +702,7 @@ describe("legacyReadDbToml", () => {
           Effect.sync(() => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
-              expect(JSON.stringify(exit.cause)).toContain(
+              expect(Formatter.formatJson(exit.cause)).toContain(
                 "'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type 'map[string]interface {}'",
               );
             }
@@ -665,7 +747,7 @@ describe("legacyReadDbToml", () => {
           Effect.sync(() => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
-              expect(JSON.stringify(exit.cause)).toContain(
+              expect(Formatter.formatJson(exit.cause)).toContain(
                 "failed to parse config: decoding failed due to the following error(s):\\n\\n'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type '[]interface {}'",
               );
             }
@@ -691,7 +773,7 @@ describe("legacyReadDbToml", () => {
           Effect.sync(() => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
-              expect(JSON.stringify(exit.cause)).toContain(
+              expect(Formatter.formatJson(exit.cause)).toContain(
                 "'db.migrations.schema_paths[1]' expected type 'string', got unconvertible type 'map[string]interface {}'",
               );
             }
@@ -712,7 +794,7 @@ describe("legacyReadDbToml", () => {
           Effect.sync(() => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
-              expect(JSON.stringify(exit.cause)).toContain(
+              expect(Formatter.formatJson(exit.cause)).toContain(
                 "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type '[]interface {}'",
               );
             }
@@ -748,7 +830,7 @@ describe("legacyReadDbToml", () => {
           Effect.sync(() => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
-              const message = JSON.stringify(exit.cause);
+              const message = Formatter.formatJson(exit.cause);
               const schemaIssue =
                 "'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type '[]interface {}'";
               const seedIssue =
@@ -772,8 +854,6 @@ describe("legacyReadDbToml", () => {
       // Go applies each matched-remote key via v.Set (override tier) above AutomaticEnv,
       // so an explicit remote value wins over the env var.
       const ref = "schmschmschmschmschm";
-      const previous = process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
-      process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = "env-only.sql";
       const dir = withConfig(
         [
           "[remotes.prod]",
@@ -782,19 +862,13 @@ describe("legacyReadDbToml", () => {
           "",
         ].join("\n"),
       );
-      return readRef(dir, ref).pipe(
+      return readRef(dir, ref, { SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS: "env-only.sql" }).pipe(
         Effect.tap((v) =>
           Effect.sync(() => {
             expect(v.schemaPaths).toEqual(["supabase/remote-only.sql"]);
           }),
         ),
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
-            else process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = previous;
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
       );
     },
   );
@@ -846,7 +920,7 @@ describe("legacyReadDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain(
+            expect(Formatter.formatJson(exit.cause)).toContain(
               "Missing required field in config: db.port",
             );
           }
@@ -860,24 +934,16 @@ describe("legacyReadDbToml", () => {
     // Go applies each matched-remote key via v.Set (override tier) above AutomaticEnv,
     // so an explicit remote value wins over the env var.
     const ref = "abcdefghijklmnopqrst";
-    const previous = process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
-    process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "false";
     const dir = withConfig(
       ["[remotes.prod]", `project_id = "${ref}"`, "db.migrations.enabled = true", ""].join("\n"),
     );
-    return readRef(dir, ref).pipe(
+    return readRef(dir, ref, { SUPABASE_DB_MIGRATIONS_ENABLED: "false" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.migrationsEnabled).toBe(true);
         }),
       ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
-          else process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = previous;
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
@@ -885,22 +951,14 @@ describe("legacyReadDbToml", () => {
     // Control: the env override is suppressed only for keys the matched block explicitly
     // set; a block that omits db.migrations.enabled leaves the env override in force.
     const ref = "abcdefghijklmnopqrst";
-    const previous = process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
-    process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "false";
     const dir = withConfig(["[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"));
-    return readRef(dir, ref).pipe(
+    return readRef(dir, ref, { SUPABASE_DB_MIGRATIONS_ENABLED: "false" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.migrationsEnabled).toBe(false);
         }),
       ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
-          else process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = previous;
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
@@ -933,22 +991,14 @@ describe("legacyReadDbToml", () => {
   it.effect(
     "honors SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS over the TOML array (comma split, no trim)",
     () => {
-      const previous = process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
-      process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = "a.sql, b.sql";
       const dir = withConfig(["[db.migrations]", 'schema_paths = ["ignored.sql"]', ""].join("\n"));
-      return read(dir).pipe(
+      return read(dir, { SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS: "a.sql, b.sql" }).pipe(
         Effect.tap((v) =>
           Effect.sync(() => {
             expect(v.schemaPaths).toEqual(["supabase/a.sql", "supabase/ b.sql"]);
           }),
         ),
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
-            else process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = previous;
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
       );
     },
   );
@@ -970,8 +1020,6 @@ describe("legacyReadDbToml", () => {
     () => {
       // Same override-tier precedence as db.migrations.enabled above.
       const ref = "abcdefghijklmnopqrst";
-      const previous = process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
-      process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = "env-wins.sql";
       const dir = withConfig(
         [
           "[remotes.prod]",
@@ -981,19 +1029,13 @@ describe("legacyReadDbToml", () => {
           "",
         ].join("\n"),
       );
-      return readRef(dir, ref).pipe(
+      return readRef(dir, ref, { SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS: "env-wins.sql" }).pipe(
         Effect.tap((v) =>
           Effect.sync(() => {
             expect(v.schemaPaths).toEqual(["supabase/remote-wins.sql"]);
           }),
         ),
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
-            else process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = previous;
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
       );
     },
   );
@@ -1003,8 +1045,6 @@ describe("legacyReadDbToml", () => {
     // not just db/seed — so a remote experimental.pgdelta.enabled wins
     // over SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED.
     const ref = "abcdefghijklmnopqrst";
-    const previous = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
-    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = "false";
     const dir = withConfig(
       [
         "[remotes.prod]",
@@ -1014,19 +1054,13 @@ describe("legacyReadDbToml", () => {
         "",
       ].join("\n"),
     );
-    return readRef(dir, ref).pipe(
+    return readRef(dir, ref, { SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "false" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.pgDelta.enabled).toBe(true);
         }),
       ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
-          else process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = previous;
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
@@ -1034,22 +1068,14 @@ describe("legacyReadDbToml", () => {
     // Control: the env override is suppressed only for keys the matched block explicitly set;
     // a block that omits experimental.pgdelta.enabled leaves the env override in force.
     const ref = "abcdefghijklmnopqrst";
-    const previous = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
-    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = "true";
     const dir = withConfig(["[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"));
-    return readRef(dir, ref).pipe(
+    return readRef(dir, ref, { SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "true" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.pgDelta.enabled).toBe(true);
         }),
       ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
-          else process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = previous;
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
@@ -1058,8 +1084,6 @@ describe("legacyReadDbToml", () => {
     // but for auth.enabled specifically (CLI-1878): a matched remote
     // block's auth.enabled must win over SUPABASE_AUTH_ENABLED.
     const ref = "abcdefghijklmnopqrst";
-    const previous = process.env["SUPABASE_AUTH_ENABLED"];
-    process.env["SUPABASE_AUTH_ENABLED"] = "true";
     const dir = withConfig(
       [
         "[remotes.prod]",
@@ -1069,19 +1093,13 @@ describe("legacyReadDbToml", () => {
         "",
       ].join("\n"),
     );
-    return readRef(dir, ref).pipe(
+    return readRef(dir, ref, { SUPABASE_AUTH_ENABLED: "true" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.baseline.authEnabled).toBe(false);
         }),
       ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_AUTH_ENABLED"];
-          else process.env["SUPABASE_AUTH_ENABLED"] = previous;
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
@@ -1089,22 +1107,14 @@ describe("legacyReadDbToml", () => {
     // Control: the env override is suppressed only for keys the matched block explicitly
     // set; a block that omits auth.enabled leaves the env override in force.
     const ref = "abcdefghijklmnopqrst";
-    const previous = process.env["SUPABASE_AUTH_ENABLED"];
-    process.env["SUPABASE_AUTH_ENABLED"] = "false";
     const dir = withConfig(["[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"));
-    return readRef(dir, ref).pipe(
+    return readRef(dir, ref, { SUPABASE_AUTH_ENABLED: "false" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.baseline.authEnabled).toBe(false);
         }),
       ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_AUTH_ENABLED"];
-          else process.env["SUPABASE_AUTH_ENABLED"] = previous;
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
@@ -1117,8 +1127,6 @@ describe("legacyReadDbToml", () => {
       // (false) would win instead, and the merged [experimental.webhooks] section (present via
       // the remote block) would then fail validation ("Webhooks cannot be deactivated").
       const ref = "abcdefghijklmnopqrst";
-      const previous = process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
-      process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "false";
       const dir = withConfig(
         [
           "[remotes.prod]",
@@ -1128,15 +1136,12 @@ describe("legacyReadDbToml", () => {
           "",
         ].join("\n"),
       );
-      return readRef(dir, ref).pipe(
+      return readRef(dir, ref, { SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED: "false" }).pipe(
         Effect.exit,
         Effect.tap((exit) =>
           Effect.sync(() => {
             expect(Exit.isSuccess(exit)).toBe(true);
             if (Exit.isSuccess(exit)) expect(exit.value.webhooksEnabled).toBe(true);
-            if (previous === undefined)
-              delete process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
-            else process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = previous;
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
@@ -1152,8 +1157,6 @@ describe("legacyReadDbToml", () => {
       // base [experimental.webhooks] section (present, default true) flipped off by the env
       // var still fails Go's "cannot be deactivated" validation.
       const ref = "abcdefghijklmnopqrst";
-      const previous = process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
-      process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "false";
       const dir = withConfig(
         [
           "[experimental.webhooks]",
@@ -1163,17 +1166,14 @@ describe("legacyReadDbToml", () => {
           "",
         ].join("\n"),
       );
-      return readRef(dir, ref).pipe(
+      return readRef(dir, ref, { SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED: "false" }).pipe(
         Effect.exit,
         Effect.tap((exit) =>
           Effect.sync(() => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
-              expect(JSON.stringify(exit.cause)).toContain("Webhooks cannot be deactivated");
+              expect(Formatter.formatJson(exit.cause)).toContain("Webhooks cannot be deactivated");
             }
-            if (previous === undefined)
-              delete process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
-            else process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = previous;
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
@@ -1191,18 +1191,13 @@ describe("legacyReadDbToml", () => {
       // section is declared, unlike experimental.pgdelta.enabled (always known via the Eject
       // template merged into defaults). Before the presence gate, this reader parsed the env
       // override unconditionally and failed the whole config load on the bogus value.
-      const previous = process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
-      process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "bogus";
       const dir = withConfig("");
-      return read(dir).pipe(
+      return read(dir, { SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED: "bogus" }).pipe(
         Effect.exit,
         Effect.tap((exit) =>
           Effect.sync(() => {
             expect(Exit.isSuccess(exit)).toBe(true);
             if (Exit.isSuccess(exit)) expect(exit.value.webhooksEnabled).toBe(false);
-            if (previous === undefined)
-              delete process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
-            else process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = previous;
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
@@ -1214,22 +1209,14 @@ describe("legacyReadDbToml", () => {
     // Viper AutomaticEnv supplies/overrides remotes.prod.project_id, so the block merges
     // even with no TOML project_id (here it lifts major_version 15 over the base default).
     const ref = "abcdefghijklmnopqrst";
-    const previous = process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"];
-    process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"] = ref;
     const dir = withConfig(["[remotes.prod]", "db.major_version = 15", ""].join("\n"));
-    return readRef(dir, ref).pipe(
+    return readRef(dir, ref, { SUPABASE_REMOTES_PROD_PROJECT_ID: ref }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.majorVersion).toBe(15);
         }),
       ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"];
-          else process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"] = previous;
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
@@ -1237,10 +1224,8 @@ describe("legacyReadDbToml", () => {
     // Without the env value the block (no TOML project_id) would fail Validate; the env
     // override supplies a valid ref, so the load succeeds.
     const ref = "abcdefghijklmnopqrst";
-    const previous = process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"];
-    process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"] = ref;
     const dir = withConfig(["[remotes.prod]", "db.major_version = 15", ""].join("\n"));
-    return read(dir).pipe(
+    return read(dir, { SUPABASE_REMOTES_PROD_PROJECT_ID: ref }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           // Load succeeded (no invalid-remote error); read() without a ref leaves the base
@@ -1248,13 +1233,7 @@ describe("legacyReadDbToml", () => {
           expect(v.majorVersion).toBe(17);
         }),
       ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"];
-          else process.env["SUPABASE_REMOTES_PROD_PROJECT_ID"] = previous;
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
@@ -1262,43 +1241,27 @@ describe("legacyReadDbToml", () => {
     // Go's mergeRemoteConfig v.Set(false) is an override-tier value above AutomaticEnv,
     // so a remote that omits db.seed.enabled stays unseeded even with the env var set.
     const ref = "abcdefghijklmnopqrst";
-    const previous = process.env["SUPABASE_DB_SEED_ENABLED"];
-    process.env["SUPABASE_DB_SEED_ENABLED"] = "true";
     const dir = withConfig(["[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"));
-    return readRef(dir, ref).pipe(
+    return readRef(dir, ref, { SUPABASE_DB_SEED_ENABLED: "true" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.seed.enabled).toBe(false);
         }),
       ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_DB_SEED_ENABLED"];
-          else process.env["SUPABASE_DB_SEED_ENABLED"] = previous;
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
   it.effect("SUPABASE_DB_SEED_ENABLED still wins on the local path (no remote force)", () => {
     // Negative control: with no matched remote block, the env override applies normally.
-    const previous = process.env["SUPABASE_DB_SEED_ENABLED"];
-    process.env["SUPABASE_DB_SEED_ENABLED"] = "false";
     const dir = withConfig(["[db.seed]", "enabled = true", ""].join("\n"));
-    return read(dir).pipe(
+    return read(dir, { SUPABASE_DB_SEED_ENABLED: "false" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.seed.enabled).toBe(false);
         }),
       ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_DB_SEED_ENABLED"];
-          else process.env["SUPABASE_DB_SEED_ENABLED"] = previous;
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
@@ -1336,7 +1299,7 @@ describe("legacyReadDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyDbConfigLoadError");
+            expect(Formatter.formatJson(exit.cause)).toContain("LegacyDbConfigLoadError");
           }
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -1460,7 +1423,9 @@ describe("legacyReadDbToml", () => {
           Effect.sync(() => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
-              expect(JSON.stringify(exit.cause)).toContain("duplicate project_id for [remotes.b]");
+              expect(Formatter.formatJson(exit.cause)).toContain(
+                "duplicate project_id for [remotes.b]",
+              );
             }
             rmSync(dir, { recursive: true, force: true });
           }),
@@ -1478,7 +1443,7 @@ describe("legacyReadDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain(
+            expect(Formatter.formatJson(exit.cause)).toContain(
               "Failed reading config: Invalid edge_runtime.deno_version: 3.",
             );
           }
@@ -1496,7 +1461,7 @@ describe("legacyReadDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain(
+            expect(Formatter.formatJson(exit.cause)).toContain(
               "Missing required field in config: edge_runtime.deno_version",
             );
           }
@@ -1529,7 +1494,7 @@ describe("legacyReadDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
+            const json = Formatter.formatJson(exit.cause);
             expect(json).toContain("LegacyDbConfigLoadError");
             expect(json).toContain(
               "Invalid config for experimental.pgdelta.format_options: must be valid JSON",
@@ -1562,7 +1527,7 @@ describe("legacyReadDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
+            const json = Formatter.formatJson(exit.cause);
             expect(json).toContain("LegacyDbConfigLoadError");
             // Prose part is backslash-free, so safe to assert through JSON.stringify;
             // the trailing `(<regex source>)` is built from the pattern's `.source`,
@@ -1588,7 +1553,7 @@ describe("legacyReadDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
+            const json = Formatter.formatJson(exit.cause);
             expect(json).toContain("LegacyDbConfigLoadError");
             expect(json).toContain(
               "Invalid Function name: 123. Must start with at least one letter, and only include alphanumeric characters, underscores, and hyphens.",
@@ -1630,7 +1595,7 @@ describe("legacyReadDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
+            const json = Formatter.formatJson(exit.cause);
             expect(json).toContain("LegacyDbConfigLoadError");
             expect(json).toContain("invalid storage.buckets.avatars.file_size_limit");
           }
@@ -1686,7 +1651,7 @@ describe("legacyReadDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const json = JSON.stringify(exit.cause);
+            const json = Formatter.formatJson(exit.cause);
             expect(json).toContain("LegacyDbConfigLoadError");
             expect(json).toContain("failed to parse config: invalid api.auto_expose_new_tables.");
           }
@@ -1699,49 +1664,30 @@ describe("legacyReadDbToml", () => {
   it.effect("honors SUPABASE_API_AUTO_EXPOSE_NEW_TABLES env override (AutomaticEnv)", () => {
     // viper AutomaticEnv overrides the TOML value; `1` decodes to true.
     const dir = withConfig("[api]\nauto_expose_new_tables = false\n");
-    const saved = process.env["SUPABASE_API_AUTO_EXPOSE_NEW_TABLES"];
-    process.env["SUPABASE_API_AUTO_EXPOSE_NEW_TABLES"] = "1";
-    return read(dir).pipe(
+    return read(dir, { SUPABASE_API_AUTO_EXPOSE_NEW_TABLES: "1" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(Option.getOrNull(v.baseline.apiAutoExposeNewTables)).toBe(true);
         }),
       ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (saved === undefined) delete process.env["SUPABASE_API_AUTO_EXPOSE_NEW_TABLES"];
-          else process.env["SUPABASE_API_AUTO_EXPOSE_NEW_TABLES"] = saved;
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
   it.effect("honors SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED / _DECLARATIVE_SCHEMA_PATH env", () => {
     // Go's viper AutomaticEnv overrides TOML for experimental.pgdelta.* before validation.
     const dir = withConfig(undefined);
-    const savedEnabled = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
-    const savedPath = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"];
-    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = "true";
-    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"] = "from_env";
-    return read(dir).pipe(
+    return read(dir, {
+      SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "true",
+      SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH: "from_env",
+    }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.pgDelta.enabled).toBe(true);
           expect(Option.getOrNull(v.pgDelta.declarativeSchemaPath)).toBe("supabase/from_env");
         }),
       ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (savedEnabled === undefined)
-            delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
-          else process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = savedEnabled;
-          if (savedPath === undefined)
-            delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"];
-          else process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"] = savedPath;
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
@@ -1749,70 +1695,44 @@ describe("legacyReadDbToml", () => {
     // Go decodes the AutomaticEnv override through LoadEnvHook, so an
     // env(VAR) indirection resolves before the supabase/ join — not stored literally.
     const dir = withConfig(undefined);
-    const savedEnabled = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
-    const savedPath = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"];
-    const savedDir = process.env["SCHEMA_DIR"];
-    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = "true";
-    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"] = "env(SCHEMA_DIR)";
-    process.env["SCHEMA_DIR"] = "schemas";
-    return read(dir).pipe(
+    return read(dir, {
+      SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "true",
+      SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH: "env(SCHEMA_DIR)",
+      SCHEMA_DIR: "schemas",
+    }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(Option.getOrNull(v.pgDelta.declarativeSchemaPath)).toBe("supabase/schemas");
         }),
       ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (savedEnabled === undefined)
-            delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
-          else process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = savedEnabled;
-          if (savedPath === undefined)
-            delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"];
-          else process.env["SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH"] = savedPath;
-          if (savedDir === undefined) delete process.env["SCHEMA_DIR"];
-          else process.env["SCHEMA_DIR"] = savedDir;
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
   it.effect("treats SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=1 as true (Go strconv.ParseBool)", () => {
     const dir = withConfig(undefined);
-    const saved = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
-    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = "1";
-    return read(dir).pipe(
+    return read(dir, { SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "1" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.pgDelta.enabled).toBe(true);
         }),
       ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (saved === undefined) delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
-          else process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = saved;
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
   it.effect("fails on a malformed SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED (Go config error)", () => {
     const dir = withConfig(undefined);
-    const saved = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
-    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = "maybe";
-    return read(dir).pipe(
+    return read(dir, { SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED: "maybe" }).pipe(
       Effect.exit,
       Effect.tap((exit) =>
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain(
+            expect(Formatter.formatJson(exit.cause)).toContain(
               "failed to parse config: invalid experimental.pgdelta.enabled: maybe.",
             );
           }
-          if (saved === undefined) delete process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
-          else process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = saved;
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -1828,7 +1748,7 @@ describe("legacyReadDbToml", () => {
       const exit = yield* read(bad).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Formatter.formatJson(exit.cause)).toContain(
           "failed to parse config: invalid storage.enabled.",
         );
       }
@@ -1841,7 +1761,7 @@ describe("legacyReadDbToml", () => {
     // Go's mergeFileConfig swallows only os.ErrNotExist; every other read error aborts
     // rather than silently running against the default local database (Codex P2 parity).
     // A directory at the config.toml path yields a non-NotFound PlatformError on read.
-    const dir = mkdtempSync(join(tmpdir(), "legacy-db-toml-"));
+    const dir = mkdtempSync("legacy-db-toml-");
     mkdirSync(join(dir, "supabase", "config.toml"), { recursive: true });
     return read(dir).pipe(
       Effect.exit,
@@ -1849,8 +1769,8 @@ describe("legacyReadDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyDbConfigLoadError");
-            expect(JSON.stringify(exit.cause)).toContain("failed to read file config");
+            expect(Formatter.formatJson(exit.cause)).toContain("LegacyDbConfigLoadError");
+            expect(Formatter.formatJson(exit.cause)).toContain("failed to read file config");
           }
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -1899,18 +1819,14 @@ describe("legacyReadDbToml", () => {
   });
 
   it.effect("expands env(VAR) for password and port like Go's LoadEnvHook", () => {
-    process.env["LEGACY_DB_PW"] = "from-env";
-    process.env["LEGACY_DB_PORT"] = "6000";
     const dir = withConfig(
       ["[db]", 'port = "env(LEGACY_DB_PORT)"', 'password = "env(LEGACY_DB_PW)"', ""].join("\n"),
     );
-    return read(dir).pipe(
+    return read(dir, { LEGACY_DB_PW: "from-env", LEGACY_DB_PORT: "6000" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.port).toBe(6000);
           expect(v.password).toBe("from-env");
-          delete process.env["LEGACY_DB_PW"];
-          delete process.env["LEGACY_DB_PORT"];
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -1921,13 +1837,11 @@ describe("legacyReadDbToml", () => {
     // Go's LoadEnvHook expands env(VAR) on every string element of db.seed.sql_paths
     // during unmarshal, before resolve() prefixes relative patterns — so the glob is
     // the expanded value, not the literal `supabase/env(...)`.
-    process.env["LEGACY_SEED_SQL"] = "custom/data.sql";
     const dir = withConfig(["[db.seed]", 'sql_paths = ["env(LEGACY_SEED_SQL)"]', ""].join("\n"));
-    return read(dir).pipe(
+    return read(dir, { LEGACY_SEED_SQL: "custom/data.sql" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.seed.sqlPaths).toEqual(["supabase/custom/data.sql"]);
-          delete process.env["LEGACY_SEED_SQL"];
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -1935,13 +1849,11 @@ describe("legacyReadDbToml", () => {
   });
 
   it.effect("honors SUPABASE_DB_SEED_ENABLED over the TOML value (Go AutomaticEnv)", () => {
-    process.env["SUPABASE_DB_SEED_ENABLED"] = "false";
     const dir = withConfig(["[db.seed]", "enabled = true", ""].join("\n"));
-    return read(dir).pipe(
+    return read(dir, { SUPABASE_DB_SEED_ENABLED: "false" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.seed.enabled).toBe(false);
-          delete process.env["SUPABASE_DB_SEED_ENABLED"];
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -1952,15 +1864,11 @@ describe("legacyReadDbToml", () => {
     // Go decodes the AutomaticEnv override through LoadEnvHook before the bool parse,
     // so `env(SEED_ON)` resolves to SEED_ON's value rather
     // than failing the load on a literal `env(...)` bool.
-    process.env["SUPABASE_DB_SEED_ENABLED"] = "env(SEED_ON)";
-    process.env["SEED_ON"] = "false";
     const dir = withConfig(["[db.seed]", "enabled = true", ""].join("\n"));
-    return read(dir).pipe(
+    return read(dir, { SUPABASE_DB_SEED_ENABLED: "env(SEED_ON)", SEED_ON: "false" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.seed.enabled).toBe(false);
-          delete process.env["SUPABASE_DB_SEED_ENABLED"];
-          delete process.env["SEED_ON"];
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -1968,13 +1876,11 @@ describe("legacyReadDbToml", () => {
   });
 
   it.effect("honors SUPABASE_DB_MIGRATIONS_ENABLED over the default (Go AutomaticEnv)", () => {
-    process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "false";
     const dir = withConfig(undefined);
-    return read(dir).pipe(
+    return read(dir, { SUPABASE_DB_MIGRATIONS_ENABLED: "false" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.migrationsEnabled).toBe(false);
-          delete process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -1982,14 +1888,12 @@ describe("legacyReadDbToml", () => {
   });
 
   it.effect("fails the load on a malformed SUPABASE_DB_SEED_ENABLED override", () => {
-    process.env["SUPABASE_DB_SEED_ENABLED"] = "notabool";
     const dir = withConfig(undefined);
-    return read(dir).pipe(
+    return read(dir, { SUPABASE_DB_SEED_ENABLED: "notabool" }).pipe(
       Effect.exit,
       Effect.tap((exit) =>
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
-          delete process.env["SUPABASE_DB_SEED_ENABLED"];
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -2001,13 +1905,11 @@ describe("legacyReadDbToml", () => {
     () => {
       // Go expands `project_id` via LoadEnvHook before deriving local container names,
       // so a raw `env(...)` must not leak into `supabase_db_env_PROJECT_ID_`.
-      process.env["LEGACY_PROJECT_REF"] = "abcdefghijklmnopqrst";
       const dir = withConfig(['project_id = "env(LEGACY_PROJECT_REF)"', ""].join("\n"));
-      return read(dir).pipe(
+      return read(dir, { LEGACY_PROJECT_REF: "abcdefghijklmnopqrst" }).pipe(
         Effect.tap((v) =>
           Effect.sync(() => {
             expect(Option.getOrNull(v.projectId)).toBe("abcdefghijklmnopqrst");
-            delete process.env["LEGACY_PROJECT_REF"];
             rmSync(dir, { recursive: true, force: true });
           }),
         ),
@@ -2021,7 +1923,6 @@ describe("legacyReadDbToml", () => {
     // during the later UnmarshalExact. So the block is NOT selected by its expanded ref and
     // does not merge (major_version stays the base 15), while Validate over the decoded,
     // expanded field still passes the load.
-    process.env["LEGACY_STAGING_REF"] = "stagingrefstagingref";
     const dir = withConfig(
       [
         'project_id = "base"',
@@ -2034,11 +1935,12 @@ describe("legacyReadDbToml", () => {
         "",
       ].join("\n"),
     );
-    return readRef(dir, "stagingrefstagingref").pipe(
+    return readRef(dir, "stagingrefstagingref", {
+      LEGACY_STAGING_REF: "stagingrefstagingref",
+    }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.majorVersion).toBe(15); // block not merged: matched on the raw env() literal
-          delete process.env["LEGACY_STAGING_REF"];
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -2047,17 +1949,16 @@ describe("legacyReadDbToml", () => {
 
   it.effect("rejects an env-backed remote project_id that expands to nothing", () => {
     // An unset env() expands to the literal `env(...)`, which fails Go's ref pattern.
-    delete process.env["LEGACY_MISSING_REF"];
     const dir = withConfig(
       ["[remotes.staging]", 'project_id = "env(LEGACY_MISSING_REF)"', ""].join("\n"),
     );
-    return read(dir).pipe(
+    return read(dir, {}).pipe(
       Effect.exit,
       Effect.tap((exit) =>
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain(
+            expect(Formatter.formatJson(exit.cause)).toContain(
               "Invalid config for remotes.staging.project_id",
             );
           }
@@ -2068,7 +1969,6 @@ describe("legacyReadDbToml", () => {
   });
 
   it.effect("parses experimental.orioledb_version (env-expanded) on a 15/17 project", () => {
-    process.env["LEGACY_ORIOLE_VER"] = "16.0.0.1";
     const dir = withConfig(
       [
         "[db]",
@@ -2082,11 +1982,10 @@ describe("legacyReadDbToml", () => {
         "",
       ].join("\n"),
     );
-    return read(dir).pipe(
+    return read(dir, { LEGACY_ORIOLE_VER: "16.0.0.1" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(Option.getOrNull(v.orioledbVersion)).toBe("16.0.0.1");
-          delete process.env["LEGACY_ORIOLE_VER"];
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -2096,7 +1995,6 @@ describe("legacyReadDbToml", () => {
   it.effect("warns (does not fail) for an unset S3 env on an OrioleDB project", () => {
     // Go's assertEnvLoaded prints `WARN: environment variable is unset: <NAME>` to
     // stderr for an S3 value still holding an unexpanded env(...), and returns nil.
-    delete process.env["LEGACY_S3_KEY"];
     const writes: Array<string> = [];
     const original = process.stderr.write.bind(process.stderr);
     process.stderr.write = ((chunk: string | Uint8Array): boolean => {
@@ -2113,7 +2011,7 @@ describe("legacyReadDbToml", () => {
         "",
       ].join("\n"),
     );
-    return read(dir).pipe(
+    return read(dir, {}).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           // Config load succeeds (warning only), and the orioledb version is parsed.
@@ -2133,7 +2031,6 @@ describe("legacyReadDbToml", () => {
       // than once per invocation (an earlier, authoritative preflight call already
       // warned) — internal re-reads pass `warnOnUnresolvedEnv: false` so Go's
       // exactly-once `flags.LoadConfig` WARN isn't printed a second/third time.
-      delete process.env["LEGACY_S3_KEY_QUIET"];
       const writes: Array<string> = [];
       const original = process.stderr.write.bind(process.stderr);
       process.stderr.write = ((chunk: string | Uint8Array): boolean => {
@@ -2151,11 +2048,12 @@ describe("legacyReadDbToml", () => {
         ].join("\n"),
       );
       return Effect.gen(function* () {
+        yield* flushFixture(dir);
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         return yield* legacyReadDbToml(fs, path, dir, undefined, { warnOnUnresolvedEnv: false });
       }).pipe(
-        Effect.provide(BunServices.layer),
+        Effect.provide(testServices({})),
         Effect.tap((v) =>
           Effect.sync(() => {
             // Config load still succeeds and still resolves the value; only the
@@ -2174,9 +2072,8 @@ describe("legacyReadDbToml", () => {
     // Go's LoadEnvHook only substitutes when len(os.Getenv(name)) > 0; otherwise it
     // preserves the literal string. Password is a plain string field, so an
     // unresolved env() ref stays literal (it is not validated like the ports).
-    delete process.env["LEGACY_DB_UNSET"];
     const dir = withConfig(["[db]", 'password = "env(LEGACY_DB_UNSET)"', ""].join("\n"));
-    return read(dir).pipe(
+    return read(dir, {}).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.password).toBe("env(LEGACY_DB_UNSET)");
@@ -2191,7 +2088,6 @@ describe("legacyReadDbToml", () => {
     () => {
       // Go decodes [db].port into uint16 after LoadEnvHook; a present value that cannot
       // unmarshal aborts config loading rather than silently defaulting to 54322.
-      delete process.env["LEGACY_DB_UNSET"];
       const cases = ['port = "abc"', "port = 70000", "port = -1", 'port = "env(LEGACY_DB_UNSET)"'];
       return Effect.forEach(cases, (line) => {
         const dir = withConfig(["[db]", line, ""].join("\n"));
@@ -2201,14 +2097,14 @@ describe("legacyReadDbToml", () => {
             Effect.sync(() => {
               expect(Exit.isFailure(exit)).toBe(true);
               if (Exit.isFailure(exit)) {
-                expect(JSON.stringify(exit.cause)).toContain("LegacyDbConfigLoadError");
-                expect(JSON.stringify(exit.cause)).toContain("invalid db.port");
+                expect(Formatter.formatJson(exit.cause)).toContain("LegacyDbConfigLoadError");
+                expect(Formatter.formatJson(exit.cause)).toContain("invalid db.port");
               }
               rmSync(dir, { recursive: true, force: true });
             }),
           ),
         );
-      });
+      }).pipe(Effect.provide(testServices({})));
     },
   );
 
@@ -2220,7 +2116,7 @@ describe("legacyReadDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("invalid db.shadow_port");
+            expect(Formatter.formatJson(exit.cause)).toContain("invalid db.shadow_port");
           }
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -2229,14 +2125,13 @@ describe("legacyReadDbToml", () => {
   });
 
   it.effect("resolves env(VAR) from the project supabase/.env file (Go loadNestedEnv)", () => {
-    delete process.env["LEGACY_DB_FILEVAR"];
     const dir = withConfig(
       ["[db]", 'port = "env(LEGACY_DB_FILEVAR)"', 'password = "env(LEGACY_DB_FILEVAR)"', ""].join(
         "\n",
       ),
     );
     writeFileSync(join(dir, "supabase", ".env"), "LEGACY_DB_FILEVAR=7000\n");
-    return read(dir).pipe(
+    return read(dir, {}).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.port).toBe(7000);
@@ -2248,14 +2143,12 @@ describe("legacyReadDbToml", () => {
   });
 
   it.effect("lets the shell env win over a project .env value (godotenv no-override)", () => {
-    process.env["LEGACY_DB_FILEVAR"] = "shell-wins";
     const dir = withConfig(["[db]", 'password = "env(LEGACY_DB_FILEVAR)"', ""].join("\n"));
     writeFileSync(join(dir, "supabase", ".env"), "LEGACY_DB_FILEVAR=from-file\n");
-    return read(dir).pipe(
+    return read(dir, { LEGACY_DB_FILEVAR: "shell-wins" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.password).toBe("shell-wins");
-          delete process.env["LEGACY_DB_FILEVAR"];
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -2263,11 +2156,10 @@ describe("legacyReadDbToml", () => {
   });
 
   it.effect("lets supabase/.env win over a repo-root .env (Go walks supabase/ first)", () => {
-    delete process.env["LEGACY_DB_FILEVAR"];
     const dir = withConfig(["[db]", 'password = "env(LEGACY_DB_FILEVAR)"', ""].join("\n"));
     writeFileSync(join(dir, ".env"), "LEGACY_DB_FILEVAR=root\n");
     writeFileSync(join(dir, "supabase", ".env"), "LEGACY_DB_FILEVAR=supabase\n");
-    return read(dir).pipe(
+    return read(dir, {}).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.password).toBe("supabase");
@@ -2286,7 +2178,7 @@ describe("legacyReadDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("failed to parse environment file");
+            expect(Formatter.formatJson(exit.cause)).toContain("failed to parse environment file");
           }
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -2306,7 +2198,7 @@ describe("legacyReadDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("failed to read environment file");
+            expect(Formatter.formatJson(exit.cause)).toContain("failed to read environment file");
           }
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -2315,18 +2207,14 @@ describe("legacyReadDbToml", () => {
   });
 
   it.effect("lets SUPABASE_DB_* env vars override the [db] config (viper AutomaticEnv)", () => {
-    const prev = {
-      PORT: process.env["SUPABASE_DB_PORT"],
-      SHADOW: process.env["SUPABASE_DB_SHADOW_PORT"],
-      PW: process.env["SUPABASE_DB_PASSWORD"],
-    };
-    process.env["SUPABASE_DB_PORT"] = "6000";
-    process.env["SUPABASE_DB_SHADOW_PORT"] = "6001";
-    process.env["SUPABASE_DB_PASSWORD"] = "env-override";
     const dir = withConfig(
       ["[db]", "port = 55555", "shadow_port = 55556", 'password = "hunter2"', ""].join("\n"),
     );
-    return read(dir).pipe(
+    return read(dir, {
+      SUPABASE_DB_PORT: "6000",
+      SUPABASE_DB_SHADOW_PORT: "6001",
+      SUPABASE_DB_PASSWORD: "env-override",
+    }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.port).toBe(6000);
@@ -2334,14 +2222,6 @@ describe("legacyReadDbToml", () => {
           // db.password is tagged `json:"-"` in Go, so it is NOT bound from
           // SUPABASE_DB_PASSWORD — the local password stays the config value.
           expect(v.password).toBe("hunter2");
-          for (const [k, val] of Object.entries({
-            SUPABASE_DB_PORT: prev.PORT,
-            SUPABASE_DB_SHADOW_PORT: prev.SHADOW,
-            SUPABASE_DB_PASSWORD: prev.PW,
-          })) {
-            if (val === undefined) delete process.env[k];
-            else process.env[k] = val;
-          }
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -2350,15 +2230,11 @@ describe("legacyReadDbToml", () => {
 
   it.effect("does not source the local password from SUPABASE_DB_PASSWORD", () => {
     // Go's db.Password is json:"-" — not env-bound; the local default is "postgres".
-    const prev = process.env["SUPABASE_DB_PASSWORD"];
-    process.env["SUPABASE_DB_PASSWORD"] = "remote-secret";
     const dir = withConfig(["[db]", "port = 5000", ""].join("\n"));
-    return read(dir).pipe(
+    return read(dir, { SUPABASE_DB_PASSWORD: "remote-secret" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.password).toBe("postgres");
-          if (prev === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
-          else process.env["SUPABASE_DB_PASSWORD"] = prev;
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -2377,7 +2253,7 @@ describe("legacyReadDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain(
+            expect(Formatter.formatJson(exit.cause)).toContain(
               "Missing required field in config: db.major_version",
             );
           }
@@ -2395,7 +2271,9 @@ describe("legacyReadDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("Postgres version 12.x is unsupported");
+            expect(Formatter.formatJson(exit.cause)).toContain(
+              "Postgres version 12.x is unsupported",
+            );
           }
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -2411,7 +2289,7 @@ describe("legacyReadDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain(
+            expect(Formatter.formatJson(exit.cause)).toContain(
               "Failed reading config: Invalid db.major_version: 16.",
             );
           }
@@ -2443,7 +2321,7 @@ describe("legacyReadDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain(
+            expect(Formatter.formatJson(exit.cause)).toContain(
               "Failed reading config: Invalid db.major_version: 17foo.",
             );
           }
@@ -2454,13 +2332,11 @@ describe("legacyReadDbToml", () => {
   });
 
   it.effect("expands env(VAR) for db.major_version like Go's LoadEnvHook", () => {
-    process.env["LEGACY_PG_MAJOR"] = "15";
     const dir = withConfig(["[db]", 'major_version = "env(LEGACY_PG_MAJOR)"', ""].join("\n"));
-    return read(dir).pipe(
+    return read(dir, { LEGACY_PG_MAJOR: "15" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.majorVersion).toBe(15);
-          delete process.env["LEGACY_PG_MAJOR"];
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -2468,15 +2344,11 @@ describe("legacyReadDbToml", () => {
   });
 
   it.effect("honors SUPABASE_DB_MAJOR_VERSION over the TOML value", () => {
-    const prev = process.env["SUPABASE_DB_MAJOR_VERSION"];
-    process.env["SUPABASE_DB_MAJOR_VERSION"] = "15";
     const dir = withConfig(["[db]", "major_version = 17", ""].join("\n"));
-    return read(dir).pipe(
+    return read(dir, { SUPABASE_DB_MAJOR_VERSION: "15" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.majorVersion).toBe(15);
-          if (prev === undefined) delete process.env["SUPABASE_DB_MAJOR_VERSION"];
-          else process.env["SUPABASE_DB_MAJOR_VERSION"] = prev;
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -2486,15 +2358,11 @@ describe("legacyReadDbToml", () => {
   it.effect("honors SUPABASE_EDGE_RUNTIME_DENO_VERSION over the TOML value", () => {
     // Go binds this via viper AutomaticEnv before Validate, so an env override of 1
     // selects the deno1 edge-runtime image even when the TOML omits/sets a different value.
-    const prev = process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
-    process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
     const dir = withConfig(["[edge_runtime]", "deno_version = 2", ""].join("\n"));
-    return read(dir).pipe(
+    return read(dir, { SUPABASE_EDGE_RUNTIME_DENO_VERSION: "1" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.denoVersion).toBe(1);
-          if (prev === undefined) delete process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
-          else process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = prev;
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -2511,7 +2379,7 @@ describe("legacyReadDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain(
+            expect(Formatter.formatJson(exit.cause)).toContain(
               "Failed reading config: Invalid edge_runtime.deno_version: 2foo.",
             );
           }
@@ -2531,7 +2399,7 @@ describe("legacyReadDbToml", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain(
+            expect(Formatter.formatJson(exit.cause)).toContain(
               "Invalid config for remotes.staging.project_id. Must be like: abcdefghijklmnopqrst",
             );
           }
@@ -2556,15 +2424,11 @@ describe("legacyReadDbToml", () => {
   });
 
   it.effect("ignores an empty SUPABASE_DB_PORT override (viper AllowEmptyEnv=false)", () => {
-    const prev = process.env["SUPABASE_DB_PORT"];
-    process.env["SUPABASE_DB_PORT"] = "";
     const dir = withConfig(["[db]", "port = 55555", ""].join("\n"));
-    return read(dir).pipe(
+    return read(dir, { SUPABASE_DB_PORT: "" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.port).toBe(55555);
-          if (prev === undefined) delete process.env["SUPABASE_DB_PORT"];
-          else process.env["SUPABASE_DB_PORT"] = prev;
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -2576,11 +2440,10 @@ describe("legacyReadDbToml", () => {
     () => {
       // The --linked resolver reads SUPABASE_DB_PASSWORD via this map, so a value
       // defined only in supabase/.env must be visible (Go's loadNestedEnv parity).
-      delete process.env["SUPABASE_DB_PASSWORD"];
-      const dir = mkdtempSync(join(tmpdir(), "legacy-db-toml-"));
+      const dir = mkdtempSync("legacy-db-toml-");
       mkdirSync(join(dir, "supabase"), { recursive: true });
       writeFileSync(join(dir, "supabase", ".env"), "SUPABASE_DB_PASSWORD=from-dotenv\n");
-      return loadEnv(dir).pipe(
+      return loadEnv(dir, {}).pipe(
         Effect.tap((env) =>
           Effect.sync(() => {
             expect(env["SUPABASE_DB_PASSWORD"]).toBe("from-dotenv");
@@ -2597,32 +2460,27 @@ describe("legacyReadDbToml", () => {
     // NOT mutate process.env. Applying to process.env is the separate, opt-in
     // legacyApplyProjectEnv (below), so a mere `load` for SUPABASE_YES has no global
     // side effect.
-    const saved: Record<string, string | undefined> = {};
-    for (const k of ["SUPABASE_INTERNAL_IMAGE_REGISTRY", "SUPABASE_PROJECT_ID", "SUPABASE_ENV"]) {
-      saved[k] = process.env[k];
-      delete process.env[k];
-    }
-    const dir = mkdtempSync(join(tmpdir(), "legacy-db-toml-"));
+    const dir = mkdtempSync("legacy-db-toml-");
     mkdirSync(join(dir, "supabase"), { recursive: true });
     writeFileSync(
       join(dir, "supabase", ".env"),
       "SUPABASE_INTERNAL_IMAGE_REGISTRY=my-mirror.example.com\nSUPABASE_PROJECT_ID=envonlyref\nSUPABASE_ENV=staging\n",
     );
-    return loadEnv(dir).pipe(
-      Effect.tap((env) =>
-        Effect.sync(() => {
+    return loadEnv(dir, {}).pipe(
+      Effect.flatMap((env) =>
+        Effect.gen(function* () {
           // The returned map carries all keys.
           expect(env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBe("my-mirror.example.com");
           expect(env["SUPABASE_PROJECT_ID"]).toBe("envonlyref");
           expect(env["SUPABASE_ENV"]).toBe("staging");
-          // ...but process.env is untouched, including the allowlisted registry key.
-          expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
-          expect(process.env["SUPABASE_PROJECT_ID"]).toBeUndefined();
-          expect(process.env["SUPABASE_ENV"]).toBeUndefined();
-          for (const [k, v] of Object.entries(saved)) {
-            if (v === undefined) delete process.env[k];
-            else process.env[k] = v;
-          }
+          // ...but the process environment is untouched, including the allowlisted registry key.
+          expect(
+            Option.getOrUndefined(yield* readEnvironment("SUPABASE_INTERNAL_IMAGE_REGISTRY")),
+          ).toBeUndefined();
+          expect(
+            Option.getOrUndefined(yield* readEnvironment("SUPABASE_PROJECT_ID")),
+          ).toBeUndefined();
+          expect(Option.getOrUndefined(yield* readEnvironment("SUPABASE_ENV"))).toBeUndefined();
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -2630,25 +2488,8 @@ describe("legacyReadDbToml", () => {
   });
 
   it.effect(
-    "legacyApplyProjectEnv sets only the allowlisted keys in-scope, never overrides, reverts on close",
+    "legacyApplyProjectEnv resolves only allowlisted keys and lets shell values win",
     () => {
-      // Go's loadNestedEnv os.Setenv's the project .env, but its root globals
-      // (project-ref, SUPABASE_ENV, workdir/profile) are resolved from the shell
-      // BEFORE loadNestedEnv. Our resolvers read process.env lazily, so we apply only
-      // the allowlisted `SUPABASE_INTERNAL_IMAGE_REGISTRY` / `PGDELTA_NPM_REGISTRY`
-      // (the two process.env-only readers): a .env project-ref must not retarget the
-      // lazy ref/pooler resolvers, and a .env SUPABASE_ENV must not switch the
-      // env-file set.
-      const saved: Record<string, string | undefined> = {};
-      for (const k of [
-        "SUPABASE_INTERNAL_IMAGE_REGISTRY",
-        "PGDELTA_NPM_REGISTRY",
-        "SUPABASE_PROJECT_ID",
-        "SUPABASE_ENV",
-      ]) {
-        saved[k] = process.env[k];
-        delete process.env[k];
-      }
       const loaded = {
         SUPABASE_INTERNAL_IMAGE_REGISTRY: "my-mirror.example.com",
         PGDELTA_NPM_REGISTRY: "https://npm.example.com",
@@ -2656,34 +2497,23 @@ describe("legacyReadDbToml", () => {
         SUPABASE_ENV: "staging",
       };
       return Effect.gen(function* () {
-        // Inside the scope: only the registry keys are applied; the ref/env selector are not.
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            yield* legacyApplyProjectEnv(loaded);
-            expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBe("my-mirror.example.com");
-            expect(process.env["PGDELTA_NPM_REGISTRY"]).toBe("https://npm.example.com");
-            expect(process.env["SUPABASE_PROJECT_ID"]).toBeUndefined();
-            expect(process.env["SUPABASE_ENV"]).toBeUndefined();
-          }),
+        const resolved = yield* legacyApplyProjectEnv(loaded);
+        expect(resolved).toEqual({
+          SUPABASE_INTERNAL_IMAGE_REGISTRY: "my-mirror.example.com",
+          PGDELTA_NPM_REGISTRY: "https://npm.example.com",
+        });
+        const shellResolved = yield* legacyApplyProjectEnv(loaded).pipe(
+          Effect.provide(
+            testServices({
+              SUPABASE_INTERNAL_IMAGE_REGISTRY: "shell-wins.example.com",
+            }),
+          ),
         );
-        // After the scope closes the applied keys are reverted (no test-worker leak).
-        expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
-        expect(process.env["PGDELTA_NPM_REGISTRY"]).toBeUndefined();
-
-        // An existing process.env value is never overridden, and is NOT deleted on close.
-        process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = "shell-wins.example.com";
-        yield* Effect.scoped(legacyApplyProjectEnv(loaded));
-        expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBe("shell-wins.example.com");
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            for (const [k, v] of Object.entries(saved)) {
-              if (v === undefined) delete process.env[k];
-              else process.env[k] = v;
-            }
-          }),
-        ),
-      );
+        expect(shellResolved).toEqual({
+          SUPABASE_INTERNAL_IMAGE_REGISTRY: "shell-wins.example.com",
+          PGDELTA_NPM_REGISTRY: "https://npm.example.com",
+        });
+      }).pipe(Effect.provide(testServices({})));
     },
   );
 
@@ -2848,7 +2678,7 @@ describe("legacyReadDbToml auth.Enabled validation (Go config.Validate parity)",
       if (extra) extra(dir);
       const exit = yield* read(dir).pipe(Effect.exit);
       expect(Exit.isFailure(exit), `expected failure containing: ${message}`).toBe(true);
-      if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain(message);
+      if (Exit.isFailure(exit)) expect(Formatter.formatJson(exit.cause)).toContain(message);
       rmSync(dir, { recursive: true, force: true });
     });
   // Loads cleanly — no validation error (the read resolves to a value).
@@ -3059,20 +2889,12 @@ describe("legacyReadDbToml auth.Enabled validation (Go config.Validate parity)",
   );
 
   it.effect("skips auth validation when SUPABASE_AUTH_ENABLED=false (env override)", () => {
-    const previous = process.env["SUPABASE_AUTH_ENABLED"];
-    process.env["SUPABASE_AUTH_ENABLED"] = "false";
     const dir = withConfig(
       ["[auth]", 'site_url = ""', "[auth.passkey]", "enabled = true"].join("\n"),
     );
-    return read(dir).pipe(
+    return read(dir, { SUPABASE_AUTH_ENABLED: "false" }).pipe(
       Effect.tap((v) => Effect.sync(() => expect(v.baseline).toBeDefined())),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_AUTH_ENABLED"];
-          else process.env["SUPABASE_AUTH_ENABLED"] = previous;
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
@@ -3099,7 +2921,7 @@ describe("legacyReadDbToml encrypted secret decryption (Go DecryptSecretHookFunc
       const dir = withConfig(lines.join("\n"));
       const exit = yield* read(dir).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain(message);
+      if (Exit.isFailure(exit)) expect(Formatter.formatJson(exit.cause)).toContain(message);
       rmSync(dir, { recursive: true, force: true });
     });
   const expectLoads = (lines: ReadonlyArray<string>) =>
@@ -3185,7 +3007,9 @@ describe("legacyReadDbToml non-scalar config booleans (Go UnmarshalExact parity)
       const exit = yield* read(dir).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(`failed to parse config: invalid ${field}.`);
+        expect(Formatter.formatJson(exit.cause)).toContain(
+          `failed to parse config: invalid ${field}.`,
+        );
       }
       rmSync(dir, { recursive: true, force: true });
     });
@@ -3208,7 +3032,7 @@ describe("legacyReadDbToml empty project_id (Go config.Validate parity)", () => 
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain(
+            expect(Formatter.formatJson(exit.cause)).toContain(
               "Missing required field in config: project_id",
             );
           }
@@ -3232,12 +3056,16 @@ describe("legacyReadDbToml empty project_id (Go config.Validate parity)", () => 
 });
 
 describe("legacyReadDbToml [analytics] validation (Go config.Validate parity)", () => {
-  const failsWith = (lines: ReadonlyArray<string>, message: string) =>
+  const failsWith = (
+    lines: ReadonlyArray<string>,
+    message: string,
+    env: Readonly<Record<string, string>> = {},
+  ) =>
     Effect.gen(function* () {
       const dir = withConfig(lines.join("\n"));
-      const exit = yield* read(dir).pipe(Effect.exit);
+      const exit = yield* read(dir, env).pipe(Effect.exit);
       expect(Exit.isFailure(exit), `expected failure containing: ${message}`).toBe(true);
-      if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain(message);
+      if (Exit.isFailure(exit)) expect(Formatter.formatJson(exit.cause)).toContain(message);
       rmSync(dir, { recursive: true, force: true });
     });
   const succeeds = (lines: ReadonlyArray<string>) =>
@@ -3299,84 +3127,49 @@ describe("legacyReadDbToml [analytics] validation (Go config.Validate parity)", 
   it.effect("skips the bigquery gcp checks when analytics is disabled", () =>
     succeeds(["[analytics]", "enabled = false", 'backend = "bigquery"']),
   );
-  it.effect("honors SUPABASE_ANALYTICS_BACKEND when validating the bigquery gcp fields", () => {
-    const previous = process.env["SUPABASE_ANALYTICS_BACKEND"];
-    process.env["SUPABASE_ANALYTICS_BACKEND"] = "bigquery";
-    return failsWith(
+  it.effect("honors SUPABASE_ANALYTICS_BACKEND when validating the bigquery gcp fields", () =>
+    failsWith(
       ["[analytics]", "enabled = true"],
       "Missing required field in config: analytics.gcp_project_id",
-    ).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_ANALYTICS_BACKEND"];
-          else process.env["SUPABASE_ANALYTICS_BACKEND"] = previous;
-        }),
-      ),
-    );
-  });
+      { SUPABASE_ANALYTICS_BACKEND: "bigquery" },
+    ),
+  );
 });
 
 describe("legacyReadDbToml SUPABASE_PROJECT_ID override (Go AutomaticEnv parity)", () => {
-  const restore = (previous: string | undefined) =>
-    Effect.sync(() => {
-      if (previous === undefined) delete process.env["SUPABASE_PROJECT_ID"];
-      else process.env["SUPABASE_PROJECT_ID"] = previous;
-    });
-
   it.effect("overrides the TOML project_id with SUPABASE_PROJECT_ID", () => {
-    const previous = process.env["SUPABASE_PROJECT_ID"];
-    process.env["SUPABASE_PROJECT_ID"] = "env-project";
     const dir = withConfig(['project_id = "toml-project"', ""].join("\n"));
-    return read(dir).pipe(
+    return read(dir, { SUPABASE_PROJECT_ID: "env-project" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(Option.getOrNull(v.projectId)).toBe("env-project");
         }),
       ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-      Effect.ensuring(restore(previous)),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
   it.effect("applies SUPABASE_PROJECT_ID even when config.toml is absent", () => {
-    const previous = process.env["SUPABASE_PROJECT_ID"];
-    process.env["SUPABASE_PROJECT_ID"] = "env-project";
     const dir = withConfig(undefined);
-    return read(dir).pipe(
+    return read(dir, { SUPABASE_PROJECT_ID: "env-project" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(Option.getOrNull(v.projectId)).toBe("env-project");
         }),
       ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-      Effect.ensuring(restore(previous)),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
   it.effect("ignores an empty SUPABASE_PROJECT_ID (viper AllowEmptyEnv=false)", () => {
-    const previous = process.env["SUPABASE_PROJECT_ID"];
-    process.env["SUPABASE_PROJECT_ID"] = "";
     const dir = withConfig(['project_id = "toml-project"', ""].join("\n"));
-    return read(dir).pipe(
+    return read(dir, { SUPABASE_PROJECT_ID: "" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(Option.getOrNull(v.projectId)).toBe("toml-project");
         }),
       ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-      Effect.ensuring(restore(previous)),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
@@ -3388,13 +3181,11 @@ describe("legacyReadDbToml SUPABASE_PROJECT_ID override (Go AutomaticEnv parity)
       // that block is selected BECAUSE its
       // `project_id` equals the resolved ref, so it must win even when an unrelated
       // `SUPABASE_PROJECT_ID` is set to something else entirely.
-      const previous = process.env["SUPABASE_PROJECT_ID"];
-      process.env["SUPABASE_PROJECT_ID"] = "local";
       const ref = "abcdefghijklmnopqrst";
       const dir = withConfig(
         ['project_id = "toml-project"', "[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"),
       );
-      return readRef(dir, ref).pipe(
+      return readRef(dir, ref, { SUPABASE_PROJECT_ID: "local" }).pipe(
         Effect.tap((v) =>
           Effect.sync(() => {
             expect(v.appliedRemote).toBe("prod");
@@ -3402,34 +3193,22 @@ describe("legacyReadDbToml SUPABASE_PROJECT_ID override (Go AutomaticEnv parity)
             expect(Option.getOrNull(v.projectId)).toBe(ref);
           }),
         ),
-        Effect.ensuring(
-          Effect.sync(() => {
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
-        Effect.ensuring(restore(previous)),
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
       );
     },
   );
 
   it.effect("still applies SUPABASE_PROJECT_ID when no [remotes.*] block matches the ref", () => {
-    const previous = process.env["SUPABASE_PROJECT_ID"];
-    process.env["SUPABASE_PROJECT_ID"] = "env-project";
     const ref = "abcdefghijklmnopqrst";
     const dir = withConfig(['project_id = "toml-project"', ""].join("\n"));
-    return readRef(dir, ref).pipe(
+    return readRef(dir, ref, { SUPABASE_PROJECT_ID: "env-project" }).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
           expect(v.appliedRemote).toBeUndefined();
           expect(Option.getOrNull(v.projectId)).toBe("env-project");
         }),
       ),
-      Effect.ensuring(
-        Effect.sync(() => {
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-      Effect.ensuring(restore(previous)),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 });

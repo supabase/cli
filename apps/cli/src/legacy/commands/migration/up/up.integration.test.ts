@@ -1,8 +1,17 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import {
+  Cause,
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Path,
+} from "effect";
+import * as Formatter from "effect/Formatter";
 
 import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
@@ -31,9 +40,25 @@ import {
 import { LegacyMigrationVaultError } from "../../../shared/legacy-vault.ts";
 import { legacyMigrationUp } from "./up.handler.ts";
 import type { LegacyMigrationUpFlags } from "./up.command.ts";
+import { makeLegacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
 
 const LIST_SQL = "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version";
 const READ_VAULT = "SELECT id, name FROM vault.secrets WHERE name = ANY($1)";
+
+const fixturePath = ManagedRuntime.make(BunServices.layer).runSync(Path.Path);
+const join = (first: string, ...rest: ReadonlyArray<string>) => fixturePath.join(first, ...rest);
+const pendingWrites: Array<{ readonly path: string; readonly contents: string }> = [];
+const writeFileSync = (path: string, contents: string) => {
+  pendingWrites.push({ path, contents });
+};
+const flushFixtureWrites = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  for (const write of pendingWrites) {
+    yield* fs.makeDirectory(fixturePath.dirname(write.path), { recursive: true });
+    yield* fs.writeFileString(write.path, write.contents);
+  }
+  pendingWrites.length = 0;
+});
 
 interface SetupOpts {
   readonly format?: OutputFormat;
@@ -47,7 +72,6 @@ interface SetupOpts {
 
 function setup(workdir: string, opts: SetupOpts = {}) {
   if (opts.config !== undefined) {
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
     writeFileSync(join(workdir, "supabase", "config.toml"), opts.config);
   }
   const out = mockOutput({ format: opts.format ?? "text" });
@@ -121,6 +145,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
 
   const layer = Layer.mergeAll(
+    Layer.effectDiscard(flushFixtureWrites.pipe(Effect.provide(BunServices.layer))),
     out.layer,
     telemetry.layer,
     cache.layer,
@@ -131,6 +156,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     BunServices.layer,
+    makeLegacyViperEnvLayer(ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
   );
   return { layer, out, telemetry, execs, queries, cache };
 }
@@ -145,7 +171,6 @@ const flags = (over: Partial<LegacyMigrationUpFlags> = {}): LegacyMigrationUpFla
 
 const seed = (workdir: string, name: string, body = "create table a;\n") => {
   const dir = join(workdir, "supabase", "migrations");
-  mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, name), body);
 };
 const insertedVersions = (queries: Array<{ sql: string; params?: ReadonlyArray<unknown> }>) =>
@@ -189,8 +214,10 @@ describe("legacy migration up", () => {
         expect(Option.isSome(failure) && failure.value._tag).toBe(
           "LegacyMigrationMissingLocalError",
         );
-        expect(JSON.stringify(exit.cause)).toContain("migration repair --local --status reverted");
-        expect(JSON.stringify(exit.cause)).toContain("supabase db pull --local");
+        expect(Formatter.formatJson(exit.cause)).toContain(
+          "migration repair --local --status reverted",
+        );
+        expect(Formatter.formatJson(exit.cause)).toContain("supabase db pull --local");
       }
     }).pipe(Effect.provide(layer));
   });

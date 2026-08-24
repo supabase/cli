@@ -1,18 +1,12 @@
 import { renderGlamourTable } from "../../../output/legacy-glamour-table.ts";
+import { DateTime } from "effect";
 import type { Functions } from "./list.encoders.ts";
 
 export function formatUnixMilliTimestamp(value: number): string {
-  const date = new Date(value);
-  const parts = [
-    date.getUTCFullYear(),
-    date.getUTCMonth() + 1,
-    date.getUTCDate(),
-    date.getUTCHours(),
-    date.getUTCMinutes(),
-    date.getUTCSeconds(),
-  ];
-  const [year, ...rest] = parts.map((part) => part.toString().padStart(2, "0"));
-  return `${year}-${rest[0]}-${rest[1]} ${rest[2]}:${rest[3]}:${rest[4]}`;
+  const iso = DateTime.formatIso(DateTime.makeUnsafe(value));
+  const date = iso.slice(0, 10);
+  const time = iso.slice(11, 19);
+  return `${date} ${time}`;
 }
 
 export function renderFunctionsTable(functions: Functions): string {

@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer } from "effect";
+import { Effect, Exit, Formatter, Layer, Schema } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -65,7 +65,9 @@ function setup(routes: ReadonlyArray<{ match: string; status?: number; body?: un
       let body: unknown;
       if (request.body._tag === "Uint8Array") {
         try {
-          body = JSON.parse(new TextDecoder().decode(request.body.body));
+          body = Schema.decodeSync(Schema.fromJsonString(Schema.Unknown))(
+            new TextDecoder().decode(request.body.body),
+          );
         } catch {
           body = undefined;
         }
@@ -131,7 +133,7 @@ describe("legacyMakeStorageGateway", () => {
         apiKey: "sb_secret_local",
         userAgent: "ua",
       });
-      yield* opaque.listBuckets();
+      yield* opaque.listBuckets;
       expect(requests[0]?.headers["apikey"]).toBe("sb_secret_local");
       expect(requests[0]?.headers["authorization"]).toBeUndefined();
 
@@ -140,7 +142,7 @@ describe("legacyMakeStorageGateway", () => {
         apiKey: "ey.jwt.key",
         userAgent: "ua",
       });
-      yield* jwt.listBuckets();
+      yield* jwt.listBuckets;
       expect(requests[1]?.headers["authorization"]).toBe("Bearer ey.jwt.key");
     }).pipe(Effect.provide(layer));
   });
@@ -157,7 +159,7 @@ describe("legacyMakeStorageGateway", () => {
       });
       const exit = yield* gateway.moveObject("private", "a", "b").pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const json = JSON.stringify(exit);
+      const json = Formatter.formatJson(exit);
       expect(json).toContain("Error status 404");
       // The raw response body is carried on the status error for caller classification.
       expect(json).toContain("not_found");

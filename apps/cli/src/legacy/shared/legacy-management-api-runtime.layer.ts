@@ -121,12 +121,14 @@ export function legacyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string
   // `LegacyOutputFlag`, `Analytics`, `Stdio`, `Tty`, …) and is therefore
   // already provided via `runCli` / `cliProgramFor` — no change here.
   //
-  // The assertion uses `unknown` for E and R so that the assertion ONLY fires
-  // for missing exposed services; changes to the layer's internal error /
-  // requirement channels do not perturb this check. cli-e2e parity tests
-  // surface missing-service runtime panics, but the same class of bug is now
-  // caught at compile time.
-  const _serviceCoverageCheck: Layer.Layer<LegacyManagementApiServices, unknown, unknown> = built;
+  // Preserve the concrete channels inferred from the composed layer while checking
+  // that every service exposed to handlers is present. This keeps the assertion
+  // sensitive to missing services without widening the runtime's requirements.
+  const _serviceCoverageCheck: Layer.Layer<
+    LegacyManagementApiServices,
+    Layer.Error<typeof built>,
+    Layer.Services<typeof built>
+  > = built;
   void _serviceCoverageCheck;
 
   return built;

@@ -39,7 +39,7 @@ const defaultVectorBuckets = {};
  * numeric value is normalized to its decimal string so the decoded type stays a
  * `string` for all consumers (`ramInBytes` parses either form identically).
  */
-const fileSizeLimit = Schema.Union([Schema.String, Schema.Number]).pipe(
+const fileSizeLimit = Schema.Union([Schema.String, Schema.Finite]).pipe(
   Schema.decodeTo(Schema.String, {
     decode: SchemaGetter.transform((value) => (typeof value === "number" ? String(value) : value)),
     encode: SchemaGetter.transform((value) => value),
@@ -126,19 +126,19 @@ export const storage = Schema.Struct({
       tags,
       links,
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultAnalyticsEnabled))),
-    max_namespaces: Schema.Number.annotate({
+    max_namespaces: Schema.Finite.annotate({
       default: defaultMaxNamespaces,
       description: "Maximum number of analytics namespaces.",
       tags,
       links,
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxNamespaces))),
-    max_tables: Schema.Number.annotate({
+    max_tables: Schema.Finite.annotate({
       default: defaultMaxTables,
       description: "Maximum number of analytics tables.",
       tags,
       links,
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxTables))),
-    max_catalogs: Schema.Number.annotate({
+    max_catalogs: Schema.Finite.annotate({
       default: defaultMaxCatalogs,
       description: "Maximum number of analytics catalogs.",
       tags,
@@ -164,13 +164,13 @@ export const storage = Schema.Struct({
       tags,
       links,
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultVectorEnabled))),
-    max_buckets: Schema.Number.annotate({
+    max_buckets: Schema.Finite.annotate({
       default: defaultMaxBuckets,
       description: "Maximum number of vector buckets.",
       tags,
       links,
     }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxBuckets))),
-    max_indexes: Schema.Number.annotate({
+    max_indexes: Schema.Finite.annotate({
       default: defaultMaxIndexes,
       description: "Maximum number of vector indexes.",
       tags,

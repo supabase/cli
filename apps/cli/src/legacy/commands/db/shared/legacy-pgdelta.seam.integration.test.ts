@@ -1,9 +1,6 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, ConfigProvider, Effect, FileSystem, Exit, Layer, Option, Path } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
@@ -33,6 +30,11 @@ import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.
 import { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
 import { legacyDeclarativeSeamLayer } from "./legacy-pgdelta.seam.layer.ts";
 import { LegacyDeclarativeSeam } from "./legacy-pgdelta.seam.service.ts";
+import { makeLegacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
+
+const legacyViperEnvLayer = makeLegacyViperEnvLayer(
+  ConfigProvider.fromEnv({ preserveEmptyStrings: true }),
+);
 
 /**
  * Integration coverage for the fully-native `legacyDeclarativeSeamLayer` (CLI-1970) —
@@ -152,10 +154,12 @@ function setup(
     // satisfy as it's applied, so `BunServices.layer` only ever fills in `FileSystem`/`Path`.
     Layer.provide(shadowSpawner.layer),
     Layer.provide(BunServices.layer),
+    Layer.provide(legacyViperEnvLayer),
   );
 
   const layer = Layer.mergeAll(
     BunServices.layer,
+    legacyViperEnvLayer,
     out.layer,
     shadowSpawner.layer,
     dbConnection.layer,
@@ -178,69 +182,86 @@ function setup(
 const failError = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
 
+const withTempWorkdir = <A, E, R>(
+  run: (fs: FileSystem.FileSystem, path: Path.Path, workdir: string) => Effect.Effect<A, E, R>,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const workdir = yield* fs.makeTempDirectoryScoped({ prefix: "legacy-pgdelta-seam-" });
+    return yield* run(fs, path, workdir);
+  });
+
 describe("legacyDeclarativeSeamLayer.exportCatalog", () => {
   it.effect(
     "provisions a shadow on a baseline cache miss, then reuses the cached catalog with no further container work",
     () => {
-      const dir = mkdtempSync(join(tmpdir(), "legacy-pgdelta-seam-"));
-      const { layer, out, shadowSpawned } = setup(dir);
-      return Effect.gen(function* () {
-        const seam = yield* LegacyDeclarativeSeam;
+      return withTempWorkdir((fs, path, dir) => {
+        const { layer, out, shadowSpawned } = setup(dir);
+        return Effect.gen(function* () {
+          const seam = yield* LegacyDeclarativeSeam;
 
-        const firstRef = yield* seam.exportCatalog({ mode: "baseline", noCache: false });
-        expect(firstRef).toMatch(/^supabase[/\\]\.temp[/\\]pgdelta[/\\]catalog-baseline-.*\.json$/);
-        expect(readFileSync(join(dir, firstRef), "utf8")).toBe('{"schemas":[]}');
-        expect(out.stderrText).toContain("Creating shadow database...\n");
-        expect(shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
-        expect(shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
+          const firstRef = yield* seam.exportCatalog({ mode: "baseline", noCache: false });
+          expect(firstRef).toMatch(
+            /^supabase[/\\]\.temp[/\\]pgdelta[/\\]catalog-baseline-.*\.json$/,
+          );
+          expect(yield* fs.readFileString(path.join(dir, firstRef))).toBe('{"schemas":[]}');
+          expect(out.stderrText).toContain("Creating shadow database...\n");
+          expect(shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
+          expect(shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
 
-        // Cache hit: same ref, zero additional container work.
-        const secondRef = yield* seam.exportCatalog({ mode: "baseline", noCache: false });
-        expect(secondRef).toBe(firstRef);
-        expect(shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
-        expect(shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
-
-        rmSync(dir, { recursive: true, force: true });
-      }).pipe(Effect.provide(layer));
+          // Cache hit: same ref, zero additional container work.
+          const secondRef = yield* seam.exportCatalog({ mode: "baseline", noCache: false });
+          expect(secondRef).toBe(firstRef);
+          expect(shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
+          expect(shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(BunServices.layer));
     },
   );
 
   it.effect(
     "writes catalog-nocache-declarative.json on --no-cache, applying the declarative directory first",
     () => {
-      const dir = mkdtempSync(join(tmpdir(), "legacy-pgdelta-seam-"));
-      const declDir = join(dir, "supabase", "schemas");
-      mkdirSync(declDir, { recursive: true });
-      writeFileSync(join(declDir, "public.sql"), "create table t ();");
-      const { layer, edgeCalls, shadowSpawned } = setup(dir);
-      return Effect.gen(function* () {
-        const seam = yield* LegacyDeclarativeSeam;
-        const ref = yield* seam.exportCatalog({ mode: "declarative", noCache: true });
-        expect(ref).toBe(join("supabase", ".temp", "pgdelta", "catalog-nocache-declarative.json"));
-        expect(readFileSync(join(dir, ref), "utf8")).toBe('{"schemas":[]}');
-        expect(edgeCalls.some((c) => c.errPrefix === "error running pg-delta script")).toBe(true);
-        expect(shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
-        expect(shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
-        rmSync(dir, { recursive: true, force: true });
-      }).pipe(Effect.provide(layer));
+      return withTempWorkdir((fs, path, dir) => {
+        const { layer, edgeCalls, shadowSpawned } = setup(dir);
+        return Effect.gen(function* () {
+          yield* fs.makeDirectory(path.join(dir, "supabase", "schemas"), { recursive: true });
+          yield* fs.writeFileString(
+            path.join(dir, "supabase", "schemas", "public.sql"),
+            "create table t ();",
+          );
+          const seam = yield* LegacyDeclarativeSeam;
+          const ref = yield* seam.exportCatalog({ mode: "declarative", noCache: true });
+          expect(ref).toBe(
+            path.join("supabase", ".temp", "pgdelta", "catalog-nocache-declarative.json"),
+          );
+          expect(yield* fs.readFileString(path.join(dir, ref))).toBe('{"schemas":[]}');
+          expect(edgeCalls.some((c) => c.errPrefix === "error running pg-delta script")).toBe(true);
+          expect(shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
+          expect(shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(BunServices.layer));
     },
   );
 
-  it.effect("maps a shadow-provisioning failure to LegacyDeclarativeShadowDbError", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-pgdelta-seam-"));
-    const { layer } = setup(dir, { failCreate: true });
-    return Effect.gen(function* () {
-      const seam = yield* LegacyDeclarativeSeam;
-      const exit = yield* seam.exportCatalog({ mode: "baseline", noCache: true }).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      const error = failError(exit);
-      expect(error).toBeInstanceOf(LegacyDeclarativeShadowDbError);
-      expect((error as LegacyDeclarativeShadowDbError).message).toContain(
-        "failed to provision the shadow database:",
-      );
-      rmSync(dir, { recursive: true, force: true });
-    }).pipe(Effect.provide(layer));
-  });
+  it.effect("maps a shadow-provisioning failure to LegacyDeclarativeShadowDbError", () =>
+    withTempWorkdir((_fs, _path, dir) => {
+      const { layer } = setup(dir, { failCreate: true });
+      return Effect.gen(function* () {
+        const seam = yield* LegacyDeclarativeSeam;
+        const exit = yield* seam
+          .exportCatalog({ mode: "baseline", noCache: true })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const error = failError(exit);
+        expect(error).toBeInstanceOf(LegacyDeclarativeShadowDbError);
+        expect((error as LegacyDeclarativeShadowDbError).message).toContain(
+          "failed to provision the shadow database:",
+        );
+      }).pipe(Effect.provide(layer));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });
 
 describe("legacyDeclarativeSeamLayer.ensureLocalDatabaseStarted", () => {
@@ -253,22 +274,22 @@ describe("legacyDeclarativeSeamLayer.ensureLocalDatabaseStarted", () => {
       // debug hint instead of the actionable Docker recovery text (review: the start-failure
       // catch below it already propagates `suggestion`; this asserts the inspect mapping does
       // too).
-      const dir = mkdtempSync(join(tmpdir(), "legacy-pgdelta-seam-"));
-      const { layer } = setup(dir, {
-        dbInspectFailsWith:
-          "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
-      });
-      return Effect.gen(function* () {
-        const seam = yield* LegacyDeclarativeSeam;
-        const exit = yield* seam.ensureLocalDatabaseStarted().pipe(Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        const error = failError(exit);
-        expect(error).toBeInstanceOf(LegacyDeclarativeShadowDbError);
-        const shadowError = error as LegacyDeclarativeShadowDbError;
-        expect(shadowError.docker).toBe("daemon");
-        expect(shadowError.suggestion).toBe(LEGACY_SUGGEST_DOCKER_INSTALL);
-        rmSync(dir, { recursive: true, force: true });
-      }).pipe(Effect.provide(layer));
+      return withTempWorkdir((_fs, _path, dir) => {
+        const { layer } = setup(dir, {
+          dbInspectFailsWith:
+            "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+        });
+        return Effect.gen(function* () {
+          const seam = yield* LegacyDeclarativeSeam;
+          const exit = yield* seam.ensureLocalDatabaseStarted.pipe(Effect.exit);
+          expect(Exit.isFailure(exit)).toBe(true);
+          const error = failError(exit);
+          expect(error).toBeInstanceOf(LegacyDeclarativeShadowDbError);
+          const shadowError = error as LegacyDeclarativeShadowDbError;
+          expect(shadowError.docker).toBe("daemon");
+          expect(shadowError.suggestion).toBe(LEGACY_SUGGEST_DOCKER_INSTALL);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(BunServices.layer));
     },
   );
 });

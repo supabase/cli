@@ -20,12 +20,16 @@ function readNonEmptyEnv(
   return nonEmptyString(env[key]);
 }
 
-function shippedPosthogHost(): Option.Option<string> {
-  return nonEmptyString(process.env.SUPABASE_CLI_POSTHOG_HOST);
+function shippedPosthogHost(
+  env: Readonly<Record<string, string | undefined>>,
+): Option.Option<string> {
+  return nonEmptyString(env.SUPABASE_CLI_POSTHOG_HOST);
 }
 
-function shippedPosthogKey(): Option.Option<string> {
-  return nonEmptyString(process.env.SUPABASE_CLI_POSTHOG_KEY);
+function shippedPosthogKey(
+  env: Readonly<Record<string, string | undefined>>,
+): Option.Option<string> {
+  return nonEmptyString(env.SUPABASE_CLI_POSTHOG_KEY);
 }
 
 export function resolvePosthogConfig(
@@ -33,11 +37,11 @@ export function resolvePosthogConfig(
 ): PosthogConfig {
   return {
     host: readNonEmptyEnv(env, "SUPABASE_TELEMETRY_POSTHOG_HOST").pipe(
-      Option.orElse(shippedPosthogHost),
+      Option.orElse(() => shippedPosthogHost(env)),
       Option.getOrElse(() => DEFAULT_HOST),
     ),
     key: readNonEmptyEnv(env, "SUPABASE_TELEMETRY_POSTHOG_KEY").pipe(
-      Option.orElse(shippedPosthogKey),
+      Option.orElse(() => shippedPosthogKey(env)),
     ),
   };
 }

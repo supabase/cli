@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/global-timers -- AtomRegistry requires a callback scheduler, not an Effect value.
 import { clearTimeout, setTimeout } from "node:timers";
 import { createElement } from "react";
 import * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry";

@@ -66,7 +66,7 @@ export const auth = Schema.Struct({
       links: [links.auth],
     })
     .pipe(Schema.withDecodingDefaultKey(Effect.succeed([...defaultAdditionalRedirectUrls]))),
-  jwt_expiry: Schema.Number.annotate({
+  jwt_expiry: Schema.Finite.annotate({
     default: defaultJwtExpiry,
     description:
       "How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 seconds (one week).",
@@ -93,7 +93,7 @@ export const auth = Schema.Struct({
     tags,
     links: [links.auth],
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnableRefreshTokenRotation))),
-  refresh_token_reuse_interval: Schema.Number.annotate({
+  refresh_token_reuse_interval: Schema.Finite.annotate({
     default: defaultRefreshTokenReuseInterval,
     description:
       "Allows refresh tokens to be reused after expiry, up to the specified interval in seconds.",
@@ -118,7 +118,7 @@ export const auth = Schema.Struct({
     tags,
     links: [links.auth],
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnableAnonymousSignIns))),
-  minimum_password_length: Schema.Number.annotate({
+  minimum_password_length: Schema.Finite.annotate({
     default: defaultMinimumPasswordLength,
     description: "Passwords shorter than this value will be rejected as weak.",
     tags,

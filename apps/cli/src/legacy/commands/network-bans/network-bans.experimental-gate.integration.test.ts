@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer } from "effect";
+import { Effect, Exit, Layer, Formatter } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 
 import { normalizeCause } from "../../../shared/output/normalize-error.ts";
@@ -74,7 +74,7 @@ describe("legacy network-bans experimental gate (Go PersistentPreRunE parity)", 
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyExperimentalRequiredError");
+            expect(Formatter.formatJson(exit.cause)).toContain("LegacyExperimentalRequiredError");
           }
           expect(api.requests).toHaveLength(0);
         }).pipe(Effect.provide(layer));
@@ -89,7 +89,7 @@ describe("legacy network-bans experimental gate (Go PersistentPreRunE parity)", 
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const causeText = JSON.stringify(exit.cause);
+          const causeText = Formatter.formatJson(exit.cause);
           expect(causeText).not.toContain("LegacyExperimentalRequiredError");
           expect(causeText).toContain("LegacyPlatformAuthRequiredError");
         }
@@ -119,7 +119,7 @@ describe("legacy network-bans experimental gate (Go PersistentPreRunE parity)", 
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).not.toContain("LegacyExperimentalRequiredError");
+          expect(Formatter.formatJson(exit.cause)).not.toContain("LegacyExperimentalRequiredError");
           expect(normalizeCause(exit.cause).message).toBe(
             'invalid argument "\\"1.2.3.4" for "--db-unban-ip" flag: parse error on line 1, column 9: extraneous or missing " in quoted-field',
           );

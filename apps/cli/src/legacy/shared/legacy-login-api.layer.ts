@@ -41,12 +41,10 @@ export const legacyLoginApiLayer = Layer.effect(
           const response = yield* httpClient.execute(request);
           if (response.status !== 200) {
             const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-            return yield* Effect.fail(
-              new LegacyLoginVerificationError({
-                message: `Error status ${response.status}: ${body}`,
-                statusCode: response.status,
-              }),
-            );
+            return yield* new LegacyLoginVerificationError({
+              message: `Error status ${response.status}: ${body}`,
+              statusCode: response.status,
+            });
           }
           const body = yield* response.json;
           const session: LegacyLoginSessionResponse = {

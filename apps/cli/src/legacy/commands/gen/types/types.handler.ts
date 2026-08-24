@@ -1,6 +1,16 @@
 import { loadProjectConfig } from "@supabase/config";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
+import {
+  Config,
+  Effect,
+  FileSystem,
+  Option,
+  Path,
+  PlatformError,
+  Scope,
+  Stdio,
+  Stream,
+} from "effect";
 import {
   LegacyDnsResolverFlag,
   LegacyNetworkIdFlag,
@@ -13,18 +23,25 @@ import {
   pflagArgvScan,
 } from "../../../../shared/cli/cobra-flag-groups.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
-import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
+import {
+  LegacyInvalidProjectRefError,
+  LegacyProjectNotLinkedError,
+} from "../../../config/legacy-project-ref.errors.ts";
 import {
   LegacyProjectRefResolver,
   PROJECT_NOT_LINKED_MESSAGE,
 } from "../../../config/legacy-project-ref.service.ts";
-import { spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
+import {
+  LegacyContainerRuntimeNotFoundError,
+  spawnContainerCli,
+} from "../../../shared/legacy-container-cli.ts";
 import {
   legacyIsIPv6ConnectivityError,
   legacyIsIPv6ConnectivityErrorCause,
 } from "../../../shared/legacy-connect-errors.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
+import type { LegacyDbConfigError } from "../../../shared/legacy-db-config.service.ts";
 import type { LegacyDbConfigFlags } from "../../../shared/legacy-db-config.types.ts";
 import { legacyPoolerConfigFromConnectionString } from "../../../shared/legacy-db-config.parse.ts";
 import {
@@ -36,20 +53,29 @@ import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import { legacyTempPaths } from "../../../shared/legacy-temp-paths.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
+import type { LegacyProjectRefReadError } from "../../../shared/legacy-temp-paths.ts";
+import {
+  LegacyPgDeltaSslProbe,
+  LegacyPgDeltaSslProbeError,
+} from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import {
   legacyIsDirectDbHost,
   legacyRunWithPoolerFallback,
 } from "../../../shared/legacy-pooler-fallback.ts";
 import type { LegacyGenTypesFlags } from "./types.command.ts";
-import { LegacyGenTypesNetworkError, LegacyGenTypesUnexpectedStatusError } from "./types.errors.ts";
+import {
+  LegacyGenTypesCommandError,
+  LegacyGenTypesNetworkError,
+  LegacyGenTypesUnexpectedStatusError,
+} from "./types.errors.ts";
+import { legacyViperEnvBool } from "../../../../shared/legacy/legacy-viper-env.ts";
+import { LegacyViperEnv } from "../../../../shared/legacy/legacy-viper-env.ts";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
 import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
 import {
   defaultSchemas,
   buildPostgresUrl,
   localDbContainerId,
-  localDbPassword,
   localNetworkId,
   parseDatabaseUrl,
   parseQueryTimeoutSeconds,
@@ -89,6 +115,14 @@ function isProjectNotFound(cause: unknown) {
 }
 
 const GEN_TYPES_COMMAND_PATH = ["gen", "types"] as const;
+
+type LegacyGenTypesRunPgMetaError =
+  | Config.ConfigError
+  | LegacyContainerRuntimeNotFoundError
+  | LegacyDbConfigError
+  | LegacyGenTypesCommandError
+  | LegacyPgDeltaSslProbeError
+  | PlatformError.PlatformError;
 
 type LegacyGenTypesMutexFlag =
   | "local"
@@ -136,8 +170,8 @@ const GEN_TYPES_SCAN_SPEC = {
 } as const;
 
 function forwardByteStream(
-  stream: Stream.Stream<Uint8Array, unknown>,
-  write: (text: string) => Effect.Effect<void, unknown>,
+  stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>,
+  write: (text: string) => Effect.Effect<void>,
 ) {
   const decoder = new TextDecoder();
   return Stream.runForEach(stream, (chunk) => write(decoder.decode(chunk, { stream: true }))).pipe(
@@ -145,7 +179,7 @@ function forwardByteStream(
   );
 }
 
-function collectByteStream(stream: Stream.Stream<Uint8Array, unknown>) {
+function collectByteStream(stream: Stream.Stream<Uint8Array, PlatformError.PlatformError>) {
   const decoder = new TextDecoder();
   return Stream.runFold(
     stream,
@@ -235,6 +269,8 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const dbConfig = yield* LegacyDbConfigResolver;
   const sslProbe = yield* LegacyPgDeltaSslProbe;
+  const viperEnv = yield* LegacyViperEnv;
+  const caSkipVerify = yield* legacyViperEnvBool("SUPABASE_CA_SKIP_VERIFY");
 
   // "Set" follows cobra's `pflag.Changed` semantics — whether the flag was
   // passed at all — not the resulting value: `--linked=false` still counts
@@ -334,7 +370,9 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         .pipe(Effect.catch(mapBranchDatabaseConfigError));
 
       if (branch.db_user === undefined || branch.db_pass === undefined) {
-        return yield* Effect.fail(new Error("Preview branch database credentials are unavailable"));
+        return yield* new LegacyGenTypesCommandError({
+          message: "Preview branch database credentials are unavailable",
+        });
       }
       const branchUser = branch.db_user;
       const branchPassword = branch.db_pass;
@@ -384,14 +422,15 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     readonly port: number;
     readonly probeHost: string;
     readonly probePort: number;
-    readonly networkMode: "host" | string;
+    readonly networkMode: string;
     readonly includedSchemas: string;
+    readonly projectEnvValues?: Readonly<Record<string, string>>;
     readonly postgrestV9Compat: boolean;
     readonly pgmetaVersionOverride?: string;
     readonly poolerFallback?: {
       readonly directHost: string;
       readonly eligible: boolean;
-      readonly resolve: Effect.Effect<Option.Option<LegacyPgConnInput>, unknown>;
+      readonly resolve: Effect.Effect<Option.Option<LegacyPgConnInput>, LegacyDbConfigError>;
     };
   }) =>
     Effect.scoped(
@@ -402,7 +441,11 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
           readonly port: number;
           readonly probeHost: string;
           readonly probePort: number;
-        }) =>
+        }): Effect.Effect<
+          { readonly exitCode: number; readonly stderrText: string },
+          LegacyGenTypesRunPgMetaError,
+          Scope.Scope
+        > =>
           Effect.gen(function* () {
             yield* output.raw(`Connecting to ${target.host} ${target.port}\n`, "stderr");
 
@@ -425,7 +468,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
             // Emitted to stderr when the probe runs with certificate
             // verification disabled. Our wire-level SSLRequest probe never
             // verifies certificates, so honour the same env var here too.
-            if (process.env["SUPABASE_CA_SKIP_VERIFY"] === "true") {
+            if (caSkipVerify) {
               yield* output.raw(
                 "WARNING: TLS certificate verification disabled for SSL probe (SUPABASE_CA_SKIP_VERIFY=true)\n",
                 "stderr",
@@ -446,7 +489,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
               "--network",
               networkMode,
               ...env.flatMap((entry) => ["--env", entry]),
-              resolvePgmetaImage(input.pgmetaVersionOverride),
+              resolvePgmetaImage(input.pgmetaVersionOverride, input.projectEnvValues),
               "node",
               "dist/server/server.js",
             ];
@@ -496,7 +539,9 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
               });
 
         if (result.exitCode !== 0) {
-          return yield* Effect.fail(new Error(`error running container: exit ${result.exitCode}`));
+          return yield* new LegacyGenTypesCommandError({
+            message: `error running container: exit ${result.exitCode}`,
+          });
         }
       }),
     );
@@ -523,15 +568,16 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         if (exitCode !== 0) {
           const message = stderr.trim();
           if (message.toLowerCase().includes("no such container")) {
-            return yield* Effect.fail(new Error("supabase start is not running."));
+            return yield* new LegacyGenTypesCommandError({
+              message: "supabase start is not running.",
+            });
           }
-          return yield* Effect.fail(
-            new Error(
+          return yield* new LegacyGenTypesCommandError({
+            message:
               message.length > 0
                 ? `failed to inspect service: ${message}`
                 : "failed to inspect service",
-            ),
-          );
+          });
         }
       }),
     );
@@ -546,9 +592,9 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     if (flags.postgrestV9Compat && Option.isNone(flags.dbUrl)) {
       // Established error text, including the "must used" typo — do not
       // "fix" the grammar.
-      return yield* Effect.fail(
-        new Error("--postgrest-v9-compat must used together with --db-url"),
-      );
+      return yield* new LegacyGenTypesCommandError({
+        message: "--postgrest-v9-compat must used together with --db-url",
+      });
     }
     const legacyLang = findLegacyPositionalLanguage(rawArgs);
     if (
@@ -556,7 +602,9 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       legacyLang.value !== "typescript" &&
       !occurrences.has("lang")
     ) {
-      return yield* Effect.fail(new Error("use --lang flag to specify the typegen language"));
+      return yield* new LegacyGenTypesCommandError({
+        message: "use --lang flag to specify the typegen language",
+      });
     }
 
     // Cobra's mutual exclusion keys off pflag `Changed` — a flag counts as
@@ -577,16 +625,23 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     for (const group of GEN_TYPES_MUTEX_GROUPS) {
       const set = group.filter((flagName) => changedMutexFlags[flagName]);
       if (set.length > 1) {
-        return yield* Effect.fail(new Error(cobraMutuallyExclusiveErrorMessage(group, set)));
+        return yield* new LegacyGenTypesCommandError({
+          message: cobraMutuallyExclusiveErrorMessage(group, set),
+        });
       }
     }
 
     if (flags.local) {
       const config = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
-      yield* legacyApplyProjectEnv(
-        config.projectEnv,
-        Object.keys(config.projectEnv).filter((key) => key !== "SUPABASE_DB_PASSWORD"),
-      );
+      const projectEnvKeys = [
+        ...Object.keys(config.projectEnv).filter((key) => key !== "SUPABASE_DB_PASSWORD"),
+        "SUPABASE_INTERNAL_IMAGE_REGISTRY",
+        "PGDELTA_NPM_REGISTRY",
+      ];
+      const effectiveProjectEnv = {
+        ...config.projectEnv,
+        ...(yield* legacyApplyProjectEnv(config.projectEnv, projectEnvKeys)),
+      };
       const projectId = Option.getOrElse(config.projectId, () => path.basename(cliConfig.workdir));
 
       const paths = legacyTempPaths(path, cliConfig.workdir);
@@ -609,21 +664,26 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         schemas.length > 0 ? schemas : defaultSchemas(config.apiSchemas)
       ).join(",");
       yield* assertLocalDbRunning(projectId);
+      const dbPassword = Option.getOrElse(
+        yield* viperEnv.get("SUPABASE_DB_PASSWORD"),
+        () => "postgres",
+      );
 
       yield* runPgMeta({
         url: buildPostgresUrl({
           host: "db",
           port: 5432,
           user: "postgres",
-          password: localDbPassword(),
+          password: dbPassword,
           database: "postgres",
         }),
         host: "db",
         port: 5432,
-        probeHost: legacyGetHostname(),
+        probeHost: yield* legacyGetHostname,
         probePort: config.port,
         networkMode: localNetworkId(projectId),
         includedSchemas,
+        projectEnvValues: effectiveProjectEnv,
         postgrestV9Compat: flags.postgrestV9Compat || forcedV9,
         pgmetaVersionOverride,
       });
@@ -672,19 +732,23 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
       return;
     }
 
-    const resolvedRef = yield* projectRef.resolve(Option.none()).pipe(
-      Effect.catch((cause) => {
-        if (
-          cause instanceof LegacyProjectNotLinkedError &&
-          cause.message === PROJECT_NOT_LINKED_MESSAGE
-        ) {
-          return Effect.fail(
-            new Error("Must specify one of --local, --linked, --project-id, or --db-url"),
-          );
-        }
-        return Effect.fail(cause);
-      }),
+    const resolveProjectRef: Effect.Effect<
+      string,
+      LegacyProjectNotLinkedError | LegacyInvalidProjectRefError | LegacyProjectRefReadError
+    > = projectRef.resolve(Option.none());
+    const resolvedRefEffect = Effect.catchTag(
+      resolveProjectRef,
+      "LegacyProjectNotLinkedError",
+      (cause): Effect.Effect<string, LegacyGenTypesCommandError | LegacyProjectNotLinkedError> =>
+        cause.message === PROJECT_NOT_LINKED_MESSAGE
+          ? Effect.fail(
+              new LegacyGenTypesCommandError({
+                message: "Must specify one of --local, --linked, --project-id, or --db-url",
+              }),
+            )
+          : Effect.fail(new LegacyProjectNotLinkedError({ message: cause.message })),
     );
+    const resolvedRef = yield* resolvedRefEffect;
     const loaded = schemas.length > 0 ? null : yield* loadConfigForRef(resolvedRef);
     yield* runProjectTypes(
       resolvedRef,

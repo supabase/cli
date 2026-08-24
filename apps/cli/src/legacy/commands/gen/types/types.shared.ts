@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import * as Formatter from "effect/Formatter";
 import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
 import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
 import {
@@ -25,6 +26,9 @@ const DURATION_UNITS_TO_MILLIS = {
   m: 60_000,
   h: 3_600_000,
 } as const;
+type DurationUnit = keyof typeof DURATION_UNITS_TO_MILLIS;
+
+const isDurationUnit = (value: string): value is DurationUnit => value in DURATION_UNITS_TO_MILLIS;
 
 const DURATION_PART_PATTERN = new RegExp(
   String.raw`([+-]?(?:\d+\.?\d*|\.\d+))(ns|us|\u00b5s|\u03bcs|ms|s|m|h)`,
@@ -35,7 +39,7 @@ export interface LegacyGenTypesDbTarget {
   readonly url: string;
   readonly host: string;
   readonly port: number;
-  readonly networkMode: "host" | string;
+  readonly networkMode: string;
 }
 
 export function defaultSchemas(extraSchemas: ReadonlyArray<string> = []) {
@@ -48,11 +52,9 @@ export function parseQueryTimeoutSeconds(
   return Effect.gen(function* () {
     const input = raw.trim();
     if (input.length === 0) {
-      return yield* Effect.fail(
-        new LegacyInvalidGenTypesDurationError({
-          message: `invalid duration ${JSON.stringify(raw)}`,
-        }),
-      );
+      return yield* new LegacyInvalidGenTypesDurationError({
+        message: `invalid duration ${Formatter.formatJson(raw)}`,
+      });
     }
 
     let totalMillis = 0;
@@ -69,32 +71,29 @@ export function parseQueryTimeoutSeconds(
         continue;
       }
       if (match.index !== consumed) {
-        return yield* Effect.fail(
-          new LegacyInvalidGenTypesDurationError({
-            message: `invalid duration ${JSON.stringify(raw)}`,
-          }),
-        );
+        return yield* new LegacyInvalidGenTypesDurationError({
+          message: `invalid duration ${Formatter.formatJson(raw)}`,
+        });
       }
       const amount = Number.parseFloat(rawNumber);
-      const unitMillis = DURATION_UNITS_TO_MILLIS[rawUnit as keyof typeof DURATION_UNITS_TO_MILLIS];
+      if (!isDurationUnit(rawUnit)) {
+        return yield* new LegacyInvalidGenTypesDurationError({
+          message: `invalid duration ${Formatter.formatJson(raw)}`,
+        });
+      }
+      const unitMillis = DURATION_UNITS_TO_MILLIS[rawUnit];
       totalMillis += amount * unitMillis;
       consumed += token.length;
     }
 
     if (!Number.isFinite(totalMillis) || consumed !== input.length || totalMillis < 0) {
-      return yield* Effect.fail(
-        new LegacyInvalidGenTypesDurationError({
-          message: `invalid duration ${JSON.stringify(raw)}`,
-        }),
-      );
+      return yield* new LegacyInvalidGenTypesDurationError({
+        message: `invalid duration ${Formatter.formatJson(raw)}`,
+      });
     }
 
     return Math.round(totalMillis / 1_000);
   });
-}
-
-export function localDbPassword() {
-  return process.env["SUPABASE_DB_PASSWORD"] ?? "postgres";
 }
 
 export function parseDatabaseUrl(
@@ -139,13 +138,17 @@ export function buildPostgresUrl(input: {
   );
 }
 
-export function resolvePgmetaImage(versionOverride?: string) {
+export function resolvePgmetaImage(
+  versionOverride?: string,
+  projectEnvValues?: Readonly<Record<string, string>>,
+) {
   const defaultImage = dockerfileServiceImage("pgmeta");
   if (versionOverride === undefined || versionOverride.trim().length === 0) {
-    return legacyGetRegistryImageUrl(defaultImage);
+    return legacyGetRegistryImageUrl(defaultImage, projectEnvValues ?? {});
   }
   return legacyGetRegistryImageUrl(
     replaceImageTag(defaultImage, `v${versionOverride.trim().replace(/^v/i, "")}`),
+    projectEnvValues ?? {},
   );
 }
 

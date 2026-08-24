@@ -1,4 +1,4 @@
-import { Effect, type FileSystem, Option, type Path } from "effect";
+import { Effect, Schema, type FileSystem, Option, type Path, Predicate } from "effect";
 import * as SmolToml from "smol-toml";
 import {
   LEGACY_PROJECT_REF_PATTERN,
@@ -25,6 +25,7 @@ import { LegacyDbConfigLoadError } from "./legacy-db-config.errors.ts";
 import { parseDotEnv } from "./legacy-dotenv.ts";
 import { legacyStrToArr } from "./legacy-local-config-values.ts";
 import { ramInBytes } from "./legacy-size-units.ts";
+import { LegacyViperEnv, legacyViperEnvEntries } from "../../shared/legacy/legacy-viper-env.ts";
 import {
   legacyCollectDotenvPrivateKeys,
   legacyDecryptSecret,
@@ -999,14 +1000,32 @@ const LEGACY_PROCESS_ENV_APPLY_KEYS = [
   "PGDELTA_NPM_REGISTRY",
 ] as const;
 
+const LEGACY_ENV_LOOKUP_NAMES = [
+  "SUPABASE_ENV",
+  "DOTENV_PRIVATE_KEY",
+  ...LEGACY_PROCESS_ENV_APPLY_KEYS,
+  ...LEGACY_ENV_OVERRIDABLE_KEYS.map((key) => `SUPABASE_${key.replaceAll(".", "_").toUpperCase()}`),
+];
+
+function legacyCollectEnvReferences(content: string | undefined): ReadonlySet<string> {
+  const names = new Set<string>(LEGACY_ENV_LOOKUP_NAMES);
+  if (content === undefined) return names;
+  const referencePattern = /env\(([A-Za-z_][A-Za-z0-9_]*)\)/gu;
+  for (const match of content.matchAll(referencePattern)) {
+    const name = match[1];
+    if (name !== undefined) names.add(name);
+  }
+  return names;
+}
+
 /**
  * Load the project's nested `.env` files into a lookup map. **Pure**: it reads the
- * files and returns the merged map, with no `process.env` side effect — so the
+ * files and returns the merged map, with no ambient environment side effect — so the
  * `SUPABASE_YES` / `SUPABASE_DB_PASSWORD` readers that call it
  * (`legacyResolveYesWithProjectEnv`, `resolveDbPassword`) never mutate the global
  * environment. Commands that need an allowlisted key visible to a synchronous
- * `process.env` reader (`db dump` / `db pull` → `legacyGetRegistryImageUrl`) opt
- * into {@link legacyApplyProjectEnv} around the container work instead.
+ * consumer (`db dump` / `db pull` → `legacyGetRegistryImageUrl`) pass the returned
+ * values explicitly instead.
  *
  * Partially mirrors `loadNestedEnv` + `loadDefaultEnv`.
  * Go walks from the `supabase/` directory up to
@@ -1018,52 +1037,74 @@ const LEGACY_PROCESS_ENV_APPLY_KEYS = [
  * read — aborts: `loadEnvIfExists` swallows only `os.ErrNotExist` and returns
  * every other error. The path is named without leaking file contents (CWE-209-safe).
  */
-export const legacyLoadProjectEnv = Effect.fnUntraced(function* (
+export const legacyLoadProjectEnv = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
-) {
-  const env = process.env["SUPABASE_ENV"] || DEFAULT_SUPABASE_ENV;
-  const filenames = [`.env.${env}.local`];
-  if (env !== "test") filenames.push(".env.local");
-  filenames.push(`.env.${env}`, ".env");
-  // Go walks `supabase/` first, then the repo root; first writer wins.
-  const dirs = [path.join(workdir, "supabase"), workdir];
-  const loaded: Record<string, string> = {};
-  for (const dir of dirs) {
-    for (const name of filenames) {
-      // Go's loadEnvIfExists ignores only os.ErrNotExist; any other read error
-      // aborts rather than silently skipping the file (which would hide a broken
-      // env-backed config). Effect surfaces "not found" as a NotFound PlatformError.
-      const content = yield* fs.readFileString(path.join(dir, name)).pipe(
-        Effect.map(Option.some<string>),
-        Effect.catchTag("PlatformError", (error) =>
-          error.reason._tag === "NotFound"
-            ? Effect.succeed(Option.none<string>())
-            : Effect.fail(
-                new LegacyDbConfigLoadError({
-                  message: `failed to read environment file: ${name}`,
-                }),
-              ),
-        ),
-      );
-      if (Option.isNone(content)) continue;
-      let parsed: Record<string, string>;
-      try {
-        parsed = parseDotEnv(content.value);
-      } catch {
-        return yield* Effect.fail(
-          new LegacyDbConfigLoadError({ message: `failed to parse environment file: ${name}` }),
+): Effect.Effect<
+  Readonly<Record<string, string>>,
+  LegacyDbConfigLoadError,
+  FileSystem.FileSystem | Path.Path | LegacyViperEnv
+> =>
+  Effect.gen(function* () {
+    const viper = yield* LegacyViperEnv;
+    const envValue = yield* viper.get("SUPABASE_ENV").pipe(
+      Effect.mapError(
+        () =>
+          new LegacyDbConfigLoadError({
+            message: "failed to read SUPABASE_ENV from the environment",
+          }),
+      ),
+    );
+    const env = Option.getOrElse(envValue, () => DEFAULT_SUPABASE_ENV) || DEFAULT_SUPABASE_ENV;
+    const filenames = [`.env.${env}.local`];
+    if (env !== "test") filenames.push(".env.local");
+    filenames.push(`.env.${env}`, ".env");
+    // Go walks `supabase/` first, then the repo root; first writer wins.
+    const dirs = [path.join(workdir, "supabase"), workdir];
+    const loaded: Record<string, string> = {};
+    for (const dir of dirs) {
+      for (const name of filenames) {
+        // Go's loadEnvIfExists ignores only os.ErrNotExist; any other read error
+        // aborts rather than silently skipping the file (which would hide a broken
+        // env-backed config). Effect surfaces "not found" as a NotFound PlatformError.
+        const content = yield* fs.readFileString(path.join(dir, name)).pipe(
+          Effect.map(Option.some<string>),
+          Effect.catchTag("PlatformError", (error) =>
+            Predicate.isTagged(error.reason, "NotFound")
+              ? Effect.succeed(Option.none<string>())
+              : Effect.fail(
+                  new LegacyDbConfigLoadError({
+                    message: `failed to read environment file: ${name}`,
+                  }),
+                ),
+          ),
         );
-      }
-      for (const [key, value] of Object.entries(parsed)) {
-        // godotenv.Load never overrides: the shell env and earlier files win.
-        if (process.env[key] === undefined && loaded[key] === undefined) loaded[key] = value;
+        if (Option.isNone(content)) continue;
+        const parsed = yield* Effect.try({
+          try: () => parseDotEnv(content.value),
+          catch: () =>
+            new LegacyDbConfigLoadError({
+              message: `failed to parse environment file: ${name}`,
+            }),
+        });
+        for (const [key, value] of Object.entries(parsed)) {
+          // godotenv.Load never overrides: the shell env and earlier files win. Read shell
+          // presence through the injected viper environment so empty shell values still win.
+          const shellValue = yield* viper.get(key).pipe(
+            Effect.mapError(
+              () =>
+                new LegacyDbConfigLoadError({
+                  message: `failed to read environment variable: ${key}`,
+                }),
+            ),
+          );
+          if (Option.isNone(shellValue) && loaded[key] === undefined) loaded[key] = value;
+        }
       }
     }
-  }
-  return loaded;
-});
+    return loaded;
+  });
 
 /**
  * Apply the allowlisted project-`.env` keys (see {@link LEGACY_PROCESS_ENV_APPLY_KEYS})
@@ -1084,26 +1125,27 @@ export const legacyLoadProjectEnv = Effect.fnUntraced(function* (
 export const legacyApplyProjectEnv = (
   loaded: Readonly<Record<string, string>>,
   keys: ReadonlyArray<string> = LEGACY_PROCESS_ENV_APPLY_KEYS,
-) =>
-  Effect.forEach(
-    keys,
-    (key) => {
-      const value = loaded[key];
-      if (value === undefined || process.env[key] !== undefined) {
-        return Effect.void;
-      }
-      return Effect.acquireRelease(
-        Effect.sync(() => {
-          process.env[key] = value;
-        }),
-        () =>
-          Effect.sync(() => {
-            delete process.env[key];
-          }),
+): Effect.Effect<Readonly<Record<string, string>>, LegacyDbConfigLoadError, LegacyViperEnv> =>
+  Effect.gen(function* () {
+    const viper = yield* LegacyViperEnv;
+    const resolved: Record<string, string> = {};
+    for (const key of keys) {
+      const shellValue = yield* viper.get(key).pipe(
+        Effect.mapError(
+          () =>
+            new LegacyDbConfigLoadError({
+              message: `failed to read environment variable: ${key}`,
+            }),
+        ),
       );
-    },
-    { discard: true },
-  );
+      if (Option.isSome(shellValue)) {
+        resolved[key] = shellValue.value;
+      } else if (loaded[key] !== undefined) {
+        resolved[key] = loaded[key];
+      }
+    }
+    return resolved;
+  });
 
 function nonEmptyString(value: unknown): Option.Option<string> {
   return typeof value === "string" && value.length > 0 ? Option.some(value) : Option.none();
@@ -1152,17 +1194,17 @@ const resolveBoolOrFail = Effect.fnUntraced(function* (
   if (envValue !== undefined) {
     const parsed = legacyParseGoBool(legacyExpandEnv(envValue, lookup));
     if (parsed === undefined) {
-      return yield* Effect.fail(
-        new LegacyDbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
-      );
+      return yield* new LegacyDbConfigLoadError({
+        message: `failed to parse config: invalid ${field}.`,
+      });
     }
     return parsed;
   }
   const resolved = resolveBool(value, fallback, lookup);
   if (resolved === "invalid") {
-    return yield* Effect.fail(
-      new LegacyDbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
-    );
+    return yield* new LegacyDbConfigLoadError({
+      message: `failed to parse config: invalid ${field}.`,
+    });
   }
   return resolved;
 });
@@ -1184,9 +1226,9 @@ const resolveOptionalBoolOrFail = Effect.fnUntraced(function* (
   if (envValue !== undefined) {
     const parsed = legacyParseGoBool(legacyExpandEnv(envValue, lookup));
     if (parsed === undefined) {
-      return yield* Effect.fail(
-        new LegacyDbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
-      );
+      return yield* new LegacyDbConfigLoadError({
+        message: `failed to parse config: invalid ${field}.`,
+      });
     }
     return Option.some(parsed);
   }
@@ -1196,18 +1238,18 @@ const resolveOptionalBoolOrFail = Effect.fnUntraced(function* (
   if (typeof value === "string") {
     const parsed = legacyParseGoBool(legacyExpandEnv(value, lookup));
     if (parsed === undefined) {
-      return yield* Effect.fail(
-        new LegacyDbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
-      );
+      return yield* new LegacyDbConfigLoadError({
+        message: `failed to parse config: invalid ${field}.`,
+      });
     }
     return Option.some(parsed);
   }
   // Absent → `None` (`*bool` stays nil). A present non-scalar value is a decode
   // failure, so reject it here rather than silently treating it as absent.
   if (value === undefined) return Option.none<boolean>();
-  return yield* Effect.fail(
-    new LegacyDbConfigLoadError({ message: `failed to parse config: invalid ${field}.` }),
-  );
+  return yield* new LegacyDbConfigLoadError({
+    message: `failed to parse config: invalid ${field}.`,
+  });
 });
 
 const LEGACY_VAULT_SECRET_PATH = ["db", "vault", "*"] as const;
@@ -1391,7 +1433,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     : yield* fs.readFileString(configPath).pipe(
         Effect.map(Option.some<string>),
         Effect.catchTag("PlatformError", (error) =>
-          error.reason._tag === "NotFound"
+          Predicate.isTagged(error.reason, "NotFound")
             ? Effect.succeed(Option.none<string>())
             : Effect.fail(
                 new LegacyDbConfigLoadError({
@@ -1405,12 +1447,56 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // here — before the remote-config validation/merge below — so remote and
   // top-level `project_id` env() forms are expanded before they are validated or
   // used to derive Docker IDs.
+  const viper = yield* LegacyViperEnv;
   const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
-  const lookup: EnvLookup = (name) => process.env[name] ?? projectEnv[name];
+  const shellEnv: Record<string, string> = {};
+  const envNames = legacyCollectEnvReferences(
+    Option.isSome(maybeContent) ? maybeContent.value : undefined,
+  );
+  // AutomaticEnv values may themselves contain env(VAR) indirections (for example
+  // SUPABASE_DB_SEED_ENABLED=env(SEED_ON)). Resolve those referenced names through the
+  // injected environment service too; process.env enumeration is intentionally unavailable
+  // at this boundary, so discovery must remain explicit and deterministic.
+  const pendingEnvNames = [...envNames];
+  const seenEnvNames = new Set<string>();
+  while (pendingEnvNames.length > 0) {
+    const name = pendingEnvNames.shift();
+    if (name === undefined || seenEnvNames.has(name)) continue;
+    seenEnvNames.add(name);
+    const value = yield* viper.get(name).pipe(
+      Effect.mapError(
+        () =>
+          new LegacyDbConfigLoadError({
+            message: `failed to read environment variable: ${name}`,
+          }),
+      ),
+    );
+    if (Option.isSome(value)) {
+      shellEnv[name] = value.value;
+      const references = value.value.matchAll(/env\(([A-Za-z_][A-Za-z0-9_]*)\)/gu);
+      for (const match of references) {
+        const reference = match[1];
+        if (reference !== undefined && !seenEnvNames.has(reference))
+          pendingEnvNames.push(reference);
+      }
+    }
+  }
+  const dotenvPrivateShellEntries = yield* legacyViperEnvEntries("DOTENV_PRIVATE_KEY").pipe(
+    Effect.mapError(
+      () =>
+        new LegacyDbConfigLoadError({
+          message: "failed to read DOTENV_PRIVATE_KEY environment entries",
+        }),
+    ),
+  );
+  for (const [name, value] of Object.entries(dotenvPrivateShellEntries)) {
+    shellEnv[name] = value;
+  }
+  const lookup: EnvLookup = (name) => shellEnv[name] ?? projectEnv[name];
   // dotenvx private keys for decrypting `encrypted:` secrets, from the shell + project
   // env. Used by the global secret-decryptability assertion below and the `[db.vault]`
   // resolution.
-  const dotenvPrivateKeys = legacyCollectDotenvPrivateKeys({ ...projectEnv, ...process.env });
+  const dotenvPrivateKeys = legacyCollectDotenvPrivateKeys({ ...projectEnv, ...shellEnv });
 
   let db: RawDoc | undefined;
   let pgDeltaRaw: RawDoc | undefined;
@@ -1434,36 +1520,42 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // The matched `[remotes.<name>]` block name, echoed as the config-override line.
   let appliedRemote: string | undefined;
   if (Option.isSome(maybeContent)) {
-    let doc: RawDoc | undefined;
-    try {
-      doc = asRecord(SmolToml.parse(maybeContent.value));
-    } catch (cause) {
-      return yield* Effect.fail(
+    const doc = yield* Effect.try({
+      try: () => asRecord(SmolToml.parse(maybeContent.value)),
+      catch: (cause) =>
         new LegacyDbConfigLoadError({
           message: `failed to load config: ${cause instanceof Error ? cause.message : String(cause)}`,
         }),
+    });
+    const remotes = asRecord(doc?.["remotes"]);
+    for (const name of remotes === undefined ? [] : Object.keys(remotes)) {
+      const envName = `SUPABASE_REMOTES_${name.toUpperCase()}_PROJECT_ID`;
+      const value = yield* viper.get(envName).pipe(
+        Effect.mapError(
+          () =>
+            new LegacyDbConfigLoadError({
+              message: `failed to read environment variable: ${envName}`,
+            }),
+        ),
       );
+      if (Option.isSome(value)) shellEnv[envName] = value.value;
     }
     // Config load aborts when two `[remotes.*]` blocks share a `project_id`,
     // regardless of which command runs — check before merging.
     const duplicateRemote = findDuplicateRemoteProjectId(doc, lookup);
     if (duplicateRemote !== undefined) {
-      return yield* Effect.fail(
-        new LegacyDbConfigLoadError({
-          message: `duplicate project_id for [remotes.${duplicateRemote.name}] and [remotes.${duplicateRemote.other}]`,
-        }),
-      );
+      return yield* new LegacyDbConfigLoadError({
+        message: `duplicate project_id for [remotes.${duplicateRemote.name}] and [remotes.${duplicateRemote.other}]`,
+      });
     }
     // Validation rejects any remote whose `project_id` is not a valid 20-char ref, on
     // every load, after the duplicate check. So a malformed remote fails even
     // local/direct commands before any DB connection.
     const invalidRemote = findInvalidRemoteProjectId(doc, lookup);
     if (invalidRemote !== undefined) {
-      return yield* Effect.fail(
-        new LegacyDbConfigLoadError({
-          message: `Invalid config for remotes.${invalidRemote}.project_id. Must be like: abcdefghijklmnopqrst`,
-        }),
-      );
+      return yield* new LegacyDbConfigLoadError({
+        message: `Invalid config for remotes.${invalidRemote}.project_id. Must be like: abcdefghijklmnopqrst`,
+      });
     }
     // Apply a matching `[remotes.<name>]` override: merge the block whose
     // `project_id` equals the resolved ref over the base.
@@ -1505,7 +1597,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       includeVault: resolveVaultSecrets,
     });
     if (secretError !== undefined) {
-      return yield* Effect.fail(new LegacyDbConfigLoadError({ message: secretError }));
+      return yield* new LegacyDbConfigLoadError({ message: secretError });
     }
   }
   // `remoteOverrideKeys` has its final value from here on — see `legacyMakeRemoteWins`'s own doc
@@ -1534,7 +1626,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // value/default. An empty env value is ignored, and the project `.env` files are
   // loaded into the environment first, so consult both.
   const envOverride = (name: string): string | undefined => {
-    const fromShell = process.env[name];
+    const fromShell = shellEnv[name];
     if (fromShell !== undefined && fromShell.length > 0) return fromShell;
     const fromFile = projectEnv[name];
     return fromFile !== undefined && fromFile.length > 0 ? fromFile : undefined;
@@ -1567,9 +1659,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // `db reset`) fails fast rather than dropping schemas on a config that should have
   // already failed validation.
   if (projectIdExplicitEmpty && Option.isNone(projectId)) {
-    return yield* Effect.fail(
-      new LegacyDbConfigLoadError({ message: "Missing required field in config: project_id" }),
-    );
+    return yield* new LegacyDbConfigLoadError({
+      message: "Missing required field in config: project_id",
+    });
   }
 
   // A present-but-unmarshalable port aborts rather than defaulting, so `test db
@@ -1587,19 +1679,17 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     lookup,
   );
   if (port === undefined || shadowPort === undefined) {
-    return yield* Effect.fail(
-      new LegacyDbConfigLoadError({
-        message: `failed to load config: invalid ${port === undefined ? "db.port" : "db.shadow_port"} value`,
-      }),
-    );
+    return yield* new LegacyDbConfigLoadError({
+      message: `failed to load config: invalid ${port === undefined ? "db.port" : "db.shadow_port"} value`,
+    });
   }
   // Validation rejects an explicit `db.port = 0`; an absent port is defaulted before
   // validation, so only a present 0 fails. `resolvePort` accepts 0 as a syntactically
   // valid uint16, so the zero check lives here. No equivalent check for `shadow_port`.
   if (port === 0) {
-    return yield* Effect.fail(
-      new LegacyDbConfigLoadError({ message: "Missing required field in config: db.port" }),
-    );
+    return yield* new LegacyDbConfigLoadError({
+      message: "Missing required field in config: db.port",
+    });
   }
 
   // `db.password` isn't part of the config schema (no `SUPABASE_DB_PASSWORD` env
@@ -1626,11 +1716,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       typeof majorVersionRaw === "string"
         ? legacyExpandEnv(majorVersionRaw, lookup)
         : String(majorVersionRaw);
-    return yield* Effect.fail(
-      new LegacyDbConfigLoadError({
-        message: `Failed reading config: Invalid db.major_version: ${shown}.`,
-      }),
-    );
+    return yield* new LegacyDbConfigLoadError({
+      message: `Failed reading config: Invalid db.major_version: ${shown}.`,
+    });
   }
   // Rejecting an unsupported major version ({13,14,15,17}) is
   // `legacyValidateResolvedConfig`'s `db.major_version` switch (called once, below) — an
@@ -1681,11 +1769,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       typeof denoVersionRaw === "string"
         ? legacyExpandEnv(denoVersionRaw, lookup)
         : String(denoVersionRaw);
-    return yield* Effect.fail(
-      new LegacyDbConfigLoadError({
-        message: `Failed reading config: Invalid edge_runtime.deno_version: ${shown}.`,
-      }),
-    );
+    return yield* new LegacyDbConfigLoadError({
+      message: `Failed reading config: Invalid edge_runtime.deno_version: ${shown}.`,
+    });
   }
   // Rejecting a present-but-invalid deno_version (0 → missing-required, anything other
   // than 1/2 → invalid) is `legacyValidateResolvedConfig`'s `edgeRuntimeDenoVersion`
@@ -1731,11 +1817,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     const expandedWebhooksEnabledEnv = legacyExpandEnv(webhooksEnabledEnv, lookup);
     const parsed = legacyParseGoBool(expandedWebhooksEnabledEnv);
     if (parsed === undefined) {
-      return yield* Effect.fail(
-        new LegacyDbConfigLoadError({
-          message: `failed to parse config: invalid experimental.webhooks.enabled: ${expandedWebhooksEnabledEnv}.`,
-        }),
-      );
+      return yield* new LegacyDbConfigLoadError({
+        message: `failed to parse config: invalid experimental.webhooks.enabled: ${expandedWebhooksEnabledEnv}.`,
+      });
     }
     webhooksEnabled = parsed;
   } else if (typeof webhooksEnabledRaw === "boolean") {
@@ -1747,11 +1831,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   } else if (typeof webhooksEnabledRaw === "string") {
     const parsed = legacyParseGoBool(legacyExpandEnv(webhooksEnabledRaw, lookup));
     if (parsed === undefined) {
-      return yield* Effect.fail(
-        new LegacyDbConfigLoadError({
-          message: `failed to parse config: invalid experimental.webhooks.enabled: ${legacyExpandEnv(webhooksEnabledRaw, lookup)}.`,
-        }),
-      );
+      return yield* new LegacyDbConfigLoadError({
+        message: `failed to parse config: invalid experimental.webhooks.enabled: ${legacyExpandEnv(webhooksEnabledRaw, lookup)}.`,
+      });
     }
     webhooksEnabled = parsed;
   } else {
@@ -1780,11 +1862,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     const expandedEnabledEnv = legacyExpandEnv(enabledEnv, lookup);
     const parsed = legacyParseGoBool(expandedEnabledEnv);
     if (parsed === undefined) {
-      return yield* Effect.fail(
-        new LegacyDbConfigLoadError({
-          message: `failed to parse config: invalid experimental.pgdelta.enabled: ${expandedEnabledEnv}.`,
-        }),
-      );
+      return yield* new LegacyDbConfigLoadError({
+        message: `failed to parse config: invalid experimental.pgdelta.enabled: ${expandedEnabledEnv}.`,
+      });
     }
     enabled = parsed;
   } else if (typeof enabledRaw === "boolean") {
@@ -1796,11 +1876,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   } else if (typeof enabledRaw === "string") {
     const parsed = legacyParseGoBool(legacyExpandEnv(enabledRaw, lookup));
     if (parsed === undefined) {
-      return yield* Effect.fail(
-        new LegacyDbConfigLoadError({
-          message: `failed to parse config: invalid experimental.pgdelta.enabled: ${legacyExpandEnv(enabledRaw, lookup)}.`,
-        }),
-      );
+      return yield* new LegacyDbConfigLoadError({
+        message: `failed to parse config: invalid experimental.pgdelta.enabled: ${legacyExpandEnv(enabledRaw, lookup)}.`,
+      });
     }
     enabled = parsed;
   } else {
@@ -1860,15 +1938,13 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       if (typeof rawLimit !== "string" && typeof rawLimit !== "number") continue;
       const limitString =
         typeof rawLimit === "number" ? String(rawLimit) : legacyExpandEnv(rawLimit, lookup);
-      try {
-        ramInBytes(limitString);
-      } catch {
-        return yield* Effect.fail(
+      yield* Effect.try({
+        try: () => ramInBytes(limitString),
+        catch: () =>
           new LegacyDbConfigLoadError({
             message: `failed to parse config: invalid storage.buckets.${bucketName}.file_size_limit.`,
           }),
-        );
-      }
+      });
     }
   }
 
@@ -1943,24 +2019,21 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     const signingKeysPath = str(authRawResolved, "signing_keys_path");
     if (signingKeysPath.length > 0) {
       const keysJson = yield* fs
-        .readFileString(legacyResolveSigningKeysPath(workdir, signingKeysPath))
+        .readFileString(legacyResolveSigningKeysPath(path, workdir, signingKeysPath))
         .pipe(
           Effect.mapError(
             (cause) =>
               new LegacyDbConfigLoadError({ message: legacySigningKeysReadErrorMessage(cause) }),
           ),
         );
-      yield* Effect.try({
-        try: () => {
-          const parsed: unknown = JSON.parse(keysJson);
-          if (!Array.isArray(parsed)) {
-            throw new Error("signing keys must be a JSON array of JWKs");
-          }
-          return parsed;
-        },
-        catch: (cause) =>
-          new LegacyDbConfigLoadError({ message: legacySigningKeysDecodeErrorMessage(cause) }),
-      });
+      yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Array(Schema.Unknown)))(
+        keysJson,
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new LegacyDbConfigLoadError({ message: legacySigningKeysDecodeErrorMessage(cause) }),
+        ),
+      );
     }
 
     // A6: passkey/webauthn when passkey enabled.
@@ -2023,20 +2096,17 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       for (const name of Object.keys(templatesRaw)) {
         const tmpl = asRecord(templatesRaw[name]);
         if (tmpl === undefined) continue;
-        const contentPath = yield* Effect.try({
-          try: () =>
-            legacyResolveEmailTemplateContentPath({
-              section: "template",
-              name,
-              contentPath: str(tmpl, "content_path"),
-              contentPresent: tmpl["content"] !== undefined,
-              base: workdir,
-            }),
-          catch: (cause) =>
-            new LegacyDbConfigLoadError({
-              message: cause instanceof Error ? cause.message : String(cause),
-            }),
-        });
+        const contentPath = yield* legacyResolveEmailTemplateContentPath({
+          path,
+          fileSystem: fs,
+          section: "template",
+          name,
+          contentPath: str(tmpl, "content_path"),
+          contentPresent: tmpl["content"] !== undefined,
+          base: workdir,
+        }).pipe(
+          Effect.mapError((cause) => new LegacyDbConfigLoadError({ message: cause.message })),
+        );
         if (contentPath === undefined) continue;
         yield* fs.readFileString(contentPath).pipe(
           Effect.mapError(
@@ -2058,20 +2128,17 @@ const readDbTomlCore = Effect.fnUntraced(function* (
         ) {
           continue;
         }
-        const contentPath = yield* Effect.try({
-          try: () =>
-            legacyResolveEmailTemplateContentPath({
-              section: "notification",
-              name,
-              contentPath: str(tmpl, "content_path"),
-              contentPresent: tmpl["content"] !== undefined,
-              base: workdir,
-            }),
-          catch: (cause) =>
-            new LegacyDbConfigLoadError({
-              message: cause instanceof Error ? cause.message : String(cause),
-            }),
-        });
+        const contentPath = yield* legacyResolveEmailTemplateContentPath({
+          path,
+          fileSystem: fs,
+          section: "notification",
+          name,
+          contentPath: str(tmpl, "content_path"),
+          contentPresent: tmpl["content"] !== undefined,
+          base: workdir,
+        }).pipe(
+          Effect.mapError((cause) => new LegacyDbConfigLoadError({ message: cause.message })),
+        );
         if (contentPath === undefined) continue;
         yield* fs.readFileString(contentPath).pipe(
           Effect.mapError(
@@ -2642,9 +2709,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       if (legacyIsEncryptedSecret(value)) {
         const decrypted = legacyDecryptSecret(value, dotenvPrivateKeys);
         if (!decrypted.ok) {
-          return yield* Effect.fail(
-            new LegacyDbConfigLoadError({ message: `failed to parse config: ${decrypted.error}` }),
-          );
+          return yield* new LegacyDbConfigLoadError({
+            message: `failed to parse config: ${decrypted.error}`,
+          });
         }
         vault.push({ name, value: decrypted.value, resolved: true });
         continue;
@@ -2673,9 +2740,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     lookup,
   );
   if (apiSchemas === undefined) {
-    return yield* Effect.fail(
-      new LegacyDbConfigLoadError({ message: "failed to parse config: invalid api.schemas." }),
-    );
+    return yield* new LegacyDbConfigLoadError({
+      message: "failed to parse config: invalid api.schemas.",
+    });
   }
 
   const values: LegacyDbTomlValues = {

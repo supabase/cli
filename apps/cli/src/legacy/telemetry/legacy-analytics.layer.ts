@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Config, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 import { aiToolLayer } from "../../shared/telemetry/ai-tool.layer.ts";
 import { AiTool } from "../../shared/telemetry/ai-tool.service.ts";
 import {
@@ -36,6 +36,13 @@ interface LinkedProjectCacheValue {
   readonly organization_id: string;
   readonly organization_slug: string;
 }
+
+const LinkedProjectCacheSchema = Schema.Struct({
+  ref: Schema.String,
+  name: Schema.optional(Schema.String),
+  organization_id: Schema.optional(Schema.String),
+  organization_slug: Schema.String,
+});
 
 function stripUndefined(properties: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(properties).filter(([, value]) => value !== undefined));
@@ -78,18 +85,20 @@ export function resolveGroups(
 }
 
 // Mirrors apps/cli-go/cmd/root_analytics.go:149-165 envSignals().
-export function collectEnvSignals(): Record<string, true | string> | undefined {
+export function collectEnvSignals(
+  env: Readonly<Record<string, string | undefined>>,
+): Record<string, true | string> | undefined {
   const signals: Record<string, true | string> = {};
 
   for (const key of EnvSignalPresenceKeys) {
-    const raw = process.env[key];
+    const raw = env[key];
     if (raw === undefined) continue;
     if (raw.trim().length === 0) continue;
     signals[key] = true;
   }
 
   for (const key of EnvSignalValueKeys) {
-    const raw = process.env[key];
+    const raw = env[key];
     if (raw === undefined) continue;
     const trimmed = raw.trim();
     if (trimmed.length === 0) continue;
@@ -113,8 +122,8 @@ export function collectEnvSignals(): Record<string, true | string> | undefined {
 function makeLoadLinkedProject(
   fs: FileSystem.FileSystem,
   path: Path.Path,
+  workdir: string,
 ): Effect.Effect<Option.Option<LinkedProjectCacheValue>> {
-  const workdir = process.env.SUPABASE_WORKDIR ?? process.cwd();
   const cachePath = path.join(workdir, "supabase", ".temp", "linked-project.json");
   return Effect.gen(function* () {
     const exists = yield* fs.exists(cachePath).pipe(Effect.orElseSucceed(() => false));
@@ -123,21 +132,20 @@ function makeLoadLinkedProject(
     const content = yield* fs.readFileString(cachePath).pipe(Effect.option);
     if (Option.isNone(content)) return Option.none<LinkedProjectCacheValue>();
 
-    try {
-      const parsed = JSON.parse(content.value) as Partial<LinkedProjectCacheValue>;
-      if (typeof parsed.ref !== "string" || typeof parsed.organization_slug !== "string") {
-        return Option.none<LinkedProjectCacheValue>();
-      }
-      return Option.some<LinkedProjectCacheValue>({
-        ref: parsed.ref,
-        name: typeof parsed.name === "string" ? parsed.name : "",
-        organization_id: typeof parsed.organization_id === "string" ? parsed.organization_id : "",
-        organization_slug: parsed.organization_slug,
-      });
-    } catch {
-      return Option.none<LinkedProjectCacheValue>();
-    }
-  }).pipe(Effect.catch(() => Effect.succeed(Option.none<LinkedProjectCacheValue>())));
+    return yield* Schema.decodeEffect(Schema.fromJsonString(LinkedProjectCacheSchema))(
+      content.value,
+    ).pipe(
+      Effect.map(({ ref, name, organization_id, organization_slug }) =>
+        Option.some<LinkedProjectCacheValue>({
+          ref,
+          name: name ?? "",
+          organization_id: organization_id ?? "",
+          organization_slug,
+        }),
+      ),
+      Effect.orElseSucceed(() => Option.none<LinkedProjectCacheValue>()),
+    );
+  });
 }
 
 export const legacyAnalyticsLayer = Layer.effect(
@@ -147,7 +155,24 @@ export const legacyAnalyticsLayer = Layer.effect(
     const aiTool = yield* AiTool;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const posthogConfig = resolvePosthogConfig(process.env);
+    const envKeys = [
+      ...EnvSignalPresenceKeys,
+      ...EnvSignalValueKeys,
+      "SUPABASE_WORKDIR",
+      "SUPABASE_TELEMETRY_POSTHOG_HOST",
+      "SUPABASE_TELEMETRY_POSTHOG_KEY",
+      "SUPABASE_CLI_POSTHOG_HOST",
+      "SUPABASE_CLI_POSTHOG_KEY",
+    ];
+    const envEntries = yield* Effect.all(
+      [...new Set(envKeys)].map((key) =>
+        Config.option(Config.string(key)).pipe(
+          Effect.map((value) => [key, Option.getOrUndefined(value)] as const),
+        ),
+      ),
+    );
+    const env = Object.fromEntries(envEntries);
+    const posthogConfig = resolvePosthogConfig(env);
 
     if (runtime.consent !== "granted" || Option.isNone(posthogConfig.key)) {
       return Analytics.of({
@@ -160,10 +185,14 @@ export const legacyAnalyticsLayer = Layer.effect(
 
     const client = yield* scopedPosthogClient(posthogConfig.key.value, posthogConfig.host);
 
-    const loadLinkedProject = makeLoadLinkedProject(fs, path);
+    const loadLinkedProject = makeLoadLinkedProject(
+      fs,
+      path,
+      env.SUPABASE_WORKDIR ?? process.cwd(),
+    );
 
     const isAgent = Option.isSome(aiTool.name);
-    const envSignals = collectEnvSignals();
+    const envSignals = collectEnvSignals(env);
 
     const baseProperties = stripUndefined({
       [PropPlatform]: "cli",

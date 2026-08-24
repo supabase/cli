@@ -1,4 +1,4 @@
-import { Effect, Exit, Stream } from "effect";
+import { Cause, Clock, Effect, Exit, Stream } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 import { spawnContainerCli } from "./legacy-container-cli.ts";
 import { LegacyDockerRunError } from "./legacy-docker-run.errors.ts";
@@ -127,13 +127,11 @@ export function legacyMakeDockerImageResolver(
       if (isImageNotFoundMessage(stderr)) return false;
       const daemonDown = legacyIsDockerDaemonUnreachable(stderr);
       const hint = daemonDown ? `\n\n${LEGACY_SUGGEST_DOCKER_INSTALL}` : "";
-      return yield* Effect.fail(
-        new LegacyDockerRunError({
-          message: `failed to inspect docker image: ${stderr}${hint}`,
-          reason: "inspect",
-          daemonDown,
-        }),
-      );
+      return yield* new LegacyDockerRunError({
+        message: `failed to inspect docker image: ${stderr}${hint}`,
+        reason: "inspect",
+        daemonDown,
+      });
     }).pipe(Effect.scoped);
 
   const pullImage = (
@@ -149,7 +147,7 @@ export function legacyMakeDockerImageResolver(
         stderr: "pipe",
         detached: false,
         extendEnv: true,
-      }).pipe(Effect.mapError(() => new Error("spawn")));
+      }).pipe(Effect.mapError(() => new Cause.UnknownError(undefined, String("spawn"))));
       // Tee pull progress to the parent terminal in real time so a large,
       // uncached pull does not look frozen — Go streams the same progress via
       // `jsonmessage.DisplayJSONMessagesToStream`. Progress goes to stderr so
@@ -195,7 +193,7 @@ export function legacyMakeDockerImageResolver(
 
   return (image: string, deadline?: number): Effect.Effect<string, LegacyDockerRunError> =>
     Effect.gen(function* () {
-      const candidates = legacyGetRegistryImageUrlCandidates(image, projectEnvValues);
+      const candidates = legacyGetRegistryImageUrlCandidates(image, projectEnvValues ?? {});
       for (const candidate of candidates) {
         if (yield* hasLocalImage(candidate)) {
           return candidate;
@@ -214,11 +212,12 @@ export function legacyMakeDockerImageResolver(
         let candidateShareMs: number | undefined;
         let candidateDeadline: number | undefined;
         if (deadline !== undefined) {
+          const now = yield* Clock.currentTimeMillis;
           candidateShareMs = Math.max(
             1,
-            Math.floor((deadline - Date.now()) / (candidates.length - candidateIndex)),
+            Math.floor((deadline - now) / (candidates.length - candidateIndex)),
           );
-          candidateDeadline = Math.min(Date.now() + candidateShareMs, deadline);
+          candidateDeadline = Math.min(now + candidateShareMs, deadline);
         }
         // Whether the most recent failed attempt's teed output ended with a
         // newline — read by the retry banner below, which runs outside the
@@ -231,7 +230,9 @@ export function legacyMakeDockerImageResolver(
         ) {
           const attempt = attemptIndex + 1;
           const remainingMs =
-            candidateDeadline === undefined ? undefined : candidateDeadline - Date.now();
+            candidateDeadline === undefined
+              ? undefined
+              : candidateDeadline - (yield* Clock.currentTimeMillis);
           if (remainingMs !== undefined && remainingMs <= 0) {
             failures.push(
               `${candidate} attempt ${attempt}: candidate budget exhausted (${candidateShareMs}ms share)`,
@@ -273,7 +274,7 @@ export function legacyMakeDockerImageResolver(
             // candidate can fix a missing Docker/Podman binary, so stop here
             // and surface the install hint instead of an opaque, repeated
             // spawn error across every candidate.
-            return yield* Effect.fail(spawnError());
+            return yield* spawnError();
           }
 
           const delay = DOCKER_PULL_RETRY_DELAYS_MS[attemptIndex];
@@ -282,7 +283,10 @@ export function legacyMakeDockerImageResolver(
           }
           // Never sleep past this candidate's share — the backoff would spend
           // budget the remaining registries still need.
-          if (candidateDeadline !== undefined && Date.now() + delay >= candidateDeadline) {
+          if (
+            candidateDeadline !== undefined &&
+            (yield* Clock.currentTimeMillis) + delay >= candidateDeadline
+          ) {
             break;
           }
           // Go prints a per-retry banner before sleeping:
@@ -305,12 +309,10 @@ export function legacyMakeDockerImageResolver(
         }
       }
 
-      return yield* Effect.fail(
-        new LegacyDockerRunError({
-          message: `failed to pull docker image from all registries: ${failures.join("; ")}`,
-          reason: "pull",
-          daemonDown: failures.some(legacyIsDockerDaemonUnreachable),
-        }),
-      );
+      return yield* new LegacyDockerRunError({
+        message: `failed to pull docker image from all registries: ${failures.join("; ")}`,
+        reason: "pull",
+        daemonDown: failures.some(legacyIsDockerDaemonUnreachable),
+      });
     });
 }

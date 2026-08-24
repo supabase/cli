@@ -268,7 +268,10 @@ function compareType(
   }
 
   if (parsed.kind === "unknown") {
-    console.warn(`[types.gen.go drift check] skipping ${path}: could not classify the Go type`);
+    mismatches.push({
+      path,
+      message: `could not classify the Go type at ${path}`,
+    });
     return;
   }
 

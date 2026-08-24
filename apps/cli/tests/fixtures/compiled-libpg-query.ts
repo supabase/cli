@@ -28,4 +28,4 @@ if (result.files.length !== 1) {
   throw new Error("analyzeForShadow did not reorder the expected statement");
 }
 
-console.log("libpg-query.wasm loaded");
+process.stdout.write("libpg-query.wasm loaded\n");

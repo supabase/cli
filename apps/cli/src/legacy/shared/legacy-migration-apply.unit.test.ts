@@ -1,9 +1,8 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Data, Effect, Exit, FileSystem, Path } from "effect";
+import { Data, Effect, Exit, FileSystem, Layer, ManagedRuntime, Path } from "effect";
+import type { PlatformError } from "effect/PlatformError";
+import * as Formatter from "effect/Formatter";
 
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
@@ -11,16 +10,17 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
+import { useLegacyTempWorkdir } from "../../../tests/helpers/legacy-mocks.ts";
 import type { LegacyDbConnectError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbBatchStatement, LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
   legacyApplyMigrationFile,
-  legacyApplySchemaFiles,
+  legacyApplySchemaFiles as legacyApplySchemaFilesImpl,
   legacyHasTransactionControl,
   legacyIsPipelineIncompatible,
   legacyMarkError,
   legacyRevertsToLoginRole,
-  legacySeedGlobals,
+  legacySeedGlobals as legacySeedGlobalsImpl,
 } from "./legacy-migration-apply.ts";
 
 class TestError extends Data.TaggedError("TestError")<{ readonly message: string }> {}
@@ -34,6 +34,95 @@ class FakeExecError extends Data.TaggedError("LegacyDbExecError")<{
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.dbFinding;
+  }
+}
+
+const testPlatform = ManagedRuntime.make(BunServices.layer);
+const testPath = testPlatform.runSync(Path.Path);
+const tempRoot = useLegacyTempWorkdir("legacy-migration-apply-");
+
+function join(...paths: ReadonlyArray<string>): string {
+  return testPath.join(...paths);
+}
+
+type FixtureOperation = Effect.Effect<void, PlatformError, FileSystem.FileSystem>;
+const fixtureOperations = new Map<string, Array<FixtureOperation>>();
+let fixtureCounter = 0;
+
+function fixtureRoot(path: string): string | undefined {
+  return [...fixtureOperations.keys()]
+    .filter((root) => path === root || path.startsWith(`${root}/`))
+    .sort((a, b) => b.length - a.length)[0];
+}
+
+function enqueueFixtureOperation(path: string, operation: FixtureOperation): void {
+  const root = fixtureRoot(path);
+  if (root === undefined) throw new Error(`fixture root not registered for ${path}`);
+  fixtureOperations.get(root)?.push(operation);
+}
+
+function flushFixture(path: string): Effect.Effect<void, PlatformError, FileSystem.FileSystem> {
+  const root = fixtureRoot(path);
+  if (root === undefined) return Effect.void;
+  const operations = fixtureOperations.get(root) ?? [];
+  fixtureOperations.set(root, []);
+  return Effect.forEach(operations, (operation) => operation).pipe(Effect.asVoid);
+}
+
+function mkdirSync(path: string, options?: { readonly recursive?: boolean }): void {
+  enqueueFixtureOperation(
+    path,
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(path, options);
+    }),
+  );
+}
+
+function writeFileSync(path: string, data: string): void {
+  enqueueFixtureOperation(
+    path,
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(path, data);
+    }),
+  );
+}
+
+function chmodSync(path: string, mode: number): void {
+  enqueueFixtureOperation(
+    path,
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.chmod(path, mode);
+    }),
+  );
+}
+
+function mkdtempSync(prefix: string): string {
+  const path = join(tempRoot.current, `${prefix}${fixtureCounter++}`);
+  fixtureOperations.set(path, [
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(path, { recursive: true });
+    }),
+  ]);
+  return path;
+}
+
+function rmSync(
+  path: string,
+  options?: { readonly recursive?: boolean; readonly force?: boolean },
+): void {
+  const root = fixtureRoot(path);
+  if (root !== undefined) {
+    enqueueFixtureOperation(
+      path,
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.remove(path, options);
+      }),
+    );
   }
 }
 
@@ -110,24 +199,52 @@ const executedSql = (
 const run = (
   session: LegacyDbSession,
   migrationPath: string,
-): Effect.Effect<void, TestError | LegacyDbConnectError> =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    return yield* legacyApplyMigrationFile(
-      session,
-      fs,
-      path,
-      migrationPath,
-      (message) => new TestError({ message }),
-    );
-  }).pipe(Effect.provide(BunServices.layer));
+): Effect.Effect<void, TestError | LegacyDbConnectError | PlatformError> =>
+  flushFixture(migrationPath).pipe(
+    Effect.flatMap(() =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        return yield* legacyApplyMigrationFile(
+          session,
+          fs,
+          path,
+          migrationPath,
+          (message) => new TestError({ message }),
+        );
+      }),
+    ),
+    Effect.provide(BunServices.layer),
+  );
+
+const legacyApplySchemaFiles = (
+  session: LegacyDbSession,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+  schemaPaths: ReadonlyArray<string>,
+  mapError: (message: string, suggestion?: string) => TestError,
+  projectEnv: Readonly<Record<string, string>> = {},
+): Effect.Effect<void, TestError | LegacyDbConnectError | PlatformError, FileSystem.FileSystem> =>
+  flushFixture(workdir).pipe(
+    Effect.flatMap(() =>
+      legacyApplySchemaFilesImpl<TestError>(
+        session,
+        fs,
+        path,
+        workdir,
+        schemaPaths,
+        mapError,
+        projectEnv,
+      ),
+    ),
+  );
 
 describe("legacyApplyMigrationFile", () => {
   it.effect(
     "creates the history table, then runs the statements + history insert in a transaction",
     () => {
-      const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+      const dir = mkdtempSync("legacy-apply-");
       const file = join(dir, "20240101120000_add_col.sql");
       writeFileSync(file, "ALTER TABLE a ADD COLUMN b int;\nCREATE INDEX i ON a(b);");
       const { session, calls } = fakeSession();
@@ -173,7 +290,7 @@ describe("legacyApplyMigrationFile", () => {
   );
 
   it.effect("records a versioned empty migration in one batch", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_empty.sql");
     writeFileSync(file, "");
     const { session, calls } = fakeSession();
@@ -195,7 +312,7 @@ describe("legacyApplyMigrationFile", () => {
   });
 
   it.effect("rolls back and maps the error when a statement fails", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_boom.sql");
     writeFileSync(file, "ALTER TABLE a ADD COLUMN b int;");
     const { session, calls } = fakeSession({ failOn: "ADD COLUMN b int" });
@@ -207,7 +324,7 @@ describe("legacyApplyMigrationFile", () => {
           expect(calls.filter((call) => call.kind === "batch")).toHaveLength(1);
           // Go's ExecBatch appends the failing statement number + text for context.
           if (Exit.isFailure(exit)) {
-            const msg = JSON.stringify(exit.cause);
+            const msg = Formatter.formatJson(exit.cause);
             expect(msg).toContain("At statement: 0");
             expect(msg).toContain("ALTER TABLE a ADD COLUMN b int");
           }
@@ -218,7 +335,7 @@ describe("legacyApplyMigrationFile", () => {
   });
 
   it.effect("sends a large compatible migration in one batch", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_many.sql");
     const statements = Array.from({ length: 10_000 }, (_, index) => `SELECT ${index + 1}`);
     writeFileSync(file, `${statements.join(";\n")};`);
@@ -240,7 +357,7 @@ describe("legacyApplyMigrationFile", () => {
   });
 
   it.effect("keeps the global error index after an incompatible-statement flush", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_fail_after_vacuum.sql");
     writeFileSync(file, "SELECT 1;\nVACUUM;\nSELECT missing_column;\nSELECT 4;");
     const { session } = fakeSession({ failOn: "missing_column" });
@@ -257,7 +374,7 @@ describe("legacyApplyMigrationFile", () => {
   });
 
   it.effect("defaults a deferred batch failure to the migration history statement", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_deferred.sql");
     writeFileSync(file, "SELECT 1;");
     const { session } = fakeSession({ failAfterBatch: true });
@@ -281,7 +398,7 @@ describe("legacyApplyMigrationFile", () => {
       // `ApplyMigrations`/`applySchemaFiles` ever get a chance to attach a
       // `CmdSuggestion` — a read failure here must carry the same prefix, not the bare
       // platform error text.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-apply-read-fail-"));
+      const dir = mkdtempSync("legacy-apply-read-fail-");
       const missingFile = join(dir, "20240101120000_missing.sql");
       const { session } = fakeSession();
       return run(session, missingFile).pipe(
@@ -290,7 +407,7 @@ describe("legacyApplyMigrationFile", () => {
           Effect.sync(() => {
             expect(Exit.isFailure(exit)).toBe(true);
             if (Exit.isFailure(exit)) {
-              const msg = JSON.stringify(exit.cause);
+              const msg = Formatter.formatJson(exit.cause);
               expect(msg).toContain("failed to open migration file: ");
             }
             rmSync(dir, { recursive: true, force: true });
@@ -301,7 +418,7 @@ describe("legacyApplyMigrationFile", () => {
   );
 
   it.effect("runs a pipeline-incompatible statement outside the surrounding transaction", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_add_index.sql");
     writeFileSync(
       file,
@@ -335,7 +452,7 @@ describe("legacyApplyMigrationFile", () => {
   });
 
   it.effect("honors pg-delta's file-level no-transaction directive", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_drop_subscription.sql");
     writeFileSync(
       file,
@@ -377,7 +494,7 @@ describe("legacyApplyMigrationFile", () => {
   });
 
   it.effect("resets the session and omits history when a no-transaction migration fails", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_drop_subscription.sql");
     writeFileSync(
       file,
@@ -396,7 +513,7 @@ describe("legacyApplyMigrationFile", () => {
           expect(execs.at(-1)).toBe("RESET ALL");
           expect(calls.some((call) => call.kind === "query")).toBe(false);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("At statement: 1");
+            expect(Formatter.formatJson(exit.cause)).toContain("At statement: 1");
           }
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -405,7 +522,7 @@ describe("legacyApplyMigrationFile", () => {
   });
 
   it.effect("reports a pipeline-incompatible statement failure with its statement index", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_add_index.sql");
     writeFileSync(file, "create table a (id int);\nCREATE INDEX CONCURRENTLY a_idx ON a(id);");
     const { session, calls } = fakeSession({ failOn: "CONCURRENTLY" });
@@ -415,7 +532,7 @@ describe("legacyApplyMigrationFile", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const msg = JSON.stringify(exit.cause);
+            const msg = Formatter.formatJson(exit.cause);
             // Index 1: the leading `create table a` (index 0) committed in its own batch first.
             expect(msg).toContain("At statement: 1");
             expect(msg).toContain("CREATE INDEX CONCURRENTLY a_idx ON a(id)");
@@ -433,7 +550,7 @@ describe("legacyApplyMigrationFile", () => {
   });
 
   it.effect("preserves authored transaction boundaries and records history afterwards", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_authored.sql");
     writeFileSync(file, "BEGIN;\nSET LOCAL check_function_bodies = off;\nCOMMIT;");
     const { session, calls } = fakeSession();
@@ -456,7 +573,7 @@ describe("legacyApplyMigrationFile", () => {
   });
 
   it.effect("keeps savepoint rollback inside the managed migration transaction", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_savepoint.sql");
     writeFileSync(
       file,
@@ -490,7 +607,7 @@ describe("legacyApplyMigrationFile", () => {
   });
 
   it.effect("does not record history when an authored transaction fails", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_authored.sql");
     writeFileSync(file, "BEGIN;\nCREATE TABLE broken (;\nCOMMIT;");
     const { session, calls } = fakeSession({ failOn: "CREATE TABLE broken" });
@@ -513,7 +630,7 @@ describe("legacyApplyMigrationFile", () => {
   it.effect(
     "re-asserts the stepped-down role between the statements and the history insert",
     () => {
-      const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+      const dir = mkdtempSync("legacy-apply-");
       const file = join(dir, "20240101120000_reset_role.sql");
       writeFileSync(file, "set role repro_writer;\ncreate table t (id int);\nreset role;");
       const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
@@ -545,7 +662,7 @@ describe("legacyApplyMigrationFile", () => {
   );
 
   it.effect("never re-asserts a role on sessions that did not step down", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_reset_role.sql");
     writeFileSync(file, "reset role;");
     const { session, calls } = fakeSession();
@@ -560,7 +677,7 @@ describe("legacyApplyMigrationFile", () => {
   });
 
   it.effect("re-asserts the stepped-down role before recording an authored transaction", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_authored.sql");
     writeFileSync(file, "BEGIN;\nreset role;\nCOMMIT;");
     const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
@@ -583,7 +700,7 @@ describe("legacyApplyMigrationFile", () => {
   });
 
   it.effect("keeps the history insert's statement index when the role restore precedes it", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_fail.sql");
     writeFileSync(file, "SELECT 1;");
     const { session } = fakeSession({
@@ -609,7 +726,7 @@ describe("legacyApplyMigrationFile", () => {
   });
 
   it.effect("keeps a mid-batch failure's statement index when a restore op is appended", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_fail.sql");
     writeFileSync(file, "SELECT 1;\nSELECT bad_col;\nSELECT 3;");
     const { session } = fakeSession({
@@ -632,7 +749,7 @@ describe("legacyApplyMigrationFile", () => {
     // Mirrors "defaults a deferred batch failure to the migration history
     // statement": the restore op between the statements and the insert must not
     // shift the deferred (post-Sync) index either.
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_deferred.sql");
     writeFileSync(file, "SELECT 1;");
     const { session } = fakeSession({
@@ -652,7 +769,7 @@ describe("legacyApplyMigrationFile", () => {
   });
 
   it.effect("reports the restore op's own failure with the history step's index", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_fail.sql");
     writeFileSync(file, "SELECT 1;");
     const { session } = fakeSession({
@@ -678,7 +795,7 @@ describe("legacyApplyMigrationFile", () => {
   it.effect("keeps the insert index when the final batch holds only the trailing ops", () => {
     // A trailing CONCURRENTLY statement empties `pending`, so the final batch is
     // just [restore, insert] — the index math must still report the file's count.
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_fail.sql");
     writeFileSync(file, "SELECT 1;\nCREATE INDEX CONCURRENTLY i ON a(id);");
     const { session } = fakeSession({
@@ -700,7 +817,7 @@ describe("legacyApplyMigrationFile", () => {
   it.effect("restores postgres immediately after a mid-file RESET ROLE, silently", () => {
     // Statements after the reset now run as postgres again (avallete's #6246
     // review), so the old drift WARN is gone — there is no drift left to surface.
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_reset_role.sql");
     writeFileSync(file, "set role r;\nreset role;\nselect 1;");
     const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
@@ -731,7 +848,7 @@ describe("legacyApplyMigrationFile", () => {
   });
 
   it.effect("restores postgres after every static role-revert spelling", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_role_none.sql");
     writeFileSync(
       file,
@@ -763,7 +880,7 @@ describe("legacyApplyMigrationFile", () => {
   it.effect("emits exactly one restore when a no-transaction file ends in a revert", () => {
     // Sequential path: the injected restore after the trailing `reset role`
     // makes the end-of-file restore redundant, so it must dedupe away.
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_seq_reset.sql");
     writeFileSync(file, "-- pg-delta: transaction=false\nset role r;\nreset role;");
     const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
@@ -783,7 +900,7 @@ describe("legacyApplyMigrationFile", () => {
   it.effect("keeps the deferred-failure index when mid-file restores were injected", () => {
     // The `injectedBefore[raw] ?? injected` fallback only matters when the
     // deferred (post-Sync) index lands past the ops array AND injections exist.
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_deferred.sql");
     writeFileSync(file, "set role r;\nreset role;\nselect 1;");
     const { session } = fakeSession({
@@ -803,7 +920,7 @@ describe("legacyApplyMigrationFile", () => {
   });
 
   it.effect("injects into intermediate flushes so standalone statements run as postgres", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_concurrent.sql");
     writeFileSync(file, "reset role;\nCREATE INDEX CONCURRENTLY i ON a(id);\nselect 2;");
     const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
@@ -827,7 +944,7 @@ describe("legacyApplyMigrationFile", () => {
   });
 
   it.effect("reports a mid-file restore's own failure at its host statement", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_fail.sql");
     writeFileSync(file, "set role r;\nreset role;\nselect 1;");
     const { session } = fakeSession({
@@ -849,7 +966,7 @@ describe("legacyApplyMigrationFile", () => {
   });
 
   it.effect("keeps statement numbering across an injected mid-file restore", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_fail.sql");
     writeFileSync(file, "set role r;\nreset role;\nselect bad;");
     const { session } = fakeSession({
@@ -905,7 +1022,7 @@ describe("migration failure rendering (Go ExecBatch parity)", () => {
     sql: string,
     failWith: { message: string; code?: string; detail?: string; position?: number },
   ) => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const dir = mkdtempSync("legacy-apply-");
     const file = join(dir, "20240101120000_fail.sql");
     writeFileSync(file, `${sql};`);
     const { session } = fakeSession({ failOn: sql, failWith });
@@ -1125,14 +1242,21 @@ describe("legacyIsPipelineIncompatible", () => {
 
 describe("legacySeedGlobals", () => {
   it.effect("runs the globals file WITHOUT RESET ALL and without a history insert", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-globals-"));
+    const dir = mkdtempSync("legacy-globals-");
     const file = join(dir, "roles.sql");
     writeFileSync(file, "CREATE ROLE my_role;");
     const { session, calls } = fakeSession();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      yield* legacySeedGlobals(session, fs, path, [file], (message) => new TestError({ message }));
+      yield* flushFixture(file);
+      yield* legacySeedGlobalsImpl<TestError>(
+        session,
+        fs,
+        path,
+        [file],
+        (message) => new TestError({ message }),
+      );
       const execs = executedSql(calls);
       // Go's SeedGlobals calls ExecBatch directly — no RESET ALL (that's only the
       // migration-apply path) and no schema-migrations history insert.
@@ -1143,22 +1267,28 @@ describe("legacySeedGlobals", () => {
       ).toBe(false);
       rmSync(dir, { recursive: true, force: true });
     }).pipe(
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(BunServices.layer),
+      Effect.provide(BunServices.layer.pipe(Layer.merge(mockOutput({ format: "text" }).layer))),
     );
   });
 
   it.effect("leaves a stepped-down session role-clean after a globals file", () => {
     // Globals run before the vault upsert and the history-table DDL on the same
     // session, so a `reset role` here must not leak the login role into them.
-    const dir = mkdtempSync(join(tmpdir(), "legacy-globals-"));
+    const dir = mkdtempSync("legacy-globals-");
     const file = join(dir, "roles.sql");
     writeFileSync(file, "CREATE ROLE my_role;\nset role my_role;\nreset role;");
     const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      yield* legacySeedGlobals(session, fs, path, [file], (message) => new TestError({ message }));
+      yield* flushFixture(file);
+      yield* legacySeedGlobalsImpl<TestError>(
+        session,
+        fs,
+        path,
+        [file],
+        (message) => new TestError({ message }),
+      );
       const batch = calls.find((call) => call.kind === "batch");
       expect(batch?.statements?.at(-1)?.sql).toBe("SET SESSION ROLE postgres");
       expect(
@@ -1166,8 +1296,7 @@ describe("legacySeedGlobals", () => {
       ).toBe(false);
       rmSync(dir, { recursive: true, force: true });
     }).pipe(
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(BunServices.layer),
+      Effect.provide(BunServices.layer.pipe(Layer.merge(mockOutput({ format: "text" }).layer))),
     );
   });
 });
@@ -1186,7 +1315,7 @@ describe("legacyApplySchemaFiles", () => {
       // `stat` only needs directory execute permission, not read permission on the
       // file itself, so this still resolves as a `"File"` match, unlike a directory
       // (which the glob would instead expand via `legacyWalkSqlFiles`).
-      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-read-fail-"));
+      const dir = mkdtempSync("legacy-schema-files-read-fail-");
       const file = join(dir, "supabase", "unreadable.sql");
       mkdirSync(join(dir, "supabase"), { recursive: true });
       writeFileSync(file, "select 1;");
@@ -1206,7 +1335,7 @@ describe("legacyApplySchemaFiles", () => {
         ).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const msg = JSON.stringify(exit.cause);
+          const msg = Formatter.formatJson(exit.cause);
           expect(msg).toContain("failed to open migration file: ");
           expect(msg).toContain("supabase/unreadable.sql");
           expect(msg).not.toContain(dir);
@@ -1227,15 +1356,13 @@ describe("legacyApplySchemaFiles", () => {
       // statement's raw byte length, this fails with `bufio.Scanner: token too long`
       // instead of silently applying the oversized statement — verified empirically
       // (a `parser.SplitAndTrim` scratch probe).
-      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-"));
+      const dir = mkdtempSync("legacy-schema-files-scanner-");
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
       // A single, un-splittable statement whose raw text exceeds the 4096-byte floor
       // (`bufio.Scanner` starts at that size regardless of the configured limit).
       writeFileSync(file, `SELECT 1;\nSELECT '${"a".repeat(5000)}';\n`);
       const { session } = fakeSession();
-      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
-      process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = "100b";
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1247,22 +1374,17 @@ describe("legacyApplySchemaFiles", () => {
           ["supabase/big.sql"],
           (message, suggestion) =>
             new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
+          { SUPABASE_SCANNER_BUFFER_SIZE: "100b" },
         ).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const msg = JSON.stringify(exit.cause);
+          const msg = Formatter.formatJson(exit.cause);
           expect(msg).toContain("bufio.Scanner: token too long");
           expect(msg).toContain("After statement 1: SELECT 1;");
           expect(msg).toContain("Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB");
         }
       }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
-            else process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
         Effect.provide(BunServices.layer),
       );
     },
@@ -1278,13 +1400,11 @@ describe("legacyApplySchemaFiles", () => {
       // message still reports that lone ";" as the last-scanned text, not a blank
       // token — `len(stats)` (this port's `emitted`) stays gated on non-empty trim,
       // but the reported RAW text must not share that gate.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-empty-token-"));
+      const dir = mkdtempSync("legacy-schema-files-scanner-empty-token-");
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
       writeFileSync(file, `;\nSELECT '${"a".repeat(5000)}';\n`);
       const { session } = fakeSession();
-      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
-      process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = "100b";
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1296,10 +1416,11 @@ describe("legacyApplySchemaFiles", () => {
           ["supabase/big.sql"],
           (message, suggestion) =>
             new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
+          { SUPABASE_SCANNER_BUFFER_SIZE: "100b" },
         ).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const msg = JSON.stringify(exit.cause);
+          const msg = Formatter.formatJson(exit.cause);
           expect(msg).toContain("bufio.Scanner: token too long");
           // 0 statements were EMITTED (the lone ";" trimmed to empty and was never
           // appended), but the last scanned RAW token (";") must still show — not a
@@ -1307,13 +1428,7 @@ describe("legacyApplySchemaFiles", () => {
           expect(msg).toContain("After statement 0: ;");
         }
       }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
-            else process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
         Effect.provide(BunServices.layer),
       );
     },
@@ -1322,13 +1437,11 @@ describe("legacyApplySchemaFiles", () => {
   it.effect(
     "applies an oversized statement fine when SUPABASE_SCANNER_BUFFER_SIZE is unset (Go's default auto-grows to file size)",
     () => {
-      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-default-"));
+      const dir = mkdtempSync("legacy-schema-files-scanner-default-");
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
       writeFileSync(file, `SELECT '${"a".repeat(5000)}';\n`);
       const { session, calls } = fakeSession();
-      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
-      delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1343,12 +1456,7 @@ describe("legacyApplySchemaFiles", () => {
         );
         expect(executedSql(calls).some((sql) => sql.startsWith("SELECT 'a"))).toBe(true);
       }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous !== undefined) process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
         Effect.provide(BunServices.layer),
       );
     },
@@ -1365,13 +1473,11 @@ describe("legacyApplySchemaFiles", () => {
       // `parser.Split` falls back to its OWN hardcoded default cap
       // (`MaxScannerCapacity`, 256KiB), not to "no limit" and not to a tiny 5-byte
       // limit either. A statement past that hardcoded default must still fail.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-garbage-"));
+      const dir = mkdtempSync("legacy-schema-files-scanner-garbage-");
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
       writeFileSync(file, `SELECT 1;\nSELECT '${"a".repeat(300_000)}';\n`);
       const { session } = fakeSession();
-      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
-      process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = "5M";
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1383,10 +1489,11 @@ describe("legacyApplySchemaFiles", () => {
           ["supabase/big.sql"],
           (message, suggestion) =>
             new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
+          { SUPABASE_SCANNER_BUFFER_SIZE: "5M" },
         ).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const msg = JSON.stringify(exit.cause);
+          const msg = Formatter.formatJson(exit.cause);
           expect(msg).toContain("bufio.Scanner: token too long");
           // 256KiB (`parser.MaxScannerCapacity` default), not "5MB" and not ~0KB.
           expect(msg).toContain(
@@ -1394,13 +1501,7 @@ describe("legacyApplySchemaFiles", () => {
           );
         }
       }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
-            else process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
         Effect.provide(BunServices.layer),
       );
     },
@@ -1417,13 +1518,11 @@ describe("legacyApplySchemaFiles", () => {
       // string outright and silently fall back to the 256KiB default instead, so a
       // statement between 5120 and 262144 bytes would apply in TS but Go would
       // already have failed with "bufio.Scanner: token too long" at 5121 bytes.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-hex-"));
+      const dir = mkdtempSync("legacy-schema-files-scanner-hex-");
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
       writeFileSync(file, `SELECT 1;\nSELECT '${"a".repeat(5116)}';\n`);
       const { session } = fakeSession();
-      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
-      process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = "0x1400";
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1435,10 +1534,11 @@ describe("legacyApplySchemaFiles", () => {
           ["supabase/big.sql"],
           (message, suggestion) =>
             new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
+          { SUPABASE_SCANNER_BUFFER_SIZE: "0x1400" },
         ).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const msg = JSON.stringify(exit.cause);
+          const msg = Formatter.formatJson(exit.cause);
           expect(msg).toContain("bufio.Scanner: token too long");
           // 5KiB (0x1400 bytes), not the 256KiB hardcoded fallback a decimal-only
           // parser would have silently used instead.
@@ -1447,13 +1547,7 @@ describe("legacyApplySchemaFiles", () => {
           );
         }
       }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
-            else process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
         Effect.provide(BunServices.layer),
       );
     },
@@ -1470,13 +1564,11 @@ describe("legacyApplySchemaFiles", () => {
       // 256KiB default instead, so a statement between 5120 and 262144 bytes would
       // apply in TS but Go would already have failed with "bufio.Scanner: token too
       // long" at 5121 bytes.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-underscore-"));
+      const dir = mkdtempSync("legacy-schema-files-scanner-underscore-");
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
       writeFileSync(file, `SELECT 1;\nSELECT '${"a".repeat(5116)}';\n`);
       const { session } = fakeSession();
-      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
-      process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = "5_120";
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1488,10 +1580,11 @@ describe("legacyApplySchemaFiles", () => {
           ["supabase/big.sql"],
           (message, suggestion) =>
             new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
+          { SUPABASE_SCANNER_BUFFER_SIZE: "5_120" },
         ).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const msg = JSON.stringify(exit.cause);
+          const msg = Formatter.formatJson(exit.cause);
           expect(msg).toContain("bufio.Scanner: token too long");
           // 5KiB (5_120 bytes), not the 256KiB hardcoded fallback an
           // underscore-rejecting parser would have silently used instead.
@@ -1500,13 +1593,7 @@ describe("legacyApplySchemaFiles", () => {
           );
         }
       }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
-            else process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
         Effect.provide(BunServices.layer),
       );
     },
@@ -1521,13 +1608,11 @@ describe("legacyApplySchemaFiles", () => {
       // invalid in real Go (`strconv.ParseInt("_5120", 0, 64)` errors), so it falls
       // back to the same 256KiB default as a genuinely unset/unparseable value —
       // verified empirically against the real Go `strconv.ParseInt`.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-bad-underscore-"));
+      const dir = mkdtempSync("legacy-schema-files-scanner-bad-underscore-");
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
       writeFileSync(file, `SELECT 1;\nSELECT '${"a".repeat(5116)}';\n`);
       const { session } = fakeSession();
-      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
-      process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = "_5120";
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1539,18 +1624,13 @@ describe("legacyApplySchemaFiles", () => {
           ["supabase/big.sql"],
           (message, suggestion) =>
             new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
+          { SUPABASE_SCANNER_BUFFER_SIZE: "_5120" },
         ).pipe(Effect.exit);
         // The 5116-byte statement fits comfortably under the 256KiB default
         // fallback, so an invalid underscore placement must NOT fail the apply.
         expect(Exit.isSuccess(exit)).toBe(true);
       }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
-            else process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
         Effect.provide(BunServices.layer),
       );
     },
@@ -1568,13 +1648,11 @@ describe("legacyApplySchemaFiles", () => {
       // genuinely unparseable value ("5M" above) — NOT to "no limit". Verified
       // empirically against the pinned `spf13/cast@v1.10.0`
       // (`cast.ToInt("9223372036854775808")` → `0`).
-      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-int64-overflow-"));
+      const dir = mkdtempSync("legacy-schema-files-scanner-int64-overflow-");
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
       writeFileSync(file, `SELECT 1;\nSELECT '${"a".repeat(300_000)}';\n`);
       const { session } = fakeSession();
-      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
-      process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = "9223372036854775808";
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1586,10 +1664,11 @@ describe("legacyApplySchemaFiles", () => {
           ["supabase/big.sql"],
           (message, suggestion) =>
             new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
+          { SUPABASE_SCANNER_BUFFER_SIZE: "9223372036854775808" },
         ).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const msg = JSON.stringify(exit.cause);
+          const msg = Formatter.formatJson(exit.cause);
           expect(msg).toContain("bufio.Scanner: token too long");
           // 256KiB (Go's hardcoded default), not "no limit" — a treat-as-unbounded
           // bug would let this 300_000-byte statement apply successfully instead.
@@ -1598,13 +1677,7 @@ describe("legacyApplySchemaFiles", () => {
           );
         }
       }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
-            else process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
         Effect.provide(BunServices.layer),
       );
     },
@@ -1618,13 +1691,11 @@ describe("legacyApplySchemaFiles", () => {
       // are. A range check that's off-by-one in the strict direction would wrongly
       // reject this legitimate (if enormous) configured size and fall back to the
       // 256KiB default instead of the requested cap.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-int64-boundary-"));
+      const dir = mkdtempSync("legacy-schema-files-scanner-int64-boundary-");
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
       writeFileSync(file, `SELECT 1;\nSELECT '${"a".repeat(5116)}';\n`);
       const { session } = fakeSession();
-      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
-      process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = "9223372036854775807";
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1636,18 +1707,13 @@ describe("legacyApplySchemaFiles", () => {
           ["supabase/big.sql"],
           (message, suggestion) =>
             new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
+          { SUPABASE_SCANNER_BUFFER_SIZE: "9223372036854775807" },
         ).pipe(Effect.exit);
         // The 5116-byte statement fits comfortably under the (enormous) configured
         // limit, so this must succeed, not fall back to the 256KiB default.
         expect(Exit.isSuccess(exit)).toBe(true);
       }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
-            else process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
         Effect.provide(BunServices.layer),
       );
     },
@@ -1662,13 +1728,11 @@ describe("legacyApplySchemaFiles", () => {
       // `SUPABASE_SCANNER_BUFFER_SIZE` exactly like a real shell-exported one.
       // `legacyApplySchemaFiles`'s `projectEnv` parameter threads the caller's already
       // -loaded `legacyLoadProjectEnv` map through to the same check.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-projectenv-"));
+      const dir = mkdtempSync("legacy-schema-files-scanner-projectenv-");
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
       writeFileSync(file, `SELECT 1;\nSELECT '${"a".repeat(5000)}';\n`);
       const { session } = fakeSession();
-      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
-      delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1684,16 +1748,11 @@ describe("legacyApplySchemaFiles", () => {
         ).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const msg = JSON.stringify(exit.cause);
+          const msg = Formatter.formatJson(exit.cause);
           expect(msg).toContain("bufio.Scanner: token too long");
         }
       }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous !== undefined) process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
         Effect.provide(BunServices.layer),
       );
     },
@@ -1705,15 +1764,13 @@ describe("legacyApplySchemaFiles", () => {
       // `godotenv.Load`'s `overload=false` never sets a key already present in
       // `os.Environ()` — the shell value must
       // win even when a (different) project-env value is also threaded through.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-shellwins-"));
+      const dir = mkdtempSync("legacy-schema-files-scanner-shellwins-");
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
       writeFileSync(file, `SELECT '${"a".repeat(5000)}';\n`);
       const { session, calls } = fakeSession();
-      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
       // Shell explicitly unsets enforcement (0 → treated as unset, no check) while the
       // project env sets a tiny limit — the shell value must win.
-      process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = "0";
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -1725,17 +1782,11 @@ describe("legacyApplySchemaFiles", () => {
           ["supabase/big.sql"],
           (message, suggestion) =>
             new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
-          { SUPABASE_SCANNER_BUFFER_SIZE: "100b" },
+          { SUPABASE_SCANNER_BUFFER_SIZE: "0" },
         );
         expect(executedSql(calls).some((sql) => sql.startsWith("SELECT 'a"))).toBe(true);
       }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
-            else process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+        Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
         Effect.provide(BunServices.layer),
       );
     },

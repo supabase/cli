@@ -1,13 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { ProjectConfigSchema, type ProjectConfig } from "@supabase/config";
-import { Effect, Exit, FileSystem, Path, Schema } from "effect";
+import { Effect, Exit, FileSystem, Formatter, Layer, Path, Schema } from "effect";
 
 import { legacyReadDbToml } from "./legacy-db-config.toml-read.ts";
 import { legacyResolveLocalConfigValues } from "./legacy-local-config-values.ts";
+import { makeLegacyViperEnvLayer } from "../../shared/legacy/legacy-viper-env.ts";
 
 /**
  * Cross-caller parity coverage: for a table of Go-parity misconfigurations, drives BOTH real
@@ -23,31 +21,35 @@ import { legacyResolveLocalConfigValues } from "./legacy-local-config-values.ts"
  * pattern from `legacy-local-config-values.unit.test.ts` (same reasoning).
  */
 
-function withConfig(content: string) {
-  const dir = mkdtempSync(join(tmpdir(), "legacy-config-validate-parity-"));
-  mkdirSync(join(dir, "supabase"), { recursive: true });
-  writeFileSync(join(dir, "supabase", "config.toml"), content);
-  return dir;
-}
+const withConfig = (fs: FileSystem.FileSystem, path: Path.Path, content: string) =>
+  Effect.gen(function* () {
+    const dir = yield* fs.makeTempDirectory({ prefix: "legacy-config-validate-parity-" });
+    const supabaseDir = path.join(dir, "supabase");
+    yield* fs.makeDirectory(supabaseDir, { recursive: true });
+    yield* fs.writeFileString(path.join(supabaseDir, "config.toml"), content);
+    return dir;
+  });
 
 const readD = (workdir: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     return yield* legacyReadDbToml(fs, path, workdir);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, makeLegacyViperEnvLayer())));
 
 /** Drives D's real pipeline and asserts the failure message contains `message`. */
 function failsWithD(tomlLines: ReadonlyArray<string>, message: string) {
   return Effect.gen(function* () {
-    const dir = withConfig(tomlLines.join("\n"));
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = yield* withConfig(fs, path, tomlLines.join("\n"));
     const exit = yield* readD(dir).pipe(Effect.exit);
     expect(Exit.isFailure(exit), `D: expected failure containing: ${message}`).toBe(true);
     if (Exit.isFailure(exit)) {
-      expect(JSON.stringify(exit.cause)).toContain(message);
+      expect(Formatter.formatJson(exit.cause)).toContain(message);
     }
-    rmSync(dir, { recursive: true, force: true });
-  });
+    yield* fs.remove(dir, { recursive: true });
+  }).pipe(Effect.provide(BunServices.layer));
 }
 
 const decodeConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
@@ -64,9 +66,16 @@ function failsWithL(
   document?: Readonly<Record<string, unknown>>,
 ) {
   const config = baseConfig(overrides);
-  expect(() =>
-    legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
-  ).toThrow(message);
+  return legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, {}, document).pipe(
+    Effect.exit,
+    Effect.tap((exit) =>
+      Effect.sync(() => {
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) expect(Formatter.formatJson(exit.cause)).toContain(message);
+      }),
+    ),
+    Effect.provide(BunServices.layer),
+  );
 }
 
 interface ParityScenario {
@@ -285,7 +294,7 @@ describe("legacyValidateResolvedConfig cross-caller parity (D vs L)", () => {
     it.effect(`${scenario.name}: D and L fail with the same message`, () =>
       Effect.gen(function* () {
         yield* failsWithD(scenario.toml, scenario.message);
-        failsWithL(scenario.overrides, scenario.message, scenario.document);
+        yield* failsWithL(scenario.overrides, scenario.message, scenario.document);
       }),
     );
   }

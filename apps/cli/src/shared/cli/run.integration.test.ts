@@ -1,5 +1,5 @@
-import { describe, expect, test } from "@effect/vitest";
-import { Console, Effect, Exit, Layer } from "effect";
+import { describe, expect, it } from "@effect/vitest";
+import { ConfigProvider, Console, Effect, Exit, Layer, Logger } from "effect";
 import { Argument, CliOutput, Command, Flag } from "effect/unstable/cli";
 import { legacyBranchesCommand } from "../../legacy/commands/branches/branches.command.ts";
 import { LEGACY_GLOBAL_FLAGS } from "../legacy/global-flags.ts";
@@ -7,6 +7,7 @@ import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { emptyEnv, mockOutput } from "../../../tests/helpers/mocks.ts";
 import { CliArgs } from "./cli-args.service.ts";
 import { OutputFormatFlag } from "./global-flags.ts";
+import { legacyViperEnvLayer } from "../legacy/legacy-viper-env.ts";
 import { exitCodeForFailure, withoutParseErrorHelpDump } from "./run.ts";
 
 const testBranchesCommand = legacyBranchesCommand.pipe(
@@ -82,37 +83,46 @@ describe("legacy group command exit codes (CLI-1906)", () => {
       Layer.succeed(CliArgs, { args }),
       mockOutput({ format: "text" }).layer,
       emptyEnv(),
+      legacyViperEnvLayer,
+      ConfigProvider.layer(ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
     );
 
   const runBranches = (args: ReadonlyArray<string>) =>
-    Effect.runPromiseExit(
-      Command.runWith(testBranchesCommand, { version: "0.0.0-test" })(args).pipe(
-        Effect.provide(layerFor(args)),
-      ),
+    Command.runWith(testBranchesCommand, { version: "0.0.0-test" })(args).pipe(
+      Effect.provide(layerFor(args)),
+      Effect.exit,
     );
 
-  test("bare `branches` (no subcommand, no --help) fails with a clean ShowHelp that maps to exit 0", async () => {
-    const exit = await runBranches([]);
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (!Exit.isFailure(exit)) return;
+  it.live(
+    "bare `branches` (no subcommand, no --help) fails with a clean ShowHelp that maps to exit 0",
+    () =>
+      Effect.gen(function* () {
+        const exit = yield* runBranches([]);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) return;
 
-    expect(exitCodeForFailure(exit.cause)).toBe(0);
-  });
+        expect(exitCodeForFailure(exit.cause)).toBe(0);
+      }),
+  );
 
-  test("`branches --help` succeeds outright and exits 0", async () => {
-    const exit = await runBranches(["--help"]);
-    // The `--help` global flag is handled as a successful `GlobalFlag.Action`, so this
-    // never even reaches the ShowHelp-as-failure path bare `branches` goes through above.
-    expect(Exit.isSuccess(exit)).toBe(true);
-  });
+  it.live("`branches --help` succeeds outright and exits 0", () =>
+    Effect.gen(function* () {
+      const exit = yield* runBranches(["--help"]);
+      // The `--help` global flag is handled as a successful `GlobalFlag.Action`, so this
+      // never even reaches the ShowHelp-as-failure path bare `branches` goes through above.
+      expect(Exit.isSuccess(exit)).toBe(true);
+    }),
+  );
 
-  test("`branches` with an unrecognized flag is a genuine parse error that still exits 1", async () => {
-    const exit = await runBranches(["--this-flag-does-not-exist"]);
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (!Exit.isFailure(exit)) return;
+  it.live("`branches` with an unrecognized flag is a genuine parse error that still exits 1", () =>
+    Effect.gen(function* () {
+      const exit = yield* runBranches(["--this-flag-does-not-exist"]);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (!Exit.isFailure(exit)) return;
 
-    expect(exitCodeForFailure(exit.cause)).toBe(1);
-  });
+      expect(exitCodeForFailure(exit.cause)).toBe(1);
+    }),
+  );
 });
 
 /**
@@ -161,11 +171,14 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
       Layer.succeed(Console.Console, console),
       mockOutput({ format: "text" }).layer,
       emptyEnv(),
+      ConfigProvider.layer(ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
     );
 
   const runBranches = (args: ReadonlyArray<string>, console: Console.Console) =>
     withoutParseErrorHelpDump(
-      Command.runWith(testBranchesCommand, { version: "0.0.0-test" })(args),
+      Command.runWith(testBranchesCommand, { version: "0.0.0-test" })(args).pipe(
+        Effect.provide(legacyViperEnvLayer),
+      ),
       { rootCommand: testBranchesCommand, args },
     ).pipe(Effect.provide(layerFor(args, console)));
 
@@ -181,53 +194,67 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
 
   const runRequiredFlagCommand = (args: ReadonlyArray<string>, console: Console.Console) =>
     withoutParseErrorHelpDump(
-      Command.runWith(requiredFlagCommand, { version: "0.0.0-test" })(args),
+      Command.runWith(requiredFlagCommand, { version: "0.0.0-test" })(args).pipe(
+        Effect.provide(legacyViperEnvLayer),
+      ),
       { rootCommand: requiredFlagCommand, args },
     ).pipe(Effect.provide(layerFor(args, console)));
 
-  test("an unrecognized flag: replays the help dump to stderr (never stdout) and drops the duplicate error, but still fails with the original cause", async () => {
-    const { console, calls } = fakeConsole();
-    const exit = await Effect.runPromiseExit(runBranches(["--this-flag-does-not-exist"], console));
+  it.live(
+    "an unrecognized flag: replays the help dump to stderr (never stdout) and drops the duplicate error, but still fails with the original cause",
+    () =>
+      Effect.gen(function* () {
+        const { console, calls } = fakeConsole();
+        const exit = yield* Effect.exit(runBranches(["--this-flag-does-not-exist"], console));
 
-    // The library's own duplicate `Console.error` write is gone. Its help
-    // doc survives, but redirected to stderr (`error:`), never stdout
-    // (`log:`) — matching Go, which still shows usage for an unrecognized
-    // flag (raised during `ParseFlags`, before `SilenceUsage` is set), just
-    // on stderr.
-    expect(calls.length).toBeGreaterThan(0);
-    expect(calls.every((call) => call.startsWith("error:"))).toBe(true);
+        // The library's own duplicate `Console.error` write is gone. Its help
+        // doc survives, but redirected to stderr (`error:`), never stdout
+        // (`log:`) — matching Go, which still shows usage for an unrecognized
+        // flag (raised during `ParseFlags`, before `SilenceUsage` is set), just
+        // on stderr.
+        expect(calls.length).toBeGreaterThan(0);
+        expect(calls.every((call) => call.startsWith("error:"))).toBe(true);
 
-    // The original ShowHelp/UnrecognizedOption failure still propagates —
-    // the fix only suppresses the library's own console writes, it must not
-    // swallow or reshape the failure this repo's own `handledProgram` +
-    // `normalizeCause` still needs to render the single Go-parity line.
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (!Exit.isFailure(exit)) return;
-    expect(exitCodeForFailure(exit.cause)).toBe(1);
-  });
+        // The original ShowHelp/UnrecognizedOption failure still propagates —
+        // the fix only suppresses the library's own console writes, it must not
+        // swallow or reshape the failure this repo's own `handledProgram` +
+        // `normalizeCause` still needs to render the single Go-parity line.
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) return;
+        expect(exitCodeForFailure(exit.cause)).toBe(1);
+      }),
+  );
 
-  test("`branches` bare (clean ShowHelp) still flushes its help dump to stdout and exits 0 (untouched)", async () => {
-    const { console, calls } = fakeConsole();
-    const exit = await Effect.runPromiseExit(runBranches([], console));
+  it.live(
+    "`branches` bare (clean ShowHelp) still flushes its help dump to stdout and exits 0 (untouched)",
+    () =>
+      Effect.gen(function* () {
+        const { console, calls } = fakeConsole();
+        const exit = yield* Effect.exit(runBranches([], console));
 
-    expect(calls.length).toBeGreaterThan(0);
-    expect(calls.every((call) => call.startsWith("log:"))).toBe(true);
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (!Exit.isFailure(exit)) return;
-    expect(exitCodeForFailure(exit.cause)).toBe(0);
-  });
+        expect(calls.length).toBeGreaterThan(0);
+        expect(calls.every((call) => call.startsWith("log:"))).toBe(true);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) return;
+        expect(exitCodeForFailure(exit.cause)).toBe(0);
+      }),
+  );
 
-  test("missing a required flag: drops the help dump entirely and the duplicate error, but still fails with the original cause", async () => {
-    const { console, calls } = fakeConsole();
-    const exit = await Effect.runPromiseExit(runRequiredFlagCommand([], console));
+  it.live(
+    "missing a required flag: drops the help dump entirely and the duplicate error, but still fails with the original cause",
+    () =>
+      Effect.gen(function* () {
+        const { console, calls } = fakeConsole();
+        const exit = yield* Effect.exit(runRequiredFlagCommand([], console));
 
-    // Go's `SilenceUsage` is already active for a missing required flag
-    // (post-`PersistentPreRunE`) — nothing survives, not even on stderr.
-    expect(calls).toEqual([]);
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (!Exit.isFailure(exit)) return;
-    expect(exitCodeForFailure(exit.cause)).toBe(1);
-  });
+        // Go's `SilenceUsage` is already active for a missing required flag
+        // (post-`PersistentPreRunE`) — nothing survives, not even on stderr.
+        expect(calls).toEqual([]);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) return;
+        expect(exitCodeForFailure(exit.cause)).toBe(1);
+      }),
+  );
 
   // CLI-1901 (Codex review finding): the vendored library can't tell "flag
   // never given" apart from "flag given with no value following it" — both
@@ -236,16 +263,20 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
   // set) — verified against the real `apps/cli-go/supabase-go` binary, which
   // still prints its usage block for this input. `--type` as the LAST token
   // (no value token follows it) reproduces that "present but valueless" case.
-  test("a required flag present on argv but missing its value: replays the help dump to stderr instead of dropping it", async () => {
-    const { console, calls } = fakeConsole();
-    const exit = await Effect.runPromiseExit(runRequiredFlagCommand(["--type"], console));
+  it.live(
+    "a required flag present on argv but missing its value: replays the help dump to stderr instead of dropping it",
+    () =>
+      Effect.gen(function* () {
+        const { console, calls } = fakeConsole();
+        const exit = yield* Effect.exit(runRequiredFlagCommand(["--type"], console));
 
-    expect(calls.length).toBeGreaterThan(0);
-    expect(calls.every((call) => call.startsWith("error:"))).toBe(true);
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (!Exit.isFailure(exit)) return;
-    expect(exitCodeForFailure(exit.cause)).toBe(1);
-  });
+        expect(calls.length).toBeGreaterThan(0);
+        expect(calls.every((call) => call.startsWith("error:"))).toBe(true);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) return;
+        expect(exitCodeForFailure(exit.cause)).toBe(1);
+      }),
+  );
 
   // Codex review finding (CLI-1901 follow-up): the same "present but missing
   // its value" case, but supplied via the flag's SHORT ALIAS (`-t`) instead of
@@ -257,36 +288,48 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
   // --type`). Before this fix, `isMissingFlagTokenPresent` only recognized
   // the canonical `--type` token and misclassified `-t` as absent, silently
   // dropping the help dump instead.
-  test("a required flag present on argv by its short alias but missing its value: replays the help dump to stderr instead of dropping it", async () => {
-    const { console, calls } = fakeConsole();
-    const exit = await Effect.runPromiseExit(runRequiredFlagCommand(["-t"], console));
+  it.live(
+    "a required flag present on argv by its short alias but missing its value: replays the help dump to stderr instead of dropping it",
+    () =>
+      Effect.gen(function* () {
+        const { console, calls } = fakeConsole();
+        const exit = yield* Effect.exit(runRequiredFlagCommand(["-t"], console));
 
-    expect(calls.length).toBeGreaterThan(0);
-    expect(calls.every((call) => call.startsWith("error:"))).toBe(true);
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (!Exit.isFailure(exit)) return;
-    expect(exitCodeForFailure(exit.cause)).toBe(1);
-  });
+        expect(calls.length).toBeGreaterThan(0);
+        expect(calls.every((call) => call.startsWith("error:"))).toBe(true);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) return;
+        expect(exitCodeForFailure(exit.cause)).toBe(1);
+      }),
+  );
 
-  test("an invalid Flag.choice value: replays the help dump to stderr (never stdout) and drops the duplicate error, but still fails with the original cause", async () => {
-    const { console, calls } = fakeConsole();
-    const exit = await Effect.runPromiseExit(runRequiredFlagCommand(["--type", "bogus"], console));
+  it.live(
+    "an invalid Flag.choice value: replays the help dump to stderr (never stdout) and drops the duplicate error, but still fails with the original cause",
+    () =>
+      Effect.gen(function* () {
+        const { console, calls } = fakeConsole();
+        const exit = yield* Effect.exit(runRequiredFlagCommand(["--type", "bogus"], console));
 
-    expect(calls.length).toBeGreaterThan(0);
-    expect(calls.every((call) => call.startsWith("error:"))).toBe(true);
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (!Exit.isFailure(exit)) return;
-    expect(exitCodeForFailure(exit.cause)).toBe(1);
-  });
+        expect(calls.length).toBeGreaterThan(0);
+        expect(calls.every((call) => call.startsWith("error:"))).toBe(true);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (!Exit.isFailure(exit)) return;
+        expect(exitCodeForFailure(exit.cause)).toBe(1);
+      }),
+  );
 
-  test("`--help` on a command with a required flag still prints the full help doc to stdout and exits 0 (untouched)", async () => {
-    const { console, calls } = fakeConsole();
-    const exit = await Effect.runPromiseExit(runRequiredFlagCommand(["--help"], console));
+  it.live(
+    "`--help` on a command with a required flag still prints the full help doc to stdout and exits 0 (untouched)",
+    () =>
+      Effect.gen(function* () {
+        const { console, calls } = fakeConsole();
+        const exit = yield* Effect.exit(runRequiredFlagCommand(["--help"], console));
 
-    expect(calls.length).toBeGreaterThan(0);
-    expect(calls.every((call) => call.startsWith("log:"))).toBe(true);
-    expect(Exit.isSuccess(exit)).toBe(true);
-  });
+        expect(calls.length).toBeGreaterThan(0);
+        expect(calls.every((call) => call.startsWith("log:"))).toBe(true);
+        expect(Exit.isSuccess(exit)).toBe(true);
+      }),
+  );
 
   // Effect's default logger (`Effect.log*`) resolves through this same
   // `Console.Console` reference (`Logger.withConsoleLog`/`withConsoleError`
@@ -295,55 +338,66 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
   // codebase uses `Effect.log*` today, but this pins the invariant the doc
   // comment describes: on a successful run, buffered logger output still
   // reaches the user (deferred to end-of-run, not dropped).
-  test("Effect.log* output during a successful run is still flushed, not lost", async () => {
-    const { console, calls } = fakeConsole();
-    const program = Effect.gen(function* () {
-      yield* Effect.logInfo("hello from a handler");
-      return "done" as const;
-    });
+  it.live("Effect.log* output during a successful run is still flushed, not lost", () =>
+    Effect.gen(function* () {
+      const { console, calls } = fakeConsole();
+      const program = Effect.gen(function* () {
+        yield* Effect.logInfo("hello from a handler");
+        return "done" as const;
+      });
 
-    const result = await Effect.runPromise(
-      withoutParseErrorHelpDump(program, { rootCommand: requiredFlagCommand, args: [] }).pipe(
-        Effect.provide(Layer.succeed(Console.Console, console)),
-      ),
-    );
+      const result = yield* withoutParseErrorHelpDump(program, {
+        rootCommand: requiredFlagCommand,
+        args: [],
+      }).pipe(
+        Effect.provide(
+          Layer.merge(
+            Layer.succeed(Console.Console, console),
+            Logger.layer([Logger.withConsoleLog(Logger.defaultLogger)]),
+          ),
+        ),
+      );
 
-    expect(result).toBe("done");
-    expect(calls.length).toBeGreaterThan(0);
-    expect(calls.some((call) => call.includes("hello from a handler"))).toBe(true);
-  });
+      expect(result).toBe("done");
+      expect(calls.length).toBeGreaterThan(0);
+      expect(calls.some((call) => call.includes("hello from a handler"))).toBe(true);
+    }),
+  );
 });
 
 describe("nested command parsing", () => {
-  test("forwards operands after -- to a nested variadic argument", async () => {
-    let receivedPaths: ReadonlyArray<string> = [];
-    const db = Command.make("db", {
-      paths: Argument.string("path").pipe(Argument.variadic()),
-    }).pipe(
-      Command.withHandler(({ paths }) =>
-        Effect.sync(() => {
-          receivedPaths = paths;
-        }),
-      ),
-    );
-    const testCommand = Command.make("test").pipe(Command.withSubcommands([db]));
-    const root = Command.make("supabase").pipe(Command.withSubcommands([testCommand]));
-    const args = ["test", "db", "--", "-foo.sql", "--literal"];
+  it.live("forwards operands after -- to a nested variadic argument", () =>
+    Effect.gen(function* () {
+      let receivedPaths: ReadonlyArray<string> = [];
+      const db = Command.make("db", {
+        paths: Argument.string("path").pipe(Argument.variadic()),
+      }).pipe(
+        Command.withHandler(({ paths }) =>
+          Effect.sync(() => {
+            receivedPaths = paths;
+          }),
+        ),
+      );
+      const testCommand = Command.make("test").pipe(Command.withSubcommands([db]));
+      const root = Command.make("supabase").pipe(Command.withSubcommands([testCommand]));
+      const args = ["test", "db", "--", "-foo.sql", "--literal"];
 
-    const exit = await Effect.runPromiseExit(
-      Command.runWith(root, { version: "0.0.0-test" })(args).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            CliOutput.layer(textCliOutputFormatter()),
-            Layer.succeed(CliArgs, { args }),
-            mockOutput({ format: "text" }).layer,
-            emptyEnv(),
+      const exit = yield* Effect.exit(
+        Command.runWith(root, { version: "0.0.0-test" })(args).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              CliOutput.layer(textCliOutputFormatter()),
+              Layer.succeed(CliArgs, { args }),
+              mockOutput({ format: "text" }).layer,
+              emptyEnv(),
+              ConfigProvider.layer(ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
+            ),
           ),
         ),
-      ),
-    );
+      );
 
-    expect(Exit.isSuccess(exit)).toBe(true);
-    expect(receivedPaths).toEqual(["-foo.sql", "--literal"]);
-  });
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(receivedPaths).toEqual(["-foo.sql", "--literal"]);
+    }),
+  );
 });

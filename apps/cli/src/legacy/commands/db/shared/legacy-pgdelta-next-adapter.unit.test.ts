@@ -2,7 +2,7 @@ import { it } from "@effect/vitest";
 import { buildFactBase, type Fact, type StableId } from "@supabase/pg-delta/core";
 import { renderPlanFiles, ShadowLoadError } from "@supabase/pg-delta/frontends";
 import { plan, type Action } from "@supabase/pg-delta/plan";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import { Pool } from "pg";
 import { describe, expect } from "vitest";
 
@@ -13,6 +13,7 @@ import {
   legacyPgDeltaNextProfile,
   legacySummarizePgDeltaNextHazards,
   legacySummarizePgDeltaNextRemovals,
+  LegacyPgDeltaNextLibraryError,
   type LegacyPgDeltaNextLibraries,
 } from "./legacy-pgdelta-next-adapter.layer.ts";
 import {
@@ -47,6 +48,15 @@ function fakeDiagnostic(code: string, subject: string) {
   };
 }
 
+const sourcePlanJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown))({
+  source: "source-facts",
+  desired: "desired-facts",
+});
+const declarativePlanJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown))({
+  source: "target-facts",
+  desired: "loaded-files",
+});
+
 function setupLibraries(sourcePool: Pool, desiredPool: Pool) {
   const state = {
     resolveCalls: [] as Array<{
@@ -70,22 +80,24 @@ function setupLibraries(sourcePool: Pool, desiredPool: Pool) {
     snapshotMetadata: [] as object[],
   };
 
-  const extract = async (
+  const extract = (
     pool: Pool,
     options?: { redactSecrets?: boolean; statementTimeoutMs?: number },
   ) => {
-    state.extractCalls.push({ pool, options });
-    const source = pool === sourcePool;
-    if (!source && pool !== desiredPool) {
-      throw new Error("unexpected pool passed to fake extractor");
-    }
-    return {
-      factBase: { id: source ? "source-facts" : "desired-facts" },
-      pgVersion: source ? "15.9" : "17.6",
-      diagnostics: [
-        fakeDiagnostic(source ? "source-warning" : "desired-warning", source ? "s" : "d"),
-      ],
-    };
+    return Effect.suspend(() => {
+      state.extractCalls.push({ pool, options });
+      const source = pool === sourcePool;
+      if (!source && pool !== desiredPool) {
+        return Effect.fail(new LegacyPgDeltaNextLibraryError({ cause: "unexpected pool" }));
+      }
+      return Effect.succeed({
+        factBase: { id: source ? "source-facts" : "desired-facts" },
+        pgVersion: source ? "15.9" : "17.6",
+        diagnostics: [
+          fakeDiagnostic(source ? "source-warning" : "desired-warning", source ? "s" : "d"),
+        ],
+      });
+    });
   };
 
   const libraries: LegacyPgDeltaNextLibraries<
@@ -94,62 +106,67 @@ function setupLibraries(sourcePool: Pool, desiredPool: Pool) {
     FakePlan,
     FakeSubject
   > = {
-    resolveProfile: async (pool, options, schema) => {
-      state.resolveCalls.push({ pool, options, ...(schema !== undefined ? { schema } : {}) });
-      return {
-        id: "supabase",
-        planOptions: { managedView: "shared-profile-options" },
-        extract,
-      };
-    },
-    plan: (source, desired, options) => {
-      state.planCalls.push({ source, desired, options });
-      return { source: source.id, desired: desired.id };
-    },
-    renderPlanFiles: (_generatedPlan, options) => {
-      state.renderOptions.push(options);
-      return {
-        changes: true,
-        files: [
-          {
-            suffix: "_1",
-            contents: "CREATE TABLE public.widgets (id integer, display_name text);\n",
-            transactional: true,
-            actionCount: 2,
+    resolveProfile: (pool, options, schema) =>
+      Effect.sync(() => {
+        state.resolveCalls.push({ pool, options, ...(schema !== undefined ? { schema } : {}) });
+        return {
+          id: "supabase",
+          planOptions: { managedView: "shared-profile-options" },
+          extract,
+        };
+      }),
+    plan: (source, desired, options) =>
+      Effect.sync(() => {
+        state.planCalls.push({ source, desired, options });
+        return { source: source.id, desired: desired.id };
+      }),
+    renderPlanFiles: (_generatedPlan, options) =>
+      Effect.sync(() => {
+        state.renderOptions.push(options);
+        return {
+          changes: true,
+          files: [
+            {
+              suffix: "_1",
+              contents: "CREATE TABLE public.widgets (id integer, display_name text);\n",
+              transactional: true,
+              actionCount: 2,
+            },
+            {
+              suffix: "_2",
+              contents:
+                "-- pg-delta: transaction=false\nSET check_function_bodies = off;\n\nGRANT SELECT ON TABLE public.widgets TO anon;\n\nRESET ALL;\n",
+              transactional: false,
+              actionCount: 1,
+            },
+          ],
+        };
+      }),
+    buildSchemaExport: (_pool, input) =>
+      Effect.sync(() => {
+        state.exportInputs.push(input);
+        return {
+          files: [{ name: "public/tables/items.sql", sql: "create table items();" }],
+          diagnostics: [fakeDiagnostic("export-warning", "export")],
+          manifest: {
+            redactSecrets: true,
+            scope: "database",
+            profile: "supabase",
+            defaultOwner: "postgres",
           },
-          {
-            suffix: "_2",
-            contents:
-              "-- pg-delta: transaction=false\nSET check_function_bodies = off;\n\nGRANT SELECT ON TABLE public.widgets TO anon;\n\nRESET ALL;\n",
-            transactional: false,
-            actionCount: 1,
-          },
-        ],
-      };
-    },
-    buildSchemaExport: async (_pool, input) => {
-      state.exportInputs.push(input);
-      return {
-        files: [{ name: "public/tables/items.sql", sql: "create table items();" }],
-        diagnostics: [fakeDiagnostic("export-warning", "export")],
-        manifest: {
-          redactSecrets: true,
-          scope: "database",
-          profile: "supabase",
-          defaultOwner: "postgres",
-        },
-      };
-    },
-    planSchemaFiles: async (_targetPool, _shadowPool, _files, input) => {
-      state.declarativeInputs.push(input);
-      return {
-        plan: { source: "target-facts", desired: "loaded-files" },
-        loadDiagnostics: [fakeDiagnostic("load-warning", "load")],
-        targetDiagnostics: [fakeDiagnostic("target-warning", "target")],
-        driftDiagnostics: [fakeDiagnostic("unmodeled_drift", "drift")],
-        skipped: [{ file: "roles.sql", stmt: "create role ignored" }],
-      };
-    },
+        };
+      }),
+    planSchemaFiles: (_targetPool, _shadowPool, _files, input) =>
+      Effect.sync(() => {
+        state.declarativeInputs.push(input);
+        return {
+          plan: { source: "target-facts", desired: "loaded-files" },
+          loadDiagnostics: [fakeDiagnostic("load-warning", "load")],
+          targetDiagnostics: [fakeDiagnostic("target-warning", "target")],
+          driftDiagnostics: [fakeDiagnostic("unmodeled_drift", "drift")],
+          skipped: [{ file: "roles.sql", stmt: "create role ignored" }],
+        };
+      }),
     serializeSnapshot: (factBase, metadata) => {
       state.snapshotMetadata.push(metadata);
       return JSON.stringify({ factBase: factBase.id, metadata });
@@ -188,23 +205,23 @@ const unusedLibraries: LegacyPgDeltaNextLibraries<
   FakePlan,
   string
 > = {
-  resolveProfile: async () => {
-    throw new Error("unused");
-  },
-  plan: () => ({ source: "unused", desired: "unused" }),
-  renderPlanFiles: () => ({ changes: false, files: [] }),
-  buildSchemaExport: async () => ({
-    files: [],
-    diagnostics: [],
-    manifest: { redactSecrets: true, scope: "database" },
-  }),
-  planSchemaFiles: async () => ({
-    plan: { source: "unused", desired: "unused" },
-    loadDiagnostics: [],
-    targetDiagnostics: [],
-    driftDiagnostics: [],
-    skipped: [],
-  }),
+  resolveProfile: () => Effect.fail(new LegacyPgDeltaNextLibraryError({ cause: "unused" })),
+  plan: () => Effect.succeed({ source: "unused", desired: "unused" }),
+  renderPlanFiles: () => Effect.succeed({ changes: false, files: [] }),
+  buildSchemaExport: () =>
+    Effect.succeed({
+      files: [],
+      diagnostics: [],
+      manifest: { redactSecrets: true, scope: "database" },
+    }),
+  planSchemaFiles: () =>
+    Effect.succeed({
+      plan: { source: "unused", desired: "unused" },
+      loadDiagnostics: [],
+      targetDiagnostics: [],
+      driftDiagnostics: [],
+      skipped: [],
+    }),
   serializeSnapshot: () => "unused",
   serializePlan: () => "unused",
   summarizeRemovals: () => ({ extensions: [], extensionIntents: [] }),
@@ -436,7 +453,7 @@ describe("LegacyPgDeltaNextAdapter", () => {
         expect(result.debug).toEqual({
           sourceSnapshot: expect.stringContaining("source-facts"),
           desiredSnapshot: expect.stringContaining("desired-facts"),
-          plan: JSON.stringify({ source: "source-facts", desired: "desired-facts" }),
+          plan: sourcePlanJson,
         });
         expect(state.snapshotMetadata).toEqual([
           { pgVersion: "15.9", redactSecrets: true, profile: "supabase" },
@@ -562,7 +579,7 @@ describe("LegacyPgDeltaNextAdapter", () => {
           ],
         });
         expect(planned.debug).toEqual({
-          plan: JSON.stringify({ source: "target-facts", desired: "loaded-files" }),
+          plan: declarativePlanJson,
         });
         expect(planned.files.map((file) => file.sql)).toEqual([
           "CREATE TABLE public.widgets (id integer, display_name text);\n",
@@ -644,9 +661,7 @@ describe("LegacyPgDeltaNextAdapter", () => {
     ]);
     const failingLayer = legacyPgDeltaNextAdapterLayerFromLibraries({
       ...unusedLibraries,
-      planSchemaFiles: async () => {
-        throw cause;
-      },
+      planSchemaFiles: () => Effect.fail(new LegacyPgDeltaNextLibraryError({ cause })),
     });
 
     return Effect.gen(function* () {

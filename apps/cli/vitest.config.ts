@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { defineConfig } from "vitest/config";
 
 function dockerfileTextPlugin() {
@@ -10,7 +9,9 @@ function dockerfileTextPlugin() {
         return undefined;
       }
 
-      return `export default ${JSON.stringify(readFileSync(filePath, "utf8"))};`;
+      return Bun.file(filePath)
+        .text()
+        .then((text) => `export default ${JSON.stringify(text)};`);
     },
   };
 }

@@ -11,14 +11,14 @@ describe("supabase db diff (legacy)", () => {
   test(
     "--from without --to exits non-zero with the explicit-mode error",
     { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      const { exitCode, stdout, stderr } = await runSupabase(["db", "diff", "--from", "local"], {
+    () =>
+      runSupabase(["db", "diff", "--from", "local"], {
         entrypoint: "legacy",
-      });
-      expect(exitCode).not.toBe(0);
-      expect(`${stdout}${stderr}`).toContain(
-        "must set both --from and --to when using explicit diff mode",
-      );
-    },
+      }).then(({ exitCode, stdout, stderr }) => {
+        expect(exitCode).not.toBe(0);
+        expect(`${stdout}${stderr}`).toContain(
+          "must set both --from and --to when using explicit diff mode",
+        );
+      }),
   );
 });

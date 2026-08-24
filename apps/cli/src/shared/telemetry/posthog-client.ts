@@ -1,5 +1,11 @@
-import { Effect } from "effect";
+import { Data, Effect } from "effect";
+import type * as Scope from "effect/Scope";
 import { PostHog, type PostHogOptions } from "posthog-node";
+import {
+  actionability,
+  ErrorActionabilityId,
+  type CliErrorActionabilityDeclaration,
+} from "./error-actionability.ts";
 
 const EXIT_DELAY_CAP_MS = 2_000;
 
@@ -9,18 +15,46 @@ const delivered = {
   json: () => Promise.resolve({}),
 };
 
+class PosthogFetchError extends Data.TaggedError("PosthogFetchError")<{
+  readonly cause: unknown;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
+
+type FetchImplementation = (url: string | URL, options: RequestInit) => Promise<Response>;
+
 // posthog-node has no logger hook: delivery failures hit hardcoded
 // console.error calls and multi-second retries, so report them as delivered.
-export const fireAndForgetFetch: NonNullable<PostHogOptions["fetch"]> = async (url, options) => {
-  try {
-    const response = await globalThis.fetch(url, options);
-    return response.status >= 400 ? delivered : response;
-  } catch {
-    return delivered;
-  }
-};
+export const makeFireAndForgetFetch =
+  (fetch: FetchImplementation): NonNullable<PostHogOptions["fetch"]> =>
+  (url, options) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const response = yield* Effect.tryPromise({
+          try: () => fetch(url, options),
+          catch: (cause) => new PosthogFetchError({ cause }),
+        }).pipe(Effect.orElseSucceed(() => delivered));
+        if (response === delivered || response.status >= 400) {
+          return delivered;
+        }
+        return response;
+      }),
+    );
 
-export const scopedPosthogClient = (apiKey: string, host: string) =>
+export const scopedPosthogClient: (
+  apiKey: string,
+  host: string,
+  fetch?: FetchImplementation,
+) => Effect.Effect<PostHog, never, Scope.Scope> = (
+  apiKey: string,
+  host: string,
+  // The PostHog SDK owns this outer Promise-based platform boundary; callers may
+  // still inject a fetch implementation for deterministic tests.
+  // oxlint-disable-next-line effecttsgo/global-fetch -- native fetch is the explicit host boundary for telemetry delivery.
+  fetch: FetchImplementation = globalThis.fetch,
+) =>
   Effect.acquireRelease(
     Effect.sync(() => {
       const shutdown = new AbortController();
@@ -30,7 +64,7 @@ export const scopedPosthogClient = (apiKey: string, host: string) =>
         flushInterval: 0,
         requestTimeout: EXIT_DELAY_CAP_MS,
         fetch: (url, options) =>
-          fireAndForgetFetch(url, {
+          makeFireAndForgetFetch(fetch)(url, {
             ...options,
             signal: options.signal
               ? AbortSignal.any([options.signal, shutdown.signal])

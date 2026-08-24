@@ -13,8 +13,6 @@ export const createNodesV2: CreateNodesV2<OxlintPluginOptions> = [
       if (!pkgJson.devDependencies?.["oxlint"]) return [];
 
       const projectRoot = dirname(packageJsonPath);
-      const typeAware = (pkgJson.oxlint as { typeAware?: boolean } | undefined)?.typeAware ?? false;
-      const typeAwareFlag = typeAware ? "--type-aware " : "";
 
       return [
         [
@@ -24,13 +22,19 @@ export const createNodesV2: CreateNodesV2<OxlintPluginOptions> = [
               [projectRoot]: {
                 targets: {
                   "lint:check": {
-                    command: `oxlint ${typeAwareFlag}--deny-warnings`,
+                    command: "oxlint --deny-warnings",
                     options: { cwd: "{projectRoot}" },
                     cache: true,
-                    inputs: ["default", { externalDependencies: ["oxlint"] }],
+                    inputs: [
+                      "default",
+                      "{workspaceRoot}/.oxlintrc.json",
+                      {
+                        externalDependencies: ["oxlint", "oxlint-tsgolint", "@effect/tsgo"],
+                      },
+                    ],
                   },
                   "lint:fix": {
-                    command: `oxlint ${typeAwareFlag}--deny-warnings --fix`,
+                    command: "oxlint --deny-warnings --fix",
                     options: { cwd: "{projectRoot}" },
                     cache: false,
                   },

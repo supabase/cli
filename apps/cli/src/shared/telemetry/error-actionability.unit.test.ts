@@ -48,7 +48,9 @@ class DeclaredNoSuggestionError extends Data.TaggedError("DeclaredNoSuggestionEr
   }
 }
 
-class PlainDeclaredError extends Error {
+class PlainDeclaredError extends Data.TaggedError("PlainDeclaredError")<{
+  readonly message: string;
+}> {
   static readonly [ErrorActionabilityFingerprintId] = "PlainDeclaredError";
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -56,23 +58,18 @@ class PlainDeclaredError extends Error {
   }
 }
 
-class DeclarationCarrierError extends Error {
-  readonly _tag: string;
+class DeclarationCarrierError extends Data.TaggedError("DeclarationCarrierError")<{
   readonly declaration: Record<string, unknown>;
-
-  constructor(tag: string, declaration: Record<string, unknown>) {
-    super(tag);
-    this._tag = tag;
-    this.declaration = declaration;
-  }
-
+}> {
   get [ErrorActionabilityId](): Record<string, unknown> {
     return this.declaration;
   }
 }
 
 function declarationCarrier(tag: string, declaration: Record<string, unknown>) {
-  return new DeclarationCarrierError(tag, declaration);
+  const error = new DeclarationCarrierError({ declaration });
+  Reflect.set(error, "_tag", tag);
+  return error;
 }
 
 describe("classifyCliErrorActionability", () => {
@@ -90,7 +87,9 @@ describe("classifyCliErrorActionability", () => {
   });
 
   it("uses a declared Error subclass constructor for an untagged fingerprint", () => {
-    const result = classifyCliErrorActionability(new PlainDeclaredError("private path"));
+    const result = classifyCliErrorActionability(
+      new PlainDeclaredError({ message: "private path" }),
+    );
     expect(result.error_category).toBe("invalid_config");
     expect(result.error_fingerprint).toBe("error:PlainDeclaredError");
   });
@@ -99,14 +98,18 @@ describe("classifyCliErrorActionability", () => {
     // TypeError.prototype carries an own `name` data property ("TypeError");
     // without the static-identifier precedence, every declared class extending
     // a native Error subtype would collide on the native name.
-    class NativeSubtypeDeclaredError extends TypeError {
+    class NativeSubtypeDeclaredError extends Data.TaggedError("NativeSubtypeDeclaredError")<{
+      readonly message: string;
+    }> {
       static readonly [ErrorActionabilityFingerprintId] = "NativeSubtypeDeclaredError";
 
       get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
         return actionability.invalidConfig;
       }
     }
-    const result = classifyCliErrorActionability(new NativeSubtypeDeclaredError("boom"));
+    const result = classifyCliErrorActionability(
+      new NativeSubtypeDeclaredError({ message: "boom" }),
+    );
     expect(result.error_category).toBe("invalid_config");
     expect(result.error_fingerprint).toBe("error:NativeSubtypeDeclaredError");
   });
@@ -278,9 +281,7 @@ describe("classifyCliErrorActionability", () => {
 
   it("ignores a declaration whose symbol getter throws", () => {
     const secret = "token-from-throwing-getter";
-    class ThrowingDeclarationError extends Error {
-      readonly _tag = "ThrowingDeclarationError";
-
+    class ThrowingDeclarationError extends Data.TaggedError("ThrowingDeclarationError")<{}> {
       get [ErrorActionabilityId]() {
         throw new Error(secret);
       }
@@ -432,16 +433,18 @@ describe("classifyCliErrorActionability", () => {
   it("does not accept declarations through the global symbol registry", () => {
     const secret = "CustomerProjectRef123";
     const globalDeclarationKey = Symbol.for("@supabase/cli/telemetry/ErrorActionability");
-    class HostileDeclaredError extends Error {
-      readonly _tag = secret;
-
+    class HostileDeclaredError extends Data.TaggedError("HostileDeclaredError")<{
+      readonly message: string;
+    }> {
       get [globalDeclarationKey](): CliErrorActionabilityDeclaration {
         return actionability.invalidInput;
       }
     }
     Object.defineProperty(HostileDeclaredError, "name", { value: secret });
 
-    const result = classifyCliErrorActionability(new HostileDeclaredError(secret));
+    const error = new HostileDeclaredError({ message: secret });
+    Reflect.set(error, "_tag", secret);
+    const result = classifyCliErrorActionability(error);
     expect(result.error_fingerprint).toBe("tag:unknown");
     expect(JSON.stringify(result)).not.toContain(secret);
   });
@@ -691,13 +694,18 @@ describe("classifyCliErrorActionability", () => {
   });
 
   it("fingerprints workspaceCause without populating native Error.cause", () => {
-    const error = new (class extends Error {
-      readonly _tag = "UnsupportedGitWorkspaceError";
-      readonly code = "UNSUPPORTED_GIT_WORKSPACE";
-      readonly path = "/private/project/.git";
-      readonly reason = "metadata is inaccessible";
-      readonly workspaceCause = "metadata-inaccessible" as const;
-    })();
+    class WorkspaceCauseError extends Data.TaggedError("UnsupportedGitWorkspaceError")<{
+      readonly code: string;
+      readonly path: string;
+      readonly reason: string;
+      readonly workspaceCause: "metadata-inaccessible";
+    }> {}
+    const error = new WorkspaceCauseError({
+      code: "UNSUPPORTED_GIT_WORKSPACE",
+      path: "/private/project/.git",
+      reason: "metadata is inaccessible",
+      workspaceCause: "metadata-inaccessible",
+    });
     expect(error.cause).toBeUndefined();
     expect(classifyCliErrorActionability(error).error_fingerprint).toBe(
       "tag:UnsupportedGitWorkspaceError:managed_git_workspace_metadata_inaccessible",

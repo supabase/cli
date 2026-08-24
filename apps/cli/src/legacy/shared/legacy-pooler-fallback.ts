@@ -8,12 +8,12 @@ export function legacyIsDirectDbHost(host: string, projectHost: string): boolean
   return host.startsWith("db.") && host.endsWith(`.${projectHost}`);
 }
 
-export interface LegacyPoolerFallbackOptions<A, E, R, R2, RF> {
+export interface LegacyPoolerFallbackOptions<A, E, R, R2, RF, EF> {
   readonly run: Effect.Effect<A, E, R>;
   readonly retry: (pooler: LegacyPgConnInput) => Effect.Effect<A, E, R2>;
   readonly directHost: string;
   readonly eligible: boolean;
-  readonly resolveFallback: Effect.Effect<Option.Option<LegacyPgConnInput>, unknown, RF>;
+  readonly resolveFallback: Effect.Effect<Option.Option<LegacyPgConnInput>, EF, RF>;
   readonly classifyError?: (error: E) => boolean;
   readonly classifyResult?: (result: A) => boolean;
 }
@@ -33,8 +33,8 @@ export const legacyEmitPoolerFallbackWarning = (host: string): Effect.Effect<voi
     );
   });
 
-export function legacyRunWithPoolerFallback<A, E, R, R2, RF>(
-  options: LegacyPoolerFallbackOptions<A, E, R, R2, RF>,
+export function legacyRunWithPoolerFallback<A, E, R, R2, RF, EF>(
+  options: LegacyPoolerFallbackOptions<A, E, R, R2, RF, EF>,
 ): Effect.Effect<A, E, R | R2 | RF | Output> {
   const resolveFallback = options.resolveFallback.pipe(
     Effect.orElseSucceed(() => Option.none<LegacyPgConnInput>()),

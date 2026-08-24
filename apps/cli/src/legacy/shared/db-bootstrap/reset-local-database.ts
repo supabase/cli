@@ -143,11 +143,9 @@ export const legacyResetLocalDatabase = Effect.fnUntraced(function* (
     Option.getOrUndefined(cliConfig.projectId),
   );
   if (!running) {
-    return yield* Effect.fail(
-      new LegacyResetLocalDbNotRunningError({
-        message: `${legacyAqua("supabase start")} is not running.`,
-      }),
-    );
+    return yield* new LegacyResetLocalDbNotRunningError({
+      message: `${legacyAqua("supabase start")} is not running.`,
+    });
   }
   // resetDatabase: "Resetting local database…" then recreate + migrate + seed.
   yield* output.raw(`Resetting local database${toLogMessage(input.version)}\n`, "stderr");

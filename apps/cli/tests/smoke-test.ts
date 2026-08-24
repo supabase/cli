@@ -1,6 +1,7 @@
-import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, Path } from "effect";
 
 const { values } = parseArgs({
   options: {
@@ -12,7 +13,9 @@ const { values } = parseArgs({
 const version = values.version!;
 const tag = values.tag;
 if (tag !== "latest" && tag !== "alpha" && tag !== "beta") {
-  console.error(`Invalid --tag value: ${String(tag)}. Expected "latest", "alpha", or "beta".`);
+  process.stderr.write(
+    `Invalid --tag value: ${String(tag)}. Expected "latest", "alpha", or "beta".\n`,
+  );
   process.exit(1);
 }
 const testsDir = import.meta.dir;
@@ -25,12 +28,17 @@ const platformScripts: Record<string, string> = {
 
 const script = platformScripts[process.platform];
 if (!script) {
-  console.error(`Unsupported platform: ${process.platform}`);
+  process.stderr.write(`Unsupported platform: ${process.platform}\n`);
   process.exit(1);
 }
 
-const scriptPath = path.join(testsDir, script);
-console.log(`Detected platform: ${process.platform} — running ${script}\n`);
+const scriptPath = Effect.runSync(
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    return path.join(testsDir, script);
+  }).pipe(Effect.provide(BunServices.layer)),
+);
+process.stdout.write(`Detected platform: ${process.platform} — running ${script}\n\n`);
 
 const proc = Bun.spawn(["bun", "run", scriptPath, "--version", version, "--tag", tag], {
   stdout: "inherit",

@@ -1,8 +1,16 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import {
+  Cause,
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Path,
+} from "effect";
 
 import {
   LEGACY_VALID_REF,
@@ -14,6 +22,7 @@ import {
 import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import { makeLegacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigLoadError } from "../../../shared/legacy-db-config.errors.ts";
@@ -28,6 +37,49 @@ import type { LegacyMigrationFetchFlags } from "./fetch.command.ts";
 
 const SELECT_SQL =
   "SELECT version, coalesce(name, '') as name, statements FROM supabase_migrations.schema_migrations";
+
+const fixturePath = ManagedRuntime.make(BunServices.layer).runSync(Path.Path);
+const join = (first: string, ...rest: ReadonlyArray<string>) => fixturePath.join(first, ...rest);
+const pendingDirectories: string[] = [];
+const pendingWrites: Array<{ readonly path: string; readonly contents: string | Uint8Array }> = [];
+const mkdirSync = (path: string, _options?: { readonly recursive?: boolean }) => {
+  pendingDirectories.push(path);
+};
+const writeFileSync = (path: string, contents: string | Uint8Array) => {
+  pendingWrites.push({ path, contents });
+};
+const flushFixtureWrites = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  for (const directory of pendingDirectories) {
+    yield* fs.makeDirectory(directory, { recursive: true });
+  }
+  for (const write of pendingWrites) {
+    yield* fs.makeDirectory(fixturePath.dirname(write.path), { recursive: true });
+    yield* fs.writeFileString(
+      write.path,
+      typeof write.contents === "string"
+        ? write.contents
+        : new TextDecoder().decode(write.contents),
+    );
+  }
+  pendingDirectories.length = 0;
+  pendingWrites.length = 0;
+});
+const readDirectory = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.readDirectory(path);
+  });
+const readText = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.readFileString(path);
+  });
+const exists = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.exists(path);
+  });
 
 interface MigrationRow {
   readonly version: string;
@@ -48,6 +100,7 @@ interface SetupOpts {
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
+  const configProvider = ConfigProvider.fromEnv({ preserveEmptyStrings: true });
   const out = mockOutput({
     format: opts.format ?? "text",
     promptConfirmResponses: opts.confirm === undefined ? undefined : [opts.confirm],
@@ -110,6 +163,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   const layer = Layer.mergeAll(
     out.layer,
+    ConfigProvider.layer(configProvider),
+    makeLegacyViperEnvLayer(configProvider),
     telemetry.layer,
     cache.layer,
     resolver,
@@ -126,6 +181,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       // supplied via piped stdin rather than the Output prompt mock.
       opts.pipedInput ?? (opts.confirm === undefined ? undefined : opts.confirm ? "y\n" : "n\n"),
     ),
+    Layer.effectDiscard(flushFixtureWrites.pipe(Effect.provide(BunServices.layer))),
     BunServices.layer,
   );
   return { layer, out, telemetry, cache };
@@ -157,9 +213,9 @@ describe("legacy migration fetch", () => {
       // The connection banner prints to stderr before dialing.
       expect(out.stderrText).toContain("Connecting to remote database...");
       const dir = migrationsDir(tmp.current);
-      const files = readdirSync(dir);
+      const files = yield* readDirectory(dir);
       expect(files).toEqual(["20240101000000_init.sql"]);
-      expect(readFileSync(join(dir, files[0]!), "utf8")).toBe("create table a;\ncreate index b;\n");
+      expect(yield* readText(join(dir, files[0]!))).toBe("create table a;\ncreate index b;\n");
     }).pipe(Effect.provide(layer));
   });
 
@@ -175,7 +231,7 @@ describe("legacy migration fetch", () => {
     return Effect.gen(function* () {
       yield* legacyMigrationFetch(flags());
       const dir = migrationsDir(tmp.current);
-      expect(readFileSync(join(dir, "20240101000000_empty.sql"), "utf8")).toBe(";\n");
+      expect(yield* readText(join(dir, "20240101000000_empty.sql"))).toBe(";\n");
     }).pipe(Effect.provide(layer));
   });
 
@@ -188,7 +244,7 @@ describe("legacy migration fetch", () => {
     });
     return Effect.gen(function* () {
       yield* legacyMigrationFetch(flags());
-      expect(readdirSync(migrationsDir(tmp.current))).toContain("20240101000000_init.sql");
+      expect(yield* readDirectory(migrationsDir(tmp.current))).toContain("20240101000000_init.sql");
     }).pipe(Effect.provide(layer));
   });
 
@@ -206,7 +262,7 @@ describe("legacy migration fetch", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyOperationCanceledError");
       }
-      expect(readdirSync(migrationsDir(tmp.current))).toEqual(["existing.sql"]);
+      expect(yield* readDirectory(migrationsDir(tmp.current))).toEqual(["existing.sql"]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -228,7 +284,7 @@ describe("legacy migration fetch", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyOperationCanceledError");
       }
-      expect(readdirSync(migrationsDir(tmp.current))).toEqual(["existing.sql"]);
+      expect(yield* readDirectory(migrationsDir(tmp.current))).toEqual(["existing.sql"]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -242,7 +298,7 @@ describe("legacy migration fetch", () => {
     return Effect.gen(function* () {
       yield* legacyMigrationFetch(flags());
       expect(out.stderrText).toContain("[Y/n] y");
-      expect(readdirSync(migrationsDir(tmp.current))).toContain("20240101000000_init.sql");
+      expect(yield* readDirectory(migrationsDir(tmp.current))).toContain("20240101000000_init.sql");
     }).pipe(Effect.provide(layer));
   });
 
@@ -261,7 +317,9 @@ describe("legacy migration fetch", () => {
       return Effect.gen(function* () {
         yield* legacyMigrationFetch(flags());
         expect(out.stderrText).toContain("[Y/n] y");
-        expect(readdirSync(migrationsDir(tmp.current))).toContain("20240101000000_init.sql");
+        expect(yield* readDirectory(migrationsDir(tmp.current))).toContain(
+          "20240101000000_init.sql",
+        );
       }).pipe(Effect.provide(layer));
     },
   );
@@ -308,7 +366,7 @@ describe("legacy migration fetch", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyOperationCanceledError");
       }
-      expect(readdirSync(migrationsDir(tmp.current))).toEqual(["existing.sql"]);
+      expect(yield* readDirectory(migrationsDir(tmp.current))).toEqual(["existing.sql"]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -326,7 +384,7 @@ describe("legacy migration fetch", () => {
         expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyMigrationFetchWriteError");
       }
       // Nothing is written when the guard fires.
-      expect(readdirSync(migrationsDir(tmp.current))).toEqual([]);
+      expect(yield* readDirectory(migrationsDir(tmp.current))).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -339,7 +397,7 @@ describe("legacy migration fetch", () => {
     });
     return Effect.gen(function* () {
       yield* legacyMigrationFetch(flags());
-      expect(readdirSync(migrationsDir(tmp.current))).toEqual(["-1_legacy.sql"]);
+      expect(yield* readDirectory(migrationsDir(tmp.current))).toEqual(["-1_legacy.sql"]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -356,7 +414,7 @@ describe("legacy migration fetch", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyMigrationFetchWriteError");
       }
-      expect(readdirSync(migrationsDir(tmp.current))).toEqual([]);
+      expect(yield* readDirectory(migrationsDir(tmp.current))).toEqual([]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -391,7 +449,7 @@ describe("legacy migration fetch", () => {
         expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyDbConfigLoadError");
       }
       // The config failed before any side effect: no migrations dir, no overwrite prompt.
-      expect(existsSync(migrationsDir(tmp.current))).toBe(false);
+      expect(yield* exists(migrationsDir(tmp.current))).toBe(false);
       expect(out.promptConfirmCalls.length).toBe(0);
     }).pipe(Effect.provide(layer));
   });
@@ -459,7 +517,7 @@ describe("legacy migration fetch", () => {
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }
-      expect(existsSync(migrationsDir(tmp.current))).toBe(false);
+      expect(yield* exists(migrationsDir(tmp.current))).toBe(false);
       expect(out.promptConfirmCalls.length).toBe(0);
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));

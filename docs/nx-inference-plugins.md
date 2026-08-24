@@ -52,16 +52,16 @@ Infers `lint:check` and `lint:fix` targets for any workspace package that has `o
 
 **Detection signal:** `package.json` must have `"oxlint"` under `devDependencies`.
 
-**Per-project config:** an optional `"oxlint": { "typeAware": true }` key in `package.json` enables `--type-aware` linting for that project. Projects without this key get plain `--deny-warnings` linting.
+The root `.oxlintrc.json` extends Effect's recommended preset from `@effect/tsgo`. The root `prepare` script patches Oxlint with the Effect TypeScript-Go integration after installation, without patching TypeScript.
 
 **Inferred targets:**
 
 | Target | Command | Cached | Inputs |
 |--------|---------|--------|--------|
-| `lint:check` | `oxlint [--type-aware] --deny-warnings` | Yes | `default`, `oxlint` package version |
-| `lint:fix` | `oxlint [--type-aware] --deny-warnings --fix` | No | — |
+| `lint:check` | `oxlint --deny-warnings` | Yes | `default`, root `.oxlintrc.json`, `oxlint`, `oxlint-tsgolint`, and `@effect/tsgo` package versions |
+| `lint:fix` | `oxlint --deny-warnings --fix` | No | — |
 
-Currently `packages/api` is the only project with `"oxlint": { "typeAware": true }`.
+The recommended Effect preset enables type-aware linting and the `effecttsgo` plugin for every inferred Oxlint target.
 
 ### `typescript.plugin.ts`
 

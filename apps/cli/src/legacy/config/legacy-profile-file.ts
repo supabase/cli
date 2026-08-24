@@ -21,10 +21,11 @@ import {
  * directly, so `env` defaults to it.
  */
 export function legacySupabaseHome(
+  path: Path.Path,
+  configuredHome: string | undefined,
   homeDir: string,
-  env: Readonly<Record<string, string | undefined>> = process.env,
 ): string {
-  return resolveSupabaseHome(env, homeDir);
+  return resolveSupabaseHome(path, configuredHome, homeDir);
 }
 
 /** Raised when persisting the profile name fails — fails `login` outright,
@@ -40,9 +41,9 @@ export class LegacyProfileSaveError extends Data.TaggedError("LegacyProfileSaveE
 export function legacyProfileFilePath(
   path: Path.Path,
   homeDir: string,
-  env?: Readonly<Record<string, string | undefined>>,
+  configuredHome?: string,
 ): string {
-  return path.join(legacySupabaseHome(homeDir, env), "profile");
+  return path.join(legacySupabaseHome(path, configuredHome, homeDir), "profile");
 }
 
 /** Writes the profile name to `<SUPABASE_HOME or ~/.supabase>/profile`. Fatal on failure. */
@@ -51,15 +52,15 @@ export const saveLegacyProfileName = (
   path: Path.Path,
   homeDir: string,
   name: string,
+  configuredHome?: string,
 ): Effect.Effect<void, LegacyProfileSaveError> =>
   Effect.gen(function* () {
-    const filePath = legacyProfileFilePath(path, homeDir);
+    const filePath = legacyProfileFilePath(path, homeDir, configuredHome);
     yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
     yield* fs.writeFileString(filePath, name);
   }).pipe(
-    Effect.catch((error) =>
-      Effect.fail(
+    Effect.mapError(
+      (error) =>
         new LegacyProfileSaveError({ message: `failed to save profile: ${error.message}` }),
-      ),
     ),
   );

@@ -43,21 +43,17 @@ export const parseServiceVersionOverrides = Effect.fnUntraced(function* (
     const rawVersion = separatorIndex === -1 ? "" : rawOverride.slice(separatorIndex + 1).trim();
 
     if (!isServiceName(rawService)) {
-      return yield* Effect.fail(
-        new InvalidServiceVersionOverrideError({
-          detail: `Invalid service version override '${rawOverride}'. Unknown service '${rawService}'.`,
-          suggestion: `Use one of: ${SERVICE_NAMES.join(", ")}.`,
-        }),
-      );
+      return yield* new InvalidServiceVersionOverrideError({
+        detail: `Invalid service version override '${rawOverride}'. Unknown service '${rawService}'.`,
+        suggestion: `Use one of: ${SERVICE_NAMES.join(", ")}.`,
+      });
     }
 
     if (rawVersion.length === 0) {
-      return yield* Effect.fail(
-        new InvalidServiceVersionOverrideError({
-          detail: `Invalid service version override '${rawOverride}'. Expected format service=version.`,
-          suggestion: `Pass --service-version ${rawService}=${DEFAULT_VERSIONS[rawService]}.`,
-        }),
-      );
+      return yield* new InvalidServiceVersionOverrideError({
+        detail: `Invalid service version override '${rawOverride}'. Expected format service=version.`,
+        suggestion: `Pass --service-version ${rawService}=${DEFAULT_VERSIONS[rawService]}.`,
+      });
     }
 
     overrides[rawService] = normalizeServiceVersion(rawService, rawVersion);

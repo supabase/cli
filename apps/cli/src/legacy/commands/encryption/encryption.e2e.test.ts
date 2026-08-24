@@ -11,14 +11,14 @@ describe("supabase encryption (legacy)", () => {
   test(
     "get-root-key without a resolvable project ref exits non-zero with the not-linked message",
     { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      const { exitCode, stdout, stderr } = await runSupabase(["encryption", "get-root-key"], {
+    () =>
+      runSupabase(["encryption", "get-root-key"], {
         entrypoint: "legacy",
         env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN },
-      });
-      expect(exitCode).not.toBe(0);
-      expect(`${stdout}${stderr}`).toContain("Cannot find project ref");
-    },
+      }).then(({ exitCode, stdout, stderr }) => {
+        expect(exitCode).not.toBe(0);
+        expect(`${stdout}${stderr}`).toContain("Cannot find project ref");
+      }),
   );
 
   // Validates the piped-stdin read path reaches the resolver in a real
@@ -26,14 +26,14 @@ describe("supabase encryption (legacy)", () => {
   test(
     "update-root-key with piped key but no resolvable ref exits non-zero",
     { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      const { exitCode, stdout, stderr } = await runSupabase(["encryption", "update-root-key"], {
+    () =>
+      runSupabase(["encryption", "update-root-key"], {
         entrypoint: "legacy",
         env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN },
         stdin: "newkey\n",
-      });
-      expect(exitCode).not.toBe(0);
-      expect(`${stdout}${stderr}`).toContain("Cannot find project ref");
-    },
+      }).then(({ exitCode, stdout, stderr }) => {
+        expect(exitCode).not.toBe(0);
+        expect(`${stdout}${stderr}`).toContain("Cannot find project ref");
+      }),
   );
 });

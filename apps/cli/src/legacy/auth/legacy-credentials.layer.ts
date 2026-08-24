@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Layer, Option, Path, Redacted, Result } from "effect";
+import { Config, Effect, FileSystem, Layer, Option, Path, Redacted, Result } from "effect";
 
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { normalizeKeyringToken } from "../../shared/auth/keyring-token.ts";
@@ -352,7 +352,12 @@ const loadKeyringModule = (
   fs: FileSystem.FileSystem,
 ): Effect.Effect<Option.Option<KeyringModule>> =>
   Effect.gen(function* () {
-    const noKeyring = process.env["SUPABASE_NO_KEYRING"] === "1";
+    const noKeyring = yield* Config.option(Config.string("SUPABASE_NO_KEYRING")).pipe(
+      Effect.map((value) =>
+        Option.match(value, { onNone: () => false, onSome: (item) => item === "1" }),
+      ),
+      Effect.orElseSucceed(() => false),
+    );
     const wsl = yield* detectWsl(fs);
     return wsl || noKeyring
       ? Option.none<KeyringModule>()
@@ -415,6 +420,7 @@ export const legacyAccessTokenForProfile = Effect.fnUntraced(function* (profileA
   const path = yield* Path.Path;
   const runtimeInfo = yield* RuntimeInfo;
   const cliConfig = yield* LegacyCliConfig;
+  const configuredHome = yield* Config.option(Config.string("SUPABASE_HOME"));
   // `serviceOption` keeps the logger optional (no-op outside the real CLI
   // tree), same as the sso pflag-reconcile module's optional services.
   const debugLogger: LegacyDebugLoggerShape = Option.getOrElse(
@@ -440,7 +446,10 @@ export const legacyAccessTokenForProfile = Effect.fnUntraced(function* (profileA
     return Option.some(Redacted.make(keyringValue.value));
   }
 
-  const fallbackPath = path.join(legacySupabaseHome(runtimeInfo.homeDir), "access-token");
+  const fallbackPath = path.join(
+    legacySupabaseHome(path, Option.getOrUndefined(configuredHome), runtimeInfo.homeDir),
+    "access-token",
+  );
   const fileValue = yield* readFallbackFile(fs, fallbackPath);
   if (Option.isSome(fileValue)) {
     yield* debugLogger.debug(`Using access token from file: ${fallbackPath}`);
@@ -457,10 +466,15 @@ const makeLegacyCredentials = Effect.gen(function* () {
   const runtimeInfo = yield* RuntimeInfo;
   const cliConfig = yield* LegacyCliConfig;
   const debugLogger = yield* LegacyDebugLogger;
+  const configuredHome = yield* Config.option(Config.string("SUPABASE_HOME"));
   const profileAccount = cliConfig.profile;
 
   // <SUPABASE_HOME or ~/.supabase>/access-token — fallback file path
-  const fallbackDir = legacySupabaseHome(runtimeInfo.homeDir);
+  const fallbackDir = legacySupabaseHome(
+    path,
+    Option.getOrUndefined(configuredHome),
+    runtimeInfo.homeDir,
+  );
   const fallbackPath = path.join(fallbackDir, "access-token");
 
   const keyringModule = yield* loadKeyringModule(fs);
@@ -526,12 +540,11 @@ const makeLegacyCredentials = Effect.gen(function* () {
       const exists = yield* fs.exists(fallbackPath).pipe(Effect.orElseSucceed(() => false));
       if (exists) {
         yield* fs.remove(fallbackPath).pipe(
-          Effect.catch((error) =>
-            Effect.fail(
+          Effect.mapError(
+            (error) =>
               new LegacyDeleteTokenError({
                 message: `failed to remove access token file: ${error.message}`,
               }),
-            ),
           ),
         );
       }
@@ -546,7 +559,7 @@ const makeLegacyCredentials = Effect.gen(function* () {
       //    No keyring backend (WSL / `SUPABASE_NO_KEYRING` / unsupported) maps
       //    to `LegacyNotLoggedInError`.
       if (Option.isNone(keyringModule)) {
-        return yield* Effect.fail(new LegacyNotLoggedInError({ message: NOT_LOGGED_IN_MESSAGE }));
+        return yield* new LegacyNotLoggedInError({ message: NOT_LOGGED_IN_MESSAGE });
       }
       const outcome = yield* deleteProfileKeyringEntry(
         keyringModule.value,
@@ -554,7 +567,7 @@ const makeLegacyCredentials = Effect.gen(function* () {
         runtimeInfo.platform,
       );
       if (outcome === "notFound") {
-        return yield* Effect.fail(new LegacyNotLoggedInError({ message: NOT_LOGGED_IN_MESSAGE }));
+        return yield* new LegacyNotLoggedInError({ message: NOT_LOGGED_IN_MESSAGE });
       }
     }),
 

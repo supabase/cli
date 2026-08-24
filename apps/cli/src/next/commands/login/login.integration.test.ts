@@ -1,12 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { BunServices } from "@effect/platform-bun";
+import { Cause, Clock, Effect, FileSystem, Exit, Layer, Option, Path, Schema } from "effect";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import type { LoginFlags } from "./login.command.ts";
 import { login } from "./login.handler.ts";
-import type { TelemetryConfig } from "../../../shared/telemetry/types.ts";
+import { TelemetryConfigSchema, type TelemetryConfig } from "../../../shared/telemetry/types.ts";
 import { ApiError } from "../../auth/errors.ts";
 import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
 import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
@@ -35,16 +33,35 @@ const NO_FLAGS: LoginFlags = {
   noBrowser: false,
 };
 
-function makeTempDir(): string {
-  return mkdtempSync(path.join(tmpdir(), "supabase-login-test-"));
+function writeTelemetryConfig(
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  dir: string,
+  config: TelemetryConfig,
+) {
+  return fs.writeFileString(
+    path.join(dir, "telemetry.json"),
+    Schema.encodeSync(Schema.fromJsonString(TelemetryConfigSchema))(config),
+  );
 }
 
-function writeTelemetryConfig(dir: string, config: TelemetryConfig) {
-  writeFileSync(path.join(dir, "telemetry.json"), JSON.stringify(config));
+function readTelemetryConfig(fs: FileSystem.FileSystem, path: Path.Path, dir: string) {
+  return fs
+    .readFileString(path.join(dir, "telemetry.json"))
+    .pipe(Effect.flatMap(Schema.decodeEffect(Schema.fromJsonString(TelemetryConfigSchema))));
 }
 
-function readTelemetryConfig(dir: string): TelemetryConfig {
-  return JSON.parse(readFileSync(path.join(dir, "telemetry.json"), "utf8"));
+function withTempHome<A, E, R>(
+  body: (homeDir: string, fs: FileSystem.FileSystem, path: Path.Path) => Effect.Effect<A, E, R>,
+) {
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const homeDir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-login-test-" });
+      return yield* body(homeDir, fs, path);
+    }),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -183,104 +200,100 @@ describe("login", () => {
     });
 
     it.live("token-based login in an ephemeral runtime stamps without alias or file write", () => {
-      const homeDir = makeTempDir();
-      const identity = makeTelemetryIdentity(undefined);
-      const { layer, analytics } = setupWithEnv({ SUPABASE_HOME: homeDir }, { isTTY: false });
-      const runtime = TelemetryRuntime.of({
-        configDir: homeDir,
-        tracesDir: path.join(homeDir, "traces"),
-        consent: "granted",
-        showDebug: false,
-        deviceId: "test-device-id",
-        sessionId: "test-session-id",
-        identity,
-        isFirstRun: false,
-        isTty: false,
-        isCi: true,
-        os: "linux",
-        arch: "x64",
-        cliVersion: "0.1.0",
-      });
-      return Effect.gen(function* () {
-        yield* login({ ...NO_FLAGS, token: Option.some(VALID_TOKEN) }).pipe(
-          Effect.provideService(TelemetryRuntime, runtime),
-        );
-        expect(identity.current()).toBe("user-123");
-        expect(analytics.aliased).toEqual([]);
-        expect(analytics.identified).toEqual([]);
-        expect(existsSync(path.join(homeDir, "telemetry.json"))).toBe(false);
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(Effect.sync(() => rmSync(homeDir, { recursive: true, force: true }))),
-      );
+      return withTempHome((homeDir, fs, path) => {
+        const identity = makeTelemetryIdentity(undefined);
+        const { layer, analytics } = setupWithEnv({ SUPABASE_HOME: homeDir }, { isTTY: false });
+        const runtime = TelemetryRuntime.of({
+          configDir: homeDir,
+          tracesDir: path.join(homeDir, "traces"),
+          consent: "granted",
+          showDebug: false,
+          deviceId: "test-device-id",
+          sessionId: "test-session-id",
+          identity,
+          isFirstRun: false,
+          isTty: false,
+          isCi: true,
+          os: "linux",
+          arch: "x64",
+          cliVersion: "0.1.0",
+        });
+        return Effect.gen(function* () {
+          yield* login({ ...NO_FLAGS, token: Option.some(VALID_TOKEN) }).pipe(
+            Effect.provideService(TelemetryRuntime, runtime),
+          );
+          expect(identity.current()).toBe("user-123");
+          expect(analytics.aliased).toEqual([]);
+          expect(analytics.identified).toEqual([]);
+          expect(yield* fs.exists(path.join(homeDir, "telemetry.json"))).toBe(false);
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(BunServices.layer));
     });
 
     it.live("token-based re-login as a different user persists without re-aliasing", () => {
-      const homeDir = makeTempDir();
-      const identity = makeTelemetryIdentity("user-a");
-      const { layer, analytics } = setupWithEnv({ SUPABASE_HOME: homeDir }, { isTTY: false });
-      const runtime = TelemetryRuntime.of({
-        configDir: homeDir,
-        tracesDir: path.join(homeDir, "traces"),
-        consent: "granted",
-        showDebug: false,
-        deviceId: "test-device-id",
-        sessionId: "test-session-id",
-        identity,
-        isFirstRun: false,
-        isTty: true,
-        isCi: false,
-        os: "linux",
-        arch: "x64",
-        cliVersion: "0.1.0",
-      });
-      return Effect.gen(function* () {
-        yield* login({ ...NO_FLAGS, token: Option.some(VALID_TOKEN) }).pipe(
-          Effect.provideService(TelemetryRuntime, runtime),
-        );
-        expect(identity.current()).toBe("user-123");
-        expect(analytics.aliased).toEqual([]);
-        expect(readTelemetryConfig(homeDir).distinct_id).toBe("user-123");
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(Effect.sync(() => rmSync(homeDir, { recursive: true, force: true }))),
-      );
+      return withTempHome((homeDir, fs, path) => {
+        const identity = makeTelemetryIdentity("user-a");
+        const { layer, analytics } = setupWithEnv({ SUPABASE_HOME: homeDir }, { isTTY: false });
+        const runtime = TelemetryRuntime.of({
+          configDir: homeDir,
+          tracesDir: path.join(homeDir, "traces"),
+          consent: "granted",
+          showDebug: false,
+          deviceId: "test-device-id",
+          sessionId: "test-session-id",
+          identity,
+          isFirstRun: false,
+          isTty: true,
+          isCi: false,
+          os: "linux",
+          arch: "x64",
+          cliVersion: "0.1.0",
+        });
+        return Effect.gen(function* () {
+          yield* login({ ...NO_FLAGS, token: Option.some(VALID_TOKEN) }).pipe(
+            Effect.provideService(TelemetryRuntime, runtime),
+          );
+          expect(identity.current()).toBe("user-123");
+          expect(analytics.aliased).toEqual([]);
+          expect((yield* readTelemetryConfig(fs, path, homeDir)).distinct_id).toBe("user-123");
+        }).pipe(Effect.provide(layer));
+      }).pipe(Effect.provide(BunServices.layer));
     });
 
     it.live("token-based login clears a stale distinct_id when profile lookup fails", () => {
-      const homeDir = makeTempDir();
-      writeTelemetryConfig(homeDir, {
-        consent: "granted",
-        device_id: "device-123",
-        session_id: "session-123",
-        session_last_active: Date.now(),
-        distinct_id: "old-user-id",
-      });
-      const creds = mockCredentials();
-      const out = mockOutput();
-      const api = mockApi({ profileError: new ApiError({ detail: "Unauthorized" }) });
-      const analytics = mockAnalytics();
-      const layer = Layer.mergeAll(
-        withEnv({ SUPABASE_HOME: homeDir }),
-        analytics.layer,
-        api.layer,
-        creds.layer,
-        mockCrypto(),
-        mockBrowser(),
-        mockStdin(false),
-        out.layer,
-      );
+      return withTempHome((homeDir, fs, path) =>
+        Effect.gen(function* () {
+          yield* writeTelemetryConfig(fs, path, homeDir, {
+            consent: "granted",
+            device_id: "device-123",
+            session_id: "session-123",
+            session_last_active: yield* Clock.currentTimeMillis,
+            distinct_id: "old-user-id",
+          });
+          const creds = mockCredentials();
+          const out = mockOutput();
+          const api = mockApi({ profileError: new ApiError({ detail: "Unauthorized" }) });
+          const analytics = mockAnalytics();
+          const layer = Layer.mergeAll(
+            withEnv({ SUPABASE_HOME: homeDir }),
+            analytics.layer,
+            api.layer,
+            creds.layer,
+            mockCrypto(),
+            mockBrowser(),
+            mockStdin(false),
+            out.layer,
+          );
 
-      return Effect.gen(function* () {
-        yield* login({ ...NO_FLAGS, token: Option.some(VALID_TOKEN) });
-        expect(creds.savedToken).toBe(VALID_TOKEN);
-        expect(readTelemetryConfig(homeDir).distinct_id).toBeUndefined();
-        expect(analytics.identified).toEqual([]);
-        expect(analytics.aliased).toEqual([]);
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(Effect.sync(() => rmSync(homeDir, { recursive: true, force: true }))),
-      );
+          yield* login({ ...NO_FLAGS, token: Option.some(VALID_TOKEN) }).pipe(
+            Effect.provide(layer),
+          );
+          expect(creds.savedToken).toBe(VALID_TOKEN);
+          expect((yield* readTelemetryConfig(fs, path, homeDir)).distinct_id).toBeUndefined();
+          expect(analytics.identified).toEqual([]);
+          expect(analytics.aliased).toEqual([]);
+        }),
+      ).pipe(Effect.provide(BunServices.layer));
     });
 
     it.live("returns NoTtyError when piped stdin is empty", () => {
@@ -422,38 +435,36 @@ describe("login", () => {
     });
 
     it.live("browser OAuth clears a stale distinct_id when profile lookup fails", () => {
-      const homeDir = makeTempDir();
-      writeTelemetryConfig(homeDir, {
-        consent: "granted",
-        device_id: "device-123",
-        session_id: "session-123",
-        session_last_active: Date.now(),
-        distinct_id: "old-user-id",
-      });
-      const creds = mockCredentials();
-      const out = mockOutput();
-      const api = mockApi({ profileError: new ApiError({ detail: "Unauthorized" }) });
-      const analytics = mockAnalytics();
-      const layer = Layer.mergeAll(
-        withEnv({ SUPABASE_HOME: homeDir }),
-        analytics.layer,
-        api.layer,
-        creds.layer,
-        mockCrypto(),
-        mockBrowser(),
-        mockStdin(true),
-        out.layer,
-      );
+      return withTempHome((homeDir, fs, path) =>
+        Effect.gen(function* () {
+          yield* writeTelemetryConfig(fs, path, homeDir, {
+            consent: "granted",
+            device_id: "device-123",
+            session_id: "session-123",
+            session_last_active: yield* Clock.currentTimeMillis,
+            distinct_id: "old-user-id",
+          });
+          const creds = mockCredentials();
+          const out = mockOutput();
+          const api = mockApi({ profileError: new ApiError({ detail: "Unauthorized" }) });
+          const analytics = mockAnalytics();
+          const layer = Layer.mergeAll(
+            withEnv({ SUPABASE_HOME: homeDir }),
+            analytics.layer,
+            api.layer,
+            creds.layer,
+            mockCrypto(),
+            mockBrowser(),
+            mockStdin(true),
+            out.layer,
+          );
 
-      return Effect.gen(function* () {
-        yield* login(NO_FLAGS);
-        expect(readTelemetryConfig(homeDir).distinct_id).toBeUndefined();
-        expect(analytics.aliased).toEqual([]);
-        expect(analytics.identified).toEqual([]);
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(Effect.sync(() => rmSync(homeDir, { recursive: true, force: true }))),
-      );
+          yield* login(NO_FLAGS).pipe(Effect.provide(layer));
+          expect((yield* readTelemetryConfig(fs, path, homeDir)).distinct_id).toBeUndefined();
+          expect(analytics.aliased).toEqual([]);
+          expect(analytics.identified).toEqual([]);
+        }),
+      ).pipe(Effect.provide(BunServices.layer));
     });
 
     it.live("browser OAuth stitches the authenticated user via /v1/profile", () => {

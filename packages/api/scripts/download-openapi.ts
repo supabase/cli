@@ -1,13 +1,45 @@
 #!/usr/bin/env bun
-import { readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { BunServices } from "@effect/platform-bun";
+import { Config, Data, Effect, FileSystem, Layer, Option, Path } from "effect";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { FetchHttpClient } from "effect/unstable/http";
+import * as Schema from "effect/Schema";
 
 const DEFAULT_SUPABASE_API_URL = "https://api.supabase.com";
-const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const OPENAPI_SPEC_PATH = path.join(scriptDir, "../src/generated/openapi.json");
-const OPENAPI_OVERRIDES_PATH = path.join(scriptDir, "openapi-overrides.json");
-const OPENAPI_SOURCE_PATH = path.join(scriptDir, "openapi-source.json");
+const SCRIPT_DIR_URL = new URL(".", import.meta.url);
+const OPENAPI_SPEC_URL = new URL("../src/generated/openapi.json", SCRIPT_DIR_URL);
+const OPENAPI_OVERRIDES_URL = new URL("./openapi-overrides.json", SCRIPT_DIR_URL);
+const OPENAPI_SOURCE_URL = new URL("./openapi-source.json", SCRIPT_DIR_URL);
+
+const SCRIPT_LAYERS = Layer.mergeAll(BunServices.layer, FetchHttpClient.layer);
+
+const runScript = <A, E extends Error>(
+  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | HttpClient.HttpClient>,
+): Promise<A> => Effect.runPromise(Effect.orDie(Effect.provide(effect, SCRIPT_LAYERS)));
+
+type ScriptPaths = {
+  readonly openApiSpec: string;
+  readonly openApiOverrides: string;
+  readonly openApiSource: string;
+};
+
+const resolveScriptPaths = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  return {
+    openApiSpec: yield* path.fromFileUrl(OPENAPI_SPEC_URL),
+    openApiOverrides: yield* path.fromFileUrl(OPENAPI_OVERRIDES_URL),
+    openApiSource: yield* path.fromFileUrl(OPENAPI_SOURCE_URL),
+  } satisfies ScriptPaths;
+});
+
+class OpenApiDownloadError extends Data.TaggedError("OpenApiDownloadError")<{
+  readonly message: string;
+}> {
+  constructor(message: string) {
+    super({ message });
+  }
+}
 
 const OPENAPI_DOCUMENT_VERSIONS = ["v1", "v2"] as const;
 type OpenApiDocumentVersion = (typeof OPENAPI_DOCUMENT_VERSIONS)[number];
@@ -232,13 +264,17 @@ export function applyOpenApiOverrides(
   return document;
 }
 
-async function loadOpenApiOverrides(): Promise<ReadonlyArray<unknown>> {
-  const parsed = JSON.parse(await readFile(OPENAPI_OVERRIDES_PATH, "utf8"));
-  if (!Array.isArray(parsed)) {
-    throw new Error("OpenAPI overrides file must contain a JSON Patch array.");
-  }
-  return parsed;
-}
+const loadOpenApiOverrides = (paths: ScriptPaths) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+      yield* fs.readFileString(paths.openApiOverrides),
+    );
+    if (!Array.isArray(parsed)) {
+      throw new Error("OpenAPI overrides file must contain a JSON Patch array.");
+    }
+    return parsed;
+  });
 
 function assertOpenApiSource(value: unknown): asserts value is OpenApiSource {
   if (!isRecord(value) || typeof value.baseUrl !== "string") {
@@ -246,27 +282,28 @@ function assertOpenApiSource(value: unknown): asserts value is OpenApiSource {
   }
 }
 
-async function loadPinnedBaseUrl(): Promise<string | undefined> {
-  let raw: string;
-  try {
-    raw = await readFile(OPENAPI_SOURCE_PATH, "utf8");
-  } catch (error) {
-    // A missing pin falls through to the default base URL; only a present
-    // but malformed pin is an error worth stopping for.
-    if (isRecord(error) && error.code === "ENOENT") {
+const loadPinnedBaseUrl = (paths: ScriptPaths) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    if (!(yield* fs.exists(paths.openApiSource))) {
       return undefined;
     }
-    throw error;
-  }
-  const parsed = JSON.parse(raw);
-  assertOpenApiSource(parsed);
-  return parsed.baseUrl;
-}
+    const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+      yield* fs.readFileString(paths.openApiSource),
+    );
+    assertOpenApiSource(parsed);
+    return parsed.baseUrl;
+  });
 
-async function writeOpenApiSource(baseUrl: string): Promise<void> {
-  const source: OpenApiSource = { baseUrl };
-  await writeFile(OPENAPI_SOURCE_PATH, `${JSON.stringify(source, null, 2)}\n`);
-}
+const writeOpenApiSource = (paths: ScriptPaths, baseUrl: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const source: OpenApiSource = { baseUrl };
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))(
+      source,
+    );
+    yield* fs.writeFileString(paths.openApiSource, `${encoded}\n`);
+  });
 
 export function resolveOpenApiBaseUrl({
   envBaseUrl,
@@ -280,7 +317,7 @@ export function resolveOpenApiBaseUrl({
 }
 
 export function resolveOpenApiSpecUrl(
-  baseUrl = process.env.SUPABASE_API_URL,
+  baseUrl?: string,
   version: OpenApiDocumentVersion = "v1",
 ): string {
   const normalizedBaseUrl = resolveOpenApiBaseUrl({ envBaseUrl: baseUrl });
@@ -408,8 +445,9 @@ export function mergeOpenApiDocuments(
 // v2 document currently has 20 webhook operations sharing just 2 duplicated
 // operationIds, and the overrides remove those paths. Validating before
 // overrides were applied would abort every production regeneration.
-export function assertMergedOpenApiDocument(document: OpenApiDocument): void {
+export function assertMergedOpenApiDocument(document: OpenApiDocument): ReadonlyArray<string> {
   const operationClaims = new Map<string, Array<string>>();
+  const warnings: Array<string> = [];
 
   for (const [pathKey, pathValue] of Object.entries(document.paths)) {
     if (!isRecord(pathValue)) {
@@ -426,7 +464,7 @@ export function assertMergedOpenApiDocument(document: OpenApiDocument): void {
       if (typeof operationId !== "string" || operationId.length === 0) {
         // generate.ts silently skips operations without an operationId; the
         // documented escape hatch is adding a "remove" override for the path.
-        console.warn(`OpenAPI operation ${label} has no operationId; generate.ts will skip it.`);
+        warnings.push(`OpenAPI operation ${label} has no operationId; generate.ts will skip it.`);
         continue;
       }
 
@@ -457,46 +495,63 @@ export function assertMergedOpenApiDocument(document: OpenApiDocument): void {
       );
     }
   }
+  return warnings;
 }
 
-export async function downloadOpenApiSpec(): Promise<void> {
-  const envBaseUrl = process.env.SUPABASE_API_URL;
-  // The sidecar is consulted only when the environment does not override it,
-  // so an explicit SUPABASE_API_URL works even when the pin is absent or
-  // malformed.
-  const pinnedBaseUrl = envBaseUrl === undefined ? await loadPinnedBaseUrl() : undefined;
-  const baseUrl = resolveOpenApiBaseUrl({ envBaseUrl, pinnedBaseUrl });
-  console.log(`Resolved OpenAPI base URL: ${baseUrl}`);
+const downloadOpenApiDocument = (url: string) =>
+  Effect.gen(function* () {
+    const client = yield* HttpClient.HttpClient;
+    const response = yield* client.get(url);
+    if (response.status < 200 || response.status >= 300) {
+      return yield* new OpenApiDownloadError(
+        `Failed to download OpenAPI spec from ${url}: ${response.status}`,
+      );
+    }
+    const document = yield* HttpClientResponse.schemaBodyJson(Schema.Unknown)(response);
+    assertOpenApiDocument(document);
+    return document;
+  });
 
-  const documents: Array<{
-    readonly version: OpenApiDocumentVersion;
-    readonly document: OpenApiDocument;
-  }> = [];
-  for (const { version, url } of resolveOpenApiSpecUrls(baseUrl)) {
-    console.log(`Fetching ${version} OpenAPI document from ${url}`);
-    const response = await fetch(url);
+const downloadOpenApiSpecEffect = (envBaseUrl?: string) =>
+  Effect.gen(function* () {
+    const paths = yield* resolveScriptPaths;
+    // The sidecar is consulted only when the environment does not override it,
+    // so an explicit SUPABASE_API_URL works even when the pin is absent or
+    // malformed.
+    const pinnedBaseUrl = envBaseUrl === undefined ? yield* loadPinnedBaseUrl(paths) : undefined;
+    const baseUrl = resolveOpenApiBaseUrl({ envBaseUrl, pinnedBaseUrl });
+    yield* Effect.log(`Resolved OpenAPI base URL: ${baseUrl}`);
 
-    // Hard-fail on a missing document instead of tolerating it: a 404 on
-    // /api/v2-json would silently delete the whole v2 namespace from the
-    // generated client, and the hourly regeneration sync would auto-merge
-    // that deletion without anyone noticing.
-    if (!response.ok) {
-      throw new Error(`Failed to download OpenAPI spec from ${url}: ${response.status}`);
+    const documents: Array<{
+      readonly version: OpenApiDocumentVersion;
+      readonly document: OpenApiDocument;
+    }> = [];
+    for (const { version, url } of resolveOpenApiSpecUrls(baseUrl)) {
+      yield* Effect.log(`Fetching ${version} OpenAPI document from ${url}`);
+      documents.push({ version, document: yield* downloadOpenApiDocument(url) });
     }
 
-    const document = await response.json();
-    assertOpenApiDocument(document);
-    documents.push({ version, document });
-  }
+    const mergedDocument = mergeOpenApiDocuments(documents);
+    applyOpenApiOverrides(mergedDocument, yield* loadOpenApiOverrides(paths));
+    for (const warning of assertMergedOpenApiDocument(mergedDocument)) {
+      yield* Effect.logWarning(warning);
+    }
 
-  const mergedDocument = mergeOpenApiDocuments(documents);
-  applyOpenApiOverrides(mergedDocument, await loadOpenApiOverrides());
-  assertMergedOpenApiDocument(mergedDocument);
-
-  await writeFile(OPENAPI_SPEC_PATH, `${JSON.stringify(mergedDocument, null, 2)}\n`);
-  await writeOpenApiSource(baseUrl);
-}
+    const fs = yield* FileSystem.FileSystem;
+    const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown, { space: 2 }))(
+      mergedDocument,
+    );
+    yield* fs.writeFileString(paths.openApiSpec, `${encoded}\n`);
+    yield* writeOpenApiSource(paths, baseUrl);
+  });
 
 if (import.meta.main) {
-  await downloadOpenApiSpec();
+  const program = Effect.gen(function* () {
+    const envBaseUrl = yield* Config.option(Config.string("SUPABASE_API_URL"));
+    yield* downloadOpenApiSpecEffect(Option.getOrUndefined(envBaseUrl));
+  });
+  runScript(program).catch((error: unknown) => {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  });
 }

@@ -48,3 +48,12 @@ export class LegacyInvalidGenTypesDatabaseUrlError extends Data.TaggedError(
     return actionability.provideFlags;
   }
 }
+
+/** Expected command validation/runtime failure with a stable, typed error channel. */
+export class LegacyGenTypesCommandError extends Data.TaggedError("LegacyGenTypesCommandError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}

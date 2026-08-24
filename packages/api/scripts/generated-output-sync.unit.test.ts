@@ -1,7 +1,8 @@
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, FileSystem, Path } from "effect";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as Schema from "effect/Schema";
 import { describe, expect, test } from "vitest";
 
 import { extractOperations, loadSpec, renderContracts, renderEffectClient } from "./generate.ts";
@@ -15,34 +16,56 @@ import { extractOperations, loadSpec, renderContracts, renderEffectClient } from
 // editing the snapshot and the generated output consistently, which the
 // hourly upstream sync then catches.
 
-const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const packageDir = path.join(scriptDir, "..");
-const generatedDir = path.join(packageDir, "src", "generated");
-const oxfmtBin = path.join(packageDir, "node_modules", ".bin", "oxfmt");
+const packageDirUrl = new URL("..", import.meta.url);
+const generatedDirUrl = new URL("../src/generated/", import.meta.url);
+const oxfmtBinUrl = new URL("../node_modules/.bin/oxfmt", import.meta.url);
 
-function formatWithOxfmt(source: string, fileName: string): string {
+const runPlatform = <A, E extends Error>(
+  effect: Effect.Effect<
+    A,
+    E,
+    FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
+  >,
+): Promise<A> => Effect.runPromise(effect.pipe(Effect.orDie, Effect.provide(BunServices.layer)));
+
+function formatWithOxfmt(source: string, fileName: string): Promise<string> {
   // oxfmt runs in file mode (also what the pipeline's fmt:fix runs) rather
   // than through stdin/stdout: Bun on Linux truncates a child's piped stdout
   // at ~219 KB, and these renders are 600+ KB. The temp directory lives
   // inside the package so oxfmt resolves the same configuration, but not
   // under node_modules, which oxfmt skips by default.
-  const tempDir = mkdtempSync(path.join(packageDir, ".generated-output-sync-"));
-  try {
-    const tempFile = path.join(tempDir, fileName);
-    writeFileSync(tempFile, source);
-    execFileSync(oxfmtBin, [tempFile], { cwd: packageDir });
-    return readFileSync(tempFile, "utf8");
-  } finally {
-    rmSync(tempDir, { recursive: true, force: true });
-  }
+  return runPlatform(
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const packageDir = yield* path.fromFileUrl(packageDirUrl);
+      const oxfmtBin = yield* path.fromFileUrl(oxfmtBinUrl);
+      const tempDir = yield* fs.makeTempDirectory({
+        directory: packageDir,
+        prefix: ".generated-output-sync-",
+      });
+      const tempFile = path.join(tempDir, fileName);
+      yield* fs.writeFileString(tempFile, source);
+      yield* spawner.string(ChildProcess.make(oxfmtBin, [tempFile], { cwd: packageDir }));
+      const output = yield* fs.readFileString(tempFile);
+      yield* fs.remove(tempDir, { recursive: true, force: true });
+      return output;
+    }),
+  );
 }
 
-function committedFile(fileName: string): string {
-  return readFileSync(path.join(generatedDir, fileName), "utf8");
-}
+const committedFile = (fileName: string): Promise<string> =>
+  runPlatform(
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const generatedDir = yield* path.fromFileUrl(generatedDirUrl);
+      return yield* fs.readFileString(path.join(generatedDir, fileName));
+    }),
+  );
 
-function expectSameSource(rendered: string, fileName: string): void {
-  const committed = committedFile(fileName);
+function expectSameSource(rendered: string, committed: string, fileName: string): void {
   if (rendered === committed) {
     return;
   }
@@ -74,9 +97,11 @@ describe("generated output sync", () => {
     "contracts.ts is byte-identical to the generator's render of the committed snapshot",
     { timeout: RENDER_TIMEOUT_MS },
     () => {
-      expectSameSource(
-        formatWithOxfmt(renderContracts(document, operations), "contracts.ts"),
-        "contracts.ts",
+      return formatWithOxfmt(renderContracts(document, operations), "contracts.ts").then(
+        (rendered) =>
+          committedFile("contracts.ts").then((committed) =>
+            expectSameSource(rendered, committed, "contracts.ts"),
+          ),
       );
     },
   );
@@ -85,9 +110,10 @@ describe("generated output sync", () => {
     "effect-client.ts is byte-identical to the generator's render of the committed snapshot",
     { timeout: RENDER_TIMEOUT_MS },
     () => {
-      expectSameSource(
-        formatWithOxfmt(renderEffectClient(operations), "effect-client.ts"),
-        "effect-client.ts",
+      return formatWithOxfmt(renderEffectClient(operations), "effect-client.ts").then((rendered) =>
+        committedFile("effect-client.ts").then((committed) =>
+          expectSameSource(rendered, committed, "effect-client.ts"),
+        ),
       );
     },
   );
@@ -96,9 +122,13 @@ describe("generated output sync", () => {
     "openapi.json is byte-identical to the generator's normalized rewrite of itself",
     { timeout: RENDER_TIMEOUT_MS },
     () => {
-      expectSameSource(
-        formatWithOxfmt(`${JSON.stringify(document, null, 2)}\n`, "openapi.json"),
-        "openapi.json",
+      const encoded = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown, { space: 2 }))(
+        document,
+      );
+      return formatWithOxfmt(`${encoded}\n`, "openapi.json").then((rendered) =>
+        committedFile("openapi.json").then((committed) =>
+          expectSameSource(rendered, committed, "openapi.json"),
+        ),
       );
     },
   );

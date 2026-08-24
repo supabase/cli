@@ -13,8 +13,8 @@ export default defineConfig({
     hookTimeout: 30_000,
     sequence: {
       sequencer: class extends BaseSequencer {
-        override async sort(files: TestSpecification[]) {
-          return [...files].sort((a, b) => a.moduleId.localeCompare(b.moduleId));
+        override sort(files: TestSpecification[]) {
+          return Promise.resolve([...files].sort((a, b) => a.moduleId.localeCompare(b.moduleId)));
         }
       },
     },

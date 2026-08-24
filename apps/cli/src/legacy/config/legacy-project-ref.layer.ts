@@ -95,9 +95,7 @@ export const legacyProjectRefLayer = Layer.effect(
             const chosen = yield* promptForProjectRef("Select a project:");
             return yield* assertValid(chosen);
           }
-          return yield* Effect.fail(
-            new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }),
-          );
+          return yield* new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE });
         }),
       resolveForLink: (flagValue) =>
         Effect.gen(function* () {
@@ -112,11 +110,9 @@ export const legacyProjectRefLayer = Layer.effect(
             const chosen = yield* promptForProjectRef("Select a project:");
             return yield* assertValid(chosen);
           }
-          return yield* Effect.fail(
-            new LegacyProjectRefRequiredError({
-              message: `required flag(s) "project-ref" not set`,
-            }),
-          );
+          return yield* new LegacyProjectRefRequiredError({
+            message: `required flag(s) "project-ref" not set`,
+          });
         }),
       resolveOptional: (flagValue) =>
         Effect.gen(function* () {
@@ -146,9 +142,7 @@ export const legacyProjectRefLayer = Layer.effect(
           if (Option.isSome(fileValue)) {
             return yield* assertValid(fileValue.value);
           }
-          return yield* Effect.fail(
-            new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }),
-          );
+          return yield* new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE });
         }),
       promptProjectRef: promptForProjectRef,
     });

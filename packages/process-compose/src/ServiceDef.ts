@@ -46,9 +46,12 @@ export type HookTrigger = "started" | "healthy";
 
 export type HookLog = (stream: "stdout" | "stderr", line: string) => Effect.Effect<void>;
 
+/** Tagged failures preserve the error identity across lifecycle boundaries. */
+export type ServiceEffectError = { readonly _tag: string };
+
 export interface LifecycleHook {
   readonly on: HookTrigger;
-  readonly run: (log: HookLog) => Effect.Effect<void, unknown>;
+  readonly run: (log: HookLog) => Effect.Effect<void, ServiceEffectError>;
   readonly timeoutSeconds?: number;
   readonly failurePolicy?: "fail" | "ignore";
 }
@@ -83,7 +86,7 @@ export interface ServiceDef {
   readonly shutdown?: ShutdownConfig;
   readonly restart?: RestartPolicy;
   readonly maxRestarts?: number;
-  readonly cleanup?: Effect.Effect<void, unknown>;
+  readonly cleanup?: Effect.Effect<void, ServiceEffectError>;
   readonly supervision?: SupervisionConfig;
   readonly hooks?: ReadonlyArray<LifecycleHook>;
   readonly enabled?: boolean;
@@ -95,7 +98,7 @@ export interface OrchestratorConfig {
 
 export interface ServiceStartOptions {
   /** Runs when a service lifecycle starts and again after each process exit before backoff. */
-  readonly beforeStart?: (name: string) => Effect.Effect<void, unknown>;
+  readonly beforeStart?: (name: string) => Effect.Effect<void, ServiceEffectError>;
   /** Runs after dependencies are satisfied and immediately before each spawn. */
   readonly beforeSpawn?: (name: string) => Effect.Effect<void>;
 }

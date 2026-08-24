@@ -94,7 +94,7 @@ export function mapLegacyHttpError<N, S>(opts: {
         // These failures occur while the generated client validates or builds
         // the request. Keep their identity because this generic mapper cannot
         // safely infer user provenance or reclassify them as response errors.
-        return yield* Effect.fail(cause);
+        return yield* cause;
       }
       if (HttpClientError.isHttpClientError(cause)) {
         if (RESPONSE_ERROR_TAGS.has(cause.reason._tag) && cause.response !== undefined) {

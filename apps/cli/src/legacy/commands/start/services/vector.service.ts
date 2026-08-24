@@ -195,7 +195,7 @@ export function legacyResolveVectorDockerSocketPlan(
   return { env, binds, securityOpt, isNpipe: parsed.scheme === "npipe" };
 }
 
-function collectText(stream: Stream.Stream<Uint8Array, unknown>) {
+function collectText<E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> {
   const decoder = new TextDecoder();
   return Stream.runFold(
     stream,
@@ -229,7 +229,12 @@ function legacyInspectDockerContextHost(spawner: Spawner): Effect.Effect<string,
         )
         .pipe(Effect.mapError(() => "failed to spawn docker"));
       const [exitCode, stdout] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stdout)],
+        [
+          child.exitCode.pipe(Effect.map(Number)),
+          collectText(child.stdout).pipe(
+            Effect.mapError(() => "failed to read docker context inspect output"),
+          ),
+        ],
         { concurrency: "unbounded" },
       ).pipe(Effect.mapError(() => "failed to read docker context inspect output"));
       if (exitCode !== 0) {

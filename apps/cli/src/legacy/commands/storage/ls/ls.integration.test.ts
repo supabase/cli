@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Formatter, Option } from "effect";
 
 import { LEGACY_VALID_REF } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { setupLegacyStorage } from "../../../../../tests/helpers/legacy-storage.ts";
@@ -160,7 +160,7 @@ describe("legacy storage ls", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("URL must match pattern ss:///bucket/[prefix]");
+      expect(Formatter.formatJson(exit)).toContain("URL must match pattern ss:///bucket/[prefix]");
       expect(requests).toHaveLength(0);
     });
   });
@@ -176,7 +176,7 @@ describe("legacy storage ls", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      const json = JSON.stringify(exit);
+      const json = Formatter.formatJson(exit);
       expect(json).toContain("failed to parse storage url");
       expect(json).toContain("missing protocol scheme");
     });
@@ -191,7 +191,7 @@ describe("legacy storage ls", () => {
     return Effect.gen(function* () {
       const exit = yield* legacyStorageLs(lsFlags()).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Error status 503");
+      expect(Formatter.formatJson(exit)).toContain("Error status 503");
     });
   });
 
@@ -253,7 +253,7 @@ describe("legacy storage ls", () => {
         projectRef: Option.some(FLAG_REF),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain(
+      expect(Formatter.formatJson(exit)).toContain(
         "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
       );
       expect(requests).toHaveLength(0);

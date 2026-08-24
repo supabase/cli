@@ -5,12 +5,13 @@
  * Go's own offline backoff.
  */
 
-import { lstat, mkdir, open, readFile } from "node:fs/promises";
-import { constants as fsConstants, existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 
-import { Effect } from "effect";
+import { BunServices } from "@effect/platform-bun";
+import { Config, Data, Duration, Effect, FileSystem, Option, Path, Schema } from "effect";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
+import { FetchHttpClient } from "effect/unstable/http";
 
 import {
   hasRootHelpOrVersionFlag,
@@ -22,6 +23,11 @@ import { CLI_VERSION } from "../../shared/cli/version.ts";
 import { legacyBold, legacyYellow } from "./legacy-colors.ts";
 import { parseDotEnv } from "./legacy-dotenv.ts";
 import { legacyCandidateDotenvFilenames } from "./legacy-project-environment.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 
 const LATEST_RELEASE_URL = "https://api.github.com/repos/supabase/cli/releases/latest";
 const UPGRADE_GUIDE_URL =
@@ -29,6 +35,15 @@ const UPGRADE_GUIDE_URL =
 const CACHE_TTL_MS = 10 * 60 * 60 * 1000;
 /** No Go equivalent (its client sets no timeout); bounds this pre-exit hook's latency. */
 const FETCH_TIMEOUT_MS = 3000;
+
+export class LegacyUpgradeNoticeError extends Data.TaggedError("LegacyUpgradeNoticeError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.externalNetwork;
+  }
+}
 
 /** Go `strconv.ParseBool`'s true spellings — anything else, including garbage, leaves the notifier on. */
 const PARSE_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
@@ -150,46 +165,51 @@ export function legacyFormatUpgradeNotice(latestTag: string, currentVersion: str
 }
 
 /**
- * Writes the cache file refusing to follow a symlink at the FINAL path
- * component. The `lstat` guard at the call site runs before a network fetch
- * bounded only by `FETCH_TIMEOUT_MS`, so by write time it only proves the path
- * was safe seconds ago; a concurrent process that swaps `cli-latest` for a
- * symlink inside that window makes a plain `writeFile` truncate an arbitrary
- * user-writable target (CWE-59/TOCTOU). `O_NOFOLLOW` moves that one decision
- * into the kernel's `open`, which fails with `ELOOP` instead.
- *
- * This does NOT close the window for the `supabase/` and `.temp/` DIRECTORY
- * components: `O_NOFOLLOW` only applies to the last component, and resolving
- * the rest against a verified directory handle needs `openat`, which Node does
- * not expose. A directory swapped for a symlink inside the same window is still
- * followed by the preceding `mkdir -p` and by this `open`. Those components
- * keep only the advisory `lstat`/`isRealDirOrAbsent` checks — narrower than the
- * final-component guarantee, and still stricter than Go, which writes through
- * symlinks at every level.
- *
- * Same path, mode, and truncate semantics as the `writeFile` it replaces, so
- * Go's filesystem side effects are unchanged — including the empty-string
- * offline backoff write.
- *
- * `O_NOFOLLOW` is POSIX-only; Node leaves it undefined on Windows, where this
- * falls back to the plain flags and the final component drops back to the same
- * advisory-only footing as the directories. Creating a symlink there needs
- * Developer Mode or `SeCreateSymbolicLinkPrivilege`.
+ * Write the offline cache without following a symlink at the final path component.
+ * The pre-fetch and post-fetch link checks are advisory; this leaf adapter repeats
+ * the invariant in the kernel after the network operation has completed. Node's
+ * numeric open flags are used only at this foreign platform boundary; all callers
+ * remain Effect-native and receive the operation's failure through the Effect error
+ * channel.
  */
-async function writeCacheFileNoFollow(cacheFile: string, contents: string): Promise<void> {
-  const handle = await open(
-    cacheFile,
-    fsConstants.O_WRONLY |
-      fsConstants.O_CREAT |
-      fsConstants.O_TRUNC |
-      (fsConstants.O_NOFOLLOW ?? 0),
-    0o644,
+function writeCacheFileNoFollow(
+  cacheFile: string,
+  contents: string,
+): Effect.Effect<void, LegacyUpgradeNoticeError> {
+  return Effect.acquireUseRelease(
+    Effect.tryPromise({
+      try: () =>
+        import("node:fs").then(({ constants: fsConstants }) =>
+          import("node:fs/promises").then(({ open: openFile }) => {
+            const flags =
+              fsConstants.O_WRONLY |
+              fsConstants.O_CREAT |
+              fsConstants.O_TRUNC |
+              (fsConstants.O_NOFOLLOW ?? 0);
+            return openFile(cacheFile, flags, 0o644);
+          }),
+        ),
+      catch: (cause) =>
+        new LegacyUpgradeNoticeError({
+          message: `failed to open cache file: ${errorMessage(cause)}`,
+          cause,
+        }),
+    }),
+    (handle) =>
+      Effect.tryPromise({
+        try: () => handle.writeFile(contents),
+        catch: (cause) =>
+          new LegacyUpgradeNoticeError({
+            message: `failed to write cache file: ${errorMessage(cause)}`,
+            cause,
+          }),
+      }),
+    (handle) =>
+      Effect.tryPromise({
+        try: () => handle.close(),
+        catch: () => undefined,
+      }).pipe(Effect.ignore),
   );
-  try {
-    await handle.writeFile(contents);
-  } finally {
-    await handle.close();
-  }
 }
 
 /**
@@ -203,22 +223,29 @@ function resolveNoticeBaseDir(
   cwd: string,
   args: ReadonlyArray<string>,
   env: Readonly<Record<string, string | undefined>>,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
   isValueTakingFlagToken?: (token: string) => boolean,
-): string {
+): Effect.Effect<string> {
   // Viper: a set flag beats the env even when empty, and an empty effective
   // value falls through to the ancestor walk (`ChangeWorkDir`'s own rule).
   const flagValue = lastGlobalFlagValue(args, "--workdir", isValueTakingFlagToken);
   const explicit = flagValue !== undefined ? flagValue : env["SUPABASE_WORKDIR"];
   if (explicit !== undefined && explicit !== "") {
-    return resolve(cwd, explicit);
+    return Effect.succeed(path.resolve(cwd, explicit));
   }
-  let current = cwd;
-  while (true) {
-    if (existsSync(join(current, "supabase", "config.toml"))) return current;
-    const parent = dirname(current);
-    if (parent === current) return cwd;
-    current = parent;
-  }
+  return Effect.gen(function* () {
+    let current = cwd;
+    while (true) {
+      const exists = yield* fs
+        .exists(path.join(current, "supabase", "config.toml"))
+        .pipe(Effect.orElseSucceed(() => false));
+      if (exists) return current;
+      const parent = path.dirname(current);
+      if (parent === current) return cwd;
+      current = parent;
+    }
+  });
 }
 
 /**
@@ -233,38 +260,50 @@ function resolveNoticeBaseDir(
  * `<base>/supabase` then `<base>`, first file to define a key wins, and the
  * shell env always beats a chain value (godotenv never overrides).
  */
-async function projectDotenvValues(
+function projectDotenvValues(
   base: string,
   env: Readonly<Record<string, string | undefined>>,
-): Promise<Record<string, string>> {
-  const merged: Record<string, string> = {};
-  // Go's walk loads `<base>/supabase` then `<base>` — except at the filesystem
-  // root, where `loadNestedEnv`'s `cwd != filepath.Dir(repoDir)` bound
-  // degenerates (`Dir("/") == "/"`) and only `/supabase` is read.
-  const dirs = dirname(base) === base ? [join(base, "supabase")] : [join(base, "supabase"), base];
-  for (const dir of dirs) {
-    for (const filename of legacyCandidateDotenvFilenames(env["SUPABASE_ENV"] || "development")) {
-      const contents = await readFile(join(dir, filename), "utf8").catch(() => undefined);
-      if (contents === undefined) continue;
-      try {
-        for (const [key, value] of Object.entries(parseDotEnv(contents))) {
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+): Effect.Effect<Record<string, string>> {
+  return Effect.gen(function* () {
+    const merged: Record<string, string> = {};
+    // Go's walk loads `<base>/supabase` then `<base>` — except at the filesystem
+    // root, where `loadNestedEnv`'s `cwd != filepath.Dir(repoDir)` bound
+    // degenerates (`Dir("/") == "/"`) and only `/supabase` is read.
+    const dirs =
+      path.dirname(base) === base
+        ? [path.join(base, "supabase")]
+        : [path.join(base, "supabase"), base];
+    for (const dir of dirs) {
+      for (const filename of legacyCandidateDotenvFilenames(env["SUPABASE_ENV"] || "development")) {
+        const contents = yield* fs.readFileString(path.join(dir, filename)).pipe(Effect.option);
+        if (Option.isNone(contents)) continue;
+        const parsed = yield* Effect.try({
+          try: () => parseDotEnv(contents.value),
+          catch: (cause) => new LegacyUpgradeNoticeError({ message: "invalid dotenv", cause }),
+        }).pipe(Effect.option);
+        if (Option.isNone(parsed)) {
+          // A malformed file is only reachable here when the command never
+          // loaded config (a load would have failed the run before this hook),
+          // and then Go never read any of the chain either.
+          return {};
+        }
+        for (const [key, value] of Object.entries(parsed.value)) {
           if (!(key in merged)) merged[key] = value;
         }
-      } catch {
-        // A malformed file is only reachable here when the command never
-        // loaded config (a load would have failed the run before this hook),
-        // and then Go never read any of the chain either.
-        return {};
       }
     }
-  }
-  return merged;
+    return merged;
+  });
 }
 
 /** Absent (we may create it) or a real directory — never a symlink to follow. */
-async function isRealDirOrAbsent(path: string): Promise<boolean> {
-  const stats = await lstat(path).catch(() => undefined);
-  return stats === undefined || stats.isDirectory();
+function isRealDirOrAbsent(path: string, fs: FileSystem.FileSystem): Effect.Effect<boolean> {
+  return fs.readLink(path).pipe(
+    Effect.as(false),
+    Effect.orElseSucceed(() => true),
+  );
 }
 
 export interface LegacyUpgradeNoticeDeps {
@@ -278,11 +317,13 @@ export interface LegacyUpgradeNoticeDeps {
   readonly resolvedCwd?: string;
   readonly currentVersion: string;
   readonly now: () => number;
-  readonly fetchLatestTag: () => Promise<string>;
+  readonly fetchLatestTag: Effect.Effect<string, LegacyUpgradeNoticeError>;
   readonly writeStderr: (text: string) => void;
 }
 
-export async function legacyRunUpgradeNotice(deps: LegacyUpgradeNoticeDeps): Promise<void> {
+export const legacyRunUpgradeNotice = Effect.fnUntraced(function* (deps: LegacyUpgradeNoticeDeps) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   if (legacyUpdateNotifierDisabled(deps.env["SUPABASE_NO_UPDATE_NOTIFIER"])) return;
 
   // `--help`/`--version` and a bare group's clean ShowHelp all skip cobra's
@@ -295,102 +336,173 @@ export async function legacyRunUpgradeNotice(deps: LegacyUpgradeNoticeDeps): Pro
   const base = builtin
     ? deps.cwd
     : (deps.resolvedCwd ??
-      resolveNoticeBaseDir(deps.cwd, deps.args, deps.env, deps.isValueTakingFlagToken));
-  const projectEnv = builtin ? {} : await projectDotenvValues(base, deps.env);
+      (yield* resolveNoticeBaseDir(
+        deps.cwd,
+        deps.args,
+        deps.env,
+        fs,
+        path,
+        deps.isValueTakingFlagToken,
+      )));
+  const projectEnv = builtin ? {} : yield* projectDotenvValues(base, deps.env, fs, path);
   // godotenv never overrides: a shell env that defines a key at all beats the
   // project dotenv chain, even when set to an empty or unparseable value.
   const effectiveEnv = (key: string): string | undefined =>
     deps.env[key] !== undefined ? deps.env[key] : projectEnv[key];
   if (legacyUpdateNotifierDisabled(effectiveEnv("SUPABASE_NO_UPDATE_NOTIFIER"))) return;
   const debug = debugEnabled(deps, builtin, effectiveEnv("SUPABASE_DEBUG"));
-  const supabaseDir = join(base, "supabase");
-  const tempDir = join(supabaseDir, ".temp");
-  const cacheFile = join(tempDir, "cli-latest");
+  const supabaseDir = path.join(base, "supabase");
+  const tempDir = path.join(supabaseDir, ".temp");
+  const cacheFile = path.join(tempDir, "cli-latest");
 
   // A hostile checkout can commit a symlink at any level of this well-known
   // path to clobber an arbitrary user-writable file (CWE-59): a symlink
   // anywhere disables the cache. Do not relax to `stat`/`existsSync`, which
   // follow links. These checks are advisory only — they run before a fetch that
-  // can take FETCH_TIMEOUT_MS, so they cannot be trusted at write time. The
-  // write re-establishes the guarantee in the kernel for the cache file itself
-  // via `O_NOFOLLOW`; the two directory components stay advisory-only for want
-  // of `openat` (see `writeCacheFileNoFollow`).
-  const cacheLstat = await lstat(cacheFile).catch(() => undefined);
+  // can take FETCH_TIMEOUT_MS, so the cache file is checked again immediately
+  // before writing.
+  const cacheSymlink = yield* fs.readLink(cacheFile).pipe(
+    Effect.as(true),
+    Effect.orElseSucceed(() => false),
+  );
+  const cacheLstat = cacheSymlink
+    ? Option.none<FileSystem.File.Info>()
+    : yield* fs.stat(cacheFile).pipe(Effect.option);
   const cachePathIsSafe =
-    cacheLstat?.isSymbolicLink() !== true &&
-    (await isRealDirOrAbsent(supabaseDir)) &&
-    (await isRealDirOrAbsent(tempDir));
+    !cacheSymlink &&
+    (yield* isRealDirOrAbsent(supabaseDir, fs)) &&
+    (yield* isRealDirOrAbsent(tempDir, fs));
 
   // Go's `rootCmd.Flag("version").Changed` — a subcommand's own `--version` must not bypass the cache.
   const forceFetch = hasRootVersionFlag(deps.args, deps.isValueTakingFlagToken);
   const cacheFresh =
     cachePathIsSafe &&
-    cacheLstat !== undefined &&
-    deps.now() <= cacheLstat.mtime.getTime() + CACHE_TTL_MS;
+    Option.isSome(cacheLstat) &&
+    Option.isSome(cacheLstat.value.mtime) &&
+    deps.now() <= cacheLstat.value.mtime.value.getTime() + CACHE_TTL_MS;
 
   let latestTag: string;
   if (forceFetch || !cacheFresh) {
-    let notifyError: Error | undefined;
-    latestTag = await deps.fetchLatestTag().catch((error: unknown) => {
+    let notifyError: LegacyUpgradeNoticeError | undefined;
+    const fetched = yield* deps.fetchLatestTag.pipe(
+      Effect.match({
+        onFailure: (error) => ({ ok: false as const, error }),
+        onSuccess: (tag) => ({ ok: true as const, tag }),
+      }),
+    );
+    if (fetched.ok) {
+      latestTag = fetched.tag;
+    } else {
       // Go's `GetLatestRelease` wrap (`internal/utils/release.go:42`) —
       // capital F and all.
-      notifyError = new Error(`Failed to fetch latest release: ${errorMessage(error)}`);
-      return "";
-    });
+      notifyError = new LegacyUpgradeNoticeError({
+        message: `Failed to fetch latest release: ${errorMessage(fetched.error)}`,
+        cause: fetched.error,
+      });
+      latestTag = "";
+    }
     // Go's `checkUpgrade` (`cmd/root.go:254-258`) overwrites the fetch error
     // with the offline-backoff write's result when inside a project, so a
     // successful write silences the diagnostic — only a missing project (no
     // backoff) or a failing write leaves an error to log, carrying the write
     // path's own wraps (`failed to mkdir`/`failed to write file`, misc.go).
-    if (cachePathIsSafe && existsSync(supabaseDir)) {
-      notifyError = await mkdir(tempDir, { recursive: true, mode: 0o755 }).then(
-        () =>
-          writeCacheFileNoFollow(cacheFile, latestTag).then(
-            () => undefined,
-            (error: unknown) => new Error(`failed to write file: ${errorMessage(error)}`),
-          ),
-        (error: unknown) => new Error(`failed to mkdir: ${errorMessage(error)}`),
+    const supabaseExists = yield* fs.exists(supabaseDir).pipe(Effect.orElseSucceed(() => false));
+    if (cachePathIsSafe && supabaseExists) {
+      const mkdirError = yield* fs.makeDirectory(tempDir, { recursive: true, mode: 0o755 }).pipe(
+        Effect.match({
+          onFailure: (error) =>
+            new LegacyUpgradeNoticeError({
+              message: `failed to mkdir: ${errorMessage(error)}`,
+              cause: error,
+            }),
+          onSuccess: () => undefined,
+        }),
       );
+      if (mkdirError !== undefined) {
+        notifyError = mkdirError;
+      } else {
+        const symlinkAfterFetch = yield* fs.readLink(cacheFile).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        );
+        if (!symlinkAfterFetch) {
+          notifyError = yield* writeCacheFileNoFollow(cacheFile, latestTag).pipe(
+            Effect.match({
+              onFailure: (error) =>
+                new LegacyUpgradeNoticeError({
+                  message: `failed to write file: ${errorMessage(error)}`,
+                  cause: error,
+                }),
+              onSuccess: () => undefined,
+            }),
+          );
+        }
+      }
     }
     if (notifyError !== undefined && debug) {
       deps.writeStderr(`${stripVTControlCharacters(notifyError.message)}\n`);
     }
   } else {
-    latestTag = await readFile(cacheFile, "utf8").catch((error: unknown) => {
-      if (debug) {
-        deps.writeStderr(
-          `failed to read cli version: ${stripVTControlCharacters(errorMessage(error))}\n`,
-        );
-      }
-      return "";
-    });
+    latestTag = yield* fs.readFileString(cacheFile).pipe(
+      Effect.match({
+        onFailure: (error) => {
+          if (debug) {
+            deps.writeStderr(
+              `failed to read cli version: ${stripVTControlCharacters(errorMessage(error))}\n`,
+            );
+          }
+          return "";
+        },
+        onSuccess: (value) => value,
+      }),
+    );
   }
 
   // Gated on the anchored semver match: no escape bytes can reach the terminal.
   if (legacyIsNewerCliVersion(latestTag, deps.currentVersion)) {
     deps.writeStderr(`${legacyFormatUpgradeNotice(latestTag, deps.currentVersion)}\n`);
   }
-}
+});
 
-async function fetchLatestReleaseTag(): Promise<string> {
+const LatestReleaseSchema = Schema.Struct({ tag_name: Schema.optional(Schema.String) });
+const decodeLatestRelease = Schema.decodeUnknownEffect(LatestReleaseSchema);
+
+function fetchLatestReleaseTag(
+  token: string | undefined,
+): Effect.Effect<string, LegacyUpgradeNoticeError, HttpClient.HttpClient> {
   // Go's `GetGitHubClient` authenticates when GITHUB_TOKEN is set, for the
   // higher rate limit on shared-egress CI runners.
-  const token = process.env["GITHUB_TOKEN"];
-  const response = await fetch(LATEST_RELEASE_URL, {
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-    headers: {
-      accept: "application/vnd.github+json",
-      "user-agent": `SupabaseCLI/${CLI_VERSION}`,
-      ...(token !== undefined && token !== "" ? { authorization: `Bearer ${token}` } : {}),
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`unexpected status ${response.status}`);
+  let request = HttpClientRequest.get(LATEST_RELEASE_URL).pipe(
+    HttpClientRequest.setHeader("accept", "application/vnd.github+json"),
+    HttpClientRequest.setHeader("user-agent", `SupabaseCLI/${CLI_VERSION}`),
+  );
+  if (token !== undefined && token !== "") {
+    request = request.pipe(HttpClientRequest.setHeader("authorization", `Bearer ${token}`));
   }
-  const body: unknown = await response.json();
-  const tag =
-    typeof body === "object" && body !== null && "tag_name" in body ? body.tag_name : undefined;
-  return typeof tag === "string" ? tag : "";
+  return Effect.gen(function* () {
+    const httpClient = yield* HttpClient.HttpClient;
+    const response = yield* httpClient.execute(request);
+    if (response.status < 200 || response.status >= 300) {
+      return yield* new LegacyUpgradeNoticeError({
+        message: `unexpected status ${response.status}`,
+      });
+    }
+    const body = yield* response.json;
+    const decoded = yield* decodeLatestRelease(body).pipe(
+      Effect.orElseSucceed(() => ({ tag_name: undefined })),
+    );
+    return decoded.tag_name ?? "";
+  }).pipe(
+    Effect.timeout(Duration.millis(FETCH_TIMEOUT_MS)),
+    Effect.mapError((cause) =>
+      cause instanceof LegacyUpgradeNoticeError
+        ? cause
+        : new LegacyUpgradeNoticeError({
+            message: `failed to fetch latest release: ${errorMessage(cause)}`,
+            cause,
+          }),
+    ),
+  );
 }
 
 /** The `runCli` post-success hook. A rejected `Effect.promise` is a defect, so `Effect.ignoreCause` (not `ignore`) keeps this unable to fail. */
@@ -403,11 +515,24 @@ export const legacyUpgradeNoticeHook = (
     readonly isValueTakingFlagToken: (token: string) => boolean;
   },
 ): Effect.Effect<void> =>
-  info.delegatedToGo
+  (info.delegatedToGo
     ? Effect.void
-    : Effect.promise(() =>
-        legacyRunUpgradeNotice({
-          env: process.env,
+    : Effect.gen(function* () {
+        const configured = yield* Effect.all({
+          noUpdateNotifier: Config.option(Config.string("SUPABASE_NO_UPDATE_NOTIFIER")),
+          workdir: Config.option(Config.string("SUPABASE_WORKDIR")),
+          environment: Config.option(Config.string("SUPABASE_ENV")),
+          debug: Config.option(Config.string("SUPABASE_DEBUG")),
+          githubToken: Config.option(Config.string("GITHUB_TOKEN")),
+        });
+        const env: Readonly<Record<string, string | undefined>> = {
+          SUPABASE_NO_UPDATE_NOTIFIER: Option.getOrUndefined(configured.noUpdateNotifier),
+          SUPABASE_WORKDIR: Option.getOrUndefined(configured.workdir),
+          SUPABASE_ENV: Option.getOrUndefined(configured.environment),
+          SUPABASE_DEBUG: Option.getOrUndefined(configured.debug),
+        };
+        yield* legacyRunUpgradeNotice({
+          env,
           args,
           cleanShowHelp: info.cleanShowHelp,
           isValueTakingFlagToken: info.isValueTakingFlagToken,
@@ -415,9 +540,12 @@ export const legacyUpgradeNoticeHook = (
           resolvedCwd: info.workingDirectory,
           currentVersion: CLI_VERSION,
           now: Date.now,
-          fetchLatestTag: fetchLatestReleaseTag,
+          fetchLatestTag: fetchLatestReleaseTag(Option.getOrUndefined(configured.githubToken)).pipe(
+            Effect.provide(FetchHttpClient.layer),
+          ),
           writeStderr: (text) => {
             process.stderr.write(text);
           },
-        }),
-      ).pipe(Effect.ignoreCause);
+        });
+      }).pipe(Effect.ignoreCause)
+  ).pipe(Effect.provide(BunServices.layer));

@@ -53,3 +53,19 @@ export class FunctionsApiTransportError extends Data.TaggedError("FunctionsApiTr
     return { ...actionability.externalNetwork, fingerprint_suffix: "network" };
   }
 }
+
+/**
+ * A typed failure for function operations that do not have an HTTP response.
+ * Keeping these failures tagged preserves the originating cause without
+ * widening Effect error channels to the global `Error` type.
+ */
+export class FunctionsOperationError extends Data.TaggedError("FunctionsOperationError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+  readonly causes?: ReadonlyArray<unknown>;
+  readonly suggestion?: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}

@@ -1,5 +1,5 @@
 import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 
 import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
@@ -102,38 +102,48 @@ describe("legacyReconcileMigrations", () => {
 
 describe("legacyListRemoteMigrations (suppress only undefined_table, like Go)", () => {
   const run = (error: LegacyDbExecError) =>
-    Effect.runPromiseExit(legacyListRemoteMigrations(failingSession(error)));
+    Effect.exit(legacyListRemoteMigrations(failingSession(error)));
 
-  it("treats a missing history table (42P01) as an empty history", async () => {
-    const exit = await run(
-      new LegacyDbExecError({
-        message: 'relation "supabase_migrations.schema_migrations" does not exist',
-        code: "42P01",
-      }),
-    );
-    expect(exit).toStrictEqual(Exit.succeed([]));
-  });
+  it.effect("treats a missing history table (42P01) as an empty history", () =>
+    Effect.gen(function* () {
+      const exit = yield* run(
+        new LegacyDbExecError({
+          message: 'relation "supabase_migrations.schema_migrations" does not exist',
+          code: "42P01",
+        }),
+      );
+      expect(exit).toStrictEqual(Exit.succeed([]));
+    }),
+  );
 
-  it("propagates a malformed table (undefined column 42703) instead of swallowing it", async () => {
-    const exit = await run(
-      new LegacyDbExecError({ message: 'column "version" does not exist', code: "42703" }),
-    );
-    expect(Exit.isFailure(exit)).toBe(true);
-  });
+  it.effect("propagates a malformed table (undefined column 42703) instead of swallowing it", () =>
+    Effect.gen(function* () {
+      const exit = yield* run(
+        new LegacyDbExecError({ message: 'column "version" does not exist', code: "42703" }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+    }),
+  );
 
-  it("falls back to a relation-not-exist message when no SQLSTATE is surfaced", async () => {
-    const exit = await run(
-      new LegacyDbExecError({
-        message: 'relation "supabase_migrations.schema_migrations" does not exist',
-      }),
-    );
-    expect(exit).toStrictEqual(Exit.succeed([]));
-  });
+  it.effect("falls back to a relation-not-exist message when no SQLSTATE is surfaced", () =>
+    Effect.gen(function* () {
+      const exit = yield* run(
+        new LegacyDbExecError({
+          message: 'relation "supabase_migrations.schema_migrations" does not exist',
+        }),
+      );
+      expect(exit).toStrictEqual(Exit.succeed([]));
+    }),
+  );
 
-  it("does not swallow a column-not-exist message when no SQLSTATE is surfaced", async () => {
-    const exit = await run(new LegacyDbExecError({ message: 'column "version" does not exist' }));
-    expect(Exit.isFailure(exit)).toBe(true);
-  });
+  it.effect("does not swallow a column-not-exist message when no SQLSTATE is surfaced", () =>
+    Effect.gen(function* () {
+      const exit = yield* run(
+        new LegacyDbExecError({ message: 'column "version" does not exist' }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+    }),
+  );
 });
 
 describe("legacyFindPendingMigrations (Go TestPendingMigrations / TestIgnoreVersionMismatch)", () => {
@@ -203,27 +213,27 @@ describe("legacySuggestRevertHistory", () => {
 });
 
 describe("legacyResolveMigrationFile (byte-ordered match, Go's sort.Strings via afero match.go:91)", () => {
-  it("picks the UTF-8-byte-first match, not JS's default UTF-16 code-unit order", async () => {
-    // A supplementary-plane character (U+1F600, a UTF-16 surrogate pair) alongside a BMP
-    // private-use character (U+E000): JS's default `.sort()` (no comparator) ranks the
-    // surrogate pair FIRST — its leading high-surrogate code unit (0xD83D) is less than
-    // the private-use code unit (0xE000). `sort.Strings` (UTF-8 byte order) ranks the
-    // private-use character first instead (0xEE... < 0xF0... in its UTF-8 encoding).
-    const surrogatePair = "20240101000000_a\u{1f600}.sql";
-    const privateUse = "20240101000000_a\u{e000}.sql";
-    expect([surrogatePair, privateUse].sort()[0]).toBe(surrogatePair);
+  it.effect("picks the UTF-8-byte-first match, not JS's default UTF-16 code-unit order", () =>
+    Effect.gen(function* () {
+      // A supplementary-plane character (U+1F600, a UTF-16 surrogate pair) alongside a BMP
+      // private-use character (U+E000): JS's default `.sort()` (no comparator) ranks the
+      // surrogate pair FIRST — its leading high-surrogate code unit (0xD83D) is less than
+      // the private-use code unit (0xE000). `sort.Strings` (UTF-8 byte order) ranks the
+      // private-use character first instead (0xEE... < 0xF0... in its UTF-8 encoding).
+      const surrogatePair = "20240101000000_a\u{1f600}.sql";
+      const privateUse = "20240101000000_a\u{e000}.sql";
+      expect([surrogatePair, privateUse].sort()[0]).toBe(surrogatePair);
 
-    const layer = Layer.mergeAll(
-      Layer.succeed(
-        FileSystem.FileSystem,
-        FileSystem.makeNoop({
-          readDirectory: () => Effect.succeed([surrogatePair, privateUse]),
-        }),
-      ),
-      Path.layer,
-    );
-    const result = await Effect.runPromise(
-      Effect.gen(function* () {
+      const layer = Layer.mergeAll(
+        Layer.succeed(
+          FileSystem.FileSystem,
+          FileSystem.makeNoop({
+            readDirectory: () => Effect.succeed([surrogatePair, privateUse]),
+          }),
+        ),
+        Path.layer,
+      );
+      const result = yield* Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         return yield* legacyResolveMigrationFile(
@@ -232,10 +242,10 @@ describe("legacyResolveMigrationFile (byte-ordered match, Go's sort.Strings via 
           "/supabase/migrations",
           "20240101000000",
         );
-      }).pipe(Effect.provide(layer)),
-    );
-    expect(Option.isSome(result) ? result.value : undefined).toBe(
-      `/supabase/migrations/${privateUse}`,
-    );
-  });
+      }).pipe(Effect.provide(layer));
+      expect(Option.isSome(result) ? result.value : undefined).toBe(
+        `/supabase/migrations/${privateUse}`,
+      );
+    }),
+  );
 });

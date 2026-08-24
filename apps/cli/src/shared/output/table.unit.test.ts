@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import { columnWidths, formatTableRow, outputTable } from "./table.ts";
 
@@ -32,36 +32,34 @@ describe("formatTableRow", () => {
 });
 
 describe("outputTable", () => {
-  it("emits a header row then one info message per data item", async () => {
+  it.effect("emits a header row then one info message per data item", () => {
     const out = mockOutput();
-    await Effect.runPromise(
-      outputTable(["ID", "NAME"], [{ id: "1", name: "main" }], (r) => [r.id, r.name]).pipe(
-        Effect.provide(out.layer),
-      ),
-    );
-    const infos = out.messages.filter((m) => m.type === "info").map((m) => m.message);
-    expect(infos).toEqual(["ID  NAME", "1   main"]);
+    return Effect.gen(function* () {
+      yield* outputTable(["ID", "NAME"], [{ id: "1", name: "main" }], (r) => [r.id, r.name]);
+      const infos = out.messages.filter((m) => m.type === "info").map((m) => m.message);
+      expect(infos).toEqual(["ID  NAME", "1   main"]);
+    }).pipe(Effect.provide(out.layer));
   });
 
-  it("uses header width when wider than any cell", async () => {
+  it.effect("uses header width when wider than any cell", () => {
     const out = mockOutput();
-    await Effect.runPromise(
-      outputTable(["STATUS"], [{ s: "OK" }], (r) => [r.s]).pipe(Effect.provide(out.layer)),
-    );
-    const infos = out.messages.filter((m) => m.type === "info").map((m) => m.message);
-    expect(infos[0]).toBe("STATUS");
-    expect(infos[1]).toBe("OK    ");
+    return Effect.gen(function* () {
+      yield* outputTable(["STATUS"], [{ s: "OK" }], (r) => [r.s]);
+      const infos = out.messages.filter((m) => m.type === "info").map((m) => m.message);
+      expect(infos[0]).toBe("STATUS");
+      expect(infos[1]).toBe("OK    ");
+    }).pipe(Effect.provide(out.layer));
   });
 
-  it("calls formatRow with cells, widths, and original item to produce row string", async () => {
+  it.effect("calls formatRow with cells, widths, and original item to produce row string", () => {
     const out = mockOutput();
     const captured: Array<{
       cells: ReadonlyArray<string>;
       widths: ReadonlyArray<number>;
       item: { name: string };
     }> = [];
-    await Effect.runPromise(
-      outputTable(
+    return Effect.gen(function* () {
+      yield* outputTable(
         ["NAME"],
         [{ name: "alice" }],
         (r) => [r.name],
@@ -69,13 +67,13 @@ describe("outputTable", () => {
           captured.push({ cells, widths, item });
           return formatTableRow(cells, widths) + " [custom]";
         },
-      ).pipe(Effect.provide(out.layer)),
-    );
-    expect(captured).toHaveLength(1);
-    expect(captured[0]!.cells).toEqual(["alice"]);
-    expect(captured[0]!.widths).toEqual([5]);
-    expect(captured[0]!.item).toEqual({ name: "alice" });
-    const infos = out.messages.filter((m) => m.type === "info").map((m) => m.message);
-    expect(infos[1]).toBe("alice [custom]");
+      );
+      expect(captured).toHaveLength(1);
+      expect(captured[0]!.cells).toEqual(["alice"]);
+      expect(captured[0]!.widths).toEqual([5]);
+      expect(captured[0]!.item).toEqual({ name: "alice" });
+      const infos = out.messages.filter((m) => m.type === "info").map((m) => m.message);
+      expect(infos[1]).toBe("alice [custom]");
+    }).pipe(Effect.provide(out.layer));
   });
 });

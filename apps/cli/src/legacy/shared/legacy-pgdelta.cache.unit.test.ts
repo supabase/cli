@@ -1,15 +1,14 @@
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import { Clock, Effect, Exit, FileSystem, Layer, Option, Path, PlatformError } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import { useLegacyTempWorkdir } from "../../../tests/helpers/legacy-mocks.ts";
 import { LegacyEdgeRuntimeScript } from "./legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "./legacy-pgdelta-ssl-probe.service.ts";
+import { makeLegacyViperEnvLayer } from "../../shared/legacy/legacy-viper-env.ts";
 import { type LegacyPgDeltaContext } from "./legacy-pgdelta.ts";
 import {
   LEGACY_NO_CACHE_BASELINE_CATALOG_NAME,
@@ -134,15 +133,28 @@ describe("catalog keys + file names", () => {
   });
 });
 
-const withTemp = () => mkdtempSync(join(tmpdir(), "legacy-decl-cache-"));
+const tempRoot = useLegacyTempWorkdir("legacy-decl-cache-");
 
-const run = <A>(effect: Effect.Effect<A, unknown, FileSystem.FileSystem | Path.Path | Output>) =>
-  effect.pipe(
-    Effect.provide(Layer.mergeAll(BunServices.layer, mockOutput().layer)),
-  ) as Effect.Effect<A>;
+const writeFile = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+  relativePath: string,
+  content: string,
+) => {
+  const fullPath = path.join(workdir, relativePath);
+  return fs
+    .makeDirectory(path.dirname(fullPath), { recursive: true })
+    .pipe(Effect.andThen(fs.writeFileString(fullPath, content)));
+};
 
-const withServices = <A>(
-  body: (fs: FileSystem.FileSystem, path: Path.Path) => Effect.Effect<A, unknown, Output>,
+const run = <A, E extends Error>(
+  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Output>,
+): Effect.Effect<A, E> =>
+  effect.pipe(Effect.provide(Layer.mergeAll(BunServices.layer, mockOutput().layer)));
+
+const withServices = <A, E extends Error>(
+  body: (fs: FileSystem.FileSystem, path: Path.Path) => Effect.Effect<A, E, Output>,
 ) =>
   run(
     Effect.gen(function* () {
@@ -154,19 +166,28 @@ const withServices = <A>(
 
 describe("legacyListLocalMigrations", () => {
   it.effect("returns sorted valid migrations, skipping a deprecated _init.sql first file", () => {
-    const dir = withTemp();
-    const migrationsDir = join(dir, "supabase", "migrations");
-    mkdirSync(migrationsDir, { recursive: true });
-    writeFileSync(join(migrationsDir, "20200101000000_init.sql"), "-- old init");
-    writeFileSync(join(migrationsDir, "20240101120000_create.sql"), "create table x();");
-    writeFileSync(join(migrationsDir, "notes.txt"), "ignore me");
-    return withServices((fs, path) => legacyListLocalMigrations(fs, path, migrationsDir)).pipe(
-      Effect.tap((paths) =>
-        Effect.sync(() => {
-          expect(paths.map((p) => p.split("/").pop())).toEqual(["20240101120000_create.sql"]);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+    return withServices((fs, path) =>
+      Effect.gen(function* () {
+        const dir = tempRoot.current;
+        const migrationsDir = path.join(dir, "supabase", "migrations");
+        yield* writeFile(
+          fs,
+          path,
+          dir,
+          "supabase/migrations/20200101000000_init.sql",
+          "-- old init",
+        );
+        yield* writeFile(
+          fs,
+          path,
+          dir,
+          "supabase/migrations/20240101120000_create.sql",
+          "create table x();",
+        );
+        yield* writeFile(fs, path, dir, "supabase/migrations/notes.txt", "ignore me");
+        const paths = yield* legacyListLocalMigrations(fs, path, migrationsDir);
+        expect(paths.map((p) => p.split("/").pop())).toEqual(["20240101120000_create.sql"]);
+      }),
     );
   });
 
@@ -176,33 +197,37 @@ describe("legacyListLocalMigrations", () => {
       // Mirrors Go's `ListLocalMigrations` warnings (`pkg/migration/list.go:45-53`):
       // a `fmt.Fprintf(os.Stderr, …)` for the deprecated `_init.sql` first file and
       // for any name that does not match `<timestamp>_name.sql`.
-      const dir = withTemp();
-      const migrationsDir = join(dir, "supabase", "migrations");
-      mkdirSync(migrationsDir, { recursive: true });
-      writeFileSync(join(migrationsDir, "20200101000000_init.sql"), "-- old init");
-      writeFileSync(join(migrationsDir, "20240101120000_create.sql"), "create table x();");
-      writeFileSync(join(migrationsDir, "notes.txt"), "ignore me");
       const out = mockOutput();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        return yield* legacyListLocalMigrations(fs, path, migrationsDir);
-      }).pipe(
-        Effect.provide(Layer.mergeAll(BunServices.layer, out.layer)),
-        Effect.tap((paths) =>
-          Effect.sync(() => {
-            expect(paths.map((p) => p.split("/").pop())).toEqual(["20240101120000_create.sql"]);
-            const stderr = out.rawChunks.filter((c) => c.stream === "stderr").map((c) => c.text);
-            expect(stderr).toContain(
-              'Skipping migration 20200101000000_init.sql... (replace "init" with a different file name to apply this migration)\n',
-            );
-            expect(stderr).toContain(
-              'Skipping migration notes.txt... (file name must match pattern "<timestamp>_name.sql")\n',
-            );
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
-      ) as Effect.Effect<unknown>;
+        const dir = tempRoot.current;
+        const migrationsDir = path.join(dir, "supabase", "migrations");
+        yield* writeFile(
+          fs,
+          path,
+          dir,
+          "supabase/migrations/20200101000000_init.sql",
+          "-- old init",
+        );
+        yield* writeFile(
+          fs,
+          path,
+          dir,
+          "supabase/migrations/20240101120000_create.sql",
+          "create table x();",
+        );
+        yield* writeFile(fs, path, dir, "supabase/migrations/notes.txt", "ignore me");
+        const paths = yield* legacyListLocalMigrations(fs, path, migrationsDir);
+        expect(paths.map((p) => p.split("/").pop())).toEqual(["20240101120000_create.sql"]);
+        const stderr = out.rawChunks.filter((c) => c.stream === "stderr").map((c) => c.text);
+        expect(stderr).toContain(
+          'Skipping migration 20200101000000_init.sql... (replace "init" with a different file name to apply this migration)\n',
+        );
+        expect(stderr).toContain(
+          'Skipping migration notes.txt... (file name must match pattern "<timestamp>_name.sql")\n',
+        );
+      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer)));
     },
   );
 
@@ -214,23 +239,26 @@ describe("legacyListLocalMigrations", () => {
       // whose target is a directory is NOT skipped as a directory — it is only ever dropped
       // later, if something actually tries to read it as a file. A naive `fs.stat`-based
       // directory check (which follows symlinks) would misclassify it and silently skip it.
-      const dir = withTemp();
-      const migrationsDir = join(dir, "supabase", "migrations");
-      mkdirSync(migrationsDir, { recursive: true });
-      const targetDir = join(dir, "outside-target");
-      mkdirSync(targetDir, { recursive: true });
-      writeFileSync(join(migrationsDir, "20240101120000_create.sql"), "create table x();");
-      symlinkSync(targetDir, join(migrationsDir, "20240102000000_link.sql"));
-      return withServices((fs, path) => legacyListLocalMigrations(fs, path, migrationsDir)).pipe(
-        Effect.tap((paths) =>
-          Effect.sync(() => {
-            expect(paths.map((p) => p.split("/").pop())).toEqual([
-              "20240101120000_create.sql",
-              "20240102000000_link.sql",
-            ]);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+      return withServices((fs, path) =>
+        Effect.gen(function* () {
+          const dir = tempRoot.current;
+          const migrationsDir = path.join(dir, "supabase", "migrations");
+          const targetDir = path.join(dir, "outside-target");
+          yield* fs.makeDirectory(targetDir, { recursive: true });
+          yield* writeFile(
+            fs,
+            path,
+            dir,
+            "supabase/migrations/20240101120000_create.sql",
+            "create table x();",
+          );
+          yield* fs.symlink(targetDir, path.join(migrationsDir, "20240102000000_link.sql"));
+          const paths = yield* legacyListLocalMigrations(fs, path, migrationsDir);
+          expect(paths.map((p) => p.split("/").pop())).toEqual([
+            "20240101120000_create.sql",
+            "20240102000000_link.sql",
+          ]);
+        }),
       );
     },
   );
@@ -245,36 +273,43 @@ describe("legacyListLocalMigrations", () => {
       // pair first (`0xD83D < 0xE000`), while Go's byte order — which preserves codepoint order —
       // ranks U+1F600 (`> U+FFFF`) after U+E000. A migrations directory with such filenames must
       // replay in Go's order, not JS's default, or a dependent migration could apply out of order.
-      const dir = withTemp();
-      const migrationsDir = join(dir, "supabase", "migrations");
-      mkdirSync(migrationsDir, { recursive: true });
       const privateUseFile = "20240101120000_z\uE000.sql";
       const supplementaryFile = "20240101120000_z\u{1F600}.sql";
-      writeFileSync(join(migrationsDir, privateUseFile), "create table x();");
-      writeFileSync(join(migrationsDir, supplementaryFile), "create table y();");
-      return withServices((fs, path) => legacyListLocalMigrations(fs, path, migrationsDir)).pipe(
-        Effect.tap((paths) =>
-          Effect.sync(() => {
-            expect(paths.map((p) => p.split("/").pop())).toEqual([
-              privateUseFile,
-              supplementaryFile,
-            ]);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+      return withServices((fs, path) =>
+        Effect.gen(function* () {
+          const dir = tempRoot.current;
+          const migrationsDir = path.join(dir, "supabase", "migrations");
+          yield* writeFile(
+            fs,
+            path,
+            dir,
+            `supabase/migrations/${privateUseFile}`,
+            "create table x();",
+          );
+          yield* writeFile(
+            fs,
+            path,
+            dir,
+            `supabase/migrations/${supplementaryFile}`,
+            "create table y();",
+          );
+          const paths = yield* legacyListLocalMigrations(fs, path, migrationsDir);
+          expect(paths.map((p) => p.split("/").pop())).toEqual([privateUseFile, supplementaryFile]);
+        }),
       );
     },
   );
 
   it.effect("returns [] when the migrations dir is absent", () => {
-    const dir = withTemp();
-    return withServices((fs, path) => legacyListLocalMigrations(fs, path, join(dir, "nope"))).pipe(
-      Effect.tap((paths) =>
-        Effect.sync(() => {
-          expect(paths).toEqual([]);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+    return withServices((fs, path) =>
+      Effect.gen(function* () {
+        const paths = yield* legacyListLocalMigrations(
+          fs,
+          path,
+          path.join(tempRoot.current, "nope"),
+        );
+        expect(paths).toEqual([]);
+      }),
     );
   });
 
@@ -282,19 +317,15 @@ describe("legacyListLocalMigrations", () => {
     // `supabase/migrations` exists but is a file, not a directory — Go's
     // ListLocalMigrations aborts with `failed to read directory` rather than
     // treating it as "no migrations".
-    const dir = withTemp();
-    const migrationsPath = join(dir, "supabase", "migrations");
-    mkdirSync(join(dir, "supabase"), { recursive: true });
-    writeFileSync(migrationsPath, "not a directory");
     return withServices((fs, path) =>
-      legacyListLocalMigrations(fs, path, migrationsPath).pipe(Effect.exit),
-    ).pipe(
-      Effect.tap((exit) =>
-        Effect.sync(() => {
-          expect(exit._tag).toBe("Failure");
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+      Effect.gen(function* () {
+        const dir = tempRoot.current;
+        const migrationsPath = path.join(dir, "supabase", "migrations");
+        yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(migrationsPath, "not a directory");
+        const exit = yield* legacyListLocalMigrations(fs, path, migrationsPath).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+      }),
     );
   });
 });
@@ -303,23 +334,24 @@ describe("legacyHashMigrations", () => {
   it.effect(
     "hashes the workdir-relative path + contents in list order (stable, content-sensitive)",
     () => {
-      const dir = withTemp();
-      const migrationsDir = join(dir, "supabase", "migrations");
-      mkdirSync(migrationsDir, { recursive: true });
-      const file = join(migrationsDir, "20240101120000_create.sql");
-      writeFileSync(file, "create table x();");
-      const relPath = join("supabase", "migrations", "20240101120000_create.sql");
       const expected = createHash("sha256")
-        .update(relPath, "utf8")
+        .update("supabase/migrations/20240101120000_create.sql", "utf8")
         .update(Buffer.from("create table x();"))
         .digest("hex");
-      return withServices((fs, path) => legacyHashMigrations(fs, path, dir, migrationsDir)).pipe(
-        Effect.tap((hash) =>
-          Effect.sync(() => {
-            expect(hash).toBe(expected);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+      return withServices((fs, path) =>
+        Effect.gen(function* () {
+          const dir = tempRoot.current;
+          const migrationsDir = path.join(dir, "supabase", "migrations");
+          yield* writeFile(
+            fs,
+            path,
+            dir,
+            "supabase/migrations/20240101120000_create.sql",
+            "create table x();",
+          );
+          const hash = yield* legacyHashMigrations(fs, path, dir, migrationsDir);
+          expect(hash).toBe(expected);
+        }),
       );
     },
   );
@@ -327,27 +359,32 @@ describe("legacyHashMigrations", () => {
   it.effect(
     "is unaffected by the absolute location of workdir (Go-parity, not machine-specific)",
     () => {
-      const dirA = withTemp();
-      const dirB = withTemp();
-      const migrationsA = join(dirA, "supabase", "migrations");
-      const migrationsB = join(dirB, "supabase", "migrations");
-      mkdirSync(migrationsA, { recursive: true });
-      mkdirSync(migrationsB, { recursive: true });
-      writeFileSync(join(migrationsA, "20240101120000_create.sql"), "create table x();");
-      writeFileSync(join(migrationsB, "20240101120000_create.sql"), "create table x();");
       return withServices((fs, path) =>
         Effect.gen(function* () {
+          const dirA = yield* fs.makeTempDirectory({ prefix: "legacy-pgdelta-cache-a-" });
+          const dirB = yield* fs.makeTempDirectory({ prefix: "legacy-pgdelta-cache-b-" });
+          const migrationsA = path.join(dirA, "supabase", "migrations");
+          const migrationsB = path.join(dirB, "supabase", "migrations");
+          yield* writeFile(
+            fs,
+            path,
+            dirA,
+            "supabase/migrations/20240101120000_create.sql",
+            "create table x();",
+          );
+          yield* writeFile(
+            fs,
+            path,
+            dirB,
+            "supabase/migrations/20240101120000_create.sql",
+            "create table x();",
+          );
           const hashA = yield* legacyHashMigrations(fs, path, dirA, migrationsA);
           const hashB = yield* legacyHashMigrations(fs, path, dirB, migrationsB);
           expect(hashA).toBe(hashB);
+          yield* fs.remove(dirA, { recursive: true, force: true });
+          yield* fs.remove(dirB, { recursive: true, force: true });
         }),
-      ).pipe(
-        Effect.tap(() =>
-          Effect.sync(() => {
-            rmSync(dirA, { recursive: true, force: true });
-            rmSync(dirB, { recursive: true, force: true });
-          }),
-        ),
       );
     },
   );
@@ -355,25 +392,22 @@ describe("legacyHashMigrations", () => {
 
 describe("legacyHashDeclarativeSchemas", () => {
   it.effect("hashes forward-slash rel path + contents over sorted .sql files", () => {
-    const dir = withTemp();
-    const declDir = join(dir, "supabase", "database");
-    mkdirSync(join(declDir, "nested"), { recursive: true });
-    writeFileSync(join(declDir, "public.sql"), "A");
-    writeFileSync(join(declDir, "nested", "auth.sql"), "B");
-    writeFileSync(join(declDir, "skip.txt"), "C");
     const expected = createHash("sha256")
       .update("nested/auth.sql", "utf8")
       .update(Buffer.from("B"))
       .update("public.sql", "utf8")
       .update(Buffer.from("A"))
       .digest("hex");
-    return withServices((fs, path) => legacyHashDeclarativeSchemas(fs, path, declDir)).pipe(
-      Effect.tap((hash) =>
-        Effect.sync(() => {
-          expect(hash).toBe(expected);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+    return withServices((fs, path) =>
+      Effect.gen(function* () {
+        const dir = tempRoot.current;
+        const declDir = path.join(dir, "supabase", "database");
+        yield* writeFile(fs, path, dir, "supabase/database/public.sql", "A");
+        yield* writeFile(fs, path, dir, "supabase/database/nested/auth.sql", "B");
+        yield* writeFile(fs, path, dir, "supabase/database/skip.txt", "C");
+        const hash = yield* legacyHashDeclarativeSchemas(fs, path, declDir);
+        expect(hash).toBe(expected);
+      }),
     );
   });
 
@@ -381,49 +415,49 @@ describe("legacyHashDeclarativeSchemas", () => {
   // entries are excluded from the hash entirely — matching the walker's no-follow
   // semantics (codex review, PR #6162).
   it.effect("skips symlinked entries instead of following them", () => {
-    const dir = withTemp();
-    const declDir = join(dir, "supabase", "database");
-    mkdirSync(declDir, { recursive: true });
-    writeFileSync(join(declDir, "public.sql"), "A");
-    symlinkSync(join(dir, "supabase"), join(declDir, "loop"));
     const expected = createHash("sha256")
       .update("public.sql", "utf8")
       .update(Buffer.from("A"))
       .digest("hex");
-    return withServices((fs, path) => legacyHashDeclarativeSchemas(fs, path, declDir)).pipe(
-      Effect.tap((hash) =>
-        Effect.sync(() => {
-          expect(hash).toBe(expected);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+    return withServices((fs, path) =>
+      Effect.gen(function* () {
+        const dir = tempRoot.current;
+        const declDir = path.join(dir, "supabase", "database");
+        yield* writeFile(fs, path, dir, "supabase/database/public.sql", "A");
+        yield* fs.symlink(path.join(dir, "supabase"), path.join(declDir, "loop"));
+        const hash = yield* legacyHashDeclarativeSchemas(fs, path, declDir);
+        expect(hash).toBe(expected);
+      }),
     );
   });
 
   // Retention removal failures must propagate — a silently-failing cleanup would let
   // snapshots accumulate forever while every run reports success (codex review, PR #6162).
   it.effect("cleanup fails when an old snapshot cannot be removed", () => {
-    const dir = withTemp();
-    const tempDir = join(dir, "pgdelta");
-    mkdirSync(tempDir, { recursive: true });
-    for (const ts of [100, 200, 300]) {
-      writeFileSync(join(tempDir, `catalog-local-declarative-h-${ts}.json`), "{}");
-    }
     return withServices((fs, path) =>
       Effect.gen(function* () {
-        const err = yield* fs.readDirectory(join(dir, "does-not-exist")).pipe(Effect.flip);
+        const dir = tempRoot.current;
+        const tempDir = path.join(dir, "pgdelta");
+        yield* fs.makeDirectory(tempDir, { recursive: true });
+        for (const ts of [100, 200, 300]) {
+          yield* writeFile(fs, path, dir, `pgdelta/catalog-local-declarative-h-${ts}.json`, "{}");
+        }
+        const err = PlatformError.systemError({
+          module: "FileSystem",
+          method: "remove",
+          _tag: "PermissionDenied",
+          description: "permission denied",
+          pathOrDescriptor: path.join(dir, "pgdelta"),
+        });
         const failing: FileSystem.FileSystem = { ...fs, remove: () => Effect.fail(err) };
-        return yield* legacyCleanupOldDeclarativeCatalogs(failing, path, tempDir, "local").pipe(
-          Effect.exit,
-        );
+        const exit = yield* legacyCleanupOldDeclarativeCatalogs(
+          failing,
+          path,
+          tempDir,
+          "local",
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
       }),
-    ).pipe(
-      Effect.tap((exit) =>
-        Effect.sync(() => {
-          expect(Exit.isFailure(exit)).toBe(true);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
     );
   });
 
@@ -431,64 +465,59 @@ describe("legacyHashDeclarativeSchemas", () => {
   // than be treated as an empty tree — an empty-tree hash could cache an empty catalog
   // and let sync emit destructive drops (codex review, PR #6162).
   it.effect("fails when the root existence check itself fails", () => {
-    const dir = withTemp();
-    const declDir = join(dir, "supabase", "database");
-    mkdirSync(declDir, { recursive: true });
     return withServices((fs, path) =>
       Effect.gen(function* () {
-        const err = yield* fs.readDirectory(join(dir, "does-not-exist")).pipe(Effect.flip);
+        const dir = tempRoot.current;
+        const declDir = path.join(dir, "supabase", "database");
+        yield* fs.makeDirectory(declDir, { recursive: true });
+        const err = PlatformError.systemError({
+          module: "FileSystem",
+          method: "exists",
+          _tag: "PermissionDenied",
+          description: "permission denied",
+          pathOrDescriptor: declDir,
+        });
         const failing: FileSystem.FileSystem = { ...fs, exists: () => Effect.fail(err) };
-        return yield* legacyHashDeclarativeSchemas(failing, path, declDir).pipe(Effect.exit);
+        const exit = yield* legacyHashDeclarativeSchemas(failing, path, declDir).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
       }),
-    ).pipe(
-      Effect.tap((exit) =>
-        Effect.sync(() => {
-          expect(Exit.isFailure(exit)).toBe(true);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
     );
   });
 
   // A partial hash can collide with an existing cache key and serve a stale catalog,
   // so a traversal failure must fail the hash, not shrink it (codex review, PR #6162).
   it.effect("fails when part of the tree cannot be read instead of hashing a subset", () => {
-    const dir = withTemp();
-    const declDir = join(dir, "supabase", "database");
-    mkdirSync(join(declDir, "nested"), { recursive: true });
-    writeFileSync(join(declDir, "public.sql"), "A");
-    writeFileSync(join(declDir, "nested", "auth.sql"), "B");
-    return withServices((fs, path) => {
-      const failing: FileSystem.FileSystem = {
-        ...fs,
-        readDirectory: (p, opts) =>
-          p.endsWith("nested")
-            ? fs.readDirectory(join(dir, "does-not-exist"))
-            : fs.readDirectory(p, opts),
-      };
-      return legacyHashDeclarativeSchemas(failing, path, declDir).pipe(Effect.exit);
-    }).pipe(
-      Effect.tap((exit) =>
-        Effect.sync(() => {
-          expect(Exit.isFailure(exit)).toBe(true);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+    return withServices((fs, path) =>
+      Effect.gen(function* () {
+        const dir = tempRoot.current;
+        const declDir = path.join(dir, "supabase", "database");
+        yield* writeFile(fs, path, dir, "supabase/database/public.sql", "A");
+        yield* writeFile(fs, path, dir, "supabase/database/nested/auth.sql", "B");
+        const failing: FileSystem.FileSystem = {
+          ...fs,
+          readDirectory: (p, opts) =>
+            p.endsWith("nested")
+              ? fs.readDirectory(path.join(dir, "does-not-exist"))
+              : fs.readDirectory(p, opts),
+        };
+        const exit = yield* legacyHashDeclarativeSchemas(failing, path, declDir).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+      }),
     );
   });
 });
 
 describe("legacyResolveDeclarativeCatalogPath + cleanup", () => {
   it.effect("resolves the newest snapshot and prunes to the retention count", () => {
-    const dir = withTemp();
-    const tempDir = join(dir, "pgdelta");
-    mkdirSync(tempDir, { recursive: true });
-    for (const ts of [100, 300, 200]) {
-      writeFileSync(join(tempDir, `catalog-local-declarative-h-${ts}.json`), "{}");
-    }
-    writeFileSync(join(tempDir, "catalog-local-declarative-other-50.json"), "{}");
     return withServices((fs, path) =>
       Effect.gen(function* () {
+        const dir = tempRoot.current;
+        const tempDir = path.join(dir, "pgdelta");
+        yield* fs.makeDirectory(tempDir, { recursive: true });
+        for (const ts of [100, 300, 200]) {
+          yield* writeFile(fs, path, dir, `pgdelta/catalog-local-declarative-h-${ts}.json`, "{}");
+        }
+        yield* writeFile(fs, path, dir, "pgdelta/catalog-local-declarative-other-50.json", "{}");
         const latest = yield* legacyResolveDeclarativeCatalogPath(fs, path, tempDir, "h", "local");
         expect(Option.getOrNull(latest)?.endsWith("catalog-local-declarative-h-300.json")).toBe(
           true,
@@ -502,7 +531,7 @@ describe("legacyResolveDeclarativeCatalogPath + cleanup", () => {
           "catalog-local-declarative-h-300.json",
         ]);
       }),
-    ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
+    );
   });
 });
 
@@ -517,14 +546,14 @@ describe("legacyWriteDeclarativeCatalogSnapshot + cleanup", () => {
   it.effect(
     "writes the snapshot and prunes older declarative catalogs past the retention count",
     () => {
-      const dir = withTemp();
-      const tempDir = join(dir, "pgdelta");
-      mkdirSync(tempDir, { recursive: true });
-      for (const ts of [100, 300, 200]) {
-        writeFileSync(join(tempDir, `catalog-local-declarative-h-${ts}.json`), "{}");
-      }
       return withServices((fs, path) =>
         Effect.gen(function* () {
+          const dir = tempRoot.current;
+          const tempDir = path.join(dir, "pgdelta");
+          yield* fs.makeDirectory(tempDir, { recursive: true });
+          for (const ts of [100, 300, 200]) {
+            yield* writeFile(fs, path, dir, `pgdelta/catalog-local-declarative-h-${ts}.json`, "{}");
+          }
           const filePath = yield* legacyWriteDeclarativeCatalogSnapshot(
             fs,
             path,
@@ -544,19 +573,20 @@ describe("legacyWriteDeclarativeCatalogSnapshot + cleanup", () => {
             "catalog-local-declarative-h-400.json",
           ]);
         }),
-      ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
+      );
     },
   );
 
   it.effect("creates the temp dir when it doesn't exist yet", () => {
-    const dir = withTemp();
-    const tempDir = join(dir, "pgdelta");
     return withServices((fs, path) =>
       Effect.gen(function* () {
+        const tempDir = path.join(tempRoot.current, "pgdelta");
         yield* legacyWriteDeclarativeCatalogSnapshot(fs, path, tempDir, "local", "h", "{}", 100);
-        expect(yield* fs.exists(join(tempDir, "catalog-local-declarative-h-100.json"))).toBe(true);
+        expect(yield* fs.exists(path.join(tempDir, "catalog-local-declarative-h-100.json"))).toBe(
+          true,
+        );
       }),
-    ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
+    );
   });
 });
 
@@ -600,86 +630,80 @@ describe("legacyCatalogPrefixFromConfig", () => {
 
 describe("legacyResolveMigrationCatalogPath", () => {
   it.effect("resolves the newest snapshot for the (hash, prefix) family", () => {
-    const dir = withTemp();
-    const tempDir = join(dir, "pgdelta");
-    mkdirSync(tempDir, { recursive: true });
-    for (const ts of [100, 300, 200]) {
-      writeFileSync(join(tempDir, `catalog-local-migrations-h-${ts}.json`), "{}");
-    }
-    // A different hash in the same prefix family must not be picked up.
-    writeFileSync(join(tempDir, "catalog-local-migrations-other-500.json"), "{}");
     return withServices((fs, path) =>
       Effect.gen(function* () {
+        const dir = tempRoot.current;
+        const tempDir = path.join(dir, "pgdelta");
+        yield* fs.makeDirectory(tempDir, { recursive: true });
+        for (const ts of [100, 300, 200]) {
+          yield* writeFile(fs, path, dir, `pgdelta/catalog-local-migrations-h-${ts}.json`, "{}");
+        }
+        // A different hash in the same prefix family must not be picked up.
+        yield* writeFile(fs, path, dir, "pgdelta/catalog-local-migrations-other-500.json", "{}");
         const latest = yield* legacyResolveMigrationCatalogPath(fs, path, tempDir, "h", "local");
         expect(Option.getOrNull(latest)?.endsWith("catalog-local-migrations-h-300.json")).toBe(
           true,
         );
       }),
-    ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
+    );
   });
 
   it.effect("returns None on a cache miss (no matching family member)", () => {
-    const dir = withTemp();
-    const tempDir = join(dir, "pgdelta");
     return withServices((fs, path) =>
       Effect.gen(function* () {
-        const resolved = yield* legacyResolveMigrationCatalogPath(fs, path, tempDir, "h", "local");
+        const resolved = yield* legacyResolveMigrationCatalogPath(
+          fs,
+          path,
+          path.join(tempRoot.current, "pgdelta"),
+          "h",
+          "local",
+        );
         expect(Option.isNone(resolved)).toBe(true);
       }),
-    ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
+    );
   });
 });
 
 describe("legacyResolveSetupInputs", () => {
   it.effect("resolves the image and tolerates a missing roles.sql", () => {
-    const dir = withTemp();
     return withServices((fs, path) =>
-      legacyResolveSetupInputs(fs, path, dir, 17, undefined, {
-        authEnabled: true,
-        storageEnabled: false,
-        realtimeEnabled: true,
-        apiAutoExposeNewTables: Option.none(),
-        vaultNames: ["a_secret"],
+      Effect.gen(function* () {
+        const inputs = yield* legacyResolveSetupInputs(fs, path, tempRoot.current, 17, undefined, {
+          authEnabled: true,
+          storageEnabled: false,
+          realtimeEnabled: true,
+          apiAutoExposeNewTables: Option.none(),
+          vaultNames: ["a_secret"],
+        });
+        expect(inputs).toMatchObject({
+          majorVersion: 17,
+          authEnabled: true,
+          storageEnabled: false,
+          realtimeEnabled: true,
+          autoExpose: false,
+          vaultNames: ["a_secret"],
+          rolesSql: "",
+        });
+        expect(inputs.image.length).toBeGreaterThan(0);
       }),
-    ).pipe(
-      Effect.tap((inputs) =>
-        Effect.sync(() => {
-          expect(inputs).toMatchObject({
-            majorVersion: 17,
-            authEnabled: true,
-            storageEnabled: false,
-            realtimeEnabled: true,
-            autoExpose: false,
-            vaultNames: ["a_secret"],
-            rolesSql: "",
-          });
-          expect(inputs.image.length).toBeGreaterThan(0);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
     );
   });
 
   it.effect("reads roles.sql content and resolves the effective auto-expose bool", () => {
-    const dir = withTemp();
-    mkdirSync(join(dir, "supabase"), { recursive: true });
-    writeFileSync(join(dir, "supabase", "roles.sql"), "create role app;");
     return withServices((fs, path) =>
-      legacyResolveSetupInputs(fs, path, dir, 17, undefined, {
-        authEnabled: true,
-        storageEnabled: true,
-        realtimeEnabled: true,
-        apiAutoExposeNewTables: Option.some(true),
-        vaultNames: [],
+      Effect.gen(function* () {
+        const dir = tempRoot.current;
+        yield* writeFile(fs, path, dir, "supabase/roles.sql", "create role app;");
+        const inputs = yield* legacyResolveSetupInputs(fs, path, dir, 17, undefined, {
+          authEnabled: true,
+          storageEnabled: true,
+          realtimeEnabled: true,
+          apiAutoExposeNewTables: Option.some(true),
+          vaultNames: [],
+        });
+        expect(inputs.rolesSql).toBe("create role app;");
+        expect(inputs.autoExpose).toBe(true);
       }),
-    ).pipe(
-      Effect.tap((inputs) =>
-        Effect.sync(() => {
-          expect(inputs.rolesSql).toBe("create role app;");
-          expect(inputs.autoExpose).toBe(true);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
     );
   });
 });
@@ -696,14 +720,14 @@ describe("legacyWriteMigrationCatalogSnapshot + cleanup", () => {
   it.effect(
     "writes the snapshot and prunes older migrations catalogs past the retention count",
     () => {
-      const dir = withTemp();
-      const tempDir = join(dir, "pgdelta");
-      mkdirSync(tempDir, { recursive: true });
-      for (const ts of [100, 300, 200]) {
-        writeFileSync(join(tempDir, `catalog-local-migrations-h-${ts}.json`), "{}");
-      }
       return withServices((fs, path) =>
         Effect.gen(function* () {
+          const dir = tempRoot.current;
+          const tempDir = path.join(dir, "pgdelta");
+          yield* fs.makeDirectory(tempDir, { recursive: true });
+          for (const ts of [100, 300, 200]) {
+            yield* writeFile(fs, path, dir, `pgdelta/catalog-local-migrations-h-${ts}.json`, "{}");
+          }
           const filePath = yield* legacyWriteMigrationCatalogSnapshot(
             fs,
             path,
@@ -723,19 +747,20 @@ describe("legacyWriteMigrationCatalogSnapshot + cleanup", () => {
             "catalog-local-migrations-h-400.json",
           ]);
         }),
-      ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
+      );
     },
   );
 
   it.effect("creates the temp dir when it doesn't exist yet", () => {
-    const dir = withTemp();
-    const tempDir = join(dir, "pgdelta");
     return withServices((fs, path) =>
       Effect.gen(function* () {
+        const tempDir = path.join(tempRoot.current, "pgdelta");
         yield* legacyWriteMigrationCatalogSnapshot(fs, path, tempDir, "local", "h", "{}", 100);
-        expect(yield* fs.exists(join(tempDir, "catalog-local-migrations-h-100.json"))).toBe(true);
+        expect(yield* fs.exists(path.join(tempDir, "catalog-local-migrations-h-100.json"))).toBe(
+          true,
+        );
       }),
-    ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
+    );
   });
 });
 
@@ -755,12 +780,7 @@ describe("legacyTryCacheMigrationsCatalog — timestamp ordering (review CLI-195
       // AFTER that sleep, proving the clock was read after the export — not
       // captured up front by a caller before this function even started (the
       // pre-fix bug).
-      const dir = withTemp();
-      const migrationsDir = join(dir, "supabase", "migrations");
-      mkdirSync(migrationsDir, { recursive: true });
       // Mirrors `legacyPgDeltaTempPath` (`<workdir>/supabase/.temp/pgdelta`).
-      const tempDir = join(dir, "supabase", ".temp", "pgdelta");
-      const beforeCallMillis = Date.now();
       const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
         run: () =>
           Effect.gen(function* () {
@@ -774,7 +794,7 @@ describe("legacyTryCacheMigrationsCatalog — timestamp ordering (review CLI-195
       });
       const ctx: LegacyPgDeltaContext = {
         projectId: "test",
-        cwd: dir,
+        cwd: tempRoot.current,
         npmVersion: undefined,
         denoVersion: 1,
         projectEnv: {},
@@ -782,6 +802,11 @@ describe("legacyTryCacheMigrationsCatalog — timestamp ordering (review CLI-195
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
+        const dir = tempRoot.current;
+        const migrationsDir = path.join(dir, "supabase", "migrations");
+        const tempDir = path.join(dir, "supabase", ".temp", "pgdelta");
+        yield* fs.makeDirectory(migrationsDir, { recursive: true });
+        const beforeCallMillis = yield* Clock.currentTimeMillis;
         yield* legacyTryCacheMigrationsCatalog(fs, path, ctx, {
           enabled: true,
           targetUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
@@ -798,8 +823,15 @@ describe("legacyTryCacheMigrationsCatalog — timestamp ordering (review CLI-195
         const embeddedMillis = Number(match![1]);
         expect(embeddedMillis).toBeGreaterThanOrEqual(beforeCallMillis + 25);
       }).pipe(
-        Effect.provide(Layer.mergeAll(BunServices.layer, mockOutput().layer, edge, sslProbe)),
-        Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            mockOutput().layer,
+            edge,
+            sslProbe,
+            makeLegacyViperEnvLayer(),
+          ),
+        ),
       );
     },
   );
@@ -807,15 +839,15 @@ describe("legacyTryCacheMigrationsCatalog — timestamp ordering (review CLI-195
 
 describe("legacyCleanupOldMigrationCatalogs", () => {
   it.effect("only prunes files matching the given prefix's family", () => {
-    const dir = withTemp();
-    const tempDir = join(dir, "pgdelta");
-    mkdirSync(tempDir, { recursive: true });
-    for (const ts of [100, 200, 300]) {
-      writeFileSync(join(tempDir, `catalog-local-migrations-h-${ts}.json`), "{}");
-    }
-    writeFileSync(join(tempDir, "catalog-other-migrations-h-50.json"), "{}");
     return withServices((fs, path) =>
       Effect.gen(function* () {
+        const dir = tempRoot.current;
+        const tempDir = path.join(dir, "pgdelta");
+        yield* fs.makeDirectory(tempDir, { recursive: true });
+        for (const ts of [100, 200, 300]) {
+          yield* writeFile(fs, path, dir, `pgdelta/catalog-local-migrations-h-${ts}.json`, "{}");
+        }
+        yield* writeFile(fs, path, dir, "pgdelta/catalog-other-migrations-h-50.json", "{}");
         yield* legacyCleanupOldMigrationCatalogs(fs, path, tempDir, "local");
         const remaining = (yield* fs.readDirectory(tempDir)).sort();
         expect(remaining).toEqual([
@@ -824,7 +856,7 @@ describe("legacyCleanupOldMigrationCatalogs", () => {
           "catalog-other-migrations-h-50.json",
         ]);
       }),
-    ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
+    );
   });
 
   it.effect(
@@ -836,21 +868,18 @@ describe("legacyCleanupOldMigrationCatalogs", () => {
       // than silently look like "no cached catalogs" (which would bypass retention
       // indefinitely, since the caller's own best-effort warning never fires without
       // a propagated failure).
-      const dir = withTemp();
-      const tempDir = join(dir, "pgdelta");
-      mkdirSync(tempDir, { recursive: true });
-      writeFileSync(join(tempDir, "catalog-local-migrations-h-100.json"), "{}");
-      chmodSync(tempDir, 0o000);
       return withServices((fs, path) =>
-        legacyCleanupOldMigrationCatalogs(fs, path, tempDir, "local").pipe(Effect.exit),
-      ).pipe(
-        Effect.tap((exit) =>
-          Effect.sync(() => {
-            chmodSync(tempDir, 0o755);
-            expect(Exit.isFailure(exit)).toBe(true);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+        Effect.gen(function* () {
+          const dir = tempRoot.current;
+          const tempDir = path.join(dir, "pgdelta");
+          yield* writeFile(fs, path, dir, "pgdelta/catalog-local-migrations-h-100.json", "{}");
+          yield* fs.chmod(tempDir, 0o000);
+          const exit = yield* legacyCleanupOldMigrationCatalogs(fs, path, tempDir, "local").pipe(
+            Effect.exit,
+          );
+          yield* fs.chmod(tempDir, 0o755);
+          expect(Exit.isFailure(exit)).toBe(true);
+        }),
       );
     },
   );

@@ -1,9 +1,6 @@
-import { existsSync } from "node:fs";
-import { homedir, userInfo } from "node:os";
-import { join } from "node:path";
 import { getDomain } from "tldts";
 import type { LegacyPgConnInput } from "./legacy-db-connection.service.ts";
-import { legacyPgpassPassword } from "./legacy-pgpass.ts";
+import { legacyPgpassPassword, type LegacyPgpassRuntime } from "./legacy-pgpass.ts";
 import { legacyServiceSettings } from "./legacy-pgservicefile.ts";
 
 /** Go's `pgconn` default direct Postgres port. */
@@ -14,12 +11,39 @@ const DIRECT_PORT = 5432;
  * layer the project `.env*` files under the shell environment, mirroring Go's
  * `LoadConfig` (`godotenv.Load`) populating `os.Environ` before `pgconn.ParseConfig`
  * reads `PGHOST`/`PGPASSWORD`/`PGSSLMODE`/… (`internal/utils/flags/db_url.go:59-68`).
- * Defaults to `process.env` so the pure call sites (and the pooler path, whose
- * connection string is fully specified) keep their existing behavior.
+ * Callers provide the already-resolved shell/project environment explicitly. The
+ * parser itself is pure and never reads process-global environment state.
  */
 export type LegacyParseEnv = (name: string) => string | undefined;
 
-const processEnv: LegacyParseEnv = (name) => process.env[name];
+/** Explicit data acquired by the Effect composition boundary before parsing. */
+export interface LegacyDbConfigParseRuntime extends LegacyPgpassRuntime {
+  readonly defaultHost?: string;
+  readonly defaultServiceFilePath?: string;
+  readonly serviceFiles: ReadonlyMap<string, string>;
+  readonly osUser?: string;
+}
+
+/** PG* variables consulted by libpq parsing; callers may resolve these through Config. */
+export const LEGACY_PARSE_ENV_NAMES = [
+  "PGAPPNAME",
+  "PGCONNECT_TIMEOUT",
+  "PGDATABASE",
+  "PGHOST",
+  "PGPASSFILE",
+  "PGPASSWORD",
+  "PGPORT",
+  "PGSERVICE",
+  "PGSERVICEFILE",
+  "PGSSLCERT",
+  "PGSSLKEY",
+  "PGSSLMODE",
+  "PGSSLROOTCERT",
+  "PGSSLPASSWORD",
+  "PGUSER",
+] as const;
+
+const emptyParseEnv: LegacyParseEnv = () => undefined;
 
 /**
  * The `sslmode` values pgconn's `configTLS` accepts; any other value is a parse
@@ -144,12 +168,8 @@ function libpqEnv(env: LegacyParseEnv, name: string): string | undefined {
  * common unix-socket directory, else `localhost`; Windows always uses
  * `localhost`. `PGHOST` (applied by the callers) takes priority over this.
  */
-function defaultLibpqHost(): string {
-  if (process.platform === "win32") return "localhost";
-  for (const candidate of ["/var/run/postgresql", "/private/tmp", "/tmp"]) {
-    if (existsSync(candidate)) return candidate;
-  }
-  return "localhost";
+function defaultLibpqHost(runtime: LegacyDbConfigParseRuntime | undefined): string {
+  return runtime?.defaultHost ?? "localhost";
 }
 
 /**
@@ -200,9 +220,10 @@ function libpqConnectTimeout(
 const SERVICE_RESOLUTION_FAILED = Symbol("service-resolution-failed");
 
 /** libpq's default service file (`~/.pg_service.conf`); `PGSERVICEFILE` overrides. */
-function defaultServiceFilePath(): string | undefined {
-  const home = homedir();
-  return home.length > 0 ? join(home, ".pg_service.conf") : undefined;
+function defaultServiceFilePath(
+  runtime: LegacyDbConfigParseRuntime | undefined,
+): string | undefined {
+  return runtime?.defaultServiceFilePath;
 }
 
 /**
@@ -226,6 +247,7 @@ function resolveServiceSettings(
   connStringService: string | null | undefined,
   connStringServicefile: string | undefined,
   env: LegacyParseEnv,
+  runtime: LegacyDbConfigParseRuntime | undefined,
 ): Map<string, string> | typeof SERVICE_RESOLUTION_FAILED | undefined {
   const service =
     connStringService !== null && connStringService !== undefined
@@ -246,11 +268,13 @@ function resolveServiceSettings(
   const servicefile =
     connStringServicefile !== undefined
       ? connStringServicefile
-      : (libpqEnv(env, "PGSERVICEFILE") ?? defaultServiceFilePath());
+      : (libpqEnv(env, "PGSERVICEFILE") ?? defaultServiceFilePath(runtime));
   if (servicefile === undefined || servicefile.length === 0) {
     return SERVICE_RESOLUTION_FAILED;
   }
-  return legacyServiceSettings(service, servicefile) ?? SERVICE_RESOLUTION_FAILED;
+  return (
+    legacyServiceSettings(service, servicefile, runtime?.serviceFiles) ?? SERVICE_RESOLUTION_FAILED
+  );
 }
 
 /**
@@ -291,11 +315,12 @@ function resolveLibpqPassword(
   user: string,
   env: LegacyParseEnv,
   passfile: string | undefined,
+  runtime: LegacyDbConfigParseRuntime | undefined,
 ): string {
   const resolved = connStringPassword ?? libpqEnv(env, "PGPASSWORD") ?? "";
   return resolved.length > 0
     ? resolved
-    : legacyPgpassPassword(host, port, database, user, env, passfile);
+    : legacyPgpassPassword(host, port, database, user, env, passfile, runtime);
 }
 
 /**
@@ -386,7 +411,8 @@ function parseHostPortSegment(segment: string): { host: string; port: string } {
  */
 export function parseLegacyConnectionString(
   value: string,
-  env: LegacyParseEnv = processEnv,
+  env: LegacyParseEnv = emptyParseEnv,
+  runtime?: LegacyDbConfigParseRuntime,
 ): LegacyPgConnInput | undefined {
   const trimmed = value.trim();
   // Match pgconn's dispatch (`config.go:236`): only a literal `postgres://` /
@@ -395,9 +421,32 @@ export function parseLegacyConnectionString(
   // to the DSN parser, which rejects it (no `key=value`) → the caller surfaces a
   // redacted parse error rather than connecting to a bogus host.
   if (trimmed.startsWith("postgres://") || trimmed.startsWith("postgresql://")) {
-    return parseUrlConnectionString(value, env);
+    return parseUrlConnectionString(value, env, runtime);
   }
-  return parseKeywordValueDsn(trimmed, env);
+  return parseKeywordValueDsn(trimmed, env, runtime);
+}
+
+/**
+ * Return non-empty service/passfile paths explicitly supplied by a connection
+ * string. This reuses the same URL and keyword/value syntax parsers as
+ * `parseLegacyConnectionString`; callers use the paths to preload files before
+ * invoking the pure connection parser.
+ */
+export function legacyConnectionStringFilePaths(value: string): ReadonlyArray<string> {
+  const trimmed = value.trim();
+  if (trimmed.startsWith("postgres://") || trimmed.startsWith("postgresql://")) {
+    const parsed = parseLegacyUrl(trimmed);
+    if (parsed === undefined) return [];
+    return [
+      parsed.url.searchParams.get("servicefile"),
+      parsed.url.searchParams.get("passfile"),
+    ].filter((path): path is string => path !== null && path.length > 0);
+  }
+  const settings = parseKeywordValueSettings(trimmed);
+  if (settings === undefined) return [];
+  return [settings.get("servicefile"), settings.get("passfile")].filter(
+    (path): path is string => path !== undefined && path.length > 0,
+  );
 }
 
 /**
@@ -406,8 +455,9 @@ export function parseLegacyConnectionString(
  */
 export function legacyLayeredParseEnv(
   projectEnv: Readonly<Record<string, string>>,
+  shellEnv: Readonly<Record<string, string>> = {},
 ): LegacyParseEnv {
-  return (name) => process.env[name] ?? projectEnv[name];
+  return (name) => shellEnv[name] ?? projectEnv[name];
 }
 
 export type LegacyPoolerConfigResult =
@@ -426,7 +476,7 @@ export function legacyPoolerConfigFromConnectionString(
   expectedPoolerHost: string,
 ): LegacyPoolerConfigResult {
   const sanitized = connectionString.replaceAll("[YOUR-PASSWORD]", "");
-  const parsed = parseLegacyConnectionString(sanitized);
+  const parsed = parseLegacyConnectionString(sanitized, emptyParseEnv);
   if (parsed === undefined) {
     return { _tag: "invalid", reason: "failed to parse pooler URL" };
   }
@@ -467,29 +517,27 @@ export function legacyPoolerConfigFromConnectionString(
   };
 }
 
-/** Parse the WHATWG `postgres(ql)://` URL form. */
-function parseUrlConnectionString(
-  value: string,
-  env: LegacyParseEnv,
-): LegacyPgConnInput | undefined {
+interface LegacyParsedUrl {
+  readonly url: URL;
+  readonly userinfoRaw: string;
+  readonly segments: ReadonlyArray<string>;
+  readonly useHandSplit: boolean;
+}
+
+/** Normalize a Postgres URL for WHATWG parsing while preserving libpq host lists. */
+function parseLegacyUrl(value: string): LegacyParsedUrl | undefined {
   const trimmed = value.trim();
-  // pgconn accepts libpq multi-host failover URLs (`postgres://h1:5432,h2:5433/db`,
-  // `config.go:166,326-362`), which WHATWG `new URL()` rejects (the comma'd
-  // host:port is not a valid authority). Hand-extract the authority so we can split
-  // the host list ourselves, then normalize the URL down to its first host so
-  // `new URL()` still parses the userinfo, path, and query exactly as before.
+  // pgconn accepts libpq multi-host failover URLs (`postgres://h1:5432,h2:5433/db`),
+  // which WHATWG `new URL()` rejects. Hand-extract the authority so the parser can
+  // split the host list while WHATWG still handles userinfo, path, and query fields.
   const authority = legacyUrlAuthority(trimmed);
-  // Go's `net/url` splits userinfo from host on the last `@`; literal `@` in a
-  // password must be percent-encoded, so the last `@` is the real boundary.
   const atIdx = authority.lastIndexOf("@");
   const userinfoRaw = atIdx === -1 ? "" : authority.slice(0, atIdx);
   const hostPortRaw = atIdx === -1 ? authority : authority.slice(atIdx + 1);
   const segments = splitHostPortList(hostPortRaw);
   const multiHost = segments.length > 1;
-  // pgconn accepts a port-only authority (`postgres://:5433/db`): `net.SplitHostPort`
-  // yields an empty host + the port, so the host falls back to PGHOST/default while
-  // the port is kept (`config.go:464-488`). WHATWG `new URL()` throws on an empty
-  // host with a port, so route that through the same hand-split path as multi-host.
+  // pgconn accepts a port-only authority (`postgres://:5433/db`), which WHATWG
+  // rejects; substitute a placeholder while retaining the parsed port below.
   const firstSegmentHost = parseHostPortSegment(segments[0]!).host;
   const emptyHostAuthority = !multiHost && firstSegmentHost.length === 0 && hostPortRaw.length > 0;
   const useHandSplit = multiHost || emptyHostAuthority;
@@ -497,10 +545,6 @@ function parseUrlConnectionString(
   let normalized = trimmed;
   if (useHandSplit) {
     const authorityStart = trimmed.indexOf("://") + 3;
-    // Substitute a placeholder host so `new URL()` can parse the userinfo/path/query;
-    // the real host(s)/port(s) come from the hand-split segments below. A non-empty
-    // first segment (multi-host) is reused verbatim; an empty host gets a literal
-    // placeholder (never read — structural host/port override it).
     const placeholderHost = firstSegmentHost.length > 0 ? segments[0]! : "placeholder.invalid";
     const newAuthority =
       atIdx === -1 ? placeholderHost : `${authority.slice(0, atIdx + 1)}${placeholderHost}`;
@@ -510,12 +554,22 @@ function parseUrlConnectionString(
       trimmed.slice(authorityStart + authority.length);
   }
 
-  let url: URL;
   try {
-    url = new URL(normalized);
+    return { url: new URL(normalized), userinfoRaw, segments, useHandSplit };
   } catch {
     return undefined;
   }
+}
+
+/** Parse the WHATWG `postgres(ql)://` URL form. */
+function parseUrlConnectionString(
+  value: string,
+  env: LegacyParseEnv,
+  runtime: LegacyDbConfigParseRuntime | undefined,
+): LegacyPgConnInput | undefined {
+  const parsed = parseLegacyUrl(value);
+  if (parsed === undefined) return undefined;
+  const { url, userinfoRaw, segments, useHandSplit } = parsed;
   try {
     // `decodeURIComponent` throws on a malformed percent escape (e.g. `p%zz`).
     // Keep it inside the try so a bad escape yields a normal parse failure
@@ -538,6 +592,7 @@ function parseUrlConnectionString(
       query.get("service"),
       query.get("servicefile") ?? undefined,
       env,
+      runtime,
     );
     if (serviceSettings === SERVICE_RESOLUTION_FAILED) {
       return undefined;
@@ -553,7 +608,7 @@ function parseUrlConnectionString(
         ? userQuery
         : structuralUser.length > 0
           ? structuralUser
-          : (svc("user") ?? defaultOsUser(env));
+          : (svc("user") ?? defaultOsUser(env, runtime));
     // libpq fills `sslmode` from the service, then `PGSSLMODE`, when the connection
     // string omits it (pgconn's merge order), before the TLS-mode default.
     const sslmode =
@@ -622,7 +677,7 @@ function parseUrlConnectionString(
         ? hostQuery
         : structuralHosts.length > 0
           ? structuralHosts.join(",")
-          : (svc("host") ?? libpqEnv(env, "PGHOST") ?? defaultLibpqHost());
+          : (svc("host") ?? libpqEnv(env, "PGHOST") ?? defaultLibpqHost(runtime));
     // pgconn copies a `?port=` query value verbatim into `settings["port"]` and the
     // fallback builder splits it on commas, parsing each segment (`config.go:326-340`),
     // so a multi-host URL may carry a comma-separated port list (`?port=5432,5433`).
@@ -687,6 +742,7 @@ function parseUrlConnectionString(
       user,
       env,
       passfile,
+      runtime,
     );
     return {
       host: primary.host,
@@ -713,7 +769,7 @@ function parseUrlConnectionString(
  * escapes. Unknown keywords are ignored. Defaults mirror libpq/pgconn: the user
  * falls back to the OS account, the database to the user, and the port to 5432.
  */
-function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnInput | undefined {
+function parseKeywordValueSettings(value: string): Map<string, string> | undefined {
   const params = new Map<string, string>();
   const n = value.length;
   let i = 0;
@@ -766,6 +822,16 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
     // aliases share one settings slot and the last occurrence in the DSN wins.
     params.set(key === "dbname" ? "database" : key, val);
   }
+  return params;
+}
+
+function parseKeywordValueDsn(
+  value: string,
+  env: LegacyParseEnv,
+  runtime: LegacyDbConfigParseRuntime | undefined,
+): LegacyPgConnInput | undefined {
+  const params = parseKeywordValueSettings(value);
+  if (params === undefined) return undefined;
   // Omitted fields fall back to libpq `PG*` env vars and then the libpq defaults,
   // matching pgconn's `mergeSettings(defaultSettings, envSettings, connStringSettings)`.
   // A libpq DSN also accepts comma-separated multi-host failover
@@ -776,6 +842,7 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
     params.get("service"),
     params.get("servicefile"),
     env,
+    runtime,
   );
   if (serviceSettings === SERVICE_RESOLUTION_FAILED) return undefined;
   const svc = (key: string): string | undefined => serviceValue(serviceSettings, key);
@@ -785,7 +852,7 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
   // so a `hostaddr`-only DSN dials `defaultHost()` (`defaults.go:15`), never the address.
   // Don't use `hostaddr` as a host fallback (it would dial a different endpoint than Go).
   const hostString =
-    params.get("host") ?? svc("host") ?? libpqEnv(env, "PGHOST") ?? defaultLibpqHost();
+    params.get("host") ?? svc("host") ?? libpqEnv(env, "PGHOST") ?? defaultLibpqHost(runtime);
   // Explicit empty/non-numeric `port=` is a parse error (pgconn's `parsePort`); an
   // absent `port` falls back to the service, then `PGPORT`, then the libpq default.
   const portParam = params.get("port");
@@ -800,7 +867,7 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
   const hostList = buildLegacyHostList(hostString, portString);
   if (hostList === undefined || hostList.length === 0) return undefined;
   const primary = hostList[0]!;
-  const user = params.get("user") ?? svc("user") ?? defaultOsUser(env);
+  const user = params.get("user") ?? svc("user") ?? defaultOsUser(env, runtime);
   // `dbname` was remapped to `database` at parse time (last-wins alias), so read
   // only `database` here. A present value (even empty) overrides service/env.
   const database =
@@ -844,6 +911,7 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
     user,
     env,
     passfile,
+    runtime,
   );
   return {
     host: primary.host,
@@ -873,21 +941,15 @@ function parseKeywordValueDsn(value: string, env: LegacyParseEnv): LegacyPgConnI
  * when non-empty, `config.go:436-441`), so an empty `PGUSER` falls through to the OS
  * account. The OS account is `user.Current().Username` (`defaults.go:21-23`) — the
  * passwd entry for the effective uid, **not** the `$USER`/`$USERNAME` env vars (those
- * are never consulted by pgconn; only `PGUSER` is an env override). Node's
- * `os.userInfo().username` is the faithful analogue; it can throw when there is no
- * passwd entry, mirroring Go's ignored-error path → the `"postgres"` guard.
+ * are never consulted by pgconn; only `PGUSER` is an env override). The composition
+ * boundary supplies the effective OS username when available; the parser falls back
+ * to `"postgres"` when the host runtime has no account information.
  */
-function osAccountUsername(): string | undefined {
-  try {
-    const name = userInfo().username;
-    return name.length > 0 ? name : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function defaultOsUser(env: LegacyParseEnv): string {
-  return libpqEnv(env, "PGUSER") ?? osAccountUsername() ?? "postgres";
+function defaultOsUser(
+  env: LegacyParseEnv,
+  runtime: LegacyDbConfigParseRuntime | undefined,
+): string {
+  return libpqEnv(env, "PGUSER") ?? runtime?.osUser ?? "postgres";
 }
 
 /**

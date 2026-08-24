@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -78,7 +78,7 @@ const fetchAdvisors = Effect.fnUntraced(function* (
 
   if (response.status !== 200) {
     const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-    return yield* Effect.fail(endpoint.status(response.status, sanitizeLegacyErrorBody(rawBody)));
+    return yield* endpoint.status(response.status, sanitizeLegacyErrorBody(rawBody));
   }
 
   // The 200 body is only decoded when the Content-Type header contains "json";
@@ -87,15 +87,18 @@ const fetchAdvisors = Effect.fnUntraced(function* (
   const contentType = response.headers["content-type"] ?? "";
   if (!contentType.toLowerCase().includes("json")) {
     const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-    return yield* Effect.fail(endpoint.status(200, sanitizeLegacyErrorBody(rawBody)));
+    return yield* endpoint.status(200, sanitizeLegacyErrorBody(rawBody));
   }
 
   const rawBody = yield* response.text;
   // A decode error folds into the same `failed to fetch … advisors: %w` path,
   // so map both JSON syntax errors and structural-shape rejections (thrown by
   // `apiResponseToLegacyAdvisorLints`) to the endpoint's network error.
+  const decoded = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(rawBody).pipe(
+    Effect.mapError((cause) => endpoint.network(String(cause), { decode: true })),
+  );
   return yield* Effect.try({
-    try: () => apiResponseToLegacyAdvisorLints(JSON.parse(rawBody) as unknown),
+    try: () => apiResponseToLegacyAdvisorLints(decoded),
     catch: (cause) => endpoint.network(String(cause), { decode: true }),
   });
 });

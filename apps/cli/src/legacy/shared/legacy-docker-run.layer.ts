@@ -1,7 +1,10 @@
-import { Effect, Layer, Stream } from "effect";
+import { Config, Effect, Layer, Option, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 import { ProcessControl } from "../../shared/runtime/process-control.service.ts";
-import { legacyIsBitbucketPipeline } from "./legacy-bitbucket-pipeline.ts";
+import {
+  LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY,
+  legacyIsBitbucketPipeline,
+} from "./legacy-bitbucket-pipeline.ts";
 import { containerCliExitCode, spawnContainerCli } from "./legacy-container-cli.ts";
 import { legacyMakeDockerImageResolver } from "./legacy-docker-image-resolve.ts";
 import {
@@ -12,15 +15,19 @@ import { LegacyDockerRunError } from "./legacy-docker-run.errors.ts";
 import { LEGACY_SUGGEST_DOCKER_INSTALL } from "./legacy-docker-suggest.ts";
 import { LegacyDockerRun, type LegacyDockerRunOpts } from "./legacy-docker-run.service.ts";
 
-export const legacyDockerRunLayer: Layer.Layer<
-  LegacyDockerRun,
-  never,
-  ProcessControl | ChildProcessSpawner
-> = Layer.effect(
+export const legacyDockerRunLayer = Layer.effect(
   LegacyDockerRun,
   Effect.gen(function* () {
     const processControl = yield* ProcessControl;
     const spawner = yield* ChildProcessSpawner;
+    const ambientBitbucketMarker = yield* Config.option(
+      Config.string(LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY),
+    );
+    const isAmbientBitbucket =
+      Option.isSome(ambientBitbucketMarker) &&
+      legacyIsBitbucketPipeline({
+        [LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY]: ambientBitbucketMarker.value,
+      });
 
     const spawnError = () =>
       // Never embed the spawn error verbatim: it can leak the full argv and
@@ -45,6 +52,9 @@ export const legacyDockerRunLayer: Layer.Layer<
 
     const resolveImage = legacyMakeDockerImageResolver(spawner);
 
+    const applyBitbucketFilter = (opts: LegacyDockerRunOpts) =>
+      legacyApplyBitbucketDockerFilter(opts, isAmbientBitbucket);
+
     const withResolvedImage = (
       opts: LegacyDockerRunOpts,
     ): Effect.Effect<LegacyDockerRunOpts, LegacyDockerRunError> =>
@@ -59,9 +69,7 @@ export const legacyDockerRunLayer: Layer.Layer<
             const teeStderr = captureOpts?.teeStderr ?? false;
             yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
             const resolvedOpts = yield* withResolvedImage(opts);
-            const args = buildLegacyDockerArgs(
-              legacyApplyBitbucketDockerFilter(resolvedOpts, legacyIsBitbucketPipeline()),
-            );
+            const args = buildLegacyDockerArgs(applyBitbucketFilter(resolvedOpts));
             // Pipe stdout/stderr (rather than inherit) so the SQL dump can be
             // captured and redirected to `--file`/post-processing. `dockerExec`
             // does the same: stdout → caller's writer, stderr → `MultiWriter(os.Stderr,
@@ -116,9 +124,7 @@ export const legacyDockerRunLayer: Layer.Layer<
             const captureStderr = streamOpts.captureStderr ?? true;
             yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
             const resolvedOpts = yield* withResolvedImage(opts);
-            const args = buildLegacyDockerArgs(
-              legacyApplyBitbucketDockerFilter(resolvedOpts, legacyIsBitbucketPipeline()),
-            );
+            const args = buildLegacyDockerArgs(applyBitbucketFilter(resolvedOpts));
             const handle = yield* spawnContainerCli(spawner, args, {
               stdin: "inherit",
               stdout: "pipe",
@@ -162,9 +168,7 @@ export const legacyDockerRunLayer: Layer.Layer<
           Effect.gen(function* () {
             yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
             const resolvedOpts = yield* withResolvedImage(opts);
-            const args = buildLegacyDockerArgs(
-              legacyApplyBitbucketDockerFilter(resolvedOpts, legacyIsBitbucketPipeline()),
-            );
+            const args = buildLegacyDockerArgs(applyBitbucketFilter(resolvedOpts));
             // Pass run env (incl. PGPASSWORD) through the docker child's own
             // environment, not the argv. `buildLegacyDockerArgs` emits the
             // key-only `-e KEY` form, so docker inherits each value from here

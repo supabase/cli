@@ -64,7 +64,7 @@ export class LegacyDockerLifecycleInspectError extends Data.TaggedError(
   }
 }
 
-function collectByteStream(stream: Stream.Stream<Uint8Array, unknown>) {
+function collectByteStream<E>(stream: Stream.Stream<Uint8Array, E>) {
   const decoder = new TextDecoder();
   return Stream.runFold(
     stream,
@@ -135,14 +135,12 @@ function spawnDockerPsLines(
       );
       if (exitCode !== 0) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new LegacyDockerLifecycleListError({
-            message:
-              message.length > 0
-                ? `failed to list containers: ${message}`
-                : "failed to list containers",
-          }),
-        );
+        return yield* new LegacyDockerLifecycleListError({
+          message:
+            message.length > 0
+              ? `failed to list containers: ${message}`
+              : "failed to list containers",
+        });
       }
       return splitNonEmptyLines(stdout);
     }),
@@ -268,15 +266,13 @@ export const legacyInspectContainerState = (spawner: Spawner, containerId: strin
       );
       if (exitCode !== 0) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new LegacyDockerLifecycleInspectError({
-            message:
-              message.length > 0
-                ? `failed to inspect container health: ${message}`
-                : "failed to inspect container health",
-            daemonDown: isDockerDaemonDownMessage(message),
-          }),
-        );
+        return yield* new LegacyDockerLifecycleInspectError({
+          message:
+            message.length > 0
+              ? `failed to inspect container health: ${message}`
+              : "failed to inspect container health",
+          daemonDown: isDockerDaemonDownMessage(message),
+        });
       }
       return parseContainerState(stdout);
     }),
@@ -360,12 +356,10 @@ export const legacyListVolumesByLabel = (spawner: Spawner, projectIdFilter: stri
       );
       if (exitCode !== 0) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new LegacyDockerLifecycleListError({
-            message:
-              message.length > 0 ? `failed to list volumes: ${message}` : "failed to list volumes",
-          }),
-        );
+        return yield* new LegacyDockerLifecycleListError({
+          message:
+            message.length > 0 ? `failed to list volumes: ${message}` : "failed to list volumes",
+        });
       }
       return splitNonEmptyLines(stdout);
     }),

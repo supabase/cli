@@ -11,7 +11,7 @@ export const ensureProjectStateIgnored = (
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const gitRoot = yield* Effect.tryPromise(() => findGitRootPath(projectRoot)).pipe(Effect.orDie);
+    const gitRoot = yield* findGitRootPath(projectRoot).pipe(Effect.orDie);
 
     if (gitRoot === undefined) {
       return;

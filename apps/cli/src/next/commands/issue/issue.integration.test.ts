@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option } from "effect";
+import { ConfigProvider, Effect, Layer, Option } from "effect";
 import { Output } from "../../../shared/output/output.service.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
 import { Browser } from "../../../shared/runtime/browser.service.ts";
@@ -16,29 +16,11 @@ type OutputMessage = {
 };
 
 function processEnvLayer(values: Readonly<Record<string, string | undefined>> = {}) {
-  return Layer.effectDiscard(
-    Effect.acquireRelease(
-      Effect.sync(() => {
-        const snapshot = { ...process.env };
-        for (const key of Object.keys(process.env)) {
-          delete process.env[key];
-        }
-        for (const [key, value] of Object.entries(values)) {
-          if (value !== undefined) process.env[key] = value;
-        }
-        return snapshot;
-      }),
-      (snapshot) =>
-        Effect.sync(() => {
-          for (const key of Object.keys(process.env)) {
-            delete process.env[key];
-          }
-          for (const [key, value] of Object.entries(snapshot)) {
-            if (value !== undefined) process.env[key] = value;
-          }
-        }),
-    ),
-  );
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (value !== undefined) env[key] = value;
+  }
+  return ConfigProvider.layer(ConfigProvider.fromEnv({ env, preserveEmptyStrings: true }));
 }
 
 function mockOutput(opts: { readonly format?: OutputFormat } = {}) {

@@ -1,5 +1,4 @@
-import { createServer, type Server } from "node:http";
-import { gunzipSync } from "node:zlib";
+import { Effect, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { runSupabase } from "../../../tests/helpers/cli.ts";
 
@@ -9,39 +8,44 @@ type CapturedEvent = {
 };
 
 describe("failed command telemetry", () => {
-  let server: Server;
+  let server: { readonly port: number; readonly stop: () => Promise<void> };
   let host: string;
   const capturedEvents: CapturedEvent[] = [];
 
-  beforeAll(async () => {
-    server = createServer((request, response) => {
-      const chunks: Buffer[] = [];
-      request.on("data", (chunk: Buffer) => chunks.push(chunk));
-      request.on("end", () => {
-        const body = Buffer.concat(chunks);
-        const decoded = request.headers["content-encoding"] === "gzip" ? gunzipSync(body) : body;
-        const payload: unknown = JSON.parse(decoded.toString());
-        if (typeof payload === "object" && payload !== null) {
-          const batch = Reflect.get(payload, "batch");
-          if (Array.isArray(batch)) capturedEvents.push(...batch);
-        }
-        response.writeHead(200, { "content-type": "application/json" });
-        response.end("{}");
-      });
+  beforeAll(() => {
+    const runningServer = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: (request) =>
+        Effect.runPromise(
+          Effect.gen(function* () {
+            const body = yield* Effect.tryPromise(() => request.arrayBuffer());
+            const decoded =
+              request.headers.get("content-encoding") === "gzip"
+                ? yield* Effect.tryPromise(() =>
+                    new Response(
+                      new Blob([body]).stream().pipeThrough(new DecompressionStream("gzip")),
+                    ).text(),
+                  )
+                : new TextDecoder().decode(body);
+            const payload = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+              decoded,
+            );
+            if (typeof payload === "object" && payload !== null) {
+              const batch = Reflect.get(payload, "batch");
+              if (Array.isArray(batch)) capturedEvents.push(...batch);
+            }
+            return new Response("{}", { headers: { "content-type": "application/json" } });
+          }),
+        ),
     });
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-    const address = server.address();
-    if (address === null || typeof address === "string") {
-      throw new Error("Failed to allocate a telemetry receiver port");
-    }
-    host = `http://127.0.0.1:${address.port}`;
+    const { port } = runningServer;
+    if (port === undefined) throw new Error("Failed to allocate a telemetry receiver port");
+    server = { port, stop: () => runningServer.stop() };
+    host = `http://127.0.0.1:${server.port}`;
   });
 
-  afterAll(async () => {
-    await new Promise<void>((resolve, reject) => {
-      server.close((error) => (error === undefined ? resolve() : reject(error)));
-    });
-  });
+  afterAll(() => server.stop());
 
   beforeEach(() => {
     capturedEvents.length = 0;
@@ -84,8 +88,8 @@ describe("failed command telemetry", () => {
       },
       rawErrors: ["failed to connect", "127.0.0.1", "select 1"],
     },
-  ])("emits sanitized metadata from the compiled $entrypoint shell", async (testCase) => {
-    const result = await runSupabase(testCase.args, {
+  ])("emits sanitized metadata from the compiled $entrypoint shell", (testCase) =>
+    runSupabase(testCase.args, {
       entrypoint: testCase.entrypoint,
       env: {
         SUPABASE_ACCESS_TOKEN: "",
@@ -94,18 +98,18 @@ describe("failed command telemetry", () => {
         SUPABASE_TELEMETRY_POSTHOG_KEY: "phc_failure_metadata_e2e",
         SUPABASE_TELEMETRY_POSTHOG_HOST: host,
       },
-    });
-
-    expect(result.exitCode).toBe(1);
-    const event = capturedEvents.find((candidate) => candidate.event === "cli_command_executed");
-    expect(event).toBeDefined();
-    expect(event?.properties).toMatchObject({
-      command: testCase.command,
-      exit_code: 1,
-      ...testCase.expected,
-    });
-    expect(event?.properties).not.toHaveProperty("workflow");
-    const encoded = JSON.stringify(event);
-    for (const rawError of testCase.rawErrors) expect(encoded).not.toContain(rawError);
-  });
+    }).then((result) => {
+      expect(result.exitCode).toBe(1);
+      const event = capturedEvents.find((candidate) => candidate.event === "cli_command_executed");
+      expect(event).toBeDefined();
+      expect(event?.properties).toMatchObject({
+        command: testCase.command,
+        exit_code: 1,
+        ...testCase.expected,
+      });
+      expect(event?.properties).not.toHaveProperty("workflow");
+      const encoded = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown))(event);
+      for (const rawError of testCase.rawErrors) expect(encoded).not.toContain(rawError);
+    }),
+  );
 });

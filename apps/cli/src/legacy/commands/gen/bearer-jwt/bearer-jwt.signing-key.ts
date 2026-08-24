@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Schema } from "effect";
 import {
   assertNoMalformedDuplicateJwkField,
   legacyReadSigningKeysFile,
@@ -31,6 +31,7 @@ import {
 /** Established console read-line timeouts. */
 const GO_CONSOLE_TTY_TIMEOUT_MILLIS = 10 * 60 * 1000;
 const GO_CONSOLE_NON_TTY_TIMEOUT_MILLIS = 100;
+const decodeJsonString = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 /**
  * Writes `label` to stderr with NO trailing newline, reads one line bounded
@@ -123,16 +124,13 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
   if (input.length === 0) {
     return LEGACY_DEFAULT_SIGNING_KEY;
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(input);
-  } catch (cause) {
-    return yield* Effect.fail(
+  const parsed = yield* Effect.try({
+    try: () => decodeJsonString(input),
+    catch: (cause) =>
       new LegacyGenBearerJwtKeyParseError({
         message: `failed to parse JWK: ${legacyBearerJwtErrorMessage(cause)}`,
       }),
-    );
-  }
+  });
   // A JSON `null` answer decodes into a ZERO-VALUE `config.JWK{}`:
   // `json.Unmarshal([]byte("null"), &key)` where `key` is a non-pointer
   // struct is a documented no-op (it leaves every field at its zero value:
@@ -146,27 +144,23 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
     return normalizeStoredJwk({});
   }
   if (typeof parsed !== "object" || Array.isArray(parsed)) {
-    return yield* Effect.fail(
-      new LegacyGenBearerJwtKeyParseError({
-        message: `failed to parse JWK: json: cannot unmarshal ${legacyGoJsonKindName(parsed)} into Go value of type config.JWK`,
-      }),
-    );
+    return yield* new LegacyGenBearerJwtKeyParseError({
+      message: `failed to parse JWK: json: cannot unmarshal ${legacyGoJsonKindName(parsed)} into Go value of type config.JWK`,
+    });
   }
-  const record = parsed as Record<string, unknown>;
+  const record: Record<string, unknown> = Object.fromEntries(Object.entries(parsed));
   // Case-insensitive lookup (`resolveJwkFieldValue`) — the `alg` allowlist
   // check (`config.Algorithm.UnmarshalText`) runs at JSON-decode time
   // regardless of the key's casing; see that function's doc comment in
   // `gen.signing-keys-config.ts`.
   const alg = resolveJwkFieldValue(record, "alg");
-  try {
-    legacyAssertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined);
-  } catch (cause) {
-    return yield* Effect.fail(
+  yield* Effect.try({
+    try: () => legacyAssertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined),
+    catch: (cause) =>
       new LegacyGenBearerJwtKeyParseError({
         message: `failed to parse JWK: ${legacyBearerJwtErrorMessage(cause)}`,
       }),
-    );
-  }
+  });
   // `normalizeStoredJwk` throws the established bare `encoding/json`
   // struct-field type-mismatch text (see its own doc comment) the moment
   // any OTHER field is malformed — e.g.
@@ -257,9 +251,9 @@ const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
     if (kid.length === 0 && availableKeys.length > 0) {
       return availableKeys[0]!;
     }
-    return yield* Effect.fail(
-      new LegacyGenBearerJwtKeyNotFoundError({ message: `signing key not found: ${kid}` }),
-    );
+    return yield* new LegacyGenBearerJwtKeyNotFoundError({
+      message: `signing key not found: ${kid}`,
+    });
   }
 
   if (availableKeys.length === 0) {
@@ -270,9 +264,7 @@ const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
     // on an empty option list" behavior to lean on, and calling it with
     // zero options would otherwise resolve to an out-of-range index and
     // crash with a raw `TypeError` when `.kid` is accessed below.
-    return yield* Effect.fail(
-      new LegacyGenBearerJwtKeyPickerAbortedError({ message: "user aborted" }),
-    );
+    return yield* new LegacyGenBearerJwtKeyPickerAbortedError({ message: "user aborted" });
   }
 
   const output = yield* Output;

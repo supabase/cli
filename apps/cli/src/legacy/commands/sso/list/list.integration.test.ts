@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Option, Schema } from "effect";
+import * as Formatter from "effect/Formatter";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts";
@@ -40,6 +41,24 @@ const PROVIDER_ITEM = {
 };
 
 const tempRoot = useLegacyTempWorkdir("supabase-sso-list-int-");
+
+const decodeListOutput = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      providers: Schema.Array(
+        Schema.Struct({
+          domains: Schema.Array(
+            Schema.Struct({
+              domain: Schema.String,
+              created_at: Schema.String,
+              updated_at: Schema.String,
+            }),
+          ),
+        }),
+      ),
+    }),
+  ),
+);
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -171,9 +190,7 @@ describe("legacy sso list integration", () => {
     const { layer, out } = setup({ goOutput: "json", body: { items: [item] } });
     return Effect.gen(function* () {
       yield* legacySsoList({ projectRef: Option.none() });
-      const emitted = JSON.parse(out.stdoutText) as {
-        providers: Array<{ domains: Array<{ created_at: string; updated_at: string }> }>;
-      };
+      const emitted = decodeListOutput(out.stdoutText);
       expect(out.stdoutText).toContain("0b0d48f6-878b-4190-88d7-2ca33ed800bc");
       expect(out.stdoutText).not.toContain("8682fcf4-4056-455c-bd93-f33295604929");
       expect(out.stdoutText).not.toContain("9484591c-a203-4500-bea7-d0aaa845e2f5");
@@ -242,7 +259,7 @@ describe("legacy sso list integration", () => {
       const exit = yield* Effect.exit(legacySsoList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySsoTomlEncodeError");
         expect(dump).toContain("failed to output toml: toml: cannot encode array with nil element");
       }
@@ -272,7 +289,7 @@ describe("legacy sso list integration", () => {
       const exit = yield* Effect.exit(legacySsoList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySsoListNetworkError");
         expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
           error_kind: "external_service",
@@ -298,7 +315,7 @@ describe("legacy sso list integration", () => {
       const exit = yield* Effect.exit(legacySsoList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySsoListSamlDisabledError");
         expect(dump).toContain("Looks like SAML 2.0 support is not enabled");
       }
@@ -327,7 +344,7 @@ describe("legacy sso list integration", () => {
       const exit = yield* Effect.exit(legacySsoList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySsoListUnexpectedStatusError");
         expect(dump).toContain("unexpected error listing identity providers");
       }
@@ -340,7 +357,7 @@ describe("legacy sso list integration", () => {
       const exit = yield* Effect.exit(legacySsoList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySsoListNetworkError");
         expect(dump).toContain("failed to list sso providers");
       }

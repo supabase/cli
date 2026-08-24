@@ -1,12 +1,8 @@
+import { DateTime } from "effect";
 import type { Tracer } from "effect";
 
 function formatTimestamp(ms: number): string {
-  const d = new Date(ms);
-  const h = String(d.getHours()).padStart(2, "0");
-  const m = String(d.getMinutes()).padStart(2, "0");
-  const s = String(d.getSeconds()).padStart(2, "0");
-  const mil = String(d.getMilliseconds()).padStart(3, "0");
-  return `${h}:${m}:${s}.${mil}`;
+  return DateTime.formatIso(DateTime.makeUnsafe(ms)).split("T")[1]!.slice(0, 12);
 }
 
 export function formatSpanForDebugConsole(span: Tracer.Span): string | undefined {

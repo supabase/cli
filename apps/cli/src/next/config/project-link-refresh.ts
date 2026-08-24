@@ -4,7 +4,8 @@ import {
   fillServiceVersionManifest,
   normalizeServiceVersions,
 } from "@supabase/stack/effect";
-import { Effect } from "effect";
+import { DateTime, Effect } from "effect";
+import { Clock } from "effect";
 import { ProjectLinkRemote } from "./project-link-remote.service.ts";
 import { ProjectLinkState } from "./project-link-state.service.ts";
 
@@ -53,7 +54,7 @@ export const refreshLinkedProjectSnapshot = Effect.fnUntraced(function* (
       name: "main",
       is_default: true,
     },
-    fetchedAt: new Date().toISOString(),
+    fetchedAt: DateTime.formatIso(DateTime.makeUnsafe(yield* Clock.currentTimeMillis)),
     versions: linkedProject.versions,
   });
 

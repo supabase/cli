@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import type { LegacyPgDeltaDatabaseEndpoint } from "./legacy-pgdelta-engine.service.ts";
 import { legacyParsePgDeltaNextEndpoint } from "./legacy-pgdelta-engine.next.layer.ts";
@@ -68,19 +68,8 @@ describe("legacyParsePgDeltaNextEndpoint", () => {
     expect(conn?.password).toBe("from-project");
   });
 
-  describe("shell env precedence", () => {
-    const ORIGINAL_PGPASSWORD = process.env.PGPASSWORD;
-
-    beforeEach(() => {
-      process.env.PGPASSWORD = "from-shell";
-    });
-
-    afterEach(() => {
-      if (ORIGINAL_PGPASSWORD === undefined) delete process.env.PGPASSWORD;
-      else process.env.PGPASSWORD = ORIGINAL_PGPASSWORD;
-    });
-
-    it("prefers the shell-set PGPASSWORD over the project .env value", () => {
+  describe("project env values", () => {
+    it("uses the explicitly supplied PGPASSWORD value", () => {
       const endpoint = {
         kind: "database",
         ref: "postgres://user@host:5432/db",
@@ -91,7 +80,7 @@ describe("legacyParsePgDeltaNextEndpoint", () => {
         legacyParsePgDeltaNextEndpoint(endpoint, { PGPASSWORD: "from-project" }),
       );
 
-      expect(conn?.password).toBe("from-shell");
+      expect(conn?.password).toBe("from-project");
     });
   });
 });

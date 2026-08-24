@@ -1,10 +1,18 @@
-import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { type ApiClient, makeApiClient, type SupabaseApiConfigError } from "@supabase/api/effect";
-import { Effect, FileSystem, Layer, Option, Redacted, Sink, Stream } from "effect";
+import {
+  ConfigProvider,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Redacted,
+  Sink,
+  Stream,
+  Schema,
+} from "effect";
 import { PlatformError, SystemError } from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
@@ -46,6 +54,7 @@ import { LegacyTelemetryState } from "../../src/legacy/telemetry/legacy-telemetr
 import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
 import type { Stdin } from "../../src/shared/runtime/stdin.service.ts";
 import { LegacyOutputFlag } from "../../src/shared/legacy/global-flags.ts";
+import { makeLegacyViperEnvLayer } from "../../src/shared/legacy/legacy-viper-env.ts";
 import type { Output } from "../../src/shared/output/output.service.ts";
 import type { ProcessControl } from "../../src/shared/runtime/process-control.service.ts";
 import type { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
@@ -160,11 +169,9 @@ export function mockLegacyCredentialsTracked(
       Effect.gen(function* () {
         deletedRefs.push(projectRef);
         if (opts.deleteFails === true) {
-          return yield* Effect.fail(
-            new LegacyCredentialDeleteError({
-              message: "failed to delete project credential: permission denied",
-            }),
-          );
+          return yield* new LegacyCredentialDeleteError({
+            message: "failed to delete project credential: permission denied",
+          });
         }
         return true;
       }),
@@ -546,11 +553,10 @@ export function mockLegacyPlatformApi(
       let body: unknown = undefined;
       if (request.body._tag === "Uint8Array") {
         const decoded = new TextDecoder().decode(request.body.body);
-        try {
-          body = JSON.parse(decoded);
-        } catch {
-          body = decoded;
-        }
+        const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+          decoded,
+        ).pipe(Effect.option);
+        body = Option.getOrElse(parsed, () => decoded);
       }
       const params = UrlParams.toString(request.urlParams);
       const recorded: LegacyRecordedRequest = {
@@ -564,7 +570,7 @@ export function mockLegacyPlatformApi(
       requests.push(recorded);
 
       if (opts.network === "fail") {
-        return yield* Effect.fail(legacyTransportFailure(request));
+        return yield* legacyTransportFailure(request);
       }
       if (opts.handler !== undefined) {
         return yield* opts.handler(request, recorded);
@@ -620,7 +626,7 @@ export function mockLegacyPlatformApi(
 type V1Stubs = Partial<{
   readonly [K in keyof ApiClient["v1"]]: (
     input: Parameters<ApiClient["v1"][K]>[0],
-  ) => Effect.Effect<unknown, unknown>;
+  ) => Effect.Effect<unknown, Error>;
 }>;
 
 export interface MockLegacyPlatformApiServiceOpts {
@@ -644,7 +650,7 @@ export function mockLegacyPlatformApiService(
         Effect.gen(function* () {
           requests.push({ method: prop, input });
           const stub = (stubs as Record<string, unknown>)[prop] as
-            | ((i: unknown) => Effect.Effect<unknown, unknown>)
+            | ((i: unknown) => Effect.Effect<unknown, Error>)
             | undefined;
           if (stub === undefined) {
             return yield* Effect.die(`Unmocked LegacyPlatformApi.v1.${prop}`);
@@ -713,12 +719,28 @@ export function useLegacyTempWorkdir(prefix = "supabase-legacy-test-"): {
 } {
   let root: string | undefined;
   beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), prefix));
+    return Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectory({ directory: tmpdir(), prefix });
+        yield* Effect.sync(() => {
+          root = directory;
+        });
+      }).pipe(Effect.provide(BunServices.layer)),
+    );
   });
   afterEach(() => {
-    if (root !== undefined) {
-      rmSync(root, { recursive: true, force: true });
-      root = undefined;
+    const directory = root;
+    if (directory !== undefined) {
+      return Effect.runPromise(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.remove(directory, { recursive: true, force: true });
+          yield* Effect.sync(() => {
+            root = undefined;
+          });
+        }).pipe(Effect.provide(BunServices.layer)),
+      );
     }
   });
   return {
@@ -880,15 +902,13 @@ export function mockLegacyShadowContainerCliSpawner(
         const args = command._tag === "StandardCommand" ? command.args : [];
         spawned.push({ args });
         if (command._tag !== "StandardCommand") {
-          return yield* Effect.fail(
-            new PlatformError(
-              new SystemError({
-                _tag: "NotFound",
-                module: "ChildProcess",
-                method: "spawn",
-                description: "spawn failed",
-              }),
-            ),
+          return yield* new PlatformError(
+            new SystemError({
+              _tag: "NotFound",
+              module: "ChildProcess",
+              method: "spawn",
+              description: "spawn failed",
+            }),
           );
         }
         const isLocalDbInspect =
@@ -997,6 +1017,8 @@ export interface BuildLegacyTestRuntimeOpts {
   readonly goOutput?: Option.Option<GoOutputValue>;
   /** Raw argv seen by the handler (e.g. to exercise an explicit `--yes=false`). */
   readonly cliArgs?: ReadonlyArray<string>;
+  /** Explicit shell environment visible to LegacyViperEnv in this scenario. */
+  readonly env?: Record<string, string>;
 }
 
 export function buildLegacyTestRuntime(opts: BuildLegacyTestRuntimeOpts) {
@@ -1009,6 +1031,9 @@ export function buildLegacyTestRuntime(opts: BuildLegacyTestRuntimeOpts) {
   const analytics = (opts.analytics ?? mockAnalytics()).layer;
   const goOutput = opts.goOutput ?? Option.none<GoOutputValue>();
   const httpClient = opts.api.httpClientLayer;
+  const legacyViperEnv = makeLegacyViperEnvLayer(
+    ConfigProvider.fromEnv({ env: opts.env ?? {}, preserveEmptyStrings: true }),
+  );
 
   // When the caller doesn't expose an HttpClient layer, use a stub that fails
   // loudly if any code path tries to consume it. Always wiring HttpClient at
@@ -1050,6 +1075,7 @@ export function buildLegacyTestRuntime(opts: BuildLegacyTestRuntimeOpts) {
     BunServices.layer,
     Layer.succeed(LegacyOutputFlag, goOutput),
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
+    legacyViperEnv,
     linkedProjectCache,
     telemetry,
     analytics,

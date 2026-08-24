@@ -2,18 +2,23 @@ import { Layer } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
+import { legacyCredentialsLayer } from "../../auth/legacy-credentials.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { legacyHttpClientLayer } from "../../auth/legacy-http-debug.layer.ts";
+import { legacyPlatformApiFactoryLayer } from "../../auth/legacy-platform-api-factory.layer.ts";
 import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
 import { legacyDockerRunLayer } from "../../shared/legacy-docker-run.layer.ts";
 import { legacyEdgeRuntimeScriptLayer } from "../../shared/legacy-edge-runtime-script.layer.ts";
+import { legacyLocalGatewayHttpClientLayer } from "../../shared/legacy-local-gateway-http-client.ts";
+import { legacyIdentityStitchLayer } from "../../shared/legacy-identity-stitch.ts";
 import { legacyPgDeltaSslProbeLayer } from "../../shared/legacy-pgdelta-ssl-probe.layer.ts";
 import { legacyStringSliceFlag } from "../../shared/legacy-string-slice-flag.ts";
 import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
+import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { LEGACY_START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import { legacyStart } from "./start.handler.ts";
 
@@ -43,10 +48,13 @@ const config = {
 
 export type LegacyStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// `start` makes no Management API calls and talks directly to Docker, so it
-// deliberately avoids `legacyManagementApiRuntimeLayer` —
-// it provides only the services the handler + instrumentation consume, mirroring
-// `stop`/`status`'s runtime shape. `ChildProcessSpawner`/`ProcessControl`/`RuntimeInfo`
+// `start` makes no eager Management API calls and talks directly to Docker, so it
+// deliberately avoids `legacyManagementApiRuntimeLayer` (the eager API stack). It
+// does expose the lazy `LegacyPlatformApiFactory` because the shared local-project
+// context can take a linked/config interpolation path; constructing that factory
+// does not resolve credentials or make a request, and the local Docker path never
+// invokes it. The remaining services are the handler + instrumentation runtime,
+// mirroring `stop`/`status`'s shape. `ChildProcessSpawner`/`ProcessControl`/`RuntimeInfo`
 // are not listed here: they come from `BunServices`/`processControlLayer`/
 // `runtimeInfoLayer` in the root runtime (`shared/cli/run.ts`), the same way
 // `stop`/`status` rely on the former. `HttpClient.HttpClient` is NOT provided by the
@@ -64,6 +72,16 @@ export type LegacyStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 // for its own call to that function (`push.layers.ts`).
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const credentials = legacyCredentialsLayer.pipe(
+  Layer.provide(cliConfig),
+  Layer.provide(legacyDebugLoggerLayer),
+);
+const platformApiFactory = legacyPlatformApiFactoryLayer.pipe(
+  Layer.provide(credentials),
+  Layer.provide(cliConfig),
+  Layer.provide(legacyDebugLoggerLayer),
+  Layer.provide(legacyIdentityStitchLayer),
+);
 const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
   Layer.provide(legacyDockerRunLayer),
   Layer.provide(cliConfig),
@@ -76,6 +94,9 @@ const legacyStartRuntimeLayer = Layer.mergeAll(
   legacyDockerRunLayer,
   legacyDbConnectionLayer,
   httpClient,
+  platformApiFactory,
+  stdinLayer,
+  legacyLocalGatewayHttpClientLayer,
   edgeRuntime,
   legacyPgDeltaSslProbeLayer,
 );

@@ -114,13 +114,13 @@ export const email = Schema.Struct({
     tags,
     links: [links.auth],
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultMaxFrequency))),
-  otp_length: Schema.Number.annotate({
+  otp_length: Schema.Finite.annotate({
     default: defaultOtpLength,
     description: "Number of characters used in the email OTP.",
     tags,
     links: [links.auth],
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultOtpLength))),
-  otp_expiry: Schema.Number.annotate({
+  otp_expiry: Schema.Finite.annotate({
     default: defaultOtpExpiry,
     description: "Number of seconds before the email OTP expires.",
     tags,
@@ -138,7 +138,7 @@ export const email = Schema.Struct({
         }),
       ),
       port: Schema.optionalKey(
-        Schema.Number.annotate({
+        Schema.Finite.annotate({
           description: "Port number of the SMTP server.",
         }),
       ),

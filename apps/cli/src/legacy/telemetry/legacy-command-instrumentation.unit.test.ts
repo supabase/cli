@@ -1,7 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, Stdio } from "effect";
+import { BunServices } from "@effect/platform-bun";
+import { Cause, Effect, Exit, Formatter, Layer, Option, Stdio } from "effect";
 import { Flag } from "effect/unstable/cli";
-import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
+import { commandRuntimeLayer as rawCommandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.ts";
 import {
   LegacyAgentFlag,
   LegacyDebugFlag,
@@ -29,6 +30,9 @@ import {
   LegacyInvalidOutputFormatError,
 } from "../shared/legacy-go-output-flag.ts";
 import { mockOutput, mockProcessControl } from "../../../tests/helpers/mocks.ts";
+
+const commandRuntimeLayer = (commandPath: ReadonlyArray<string>) =>
+  rawCommandRuntimeLayer(commandPath).pipe(Layer.provide(BunServices.layer));
 
 const FAILURE_PROPERTY_NAMES = [
   PropErrorKind,
@@ -116,15 +120,17 @@ describe("withLegacyCommandInstrumentation", () => {
       expect(typeof span.attributes.get("command_run_id")).toBe("string");
     }).pipe(
       withLegacyCommandInstrumentation(),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["backups", "list"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["backups", "list"]),
+          }),
+          commandRuntimeLayer(["backups", "list"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["backups", "list"])),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
@@ -147,15 +153,17 @@ describe("withLegacyCommandInstrumentation", () => {
 
     return Effect.void.pipe(
       withLegacyCommandInstrumentation(),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["backups", "list", "--output", "yaml"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["backups", "list", "--output", "yaml"]),
+          }),
+          commandRuntimeLayer(["backups", "list"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["backups", "list"])),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured[0]?.properties.output_format).toBe("yaml");
@@ -169,22 +177,24 @@ describe("withLegacyCommandInstrumentation", () => {
 
     return Effect.void.pipe(
       withLegacyCommandInstrumentation(),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "json" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed([
-            "backups",
-            "list",
-            "--output",
-            "pretty",
-            "--output-format",
-            "json",
-          ]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "json" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed([
+              "backups",
+              "list",
+              "--output",
+              "pretty",
+              "--output-format",
+              "json",
+            ]),
+          }),
+          commandRuntimeLayer(["backups", "list"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["backups", "list"])),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured[0]?.properties.output_format).toBe("json");
@@ -200,15 +210,17 @@ describe("withLegacyCommandInstrumentation", () => {
       withLegacyCommandInstrumentation({
         flags: { projectRef: Option.some("abcdefghijklmnopqrst") },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["secrets", "list", "--project-ref", "abcdefghijklmnopqrst"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["secrets", "list", "--project-ref", "abcdefghijklmnopqrst"]),
+          }),
+          commandRuntimeLayer(["secrets", "list"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["secrets", "list"])),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
@@ -228,15 +240,17 @@ describe("withLegacyCommandInstrumentation", () => {
       withLegacyCommandInstrumentation({
         flags: { envFile: Option.some("/path/to/.env") },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["secrets", "set", "--env-file=/path/to/.env"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["secrets", "set", "--env-file=/path/to/.env"]),
+          }),
+          commandRuntimeLayer(["secrets", "set"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["secrets", "set"])),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -253,13 +267,15 @@ describe("withLegacyCommandInstrumentation", () => {
       withLegacyCommandInstrumentation({
         flags: { password: Option.some("super-secret") },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({ args: Effect.succeed(["db", "dump", "--password", "super-secret"]) }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["db", "dump", "--password", "super-secret"]) }),
+          commandRuntimeLayer(["db", "dump"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "dump"])),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -280,15 +296,17 @@ describe("withLegacyCommandInstrumentation", () => {
         flags: { schema: Option.some(["public"]) },
         aliases: { s: "schema" },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["db", "lint", "-s", "public"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["db", "lint", "-s", "public"]),
+          }),
+          commandRuntimeLayer(["db", "lint"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "lint"])),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -309,15 +327,17 @@ describe("withLegacyCommandInstrumentation", () => {
         flags: { exclude: ["public.users"], file: Option.some("out.sql") },
         aliases: { s: "schema", x: "exclude", f: "file", p: "password" },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["db", "dump", "-x", "public.users", "-f", "out.sql"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["db", "dump", "-x", "public.users", "-f", "out.sql"]),
+          }),
+          commandRuntimeLayer(["db", "dump"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "dump"])),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -337,15 +357,17 @@ describe("withLegacyCommandInstrumentation", () => {
         flags: { file: Option.some("query.sql") },
         aliases: { f: "file" },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["db", "query", "-f", "query.sql"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["db", "query", "-f", "query.sql"]),
+          }),
+          commandRuntimeLayer(["db", "query"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "query"])),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -365,24 +387,26 @@ describe("withLegacyCommandInstrumentation", () => {
         flags: { schema: ["public"], password: Option.some("secret") },
         aliases: { s: "schema", p: "password" },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed([
-            "db",
-            "schema",
-            "declarative",
-            "generate",
-            "-s",
-            "public",
-            "-p",
-            "secret",
-          ]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed([
+              "db",
+              "schema",
+              "declarative",
+              "generate",
+              "-s",
+              "public",
+              "-p",
+              "secret",
+            ]),
+          }),
+          commandRuntimeLayer(["db", "schema", "declarative", "generate"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "schema", "declarative", "generate"])),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -402,24 +426,26 @@ describe("withLegacyCommandInstrumentation", () => {
         flags: { schema: ["public"], file: Option.some("out.sql") },
         aliases: { s: "schema", f: "file" },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed([
-            "db",
-            "schema",
-            "declarative",
-            "sync",
-            "-s",
-            "public",
-            "-f",
-            "out.sql",
-          ]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed([
+              "db",
+              "schema",
+              "declarative",
+              "sync",
+              "-s",
+              "public",
+              "-f",
+              "out.sql",
+            ]),
+          }),
+          commandRuntimeLayer(["db", "schema", "declarative", "sync"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "schema", "declarative", "sync"])),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -439,20 +465,22 @@ describe("withLegacyCommandInstrumentation", () => {
           disableDbSslEnforcement: false,
         },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed([
-            "ssl-enforcement",
-            "update",
-            "--enable-db-ssl-enforcement",
-            "--disable-db-ssl-enforcement",
-          ]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed([
+              "ssl-enforcement",
+              "update",
+              "--enable-db-ssl-enforcement",
+              "--disable-db-ssl-enforcement",
+            ]),
+          }),
+          commandRuntimeLayer(["ssl-enforcement", "update"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["ssl-enforcement", "update"])),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -473,15 +501,17 @@ describe("withLegacyCommandInstrumentation", () => {
         flags: { projectRef: Option.some("abcdefghijklmnopqrst") },
         safeFlags: ["project-ref"],
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["link", "--project-ref", "abcdefghijklmnopqrst"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["link", "--project-ref", "abcdefghijklmnopqrst"]),
+          }),
+          commandRuntimeLayer(["link"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["link"])),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -504,13 +534,15 @@ describe("withLegacyCommandInstrumentation", () => {
         flags: { lang: "python" },
         config,
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({ args: Effect.succeed(["gen", "types", "--lang", "python"]) }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["gen", "types", "--lang", "python"]) }),
+          commandRuntimeLayer(["gen", "types"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["gen", "types"])),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -537,13 +569,17 @@ describe("withLegacyCommandInstrumentation", () => {
           flags: { algorithm: "RS256" },
           config,
         }),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
         Effect.provide(
-          Stdio.layerTest({ args: Effect.succeed(["gen", "signing-key", "--algorithm", "RS256"]) }),
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({
+              args: Effect.succeed(["gen", "signing-key", "--algorithm", "RS256"]),
+            }),
+            commandRuntimeLayer(["gen", "signing-key"]),
+          ),
         ),
-        Effect.provide(commandRuntimeLayer(["gen", "signing-key"])),
         Effect.tap(() =>
           Effect.sync(() => {
             const event = analytics.captured[0];
@@ -571,11 +607,15 @@ describe("withLegacyCommandInstrumentation", () => {
           config,
           aliases: { t: "type" },
         }),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
-        Effect.provide(Stdio.layerTest({ args: Effect.succeed(["sso", "add", "-t", "saml"]) })),
-        Effect.provide(commandRuntimeLayer(["sso", "add"])),
+        Effect.provide(
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({ args: Effect.succeed(["sso", "add", "-t", "saml"]) }),
+            commandRuntimeLayer(["sso", "add"]),
+          ),
+        ),
         Effect.tap(() =>
           Effect.sync(() => {
             const event = analytics.captured[0];
@@ -597,13 +637,15 @@ describe("withLegacyCommandInstrumentation", () => {
         flags: { algorithm: Option.some("ES256") },
         config,
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({ args: Effect.succeed(["gen", "signing-key", "--algorithm", "ES256"]) }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["gen", "signing-key", "--algorithm", "ES256"]) }),
+          commandRuntimeLayer(["gen", "signing-key"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["gen", "signing-key"])),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -625,15 +667,17 @@ describe("withLegacyCommandInstrumentation", () => {
         flags: { lang: "go", schema: "public" },
         config,
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["gen", "types", "--lang", "go", "--schema", "public"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["gen", "types", "--lang", "go", "--schema", "public"]),
+          }),
+          commandRuntimeLayer(["gen", "types"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["gen", "types"])),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -648,11 +692,15 @@ describe("withLegacyCommandInstrumentation", () => {
 
     return Effect.void.pipe(
       withLegacyCommandInstrumentation({ flags: {} }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
-      Effect.provide(commandRuntimeLayer(["backups", "list"])),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) }),
+          commandRuntimeLayer(["backups", "list"]),
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -669,11 +717,15 @@ describe("withLegacyCommandInstrumentation", () => {
     return withLegacyCommandInstrumentation()(
       Effect.fail(new LegacyDbDumpRunError({ message: secret })),
     ).pipe(
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
-      Effect.provide(commandRuntimeLayer(["backups", "list"])),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) }),
+          commandRuntimeLayer(["backups", "list"]),
+        ),
+      ),
       Effect.exit,
       Effect.tap(() =>
         Effect.sync(() => {
@@ -688,7 +740,7 @@ describe("withLegacyCommandInstrumentation", () => {
           });
           expect(analytics.captured[0]?.properties).not.toHaveProperty(PropSuggestedCommand);
           expect(analytics.captured[0]?.properties).not.toHaveProperty(PropWorkflow);
-          expect(JSON.stringify(analytics.captured[0])).not.toContain(secret);
+          expect(Formatter.formatJson(analytics.captured[0])).not.toContain(secret);
         }),
       ),
       Effect.asVoid,
@@ -700,11 +752,15 @@ describe("withLegacyCommandInstrumentation", () => {
 
     return Effect.fail(failure).pipe(
       withLegacyCommandInstrumentation(),
-      Effect.provide(failingAnalytics(new Error("telemetry defect"))),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "dump"])),
+      Effect.provide(
+        Layer.mergeAll(
+          failingAnalytics(new Error("telemetry defect")),
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) }),
+          commandRuntimeLayer(["db", "dump"]),
+        ),
+      ),
       Effect.exit,
       Effect.tap((exit) =>
         Effect.sync(() => {
@@ -725,11 +781,15 @@ describe("withLegacyCommandInstrumentation", () => {
     // is being cancelled and swallowing would fight the cancellation.
     return Effect.void.pipe(
       withLegacyCommandInstrumentation(),
-      Effect.provide(interruptingAnalytics()),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "dump"])),
+      Effect.provide(
+        Layer.mergeAll(
+          interruptingAnalytics(),
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) }),
+          commandRuntimeLayer(["db", "dump"]),
+        ),
+      ),
       Effect.exit,
       Effect.tap((exit) =>
         Effect.sync(() => {
@@ -757,11 +817,15 @@ describe("withLegacyCommandInstrumentation", () => {
       yield* pc.setExitCode(1);
     }).pipe(
       withLegacyCommandInstrumentation(),
-      Effect.provide(analytics.layer),
-      Effect.provide(processControl.layer),
-      Effect.provide(mockOutput({ format: "json" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "lint"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "lint"])),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          processControl.layer,
+          mockOutput({ format: "json" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["db", "lint"]) }),
+          commandRuntimeLayer(["db", "lint"]),
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
@@ -787,11 +851,15 @@ describe("withLegacyCommandInstrumentation", () => {
       yield* pc.setExitCode(1);
     }).pipe(
       withLegacyCommandInstrumentation(),
-      Effect.provide(analytics.layer),
-      Effect.provide(processControl.layer),
-      Effect.provide(mockOutput({ format: "json" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "advisors"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "advisors"])),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          processControl.layer,
+          mockOutput({ format: "json" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["db", "advisors"]) }),
+          commandRuntimeLayer(["db", "advisors"]),
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured[0]?.properties).toMatchObject({
@@ -826,11 +894,15 @@ describe("withLegacyCommandInstrumentation", () => {
           yield* pc.setExitCode(1);
         }),
       ),
-      Effect.provide(analytics.layer),
-      Effect.provide(processControl.layer),
-      Effect.provide(mockOutput({ format: "json" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "dump"])),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          processControl.layer,
+          mockOutput({ format: "json" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["db", "dump"]) }),
+          commandRuntimeLayer(["db", "dump"]),
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured[0]?.properties).toMatchObject({
@@ -854,11 +926,15 @@ describe("withLegacyCommandInstrumentation", () => {
       yield* pc.setExitCode(2);
     }).pipe(
       withLegacyCommandInstrumentation(),
-      Effect.provide(analytics.layer),
-      Effect.provide(processControl.layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["unknown", "command"]) })),
-      Effect.provide(commandRuntimeLayer(["unknown", "command"])),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          processControl.layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["unknown", "command"]) }),
+          commandRuntimeLayer(["unknown", "command"]),
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured[0]?.properties).toMatchObject({
@@ -877,13 +953,17 @@ describe("withLegacyCommandInstrumentation", () => {
   it.live("skips analytics capture when analytics are disabled", () => {
     const analytics = mockContextualAnalytics();
 
-    return Effect.sync(() => "ok").pipe(
+    return Effect.succeed("ok").pipe(
       withLegacyCommandInstrumentation({ analytics: false }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["telemetry", "enable"]) })),
-      Effect.provide(commandRuntimeLayer(["telemetry", "enable"])),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["telemetry", "enable"]) }),
+          commandRuntimeLayer(["telemetry", "enable"]),
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toEqual([]);
@@ -902,21 +982,23 @@ describe("withLegacyCommandInstrumentation", () => {
           timestamp: Option.some(1707407047),
         },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed([
-            "backups",
-            "restore",
-            "--timestamp=1707407047",
-            "--project-ref",
-            "abcdefghijklmnopqrst",
-          ]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed([
+              "backups",
+              "restore",
+              "--timestamp=1707407047",
+              "--project-ref",
+              "abcdefghijklmnopqrst",
+            ]),
+          }),
+          commandRuntimeLayer(["backups", "restore"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["backups", "restore"])),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -931,15 +1013,18 @@ describe("withLegacyCommandInstrumentation", () => {
   it.live("rejects an -o value outside the command's enum, before running it", () => {
     const analytics = mockContextualAnalytics();
 
-    return Effect.sync(() => "must not run").pipe(
+    return Effect.succeed("must not run").pipe(
       withLegacyCommandInstrumentation({ flags: {} }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list", "-o", "table"]) })),
-      Effect.provide(commandRuntimeLayer(["backups", "list"])),
-      // `table` is valid on the shared global union but not for a resource command.
-      Effect.provide(Layer.succeed(LegacyOutputFlag, Option.some("table" as const))),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockOutput({ format: "text" }).layer,
+          mockProcessControl().layer,
+          Stdio.layerTest({ args: Effect.succeed(["backups", "list", "-o", "table"]) }),
+          commandRuntimeLayer(["backups", "list"]),
+          Layer.succeed(LegacyOutputFlag, Option.some("table" as const)),
+        ),
+      ),
       Effect.flip,
       Effect.tap((error) =>
         Effect.sync(() => {
@@ -957,14 +1042,18 @@ describe("withLegacyCommandInstrumentation", () => {
   it.live("accepts a command-specific -o value declared via outputFormats", () => {
     const analytics = mockContextualAnalytics();
 
-    return Effect.sync(() => "ok").pipe(
+    return Effect.succeed("ok").pipe(
       withLegacyCommandInstrumentation({ flags: {}, outputFormats: LEGACY_QUERY_OUTPUT_FORMATS }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "query", "-o", "csv"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "query"])),
-      Effect.provide(Layer.succeed(LegacyOutputFlag, Option.some("csv" as const))),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockOutput({ format: "text" }).layer,
+          mockProcessControl().layer,
+          Stdio.layerTest({ args: Effect.succeed(["db", "query", "-o", "csv"]) }),
+          commandRuntimeLayer(["db", "query"]),
+          Layer.succeed(LegacyOutputFlag, Option.some("csv" as const)),
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
@@ -984,12 +1073,16 @@ describe("withLegacyCommandInstrumentation", () => {
 
     return Effect.void.pipe(
       withLegacyCommandInstrumentation(),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["link"]) })),
-      Effect.provide(commandRuntimeLayer(["link"])),
-      Effect.provide(stitch.layer),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["link"]) }),
+          commandRuntimeLayer(["link"]),
+          stitch.layer,
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
@@ -1002,14 +1095,18 @@ describe("withLegacyCommandInstrumentation", () => {
   it.live("rejects a resource-only -o value for db query's narrower enum", () => {
     const analytics = mockContextualAnalytics();
 
-    return Effect.sync(() => "must not run").pipe(
+    return Effect.succeed("must not run").pipe(
       withLegacyCommandInstrumentation({ flags: {}, outputFormats: LEGACY_QUERY_OUTPUT_FORMATS }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["db", "query", "-o", "yaml"]) })),
-      Effect.provide(commandRuntimeLayer(["db", "query"])),
-      Effect.provide(Layer.succeed(LegacyOutputFlag, Option.some("yaml" as const))),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockOutput({ format: "text" }).layer,
+          mockProcessControl().layer,
+          Stdio.layerTest({ args: Effect.succeed(["db", "query", "-o", "yaml"]) }),
+          commandRuntimeLayer(["db", "query"]),
+          Layer.succeed(LegacyOutputFlag, Option.some("yaml" as const)),
+        ),
+      ),
       Effect.flip,
       Effect.tap((error) =>
         Effect.sync(() => {
@@ -1027,12 +1124,16 @@ describe("withLegacyCommandInstrumentation", () => {
 
     return Effect.void.pipe(
       withLegacyCommandInstrumentation(),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["link"]) })),
-      Effect.provide(commandRuntimeLayer(["link"])),
-      Effect.provide(stitch.layer),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["link"]) }),
+          commandRuntimeLayer(["link"]),
+          stitch.layer,
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(analytics.captured).toHaveLength(1);
@@ -1051,11 +1152,15 @@ describe("withLegacyCommandInstrumentation", () => {
 
       return Effect.void.pipe(
         withLegacyCommandInstrumentation(),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
-        Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) })),
-        Effect.provide(commandRuntimeLayer(["backups", "list"])),
+        Effect.provide(
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({ args: Effect.succeed(["backups", "list"]) }),
+            commandRuntimeLayer(["backups", "list"]),
+          ),
+        ),
         // Note: no stitch layer provided — serviceOption must default to None
         Effect.tap(() =>
           Effect.sync(() => {
@@ -1082,15 +1187,17 @@ describe("withLegacyCommandInstrumentation", () => {
         flags: { schema: Option.some(["--linked"]) },
         aliases: { s: "schema" },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["db", "lint", "--schema", "--linked"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["db", "lint", "--schema", "--linked"]),
+          }),
+          commandRuntimeLayer(["db", "lint"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "lint"])),
       Effect.tap(() =>
         Effect.sync(() => {
           const flags = analytics.captured[0]?.properties.flags as Record<string, unknown>;
@@ -1111,15 +1218,17 @@ describe("withLegacyCommandInstrumentation", () => {
         flags: { schema: Option.some(["public"]), linked: true },
         aliases: { s: "schema" },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["db", "lint", "--schema=public", "--linked"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["db", "lint", "--schema=public", "--linked"]),
+          }),
+          commandRuntimeLayer(["db", "lint"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "lint"])),
       Effect.tap(() =>
         Effect.sync(() => {
           const flags = analytics.captured[0]?.properties.flags as Record<string, unknown>;
@@ -1140,15 +1249,17 @@ describe("withLegacyCommandInstrumentation", () => {
         flags: { schema: Option.some(["public"]), linked: true },
         aliases: { s: "schema" },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["db", "lint", "-s", "public", "--linked"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["db", "lint", "-s", "public", "--linked"]),
+          }),
+          commandRuntimeLayer(["db", "lint"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "lint"])),
       Effect.tap(() =>
         Effect.sync(() => {
           const flags = analytics.captured[0]?.properties.flags as Record<string, unknown>;
@@ -1170,15 +1281,17 @@ describe("withLegacyCommandInstrumentation", () => {
       withLegacyCommandInstrumentation({
         flags: { dbUrl: Option.some("x"), local: true },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["db", "lint", "--db-url", "x", "--local"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["db", "lint", "--db-url", "x", "--local"]),
+          }),
+          commandRuntimeLayer(["db", "lint"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["db", "lint"])),
       Effect.tap(() =>
         Effect.sync(() => {
           const flags = analytics.captured[0]?.properties.flags as Record<string, unknown>;
@@ -1206,12 +1319,16 @@ describe("withLegacyCommandInstrumentation", () => {
 
     return Effect.void.pipe(
       withLegacyCommandInstrumentation({ flags: {} }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list", "--debug"]) })),
-      Effect.provide(commandRuntimeLayer(["backups", "list"])),
-      Effect.provide(Layer.succeed(LegacyDebugFlag, true)),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["backups", "list", "--debug"]) }),
+          commandRuntimeLayer(["backups", "list"]),
+          Layer.succeed(LegacyDebugFlag, true),
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -1228,22 +1345,24 @@ describe("withLegacyCommandInstrumentation", () => {
       withLegacyCommandInstrumentation({
         flags: { projectRef: Option.some("abcdefghijklmnopqrst") },
       }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed([
-            "secrets",
-            "list",
-            "--project-ref",
-            "abcdefghijklmnopqrst",
-            "--debug",
-          ]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed([
+              "secrets",
+              "list",
+              "--project-ref",
+              "abcdefghijklmnopqrst",
+              "--debug",
+            ]),
+          }),
+          commandRuntimeLayer(["secrets", "list"]),
+          Layer.succeed(LegacyDebugFlag, true),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["secrets", "list"])),
-      Effect.provide(Layer.succeed(LegacyDebugFlag, true)),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -1263,16 +1382,18 @@ describe("withLegacyCommandInstrumentation", () => {
 
       return Effect.void.pipe(
         withLegacyCommandInstrumentation({ flags: {} }),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
         Effect.provide(
-          Stdio.layerTest({
-            args: Effect.succeed(["backups", "list", "--workdir", "/tmp/project"]),
-          }),
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({
+              args: Effect.succeed(["backups", "list", "--workdir", "/tmp/project"]),
+            }),
+            commandRuntimeLayer(["backups", "list"]),
+            Layer.succeed(LegacyWorkdirFlag, Option.some("/tmp/project")),
+          ),
         ),
-        Effect.provide(commandRuntimeLayer(["backups", "list"])),
-        Effect.provide(Layer.succeed(LegacyWorkdirFlag, Option.some("/tmp/project"))),
         Effect.tap(() =>
           Effect.sync(() => {
             const event = analytics.captured[0];
@@ -1290,16 +1411,18 @@ describe("withLegacyCommandInstrumentation", () => {
 
       return Effect.void.pipe(
         withLegacyCommandInstrumentation({ flags: {} }),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
         Effect.provide(
-          Stdio.layerTest({
-            args: Effect.succeed(["backups", "list", "--dns-resolver", "https"]),
-          }),
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({
+              args: Effect.succeed(["backups", "list", "--dns-resolver", "https"]),
+            }),
+            commandRuntimeLayer(["backups", "list"]),
+            Layer.succeed(LegacyDnsResolverFlag, "https" as const),
+          ),
         ),
-        Effect.provide(commandRuntimeLayer(["backups", "list"])),
-        Effect.provide(Layer.succeed(LegacyDnsResolverFlag, "https" as const)),
         Effect.tap(() =>
           Effect.sync(() => {
             const event = analytics.captured[0];
@@ -1317,16 +1440,18 @@ describe("withLegacyCommandInstrumentation", () => {
 
       return Effect.void.pipe(
         withLegacyCommandInstrumentation({ flags: {} }),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
         Effect.provide(
-          Stdio.layerTest({
-            args: Effect.succeed(["backups", "list", "--agent", "yes"]),
-          }),
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({
+              args: Effect.succeed(["backups", "list", "--agent", "yes"]),
+            }),
+            commandRuntimeLayer(["backups", "list"]),
+            Layer.succeed(LegacyAgentFlag, "yes" as const),
+          ),
         ),
-        Effect.provide(commandRuntimeLayer(["backups", "list"])),
-        Effect.provide(Layer.succeed(LegacyAgentFlag, "yes" as const)),
         Effect.tap(() =>
           Effect.sync(() => {
             const event = analytics.captured[0];
@@ -1352,15 +1477,17 @@ describe("withLegacyCommandInstrumentation", () => {
 
       return Effect.void.pipe(
         withLegacyCommandInstrumentation({ flags: { output: "diff.sql" } }),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
         Effect.provide(
-          Stdio.layerTest({
-            args: Effect.succeed(["db", "diff", "--output", "diff.sql"]),
-          }),
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({
+              args: Effect.succeed(["db", "diff", "--output", "diff.sql"]),
+            }),
+            commandRuntimeLayer(["db", "diff"]),
+          ),
         ),
-        Effect.provide(commandRuntimeLayer(["db", "diff"])),
         Effect.tap(() =>
           Effect.sync(() => {
             const event = analytics.captured[0];
@@ -1380,11 +1507,15 @@ describe("withLegacyCommandInstrumentation", () => {
 
     return Effect.void.pipe(
       withLegacyCommandInstrumentation({ flags: {} }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list", "--debug"]) })),
-      Effect.provide(commandRuntimeLayer(["backups", "list"])),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["backups", "list", "--debug"]) }),
+          commandRuntimeLayer(["backups", "list"]),
+        ),
+      ),
       // Note: no LegacyDebugFlag layer provided.
       Effect.tap(() =>
         Effect.sync(() => {
@@ -1402,15 +1533,17 @@ describe("withLegacyCommandInstrumentation", () => {
 
     return Effect.void.pipe(
       withLegacyCommandInstrumentation({ flags: {} }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
       Effect.provide(
-        Stdio.layerTest({
-          args: Effect.succeed(["test", "db", "--", "--linked"]),
-        }),
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["test", "db", "--", "--linked"]),
+          }),
+          commandRuntimeLayer(["test", "db"]),
+        ),
       ),
-      Effect.provide(commandRuntimeLayer(["test", "db"])),
       Effect.tap(() =>
         Effect.sync(() => {
           // No changed flags → the flags map is omitted entirely; `--linked`
@@ -1434,12 +1567,16 @@ describe("withLegacyCommandInstrumentation", () => {
 
     return Effect.void.pipe(
       withLegacyCommandInstrumentation({ flags: {} }),
-      Effect.provide(analytics.layer),
-      Effect.provide(mockProcessControl().layer),
-      Effect.provide(mockOutput({ format: "text" }).layer),
-      Effect.provide(Stdio.layerTest({ args: Effect.succeed(["backups", "list", "-o", "json"]) })),
-      Effect.provide(commandRuntimeLayer(["backups", "list"])),
-      Effect.provide(Layer.succeed(LegacyOutputFlag, Option.some("json" as const))),
+      Effect.provide(
+        Layer.mergeAll(
+          analytics.layer,
+          mockProcessControl().layer,
+          mockOutput({ format: "text" }).layer,
+          Stdio.layerTest({ args: Effect.succeed(["backups", "list", "-o", "json"]) }),
+          commandRuntimeLayer(["backups", "list"]),
+          Layer.succeed(LegacyOutputFlag, Option.some("json" as const)),
+        ),
+      ),
       Effect.tap(() =>
         Effect.sync(() => {
           const event = analytics.captured[0];
@@ -1470,15 +1607,17 @@ describe("withLegacyCommandInstrumentation", () => {
         withLegacyCommandInstrumentation({
           flags: { envFile: Option.some("--debug") },
         }),
-        Effect.provide(analytics.layer),
-        Effect.provide(mockProcessControl().layer),
-        Effect.provide(mockOutput({ format: "text" }).layer),
         Effect.provide(
-          Stdio.layerTest({
-            args: Effect.succeed(["secrets", "set", "--env-file", "--debug"]),
-          }),
+          Layer.mergeAll(
+            analytics.layer,
+            mockProcessControl().layer,
+            mockOutput({ format: "text" }).layer,
+            Stdio.layerTest({
+              args: Effect.succeed(["secrets", "set", "--env-file", "--debug"]),
+            }),
+            commandRuntimeLayer(["secrets", "set"]),
+          ),
         ),
-        Effect.provide(commandRuntimeLayer(["secrets", "set"])),
         Effect.tap(() =>
           Effect.sync(() => {
             const event = analytics.captured[0];

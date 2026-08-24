@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
+import { Config, Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { lastExplicitLongFlagValue } from "../../shared/cli/cobra-flag-groups.ts";
 import { CLI_VERSION } from "../../shared/cli/version.ts";
@@ -38,6 +38,7 @@ function resolveProfile(
   flagValue: string,
   explicitFlagValue: string | undefined,
   envValue: string | undefined,
+  configuredHome: string | undefined,
   fs: FileSystem.FileSystem,
   path: Path.Path,
   homeDir: string,
@@ -56,7 +57,7 @@ function resolveProfile(
       token = envValue;
     } else {
       // Lowest precedence: the persisted `~/.supabase/profile` file.
-      const filePath = legacyProfileFilePath(path, homeDir);
+      const filePath = legacyProfileFilePath(path, homeDir, configuredHome);
       const content = yield* fs.readFileString(filePath).pipe(
         Effect.tap(() => debugLogger.debug(`Loading profile from file: ${filePath}`)),
         Effect.map(Option.some),
@@ -131,7 +132,11 @@ export const legacyCliConfigLayer = Layer.unwrap(
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const runtimeInfo = yield* RuntimeInfo;
-        const env = process.env;
+        const profileEnv = yield* Config.option(Config.string("SUPABASE_PROFILE"));
+        const supabaseHomeEnv = yield* Config.option(Config.string("SUPABASE_HOME"));
+        const accessTokenEnv = yield* Config.option(Config.string("SUPABASE_ACCESS_TOKEN"));
+        const projectIdEnv = yield* Config.option(Config.string("SUPABASE_PROJECT_ID"));
+        const workdirEnv = yield* Config.option(Config.string("SUPABASE_WORKDIR"));
 
         // `serviceOption`: tests without argv default to "not explicit". The
         // empty command path scans all of argv up to `--`, like pflag.
@@ -150,20 +155,21 @@ export const legacyCliConfigLayer = Layer.unwrap(
         } = yield* resolveProfile(
           profileFlag,
           explicitProfileFlag,
-          env["SUPABASE_PROFILE"],
+          Option.getOrUndefined(profileEnv),
+          Option.getOrUndefined(supabaseHomeEnv),
           fs,
           path,
           runtimeInfo.homeDir,
           debugLogger,
         );
 
-        const rawAccessToken = env["SUPABASE_ACCESS_TOKEN"];
+        const rawAccessToken = Option.getOrUndefined(accessTokenEnv);
         const accessToken =
           rawAccessToken === undefined || rawAccessToken.length === 0
             ? Option.none<Redacted.Redacted<string>>()
             : Option.some(Redacted.make(rawAccessToken, { label: "SUPABASE_ACCESS_TOKEN" }));
 
-        const rawProjectId = env["SUPABASE_PROJECT_ID"];
+        const rawProjectId = Option.getOrUndefined(projectIdEnv);
         const projectId =
           rawProjectId === undefined || rawProjectId.length === 0
             ? Option.none<string>()
@@ -171,7 +177,7 @@ export const legacyCliConfigLayer = Layer.unwrap(
 
         const workdir = yield* resolveWorkdir(
           workdirFlag,
-          env["SUPABASE_WORKDIR"],
+          Option.getOrUndefined(workdirEnv),
           runtimeInfo.cwd,
           (filePath) => fs.exists(filePath).pipe(Effect.orElseSucceed(() => false)),
           path,

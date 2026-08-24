@@ -21,12 +21,10 @@ const promptForAccessibleProject = Effect.fnUntraced(function* () {
   const remote = yield* ProjectLinkRemote;
   const projects = yield* remote.listAccessibleProjects;
   if (projects.length === 0) {
-    return yield* Effect.fail(
-      new NoAccessibleProjectsError({
-        detail: "No accessible Supabase projects were found for this account.",
-        suggestion: "Create a project in the dashboard or log in with a different account.",
-      }),
-    );
+    return yield* new NoAccessibleProjectsError({
+      detail: "No accessible Supabase projects were found for this account.",
+      suggestion: "Create a project in the dashboard or log in with a different account.",
+    });
   }
 
   return yield* output.promptSelect(
@@ -89,12 +87,10 @@ const chooseProjectRef = Effect.fnUntraced(function* (flagProjectRef: Option.Opt
   }
 
   if (!output.interactive) {
-    return yield* Effect.fail(
-      new ProjectRefRequiredError({
-        detail: "A project ref is required in non-interactive mode.",
-        suggestion: "Pass --project-ref or link this checkout interactively first.",
-      }),
-    );
+    return yield* new ProjectRefRequiredError({
+      detail: "A project ref is required in non-interactive mode.",
+      suggestion: "Pass --project-ref or link this checkout interactively first.",
+    });
   }
 
   return yield* promptForAccessibleProject();

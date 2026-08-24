@@ -50,6 +50,7 @@ import { LegacyPlatformApi } from "../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../config/legacy-project-ref.service.ts";
 import { LegacyIdentityStitch } from "../../shared/legacy-identity-stitch.ts";
 import { LegacyTemplateService } from "./bootstrap.templates.ts";
+import { makeLegacyViperEnvLayer } from "../../../shared/legacy/legacy-viper-env.ts";
 
 import { legacyBootstrapRuntimeLayer } from "./bootstrap.layers.ts";
 
@@ -124,6 +125,7 @@ function ambientStubs() {
     mockLegacyLinkedProjectCacheLayer,
     mockLegacyTelemetryStateLayer,
     heavyServiceStubs,
+    makeLegacyViperEnvLayer(),
   );
 }
 
@@ -134,7 +136,7 @@ describe("legacyBootstrapRuntimeLayer — LegacyIdentityStitch exposure", () => 
       return Effect.gen(function* () {
         const stitch = yield* Effect.serviceOption(LegacyIdentityStitch);
         expect(Option.isSome(stitch)).toBe(true);
-      }).pipe(Effect.provide(legacyBootstrapRuntimeLayer), Effect.provide(ambientStubs()));
+      }).pipe(Effect.provide(legacyBootstrapRuntimeLayer.pipe(Layer.provideMerge(ambientStubs()))));
     },
   );
 });

@@ -16,9 +16,11 @@
     "@supabase/cli-test-helpers": "workspace:*"
   },
   "devDependencies": {
+    "@effect/platform-bun": "catalog:",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@vitest/coverage-istanbul": "catalog:",
+    "effect": "catalog:",
     "knip": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",

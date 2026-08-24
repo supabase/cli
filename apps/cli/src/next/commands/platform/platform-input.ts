@@ -12,9 +12,11 @@ import type {
 } from "./platform-types.ts";
 
 type JsonRecord = Record<string, unknown>;
-type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+type JsonValue = Schema.Json;
 const textEncoder = new TextEncoder();
 type MultipartUploadKind = "single" | "array";
+const decodeJsonText = (raw: string): Schema.Json =>
+  Schema.decodeSync(Schema.fromJsonString(Schema.Json))(raw);
 
 const isRecord = (value: unknown): value is JsonRecord =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -37,11 +39,8 @@ const parseJsonRecord = (
   raw: string,
   kind: "json" | "params",
 ): Effect.Effect<JsonRecord, PlatformInputError> =>
-  Effect.try({
-    try: () => JSON.parse(raw),
-    catch: (cause) =>
-      invalidJsonInput(kind, cause instanceof Error ? cause.message : String(cause)),
-  }).pipe(
+  Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(raw).pipe(
+    Effect.mapError((cause) => invalidJsonInput(kind, String(cause))),
     Effect.flatMap((value) =>
       isRecord(value)
         ? Effect.succeed(value)
@@ -61,11 +60,9 @@ const readJsonSource = (
     if (raw === "-") {
       const piped = yield* stdin.readPipedText;
       if (Option.isNone(piped)) {
-        return yield* Effect.fail(
-          invalidJsonInput(
-            kind,
-            `No piped stdin content was available for ${formatSourceLabel(kind)}.`,
-          ),
+        return yield* invalidJsonInput(
+          kind,
+          `No piped stdin content was available for ${formatSourceLabel(kind)}.`,
         );
       }
       return yield* parseJsonRecord(piped.value, kind);
@@ -73,11 +70,9 @@ const readJsonSource = (
 
     return yield* parseJsonRecord(raw, kind);
   }).pipe(
-    Effect.catch((cause) =>
-      Effect.fail(
-        toPlatformInputError(cause, () =>
-          invalidJsonInput(kind, cause instanceof Error ? cause.message : String(cause)),
-        ),
+    Effect.mapError((cause) =>
+      toPlatformInputError(cause, () =>
+        invalidJsonInput(kind, cause instanceof Error ? cause.message : String(cause)),
       ),
     ),
   );
@@ -198,12 +193,10 @@ export function mergePlatformInput(options: {
   return Effect.gen(function* () {
     if (Option.isSome(options.jsonValues)) {
       if (!expectsStructuredJsonBody) {
-        return yield* Effect.fail(
-          new PlatformInputError({
-            message: `This command does not accept ${formatSourceLabel("json")}.`,
-            suggestion: unsupportedJsonSuggestion(options.descriptor),
-          }),
-        );
+        return yield* new PlatformInputError({
+          message: `This command does not accept ${formatSourceLabel("json")}.`,
+          suggestion: unsupportedJsonSuggestion(options.descriptor),
+        });
       }
       yield* validateInputKeys(
         options.descriptor,
@@ -270,12 +263,10 @@ const requireInteractivePrompts = Effect.gen(function* () {
   const stdin = yield* Stdin;
 
   if (output.format !== "text" || !stdin.isTTY) {
-    return yield* Effect.fail(
-      new NonInteractiveError({
-        detail: "Cannot prompt for missing platform request fields in non-interactive mode.",
-        suggestion: "Provide all required values with --json or --params.",
-      }),
-    );
+    return yield* new NonInteractiveError({
+      detail: "Cannot prompt for missing platform request fields in non-interactive mode.",
+      suggestion: "Provide all required values with --json or --params.",
+    });
   }
 
   return output;
@@ -314,13 +305,13 @@ const promptForField = (
               return isNodeRequired(field) ? `${label} is required` : undefined;
             }
             try {
-              JSON.parse(value);
+              decodeJsonText(value);
             } catch (cause) {
               return cause instanceof Error ? cause.message : "Invalid JSON";
             }
           },
         });
-        return JSON.parse(raw);
+        return decodeJsonText(raw);
       }
       case "integer":
       case "number": {
@@ -384,20 +375,32 @@ export const decodePlatformInput = <S extends Schema.ConstraintDecoder<unknown, 
   schema: S,
   input: JsonRecord,
 ): Effect.Effect<S["Type"], PlatformInputError> =>
-  Effect.try({
-    try: () => Schema.decodeUnknownSync(schema)(input),
-    catch: (cause) =>
-      new PlatformInputError({
-        message: "The request payload does not match the operation schema.",
-        detail: cause instanceof Error ? cause.message : String(cause),
-        suggestion: `Run \`${formatPlatformApiSchemaCommand(descriptor)}\` to inspect the documented request and response shape.`,
-      }),
-  });
+  Schema.decodeEffect(schema)(input).pipe(
+    Effect.mapError(
+      (cause) =>
+        new PlatformInputError({
+          message: "The request payload does not match the operation schema.",
+          detail: String(cause),
+          suggestion: `Run \`${formatPlatformApiSchemaCommand(descriptor)}\` to inspect the documented request and response shape.`,
+        }),
+    ),
+  );
 
 function interpolatePath(pathTemplate: string, input: JsonRecord): string {
   return pathTemplate.replaceAll(/\{([^}]+)\}/g, (_match, key: string) => {
     const value = input[key];
-    return value === undefined ? `{${key}}` : encodeURIComponent(String(value));
+    if (value === undefined) return `{${key}}`;
+    if (Array.isArray(value)) {
+      return encodeURIComponent(value.map((entry) => String(entry)).join(","));
+    }
+    if (typeof value === "object" && value !== null) {
+      return encodeURIComponent(Object.keys(value).join(","));
+    }
+    if (typeof value === "string") return encodeURIComponent(value);
+    if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+      return encodeURIComponent(value.toString());
+    }
+    return encodeURIComponent(value === null ? "null" : "undefined");
   });
 }
 
@@ -537,14 +540,11 @@ function invalidBodyInput(detail: string, suggestion: string) {
 }
 
 function parseJsonValue(raw: string): Effect.Effect<JsonValue, PlatformInputError> {
-  return Effect.try({
-    try: () => JSON.parse(raw) as JsonValue,
-    catch: (cause) =>
-      invalidBodyInput(
-        cause instanceof Error ? cause.message : String(cause),
-        "Pass inline JSON or - for stdin to --body.",
-      ),
-  });
+  return Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(raw).pipe(
+    Effect.mapError((cause) =>
+      invalidBodyInput(String(cause), "Pass inline JSON or - for stdin to --body."),
+    ),
+  );
 }
 
 function readBodyText(raw: string): Effect.Effect<string, PlatformInputError, Stdin> {
@@ -554,11 +554,9 @@ function readBodyText(raw: string): Effect.Effect<string, PlatformInputError, St
     if (raw === "-") {
       const piped = yield* stdin.readPipedText;
       if (Option.isNone(piped)) {
-        return yield* Effect.fail(
-          invalidBodyInput(
-            "No piped stdin content was available for --body.",
-            "Provide inline content or piped stdin to --body.",
-          ),
+        return yield* invalidBodyInput(
+          "No piped stdin content was available for --body.",
+          "Provide inline content or piped stdin to --body.",
         );
       }
       return piped.value;
@@ -566,13 +564,11 @@ function readBodyText(raw: string): Effect.Effect<string, PlatformInputError, St
 
     return raw;
   }).pipe(
-    Effect.catch((cause) =>
-      Effect.fail(
-        toPlatformInputError(cause, () =>
-          invalidBodyInput(
-            cause instanceof Error ? cause.message : String(cause),
-            "Pass inline content or - for stdin to --body.",
-          ),
+    Effect.mapError((cause) =>
+      toPlatformInputError(cause, () =>
+        invalidBodyInput(
+          cause instanceof Error ? cause.message : String(cause),
+          "Pass inline content or - for stdin to --body.",
         ),
       ),
     ),
@@ -586,19 +582,18 @@ function readBodyFileText(
     const fs = yield* FileSystem.FileSystem;
     const exists = yield* fs.exists(filePath);
     if (!exists) {
-      return yield* Effect.fail(
-        invalidBodyInput(`File not found: ${filePath}`, "Check the path passed to --body-file."),
+      return yield* invalidBodyInput(
+        `File not found: ${filePath}`,
+        "Check the path passed to --body-file.",
       );
     }
     return yield* fs.readFileString(filePath);
   }).pipe(
-    Effect.catch((cause) =>
-      Effect.fail(
-        toPlatformInputError(cause, () =>
-          invalidBodyInput(
-            cause instanceof Error ? cause.message : String(cause),
-            "Pass a readable file path to --body-file.",
-          ),
+    Effect.mapError((cause) =>
+      toPlatformInputError(cause, () =>
+        invalidBodyInput(
+          cause instanceof Error ? cause.message : String(cause),
+          "Pass a readable file path to --body-file.",
         ),
       ),
     ),
@@ -612,19 +607,18 @@ function readBodyFileBytes(
     const fs = yield* FileSystem.FileSystem;
     const exists = yield* fs.exists(filePath);
     if (!exists) {
-      return yield* Effect.fail(
-        invalidBodyInput(`File not found: ${filePath}`, "Check the path passed to --body-file."),
+      return yield* invalidBodyInput(
+        `File not found: ${filePath}`,
+        "Check the path passed to --body-file.",
       );
     }
     return yield* fs.readFile(filePath);
   }).pipe(
-    Effect.catch((cause) =>
-      Effect.fail(
-        toPlatformInputError(cause, () =>
-          invalidBodyInput(
-            cause instanceof Error ? cause.message : String(cause),
-            "Pass a readable file path to --body-file.",
-          ),
+    Effect.mapError((cause) =>
+      toPlatformInputError(cause, () =>
+        invalidBodyInput(
+          cause instanceof Error ? cause.message : String(cause),
+          "Pass a readable file path to --body-file.",
         ),
       ),
     ),
@@ -638,11 +632,9 @@ function parseBinaryBody(raw: string): Effect.Effect<Uint8Array, PlatformInputEr
     if (raw === "-") {
       const piped = yield* stdin.readPipedBytes;
       if (Option.isNone(piped)) {
-        return yield* Effect.fail(
-          invalidBodyInput(
-            "No piped stdin content was available for --body.",
-            "This request expects raw bytes. Provide `--body-file <path>` or pipe bytes to `--body -`.",
-          ),
+        return yield* invalidBodyInput(
+          "No piped stdin content was available for --body.",
+          "This request expects raw bytes. Provide `--body-file <path>` or pipe bytes to `--body -`.",
         );
       }
       return piped.value;
@@ -650,13 +642,11 @@ function parseBinaryBody(raw: string): Effect.Effect<Uint8Array, PlatformInputEr
 
     return textEncoder.encode(raw);
   }).pipe(
-    Effect.catch((cause) =>
-      Effect.fail(
-        toPlatformInputError(cause, () =>
-          invalidBodyInput(
-            cause instanceof Error ? cause.message : String(cause),
-            "This request expects raw bytes. Use `--body-file <path>`, `--body -`, or inline text if you want UTF-8 bytes.",
-          ),
+    Effect.mapError((cause) =>
+      toPlatformInputError(cause, () =>
+        invalidBodyInput(
+          cause instanceof Error ? cause.message : String(cause),
+          "This request expects raw bytes. Use `--body-file <path>`, `--body -`, or inline text if you want UTF-8 bytes.",
         ),
       ),
     ),
@@ -688,11 +678,9 @@ export const parsePlatformBodySource = (
 ): Effect.Effect<Option.Option<unknown>, PlatformInputError, FileSystem.FileSystem | Stdin> =>
   Effect.gen(function* () {
     if (Option.isSome(raw.body) && Option.isSome(raw.bodyFile)) {
-      return yield* Effect.fail(
-        invalidBodyInput(
-          "Cannot use --body and --body-file together.",
-          "Choose one raw body source and retry.",
-        ),
+      return yield* invalidBodyInput(
+        "Cannot use --body and --body-file together.",
+        "Choose one raw body source and retry.",
       );
     }
 
@@ -701,38 +689,30 @@ export const parsePlatformBodySource = (
     }
 
     if (descriptor.kind === "none") {
-      return yield* Effect.fail(
-        invalidBodyInput(
-          "This command does not accept raw request body input.",
-          "Remove --body and --body-file and retry.",
-        ),
+      return yield* invalidBodyInput(
+        "This command does not accept raw request body input.",
+        "Remove --body and --body-file and retry.",
       );
     }
 
     if (descriptor.kind === "json" && descriptor.schema?.kind === "object") {
-      return yield* Effect.fail(
-        invalidBodyInput(
-          "This command expects an object JSON body.",
-          "Use --json for object-shaped JSON request bodies.",
-        ),
+      return yield* invalidBodyInput(
+        "This command expects an object JSON body.",
+        "Use --json for object-shaped JSON request bodies.",
       );
     }
 
     if (descriptor.kind === "multipart") {
-      return yield* Effect.fail(
-        invalidBodyInput(
-          "This command expects multipart input split across --json and --upload.",
-          "Use --json for structured fields and --upload field=path for binary fields.",
-        ),
+      return yield* invalidBodyInput(
+        "This command expects multipart input split across --json and --upload.",
+        "Use --json for structured fields and --upload field=path for binary fields.",
       );
     }
 
     if (descriptor.kind === "urlencoded") {
-      return yield* Effect.fail(
-        invalidBodyInput(
-          "This command expects structured form fields.",
-          "Use --json for object-shaped request bodies. The CLI serializes them as urlencoded form data.",
-        ),
+      return yield* invalidBodyInput(
+        "This command expects structured form fields.",
+        "Use --json for object-shaped request bodies. The CLI serializes them as urlencoded form data.",
       );
     }
 
@@ -741,8 +721,9 @@ export const parsePlatformBodySource = (
         return Option.some(yield* readBodyFileBytes(raw.bodyFile.value));
       }
       if (Option.isNone(raw.body)) {
-        return yield* Effect.fail(
-          invalidBodyInput("Missing raw request body input.", "Provide --body or --body-file."),
+        return yield* invalidBodyInput(
+          "Missing raw request body input.",
+          "Provide --body or --body-file.",
         );
       }
       return Option.some(yield* parseBinaryBody(raw.body.value));
@@ -752,8 +733,9 @@ export const parsePlatformBodySource = (
       return Option.some(yield* parseNonObjectJsonBodyFile(raw.bodyFile.value));
     }
     if (Option.isNone(raw.body)) {
-      return yield* Effect.fail(
-        invalidBodyInput("Missing request body input.", "Provide --body or --body-file."),
+      return yield* invalidBodyInput(
+        "Missing request body input.",
+        "Provide --body or --body-file.",
       );
     }
 
@@ -796,11 +778,9 @@ function readUploadBytes(
       const stdin = yield* Stdin;
       const piped = yield* stdin.readPipedBytes;
       if (Option.isNone(piped)) {
-        return yield* Effect.fail(
-          invalidUploadInput(
-            `No piped stdin content was available for multipart field "${field}".`,
-            `Pipe bytes to stdin or pass a file path to --upload ${field}=...`,
-          ),
+        return yield* invalidUploadInput(
+          `No piped stdin content was available for multipart field "${field}".`,
+          `Pipe bytes to stdin or pass a file path to --upload ${field}=...`,
         );
       }
       return piped.value;
@@ -811,22 +791,18 @@ function readUploadBytes(
     const fs = yield* FileSystem.FileSystem;
     const exists = yield* fs.exists(source);
     if (!exists) {
-      return yield* Effect.fail(
-        invalidUploadInput(
-          `File not found for multipart field "${field}": ${source}`,
-          `Check the path passed to --upload ${field}=...`,
-        ),
+      return yield* invalidUploadInput(
+        `File not found for multipart field "${field}": ${source}`,
+        `Check the path passed to --upload ${field}=...`,
       );
     }
     return yield* fs.readFile(source);
   }).pipe(
-    Effect.catch((cause) =>
-      Effect.fail(
-        toPlatformInputError(cause, () =>
-          invalidUploadInput(
-            cause instanceof Error ? cause.message : String(cause),
-            `Check the path passed to --upload ${field}=...`,
-          ),
+    Effect.mapError((cause) =>
+      toPlatformInputError(cause, () =>
+        invalidUploadInput(
+          cause instanceof Error ? cause.message : String(cause),
+          `Check the path passed to --upload ${field}=...`,
         ),
       ),
     ),
@@ -855,11 +831,9 @@ export const parsePlatformUploadSources = (
     }
 
     if (descriptor.kind !== "multipart") {
-      return yield* Effect.fail(
-        invalidUploadInput(
-          "This command does not accept --upload.",
-          "Remove --upload and retry, or use --body-file for raw binary request bodies.",
-        ),
+      return yield* invalidUploadInput(
+        "This command does not accept --upload.",
+        "Remove --upload and retry, or use --body-file for raw binary request bodies.",
       );
     }
 
@@ -880,20 +854,16 @@ export const parsePlatformUploadSources = (
       const kind = multipartUploadKind(property);
 
       if (property === undefined) {
-        return yield* Effect.fail(
-          invalidUploadInput(
-            `Unknown multipart upload field: ${field}`,
-            "Run `supabase api request <route> --schema` to inspect the multipart body shape.",
-          ),
+        return yield* invalidUploadInput(
+          `Unknown multipart upload field: ${field}`,
+          "Run `supabase api request <route> --schema` to inspect the multipart body shape.",
         );
       }
 
       if (kind === undefined) {
-        return yield* Effect.fail(
-          invalidUploadInput(
-            `${field} is not a binary multipart field.`,
-            "Use --json for structured multipart fields and --upload only for binary fields.",
-          ),
+        return yield* invalidUploadInput(
+          `${field} is not a binary multipart field.`,
+          "Use --json for structured multipart fields and --upload only for binary fields.",
         );
       }
 
@@ -905,11 +875,9 @@ export const parsePlatformUploadSources = (
       }
 
       if (uploads[field] !== undefined) {
-        return yield* Effect.fail(
-          invalidUploadInput(
-            `Multipart field "${field}" only accepts a single upload.`,
-            `Pass ${field}=... once, or use a repeated array-valued binary field if the schema supports it.`,
-          ),
+        return yield* invalidUploadInput(
+          `Multipart field "${field}" only accepts a single upload.`,
+          `Pass ${field}=... once, or use a repeated array-valued binary field if the schema supports it.`,
         );
       }
       uploads[field] = value;

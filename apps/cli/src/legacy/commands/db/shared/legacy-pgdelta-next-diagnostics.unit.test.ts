@@ -33,7 +33,7 @@ const debugLayer = (messages: string[]) =>
   });
 
 describe("pg-delta next diagnostic coverage policy", () => {
-  it("summarizes unmodeled kinds and routes nonfatal diagnostic detail to debug", () => {
+  it.effect("summarizes unmodeled kinds and routes nonfatal diagnostic detail to debug", () => {
     const out = mockOutput();
     const debugMessages: string[] = [];
     return Effect.gen(function* () {
@@ -69,10 +69,10 @@ describe("pg-delta next diagnostic coverage policy", () => {
       );
       expect(invitations).toHaveLength(1);
       expect(invitations[0]?.message).toContain("statistics object, text search configuration");
-    }).pipe(Effect.provide(out.layer), Effect.provide(debugLayer(debugMessages)));
+    }).pipe(Effect.provide(Layer.mergeAll(out.layer, debugLayer(debugMessages))));
   });
 
-  it("renders coverage diagnostics and then fails in strict mode", () => {
+  it.effect("renders coverage diagnostics and then fails in strict mode", () => {
     const out = mockOutput();
     const debugMessages: string[] = [];
     return Effect.gen(function* () {
@@ -97,7 +97,7 @@ describe("pg-delta next diagnostic coverage policy", () => {
       expect(out.messages.some(({ message }) => message.includes("supabase issue feature"))).toBe(
         true,
       );
-    }).pipe(Effect.provide(out.layer), Effect.provide(debugLayer(debugMessages)));
+    }).pipe(Effect.provide(Layer.mergeAll(out.layer, debugLayer(debugMessages))));
   });
 
   const skippedStatement = (file: string, statement: string): LegacyPgDeltaNextDiagnostic => ({
@@ -109,7 +109,7 @@ describe("pg-delta next diagnostic coverage policy", () => {
     context: { file, statement },
   });
 
-  it("warns about skipped declarative statements without leaking their SQL", () => {
+  it.effect("warns about skipped declarative statements without leaking their SQL", () => {
     const out = mockOutput();
     const debugMessages: string[] = [];
     return Effect.gen(function* () {
@@ -129,10 +129,10 @@ describe("pg-delta next diagnostic coverage policy", () => {
       });
       expect(out.messages.some(({ message }) => message.includes("s3cret"))).toBe(false);
       expect(debugMessages.some((message) => message.includes("s3cret"))).toBe(true);
-    }).pipe(Effect.provide(out.layer), Effect.provide(debugLayer(debugMessages)));
+    }).pipe(Effect.provide(Layer.mergeAll(out.layer, debugLayer(debugMessages))));
   });
 
-  it("always renders and fails error diagnostics", () => {
+  it.effect("always renders and fails error diagnostics", () => {
     const out = mockOutput();
     const debugMessages: string[] = [];
     return Effect.gen(function* () {
@@ -155,10 +155,10 @@ describe("pg-delta next diagnostic coverage policy", () => {
         message:
           "pg-delta next diagnostic: origin=export code=extraction_failed message=catalog query failed",
       });
-    }).pipe(Effect.provide(out.layer), Effect.provide(debugLayer(debugMessages)));
+    }).pipe(Effect.provide(Layer.mergeAll(out.layer, debugLayer(debugMessages))));
   });
 
-  it("renders every diagnostic with full detail when pg-delta debug is enabled", () => {
+  it.effect("renders every diagnostic with full detail when pg-delta debug is enabled", () => {
     const out = mockOutput();
     const debugMessages: string[] = [];
     return Effect.gen(function* () {
@@ -195,7 +195,7 @@ describe("pg-delta next diagnostic coverage policy", () => {
           "pg-delta next diagnostic: origin=declarativeLoad code=invalid_routine_body message=routine body failed validation",
       });
       expect(debugMessages).toEqual([]);
-    }).pipe(Effect.provide(out.layer), Effect.provide(debugLayer(debugMessages)));
+    }).pipe(Effect.provide(Layer.mergeAll(out.layer, debugLayer(debugMessages))));
   });
 
   it("classifies all upstream coverage codes and aggregates arbitrary kinds safely", () => {

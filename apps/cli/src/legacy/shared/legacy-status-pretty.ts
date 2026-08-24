@@ -104,7 +104,7 @@ function buildGroups(
  * East-Asian-Width dependency for a 5-value constant table).
  */
 function displayWidth(text: string): number {
-  return [...text].length;
+  return Array.from(text).length;
 }
 
 /** Go-rendered display width of each fixed group title (see `status.pretty.unit.test.ts`). */

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
+  Clock,
   Deferred,
+  Data,
   Duration,
   Effect,
   Exit,
@@ -12,11 +14,16 @@ import {
   Stream,
 } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { FetchHttpClient } from "effect/unstable/http";
 import { buildGraph } from "./DependencyGraph.ts";
 import { LogBuffer } from "./LogBuffer.ts";
 import { Orchestrator } from "./Orchestrator.ts";
 import type { OrchestratorConfig, ServiceDef } from "./ServiceDef.ts";
 import type { ServiceState } from "./ServiceState.ts";
+
+class TestFailure extends Data.TaggedError("TestFailure")<{
+  readonly message: string;
+}> {}
 
 // --- Mock factories ---
 
@@ -33,27 +40,29 @@ function mockLogBuffer() {
           entryEvents.notify();
         }),
       subscribe: (_service: string) => Stream.empty,
-      subscribeAll: () => Stream.empty,
+      subscribeAll: Stream.empty,
       history: (service: string, limit = 100) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
+          const timestamp = yield* Clock.currentTimeMillis;
           const matching = entries.filter((e) => e.service === service);
           const sliced = matching.slice(-limit);
           return sliced.map((e) => ({
-            timestamp: Date.now(),
+            timestamp,
             service: e.service,
             stream: e.stream as "stdout" | "stderr",
             line: e.line,
           }));
         }),
       historyAll: (limit = 100, services?: ReadonlyArray<string>) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
+          const timestamp = yield* Clock.currentTimeMillis;
           const filtered =
             services === undefined || services.length === 0
               ? entries
               : entries.filter((entry) => services.includes(entry.service));
           const sliced = filtered.slice(-limit);
           return sliced.map((entry) => ({
-            timestamp: Date.now(),
+            timestamp,
             service: entry.service,
             stream: entry.stream as "stdout" | "stderr",
             line: entry.line,
@@ -118,7 +127,7 @@ function createWaitList() {
         Effect.ensuring(Effect.sync(() => waiters.delete(waiter))),
       );
       if (Option.isNone(result)) {
-        return yield* Effect.fail(new Error(`Timed out waiting for ${description}`));
+        return yield* new TestFailure({ message: `Timed out waiting for ${description}` });
       }
     });
 
@@ -143,7 +152,7 @@ const waitForState = (
     );
     return Option.getOrThrowWith(
       result,
-      () => new Error(`Timed out waiting for ${name} to become ${description}`),
+      () => new TestFailure({ message: `Timed out waiting for ${name} to become ${description}` }),
     );
   });
 
@@ -251,7 +260,7 @@ function setupOrchestrator(
   const proc = mockChildProcessSpawner(runnerOpts);
   const log = mockLogBuffer();
   const layer = Orchestrator.layer(graph, config).pipe(
-    Layer.provide(Layer.mergeAll(proc.layer, log.layer)),
+    Layer.provide(Layer.mergeAll(proc.layer, log.layer, FetchHttpClient.layer)),
   );
   return { graph, proc, log, layer };
 }
@@ -316,7 +325,7 @@ function setupOrchestratorWithStuckKill(
   const proc = mockStuckChildProcessSpawner();
   const log = mockLogBuffer();
   const layer = Orchestrator.layer(graph, config).pipe(
-    Layer.provide(Layer.mergeAll(proc.layer, log.layer)),
+    Layer.provide(Layer.mergeAll(proc.layer, log.layer, FetchHttpClient.layer)),
   );
   return { graph, proc, log, layer };
 }
@@ -420,7 +429,7 @@ describe("Orchestrator", () => {
     const { layer } = setupOrchestrator([svc("a"), svc("b")]);
     return Effect.gen(function* () {
       const orc = yield* Orchestrator;
-      const states = yield* orc.getAllStates();
+      const states = yield* orc.getAllStates;
       expect(states.length).toBe(2);
       const names = states.map((s) => s.name).sort();
       expect(names).toEqual(["a", "b"]);
@@ -450,7 +459,7 @@ describe("Orchestrator", () => {
       yield* orc.start();
       yield* proc.waitForSpawnCount(2);
       expect(proc.spawned.length).toBe(2);
-      yield* orc.stop();
+      yield* orc.stop;
       yield* proc.waitForKillCount(2);
       // Kill should have been called for each service (via finalizer)
       expect(proc.killed.length).toBeGreaterThanOrEqual(2);
@@ -550,7 +559,7 @@ describe("Orchestrator", () => {
       const orc = yield* Orchestrator;
       yield* orc.start();
       yield* proc.waitForSpawnCount(1);
-      yield* orc.stop();
+      yield* orc.stop;
       expect(cleanedUp).toBe(true);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
@@ -740,7 +749,7 @@ describe("Orchestrator", () => {
                 Effect.suspend(() => {
                   attempts++;
                   return attempts === 1
-                    ? Effect.fail(new Error("first attempt failed"))
+                    ? Effect.fail(new TestFailure({ message: "first attempt failed" }))
                     : Effect.void;
                 }),
             },
@@ -775,7 +784,7 @@ describe("Orchestrator", () => {
                 Effect.suspend(() => {
                   attempts++;
                   return attempts === 1
-                    ? Effect.fail(new Error("first attempt failed"))
+                    ? Effect.fail(new TestFailure({ message: "first attempt failed" }))
                     : Effect.void;
                 }),
             },
@@ -813,7 +822,7 @@ describe("Orchestrator", () => {
                 Effect.suspend(() => {
                   attempts++;
                   return attempts === 1
-                    ? Effect.fail(new Error("first attempt failed"))
+                    ? Effect.fail(new TestFailure({ message: "first attempt failed" }))
                     : Effect.void;
                 }),
             },
@@ -857,7 +866,7 @@ describe("Orchestrator", () => {
                 Effect.suspend(() => {
                   attempts++;
                   return attempts === 1
-                    ? Effect.fail(new Error("first attempt failed"))
+                    ? Effect.fail(new TestFailure({ message: "first attempt failed" }))
                     : Effect.void;
                 }),
             },
@@ -897,7 +906,7 @@ describe("Orchestrator", () => {
                 Effect.suspend(() => {
                   attempts++;
                   return attempts === 1
-                    ? Effect.fail(new Error("first attempt failed"))
+                    ? Effect.fail(new TestFailure({ message: "first attempt failed" }))
                     : Effect.void;
                 }),
             },
@@ -1596,7 +1605,12 @@ describe("Orchestrator", () => {
               successThreshold: 1,
               failureThreshold: 1,
             },
-            hooks: [{ on: "healthy", run: () => Effect.fail(new Error("recovery failed")) }],
+            hooks: [
+              {
+                on: "healthy",
+                run: () => Effect.fail(new TestFailure({ message: "recovery failed" })),
+              },
+            ],
           }),
         ],
         {
@@ -1699,7 +1713,7 @@ describe("Orchestrator", () => {
             hooks: [
               {
                 on: "started",
-                run: (_log) => Effect.fail(new Error("migration failed")),
+                run: (_log) => Effect.fail(new TestFailure({ message: "migration failed" })),
               },
             ],
           }),
@@ -1723,7 +1737,7 @@ describe("Orchestrator", () => {
             hooks: [
               {
                 on: "started",
-                run: (_log) => Effect.fail(new Error("optional hook failed")),
+                run: (_log) => Effect.fail(new TestFailure({ message: "optional hook failed" })),
                 failurePolicy: "ignore",
               },
             ],
@@ -1886,7 +1900,7 @@ describe("Orchestrator", () => {
                 run: (log) =>
                   Effect.gen(function* () {
                     yield* log("stderr", "attempting migration...");
-                    yield* Effect.fail(new Error("migration failed"));
+                    return yield* new TestFailure({ message: "migration failed" });
                   }),
                 failurePolicy: "ignore",
               },
@@ -1918,8 +1932,8 @@ describe("Orchestrator", () => {
         const orc = yield* Orchestrator;
         yield* orc.start();
         yield* proc.waitForSpawnCount(3);
-        yield* orc.stop();
-        const states = yield* orc.getAllStates();
+        yield* orc.stop;
+        const states = yield* orc.getAllStates;
         for (const s of states) {
           expect(s.status).toBe("Stopped");
         }
@@ -1940,7 +1954,7 @@ describe("Orchestrator", () => {
         const orc = yield* Orchestrator;
         yield* orc.start();
         yield* proc.waitForSpawn("api");
-        yield* orc.stop();
+        yield* orc.stop;
 
         // api must stop before db (dependent before dependency)
         const killOrder = proc.killed.map((record) => record.command);
@@ -1967,8 +1981,8 @@ describe("Orchestrator", () => {
         const orc = yield* Orchestrator;
         yield* orc.start();
         yield* proc.waitForSpawnCount(4);
-        yield* orc.stop();
-        const states = yield* orc.getAllStates();
+        yield* orc.stop;
+        const states = yield* orc.getAllStates;
         for (const s of states) {
           expect(s.status).toBe("Stopped");
         }
@@ -1987,8 +2001,8 @@ describe("Orchestrator", () => {
         const orc = yield* Orchestrator;
         yield* orc.start();
         yield* waitForHealthy(orc, "a");
-        yield* orc.stop();
-        const states = yield* orc.getAllStates();
+        yield* orc.stop;
+        const states = yield* orc.getAllStates;
         for (const s of states) {
           expect(s.status).toBe("Stopped");
         }
@@ -2004,9 +2018,9 @@ describe("Orchestrator", () => {
         const orc = yield* Orchestrator;
         yield* orc.start();
         yield* waitForState(orc, "stuck", (state) => state.status === "Healthy", "Healthy");
-        const before = Date.now();
-        yield* orc.stop();
-        const elapsed = Date.now() - before;
+        const before = yield* Clock.currentTimeMillis;
+        yield* orc.stop;
+        const elapsed = (yield* Clock.currentTimeMillis) - before;
         expect(elapsed).toBeLessThan(3000);
         const state = yield* orc.getState("stuck");
         expect(state.status).toBe("Stopped");
@@ -2025,7 +2039,7 @@ describe("Orchestrator", () => {
         const orc = yield* Orchestrator;
         yield* orc.start();
         yield* waitForState(orc, "stuck", (state) => state.status === "Healthy", "Healthy");
-        yield* orc.stop();
+        yield* orc.stop;
         const timeoutEntries = log.entries.filter((e) => e.line.includes("[shutdown-timeout]"));
         expect(timeoutEntries.length).toBeGreaterThanOrEqual(1);
       }).pipe(Effect.provide(layer), Effect.scoped);
@@ -2038,7 +2052,7 @@ describe("Orchestrator", () => {
     return Effect.gen(function* () {
       const orc = yield* Orchestrator;
       yield* orc.startService("api", {
-        beforeStart: () => Effect.fail(new Error("port reservation failed")),
+        beforeStart: () => Effect.fail(new TestFailure({ message: "port reservation failed" })),
       });
 
       const error = yield* orc.waitReady("api").pipe(Effect.flip);
@@ -2132,7 +2146,7 @@ describe("Orchestrator", () => {
               prepareCalls++;
               return prepareCalls === 1
                 ? Effect.void
-                : Effect.fail(new Error("port reservation failed"));
+                : Effect.fail(new TestFailure({ message: "port reservation failed" }));
             }),
         });
 
@@ -2302,7 +2316,12 @@ describe("Orchestrator", () => {
     const { layer, proc } = setupOrchestrator(
       [
         svc("a", {
-          hooks: [{ on: "healthy", run: () => Effect.fail(new Error("warmup failed")) }],
+          hooks: [
+            {
+              on: "healthy",
+              run: () => Effect.fail(new TestFailure({ message: "warmup failed" })),
+            },
+          ],
         }),
       ],
       { exitDelay: "5 seconds" },
@@ -2434,7 +2453,7 @@ describe("Orchestrator", () => {
             hooks: [
               {
                 on: "started",
-                run: (_log) => Effect.fail(new Error("startup failed")),
+                run: (_log) => Effect.fail(new TestFailure({ message: "startup failed" })),
               },
             ],
           }),
@@ -2487,8 +2506,8 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        yield* orc.waitAllReady();
-        const states = yield* orc.getAllStates();
+        yield* orc.waitAllReady;
+        const states = yield* orc.getAllStates;
         for (const s of states) {
           expect(s.status).toBe("Healthy");
         }
@@ -2504,7 +2523,7 @@ describe("Orchestrator", () => {
             hooks: [
               {
                 on: "started",
-                run: (_log) => Effect.fail(new Error("crash")),
+                run: (_log) => Effect.fail(new TestFailure({ message: "crash" })),
               },
             ],
           }),
@@ -2514,7 +2533,7 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
-        const exit = yield* orc.waitAllReady().pipe(Effect.exit);
+        const exit = yield* orc.waitAllReady.pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
       }).pipe(Effect.provide(layer), Effect.scoped);
     });

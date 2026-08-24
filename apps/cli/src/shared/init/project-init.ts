@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Path, Schema } from "effect";
+import { Effect, FileSystem, Formatter, Path, Schema } from "effect";
 import { legacyPromptYesNo } from "../legacy/legacy-prompt-yes-no.ts";
 import { Output } from "../output/output.service.ts";
 import { Tty } from "../runtime/tty.service.ts";
@@ -153,7 +153,7 @@ const INIT_DIR_MODE = 0o755;
 function writeJsonFile(pathname: string, contents: Record<string, unknown>) {
   return Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    yield* fs.writeFileString(pathname, `${JSON.stringify(contents, null, 2)}\n`, {
+    yield* fs.writeFileString(pathname, `${Formatter.formatJson(contents, { space: 2 })}\n`, {
       mode: INIT_FILE_MODE,
     });
   });

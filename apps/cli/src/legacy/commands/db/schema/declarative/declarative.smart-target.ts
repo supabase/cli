@@ -8,14 +8,20 @@ import { legacyPromptYesNo } from "../../../../../shared/legacy/legacy-prompt-ye
 import { Output } from "../../../../../shared/output/output.service.ts";
 import { legacyResetLocalDatabase } from "../../../../shared/db-bootstrap/reset-local-database.ts";
 import { PROJECT_REF_PATTERN } from "../../../../config/legacy-project-ref.service.ts";
+import { RuntimeInfo } from "../../../../../shared/runtime/runtime-info.service.ts";
+import { legacyMakeDbConfigParseRuntime } from "../../../../shared/legacy-db-config.layer.ts";
 import { LegacyDbConfigResolver } from "../../../../shared/legacy-db-config.service.ts";
 import { legacyLoadProjectEnv } from "../../../../shared/legacy-db-config.toml-read.ts";
 import {
+  LEGACY_PARSE_ENV_NAMES,
+  legacyConnectionStringFilePaths,
+  legacyLayeredParseEnv,
   parseLegacyConnectionString,
   redactLegacyConnectionString,
 } from "../../../../shared/legacy-db-config.parse.ts";
 import { legacyGetHostname } from "../../../../shared/legacy-hostname.ts";
 import { legacyToPostgresURL } from "../../../../shared/legacy-postgres-url.ts";
+import { LegacyViperEnv } from "../../../../../shared/legacy/legacy-viper-env.ts";
 import type { LegacyPgDeltaDatabaseEndpoint } from "../../shared/legacy-pgdelta-engine.service.ts";
 import {
   LegacyDeclarativeApplyError,
@@ -48,29 +54,29 @@ export interface LegacySmartTargetFlags {
   readonly reset: boolean;
 }
 
-const legacyLocalConnection = (local: LegacyLocalConn) => ({
+const legacyLocalConnection = (local: LegacyLocalConn, host: string) => ({
   // Go derives the local host from `utils.Config.Hostname` (`GetHostname()`:
   // SUPABASE_SERVICES_HOSTNAME → tcp DOCKER_HOST → 127.0.0.1), not a hardcoded
   // loopback (`apps/cli-go/internal/utils/misc.go:298-312`).
-  host: legacyGetHostname(),
+  host,
   port: local.port,
   user: "postgres",
   password: local.password,
   database: "postgres",
 });
 
-export const legacyLocalEndpoint = (
+export const legacyLocalEndpoint = Effect.fnUntraced(function* (
   local: LegacyLocalConn,
   dnsResolver: "native" | "https",
-): LegacyPgDeltaDatabaseEndpoint => {
-  const connection = legacyLocalConnection(local);
+) {
+  const connection = legacyLocalConnection(local, yield* legacyGetHostname);
   return {
     kind: "database",
     ref: legacyToPostgresURL(connection),
     connection,
     connectOptions: { isLocal: true, dnsResolver },
-  };
-};
+  } satisfies LegacyPgDeltaDatabaseEndpoint;
+});
 
 /** Resolves a remote target without discarding TLS and connection options. */
 export const legacyResolveRemoteEndpoint = Effect.fnUntraced(function* (
@@ -113,8 +119,8 @@ export const legacyResolveSmartTargetEndpoint = Effect.fnUntraced(function* (
     // No migrations → generate from local. Go runs ensureLocalDatabaseStarted first
     // (db_schema_declarative.go:291), starting a stopped stack.
     yield* beforeLocalTarget;
-    yield* (yield* LegacyDeclarativeSeam).ensureLocalDatabaseStarted();
-    return legacyLocalEndpoint(local, yield* LegacyDnsResolverFlag);
+    yield* (yield* LegacyDeclarativeSeam).ensureLocalDatabaseStarted;
+    return yield* legacyLocalEndpoint(local, yield* LegacyDnsResolverFlag);
   }
 
   const output = yield* Output;
@@ -151,26 +157,35 @@ export const legacyResolveSmartTargetEndpoint = Effect.fnUntraced(function* (
   if (choice === "custom") {
     const dbURL = yield* output.promptText("Enter database URL: ");
     if (dbURL.trim().length === 0) {
-      return yield* Effect.fail(
-        new LegacyDeclarativeInvalidDbUrlError({ message: "database URL cannot be empty" }),
-      );
+      return yield* new LegacyDeclarativeInvalidDbUrlError({
+        message: "database URL cannot be empty",
+      });
     }
-    // Go parses the entry with pgconn.ParseConfig then feeds pg-delta a normalized
-    // ToPostgresURL (`apps/cli-go/cmd/db_schema_declarative.go:283-287`, deleted
-    // in CLI-1970; last present at commit 7b469f5b3). Layer the
-    // project env (loaded once above) under the shell env like the --db-url path so
-    // libpq PG* fallbacks resolve, and reject malformed input with Go's "failed to
-    // parse connection string" error (password redacted, CWE-209).
-    const conn = parseLegacyConnectionString(
-      dbURL,
-      (name) => process.env[name] ?? projectEnv[name],
+    // Resolve the interactive connection string with libpq-compatible environment,
+    // service-file, pgpass, and host/user defaults. The parser is pure; filesystem
+    // and account defaults are materialized at this Effect composition boundary.
+    // Shell values take precedence over project values, and malformed input is
+    // reported without echoing credentials.
+    const env = yield* LegacyViperEnv;
+    const shellValues = yield* Effect.forEach(LEGACY_PARSE_ENV_NAMES, (name) => env.get(name));
+    const shellEnv: Record<string, string> = {};
+    for (const [index, value] of shellValues.entries()) {
+      const name = LEGACY_PARSE_ENV_NAMES[index];
+      if (name !== undefined && Option.isSome(value)) shellEnv[name] = value.value;
+    }
+    const parseEnv = legacyLayeredParseEnv(projectEnv, shellEnv);
+    const parseRuntime = yield* legacyMakeDbConfigParseRuntime(
+      fs,
+      path,
+      yield* RuntimeInfo,
+      parseEnv,
+      legacyConnectionStringFilePaths(dbURL),
     );
+    const conn = parseLegacyConnectionString(dbURL, parseEnv, parseRuntime);
     if (conn === undefined) {
-      return yield* Effect.fail(
-        new LegacyDeclarativeInvalidDbUrlError({
-          message: `failed to parse connection string: ${redactLegacyConnectionString(dbURL)}`,
-        }),
-      );
+      return yield* new LegacyDeclarativeInvalidDbUrlError({
+        message: `failed to parse connection string: ${redactLegacyConnectionString(dbURL)}`,
+      });
     }
     return {
       kind: "database",
@@ -183,7 +198,7 @@ export const legacyResolveSmartTargetEndpoint = Effect.fnUntraced(function* (
   // "Local database" choice: Go runs ensureLocalDatabaseStarted before the reset
   // prompt (db_schema_declarative.go:249), starting a stopped stack.
   yield* beforeLocalTarget;
-  yield* (yield* LegacyDeclarativeSeam).ensureLocalDatabaseStarted();
+  yield* (yield* LegacyDeclarativeSeam).ensureLocalDatabaseStarted;
 
   let shouldReset = flags.reset;
   if (!shouldReset) {
@@ -215,5 +230,5 @@ export const legacyResolveSmartTargetEndpoint = Effect.fnUntraced(function* (
       ),
     );
   }
-  return legacyLocalEndpoint(local, yield* LegacyDnsResolverFlag);
+  return yield* legacyLocalEndpoint(local, yield* LegacyDnsResolverFlag);
 });

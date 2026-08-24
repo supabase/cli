@@ -22,11 +22,23 @@ import {
   sign as signJwtBytes,
   type JsonWebKeyInput,
 } from "node:crypto";
-import { existsSync, watch } from "node:fs";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { styleText } from "node:util";
-import { Cause, Duration, Effect, Layer, Option, Queue, Redacted, Schema, Stream } from "effect";
+import { BunPath } from "@effect/platform-bun";
+import {
+  Clock,
+  Config,
+  Duration,
+  Effect,
+  FileSystem,
+  Layer,
+  Match,
+  Option,
+  Predicate,
+  Redacted,
+  Schema,
+  Stream,
+} from "effect";
+import * as EffectPath from "effect/Path";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   legacyDescribeContainerCliFailure,
@@ -76,6 +88,15 @@ import {
 } from "./functions-docker.ts";
 import { loadFunctionsProjectConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
 import { edgeRuntimeImage, resolveEdgeRuntimeVersionPin } from "./functions.shared.ts";
+import { FunctionsOperationError } from "./functions-api.errors.ts";
+import {
+  findPlatformError,
+  legacyFilesystemErrorMessage,
+} from "../legacy/legacy-filesystem-error.ts";
+
+const { basename, dirname, isAbsolute, join, relative, resolve } = Effect.runSync(
+  EffectPath.Path.pipe(Effect.provide(BunPath.layer)),
+);
 const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
 const defaultProjectConfig = decodeProjectConfig({});
 
@@ -84,6 +105,8 @@ const dockerRuntimeInspectorPort = 8083;
 // Unix timestamp (~2032-11-30) used as the `exp` claim of the local-dev default
 // JWTs, matching the Go CLI's hardcoded expiry for anon/service_role tokens.
 const defaultJwtExpiry = 1983812996;
+const encodeJsonText = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const decodeJsonText = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const defaultSigningKey = {
   kty: "EC",
   kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",
@@ -111,6 +134,7 @@ const defaultSupabaseEnv = "development";
 const serveMainContainerPath = "/root/index.ts";
 const shellVariableNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 let cachedLegacyFunctionsServeMainTemplate: string | undefined;
+
 const watchIgnoreGlobs = [
   "**/.git/**",
   "**/node_modules/**",
@@ -275,6 +299,8 @@ export interface StartEdgeRuntimeContainerInput {
   readonly dbUrl: string;
   /** Already-resolved edge-runtime image reference (registry-mapped, tag/deno-version already applied). */
   readonly image: string;
+  /** Go's merged project environment, used for Bitbucket's named-volume restriction. */
+  readonly projectEnvValues?: Readonly<Record<string, string>>;
   readonly projectRoot: string;
   readonly supabaseDir: string;
   readonly flagCwd: string;
@@ -306,37 +332,26 @@ type SigningKeyJwk = JsonWebKeyInput["key"] & {
 
 declare const SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
 
-export const serveFileWatcherLayer = Layer.sync(FileWatcher, () =>
-  FileWatcher.of({
-    watch: (root) =>
-      Stream.callback<ReadonlyArray<FileWatchEvent>, FileWatcherError>((queue) =>
-        Effect.acquireRelease(
-          Effect.sync(() => {
-            const watcher = watch(root, { recursive: true }, (eventType, filename) => {
-              const pathname =
-                filename === null || filename === undefined || filename.length === 0
-                  ? root
-                  : resolve(root, filename.toString());
-              // Node's `fs.watch` only distinguishes "rename" (create/delete/
-              // rename) from "change" (write); Go prints the real fsnotify op
-              // (`internal/functions/serve/watcher.go:100`). The closest
-              // recoverable equivalent is an existence check on "rename"
-              // events: present → create, gone → delete; "change" → update.
-              const type: FileWatchEvent["type"] =
-                eventType === "rename" ? (existsSync(pathname) ? "create" : "delete") : "update";
-              Queue.offerUnsafe(queue, [{ path: pathname, type }]);
-            });
-            watcher.on("error", (cause) => {
-              Queue.failCauseUnsafe(queue, Cause.fail(new FileWatcherError({ path: root, cause })));
-            });
-            return watcher;
-          }),
-          (watcher) =>
-            Effect.sync(() => {
-              watcher.close();
-            }),
+export const serveFileWatcherLayer = Layer.effect(
+  FileWatcher,
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return FileWatcher.of({
+      watch: (root) =>
+        fs.watch(root, { recursive: true }).pipe(
+          Stream.map((event) => [
+            {
+              path: event.path,
+              type: Match.valueTags(event, {
+                Create: () => "create" as const,
+                Update: () => "update" as const,
+                Remove: () => "delete" as const,
+              }),
+            } satisfies FileWatchEvent,
+          ]),
+          Stream.mapError((cause) => new FileWatcherError({ path: root, cause })),
         ),
-      ),
+    });
   }),
 );
 
@@ -351,23 +366,30 @@ export const serveFileWatcherLayer = Layer.sync(FileWatcher, () =>
  * shipped binary never bundles at runtime. Running from source (`bun src/supabase.ts`)
  * bundles on demand.
  */
-function getLegacyFunctionsServeMainTemplate(): Promise<string> {
+function getLegacyFunctionsServeMainTemplate() {
   if (cachedLegacyFunctionsServeMainTemplate !== undefined) {
-    return Promise.resolve(cachedLegacyFunctionsServeMainTemplate);
+    return Effect.succeed(cachedLegacyFunctionsServeMainTemplate);
   }
   if (typeof SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE === "string") {
     cachedLegacyFunctionsServeMainTemplate = SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE;
-    return Promise.resolve(cachedLegacyFunctionsServeMainTemplate);
+    return Effect.succeed(cachedLegacyFunctionsServeMainTemplate);
   }
   // Running from source: the build-time define is absent, so bundle on demand. The
   // bundler (and its esbuild dependency) is imported lazily and only here, so it is
   // never loaded by shipped binaries — which always take the define branch above.
-  return import("./serve-main-bundler.ts")
-    .then(({ bundleServeMainTemplate }) => bundleServeMainTemplate())
-    .then((bundled) => {
-      cachedLegacyFunctionsServeMainTemplate = bundled;
-      return bundled;
+  return Effect.gen(function* () {
+    const { bundleServeMainTemplate } = yield* Effect.tryPromise({
+      try: () => import("./serve-main-bundler.ts"),
+      catch: (cause) =>
+        new FunctionsOperationError({
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause,
+        }),
     });
+    const bundled = yield* bundleServeMainTemplate();
+    cachedLegacyFunctionsServeMainTemplate = bundled;
+    return bundled;
+  });
 }
 
 function reveal(value: string | Redacted.Redacted<string> | undefined): string | undefined {
@@ -500,7 +522,7 @@ function generateSymmetricJwt(secret: string, role: string) {
   return `${data}.${signature}`;
 }
 
-function generateAsymmetricJwt(signingKey: SigningKeyJwk, role: string) {
+function generateAsymmetricJwt(signingKey: SigningKeyJwk, role: string, nowSeconds: number) {
   const algorithm = signingKey.alg;
   if (algorithm !== "ES256" && algorithm !== "RS256") {
     throw new Error(`unsupported algorithm: ${String(algorithm)}`);
@@ -514,7 +536,7 @@ function generateAsymmetricJwt(signingKey: SigningKeyJwk, role: string) {
   const payload = {
     iss: "supabase-demo",
     role,
-    exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 365 * 10,
+    exp: nowSeconds + 60 * 60 * 24 * 365 * 10,
   };
   const encodedHeader = encodeBase64Url(JSON.stringify(header));
   const encodedPayload = encodeBase64Url(JSON.stringify(payload));
@@ -530,12 +552,48 @@ function generateAsymmetricJwt(signingKey: SigningKeyJwk, role: string) {
   return `${data}.${signature}`;
 }
 
-async function readSigningKeys(pathname: string): Promise<ReadonlyArray<SigningKeyJwk>> {
-  const decoded = JSON.parse(await readFile(pathname, "utf8"));
-  if (!Array.isArray(decoded)) {
-    throw new Error("expected a JSON array");
-  }
-  return decoded as ReadonlyArray<SigningKeyJwk>;
+function isSigningKeyJwk(value: unknown): value is SigningKeyJwk {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "kty" in value &&
+    (value.kty === "EC" || value.kty === "RSA")
+  );
+}
+
+function readSigningKeys(pathname: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const contents = yield* fs.readFileString(pathname).pipe(
+      Effect.mapError(
+        (cause) =>
+          new FunctionsOperationError({
+            message: `failed to read signing keys: ${legacyFilesystemErrorMessage(cause)}`,
+            cause,
+          }),
+      ),
+    );
+    return yield* Effect.succeed(contents);
+  }).pipe(
+    Effect.flatMap((contents) =>
+      Effect.try({
+        try: () => decodeJsonText(contents),
+        catch: (cause) =>
+          new FunctionsOperationError({
+            message: `failed to decode signing keys: ${cause instanceof Error ? cause.message : String(cause)}`,
+            cause,
+          }),
+      }),
+    ),
+    Effect.flatMap((decoded) => {
+      if (!Array.isArray(decoded) || !decoded.every(isSigningKeyJwk)) {
+        return Effect.fail(
+          new FunctionsOperationError({ message: "expected a JSON array of signing keys" }),
+        );
+      }
+      return Effect.succeed(decoded);
+    }),
+  );
 }
 
 /**
@@ -581,38 +639,32 @@ const resolveLocalAuthArtifacts = Effect.fnUntraced(function* (
             auth.signing_keys_path,
           );
 
-  const signingKeys = yield* Effect.tryPromise({
-    try: async () => (signingKeysPath.length === 0 ? [] : await readSigningKeys(signingKeysPath)),
-    catch: (cause) => {
-      if (cause instanceof SyntaxError) {
-        return new Error(`failed to decode signing keys: ${cause.message}`);
-      }
-      return new Error(
-        `failed to read signing keys: ${cause instanceof Error ? cause.message : String(cause)}`,
-      );
-    },
-  });
+  const signingKeys =
+    signingKeysPath.length === 0
+      ? yield* Effect.succeed<ReadonlyArray<SigningKeyJwk>>([])
+      : yield* readSigningKeys(signingKeysPath);
 
   const jwtSecret =
     auth.jwt_secret === undefined || auth.jwt_secret.length === 0
       ? defaultJwtSecret
       : auth.jwt_secret;
+  const nowSeconds = Math.floor((yield* Clock.currentTimeMillis) / 1000);
   if (jwtSecret.length < 16) {
-    return yield* Effect.fail(
-      new Error("Invalid config for auth.jwt_secret. Must be at least 16 characters"),
-    );
+    return yield* new FunctionsOperationError({
+      message: "Invalid config for auth.jwt_secret. Must be at least 16 characters",
+    });
   }
 
   const anonKey =
     auth.anon_key === undefined || auth.anon_key.length === 0
       ? signingKeys.length > 0
-        ? generateAsymmetricJwt(signingKeys[0]!, "anon")
+        ? generateAsymmetricJwt(signingKeys[0]!, "anon", nowSeconds)
         : generateSymmetricJwt(jwtSecret, "anon")
       : auth.anon_key;
   const serviceRoleKey =
     auth.service_role_key === undefined || auth.service_role_key.length === 0
       ? signingKeys.length > 0
-        ? generateAsymmetricJwt(signingKeys[0]!, "service_role")
+        ? generateAsymmetricJwt(signingKeys[0]!, "service_role", nowSeconds)
         : generateSymmetricJwt(jwtSecret, "service_role")
       : auth.service_role_key;
   const shouldUseJwtSecretFallback = signingKeysPath.length === 0;
@@ -672,12 +724,19 @@ const resolveLocalAuthArtifacts = Effect.fnUntraced(function* (
  */
 const finalizeAuthArtifacts = Effect.fnUntraced(function* (local: ServeLocalAuthArtifacts) {
   const keys: unknown[] = [];
+  const emptyRemoteJwks: ReadonlyArray<unknown> = [];
   if (local.issuerUrl !== undefined) {
     const issuerUrl = local.issuerUrl;
-    const remoteJwks = yield* Effect.tryPromise({
-      try: () => resolveRemoteJwks(issuerUrl),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    }).pipe(Effect.catch(() => Effect.succeed([] as ReadonlyArray<unknown>)));
+    const remoteJwks = yield* resolveRemoteJwks(issuerUrl).pipe(
+      Effect.mapError(
+        (cause) =>
+          new FunctionsOperationError({
+            message: cause.message,
+            cause,
+          }),
+      ),
+      Effect.orElseSucceed(() => emptyRemoteJwks),
+    );
     keys.push(...remoteJwks);
   }
   keys.push(...local.localKeys);
@@ -688,7 +747,7 @@ const finalizeAuthArtifacts = Effect.fnUntraced(function* (local: ServeLocalAuth
     jwtSecret: local.jwtSecret,
     anonKey: local.anonKey,
     serviceRoleKey: local.serviceRoleKey,
-    jwks: JSON.stringify({ keys }),
+    jwks: encodeJsonText({ keys }),
   } satisfies ServeAuthArtifacts;
 });
 
@@ -699,13 +758,11 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   goConfigCompat: FunctionsGoConfigCompat | undefined,
 ) {
   const projectEnv = yield* loadServeProjectEnvironment(projectRoot);
-  const projectRef = Option.match(projectIdOverride, {
-    onNone: () => undefined,
-    onSome: (value) => {
-      const normalized = value.trim();
-      return normalized.length > 0 ? normalized : undefined;
-    },
-  });
+  const projectRef = Option.filter(
+    Option.map(projectIdOverride, (value) => value.trim()),
+    (value) => value.length > 0,
+  );
+  const projectRefValue = Option.getOrUndefined(projectRef);
   // `loadProjectConfig` interpolates `env()` references against the project
   // environment. We resolve that environment ourselves (Go-accurate, layering
   // `.env.<SUPABASE_ENV>`/`.env.local`/`.env` over the ambient env) and pass it
@@ -720,7 +777,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   // different projects. `next` (`goConfigCompat === undefined`) keeps the
   // package defaults (ancestor search, JSON preferred), unchanged.
   const loadedConfig = yield* loadProjectConfig(projectRoot, {
-    ...(projectRef === undefined ? {} : { projectRef }),
+    ...(projectRefValue === undefined ? {} : { projectRef: projectRefValue }),
     ...(projectEnv === null ? {} : { projectEnv }),
     goViperCompat,
     ...(goConfigCompat === undefined ? {} : { search: false, tomlOnly: true }),
@@ -769,49 +826,22 @@ const resolveServeConfig = Effect.fnUntraced(function* (
             goViperCompat,
           }),
         ) ?? "");
-  const rawProjectId = Option.getOrElse(projectIdOverride, () => configProjectId).trim();
-  const fallbackProjectId = basename(resolve(projectRoot));
-
-  // Go: `flags.LoadConfig` -> `Config.Validate` (`pkg/config/config.go:878,989-1192`)
-  // — `restartEdgeRuntime` runs this FIRST, before `AssertSupabaseDbIsRunning`
-  // (see this function's own caller for that ordering) — so an invalid
-  // config must fail here too, before any Docker check. Legacy shell only;
-  // `next` keeps its own package-default config resolution above unchanged.
-  // A second, independent config/dotenv load (rather than reusing this
-  // function's own `loadedConfig`/`projectEnv` above) — that pipeline's
-  // `env(...)`-interpolation purpose is unrelated to Go's `SUPABASE_*`
-  // `AutomaticEnv` override system this one provides, and the two shouldn't
-  // be entangled for a shipped, long-running command's config path.
-  // `search`/`tomlOnly` are aligned with this file's own `loadedConfig` call
-  // above (see its comment) so the two loads can never disagree about which
-  // file is "the" project config. `projectEnvValues` (for registry/network-id
-  // env lookups, this file's own caller) and the env-overridden
-  // `deno_version` are consumed from it; `auth`/`apiPort`/functions above
-  // keep their existing derivation. `projectId` also keeps its existing
-  // derivation — a known gap, narrow to trigger but NOT cosmetic when hit:
-  // unlike `deploy`/`download` (which use `context.projectId` outright),
-  // `rawProjectId` below only ever sees `SUPABASE_PROJECT_ID` from the
-  // *ambient* shell (`projectIdOverride`, from `LegacyCliConfig`), not from
-  // project dotenv. A project that sets it only in `supabase/.env` therefore
-  // gets a different `supabase_edge_runtime_<id>`/`supabase_network_<id>`
-  // here than `deploy`/`download`/`start` resolve for the SAME project — so
-  // `serve` creates a second network and a container `reloadKong(projectId)`'s
-  // Kong (named off the other id) can't route to: a silently non-functional
-  // `serve`, where Go reads one `Config.ProjectId` for everything. Folding
-  // `goContext.projectEnvValues` in here would also require reconciling this
-  // function's `projectIdOverride`-wins-unconditionally precedence with
-  // `legacyResolveLocalProjectId`'s config-file-wins-over-`projectRef`
-  // precedence (they're not the same order) — left open rather than risking
-  // that regression under time pressure (review round on CLI-1963).
   const goContext =
     goConfigCompat === undefined
       ? undefined
       : yield* loadFunctionsProjectConfig({
           projectRoot,
-          projectRef,
+          projectRef: projectRefValue,
           goConfigCompat,
         });
+  const rawProjectId = Option.match(projectRef, {
+    onNone: () => (goContext?.projectId ?? configProjectId).trim(),
+    onSome: (value) => value,
+  });
+  const fallbackProjectId = basename(resolve(projectRoot));
 
+  // Resolve and normalize the project ID after loading config and environment
+  // values so the same ID drives runtime, network, and container naming.
   return {
     projectId: normalizeProjectId(rawProjectId.length > 0 ? rawProjectId : fallbackProjectId),
     apiPort,
@@ -864,23 +894,19 @@ export function buildFunctionsServeInspectArgs(
 }
 
 const readDotEnvFile = Effect.fnUntraced(function* (pathname: string, optional: boolean) {
-  const contents = yield* Effect.tryPromise({
-    try: () =>
-      readFile(pathname, "utf8").then(
-        (value) => value,
-        (error) => {
-          if (optional && error instanceof Error && "code" in error && error.code === "ENOENT") {
-            return undefined;
-          }
-          throw error;
-        },
-      ),
-    catch: (cause) =>
-      new Error(
-        `failed to load environment file: ${pathname}${cause instanceof Error ? ` (${cause.message})` : ""}`,
-        { cause },
-      ),
-  });
+  const fs = yield* FileSystem.FileSystem;
+  const contents = yield* fs.readFileString(pathname).pipe(
+    Effect.catch((cause) =>
+      optional && Predicate.isTagged(cause.reason, "NotFound") ? Effect.void : Effect.fail(cause),
+    ),
+    Effect.mapError(
+      (cause) =>
+        new FunctionsOperationError({
+          message: `failed to load environment file: ${pathname} (${legacyFilesystemErrorMessage(cause)})`,
+          cause,
+        }),
+    ),
+  );
   if (contents === undefined) {
     return {};
   }
@@ -956,77 +982,84 @@ function splitEnvEntry(entry: string) {
     : ([entry.slice(0, separatorIndex), entry.slice(separatorIndex + 1)] as const);
 }
 
-async function writeDockerEnvFile(env: Readonly<Record<string, string>>, dir: string) {
-  const entries = Object.entries(env);
-  if (entries.length === 0) {
-    return undefined;
-  }
+function writeDockerEnvFile(env: Readonly<Record<string, string>>, dir: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const entries = Object.entries(env);
+    if (entries.length === 0) {
+      return undefined;
+    }
 
-  // Self-healing: `dir` is a deterministic, reused path (not a fresh mkdtemp
-  // each call), so a stale directory from an earlier invocation in the same
-  // process (e.g. `functions serve`'s watch-mode restart loop) is removed
-  // first — otherwise leftover files from a shrinking env set would survive
-  // alongside the fresh write.
-  await rm(dir, { recursive: true, force: true });
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  const path = join(dir, "docker.env");
-  // The file holds the JWT secret, anon/service-role keys, and JWKS, so keep it
-  // owner-only rather than relying on the process umask.
-  await writeFile(
-    path,
-    entries
-      .map(([name, value]) => `${name}=${value.replaceAll("\r", "\\r").replaceAll("\n", "\\n")}`)
-      .join("\n"),
-    { mode: 0o600 },
-  );
+    // Self-healing: `dir` is a deterministic, reused path (not a fresh mkdtemp
+    // each call), so a stale directory from an earlier invocation in the same
+    // process (e.g. `functions serve`'s watch-mode restart loop) is removed
+    // first — otherwise leftover files from a shrinking env set would survive
+    // alongside the fresh write.
+    yield* fs.remove(dir, { recursive: true, force: true });
+    yield* fs.makeDirectory(dir, { recursive: true, mode: 0o700 });
+    const path = join(dir, "docker.env");
+    // The file holds the JWT secret, anon/service-role keys, and JWKS, so keep it
+    // owner-only rather than relying on the process umask.
+    yield* fs.writeFileString(
+      path,
+      entries
+        .map(([name, value]) => `${name}=${value.replaceAll("\r", "\\r").replaceAll("\n", "\\n")}`)
+        .join("\n"),
+      { mode: 0o600 },
+    );
 
-  return { path };
+    return { path };
+  });
 }
 
-async function writeDockerMultilineEnvScript(
+function writeDockerMultilineEnvScript(
   env: ReadonlyArray<readonly [string, string]>,
   containerDir: string,
   dir: string,
 ) {
-  // Self-healing — see the matching comment in `writeDockerEnvFile` above.
-  // Runs unconditionally, before the `env.length === 0` check, so a stale
-  // directory left by an earlier invocation that DID need multiline secrets
-  // is still reclaimed even when the current invocation doesn't.
-  await rm(dir, { recursive: true, force: true });
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    // Self-healing — see the matching comment in `writeDockerEnvFile` above.
+    // Runs unconditionally, before the `env.length === 0` check, so a stale
+    // directory left by an earlier invocation that DID need multiline secrets
+    // is still reclaimed even when the current invocation doesn't.
+    yield* fs.remove(dir, { recursive: true, force: true });
 
-  if (env.length === 0) {
-    return undefined;
-  }
+    if (env.length === 0) {
+      return undefined;
+    }
 
-  await mkdir(dir, { recursive: true, mode: 0o700 });
-  const scriptName = "multiline-env.sh";
-  const path = join(dir, scriptName);
-  const envDir = join(containerDir, "values");
-  const hostEnvDir = join(dir, "values");
-  // Names are validated by `validateDockerMultilineEnvNames` before this runs.
-  const script = env
-    .map(([name], index) => {
-      const valueFile = `env-${index}`;
-      const valuePath = join(envDir, valueFile).replaceAll("\\", "/");
-      return `${name}="$(cat ${valuePath}; printf x)"
+    yield* fs.makeDirectory(dir, { recursive: true, mode: 0o700 });
+    const scriptName = "multiline-env.sh";
+    const path = join(dir, scriptName);
+    const envDir = join(containerDir, "values");
+    const hostEnvDir = join(dir, "values");
+    // Names are validated by `validateDockerMultilineEnvNames` before this runs.
+    const script = env
+      .map(([name], index) => {
+        const valueFile = `env-${index}`;
+        const valuePath = join(envDir, valueFile).replaceAll("\\", "/");
+        return `${name}="$(cat ${valuePath}; printf x)"
 export ${name}="\${${name}%x}"`;
-    })
-    .join("\n");
-  await mkdir(hostEnvDir, { recursive: true, mode: 0o700 });
-  // The value files hold secret env values, so keep them owner-only.
-  await Promise.all(
-    env.map(([_, value], index) =>
-      writeFile(join(hostEnvDir, `env-${index}`), value, { mode: 0o600 }),
-    ),
-  );
-  await writeFile(path, script, { mode: 0o600 });
+      })
+      .join("\n");
+    yield* fs.makeDirectory(hostEnvDir, { recursive: true, mode: 0o700 });
+    // The value files hold secret env values, so keep them owner-only.
+    yield* Effect.all(
+      env.map(([_, value], index) =>
+        fs.writeFileString(join(hostEnvDir, `env-${index}`), value, { mode: 0o600 }),
+      ),
+      { concurrency: "unbounded" },
+    );
+    yield* fs.writeFileString(path, script, { mode: 0o600 });
 
-  return {
-    // `Z`: private SELinux relabel of this CLI-staged dir (supabase/cli#5989);
-    // single-consumer bind, no-op without SELinux.
-    bind: `${dir}:${containerDir}:ro,Z`,
-    scriptPath: join(containerDir, scriptName).replaceAll("\\", "/"),
-  };
+    return {
+      // `Z`: private SELinux relabel of this CLI-staged dir (supabase/cli#5989);
+      // single-consumer bind, no-op without SELinux.
+      bind: `${dir}:${containerDir}:ro,Z`,
+      scriptPath: join(containerDir, scriptName).replaceAll("\\", "/"),
+    };
+  });
 }
 
 function partitionDockerEnvEntries(env: Readonly<Record<string, string>>) {
@@ -1053,12 +1086,21 @@ function validateDockerMultilineEnvNames(env: ReadonlyArray<readonly [string, st
 }
 
 function loadDefaultEnvFilenames(env: string) {
-  return [`.env.${env}.local`, ...(env === "test" ? [] : [".env.local"]), `.env.${env}`, ".env"];
+  const resolvedEnv = env || defaultSupabaseEnv;
+  return [
+    `.env.${resolvedEnv}.local`,
+    ...(resolvedEnv === "test" ? [] : [".env.local"]),
+    `.env.${resolvedEnv}`,
+    ".env",
+  ];
 }
 
 function sanitizeDotEnvParseError(path: string, cause: unknown) {
   if (!(cause instanceof Error)) {
-    return new Error(`failed to parse environment file: ${path}`);
+    return new FunctionsOperationError({
+      message: `failed to parse environment file: ${path}`,
+      cause,
+    });
   }
   const message = cause.message;
   if (message.startsWith('unexpected character "')) {
@@ -1069,22 +1111,30 @@ function sanitizeDotEnvParseError(path: string, cause: unknown) {
       const charEnd = message.indexOf('"', charStart);
       if (charEnd !== -1) {
         const char = message.slice(charStart, charEnd);
-        return new Error(
-          `failed to parse environment file: ${path} (unexpected character '${char}' in variable name)`,
-        );
+        return new FunctionsOperationError({
+          message: `failed to parse environment file: ${path} (unexpected character '${char}' in variable name)`,
+          cause,
+        });
       }
     }
-    return new Error(
-      `failed to parse environment file: ${path} (unexpected character in variable name)`,
-    );
+    return new FunctionsOperationError({
+      message: `failed to parse environment file: ${path} (unexpected character in variable name)`,
+      cause,
+    });
   }
   if (message.startsWith("unterminated quoted value")) {
-    return new Error(`failed to parse environment file: ${path} (unterminated quoted value)`);
+    return new FunctionsOperationError({
+      message: `failed to parse environment file: ${path} (unterminated quoted value)`,
+      cause,
+    });
   }
   if (message.includes("\n")) {
-    return new Error(`failed to parse environment file: ${path} (syntax error)`);
+    return new FunctionsOperationError({
+      message: `failed to parse environment file: ${path} (syntax error)`,
+      cause,
+    });
   }
-  return new Error(`failed to load ${path}: ${message}`);
+  return new FunctionsOperationError({ message: `failed to load ${path}: ${message}`, cause });
 }
 
 function ambientProjectEnv() {
@@ -1096,6 +1146,7 @@ function ambientProjectEnv() {
 }
 
 const loadServeProjectEnvironment = Effect.fnUntraced(function* (projectRoot: string) {
+  const fs = yield* FileSystem.FileSystem;
   const paths = yield* findProjectPaths(projectRoot);
   if (paths === null) {
     return null;
@@ -1106,24 +1157,26 @@ const loadServeProjectEnvironment = Effect.fnUntraced(function* (projectRoot: st
     Object.keys(values).map((key) => [key, "ambient"]),
   );
   const loadedPaths: string[] = [];
-  const env = process.env["SUPABASE_ENV"] || defaultSupabaseEnv;
+  const env = Option.getOrElse(
+    yield* Config.option(Config.string("SUPABASE_ENV")),
+    () => defaultSupabaseEnv,
+  );
 
   for (const dir of [paths.supabaseDir, paths.projectRoot]) {
     for (const filename of loadDefaultEnvFilenames(env)) {
       const envPath = join(dir, filename);
-      const contents = yield* Effect.tryPromise({
-        try: () =>
-          readFile(envPath, "utf8").then(
-            (value) => value,
-            (error) => {
-              if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-                return undefined;
-              }
-              throw error;
-            },
-          ),
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-      });
+      const contents = yield* fs.readFileString(envPath).pipe(
+        Effect.catch((cause) =>
+          Predicate.isTagged(cause.reason, "NotFound") ? Effect.void : Effect.fail(cause),
+        ),
+        Effect.mapError(
+          (cause) =>
+            new FunctionsOperationError({
+              message: legacyFilesystemErrorMessage(cause),
+              cause,
+            }),
+        ),
+      );
       if (contents === undefined) {
         continue;
       }
@@ -1161,18 +1214,22 @@ function hasBindUnder(binds: Iterable<string>, containerPath: string): boolean {
   return false;
 }
 
-async function buildWatchSpecs(binds: ReadonlyArray<string>): Promise<ReadonlyArray<WatchSpec>> {
-  const specs = new Map<string, WatchSpec>();
+function buildWatchSpecs(binds: ReadonlyArray<string>) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const specs = new Map<string, WatchSpec>();
 
-  for (const bind of binds) {
-    const hostPath = dockerBindHostPath(bind);
-    if (!isAbsolute(hostPath)) {
-      continue;
-    }
+    for (const bind of binds) {
+      const hostPath = dockerBindHostPath(bind);
+      if (!isAbsolute(hostPath)) {
+        continue;
+      }
 
-    try {
-      const info = await stat(hostPath);
-      if (info.isDirectory()) {
+      const info = yield* fs.stat(hostPath).pipe(Effect.option);
+      if (Option.isNone(info)) {
+        continue;
+      }
+      if (info.value.type === "Directory") {
         specs.set(hostPath, { root: hostPath });
       } else {
         const root = dirname(hostPath);
@@ -1184,12 +1241,10 @@ async function buildWatchSpecs(binds: ReadonlyArray<string>): Promise<ReadonlyAr
         matchPaths.add(hostPath);
         specs.set(root, { root, matchPaths });
       }
-    } catch {
-      continue;
     }
-  }
 
-  return [...specs.values()];
+    return [...specs.values()];
+  });
 }
 
 function shouldIgnoreEvent(pathname: string) {
@@ -1262,8 +1317,8 @@ const waitForRestartSignal = Effect.fnUntraced(function* (watchSpecs: ReadonlyAr
   });
 });
 
-function forwardByteStream(
-  stream: Stream.Stream<Uint8Array, unknown>,
+function forwardByteStream<E>(
+  stream: Stream.Stream<Uint8Array, E>,
   write: (text: string, stream: "stdout" | "stderr") => Effect.Effect<void>,
   streamName: "stdout" | "stderr",
 ) {
@@ -1302,14 +1357,14 @@ const inspectContainerExitCode = Effect.fnUntraced(function* (containerId: strin
 
   if (result.exitCode !== 0) {
     const detail = result.stderr.trim() || result.stdout.trim() || "failed to inspect container";
-    return yield* Effect.fail(new Error(detail));
+    return yield* new FunctionsOperationError({ message: detail });
   }
 
   const exitCode = Number.parseInt(result.stdout.trim(), 10);
   if (Number.isNaN(exitCode)) {
-    return yield* Effect.fail(
-      new Error(`failed to parse container exit code: ${result.stdout.trim()}`),
-    );
+    return yield* new FunctionsOperationError({
+      message: `failed to parse container exit code: ${result.stdout.trim()}`,
+    });
   }
 
   return exitCode;
@@ -1325,7 +1380,15 @@ const streamContainerLogs = Effect.fnUntraced(function* (containerId: string) {
       stdout: "pipe",
       stderr: "pipe",
       extendEnv: true,
-    });
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new FunctionsOperationError({
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
+      ),
+    );
 
     let stderrText = "";
     const [exitCode] = yield* Effect.all(
@@ -1347,20 +1410,24 @@ const streamContainerLogs = Effect.fnUntraced(function* (containerId: string) {
     if (exitCode === 0) {
       const containerExitCode = yield* inspectContainerExitCode(containerId);
       if (containerExitCode === 0) {
-        return yield* Effect.fail(new Error(`container exited gracefully: ${containerId}`));
+        return yield* new FunctionsOperationError({
+          message: `container exited gracefully: ${containerId}`,
+        });
       }
       if (containerExitCode === 137) {
         yield* Effect.sleep(dockerLogRetryDelay);
         continue;
       }
-      return yield* Effect.fail(new Error(`error running container: exit ${containerExitCode}`));
+      return yield* new FunctionsOperationError({
+        message: `error running container: exit ${containerExitCode}`,
+      });
     }
 
     const trimmedStderr = stderrText.trim();
     if (!isRetriableDockerLogsError(trimmedStderr)) {
-      return yield* Effect.fail(
-        new Error(trimmedStderr.length > 0 ? trimmedStderr : `docker logs exited with ${exitCode}`),
-      );
+      return yield* new FunctionsOperationError({
+        message: trimmedStderr.length > 0 ? trimmedStderr : `docker logs exited with ${exitCode}`,
+      });
     }
 
     yield* Effect.sleep(dockerLogRetryDelay);
@@ -1389,7 +1456,7 @@ const assertLocalDbRunning = Effect.fnUntraced(function* (projectId: string) {
   }
 
   if (result.stderr.includes("No such container") || result.stderr.includes("No such object")) {
-    return yield* Effect.fail(new Error("supabase start is not running."));
+    return yield* new FunctionsOperationError({ message: "supabase start is not running." });
   }
 
   const message =
@@ -1401,11 +1468,12 @@ const assertLocalDbRunning = Effect.fnUntraced(function* (projectId: string) {
   // `recoverAndExit` prints on its own stderr line after the red error
   // (`cmd/root.go:300-303`) — mirrored here by the `suggestion` property that
   // `normalizeCliError`/`Output.fail` render the same way.
-  return yield* Effect.fail(
-    legacyIsDockerDaemonUnreachable(result.stderr)
-      ? Object.assign(new Error(message), { suggestion: LEGACY_SUGGEST_DOCKER_INSTALL })
-      : new Error(message),
-  );
+  return yield* new FunctionsOperationError({
+    message,
+    suggestion: legacyIsDockerDaemonUnreachable(result.stderr)
+      ? LEGACY_SUGGEST_DOCKER_INSTALL
+      : undefined,
+  });
 });
 
 const bestEffortRemoveContainer = Effect.fnUntraced(function* (containerId: string) {
@@ -1435,7 +1503,7 @@ const runEdgeRuntimeDockerStep = Effect.fnUntraced(function* (
         : detail.length > 0
           ? `${opts.messagePrefix}: ${detail}`
           : opts.messagePrefix;
-    return yield* Effect.fail(new Error(message));
+    return yield* new FunctionsOperationError({ message });
   }
 });
 
@@ -1454,7 +1522,7 @@ const reloadKong = Effect.fnUntraced(function* (projectId: string) {
     "docker",
     ["exec", kongId, "kong", "reload", "--nginx-conf", "/home/kong/custom_nginx.template"],
     { stdout: "ignore", stderr: "pipe" },
-  ).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
+  ).pipe(Effect.orElseSucceed(() => ({ exitCode: 1, stdout: "", stderr: "" })));
 
   if (result.exitCode !== 0) {
     const suffix = result.stderr.trim().length > 0 ? ` ${result.stderr.trim()}` : "";
@@ -1528,6 +1596,7 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
     importMapOverride: Option.Option<string>,
     noVerifyJwtOverride: Option.Option<boolean>,
     flagCwd: string,
+    projectEnvValues?: Readonly<Record<string, string>>,
   ) {
     const output = yield* Output;
     const functionConfigs = yield* resolveServeFunctionConfigs(
@@ -1541,6 +1610,10 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
 
     const functionsDir = join(projectRoot, functionsDirName);
     const binds = new Set<string>();
+    const bitbucketCloneDir =
+      projectEnvValues === undefined
+        ? Option.getOrUndefined(yield* Config.option(Config.string("BITBUCKET_CLONE_DIR")))
+        : projectEnvValues.BITBUCKET_CLONE_DIR;
 
     for (const fnConfig of functionConfigs) {
       if (!fnConfig.enabled) {
@@ -1549,14 +1622,22 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
       }
 
       const bindWarnings: string[] = [];
-      for (const bind of yield* Effect.promise(() =>
-        buildDockerBinds(projectId, functionsDir, functionsDir, fnConfig, {
-          additionalModuleRoots: [flagCwd],
-          skipMissingImportMapTargets: true,
-          onWarning: async (message) => {
-            bindWarnings.push(message);
-          },
-        }),
+      for (const bind of yield* buildDockerBinds(projectId, functionsDir, functionsDir, fnConfig, {
+        additionalModuleRoots: [flagCwd],
+        skipMissingImportMapTargets: true,
+        bitbucketCloneDir,
+        onWarning: (message) => {
+          bindWarnings.push(message);
+          return Effect.void;
+        },
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new FunctionsOperationError({
+              message: legacyFilesystemErrorMessage(cause),
+              cause,
+            }),
+        ),
       )) {
         binds.add(bind);
       }
@@ -1564,9 +1645,9 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
         warning.includes("failed to read file:"),
       );
       if (missingSourceWarning !== undefined) {
-        return yield* Effect.fail(
-          new Error(missingSourceWarning.trimStart().replace(/^WARN:\s*/, "")),
-        );
+        return yield* new FunctionsOperationError({
+          message: missingSourceWarning.trimStart().replace(/^WARN:\s*/, ""),
+        });
       }
     }
 
@@ -1615,10 +1696,16 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     // what lets the cleanup cover the whole staging-write window below, including a mid-write
     // failure between the first and second `writeDocker*` call, not just the final docker
     // create/cp/start steps.
-    const removeRuntimeArtifacts = Effect.tryPromise({
-      try: () => rm(stagingDir, { recursive: true, force: true }),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    });
+    const fs = yield* FileSystem.FileSystem;
+    const removeRuntimeArtifacts = fs.remove(stagingDir, { recursive: true, force: true }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new FunctionsOperationError({
+            message: legacyFilesystemErrorMessage(cause),
+            cause,
+          }),
+      ),
+    );
     const bestEffortCleanupRuntimeArtifacts = removeRuntimeArtifacts.pipe(
       Effect.tapError((error) =>
         output.warn(`Failed to clean up Edge Runtime artifacts: ${error.message}`),
@@ -1633,11 +1720,24 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       input.importMap,
       input.noVerifyJwt,
       input.flagCwd,
+    ).pipe(
+      Effect.mapError((cause) =>
+        cause instanceof FunctionsOperationError
+          ? cause
+          : new FunctionsOperationError({
+              message: legacyFilesystemErrorMessage(cause),
+              cause,
+            }),
+      ),
     );
 
     const functionsDir = join(input.projectRoot, functionsDirName);
     const functionBinds = new Set<string>();
     const functionsConfig: Record<string, ServeFunctionContainerConfig> = {};
+    const bitbucketCloneDir =
+      input.projectEnvValues === undefined
+        ? Option.getOrUndefined(yield* Config.option(Config.string("BITBUCKET_CLONE_DIR")))
+        : input.projectEnvValues.BITBUCKET_CLONE_DIR;
 
     for (const config of functionConfigs) {
       if (!config.enabled) {
@@ -1646,14 +1746,22 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       }
 
       const bindWarnings: string[] = [];
-      for (const bind of yield* Effect.promise(() =>
-        buildDockerBinds(projectId, functionsDir, functionsDir, config, {
-          additionalModuleRoots: [input.flagCwd],
-          skipMissingImportMapTargets: true,
-          onWarning: async (message) => {
-            bindWarnings.push(message);
-          },
-        }),
+      for (const bind of yield* buildDockerBinds(projectId, functionsDir, functionsDir, config, {
+        additionalModuleRoots: [input.flagCwd],
+        skipMissingImportMapTargets: true,
+        bitbucketCloneDir,
+        onWarning: (message) => {
+          bindWarnings.push(message);
+          return Effect.void;
+        },
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new FunctionsOperationError({
+              message: legacyFilesystemErrorMessage(cause),
+              cause,
+            }),
+        ),
       )) {
         functionBinds.add(bind);
       }
@@ -1661,9 +1769,9 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         warning.includes("failed to read file:"),
       );
       if (missingSourceWarning !== undefined) {
-        return yield* Effect.fail(
-          new Error(missingSourceWarning.trimStart().replace(/^WARN:\s*/, "")),
-        );
+        return yield* new FunctionsOperationError({
+          message: missingSourceWarning.trimStart().replace(/^WARN:\s*/, ""),
+        });
       }
       const functionEnv =
         input.discoverFunctionEnvFiles && Option.isNone(input.envFile)
@@ -1678,7 +1786,11 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
 
     const binds = new Set(functionBinds);
 
-    yield* ensureDockerNamedVolume(localDockerId("edge_runtime", projectId), projectId);
+    yield* ensureDockerNamedVolume(
+      localDockerId("edge_runtime", projectId),
+      projectId,
+      input.projectEnvValues,
+    );
     yield* ensureDockerNetwork(networkMode, projectId);
 
     const env = [
@@ -1697,7 +1809,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       `SUPABASE_INTERNAL_JWT_SECRET=${input.authArtifacts.jwtSecret}`,
       `SUPABASE_JWKS=${input.authArtifacts.jwks}`,
       `SUPABASE_INTERNAL_HOST_PORT=${input.config.apiPort}`,
-      `SUPABASE_INTERNAL_FUNCTIONS_CONFIG=${JSON.stringify(functionsConfig)}`,
+      `SUPABASE_INTERNAL_FUNCTIONS_CONFIG=${encodeJsonText(functionsConfig)}`,
       ...(input.debug ? ["SUPABASE_INTERNAL_DEBUG=true"] : []),
     ];
     if (input.inspectMode !== undefined) {
@@ -1713,22 +1825,19 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     return yield* Effect.gen(function* () {
       yield* Effect.try({
         try: () => validateDockerMultilineEnvNames(multilineDockerEnv),
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+        catch: (cause) =>
+          new FunctionsOperationError({
+            message: cause instanceof Error ? cause.message : String(cause),
+            cause,
+          }),
       });
-      const dockerEnvFile = yield* Effect.tryPromise({
-        try: () => writeDockerEnvFile(singleLineDockerEnv, join(stagingDir, "env")),
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-      });
+      const dockerEnvFile = yield* writeDockerEnvFile(singleLineDockerEnv, join(stagingDir, "env"));
       const multilineEnvDir = "/root/.supabase/multiline-env";
-      const dockerMultilineEnvScript = yield* Effect.tryPromise({
-        try: () =>
-          writeDockerMultilineEnvScript(
-            multilineDockerEnv,
-            multilineEnvDir,
-            join(stagingDir, "multiline-env"),
-          ),
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-      });
+      const dockerMultilineEnvScript = yield* writeDockerMultilineEnvScript(
+        multilineDockerEnv,
+        multilineEnvDir,
+        join(stagingDir, "multiline-env"),
+      );
 
       const labels = dockerProjectLabels(projectId);
       const runtimeCommand = [
@@ -1740,13 +1849,12 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         ...buildFunctionsServeInspectArgs(input.inspectMode, input.inspectMain),
         ...(input.debug ? ["--verbose"] : []),
       ];
-      const serveMainTemplate = yield* Effect.promise(() => getLegacyFunctionsServeMainTemplate());
+      const serveMainTemplate = yield* getLegacyFunctionsServeMainTemplate();
       // Streamed in via `docker cp` between create and start: embedding the template in the
       // `sh -c` argv hits Windows ENAMETOOLONG (#5711), and a single-file host bind mounts as
       // an empty directory on daemons that cannot see this host's filesystem (#6254, #4190).
-      const serveMainArchive = yield* Effect.tryPromise({
-        try: () => containerArchiveBytes({ [serveMainContainerPath]: serveMainTemplate }),
-        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      const serveMainArchive = yield* containerArchiveBytes({
+        [serveMainContainerPath]: serveMainTemplate,
       });
       const containerProjectRoot = toDockerPath(input.projectRoot);
       const nofile = edgeRuntimeNofileUlimit(input.platform);
@@ -1796,9 +1904,19 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       return {
         containerId,
         cleanup: removeRuntimeArtifacts.pipe(Effect.orDie),
-        watchSpecs: yield* Effect.promise(() => buildWatchSpecs([...functionBinds])),
+        watchSpecs: yield* buildWatchSpecs([...functionBinds]),
       } satisfies StartedRuntime;
-    }).pipe(Effect.onError(() => bestEffortCleanupRuntimeArtifacts));
+    }).pipe(
+      Effect.onError(() => bestEffortCleanupRuntimeArtifacts),
+      Effect.catchTag("PlatformError", (cause) =>
+        Effect.fail(
+          new FunctionsOperationError({
+            message: legacyFilesystemErrorMessage(cause),
+            cause,
+          }),
+        ),
+      ),
+    );
   },
 );
 
@@ -1862,7 +1980,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
       envOverride:
         resolved.projectEnvValues === undefined
           ? undefined
-          : legacyViperEnvStringWithProjectFallback(
+          : yield* legacyViperEnvStringWithProjectFallback(
               "SUPABASE_NETWORK_ID",
               resolved.projectEnvValues,
             ),
@@ -1936,6 +2054,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
       authArtifacts,
       dbUrl: legacyDefaultServeDbUrl,
       image,
+      projectEnvValues: resolved.projectEnvValues,
       projectRoot: input.dependencies.projectRoot,
       supabaseDir: input.dependencies.supabaseDir,
       flagCwd: input.dependencies.flagCwd,
@@ -1948,7 +2067,16 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
       noVerifyJwt: input.flags.noVerifyJwt,
       inspectMode: input.inspectMode,
       inspectMain: input.flags.inspectMain,
-    });
+    }).pipe(
+      Effect.mapError((cause) =>
+        cause instanceof FunctionsOperationError && findPlatformError(cause) === undefined
+          ? cause
+          : new FunctionsOperationError({
+              message: legacyFilesystemErrorMessage(cause),
+              cause,
+            }),
+      ),
+    );
 
     yield* reloadKong(projectId);
 
@@ -1978,7 +2106,11 @@ export const serveFunctions = Effect.fn("functions.serve")(function* (
       buildFunctionsServeInspectArgs(resolvedInspectMode, flags.inspectMain);
       return resolvedInspectMode;
     },
-    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    catch: (cause) =>
+      new FunctionsOperationError({
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause,
+      }),
   });
 
   const loop = Effect.gen(function* () {

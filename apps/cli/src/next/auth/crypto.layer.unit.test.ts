@@ -2,7 +2,7 @@ import { Buffer } from "node:buffer";
 import { describe, expect, it } from "@effect/vitest";
 import { createCipheriv, createECDH, randomBytes } from "node:crypto";
 import { vi } from "vitest";
-import { Cause, Effect, Exit } from "effect";
+import { Cause, Clock, Effect, Exit } from "effect";
 import { Crypto } from "./crypto.service.ts";
 import { cryptoLayer } from "./crypto.layer.ts";
 
@@ -11,17 +11,19 @@ const mockOs = vi.hoisted(() => ({
   userInfoReturnEmptyUsername: false,
 }));
 
-vi.mock("node:os", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:os")>();
-  return {
-    ...actual,
-    userInfo: (...args: Parameters<typeof actual.userInfo>) => {
-      if (mockOs.userInfoShouldThrow) throw new Error("userInfo unavailable");
-      if (mockOs.userInfoReturnEmptyUsername) return { ...actual.userInfo(...args), username: "" };
-      return actual.userInfo(...args);
-    },
-  };
-});
+vi.mock("node:os", () => ({
+  hostname: () => "test-host",
+  userInfo: () => {
+    if (mockOs.userInfoShouldThrow) throw new Error("userInfo unavailable");
+    return {
+      username: mockOs.userInfoReturnEmptyUsername ? "" : "test-user",
+      uid: 0,
+      gid: 0,
+      shell: "/bin/sh",
+      homedir: "/tmp",
+    };
+  },
+}));
 
 const testLayer = cryptoLayer;
 
@@ -115,11 +117,11 @@ describe("Crypto", () => {
     });
 
     it.effect("contains a numeric timestamp", () => {
-      const before = Date.now();
       return Effect.gen(function* () {
+        const before = yield* Clock.currentTimeMillis;
         const { defaultTokenName } = yield* Crypto;
         const name = yield* defaultTokenName;
-        const after = Date.now();
+        const after = yield* Clock.currentTimeMillis;
 
         // Extract the trailing numeric timestamp from the token name.
         // Both formats end with _<timestamp>: cli_<ts> or cli_<user>@<host>_<ts>
@@ -141,15 +143,14 @@ describe("Crypto", () => {
         const name = yield* defaultTokenName;
         // The fallback format is exactly cli_<timestamp> with no @ or host part
         expect(name).toMatch(/^cli_\d+$/);
-      })
-        .pipe(Effect.provide(testLayer))
-        .pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              mockOs.userInfoShouldThrow = false;
-            }),
-          ),
-        );
+      }).pipe(
+        Effect.provide(testLayer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            mockOs.userInfoShouldThrow = false;
+          }),
+        ),
+      );
     });
 
     it.effect("falls back to cli_<ts> when username is empty (if-branch false path)", () => {
@@ -159,15 +160,14 @@ describe("Crypto", () => {
         const name = yield* defaultTokenName;
         // Empty username makes the if-condition falsy, producing the bare timestamp format
         expect(name).toMatch(/^cli_\d+$/);
-      })
-        .pipe(Effect.provide(testLayer))
-        .pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              mockOs.userInfoReturnEmptyUsername = false;
-            }),
-          ),
-        );
+      }).pipe(
+        Effect.provide(testLayer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            mockOs.userInfoReturnEmptyUsername = false;
+          }),
+        ),
+      );
     });
   });
 

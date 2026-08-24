@@ -48,12 +48,10 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
     // discarded on the local target — see push.handler.ts's identical guard
     // (db push) for the full TS-only rationale.
     if (Option.isSome(flags.projectRef) && !isLinked) {
-      return yield* Effect.fail(
-        new LegacySeedMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-        }),
-      );
+      return yield* new LegacySeedMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+      });
     }
 
     const projectRefResolver = yield* LegacyProjectRefResolver;

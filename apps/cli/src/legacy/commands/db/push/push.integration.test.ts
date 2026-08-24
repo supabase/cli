@@ -1,10 +1,8 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
 
-import { BunServices } from "@effect/platform-bun";
+import { BunPath, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 
 import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -17,6 +15,7 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import { makeLegacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
@@ -67,6 +66,30 @@ const DEFAULT_FLAGS: LegacyDbPushFlags = {
   projectRef: Option.none(),
   password: Option.none(),
 };
+
+const testPath = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
+const join = (...parts: ReadonlyArray<string>) => testPath.join(...parts);
+const basename = (path: string) => testPath.basename(path);
+
+const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+
+const exists = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.exists(path);
+  }).pipe(Effect.provide(BunServices.layer));
+
+const readDirectory = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.readDirectory(path);
+  }).pipe(Effect.provide(BunServices.layer));
+
+const readFileString = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.readFileString(path);
+  }).pipe(Effect.provide(BunServices.layer));
 
 function mockResolver(
   opts: { isLocal?: boolean; onResolve?: (flags: LegacyDbConfigFlags) => void } = {},
@@ -169,6 +192,7 @@ function setup(
   opts: {
     toml?: string;
     files?: Readonly<Record<string, string>>;
+    binaryFiles?: Readonly<Record<string, Uint8Array>>;
     format?: OutputFormat;
     confirm?: ReadonlyArray<boolean>;
     args?: ReadonlyArray<string>;
@@ -185,6 +209,7 @@ function setup(
     catalogStdout?: string;
     catalogExportFailWith?: string;
     noProjectId?: boolean;
+    env?: Readonly<Record<string, string>>;
     // Simulates the real `LegacyDbConfigResolver`'s own "Initialising login
     // role..." stderr line (`legacy-db-config.layer.ts`'s `initLoginRole`),
     // fired as part of `resolve()`'s own connection-resolution work — i.e.
@@ -194,15 +219,31 @@ function setup(
     simulateInitialisingLoginRole?: boolean;
   },
 ) {
-  if (opts.toml !== undefined) {
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), opts.toml);
-  }
-  for (const [rel, content] of Object.entries(opts.files ?? {})) {
-    const abs = join(workdir, rel);
-    mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, content);
-  }
+  const configProvider = ConfigProvider.fromEnv({
+    env: opts.env ?? {},
+    preserveEmptyStrings: true,
+  });
+  const fixtureLayer = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      if (opts.toml !== undefined) {
+        const supabaseDir = path.join(workdir, "supabase");
+        yield* fs.makeDirectory(supabaseDir, { recursive: true });
+        yield* fs.writeFileString(path.join(supabaseDir, "config.toml"), opts.toml);
+      }
+      for (const [rel, content] of Object.entries(opts.files ?? {})) {
+        const abs = path.join(workdir, rel);
+        yield* fs.makeDirectory(path.dirname(abs), { recursive: true });
+        yield* fs.writeFileString(abs, content);
+      }
+      for (const [rel, content] of Object.entries(opts.binaryFiles ?? {})) {
+        const abs = path.join(workdir, rel);
+        yield* fs.makeDirectory(path.dirname(abs), { recursive: true });
+        yield* fs.writeFile(abs, content);
+      }
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
   const conn = mockConnection(opts);
@@ -214,7 +255,7 @@ function setup(
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
     run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
       edgeRunCalls.push(runOpts);
-      registryEnvAtRunTime.push(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]);
+      registryEnvAtRunTime.push(runOpts.projectEnvValues?.["SUPABASE_INTERNAL_IMAGE_REGISTRY"]);
       if (opts.catalogExportFailWith !== undefined) {
         return Effect.fail(
           new LegacyEdgeRuntimeScriptError({ message: opts.catalogExportFailWith }),
@@ -265,6 +306,8 @@ function setup(
       ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
     }),
     BunServices.layer,
+    ConfigProvider.layer(configProvider),
+    makeLegacyViperEnvLayer(configProvider),
     // Prompts (migration/seed confirmation) are answered through mockOutput's
     // `promptConfirmResponses` (the TTY/clack path), so mark stdin a TTY. Stdin is
     // only referenced by legacyPromptYesNo's non-TTY branch (unreached here).
@@ -278,9 +321,11 @@ function setup(
     linkedCache.layer,
     edge,
     sslProbe,
+    fixtureLayer,
   );
   return {
     layer,
+    configProvider,
     out,
     conn,
     telemetry,
@@ -404,7 +449,7 @@ describe("legacy db push", () => {
       yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(edgeRunCalls).toHaveLength(0);
       expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-      expect(existsSync(join(tmp.current, "supabase", ".temp", "pgdelta"))).toBe(false);
+      expect(yield* exists(join(tmp.current, "supabase", ".temp", "pgdelta"))).toBe(false);
     });
   });
 
@@ -417,7 +462,7 @@ describe("legacy db push", () => {
     return Effect.gen(function* () {
       yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(edgeRunCalls).toHaveLength(0);
-      expect(existsSync(join(tmp.current, "supabase", ".temp", "pgdelta"))).toBe(false);
+      expect(yield* exists(join(tmp.current, "supabase", ".temp", "pgdelta"))).toBe(false);
     });
   });
 
@@ -436,7 +481,7 @@ describe("legacy db push", () => {
       expect(out.stderrText).not.toContain("failed to cache migrations catalog");
       expect(edgeRunCalls).toHaveLength(1);
       const tempDir = join(tmp.current, "supabase", ".temp", "pgdelta");
-      const catalogFiles = readdirSync(tempDir).filter((name) =>
+      const catalogFiles = (yield* readDirectory(tempDir)).filter((name) =>
         name.startsWith("catalog-local-migrations-"),
       );
       expect(catalogFiles).toHaveLength(1);
@@ -451,8 +496,6 @@ describe("legacy db push", () => {
       // `supabase/.env` fallback below and resolve to the next implementation —
       // matching the engine-selector layer's own precedence rather than
       // `toml.envLookup`'s (which treats an empty shell value as unset).
-      const prev = process.env["SUPABASE_USE_PG_DELTA_NEXT"];
-      process.env["SUPABASE_USE_PG_DELTA_NEXT"] = "";
       const { layer, out, edgeRunCalls } = setup(tmp.current, {
         toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
         files: {
@@ -460,20 +503,14 @@ describe("legacy db push", () => {
           "supabase/.env": "SUPABASE_USE_PG_DELTA_NEXT=false\n",
         },
         confirm: [true],
+        env: { SUPABASE_USE_PG_DELTA_NEXT: "" },
       });
       return Effect.gen(function* () {
         yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(out.stderrText).not.toContain("failed to cache migrations catalog");
         expect(edgeRunCalls).toHaveLength(0);
-        expect(existsSync(join(tmp.current, "supabase", ".temp", "pgdelta"))).toBe(false);
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (prev === undefined) delete process.env["SUPABASE_USE_PG_DELTA_NEXT"];
-            else process.env["SUPABASE_USE_PG_DELTA_NEXT"] = prev;
-          }),
-        ),
-      );
+        expect(yield* exists(join(tmp.current, "supabase", ".temp", "pgdelta"))).toBe(false);
+      });
     },
   );
 
@@ -492,11 +529,11 @@ describe("legacy db push", () => {
       expect(out.stderrText).not.toContain("failed to cache migrations catalog");
       expect(edgeRunCalls).toHaveLength(1);
       const tempDir = join(tmp.current, "supabase", ".temp", "pgdelta");
-      const catalogFiles = readdirSync(tempDir).filter((name) =>
+      const catalogFiles = (yield* readDirectory(tempDir)).filter((name) =>
         name.startsWith("catalog-local-migrations-"),
       );
       expect(catalogFiles).toHaveLength(1);
-      expect(readFileSync(join(tempDir, catalogFiles[0]!), "utf8")).toBe('{"snapshot":"ok"}');
+      expect(yield* readFileString(join(tempDir, catalogFiles[0]!))).toBe('{"snapshot":"ok"}');
     });
   });
 
@@ -630,8 +667,6 @@ describe("legacy db push", () => {
   it.live(
     "resolves the pg-delta cache export image via SUPABASE_INTERNAL_IMAGE_REGISTRY from supabase/.env",
     () => {
-      const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-      delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
       const { layer, registryEnvAtRunTime } = setup(tmp.current, {
         toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
         files: {
@@ -641,21 +676,31 @@ describe("legacy db push", () => {
         },
         confirm: [true],
         catalogStdout: '{"snapshot":"ok"}',
+        env: {},
       });
       return Effect.gen(function* () {
         yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(registryEnvAtRunTime).toEqual(["my-mirror.example.com"]);
-        expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (prev === undefined) delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-            else process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = prev;
-          }),
-        ),
-      );
+      });
     },
   );
+
+  it.live("propagates an ambient registry value into downstream pg-delta image resolution", () => {
+    const { layer, registryEnvAtRunTime } = setup(tmp.current, {
+      toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+      files: {
+        ...migrationFile("20240101000000"),
+        "supabase/.env": "SUPABASE_USE_PG_DELTA_NEXT=false\n",
+      },
+      confirm: [true],
+      catalogStdout: '{"snapshot":"ok"}',
+      env: { SUPABASE_INTERNAL_IMAGE_REGISTRY: "ambient-mirror.example.com" },
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(registryEnvAtRunTime).toEqual(["ambient-mirror.example.com"]);
+    });
+  });
 
   it.live("returns context canceled when the migration prompt is declined", () => {
     const { layer, conn } = setup(tmp.current, {
@@ -667,7 +712,7 @@ describe("legacy db push", () => {
       const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("context canceled");
+        expect(encodeJson(exit.cause)).toContain("context canceled");
       }
       expect(conn.execs).not.toContain("BEGIN");
     });
@@ -740,11 +785,11 @@ describe("legacy db push", () => {
       const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(encodeJson(exit.cause)).toContain(
           "Remote migration versions not found in local migrations directory.",
         );
-        expect(JSON.stringify(exit.cause)).toContain("migration repair --local --status reverted");
-        expect(JSON.stringify(exit.cause)).toContain("supabase db pull --local");
+        expect(encodeJson(exit.cause)).toContain("migration repair --local --status reverted");
+        expect(encodeJson(exit.cause)).toContain("supabase db pull --local");
       }
       expect(out).toBeDefined();
     });
@@ -763,8 +808,8 @@ describe("legacy db push", () => {
         dbUrl: Option.some(dbUrl),
         local: false,
       }).pipe(Effect.provide(layer), Effect.exit);
-      expect(JSON.stringify(exit)).toContain("migration repair --status reverted");
-      expect(JSON.stringify(exit)).not.toContain("migration repair --local");
+      expect(encodeJson(exit)).toContain("migration repair --status reverted");
+      expect(encodeJson(exit)).not.toContain("migration repair --local");
     });
   });
 
@@ -779,7 +824,7 @@ describe("legacy db push", () => {
       const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("--include-all");
+        expect(encodeJson(exit.cause)).toContain("--include-all");
       }
     });
   });
@@ -873,9 +918,8 @@ describe("legacy db push", () => {
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       remoteSeeds: { "supabase/seed.sql": rawHash },
+      binaryFiles: { "supabase/seed.sql": raw },
     });
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "seed.sql"), raw);
     return Effect.gen(function* () {
       yield* legacyDbPush({ ...DEFAULT_FLAGS, includeSeed: true }).pipe(Effect.provide(layer));
       expect(out.stdoutText).toBe("Local database is up to date.\n");
@@ -965,7 +1009,7 @@ describe("legacy db push", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("context canceled");
+      if (Exit.isFailure(exit)) expect(encodeJson(exit.cause)).toContain("context canceled");
     });
   });
 
@@ -981,7 +1025,7 @@ describe("legacy db push", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(JSON.stringify(exit.cause)).toContain("context canceled");
+      if (Exit.isFailure(exit)) expect(encodeJson(exit.cause)).toContain("context canceled");
     });
   });
 
@@ -1101,7 +1145,7 @@ describe("legacy db push", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("failed to parse config:");
+      expect(encodeJson(exit)).toContain("failed to parse config:");
       expect(out.stderrText).not.toContain("Connecting to local database...");
       expect(conn.queries).toEqual([]);
     });
@@ -1273,7 +1317,7 @@ describe("legacy db push", () => {
         // malformed config aborts with the established `failed to load config`
         // message (the reader path), same as the other db commands
         // (diff/dump/pull/migration).
-        expect(JSON.stringify(exit.cause)).toContain("failed to load config");
+        expect(encodeJson(exit.cause)).toContain("failed to load config");
       }
     });
   });
@@ -1282,24 +1326,16 @@ describe("legacy db push", () => {
     // Regression for the strict @supabase/config loader rejecting `enabled = "env(VAR)"`:
     // env-expansion + boolean parsing must resolve it, so the config loads and the
     // migration proceeds. Previously native push aborted before that parse ran.
-    const previous = process.env["SEED_ENABLED"];
-    process.env["SEED_ENABLED"] = "true";
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n\n[db.seed]\nenabled = "env(SEED_ENABLED)"\n',
       files: migrationFile("20240101000000"),
       confirm: [true],
+      env: { SEED_ENABLED: "true" },
     });
     return Effect.gen(function* () {
       yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SEED_ENABLED"];
-          else process.env["SEED_ENABLED"] = previous;
-        }),
-      ),
-    );
+    });
   });
 
   it.live("a matched remote block's migrations.enabled beats the shell env override", () => {
@@ -1308,8 +1344,6 @@ describe("legacy db push", () => {
     // `SUPABASE_DB_MIGRATIONS_ENABLED=true` and the push skips migrations.
     // (Before the config-reader convergence, push resolved this gate
     // env-first and wrongly applied.)
-    const previous = process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
-    process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "true";
     const { layer, out } = setup(tmp.current, {
       toml: `project_id = "base"\n\n[remotes.preview]\nproject_id = "${LEGACY_VALID_REF}"\n\n[remotes.preview.db.migrations]\nenabled = false\n`,
       files: migrationFile("20240101000000"),
@@ -1317,6 +1351,7 @@ describe("legacy db push", () => {
       isLocal: false,
       projectRef: LEGACY_VALID_REF,
       confirm: [true],
+      env: { SUPABASE_DB_MIGRATIONS_ENABLED: "true" },
     });
     return Effect.gen(function* () {
       yield* legacyDbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(
@@ -1324,14 +1359,7 @@ describe("legacy db push", () => {
       );
       expect(out.stderrText).toContain("Skipping migrations because it is disabled");
       expect(out.stderrText).not.toContain("Applying migration 20240101000000");
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
-          else process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = previous;
-        }),
-      ),
-    );
+    });
   });
 
   it.live("announces a matching [remotes.*] override on the linked path", () => {
@@ -1456,7 +1484,7 @@ describe("legacy db push", () => {
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(encodeJson(exit.cause)).toContain(
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }

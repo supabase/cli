@@ -15,6 +15,15 @@ import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service
 import { resolveLegacyDbTargetFlags } from "../../../shared/legacy-db-target-flags.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 
+const inspectValueToString = (value: unknown): string => {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return value.toString();
+  }
+  if (typeof value === "symbol") return value.toString();
+  return Object.prototype.toString.call(value);
+};
+
 /**
  * The connection selector flags every `inspect db` subcommand inherits from the
  * `inspect` persistent flag set:
@@ -88,7 +97,7 @@ export class LegacyInspectMutuallyExclusiveFlagsError extends Data.TaggedError(
  * few UNWRAPPED columns (no code span) use `legacyInspectPlainText`.
  */
 export function legacyInspectText(value: unknown): string {
-  const text = value === null || value === undefined ? "" : String(value);
+  const text = value === null || value === undefined ? "" : inspectValueToString(value);
   return text === "" ? "``" : text;
 }
 
@@ -100,14 +109,14 @@ export function legacyInspectText(value: unknown): string {
  */
 export function legacyInspectPlainText(value: unknown): string {
   if (value === null || value === undefined) return "";
-  return String(value);
+  return inspectValueToString(value);
 }
 
 /** A bool column. The driver maps Postgres `boolean` to a JS boolean. */
 export function legacyInspectBool(value: unknown): string {
   if (typeof value === "boolean") return value ? "true" : "false";
   if (value === null || value === undefined) return "false";
-  return String(value);
+  return inspectValueToString(value);
 }
 
 /**
@@ -118,7 +127,7 @@ export function legacyInspectBool(value: unknown): string {
 export function legacyInspectInt(value: unknown): string {
   if (value === null || value === undefined) return "0";
   if (typeof value === "bigint") return value.toString();
-  return String(value);
+  return inspectValueToString(value);
 }
 
 /** A float column: always one decimal place (`12` → `"12.0"`). */
@@ -130,7 +139,7 @@ export function legacyInspectFloat1(value: unknown): string {
     return Number.isNaN(parsed) ? value : parsed.toFixed(1);
   }
   if (value === null || value === undefined) return "0.0";
-  return String(value);
+  return inspectValueToString(value);
 }
 
 /**
@@ -147,7 +156,8 @@ export function legacyInspectStmt(value: unknown): string {
   // with a single space — the exact character set this must match, since
   // JS's `\s` differs (it includes `\v` AND Unicode spaces like nbsp, U+2028)
   // and a naive `/\s+/g` would over-collapse runs this must leave alone.
-  return String(value).replace(/[\t\n\f\r ]+|\v/g, " ");
+  const text = inspectValueToString(value);
+  return text.replace(/[\t\n\f\r ]+|\v/g, " ");
 }
 
 /**
@@ -186,11 +196,9 @@ export const legacyRunInspectQuery = Effect.fnUntraced(function* (
   // it and route to linked incorrectly.
   const target = resolveLegacyDbTargetFlags(cliArgs.args);
   if (target.setFlags.length > 1) {
-    return yield* Effect.fail(
-      new LegacyInspectMutuallyExclusiveFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-      }),
-    );
+    return yield* new LegacyInspectMutuallyExclusiveFlagsError({
+      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
+    });
   }
 
   // `--linked` is the default, so absence of `--db-url`/`--local` resolves
@@ -202,12 +210,10 @@ export const legacyRunInspectQuery = Effect.fnUntraced(function* (
   // discarded on a non-linked target — see push.handler.ts's identical guard
   // (db push) for the full TS-only rationale.
   if (Option.isSome(flags.projectRef) && connType !== "linked") {
-    return yield* Effect.fail(
-      new LegacyInspectMutuallyExclusiveFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      }),
-    );
+    return yield* new LegacyInspectMutuallyExclusiveFlagsError({
+      message:
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+    });
   }
 
   const cfg = yield* resolver.resolve({

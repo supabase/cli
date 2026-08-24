@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Duration, Effect, Fiber, Layer, Queue, Stream } from "effect";
-import { join } from "node:path";
+import { BunServices } from "@effect/platform-bun";
+import { Deferred, Duration, Effect, Fiber, Layer, Path, Queue, Stream } from "effect";
 import {
   FileWatcher,
   type FileWatchEvent,
@@ -57,6 +57,7 @@ describe("functions dev runtime", () => {
 
     return Effect.gen(function* () {
       const watcher = makeFakeFileWatcher();
+      const path = yield* Path.Path;
       let emitted = false;
 
       const fiber = yield* watchPaths([{ path: cwd, names: ["supabase"] }]).pipe(
@@ -72,19 +73,20 @@ describe("functions dev runtime", () => {
       );
 
       yield* watcher.awaitWatch(cwd);
-      yield* watcher.emit(cwd, [{ path: join(cwd, "supabase", "functions"), type: "create" }]);
+      yield* watcher.emit(cwd, [{ path: path.join(cwd, "supabase", "functions"), type: "create" }]);
       yield* Fiber.join(fiber);
 
       expect(emitted).toBe(true);
-    });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.live("marks config json changes as project config changes", () => {
     const cwd = "/tmp/supabase-functions-dev-watch";
-    const supabaseDir = join(cwd, "supabase");
 
     return Effect.gen(function* () {
       const watcher = makeFakeFileWatcher();
+      const path = yield* Path.Path;
+      const supabaseDir = path.join(cwd, "supabase");
 
       const fiber = yield* watchPaths([
         { path: supabaseDir, names: ["functions", "config.toml", "config.json"] },
@@ -98,11 +100,11 @@ describe("functions dev runtime", () => {
 
       yield* watcher.awaitWatch(supabaseDir);
       yield* watcher.emit(supabaseDir, [
-        { path: join(supabaseDir, "config.json"), type: "create" },
+        { path: path.join(supabaseDir, "config.json"), type: "create" },
       ]);
       const changes = yield* Fiber.join(fiber);
 
       expect(changes.at(0)?.touchesProjectConfig).toBe(true);
-    });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 });

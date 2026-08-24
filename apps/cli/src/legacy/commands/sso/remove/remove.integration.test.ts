@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Option } from "effect";
+import * as Formatter from "effect/Formatter";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts";
@@ -130,7 +131,7 @@ describe("legacy sso remove integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoInvalidUuidError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacySsoInvalidUuidError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -155,7 +156,7 @@ describe("legacy sso remove integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoRemoveNotFoundError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacySsoRemoveNotFoundError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -168,7 +169,7 @@ describe("legacy sso remove integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySsoRemoveUnexpectedStatusError");
         expect(dump).toContain("Unexpected error removing identity provider");
       }
@@ -219,7 +220,7 @@ describe("legacy sso remove integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySsoTomlEncodeError");
         expect(dump).toContain("failed to output toml: toml: cannot encode array with nil element");
       }
@@ -252,7 +253,7 @@ describe("legacy sso remove integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoRemoveNetworkError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacySsoRemoveNetworkError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -265,7 +266,7 @@ describe("legacy sso remove integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySsoRemoveUnexpectedStatusError");
         expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
           error_kind: "external_service",
@@ -284,7 +285,7 @@ describe("legacy sso remove integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySsoRemoveNetworkError");
         expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
           error_kind: "external_service",

@@ -1,4 +1,4 @@
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import process from "node:process";
 import { Layer } from "effect";
 
@@ -12,5 +12,12 @@ export const runtimeInfoLayer = Layer.sync(RuntimeInfo, () =>
     homeDir: homedir(),
     execPath: process.execPath,
     pid: process.pid,
+    osUser: (() => {
+      try {
+        return userInfo().username || undefined;
+      } catch {
+        return undefined;
+      }
+    })(),
   }),
 );

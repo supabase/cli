@@ -173,20 +173,20 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // signing-keys-file read/parse error — all of these must fail here, not
     // be masked by a Docker/DB error when the local stack happens to be
     // unavailable.
-    const localState = yield* Effect.try({
-      try: () =>
-        legacyResolveStatusLocalState(
-          context.config,
-          context.hostname,
-          cliConfig.workdir,
-          context.projectEnvValues,
-          context.loaded?.document,
-        ),
-      catch: (cause) =>
-        new LegacyStatusInvalidConfigError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
+    const localState = yield* legacyResolveStatusLocalState(
+      context.config,
+      context.hostname,
+      cliConfig.workdir,
+      context.projectEnvValues,
+      context.loaded?.document,
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new LegacyStatusInvalidConfigError({
+            message: cause instanceof Error ? cause.message : String(cause),
+          }),
+      ),
+    );
 
     // 4. status has no --project-id flag; resolution is always env → toml →
     // workdir basename, then sanitized to match the singleton config
@@ -209,18 +209,14 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
         Effect.mapError((cause) => new LegacyStatusDbInspectError({ message: cause.message })),
       );
       if (!state.running) {
-        return yield* Effect.fail(
-          new LegacyStatusDbNotRunningError({
-            message: `${dbContainerId} container is not running: ${state.status}`,
-          }),
-        );
+        return yield* new LegacyStatusDbNotRunningError({
+          message: `${dbContainerId} container is not running: ${state.status}`,
+        });
       }
       if (state.health !== undefined && state.health !== "healthy") {
-        return yield* Effect.fail(
-          new LegacyStatusDbNotReadyError({
-            message: `${dbContainerId} container is not ready: ${state.health}`,
-          }),
-        );
+        return yield* new LegacyStatusDbNotReadyError({
+          message: `${dbContainerId} container is not ready: ${state.health}`,
+        });
       }
     }
 

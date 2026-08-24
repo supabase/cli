@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path, Schema } from "effect";
 
 import { legacyViperEnvStringWithProjectFallback } from "../../shared/legacy/legacy-viper-env.ts";
 import {
@@ -42,6 +42,21 @@ export interface LegacyDeclarativeOutput {
   readonly files: ReadonlyArray<LegacyDeclarativeFile>;
 }
 
+const LegacyDeclarativeOutputJsonSchema = Schema.fromJsonString(
+  Schema.Struct({
+    version: Schema.Finite,
+    mode: Schema.String,
+    files: Schema.Array(
+      Schema.Struct({
+        path: Schema.String,
+        order: Schema.Finite,
+        statements: Schema.Finite,
+        sql: Schema.String,
+      }),
+    ),
+  }),
+);
+
 /**
  * One execution-aware migration unit from a pg-delta diff plan. Mirrors Go's
  * `PgDeltaPlanFile` (`internal/db/diff/pgdelta.go`): a numbered SQL file whose
@@ -55,14 +70,19 @@ interface LegacyPgDeltaPlanFile {
 }
 
 /** The pg-delta diff envelope. Mirrors Go's `PgDeltaDiffOutput`. */
-interface LegacyPgDeltaDiffOutput {
-  readonly version: number;
-  readonly files: ReadonlyArray<
-    Omit<LegacyPgDeltaPlanFile, "transactionMode"> & {
-      readonly transactionMode: string;
-    }
-  >;
-}
+const LegacyPgDeltaDiffOutputJsonSchema = Schema.fromJsonString(
+  Schema.Struct({
+    version: Schema.Finite,
+    files: Schema.Array(
+      Schema.Struct({
+        order: Schema.Finite,
+        name: Schema.String,
+        transactionMode: Schema.String,
+        sql: Schema.String,
+      }),
+    ),
+  }),
+);
 
 /**
  * Result of a pg-delta diff: the per-unit plan `files`, a `sql` flattening of
@@ -168,8 +188,8 @@ export function legacyPgDeltaBinds(projectId: string, cwd: string): ReadonlyArra
 }
 
 /** Mirrors Go's `IsPgDeltaDebugEnabled` (`internal/db/diff/pgdelta_debug.go:11`). */
-export function legacyIsPgDeltaDebugEnabled(): boolean {
-  const value = (process.env["PGDELTA_DEBUG"] ?? "").trim().toLowerCase();
+export function legacyIsPgDeltaDebugEnabled(projectEnv: Readonly<Record<string, string>>): boolean {
+  const value = (projectEnv["PGDELTA_DEBUG"] ?? "").trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes";
 }
 
@@ -189,20 +209,22 @@ export function legacyIsPgDeltaDebugEnabled(): boolean {
  * call in Go. `projectEnv` reproduces that merge with the same shell-presence-wins semantics
  * (review: PRRT_kwDOErm0O86XFmjf).
  */
-export function legacyPgDeltaNpmRegistryOption(projectEnv: Readonly<Record<string, string>>): {
-  readonly extraFiles?: ReadonlyArray<LegacyEdgeRuntimeFile>;
-  readonly extraEnv?: Readonly<Record<string, string>>;
-} {
-  const registry = legacyViperEnvStringWithProjectFallback(
+export const legacyPgDeltaNpmRegistryOption = Effect.fnUntraced(function* (
+  projectEnv: Readonly<Record<string, string>>,
+) {
+  const registry = (yield* legacyViperEnvStringWithProjectFallback(
     PG_DELTA_NPM_REGISTRY_ENV,
     projectEnv,
-  ).trim();
+  )).trim();
   if (registry.length === 0) return {};
   return {
     extraFiles: [{ name: ".npmrc", content: `@supabase:registry=${registry}\n` }],
     extraEnv: { [PG_DELTA_NPM_REGISTRY_ENV]: registry, NPM_CONFIG_REGISTRY: registry },
+  } satisfies {
+    readonly extraFiles?: ReadonlyArray<LegacyEdgeRuntimeFile>;
+    readonly extraEnv?: Readonly<Record<string, string>>;
   };
-}
+});
 
 /** Adds the container ref + any SSL env for a SOURCE/TARGET endpoint (writes a CA bundle for Supabase-hosted remotes). */
 const appendRefEnv = Effect.fnUntraced(function* (
@@ -225,6 +247,7 @@ const buildDiffEnv = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   cwd: string,
+  projectEnv: Readonly<Record<string, string>>,
   params: {
     readonly targetRef: string;
     readonly sourceRef: string;
@@ -238,7 +261,7 @@ const buildDiffEnv = Effect.fnUntraced(function* (
     yield* appendRefEnv(fs, path, cwd, env, "SOURCE", params.sourceRef);
   if (params.schema.length > 0) env["INCLUDED_SCHEMAS"] = params.schema.join(",");
   if (params.formatOptions.trim().length > 0) env["FORMAT_OPTIONS"] = params.formatOptions;
-  if (legacyIsPgDeltaDebugEnabled()) env["PGDELTA_DEBUG"] = "1";
+  if (legacyIsPgDeltaDebugEnabled(projectEnv)) env["PGDELTA_DEBUG"] = "1";
   return env;
 });
 
@@ -269,8 +292,8 @@ export const legacyDiffPgDelta = Effect.fnUntraced(function* (
   const edgeRuntime = yield* LegacyEdgeRuntimeScript;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const env = yield* buildDiffEnv(fs, path, ctx.cwd, params);
-  const npm = legacyPgDeltaNpmRegistryOption(ctx.projectEnv);
+  const env = yield* buildDiffEnv(fs, path, ctx.cwd, ctx.projectEnv, params);
+  const npm = yield* legacyPgDeltaNpmRegistryOption(ctx.projectEnv);
   const result = yield* edgeRuntime
     .run({
       script: legacyInterpolatePgDeltaScript(legacyPgDeltaDiffScript, ctx.npmVersion),
@@ -279,6 +302,7 @@ export const legacyDiffPgDelta = Effect.fnUntraced(function* (
       errPrefix: "error diffing schema",
       extraFiles: npm.extraFiles,
       extraEnv: npm.extraEnv,
+      projectEnvValues: ctx.projectEnv,
       denoVersion: ctx.denoVersion,
       workdir: ctx.cwd,
     })
@@ -290,25 +314,24 @@ export const legacyDiffPgDelta = Effect.fnUntraced(function* (
   if (result.stdout.trim().length === 0) {
     return { sql: "", files: [], stderr: result.stderr } satisfies LegacyPgDeltaDiffResult;
   }
-  const envelope = yield* Effect.try({
-    try: () => JSON.parse(result.stdout) as LegacyPgDeltaDiffOutput,
-    catch: (cause) =>
-      new LegacyPgDeltaDiffParseError({
-        message: `failed to parse pg-delta diff output: ${
-          cause instanceof Error ? cause.message : String(cause)
-        }:\n${result.stderr}`,
-      }),
-  });
+  const envelope = yield* Schema.decodeEffect(LegacyPgDeltaDiffOutputJsonSchema)(
+    result.stdout,
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new LegacyPgDeltaDiffParseError({
+          message: `failed to parse pg-delta diff output: ${String(cause)}:\n${result.stderr}`,
+        }),
+    ),
+  );
   const rawFiles = envelope.files ?? [];
   const files: Array<LegacyPgDeltaPlanFile> = [];
   for (const file of rawFiles) {
     const transactionMode = file.transactionMode;
     if (transactionMode !== "transactional" && transactionMode !== "none") {
-      return yield* Effect.fail(
-        new LegacyPgDeltaDiffParseError({
-          message: `unknown pg-delta transaction mode ${JSON.stringify(transactionMode)}`,
-        }),
-      );
+      return yield* new LegacyPgDeltaDiffParseError({
+        message: `unknown pg-delta transaction mode "${transactionMode}"`,
+      });
     }
     files.push({ ...file, transactionMode });
   }
@@ -335,8 +358,8 @@ export const legacyDeclarativeExportPgDelta = Effect.fnUntraced(function* (
   const edgeRuntime = yield* LegacyEdgeRuntimeScript;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const env = yield* buildDiffEnv(fs, path, ctx.cwd, params);
-  const npm = legacyPgDeltaNpmRegistryOption(ctx.projectEnv);
+  const env = yield* buildDiffEnv(fs, path, ctx.cwd, ctx.projectEnv, params);
+  const npm = yield* legacyPgDeltaNpmRegistryOption(ctx.projectEnv);
   const result = yield* edgeRuntime
     .run({
       script: legacyInterpolatePgDeltaScript(legacyPgDeltaDeclarativeExportScript, ctx.npmVersion),
@@ -345,28 +368,26 @@ export const legacyDeclarativeExportPgDelta = Effect.fnUntraced(function* (
       errPrefix: "error exporting declarative schema",
       extraFiles: npm.extraFiles,
       extraEnv: npm.extraEnv,
+      projectEnvValues: ctx.projectEnv,
       denoVersion: ctx.denoVersion,
       workdir: ctx.cwd,
     })
     .pipe(Effect.mapError(toDeclarativeEdgeRuntimeError));
 
   if (result.stdout.length === 0) {
-    return yield* Effect.fail(
-      new LegacyDeclarativeEmptyOutputError({
-        message: `error exporting declarative schema: edge-runtime script produced no output:\n${result.stderr}`,
-      }),
-    );
+    return yield* new LegacyDeclarativeEmptyOutputError({
+      message: `error exporting declarative schema: edge-runtime script produced no output:\n${result.stderr}`,
+    });
   }
 
-  return yield* Effect.try({
-    try: () => JSON.parse(result.stdout) as LegacyDeclarativeOutput,
-    catch: (cause) =>
-      new LegacyDeclarativeParseOutputError({
-        message: `failed to parse declarative export output: ${
-          cause instanceof Error ? cause.message : String(cause)
-        }`,
-      }),
-  });
+  return yield* Schema.decodeEffect(LegacyDeclarativeOutputJsonSchema)(result.stdout).pipe(
+    Effect.mapError(
+      (cause) =>
+        new LegacyDeclarativeParseOutputError({
+          message: `failed to parse declarative export output: ${String(cause)}`,
+        }),
+    ),
+  );
 });
 
 /**
@@ -385,7 +406,7 @@ export const legacyExportCatalogPgDelta = Effect.fnUntraced(function* (
   const env: Record<string, string> = {};
   yield* appendRefEnv(fs, path, ctx.cwd, env, "TARGET", params.targetRef);
   if (params.role.length > 0) env["ROLE"] = params.role;
-  const npm = legacyPgDeltaNpmRegistryOption(ctx.projectEnv);
+  const npm = yield* legacyPgDeltaNpmRegistryOption(ctx.projectEnv);
   const result = yield* edgeRuntime
     .run({
       script: legacyInterpolatePgDeltaScript(legacyPgDeltaCatalogExportScript, ctx.npmVersion),
@@ -394,6 +415,7 @@ export const legacyExportCatalogPgDelta = Effect.fnUntraced(function* (
       errPrefix: "error exporting pg-delta catalog",
       extraFiles: npm.extraFiles,
       extraEnv: npm.extraEnv,
+      projectEnvValues: ctx.projectEnv,
       denoVersion: ctx.denoVersion,
       workdir: ctx.cwd,
     })
@@ -401,11 +423,9 @@ export const legacyExportCatalogPgDelta = Effect.fnUntraced(function* (
 
   const snapshot = result.stdout.trim();
   if (snapshot.length === 0) {
-    return yield* Effect.fail(
-      new LegacyDeclarativeEmptyOutputError({
-        message: `error exporting pg-delta catalog: edge-runtime script produced no output:\n${result.stderr}`,
-      }),
-    );
+    return yield* new LegacyDeclarativeEmptyOutputError({
+      message: `error exporting pg-delta catalog: edge-runtime script produced no output:\n${result.stderr}`,
+    });
   }
   return snapshot;
 });

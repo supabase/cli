@@ -1,6 +1,7 @@
 import { createHmac, generateKeyPairSync } from "node:crypto";
 import { importJWK, jwtVerify } from "jose";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
+import { DateTime, Effect } from "effect";
 
 import {
   legacyAssertDecodableJwkAlgorithm,
@@ -11,6 +12,7 @@ import {
 } from "./legacy-go-jwt.ts";
 
 const SECRET = "super-secret-jwt-token-with-at-least-32-characters-long";
+const JWT_TEST_CURRENT_DATE = DateTime.toDateUtc(DateTime.makeUnsafe("1970-01-01T00:00:00Z"));
 
 function generateRsaJwk(kid?: string): LegacyJwk {
   const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -89,42 +91,56 @@ describe("legacyGenerateGoJwt", () => {
 });
 
 describe("legacyGenerateAsymmetricGoJwt", () => {
-  it("signs and verifies an RS256 token from an RSA JWK", async () => {
-    const jwk = generateRsaJwk("rsa-kid");
-    const token = legacyGenerateAsymmetricGoJwt(jwk, "anon");
-    const publicKey = await importJWK(publicJwkOf(jwk), "RS256");
-    const { payload, protectedHeader } = await jwtVerify(token, publicKey);
-    expect(payload).toMatchObject({ iss: "supabase-demo", role: "anon" });
-    expect(protectedHeader).toEqual({ alg: "RS256", kid: "rsa-kid", typ: "JWT" });
-  });
+  it.effect("signs and verifies an RS256 token from an RSA JWK", () =>
+    Effect.gen(function* () {
+      const jwk = generateRsaJwk("rsa-kid");
+      const token = legacyGenerateAsymmetricGoJwt(jwk, "anon", 0);
+      const publicKey = yield* Effect.promise(() => importJWK(publicJwkOf(jwk), "RS256"));
+      const { payload, protectedHeader } = yield* Effect.promise(() =>
+        jwtVerify(token, publicKey, { currentDate: JWT_TEST_CURRENT_DATE }),
+      );
+      expect(payload).toMatchObject({ iss: "supabase-demo", role: "anon" });
+      expect(protectedHeader).toEqual({ alg: "RS256", kid: "rsa-kid", typ: "JWT" });
+    }),
+  );
 
-  it("signs an RS256 token from an RSA JWK missing CRT exponents (dp/dq/qi), matching Go", async () => {
-    // `jwkToRSAPrivateKey`
-    // never reads `dp`/`dq`/`qi` — it builds the key from `n`/`e`/`d`/`p`/`q`
-    // alone, and Go's stdlib derives the CRT params itself when absent. A
-    // hand-authored signing-keys file that omits them (common — RFC 7517 marks
-    // them optional) must still sign successfully here.
-    const jwk = generateRsaJwk("rsa-kid");
-    const { dp: _dp, dq: _dq, qi: _qi, ...jwkWithoutCrtParams } = jwk;
-    const token = legacyGenerateAsymmetricGoJwt(jwkWithoutCrtParams, "anon");
-    const publicKey = await importJWK(publicJwkOf(jwk), "RS256");
-    const { payload, protectedHeader } = await jwtVerify(token, publicKey);
-    expect(payload).toMatchObject({ iss: "supabase-demo", role: "anon" });
-    expect(protectedHeader).toEqual({ alg: "RS256", kid: "rsa-kid", typ: "JWT" });
-  });
+  it.effect(
+    "signs an RS256 token from an RSA JWK missing CRT exponents (dp/dq/qi), matching Go",
+    () =>
+      Effect.gen(function* () {
+        // `jwkToRSAPrivateKey`
+        // never reads `dp`/`dq`/`qi` — it builds the key from `n`/`e`/`d`/`p`/`q`
+        // alone, and Go's stdlib derives the CRT params itself when absent. A
+        // hand-authored signing-keys file that omits them (common — RFC 7517 marks
+        // them optional) must still sign successfully here.
+        const jwk = generateRsaJwk("rsa-kid");
+        const { dp: _dp, dq: _dq, qi: _qi, ...jwkWithoutCrtParams } = jwk;
+        const token = legacyGenerateAsymmetricGoJwt(jwkWithoutCrtParams, "anon", 0);
+        const publicKey = yield* Effect.promise(() => importJWK(publicJwkOf(jwk), "RS256"));
+        const { payload, protectedHeader } = yield* Effect.promise(() =>
+          jwtVerify(token, publicKey, { currentDate: JWT_TEST_CURRENT_DATE }),
+        );
+        expect(payload).toMatchObject({ iss: "supabase-demo", role: "anon" });
+        expect(protectedHeader).toEqual({ alg: "RS256", kid: "rsa-kid", typ: "JWT" });
+      }),
+  );
 
-  it("signs and verifies an ES256 token from an EC JWK", async () => {
-    const jwk = generateEcJwk("ec-kid");
-    const token = legacyGenerateAsymmetricGoJwt(jwk, "service_role");
-    const publicKey = await importJWK(publicJwkOf(jwk), "ES256");
-    const { payload, protectedHeader } = await jwtVerify(token, publicKey);
-    expect(payload).toMatchObject({ iss: "supabase-demo", role: "service_role" });
-    expect(protectedHeader).toEqual({ alg: "ES256", kid: "ec-kid", typ: "JWT" });
-  });
+  it.effect("signs and verifies an ES256 token from an EC JWK", () =>
+    Effect.gen(function* () {
+      const jwk = generateEcJwk("ec-kid");
+      const token = legacyGenerateAsymmetricGoJwt(jwk, "service_role", 0);
+      const publicKey = yield* Effect.promise(() => importJWK(publicJwkOf(jwk), "ES256"));
+      const { payload, protectedHeader } = yield* Effect.promise(() =>
+        jwtVerify(token, publicKey, { currentDate: JWT_TEST_CURRENT_DATE }),
+      );
+      expect(payload).toMatchObject({ iss: "supabase-demo", role: "service_role" });
+      expect(protectedHeader).toEqual({ alg: "ES256", kid: "ec-kid", typ: "JWT" });
+    }),
+  );
 
   it("omits the kid header entirely when the JWK has no kid", () => {
     const jwk = generateRsaJwk();
-    const token = legacyGenerateAsymmetricGoJwt(jwk, "anon");
+    const token = legacyGenerateAsymmetricGoJwt(jwk, "anon", 0);
     const [header] = token.split(".");
     const decoded = JSON.parse(Buffer.from(header ?? "", "base64url").toString());
     expect(decoded).toEqual({ alg: "RS256", typ: "JWT" });
@@ -132,25 +148,24 @@ describe("legacyGenerateAsymmetricGoJwt", () => {
 
   it("sets a ~10-year expiry computed from the current time, not a fixed timestamp", () => {
     const jwk = generateRsaJwk();
-    const before = Math.floor(Date.now() / 1000);
-    const token = legacyGenerateAsymmetricGoJwt(jwk, "anon");
+    const nowSeconds = 1_000_000;
+    const token = legacyGenerateAsymmetricGoJwt(jwk, "anon", nowSeconds);
     const [, payload] = token.split(".");
     const decoded = JSON.parse(Buffer.from(payload ?? "", "base64url").toString());
     const tenYearsSeconds = 60 * 60 * 24 * 365 * 10;
-    expect(decoded.exp).toBeGreaterThanOrEqual(before + tenYearsSeconds);
-    expect(decoded.exp).toBeLessThan(before + tenYearsSeconds + 10);
+    expect(decoded.exp).toBe(nowSeconds + tenYearsSeconds);
   });
 
   it("rejects an unsupported algorithm", () => {
     const jwk = { ...generateRsaJwk(), alg: "RS512" };
-    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow(
+    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon", 0)).toThrow(
       "unsupported algorithm: RS512",
     );
   });
 
   it("rejects a JWK with no algorithm", () => {
     const { alg: _alg, ...jwkWithoutAlg } = generateRsaJwk();
-    expect(() => legacyGenerateAsymmetricGoJwt(jwkWithoutAlg, "anon")).toThrow(
+    expect(() => legacyGenerateAsymmetricGoJwt(jwkWithoutAlg, "anon", 0)).toThrow(
       "unsupported algorithm: ",
     );
   });
@@ -165,14 +180,14 @@ describe("legacyGenerateAsymmetricGoJwt", () => {
   // input — corrected here.
   it("rejects an EC key forged with alg: RS256 instead of signing garbage", () => {
     const jwk = { ...generateEcJwk(), alg: "RS256" };
-    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow(
+    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon", 0)).toThrow(
       "failed to sign JWT: key is of invalid type: RSA sign expects *rsa.PrivateKey",
     );
   });
 
   it("rejects an RSA key forged with alg: ES256 instead of signing garbage", () => {
     const jwk = { ...generateRsaJwk(), alg: "ES256" };
-    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow(
+    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon", 0)).toThrow(
       "failed to sign JWT: key is of invalid type: ECDSA sign expects *ecdsa.PrivateKey",
     );
   });
@@ -180,7 +195,7 @@ describe("legacyGenerateAsymmetricGoJwt", () => {
   it("rejects an ES256 EC key whose curve is not P-256, wrapped like Go's GenerateAsymmetricJWT", () => {
     const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-384" });
     const jwk = { ...privateKey.export({ format: "jwk" }), kty: "EC", alg: "ES256" };
-    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow(
+    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon", 0)).toThrow(
       "failed to convert JWK to private key: unsupported curve: P-384",
     );
   });
@@ -189,7 +204,7 @@ describe("legacyGenerateAsymmetricGoJwt", () => {
     // `bearerjwt_test.go`'s "throws error on unsupported kty" fixture uses exactly
     // this shape (`{"kty": "oct"}`, no `alg`) — kty is checked before alg regardless.
     const jwk = { kty: "oct" } as LegacyJwk;
-    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow(
+    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon", 0)).toThrow(
       "failed to convert JWK to private key: unsupported key type: oct",
     );
   });
@@ -197,7 +212,7 @@ describe("legacyGenerateAsymmetricGoJwt", () => {
   it("rejects an ES256 EC key with no curve at all", () => {
     const jwk = generateEcJwk();
     const { crv: _crv, ...jwkWithoutCurve } = jwk;
-    expect(() => legacyGenerateAsymmetricGoJwt(jwkWithoutCurve, "anon")).toThrow(
+    expect(() => legacyGenerateAsymmetricGoJwt(jwkWithoutCurve, "anon", 0)).toThrow(
       "failed to convert JWK to private key: unsupported curve: ",
     );
   });
@@ -211,7 +226,7 @@ describe("legacyGenerateAsymmetricGoJwt", () => {
     // padding and would otherwise sign successfully, minting a token Go could never produce.
     const jwk = generateEcJwk("ec-kid");
     const padded = { ...jwk, x: `${jwk.x}=` };
-    expect(() => legacyGenerateAsymmetricGoJwt(padded, "anon")).toThrow(
+    expect(() => legacyGenerateAsymmetricGoJwt(padded, "anon", 0)).toThrow(
       /^failed to convert JWK to private key: failed to decode x coordinate: illegal base64 data at input byte \d+$/,
     );
   });
@@ -219,32 +234,38 @@ describe("legacyGenerateAsymmetricGoJwt", () => {
   it("rejects a padded RSA modulus the same way", () => {
     const jwk = generateRsaJwk("rsa-kid");
     const padded = { ...jwk, n: `${jwk.n}=` };
-    expect(() => legacyGenerateAsymmetricGoJwt(padded, "anon")).toThrow(
+    expect(() => legacyGenerateAsymmetricGoJwt(padded, "anon", 0)).toThrow(
       /^failed to convert JWK to private key: failed to decode modulus: illegal base64 data at input byte \d+$/,
     );
   });
 
   it("still signs successfully for unpadded (correctly-encoded) coordinates", () => {
     const jwk = generateEcJwk("ec-kid");
-    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).not.toThrow();
+    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon", 0)).not.toThrow();
   });
 });
 
 describe("legacySignJwtWithJwk", () => {
-  it("signs the caller's exact pre-encoded payload string verbatim (no re-serialization)", async () => {
-    const jwk = generateEcJwk("ec-kid");
-    // Deliberately NOT alphabetically sorted and containing characters Go's
-    // `encoding/json` would HTML-escape (`&`) — this function must sign exactly
-    // the bytes it's given, leaving ordering/escaping decisions to the caller.
-    const payloadJson = '{"role":"postgres","sb-role":"mgmt-api & co"}';
-    const token = legacySignJwtWithJwk(jwk, payloadJson);
-    const [, payload] = token.split(".");
-    expect(decodeSegment(payload ?? "")).toBe(payloadJson);
+  it.effect(
+    "signs the caller's exact pre-encoded payload string verbatim (no re-serialization)",
+    () =>
+      Effect.gen(function* () {
+        const jwk = generateEcJwk("ec-kid");
+        // Deliberately NOT alphabetically sorted and containing characters Go's
+        // `encoding/json` would HTML-escape (`&`) — this function must sign exactly
+        // the bytes it's given, leaving ordering/escaping decisions to the caller.
+        const payloadJson = '{"role":"postgres","sb-role":"mgmt-api & co"}';
+        const token = legacySignJwtWithJwk(jwk, payloadJson);
+        const [, payload] = token.split(".");
+        expect(decodeSegment(payload ?? "")).toBe(payloadJson);
 
-    const publicKey = await importJWK(publicJwkOf(jwk), "ES256");
-    const { payload: verified } = await jwtVerify(token, publicKey);
-    expect(verified).toEqual({ role: "postgres", "sb-role": "mgmt-api & co" });
-  });
+        const publicKey = yield* Effect.promise(() => importJWK(publicJwkOf(jwk), "ES256"));
+        const { payload: verified } = yield* Effect.promise(() =>
+          jwtVerify(token, publicKey, { currentDate: JWT_TEST_CURRENT_DATE }),
+        );
+        expect(verified).toEqual({ role: "postgres", "sb-role": "mgmt-api & co" });
+      }),
+  );
 
   it("HTML-escapes the kid in the header like Go's json.Marshal, unlike JSON.stringify (CLI-1961 Codex review finding)", () => {
     // `token.SignedString` marshals the protected header via `encoding/json`'s

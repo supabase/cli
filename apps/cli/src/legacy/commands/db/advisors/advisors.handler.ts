@@ -161,12 +161,10 @@ const runLinked = Effect.fnUntraced(function* (
       ),
     );
     if (Option.isNone(tokenOpt)) {
-      return yield* Effect.fail(
-        new LegacyDbAdvisorsNotLoggedInError({
-          message: legacyMissingAccessTokenMessage(),
-          suggestion: loginSuggestion(),
-        }),
-      );
+      return yield* new LegacyDbAdvisorsNotLoggedInError({
+        message: legacyMissingAccessTokenMessage(),
+        suggestion: loginSuggestion(),
+      });
     }
 
     const lints: Array<LegacyAdvisorLint> = [];
@@ -210,7 +208,7 @@ const outputAndCheck = Effect.fnUntraced(function* (
     // Echoes the raw `--fail-on` flag value.
     const message = `fail-on is set to ${failOn}, non-zero exit`;
     if (output.format === "text") {
-      return yield* Effect.fail(new LegacyDbAdvisorsFailOnError({ message }));
+      return yield* new LegacyDbAdvisorsFailOnError({ message });
     }
     yield* processControl.setExitCode(1);
   }
@@ -225,11 +223,9 @@ const runAdvisors = Effect.fnUntraced(function* (
   // explicitly-set flags, not the `--local` default value.
   const setFlags = target.setFlags;
   if (setFlags.length > 1) {
-    return yield* Effect.fail(
-      new LegacyDbAdvisorsMutuallyExclusiveFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
-      }),
-    );
+    return yield* new LegacyDbAdvisorsMutuallyExclusiveFlagsError({
+      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
+    });
   }
 
   // `--project-ref` never implies `--linked` and must not be silently
@@ -237,12 +233,10 @@ const runAdvisors = Effect.fnUntraced(function* (
   // for the full TS-only rationale. advisors defaults to the local/db-url path
   // (`runLocal`) whenever `--linked` isn't the resolved target selector.
   if (Option.isSome(flags.projectRef) && target.connType !== "linked") {
-    return yield* Effect.fail(
-      new LegacyDbAdvisorsMutuallyExclusiveFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      }),
-    );
+    return yield* new LegacyDbAdvisorsMutuallyExclusiveFlagsError({
+      message:
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+    });
   }
 
   const advisorType = Option.getOrElse(flags.type, () => "all");

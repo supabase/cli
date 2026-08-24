@@ -9,6 +9,7 @@ import { PlatformApi } from "../auth/platform-api.service.ts";
 import { CliConfig } from "./cli-config.service.ts";
 import {
   ProjectLinkRemote,
+  NoProjectApiKeyError,
   type AccessibleProject,
   type LinkedProjectSnapshot,
   type LinkedProjectVersionService,
@@ -20,16 +21,6 @@ export class ServiceVersionNotFoundError extends Data.TaggedError("ServiceVersio
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.provideFlags;
-  }
-}
-
-export class NoProjectApiKeyError extends Data.TaggedError("NoProjectApiKeyError")<{
-  readonly projectRef: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // A successful api-keys response with no usable key — an API response
-    // problem, not a raw status failure.
-    return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
   }
 }
 
@@ -126,7 +117,7 @@ const fetchPostgrestVersion = Effect.fnUntraced(function* (
 
   const normalized = version?.trim().split(/\s+/)[0];
   if (normalized === undefined || normalized.length === 0) {
-    return yield* Effect.fail(new ServiceVersionNotFoundError({ service: "postgrest" }));
+    return yield* new ServiceVersionNotFoundError({ service: "postgrest" });
   }
   return normalized.startsWith("v") ? normalized : `v${normalized}`;
 });
@@ -146,7 +137,7 @@ const fetchAuthVersion = Effect.fnUntraced(function* (
       : undefined;
 
   if (version === undefined || version.length === 0) {
-    return yield* Effect.fail(new ServiceVersionNotFoundError({ service: "auth" }));
+    return yield* new ServiceVersionNotFoundError({ service: "auth" });
   }
   return version;
 });
@@ -158,14 +149,14 @@ const fetchStorageVersion = Effect.fnUntraced(function* (
 ) {
   const version = (yield* fetchText(client, `${baseUrl}/storage/v1/version`, accessKey)).trim();
   if (version.length === 0 || version === "0.0.0") {
-    return yield* Effect.fail(new ServiceVersionNotFoundError({ service: "storage" }));
+    return yield* new ServiceVersionNotFoundError({ service: "storage" });
   }
   return version.startsWith("v") ? version : `v${version}`;
 });
 
-const fetchOptionalVersion = <Service extends Exclude<LinkedProjectVersionService, "postgres">>(
+const fetchOptionalVersion = <Service extends Exclude<LinkedProjectVersionService, "postgres">, E>(
   service: Service,
-  effect: Effect.Effect<string, unknown>,
+  effect: Effect.Effect<string, E>,
 ) =>
   effect.pipe(
     Effect.exit,
@@ -204,7 +195,7 @@ const makeProjectLinkRemote = Effect.gen(function* () {
 
       const accessKey = selectTenantAccessKey(apiKeys);
       if (accessKey === undefined) {
-        return yield* Effect.fail(new NoProjectApiKeyError({ projectRef }));
+        return yield* new NoProjectApiKeyError({ projectRef });
       }
 
       const baseUrl = tenantBaseUrl(project.ref, cliConfig.projectHost);

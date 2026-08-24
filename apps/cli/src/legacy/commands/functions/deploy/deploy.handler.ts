@@ -1,5 +1,4 @@
-import { join } from "node:path";
-import { Effect, Option, Stdio } from "effect";
+import { Effect, Option, Path, Stdio } from "effect";
 import { deployFunctions } from "../../../../shared/functions/deploy.ts";
 import { resolveEdgeRuntimeVersionPin } from "../../../../shared/functions/functions.shared.ts";
 import { legacyAqua, legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
@@ -26,10 +25,12 @@ export const legacyFunctionsDeploy = Effect.fn("legacy.functions.deploy")(functi
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
   const runtimeInfo = yield* RuntimeInfo;
+  const goConfigCompat = yield* legacyFunctionsGoConfigCompat;
+  const path = yield* Path.Path;
   const stdio = yield* Stdio.Stdio;
   const rawArgs = yield* stdio.args;
   const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersionPin(
-    join(cliConfig.workdir, "supabase"),
+    path.join(cliConfig.workdir, "supabase"),
   );
   let resolvedProjectRef = Option.none<string>();
 
@@ -38,9 +39,9 @@ export const legacyFunctionsDeploy = Effect.fn("legacy.functions.deploy")(functi
     cwd: cliConfig.workdir,
     flagCwd: runtimeInfo.cwd,
     projectRoot: cliConfig.workdir,
-    supabaseDir: join(cliConfig.workdir, "supabase"),
+    supabaseDir: path.join(cliConfig.workdir, "supabase"),
     dashboardUrl: legacyDashboardUrl(cliConfig.profile),
-    goConfigCompat: legacyFunctionsGoConfigCompat,
+    goConfigCompat,
     yes,
     rawArgs,
     edgeRuntimeVersion,

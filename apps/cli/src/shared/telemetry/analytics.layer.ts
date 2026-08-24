@@ -89,7 +89,7 @@ export const analyticsLayer = Layer.effect(
           onNone: () => Effect.succeed(Option.none<ProjectLinkStateValue>()),
           onSome: (projectLinkState) =>
             projectLinkState.load.pipe(
-              Effect.catch(() => Effect.succeed(Option.none<ProjectLinkStateValue>())),
+              Effect.orElseSucceed(() => Option.none<ProjectLinkStateValue>()),
             ),
         });
         const groups = resolveGroups(context, linkedProject);

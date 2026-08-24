@@ -1,6 +1,6 @@
 import { type V1ListAllSecretsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Option, Schema } from "effect";
 
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
@@ -14,6 +14,7 @@ import {
 import { legacySecretsList } from "./list.handler.ts";
 
 type SecretsResponse = typeof V1ListAllSecretsOutput.Type;
+const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 const SAMPLE_SECRETS: SecretsResponse = [
   { name: "FOO", value: "digest-foo" },
@@ -167,7 +168,7 @@ describe("legacy secrets list integration", () => {
       const exit = yield* Effect.exit(legacySecretsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
+        const errJson = encodeJson(exit.cause);
         expect(errJson).toContain("LegacySecretsEnvNotSupportedError");
         expect(errJson).toContain("--output env flag is not supported");
       }
@@ -219,7 +220,7 @@ describe("legacy secrets list integration", () => {
       const exit = yield* Effect.exit(legacySecretsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
+        const errJson = encodeJson(exit.cause);
         expect(errJson).toContain("LegacySecretsListUnexpectedStatusError");
         expect(errJson).toContain("unexpected list secrets status 503");
       }
@@ -232,7 +233,7 @@ describe("legacy secrets list integration", () => {
       const exit = yield* Effect.exit(legacySecretsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
+        const errJson = encodeJson(exit.cause);
         expect(errJson).toContain("LegacySecretsListNetworkError");
         expect(errJson).toContain("failed to list secrets");
       }

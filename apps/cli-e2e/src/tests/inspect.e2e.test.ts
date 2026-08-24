@@ -1,28 +1,37 @@
-import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { BunFileSystem, BunPath } from "@effect/platform-bun";
 import { describe, expect } from "vitest";
+import { Effect, FileSystem, Layer, Path } from "effect";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 import { testBehaviour } from "./test-context.ts";
+
+const testLayer = Layer.mergeAll(FetchHttpClient.layer, BunFileSystem.layer, BunPath.layer);
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-function setupInspectWorkspace(dir: string, pgPort: number): void {
-  mkdirSync(join(dir, "supabase"), { recursive: true });
-  writeFileSync(
-    join(dir, "supabase", "config.toml"),
-    ['project_id = "test-project"', "", "[db]", `port = ${pgPort}`].join("\n"),
-  );
-}
-
-async function setPgFixture(apiUrl: string, key: string): Promise<void> {
-  const res = await fetch(`${apiUrl}/_ctrl/pg-fixture`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ key }),
+const setupInspectWorkspace = (dir: string, pgPort: number) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.makeDirectory(path.join(dir, "supabase"), { recursive: true });
+    yield* fs.writeFileString(
+      path.join(dir, "supabase", "config.toml"),
+      ['project_id = "test-project"', "", "[db]", "port = " + pgPort].join("\n"),
+    );
   });
-  if (!res.ok) throw new Error(`Failed to set PG fixture "${key}": ${await res.text()}`);
-}
+
+const setPgFixture = (apiUrl: string, key: string) =>
+  Effect.gen(function* () {
+    const request = yield* HttpClientRequest.make("POST")(apiUrl + "/_ctrl/pg-fixture").pipe(
+      HttpClientRequest.bodyJson({ key }),
+    );
+    const response = yield* HttpClient.execute(request);
+    if (response.status < 200 || response.status >= 300) {
+      const body = yield* response.text;
+      return yield* Effect.die(new Error('Failed to set PG fixture "' + key + '": ' + body));
+    }
+  });
 
 // ---------------------------------------------------------------------------
 // Subcommand table
@@ -49,70 +58,97 @@ const SUBCOMMANDS = [
 // ---------------------------------------------------------------------------
 
 describe("inspect:flags", () => {
-  testBehaviour("rejects --db-url with --local", async ({ run, workspace, pgMockPort }) => {
-    setupInspectWorkspace(workspace.path, pgMockPort);
-    const result = await run([
-      "inspect",
-      "db",
-      "db-stats",
-      "--db-url",
-      "postgresql://postgres:postgres@localhost:5432/postgres",
-      "--local",
-    ]);
-    expect(result.exitCode).not.toBe(0);
-  });
+  testBehaviour("rejects --db-url with --local", ({ run, workspace, pgMockPort }) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        yield* setupInspectWorkspace(workspace.path, pgMockPort);
+        const result = yield* Effect.promise(() =>
+          run([
+            "inspect",
+            "db",
+            "db-stats",
+            "--db-url",
+            "postgresql://postgres:postgres@localhost:5432/postgres",
+            "--local",
+          ]),
+        );
+        expect(result.exitCode).not.toBe(0);
+      }).pipe(Effect.provide(testLayer), Effect.orDie),
+    ),
+  );
 });
 
 for (const { name, fixtureKey, assertValue } of SUBCOMMANDS) {
-  describe(`inspect:db:${name}`, () => {
-    testBehaviour(
-      "renders query results as a table",
-      async ({ run, workspace, apiUrl, pgMockPort }) => {
-        setupInspectWorkspace(workspace.path, pgMockPort);
-        await setPgFixture(apiUrl, fixtureKey);
-        const result = await run(["inspect", "db", name, "--local"]);
-        expect(result.exitCode).toBe(0);
-        expect(result.stdout).toContain(assertValue);
-      },
+  describe("inspect:db:" + name, () => {
+    testBehaviour("renders query results as a table", ({ run, workspace, apiUrl, pgMockPort }) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          yield* setupInspectWorkspace(workspace.path, pgMockPort);
+          yield* setPgFixture(apiUrl, fixtureKey);
+          const result = yield* Effect.promise(() => run(["inspect", "db", name, "--local"]));
+          expect(result.exitCode).toBe(0);
+          expect(result.stdout).toContain(assertValue);
+        }).pipe(Effect.provide(testLayer), Effect.orDie),
+      ),
     );
 
-    testBehaviour("exits non-zero on connection refused", async ({ run }) => {
-      const result = await run([
-        "inspect",
-        "db",
-        name,
-        "--db-url",
-        "postgresql://postgres:postgres@localhost:1/postgres",
-      ]);
-      expect(result.exitCode).not.toBe(0);
-      expect(result.stderr).not.toBe("");
-    });
+    testBehaviour("exits non-zero on connection refused", ({ run }) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const result = yield* Effect.promise(() =>
+            run([
+              "inspect",
+              "db",
+              name,
+              "--db-url",
+              "postgresql://postgres:postgres@localhost:1/postgres",
+            ]),
+          );
+          expect(result.exitCode).not.toBe(0);
+          expect(result.stderr).not.toBe("");
+        }),
+      ),
+    );
   });
 }
 
 describe("inspect:report", () => {
-  testBehaviour("saves CSV files on success", async ({ run, workspace, pgMockPort }) => {
-    setupInspectWorkspace(workspace.path, pgMockPort);
-    const outDir = join(workspace.path, "report-out");
-    const result = await run(["inspect", "report", "--local", "--output-dir", outDir]);
-    expect(result.exitCode).toBe(0);
-    expect(result.stderr).toContain("Reports saved to");
-    const subdirs = readdirSync(outDir);
-    expect(subdirs.length).toBe(1);
-    const dateDir = subdirs[0]!;
-    const csvFiles = readdirSync(join(outDir, dateDir));
-    expect(csvFiles.length).toBeGreaterThan(0);
-    expect(csvFiles.every((f) => f.endsWith(".csv"))).toBe(true);
-  });
+  testBehaviour("saves CSV files on success", ({ run, workspace, pgMockPort }) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        yield* setupInspectWorkspace(workspace.path, pgMockPort);
+        const path = yield* Path.Path;
+        const outDir = path.join(workspace.path, "report-out");
+        const result = yield* Effect.promise(() =>
+          run(["inspect", "report", "--local", "--output-dir", outDir]),
+        );
+        expect(result.exitCode).toBe(0);
+        expect(result.stderr).toContain("Reports saved to");
+        const fs = yield* FileSystem.FileSystem;
+        const subdirs = yield* fs.readDirectory(outDir);
+        expect(subdirs.length).toBe(1);
+        const dateDir = subdirs[0]!;
+        const csvFiles = yield* fs.readDirectory(path.join(outDir, dateDir));
+        expect(csvFiles.length).toBeGreaterThan(0);
+        expect(csvFiles.every((f) => f.endsWith(".csv"))).toBe(true);
+      }).pipe(Effect.provide(testLayer), Effect.orDie),
+    ),
+  );
 
-  testBehaviour("exits non-zero on connection refused", async ({ run }) => {
-    const result = await run([
-      "inspect",
-      "report",
-      "--db-url",
-      "postgresql://postgres:postgres@localhost:1/postgres",
-    ]);
-    expect(result.exitCode).not.toBe(0);
-    expect(result.stderr).not.toBe("");
-  });
+  testBehaviour("exits non-zero on connection refused", ({ run }) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const result = yield* Effect.promise(() =>
+          run([
+            "inspect",
+            "report",
+            "--db-url",
+            "postgresql://postgres:postgres@localhost:1/postgres",
+          ]),
+        );
+        expect(result.exitCode).not.toBe(0);
+        expect(result.stderr).not.toBe("");
+      }),
+    ),
+  );
 });

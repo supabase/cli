@@ -1,14 +1,28 @@
 import { generateKeyPairSync } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
-
 import type { ApiClient, V1ListAllBranchesOutput } from "@supabase/api/effect";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Exit, Layer, Option, PlatformError, Sink, Stdio, Stream } from "effect";
+import {
+  ConfigProvider,
+  Data,
+  Deferred,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Path,
+  PlatformError,
+  Schema,
+  Sink,
+  Stdio,
+  Stream,
+} from "effect";
+import * as Formatter from "effect/Formatter";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClientRequestModule from "effect/unstable/http/HttpClientRequest";
-import { afterEach, vi } from "vitest";
+import { vi } from "vitest";
 
 import { mockOutput, mockProcessControl } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -27,17 +41,47 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { machineErrorContextLayer } from "../../../shared/output/machine-error-context.layer.ts";
 import { jsonOutputLayer, streamJsonOutputLayer } from "../../../shared/output/output.layer.ts";
 import { legacyServiceContainerIds, localDbContainerId } from "../../shared/legacy-docker-ids.ts";
+import { makeLegacyViperEnvLayer } from "../../../shared/legacy/legacy-viper-env.ts";
 import type { LegacyStatusFlags } from "./status.command.ts";
 import { legacyStatus } from "./status.handler.ts";
 
 type LinkedStateBranches = typeof V1ListAllBranchesOutput.Type;
 type LinkedStateBranch = LinkedStateBranches[number];
 
-const tempRoot = useLegacyTempWorkdir("supabase-status-int-");
+class MockLegacyStatusApiError extends Data.TaggedError("MockLegacyStatusApiError")<{
+  readonly cause: unknown;
+}> {}
 
-afterEach(() => {
-  delete process.env["SUPABASE_AUTH_JWT_SECRET"];
+const tempRoot = useLegacyTempWorkdir("supabase-status-int-");
+const testPath = ManagedRuntime.make(BunServices.layer).runSync(Path.Path);
+
+const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+
+const StatusOutputSchema = Schema.Record(Schema.String, Schema.String);
+const StatusOutputCodec = Schema.fromJsonString(StatusOutputSchema);
+const decodeStatusOutput = (text: string): Readonly<Record<string, string>> =>
+  Schema.decodeSync(StatusOutputCodec)(text);
+
+const LinkedProjectOutputSchema = Schema.Struct({
+  project_ref: Schema.String,
+  branch: Schema.optional(Schema.String),
+  parent_project_ref: Schema.optional(Schema.String),
+  project_name: Schema.optional(Schema.String),
+  org_slug: Schema.optional(Schema.String),
+  org_id: Schema.optional(Schema.String),
 });
+const StatusErrorSchema = Schema.TaggedStruct("Error", {
+  error: Schema.Struct({ code: Schema.String, message: Schema.String }),
+  linked_project: Schema.optional(Schema.Union([Schema.Null, LinkedProjectOutputSchema])),
+});
+const StatusStreamErrorSchema = Schema.Struct({
+  type: Schema.Literal("error"),
+  timestamp: Schema.String,
+  error: Schema.Struct({ code: Schema.String, message: Schema.String }),
+  linked_project: Schema.optional(Schema.Union([Schema.Null, LinkedProjectOutputSchema])),
+});
+const decodeStatusError = Schema.decodeSync(Schema.fromJsonString(StatusErrorSchema));
+const decodeStatusStreamError = Schema.decodeSync(Schema.fromJsonString(StatusStreamErrorSchema));
 
 function flags(overrides: Partial<LegacyStatusFlags> = {}): LegacyStatusFlags {
   return {
@@ -48,10 +92,20 @@ function flags(overrides: Partial<LegacyStatusFlags> = {}): LegacyStatusFlags {
   };
 }
 
+const pendingWrites = new Map<
+  string,
+  Array<{ readonly path: string; readonly contents: string }>
+>();
+
+function writeText(path: string, contents: string): void {
+  const workdir = tempRoot.current;
+  const writes = pendingWrites.get(workdir) ?? [];
+  writes.push({ path, contents });
+  pendingWrites.set(workdir, writes);
+}
+
 function writeConfig(workdir: string, contents = 'project_id = "demo"\n') {
-  const supabaseDir = join(workdir, "supabase");
-  mkdirSync(supabaseDir, { recursive: true });
-  writeFileSync(join(supabaseDir, "config.toml"), contents);
+  return writeText(testPath.join(workdir, "supabase", "config.toml"), contents);
 }
 
 // ---------------------------------------------------------------------------
@@ -79,16 +133,15 @@ const LINKED_BRANCH: LinkedStateBranch = {
 };
 
 function tempFile(workdir: string, name: string): string {
-  return join(workdir, "supabase", ".temp", name);
+  return testPath.join(workdir, "supabase", ".temp", name);
 }
 
-function writeTempContent(workdir: string, name: string, content: string): void {
-  mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
-  writeFileSync(tempFile(workdir, name), content);
+function writeTempContent(workdir: string, name: string, content: string) {
+  return writeText(tempFile(workdir, name), content);
 }
 
-function writeProjectRefFile(workdir: string, ref: string): void {
-  writeTempContent(workdir, "project-ref", ref);
+function writeProjectRefFile(workdir: string, ref: string) {
+  return writeTempContent(workdir, "project-ref", ref);
 }
 
 /**
@@ -104,19 +157,32 @@ function writeLinkedProjectCacheFile(
     readonly orgSlug?: string | null;
     readonly orgId?: string | null;
   } = {},
-): void {
+) {
   const orgSlug = opts.orgSlug === undefined ? "acme" : opts.orgSlug;
   const orgId = opts.orgId === undefined ? "org_1" : opts.orgId;
-  writeTempContent(
+  return writeTempContent(
     workdir,
     "linked-project.json",
-    JSON.stringify({
+    encodeJson({
       ref,
       ...(opts.name === undefined ? {} : { name: opts.name }),
       ...(orgSlug === null ? {} : { organization_slug: orgSlug }),
       ...(orgId === null ? {} : { organization_id: orgId }),
     }),
   );
+}
+
+function flushFixtureWrites(workdir: string) {
+  return Effect.gen(function* () {
+    const roots = workdir === tempRoot.current ? [workdir] : [workdir, tempRoot.current];
+    const writes = roots.flatMap((root) => pendingWrites.get(root) ?? []);
+    const fs = yield* FileSystem.FileSystem;
+    for (const write of writes) {
+      yield* fs.makeDirectory(testPath.dirname(write.path), { recursive: true });
+      yield* fs.writeFileString(write.path, write.contents);
+    }
+    for (const root of roots) pendingWrites.delete(root);
+  });
 }
 
 function legacyTransportFailureForMock() {
@@ -199,25 +265,21 @@ function mockRoutedContainerCliSpawner(
         spawned.push({ command: cmd, args });
 
         if (opts.dockerMissing === true && cmd === "docker") {
-          return yield* Effect.fail(
-            PlatformError.systemError({
-              _tag: "NotFound",
-              module: "ChildProcess",
-              method: "spawn",
-              description: "docker not found",
-            }),
-          );
+          return yield* PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            description: "docker not found",
+          });
         }
 
         if (opts.failSpawnFor?.(args) === true) {
-          return yield* Effect.fail(
-            PlatformError.systemError({
-              _tag: "NotFound",
-              module: "ChildProcess",
-              method: "spawn",
-              description: "spawn failed",
-            }),
-          );
+          return yield* PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            description: "spawn failed",
+          });
         }
 
         const encoder = new TextEncoder();
@@ -261,7 +323,7 @@ function mockRoutedContainerCliSpawner(
 }
 
 const ALL_RUNNING_NAMES = legacyServiceContainerIds("demo");
-const HEALTHY_DB_STATE = JSON.stringify({
+const HEALTHY_DB_STATE = encodeJson({
   Status: "running",
   Running: true,
   Health: { Status: "healthy" },
@@ -322,6 +384,8 @@ interface SetupOpts {
     readonly fail?: unknown;
     readonly makeFails?: LegacyPlatformApiFactoryError;
   };
+  /** Per-test environment values exposed through Effect's ConfigProvider. */
+  readonly env?: Readonly<Record<string, string>>;
   /** `SUPABASE_PROJECT_ID` for the linked-state chain — defaults to unset. */
   readonly projectId?: Option.Option<string>;
 }
@@ -341,22 +405,30 @@ function setup(opts: SetupOpts = {}) {
     dockerMissing: opts.dockerMissing,
     failSpawnFor: opts.failSpawnFor,
   });
+  const branches = opts.branches;
   const apiMock =
-    opts.branches === undefined
+    branches === undefined
       ? undefined
       : mockLegacyPlatformApiService({
           v1: {
             listAllBranches:
-              opts.branches.fail !== undefined
-                ? () => Effect.fail(opts.branches?.fail)
-                : () => Effect.succeed(opts.branches?.ok ?? []),
+              branches.fail !== undefined
+                ? () => Effect.fail(new MockLegacyStatusApiError({ cause: branches.fail }))
+                : () => Effect.succeed(branches.ok ?? []),
           },
         });
   const apiFactoryMock =
     opts.apiFactory === undefined ? undefined : mockLegacyPlatformApiFactoryDirect(opts.apiFactory);
+  const configProvider = ConfigProvider.fromEnv({
+    env: opts.env ?? {},
+    preserveEmptyStrings: true,
+  });
 
   const layer = Layer.mergeAll(
     BunServices.layer,
+    Layer.effectDiscard(flushFixtureWrites(workdir).pipe(Effect.provide(BunServices.layer))),
+    Layer.succeed(ConfigProvider.ConfigProvider, configProvider),
+    makeLegacyViperEnvLayer(configProvider),
     out.layer,
     cliConfig,
     telemetry.layer,
@@ -432,21 +504,26 @@ function setupFailureEnvelope(opts: FailureEnvelopeOpts) {
   const cliConfig = mockLegacyCliConfig({ workdir, projectId: Option.none() });
   const child = mockRoutedContainerCliSpawner(defaultRoute(), { failSpawnFor: () => true });
   const processControl = mockProcessControl();
+  const branches = opts.branches;
   const apiMock =
-    opts.branches === undefined
+    branches === undefined
       ? undefined
       : mockLegacyPlatformApiService({
           v1: {
             listAllBranches:
-              opts.branches.fail !== undefined
-                ? () => Effect.fail(opts.branches?.fail)
-                : () => Effect.succeed(opts.branches?.ok ?? []),
+              branches.fail !== undefined
+                ? () => Effect.fail(new MockLegacyStatusApiError({ cause: branches.fail }))
+                : () => Effect.succeed(branches.ok ?? []),
           },
         });
   const outputLayer = opts.format === "json" ? jsonOutputLayer : streamJsonOutputLayer;
+  const configProvider = ConfigProvider.fromEnv({ env: {}, preserveEmptyStrings: true });
 
   const layer = Layer.mergeAll(
     BunServices.layer,
+    Layer.effectDiscard(flushFixtureWrites(workdir).pipe(Effect.provide(BunServices.layer))),
+    Layer.succeed(ConfigProvider.ConfigProvider, configProvider),
+    makeLegacyViperEnvLayer(configProvider),
     outputLayer.pipe(Layer.provide(stdio.layer)),
     cliConfig,
     telemetry.layer,
@@ -521,7 +598,7 @@ describe("legacy status integration", () => {
       // the default) to cover both sides of the `if !ignoreHealthCheck { assertContainerHealthy }` gate.
       const { layer, child } = setup({
         route: defaultRoute({
-          dbInspectStdout: JSON.stringify({
+          dbInspectStdout: encodeJson({
             Status: "running",
             Running: true,
             Health: { Status: "starting" },
@@ -550,14 +627,13 @@ describe("legacy status integration", () => {
 
   it.live("fails when config.toml is malformed", () => {
     const workdir = tempRoot.current;
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), "not valid toml =====");
+    writeText(testPath.join(workdir, "supabase", "config.toml"), "not valid toml =====");
     const { layer, child } = setup({ skipConfig: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyStatus(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStatusConfigLoadError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStatusConfigLoadError");
       }
       expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -570,9 +646,8 @@ describe("legacy status integration", () => {
     // `status` never binds a --project-ref flag, so it must still fail on a
     // config-wide duplicate, before ever reaching Docker.
     const workdir = tempRoot.current;
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    writeFileSync(
-      join(workdir, "supabase", "config.toml"),
+    writeText(
+      testPath.join(workdir, "supabase", "config.toml"),
       `project_id = "baseref"
 
 [remotes.a]
@@ -587,7 +662,7 @@ project_id = "previewrefaaaaaaaaaa"
       const exit = yield* Effect.exit(legacyStatus(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStatusConfigLoadError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStatusConfigLoadError");
       }
       expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -599,9 +674,8 @@ project_id = "previewrefaaaaaaaaaa"
     // remote that ends up selected — so this must fail closed before status
     // reaches Docker, even with no --project-ref requested.
     const workdir = tempRoot.current;
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    writeFileSync(
-      join(workdir, "supabase", "config.toml"),
+    writeText(
+      testPath.join(workdir, "supabase", "config.toml"),
       `project_id = "baseref"
 
 [remotes.bad]
@@ -613,7 +687,7 @@ project_id = "short"
       const exit = yield* Effect.exit(legacyStatus(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStatusConfigLoadError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStatusConfigLoadError");
       }
       expect(child.spawned).toEqual([]);
     }).pipe(Effect.provide(layer));
@@ -631,9 +705,7 @@ project_id = "short"
         configContents:
           'project_id = "demo"\n[auth]\nadditional_redirect_urls = "http://a,http://b"\n',
       });
-      return Effect.gen(function* () {
-        yield* legacyStatus(flags());
-      }).pipe(Effect.provide(layer));
+      return legacyStatus(flags()).pipe(Effect.provide(layer));
     },
   );
 
@@ -661,14 +733,14 @@ project_id = "short"
     // The explicit workdir is `chdir`'d into before config
     // load or any Docker call — a missing path must fail immediately, not
     // fall through to the workdir-basename default and inspect Docker.
-    const missingWorkdir = join(tempRoot.current, "does-not-exist");
+    const missingWorkdir = testPath.join(tempRoot.current, "does-not-exist");
     const { layer, child } = setup({ workdir: missingWorkdir, skipConfig: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyStatus(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStatusWorkdirError");
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStatusWorkdirError");
+        expect(Formatter.formatJson(exit.cause)).toContain(
           `failed to change workdir: chdir ${missingWorkdir}: no such file or directory`,
         );
       }
@@ -677,15 +749,15 @@ project_id = "short"
   });
 
   it.live("fails when --workdir/SUPABASE_WORKDIR points at a file, not a directory", () => {
-    const filePath = join(tempRoot.current, "not-a-directory");
-    writeFileSync(filePath, "");
+    const filePath = testPath.join(tempRoot.current, "not-a-directory");
+    writeText(filePath, "");
     const { layer, child } = setup({ workdir: filePath, skipConfig: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyStatus(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStatusWorkdirError");
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStatusWorkdirError");
+        expect(Formatter.formatJson(exit.cause)).toContain(
           `failed to change workdir: chdir ${filePath}: not a directory`,
         );
       }
@@ -705,8 +777,8 @@ project_id = "short"
       const exit = yield* Effect.exit(legacyStatus(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStatusInvalidConfigError");
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStatusInvalidConfigError");
+        expect(Formatter.formatJson(exit.cause)).toContain(
           "Invalid config for auth.jwt_secret. Must be at least 16 characters",
         );
       }
@@ -724,11 +796,10 @@ enabled = true
 content_path = "./supabase/templates/password_changed_notification.html"
 `,
     });
-    const templateDir = join(workdir, "supabase", "templates");
-    mkdirSync(templateDir, { recursive: true });
-    writeFileSync(join(templateDir, "recovery.html"), "<p>Recovery</p>");
-    writeFileSync(
-      join(templateDir, "password_changed_notification.html"),
+    const templateDir = testPath.join(workdir, "supabase", "templates");
+    writeText(testPath.join(templateDir, "recovery.html"), "<p>Recovery</p>");
+    writeText(
+      testPath.join(templateDir, "password_changed_notification.html"),
       "<p>Password changed</p>",
     );
 
@@ -745,8 +816,8 @@ content_path = "./supabase/templates/password_changed_notification.html"
     const { layer, out } = setup({
       goOutput: Option.some("env"),
       configContents: `project_id = "demo"\n[auth]\njwt_secret = "${"a".repeat(32)}"\n`,
+      env: { SUPABASE_AUTH_JWT_SECRET: "b".repeat(32) },
     });
-    process.env["SUPABASE_AUTH_JWT_SECRET"] = "b".repeat(32);
     return Effect.gen(function* () {
       yield* legacyStatus(flags());
       expect(out.stdoutText).toContain(`JWT_SECRET="${"b".repeat(32)}"`);
@@ -764,12 +835,12 @@ content_path = "./supabase/templates/password_changed_notification.html"
     });
     const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
     const jwk = { ...privateKey.export({ format: "jwk" }), alg: "RS256", kid: "test-kid" };
-    writeFileSync(join(workdir, "supabase", "signing_keys.json"), JSON.stringify([jwk]));
+    writeText(testPath.join(workdir, "supabase", "signing_keys.json"), encodeJson([jwk]));
     return Effect.gen(function* () {
       yield* legacyStatus(flags());
-      const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+      const parsed = decodeStatusOutput(out.stdoutText);
       const [headerSegment] = parsed.ANON_KEY?.split(".") ?? [];
-      const header = JSON.parse(Buffer.from(headerSegment ?? "", "base64url").toString());
+      const header = decodeStatusOutput(Buffer.from(headerSegment ?? "", "base64url").toString());
       expect(header).toEqual({ alg: "RS256", kid: "test-kid", typ: "JWT" });
     }).pipe(Effect.provide(layer));
   });
@@ -784,7 +855,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     // basename (not the module-level `ALL_RUNNING_NAMES`, which is fixed to
     // "demo") — route `ps` off that so the expected services actually show as
     // running rather than all appearing "stopped" and excluded.
-    const projectId = basename(tempRoot.current);
+    const projectId = testPath.basename(tempRoot.current);
     const { layer, out } = setup({
       skipConfig: true,
       route: defaultRoute({ runningNames: legacyServiceContainerIds(projectId) }),
@@ -802,9 +873,8 @@ content_path = "./supabase/templates/password_changed_notification.html"
     // before reading SUPABASE_PROJECT_ID from the resolved environment —
     // an env-file-only value overrides
     // config.toml's project_id too, not just an ambient shell export.
-    const supabaseDir = join(tempRoot.current, "supabase");
-    mkdirSync(supabaseDir, { recursive: true });
-    writeFileSync(join(supabaseDir, ".env"), "SUPABASE_PROJECT_ID=env-file-project\n");
+    const supabaseDir = testPath.join(tempRoot.current, "supabase");
+    writeText(testPath.join(supabaseDir, ".env"), "SUPABASE_PROJECT_ID=env-file-project\n");
     const { layer, child } = setup({
       configContents: 'project_id = "toml-project"\n',
       route: defaultRoute({ runningNames: legacyServiceContainerIds("env-file-project") }),
@@ -819,13 +889,12 @@ content_path = "./supabase/templates/password_changed_notification.html"
   });
 
   it.live("prefers ambient SUPABASE_PROJECT_ID over supabase/.env", () => {
-    const supabaseDir = join(tempRoot.current, "supabase");
-    mkdirSync(supabaseDir, { recursive: true });
-    writeFileSync(join(supabaseDir, ".env"), "SUPABASE_PROJECT_ID=env-file-project\n");
-    process.env["SUPABASE_PROJECT_ID"] = "ambient-project";
+    const supabaseDir = testPath.join(tempRoot.current, "supabase");
+    writeText(testPath.join(supabaseDir, ".env"), "SUPABASE_PROJECT_ID=env-file-project\n");
     const { layer, child } = setup({
       configContents: 'project_id = "toml-project"\n',
       route: defaultRoute({ runningNames: legacyServiceContainerIds("ambient-project") }),
+      env: { SUPABASE_PROJECT_ID: "ambient-project" },
     });
     return Effect.gen(function* () {
       yield* legacyStatus(flags());
@@ -833,17 +902,14 @@ content_path = "./supabase/templates/password_changed_notification.html"
         (s) => s.args[0] === "container" && s.args[1] === "inspect",
       );
       expect(inspectCall?.args).toContain(localDbContainerId("ambient-project"));
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(Effect.sync(() => delete process.env["SUPABASE_PROJECT_ID"])),
-    );
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("resolves SUPABASE_PROJECT_ID from a project-root .env file", () => {
     // The nested env load walks past supabase/ one more level, to the project
     // root/workdir — a project-root-only
     // dotenv value must override config.toml too, not just supabase/.env.
-    writeFileSync(join(tempRoot.current, ".env"), "SUPABASE_PROJECT_ID=root-env-project\n");
+    writeText(testPath.join(tempRoot.current, ".env"), "SUPABASE_PROJECT_ID=root-env-project\n");
     const { layer, child } = setup({
       configContents: 'project_id = "toml-project"\n',
       route: defaultRoute({ runningNames: legacyServiceContainerIds("root-env-project") }),
@@ -866,10 +932,10 @@ content_path = "./supabase/templates/password_changed_notification.html"
       // own must fall back to defaults (workdir-basename project id), not an
       // ancestor project's config.toml, even though `cliConfig.workdir` sits
       // right inside one.
-      const nestedWorkdir = join(tempRoot.current, "nested");
-      mkdirSync(nestedWorkdir, { recursive: true });
+      const nestedWorkdir = testPath.join(tempRoot.current, "nested");
+      writeText(testPath.join(nestedWorkdir, ".keep"), "");
       writeConfig(tempRoot.current, 'project_id = "ancestor-project"\n');
-      const projectId = basename(nestedWorkdir);
+      const projectId = testPath.basename(nestedWorkdir);
       const { layer, child } = setup({
         workdir: nestedWorkdir,
         skipConfig: true,
@@ -891,9 +957,8 @@ content_path = "./supabase/templates/password_changed_notification.html"
     // opened — a supabase/.env-only project id
     // must still be honored even when there's no config.toml to fall back to
     // template defaults from.
-    const supabaseDir = join(tempRoot.current, "supabase");
-    mkdirSync(supabaseDir, { recursive: true });
-    writeFileSync(join(supabaseDir, ".env"), "SUPABASE_PROJECT_ID=no-config-project\n");
+    const supabaseDir = testPath.join(tempRoot.current, "supabase");
+    writeText(testPath.join(supabaseDir, ".env"), "SUPABASE_PROJECT_ID=no-config-project\n");
     const { layer, child } = setup({
       skipConfig: true,
       route: defaultRoute({ runningNames: legacyServiceContainerIds("no-config-project") }),
@@ -912,9 +977,8 @@ content_path = "./supabase/templates/password_changed_notification.html"
     // before reading SUPABASE_AUTH_JWT_SECRET from the resolved environment —
     // a dotenv-file-only value must be visible here too, not just an ambient
     // shell export (see the sibling "-o env" ambient test above).
-    const supabaseDir = join(tempRoot.current, "supabase");
-    mkdirSync(supabaseDir, { recursive: true });
-    writeFileSync(join(supabaseDir, ".env"), `SUPABASE_AUTH_JWT_SECRET=${"c".repeat(32)}\n`);
+    const supabaseDir = testPath.join(tempRoot.current, "supabase");
+    writeText(testPath.join(supabaseDir, ".env"), `SUPABASE_AUTH_JWT_SECRET=${"c".repeat(32)}\n`);
     const { layer, out } = setup({
       goOutput: Option.some("env"),
       configContents: `project_id = "demo"\n[auth]\njwt_secret = "${"a".repeat(32)}"\n`,
@@ -935,7 +999,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       const exit = yield* Effect.exit(legacyStatus(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStatusDbInspectError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStatusDbInspectError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -967,7 +1031,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       const exit = yield* Effect.exit(legacyStatus(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStatusListError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStatusListError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -975,14 +1039,14 @@ content_path = "./supabase/templates/password_changed_notification.html"
   it.live("fails when the db container is not running", () => {
     const { layer } = setup({
       route: defaultRoute({
-        dbInspectStdout: JSON.stringify({ Status: "exited", Running: false }),
+        dbInspectStdout: encodeJson({ Status: "exited", Running: false }),
       }),
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyStatus(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const serialized = JSON.stringify(exit.cause);
+        const serialized = Formatter.formatJson(exit.cause);
         expect(serialized).toContain("LegacyStatusDbNotRunningError");
         expect(serialized).toContain(localDbContainerId("demo"));
       }
@@ -998,16 +1062,14 @@ content_path = "./supabase/templates/password_changed_notification.html"
       // past the not-running branch to the health check in that case.
       const { layer } = setup({
         route: defaultRoute({
-          dbInspectStdout: JSON.stringify({
+          dbInspectStdout: encodeJson({
             Status: "paused",
             Running: true,
             Health: { Status: "healthy" },
           }),
         }),
       });
-      return Effect.gen(function* () {
-        yield* legacyStatus(flags());
-      }).pipe(Effect.provide(layer));
+      return legacyStatus(flags()).pipe(Effect.provide(layer));
     },
   );
 
@@ -1025,7 +1087,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       const exit = yield* Effect.exit(legacyStatus(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const serialized = JSON.stringify(exit.cause);
+        const serialized = Formatter.formatJson(exit.cause);
         expect(serialized).toContain("LegacyStatusDbInspectError");
         expect(serialized).toContain(
           "failed to inspect container health: Error response from daemon: No such container: x",
@@ -1037,7 +1099,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
   it.live("fails when the db container is unhealthy", () => {
     const { layer } = setup({
       route: defaultRoute({
-        dbInspectStdout: JSON.stringify({
+        dbInspectStdout: encodeJson({
           Status: "running",
           Running: true,
           Health: { Status: "starting" },
@@ -1048,7 +1110,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       const exit = yield* Effect.exit(legacyStatus(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStatusDbNotReadyError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStatusDbNotReadyError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1061,7 +1123,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       const exit = yield* Effect.exit(legacyStatus(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStatusDbInspectError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStatusDbInspectError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1079,7 +1141,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     const { layer, out } = setup({ goOutput: Option.some("json") });
     return Effect.gen(function* () {
       yield* legacyStatus(flags());
-      const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+      const parsed = decodeStatusOutput(out.stdoutText);
       expect(parsed.API_URL).toBe("http://127.0.0.1:54321");
       expect(parsed.DB_URL).toContain("postgresql://postgres:postgres@");
     }).pipe(Effect.provide(layer));
@@ -1090,7 +1152,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     return Effect.gen(function* () {
       const storageId = legacyServiceContainerIds("demo")[5]!;
       yield* legacyStatus(flags({ exclude: [storageId] }));
-      const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+      const parsed = decodeStatusOutput(out.stdoutText);
       expect(parsed.STORAGE_S3_URL).toBeUndefined();
       expect(parsed.API_URL).toBeDefined();
     }).pipe(Effect.provide(layer));
@@ -1102,7 +1164,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       const authId = legacyServiceContainerIds("demo")[1]!;
       const storageId = legacyServiceContainerIds("demo")[5]!;
       yield* legacyStatus(flags({ exclude: [authId, storageId] }));
-      const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+      const parsed = decodeStatusOutput(out.stdoutText);
       expect(parsed.PUBLISHABLE_KEY).toBeUndefined();
       expect(parsed.STORAGE_S3_URL).toBeUndefined();
       expect(parsed.API_URL).toBeDefined();
@@ -1121,7 +1183,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     return Effect.gen(function* () {
       const authId = legacyServiceContainerIds("demo")[1]!;
       yield* legacyStatus(flags({ exclude: [authId] }));
-      const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+      const parsed = decodeStatusOutput(out.stdoutText);
       expect(parsed.API_URL).toBeUndefined(); // excluded via the auto-detected stopped kong
       expect(parsed.PUBLISHABLE_KEY).toBeUndefined(); // excluded via --exclude
       expect(parsed.DB_URL).toBeDefined(); // db.url is set unconditionally, before any gating
@@ -1148,7 +1210,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     const { layer, out } = setup({ goOutput: Option.some("json") });
     return Effect.gen(function* () {
       yield* legacyStatus(flags({ overrideName: ["api.url=NEXT_PUBLIC_SUPABASE_URL"] }));
-      const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+      const parsed = decodeStatusOutput(out.stdoutText);
       expect(parsed.NEXT_PUBLIC_SUPABASE_URL).toBe("http://127.0.0.1:54321");
       expect(parsed.API_URL).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -1160,7 +1222,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       const exit = yield* Effect.exit(legacyStatus(flags({ overrideName: ["not-a-kv-pair"] })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyStatusOverrideParseError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyStatusOverrideParseError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1172,7 +1234,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
     const { layer, out } = setup({ goOutput: Option.some("json") });
     return Effect.gen(function* () {
       yield* legacyStatus(flags({ overrideName: ["not.a.real.field=NAME"] }));
-      const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+      const parsed = decodeStatusOutput(out.stdoutText);
       expect(parsed.NAME).toBeUndefined();
       expect(parsed.API_URL).toBe("http://127.0.0.1:54321");
     }).pipe(Effect.provide(layer));
@@ -1184,7 +1246,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       yield* legacyStatus(
         flags({ overrideName: ["not.a.real.field=NAME", "api.url=NEXT_PUBLIC_SUPABASE_URL"] }),
       );
-      const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+      const parsed = decodeStatusOutput(out.stdoutText);
       expect(parsed.NEXT_PUBLIC_SUPABASE_URL).toBe("http://127.0.0.1:54321");
       expect(parsed.NAME).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -1625,7 +1687,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
         writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
         return Effect.gen(function* () {
           yield* legacyStatus(flags());
-          const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+          const parsed = decodeStatusOutput(out.stdoutText);
           expect(parsed.linked_project_ref).toBe(LINKED_BRANCH_REF);
           expect(parsed.linked_parent_project_ref).toBe(LINKED_PARENT_REF);
           expect(parsed.linked_project_name).toBe("Parent Project");
@@ -1677,7 +1739,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
           const exit = yield* Effect.exit(legacyStatus(flags()));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyStatusDbInspectError");
+            expect(Formatter.formatJson(exit.cause)).toContain("LegacyStatusDbInspectError");
           }
           expect(out.stdoutText).toBe(
             `Linked Project:\n  Org: acme (org_1)\n  Project: My Project (${LINKED_PLAIN_REF})\n`,
@@ -1807,7 +1869,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
         writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
         return Effect.gen(function* () {
           yield* legacyStatus(flags({ overrideName: ["api.url=linked_project_ref"] }));
-          const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+          const parsed = decodeStatusOutput(out.stdoutText);
           // `values` (the override-renamed field) spreads LAST over
           // `legacyLinkedStateGoFields`, so the API URL — not the branch ref —
           // is what ends up under this key.
@@ -1999,7 +2061,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
         writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
         return Effect.gen(function* () {
           yield* legacyStatus(flags());
-          const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+          const parsed = decodeStatusOutput(out.stdoutText);
           expect(parsed.linked_project_ref).toBe(LINKED_BRANCH_REF);
           expect(parsed.linked_branch).toBe("feature-x");
           expect(parsed.linked_parent_project_ref).toBe(LINKED_PARENT_REF);
@@ -2015,7 +2077,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       const { layer, out } = setup({ goOutput: Option.some("json") });
       return Effect.gen(function* () {
         yield* legacyStatus(flags());
-        const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+        const parsed = decodeStatusOutput(out.stdoutText);
         expect(parsed.linked_project_ref).toBeUndefined();
         expect(parsed.API_URL).toBe("http://127.0.0.1:54321");
       }).pipe(Effect.provide(layer));
@@ -2120,7 +2182,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
           return Effect.gen(function* () {
             yield* legacyStatus(flags()).pipe(withJsonErrorHandling);
             expect(stdio.stdout).toHaveLength(1);
-            const envelope = JSON.parse(stdio.stdout[0]!);
+            const envelope = decodeStatusError(stdio.stdout[0]!);
             expect(envelope._tag).toBe("Error");
             expect(envelope.error.code).toBe("LegacyStatusDbInspectError");
             expect(envelope.linked_project).toEqual({
@@ -2145,7 +2207,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
           writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
           return Effect.gen(function* () {
             yield* legacyStatus(flags()).pipe(withJsonErrorHandling);
-            const envelope = JSON.parse(stdio.stdout[0]!);
+            const envelope = decodeStatusError(stdio.stdout[0]!);
             expect(envelope.error.code).toBe("LegacyStatusDbInspectError");
             expect(envelope.linked_project).toEqual({
               project_ref: LINKED_BRANCH_REF,
@@ -2154,7 +2216,9 @@ content_path = "./supabase/templates/password_changed_notification.html"
               org_slug: "acme",
               org_id: "org_1",
             });
-            expect("branch" in envelope.linked_project).toBe(false);
+            if (envelope.linked_project !== null && envelope.linked_project !== undefined) {
+              expect("branch" in envelope.linked_project).toBe(false);
+            }
           }).pipe(Effect.provide(layer));
         },
       );
@@ -2165,7 +2229,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
           const { layer, stdio } = setupFailureEnvelope({ format: "json" });
           return Effect.gen(function* () {
             yield* legacyStatus(flags()).pipe(withJsonErrorHandling);
-            const envelope = JSON.parse(stdio.stdout[0]!);
+            const envelope = decodeStatusError(stdio.stdout[0]!);
             expect(envelope.error.code).toBe("LegacyStatusDbInspectError");
             expect("linked_project" in envelope).toBe(true);
             expect(envelope.linked_project).toBeNull();
@@ -2185,7 +2249,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
           return Effect.gen(function* () {
             yield* legacyStatus(flags()).pipe(withJsonErrorHandling);
             expect(stdio.stdout).toHaveLength(1);
-            const event = JSON.parse(stdio.stdout[0]!);
+            const event = decodeStatusStreamError(stdio.stdout[0]!);
             expect(event.type).toBe("error");
             expect(event.error.code).toBe("LegacyStatusDbInspectError");
             expect(event.linked_project).toEqual({
@@ -2225,7 +2289,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
           return Effect.gen(function* () {
             yield* legacyStatus(flags()).pipe(withJsonErrorHandling);
             expect(stdio.stdout).toHaveLength(1);
-            const envelope = JSON.parse(stdio.stdout[0]!);
+            const envelope = decodeStatusError(stdio.stdout[0]!);
             expect(envelope).toEqual({
               _tag: "Error",
               error: {

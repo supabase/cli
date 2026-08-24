@@ -265,7 +265,7 @@ export const legacyResolveYes = Effect.gen(function* () {
   if (legacyYesFlagExplicitlyFalse(cliArgs.args)) {
     return false;
   }
-  return flag || legacyViperEnvBool("SUPABASE_YES");
+  return flag || (yield* legacyViperEnvBool("SUPABASE_YES"));
 });
 
 /**
@@ -287,7 +287,7 @@ export const legacyResolveYesWithProjectEnv = (projectEnv: Record<string, string
     if (legacyYesFlagExplicitlyFalse(cliArgs.args)) {
       return false;
     }
-    return flag || legacyViperEnvBoolWithProjectFallback("SUPABASE_YES", projectEnv);
+    return flag || (yield* legacyViperEnvBoolWithProjectFallback("SUPABASE_YES", projectEnv));
   });
 
 /**
@@ -340,7 +340,7 @@ export const legacyResolveExperimental = Effect.gen(function* () {
   if (explicit !== undefined) {
     return explicit;
   }
-  return flag || legacyViperEnvBool("SUPABASE_EXPERIMENTAL");
+  return flag || (yield* legacyViperEnvBool("SUPABASE_EXPERIMENTAL"));
 });
 
 /**
@@ -364,7 +364,9 @@ export const legacyResolveExperimentalWithProjectEnv = (projectEnv: Record<strin
     if (explicit !== undefined) {
       return explicit;
     }
-    return flag || legacyViperEnvBoolWithProjectFallback("SUPABASE_EXPERIMENTAL", projectEnv);
+    return (
+      flag || (yield* legacyViperEnvBoolWithProjectFallback("SUPABASE_EXPERIMENTAL", projectEnv))
+    );
   });
 
 /**
@@ -428,5 +430,5 @@ export const legacyResolveDebugWithProjectEnv = (projectEnv: Record<string, stri
     if (legacyDebugFlagExplicitlyFalse(cliArgs.args)) {
       return false;
     }
-    return flag || legacyViperEnvBoolWithProjectFallback("SUPABASE_DEBUG", projectEnv);
+    return flag || (yield* legacyViperEnvBoolWithProjectFallback("SUPABASE_DEBUG", projectEnv));
   });

@@ -1,6 +1,5 @@
-import { dirname } from "node:path";
-import { findProjectRoot, loadProjectConfig } from "@supabase/config";
-import { Effect, FileSystem, Path } from "effect";
+import { findProjectRoot, loadProjectConfig, loadProjectEnvironment } from "@supabase/config";
+import { ConfigProvider, DateTime, Effect, FileSystem, Path } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -8,6 +7,7 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyResolveYesWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { collectConfigEnvironment } from "../../../../shared/runtime/config-environment.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import {
   legacyAssertDecryptableSecrets,
@@ -93,6 +93,8 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   const runtimeInfo = yield* RuntimeInfo;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const provider = yield* ConfigProvider.ConfigProvider;
+  const shellEnv = yield* collectConfigEnvironment(provider);
   // `--yes` OR `SUPABASE_YES`. `config push` imports `supabase/.env` before
   // the confirmation prompt reads the yes flag, so a `SUPABASE_YES` set only
   // in `supabase/.env` auto-confirms. Resolve against the project env, not
@@ -101,12 +103,16 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   // before config load), so a push from a subdirectory still reads the
   // project root's `supabase/.env`.
   const projectRoot = (yield* findProjectRoot(runtimeInfo.cwd)) ?? runtimeInfo.cwd;
-  const projectEnv = yield* legacyLoadProjectEnv(fs, path, projectRoot);
-  const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
+  const projectEnvValues = yield* legacyLoadProjectEnv(fs, path, projectRoot);
+  const configProjectEnv = yield* loadProjectEnvironment({
+    cwd: projectRoot,
+    baseEnv: { ...projectEnvValues, ...shellEnv },
+  });
+  const yes = yield* legacyResolveYesWithProjectEnv(projectEnvValues);
   // dotenvx private keys for decrypting `encrypted:` secrets, from the shell
   // + project env — same source/precedence as `legacy-db-config.toml-read.ts`
-  // (`process.env` wins over `supabase/.env`).
-  const dotenvPrivateKeys = legacyCollectDotenvPrivateKeys({ ...projectEnv, ...process.env });
+  // (the injected shell environment wins over `supabase/.env`).
+  const dotenvPrivateKeys = legacyCollectDotenvPrivateKeys({ ...projectEnvValues, ...shellEnv });
   // Only reached by `legacyAssertDecryptableSecrets` below for an `env(VAR)` literal that
   // survives `loaded.document`'s own (`@supabase/config`) interpolation pass unresolved — i.e.
   // when this wider env source resolves `VAR` but `@supabase/config`'s
@@ -115,7 +121,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   // non-secret fields; kept for parity with the shared function's other caller
   // (`legacy-db-config.toml-read.ts`, whose pre-interpolation document relies on this).
   const secretEnvLookup = (name: string): string | undefined =>
-    process.env[name] ?? projectEnv[name];
+    shellEnv[name] ?? projectEnvValues[name];
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
@@ -133,19 +139,17 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // an established error message.
     const loaded = yield* loadProjectConfig(runtimeInfo.cwd, {
       projectRef: ref,
+      projectEnv: configProjectEnv ?? undefined,
       goViperCompat: true,
     }).pipe(
-      Effect.catchTag(
-        "ProjectConfigParseError",
-        (cause) =>
+      Effect.catchTags({
+        ProjectConfigParseError: (cause) =>
           new LegacyConfigPushLoadConfigError({
             message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
           }),
-      ),
-      Effect.catchTag(
-        "DuplicateRemoteProjectIdError",
-        (cause) => new LegacyConfigPushLoadConfigError({ message: cause.message }),
-      ),
+        DuplicateRemoteProjectIdError: (cause) =>
+          new LegacyConfigPushLoadConfigError({ message: cause.message }),
+      }),
     );
     if (loaded === null) {
       return yield* new LegacyConfigPushLoadConfigError({
@@ -194,17 +198,15 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     const presence = legacyPresenceIn(loaded.document);
 
     // Config lives at <projectRoot>/supabase/config.{toml,json}.
-    const projectRoot = dirname(dirname(loaded.path));
+    const projectRoot = path.dirname(path.dirname(loaded.path));
 
     // Email content validation runs during config load, before any network call.
     const authEmailContent = authEnabled(config)
-      ? yield* Effect.try({
-          try: () => loadAuthEmailContent(projectRoot, config.auth.email),
-          catch: (cause) =>
-            new LegacyConfigPushLoadConfigError({
-              message: cause instanceof Error ? cause.message : String(cause),
-            }),
-        })
+      ? yield* loadAuthEmailContent(projectRoot, config.auth.email).pipe(
+          Effect.mapError(
+            (cause) => new LegacyConfigPushLoadConfigError({ message: cause.message }),
+          ),
+        )
       : { template: {}, notification: {} };
 
     // 2. Cost matrix (drives cost-aware prompts).
@@ -434,16 +436,21 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
         } else {
           yield* output.raw(`Updating Auth service with config: ${d}\n`, "stderr");
           if (yield* keep("auth")) {
-            yield* api.v1.updateAuthServiceConfig({ ref, ...authToUpdateBody(local) }).pipe(
-              Effect.catch(
-                mapLegacyHttpError({
-                  networkError: LegacyConfigPushAuthUpdateNetworkError,
-                  statusError: LegacyConfigPushAuthUpdateStatusError,
-                  networkMessage: (cause) => `failed to update Auth config: ${cause}`,
-                  statusMessage: readStatusMessage,
-                }),
-              ),
-            );
+            yield* api.v1
+              .updateAuthServiceConfig({
+                ref,
+                ...authToUpdateBody(local, yield* DateTime.now),
+              })
+              .pipe(
+                Effect.catch(
+                  mapLegacyHttpError({
+                    networkError: LegacyConfigPushAuthUpdateNetworkError,
+                    statusError: LegacyConfigPushAuthUpdateStatusError,
+                    networkMessage: (cause) => `failed to update Auth config: ${cause}`,
+                    statusMessage: readStatusMessage,
+                  }),
+                ),
+              );
             services.push({ service: "auth", status: "updated" });
           } else {
             services.push({ service: "auth", status: "skipped" });

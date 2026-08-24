@@ -15,13 +15,13 @@ describe("supabase snippets (legacy)", () => {
   test(
     "download with invalid UUID exits 1 with Go-format message",
     { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      const { exitCode, stdout, stderr } = await runSupabase(
-        ["snippets", "download", "not-a-uuid", "--project-ref", TEST_PROJECT_REF],
-        { entrypoint: "legacy", env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN } },
-      );
-      expect(exitCode).toBe(1);
-      expect(`${stdout}${stderr}`).toContain("invalid snippet ID");
-    },
+    () =>
+      runSupabase(["snippets", "download", "not-a-uuid", "--project-ref", TEST_PROJECT_REF], {
+        entrypoint: "legacy",
+        env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN },
+      }).then(({ exitCode, stdout, stderr }) => {
+        expect(exitCode).toBe(1);
+        expect(`${stdout}${stderr}`).toContain("invalid snippet ID");
+      }),
   );
 });

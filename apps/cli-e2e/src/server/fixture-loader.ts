@@ -1,5 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { Data, Effect, FileSystem, Path, Schema } from "effect";
 
 export interface FixtureRequest {
   method: string;
@@ -24,74 +23,114 @@ export interface FixtureEntry {
  *  an ordered queue of entries (for sequential calls to the same endpoint). */
 export type FixtureStore = Map<string, FixtureEntry[]>;
 
+class FixtureLoadError extends Data.TaggedError("FixtureLoadError")<{
+  readonly path: string;
+  readonly cause?: unknown;
+}> {}
+
+type FixtureLoadEffect<A> = Effect.Effect<A, FixtureLoadError, FileSystem.FileSystem | Path.Path>;
+
+const parseJson = Schema.fromJsonString(Schema.Unknown);
+
+function parseFixtureFile<T>(path: string): FixtureLoadEffect<T> {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    if (
+      !(yield* fs
+        .exists(path)
+        .pipe(Effect.mapError((cause) => new FixtureLoadError({ path, cause }))))
+    ) {
+      return yield* new FixtureLoadError({ path, cause: `Missing fixture file: ${path}` });
+    }
+    const content = yield* fs
+      .readFileString(path)
+      .pipe(Effect.mapError((cause) => new FixtureLoadError({ path, cause })));
+    const value = yield* Schema.decodeEffect(parseJson)(content).pipe(
+      Effect.mapError((cause) => new FixtureLoadError({ path, cause })),
+    );
+    return value as T;
+  });
+}
+
 /** Load an ordered scenario from scenarios/<name>/interactions.json.
  *  Returns null if the scenario file does not exist — caller decides whether
  *  to fail loudly or fall back to per-endpoint fixtures. */
-export function loadScenario(scenariosDir: string, name: string): FixtureEntry[] | null {
-  const scenarioFile = join(scenariosDir, name, "interactions.json");
-  if (!existsSync(scenarioFile)) return null;
-  return parseFixtureFile<FixtureEntry[]>(scenarioFile);
+export function loadScenario(
+  scenariosDir: string,
+  name: string,
+): FixtureLoadEffect<FixtureEntry[] | null> {
+  return Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const scenarioFile = path.join(scenariosDir, name, "interactions.json");
+    const fs = yield* FileSystem.FileSystem;
+    if (
+      !(yield* fs
+        .exists(scenarioFile)
+        .pipe(Effect.mapError((cause) => new FixtureLoadError({ path: scenarioFile, cause }))))
+    )
+      return null;
+    return yield* parseFixtureFile<FixtureEntry[]>(scenarioFile);
+  });
 }
 
 /** Load all fixture pairs from the recorded/ directory into a FixtureStore.
  *  Fails fast with a descriptive error if any fixture file is malformed. */
-export function loadFixtures(fixturesDir: string): FixtureStore {
-  const recordedDir = join(fixturesDir, "recorded");
-  const store: FixtureStore = new Map();
+export function loadFixtures(fixturesDir: string): FixtureLoadEffect<FixtureStore> {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const recordedDir = path.join(fixturesDir, "recorded");
+    const store: FixtureStore = new Map();
 
-  if (!existsSync(recordedDir)) {
+    if (
+      !(yield* fs
+        .exists(recordedDir)
+        .pipe(Effect.mapError((cause) => new FixtureLoadError({ path: recordedDir, cause }))))
+    )
+      return store;
+
+    const directoryEntries = yield* fs
+      .readDirectory(recordedDir)
+      .pipe(Effect.mapError((cause) => new FixtureLoadError({ path: recordedDir, cause })));
+    const keys: Array<string> = [];
+    for (const entry of directoryEntries) {
+      const info = yield* fs
+        .stat(path.join(recordedDir, entry))
+        .pipe(Effect.mapError((cause) => new FixtureLoadError({ path: recordedDir, cause })));
+      if (info.type === "Directory") keys.push(entry);
+    }
+
+    for (const key of keys) {
+      const keyDir = path.join(recordedDir, key);
+      const files = (yield* fs
+        .readDirectory(keyDir)
+        .pipe(Effect.mapError((cause) => new FixtureLoadError({ path: keyDir, cause })))).sort();
+      const indices = new Set<string>();
+
+      for (const file of files) {
+        const match = /^(\d+|default)\.(request|response)\.json$/.exec(file);
+        if (match?.[1] !== undefined) indices.add(match[1]);
+      }
+
+      const entries: FixtureEntry[] = [];
+      for (const index of [...indices].sort(compareIndices)) {
+        const [request, response] = yield* Effect.all([
+          parseFixtureFile<FixtureRequest>(path.join(keyDir, `${index}.request.json`)),
+          parseFixtureFile<FixtureResponse>(path.join(keyDir, `${index}.response.json`)),
+        ]);
+        entries.push({ request, response });
+      }
+
+      if (entries.length > 0) store.set(key, entries);
+    }
+
     return store;
-  }
-
-  const keys = readdirSync(recordedDir, { withFileTypes: true })
-    .filter((d) => d.isDirectory())
-    .map((d) => d.name);
-
-  for (const key of keys) {
-    const keyDir = join(recordedDir, key);
-    const entries: FixtureEntry[] = [];
-
-    // Collect numbered pairs: 1.request.json/1.response.json, 2.request.json, ...
-    // Also accept "default" as an alias for "1".
-    const files = readdirSync(keyDir).sort();
-    const indices = new Set<string>();
-
-    for (const file of files) {
-      const match = file.match(/^(\d+|default)\.(request|response)\.json$/);
-      if (match?.[1]) indices.add(match[1]);
-    }
-
-    for (const index of [...indices].sort(compareIndices)) {
-      const reqFile = join(keyDir, `${index}.request.json`);
-      const resFile = join(keyDir, `${index}.response.json`);
-
-      const request = parseFixtureFile<FixtureRequest>(reqFile);
-      const response = parseFixtureFile<FixtureResponse>(resFile);
-      entries.push({ request, response });
-    }
-
-    if (entries.length > 0) {
-      store.set(key, entries);
-    }
-  }
-
-  return store;
-}
-
-function parseFixtureFile<T>(filePath: string): T {
-  if (!existsSync(filePath)) {
-    throw new Error(`Missing fixture file: ${filePath}`);
-  }
-  try {
-    return JSON.parse(readFileSync(filePath, "utf8")) as T;
-  } catch (cause) {
-    throw new Error(`Malformed fixture file: ${filePath}`, { cause });
-  }
+  });
 }
 
 /** Sort indices so "default" comes first, then numerically. */
 function compareIndices(a: string, b: string): number {
   if (a === "default") return -1;
   if (b === "default") return 1;
-  return parseInt(a, 10) - parseInt(b, 10);
+  return Number.parseInt(a, 10) - Number.parseInt(b, 10);
 }

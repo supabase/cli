@@ -1,6 +1,7 @@
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, Path } from "effect";
 
 import {
   LEGACY_DEFAULT_PG_DELTA_NPM_VERSION,
@@ -21,19 +22,34 @@ const goDiffTemplatesDir = fileURLToPath(
 const goPgDeltaTemplatesDir = fileURLToPath(
   new URL("../../../../../../cli-go/internal/pgdelta/templates/", import.meta.url),
 );
-const readGoTemplate = (name: string) => readFileSync(`${goDiffTemplatesDir}${name}`, "utf8");
+const readGoTemplate = (name: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return yield* fs.readFileString(path.join(goDiffTemplatesDir, name));
+  });
+const readPgDeltaTemplate = (name: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return yield* fs.readFileString(path.join(goPgDeltaTemplatesDir, name));
+  });
 
 describe("embedded pg-delta Deno templates", () => {
-  it("match the Go sources byte-for-byte", () => {
-    expect(legacyPgDeltaDiffScript).toBe(readGoTemplate("pgdelta.ts"));
-    expect(legacyPgDeltaDeclarativeExportScript).toBe(
-      readGoTemplate("pgdelta_declarative_export.ts"),
-    );
-    expect(legacyPgDeltaCatalogExportScript).toBe(readGoTemplate("pgdelta_catalog_export.ts"));
-    expect(legacyPgDeltaDeclarativeApplyScript).toBe(
-      readFileSync(`${goPgDeltaTemplatesDir}pgdelta_declarative_apply.ts`, "utf8"),
-    );
-  });
+  it.effect("match the Go sources byte-for-byte", () =>
+    Effect.gen(function* () {
+      expect(legacyPgDeltaDiffScript).toBe(yield* readGoTemplate("pgdelta.ts"));
+      expect(legacyPgDeltaDeclarativeExportScript).toBe(
+        yield* readGoTemplate("pgdelta_declarative_export.ts"),
+      );
+      expect(legacyPgDeltaCatalogExportScript).toBe(
+        yield* readGoTemplate("pgdelta_catalog_export.ts"),
+      );
+      expect(legacyPgDeltaDeclarativeApplyScript).toBe(
+        yield* readPgDeltaTemplate("pgdelta_declarative_apply.ts"),
+      );
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
   it("pin the placeholder npm version that interpolation rewrites", () => {
     expect(legacyPgDeltaDiffScript).toContain(

@@ -1,3 +1,5 @@
+import { DateTime, Option } from "effect";
+
 function pad2(value: number): string {
   return value.toString().padStart(2, "0");
 }
@@ -16,11 +18,14 @@ export function formatLegacyTimestamp(value: string): string {
   if (!/^\d{4}-\d{2}-\d{2}T/.test(value)) {
     return value;
   }
-  const parsed = Date.parse(value);
-  if (Number.isNaN(parsed)) return value;
-  const date = new Date(parsed);
-  return (
-    `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())} ` +
-    `${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())}:${pad2(date.getUTCSeconds())}`
+  return DateTime.make(value).pipe(
+    Option.map((date) => {
+      const parts = DateTime.toPartsUtc(date);
+      return (
+        `${parts.year}-${pad2(parts.month)}-${pad2(parts.day)} ` +
+        `${pad2(parts.hour)}:${pad2(parts.minute)}:${pad2(parts.second)}`
+      );
+    }),
+    Option.getOrElse(() => value),
   );
 }

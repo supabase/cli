@@ -74,6 +74,7 @@ import {
   LEGACY_COMPOSE_PROJECT_LABEL,
   type LegacyContainerError,
   type LegacyContainerOpts,
+  type LegacyNetworkCreateError,
 } from "./container-lifecycle.ts";
 import type { LegacyImagePrepullError } from "./image-prepull.ts";
 import type { LegacyHealthCheckTimeoutError } from "./health-check.ts";
@@ -251,21 +252,18 @@ export interface LegacyShadowDatabaseHandle {
 export const legacyCreateShadowDatabase = (
   spawner: Spawner,
   input: LegacyCreateShadowDatabaseInput,
-): Effect.Effect<LegacyShadowDatabaseHandle, LegacyShadowDbError> =>
-  Effect.gen(function* () {
+): Effect.Effect<LegacyShadowDatabaseHandle, LegacyShadowDbError> => {
+  const mapContainerError = (cause: LegacyNetworkCreateError | LegacyContainerError) =>
+    new LegacyShadowDbError({
+      message: cause.message,
+      reason: legacyShadowContainerReason(cause.reason),
+    });
+  return Effect.gen(function* () {
     const labels = {
       [LEGACY_CLI_PROJECT_LABEL]: input.projectId,
       [LEGACY_COMPOSE_PROJECT_LABEL]: input.projectId,
     };
-    yield* legacyEnsureNetwork(spawner, input.networkId, labels).pipe(
-      Effect.mapError(
-        (cause) =>
-          new LegacyShadowDbError({
-            message: cause.message,
-            reason: legacyShadowContainerReason(cause.reason),
-          }),
-      ),
-    );
+    yield* legacyEnsureNetwork(spawner, input.networkId, labels);
     const spec = legacyBuildShadowPostgresContainerSpec(input);
     // The shadow container has no name (Docker auto-generates one) and no network alias —
     // see this module's own header for why that's still enough for the shadow's own one-shot
@@ -279,17 +277,10 @@ export const legacyCreateShadowDatabase = (
       workdir: input.workdir,
       extraHosts: input.extraHosts,
     };
-    const containerId = yield* legacyCreateContainer(spawner, spec, containerOpts).pipe(
-      Effect.mapError(
-        (cause) =>
-          new LegacyShadowDbError({
-            message: cause.message,
-            reason: legacyShadowContainerReason(cause.reason),
-          }),
-      ),
-    );
+    const containerId = yield* legacyCreateContainer(spawner, spec, containerOpts);
     return { containerId };
-  });
+  }).pipe(Effect.mapError(mapContainerError));
+};
 
 /**
  * Port of Go's `utils.DockerRemove(shadow)` as called by every shadow caller

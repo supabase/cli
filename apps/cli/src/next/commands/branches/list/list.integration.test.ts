@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { makeApiClient } from "@supabase/api/effect";
-import { Effect, Exit, Layer } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -31,6 +31,20 @@ function makeBranch(
     with_data: false,
     ...overrides,
   };
+}
+
+function expectFailureTag(exit: Exit.Exit<unknown, unknown>, tag: string, detail?: string) {
+  expect(Exit.isFailure(exit)).toBe(true);
+  if (Exit.isFailure(exit)) {
+    const failure = Cause.findErrorOption(exit.cause);
+    expect(Option.isSome(failure)).toBe(true);
+    if (Option.isSome(failure)) {
+      expect(failure.value).toMatchObject({ _tag: tag });
+      if (detail !== undefined) {
+        expect(failure.value).toMatchObject({ detail });
+      }
+    }
+  }
 }
 
 const DEFAULT_LINK_STATE = {
@@ -180,12 +194,7 @@ describe("branches list handler", () => {
 
       const exit = yield* list().pipe(Effect.provide(layer), Effect.exit);
 
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const cause = exit.cause;
-        expect(JSON.stringify(cause)).toContain("ProjectNotLinkedError");
-        expect(JSON.stringify(cause)).toContain("supabase link");
-      }
+      expectFailureTag(exit, "ProjectNotLinkedError", "No project is linked in this directory.");
     }),
   );
 

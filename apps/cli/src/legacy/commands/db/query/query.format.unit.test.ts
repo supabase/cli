@@ -1,4 +1,4 @@
-import { Option } from "effect";
+import { DateTime, Option, Schema } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { legacyBuildRlsAdvisory } from "./query.advisory.ts";
@@ -102,8 +102,10 @@ describe("legacyMakeLocalCellFormatter", () => {
 
   it("renders Date (timestamp) cells like Go's time.Time %v instead of map[]", () => {
     const fmt = legacyMakeLocalCellFormatter([1114]);
-    expect(fmt(new Date(Date.UTC(2024, 0, 2, 15, 4, 5)), 0)).toBe("2024-01-02 15:04:05 +0000 UTC");
-    expect(fmt(new Date(Date.UTC(2024, 0, 2, 15, 4, 5, 123)), 0)).toBe(
+    expect(fmt(DateTime.toDate(DateTime.makeUnsafe(Date.UTC(2024, 0, 2, 15, 4, 5))), 0)).toBe(
+      "2024-01-02 15:04:05 +0000 UTC",
+    );
+    expect(fmt(DateTime.toDate(DateTime.makeUnsafe(Date.UTC(2024, 0, 2, 15, 4, 5, 123))), 0)).toBe(
       "2024-01-02 15:04:05.123 +0000 UTC",
     );
   });
@@ -297,7 +299,15 @@ describe("legacyRenderJson", () => {
     expect(out).toContain("\\u003cdeadbeef\\u003e");
     expect(out).not.toContain("<deadbeef>");
     expect(out.endsWith("\n")).toBe(true);
-    const parsed = JSON.parse(out);
+    const parsed = Schema.decodeSync(
+      Schema.fromJsonString(
+        Schema.Struct({
+          boundary: Schema.String,
+          rows: Schema.Array(Schema.Unknown),
+          advisory: Schema.optional(Schema.Unknown),
+        }),
+      ),
+    )(out);
     expect(parsed.boundary).toBe("deadbeef");
     expect(parsed.rows).toEqual([{ id: 1 }]);
     expect(parsed.advisory).toBeUndefined();
@@ -307,7 +317,20 @@ describe("legacyRenderJson", () => {
     const advisory = legacyBuildRlsAdvisory(["public.users"]);
     const out = legacyRenderJson(["id"], [[1]], true, "ab", advisory);
     expect(out.indexOf('"advisory"')).toBeLessThan(out.indexOf('"boundary"'));
-    const parsed = JSON.parse(out);
+    const parsed = Schema.decodeSync(
+      Schema.fromJsonString(
+        Schema.Struct({
+          boundary: Schema.String,
+          rows: Schema.Array(Schema.Unknown),
+          advisory: Schema.Struct({
+            id: Schema.String,
+            remediation_sql: Schema.String,
+            priority: Schema.Finite,
+            level: Schema.String,
+          }),
+        }),
+      ),
+    )(out);
     expect(parsed.advisory.id).toBe("rls_disabled");
     expect(parsed.advisory.remediation_sql).toBe(
       "ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;",

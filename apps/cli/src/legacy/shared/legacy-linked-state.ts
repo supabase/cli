@@ -108,7 +108,7 @@ const legacyAcquireLinkedStateApi = Effect.fnUntraced(function* () {
 
   return yield* factoryOption.value.make.pipe(
     Effect.map(Option.some),
-    Effect.catch(() => Effect.succeed(Option.none<ApiClient>())),
+    Effect.orElseSucceed(() => Option.none<ApiClient>()),
   );
 });
 
@@ -154,7 +154,7 @@ const legacyFindLinkedBranchName = Effect.fnUntraced(function* (
     Effect.timeout(LEGACY_LINKED_STATE_LOOKUP_TIMEOUT),
     // Best-effort: any transport/status/decode failure OR the timeout above
     // degrades below — this helper must never fail on a flaky/slow lookup.
-    Effect.catch(() => Effect.succeed(Option.none<LegacyLinkedStateBranches>())),
+    Effect.orElseSucceed(() => Option.none<LegacyLinkedStateBranches>()),
   );
 
   return Option.isSome(branchesOption)

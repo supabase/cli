@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Clock, Effect, Option } from "effect";
 import { Command } from "effect/unstable/cli";
 import { Output } from "../../../shared/output/output.service.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -16,13 +16,14 @@ const enableTelemetry = Effect.gen(function* () {
   const output = yield* Output;
   const configDir = yield* getConfigDir;
   const identity = yield* resolveIdentity(configDir);
+  const now = yield* Clock.currentTimeMillis;
 
   yield* writeTelemetryConfig(
     {
       consent: "granted",
       device_id: identity.deviceId,
       session_id: identity.sessionId,
-      session_last_active: Date.now(),
+      session_last_active: now,
       ...(identity.distinctId === undefined ? {} : { distinct_id: identity.distinctId }),
     },
     configDir,
@@ -34,13 +35,14 @@ const disableTelemetry = Effect.gen(function* () {
   const output = yield* Output;
   const configDir = yield* getConfigDir;
   const identity = yield* resolveIdentity(configDir);
+  const now = yield* Clock.currentTimeMillis;
 
   yield* writeTelemetryConfig(
     {
       consent: "denied",
       device_id: identity.deviceId,
       session_id: identity.sessionId,
-      session_last_active: Date.now(),
+      session_last_active: now,
       ...(identity.distinctId === undefined ? {} : { distinct_id: identity.distinctId }),
     },
     configDir,

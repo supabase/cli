@@ -1,9 +1,6 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Path, Schema } from "effect";
 
 import {
   legacyFormatPgDeltaNextDebugId,
@@ -14,10 +11,10 @@ import { legacyPgDeltaTempPath } from "../../../shared/legacy-pgdelta.cache.ts";
 
 describe("pg-delta next artifact generation", () => {
   it.effect("writes structured non-cache artifacts and metadata under v2", () => {
-    const root = mkdtempSync(join(tmpdir(), "pgdelta-next-artifacts-"));
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "pgdelta-next-artifacts-" });
       const debugId = legacyFormatPgDeltaNextDebugId(Date.UTC(2024, 0, 2, 3, 4, 5, 678), "diff");
       const debugDir = yield* legacySavePgDeltaNextDebugArtifacts(fs, path, root, debugId, "diff", {
         sourceSnapshot: '{"source":true}\n',
@@ -28,8 +25,14 @@ describe("pg-delta next artifact generation", () => {
 
       expect(debugId).toBe("20240102-030405-678-diff");
       expect(legacyPgDeltaNextTempPath(path, root)).not.toBe(legacyPgDeltaTempPath(path, root));
-      expect(debugDir).toBe(join(legacyPgDeltaNextTempPath(path, root), "debug", debugId));
-      expect(JSON.parse(readFileSync(join(debugDir, "metadata.json"), "utf8"))).toEqual({
+      expect(debugDir).toBe(path.join(legacyPgDeltaNextTempPath(path, root), "debug", debugId));
+      const metadata = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+        yield* fs.readFileString(path.join(debugDir, "metadata.json")),
+      );
+      const diagnostics = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+        yield* fs.readFileString(path.join(debugDir, "diagnostics.json")),
+      );
+      expect(metadata).toEqual({
         version: 1,
         generation: "v2",
         implementation: "next",
@@ -37,12 +40,9 @@ describe("pg-delta next artifact generation", () => {
         cacheReusable: false,
         files: ["desired-snapshot.json", "diagnostics.json", "plan.json", "source-snapshot.json"],
       });
-      expect(JSON.parse(readFileSync(join(debugDir, "diagnostics.json"), "utf8"))).toEqual([
+      expect(diagnostics).toEqual([
         { origin: "source", code: "PG001", severity: "warning", message: "warning" },
       ]);
-    }).pipe(
-      Effect.provide(BunServices.layer),
-      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(BunServices.layer));
   });
 });

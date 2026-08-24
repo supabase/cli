@@ -29,7 +29,8 @@
  *    function's, to preserve that pre-existing behavior exactly.
  */
 
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Crypto, Effect, FileSystem, Option, Path } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 import type { GlobalFlag } from "effect/unstable/cli";
 
@@ -38,7 +39,10 @@ import { legacyResolveExperimentalWithProjectEnv } from "../../../shared/legacy/
 import { LegacyDbConfigLoadError } from "../legacy-db-config.errors.ts";
 import { localDbContainerId } from "../legacy-docker-ids.ts";
 import { resolveDockerNetworkMode } from "../../../shared/functions/functions-docker.ts";
-import { legacyViperEnvStringWithProjectFallback } from "../../../shared/legacy/legacy-viper-env.ts";
+import {
+  LegacyViperEnv,
+  legacyViperEnvStringWithProjectFallback,
+} from "../../../shared/legacy/legacy-viper-env.ts";
 import { legacyIsBitbucketPipeline } from "../legacy-bitbucket-pipeline.ts";
 import {
   legacyResolveAuthExternalUrl,
@@ -157,7 +161,12 @@ export const legacyBuildLocalDbContainerInputs = (
 ): Effect.Effect<
   LegacyLocalDbContainerInputs,
   LegacyDbConfigLoadError,
-  FileSystem.FileSystem | Path.Path | GlobalFlag.Setting.Identifier<"experimental"> | CliArgs
+  | FileSystem.FileSystem
+  | Path.Path
+  | Crypto.Crypto
+  | GlobalFlag.Setting.Identifier<"experimental">
+  | CliArgs
+  | LegacyViperEnv
 > =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -170,20 +179,18 @@ export const legacyBuildLocalDbContainerInputs = (
     // Go's `viper.GetBool("EXPERIMENTAL")` (`internal/migration/apply/apply.go:19`), read deep
     // inside `legacyRunFreshDbSetup`'s fresh-volume setup pipeline — see this field's own doc
     // comment for why `db reset`'s caller overrides it instead of using it directly.
-    const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnvValues);
+    const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnvValues).pipe(
+      Effect.mapError((cause) => mapError(String(cause))),
+    );
 
-    const values = yield* Effect.try({
-      try: () =>
-        legacyResolveLocalConfigValues(
-          config,
-          hostname,
-          workdir,
-          projectEnvValues,
-          loaded?.document,
-          remoteOverrideKeys,
-        ),
-      catch: (cause) => mapError(cause instanceof Error ? cause.message : String(cause)),
-    });
+    const values = yield* legacyResolveLocalConfigValues(
+      config,
+      hostname,
+      workdir,
+      projectEnvValues,
+      loaded?.document,
+      remoteOverrideKeys,
+    ).pipe(Effect.mapError((cause) => mapError(cause.message)));
 
     const bootstrapConfig = yield* legacyResolveDbBootstrapConfig(
       fs,
@@ -200,9 +207,13 @@ export const legacyBuildLocalDbContainerInputs = (
     // PRRT_kwDOErm0O86VlqIL; unlike `utils.Config.Hostname`, viper re-reads the dotenv-merged
     // env fresh at `DockerStart`'s own call site, not at package init). See
     // {@link resolveDockerNetworkMode}'s doc comment for the full 3-way flag/env precedence.
+    const envNetworkId = yield* legacyViperEnvStringWithProjectFallback(
+      "SUPABASE_NETWORK_ID",
+      projectEnvValues,
+    ).pipe(Effect.mapError((cause) => mapError(String(cause))));
     const networkId = resolveDockerNetworkMode({
       explicit: Option.getOrUndefined(networkIdFlag),
-      envOverride: legacyViperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
+      envOverride: envNetworkId,
       projectId,
     });
     // Go's `DockerStart` unconditionally appends the Linux-only `host.docker.internal:host-gateway`
@@ -211,7 +222,7 @@ export const legacyBuildLocalDbContainerInputs = (
     const extraHosts = platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
     const containerOpts: LegacyContainerOpts = {
       projectId,
-      isBitbucketPipeline: legacyIsBitbucketPipeline(),
+      isBitbucketPipeline: legacyIsBitbucketPipeline(projectEnvValues),
       workdir,
       extraHosts,
     };
@@ -280,17 +291,18 @@ export const legacyBuildLocalDbContainerInputs = (
       // Go's `initSchema15`'s realtime job resolves JWKS itself, LOCALLY, gated on
       // `Realtime.Enabled` (`internal/db/start/start.go:337-341`) — `legacyRunFreshDbSetup` only
       // evaluates this Effect when reached AND `realtimeEnabledForSetup`.
-      jwks: Effect.tryPromise({
-        try: () =>
-          legacyResolveLocalJwks(
-            config,
-            workdir,
-            values.jwtSecret,
-            projectEnvValues,
-            remoteOverrideKeys,
-          ),
-        catch: (cause) => mapError(cause instanceof Error ? cause.message : String(cause)),
-      }),
+      jwks: legacyResolveLocalJwks(
+        config,
+        workdir,
+        values.jwtSecret,
+        projectEnvValues,
+        remoteOverrideKeys,
+      ).pipe(
+        Effect.provide(FetchHttpClient.layer),
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.mapError((cause) => mapError(cause.message)),
+      ),
       apiUrl: values.apiUrl,
       authExternalUrl: legacyResolveAuthExternalUrl(
         loaded?.document,

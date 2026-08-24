@@ -1,13 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer } from "effect";
+import { ConfigProvider, Effect, Exit, Formatter, Layer } from "effect";
 
 import { mockOutput, mockStdin, mockTty } from "../../../../tests/helpers/mocks.ts";
+import { processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
   mockLegacyCredentialsTracked,
   mockLegacyTelemetryStateTracked,
 } from "../../../../tests/helpers/legacy-mocks.ts";
 import { LegacyYesFlag } from "../../../shared/legacy/global-flags.ts";
+import { makeLegacyViperEnvLayer } from "../../../shared/legacy/legacy-viper-env.ts";
 import { legacyLogout } from "./logout.handler.ts";
 
 interface SetupOpts {
@@ -20,9 +22,18 @@ interface SetupOpts {
   readonly stdinIsTty?: boolean;
   /** Piped (non-TTY) stdin answers, one consumed per confirmation prompt. */
   readonly pipedAnswers?: ReadonlyArray<string>;
+  readonly env?: Readonly<Record<string, string | undefined>>;
 }
 
 function setupLegacyLogout(opts: SetupOpts = {}) {
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(opts.env ?? {})) {
+    if (value !== undefined) env[key] = value;
+  }
+  const configProvider = ConfigProvider.fromEnv({
+    env,
+    preserveEmptyStrings: true,
+  });
   const out = mockOutput({
     format: opts.format ?? "text",
     confirmLogout: opts.confirm ?? false,
@@ -31,6 +42,9 @@ function setupLegacyLogout(opts: SetupOpts = {}) {
   const telemetry = mockLegacyTelemetryStateTracked();
   const credentials = mockLegacyCredentialsTracked({ deleteOutcome: opts.deleteOutcome ?? "ok" });
   const layer = Layer.mergeAll(
+    ConfigProvider.layer(configProvider),
+    makeLegacyViperEnvLayer(configProvider),
+    processEnvLayer(opts.env),
     out.layer,
     credentials.layer,
     telemetry.layer,
@@ -79,7 +93,7 @@ describe("legacy logout integration", () => {
       const exit = yield* Effect.exit(legacyLogout());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyLogoutCancelledError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyLogoutCancelledError");
       }
       expect(credentials.deletedAll).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -94,7 +108,7 @@ describe("legacy logout integration", () => {
       const exit = yield* Effect.exit(legacyLogout());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyLogoutCancelledError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyLogoutCancelledError");
       }
       expect(credentials.deletedAll).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -115,21 +129,15 @@ describe("legacy logout integration", () => {
     // scanning stdin (`console.go:71`), so `SUPABASE_YES=1 printf 'n\n' | supabase
     // logout` auto-confirms and deletes rather than consuming the piped `n`. The
     // handler resolves `yes` via legacyResolveYes, not the raw --yes flag.
-    const prev = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "1";
-    const { layer, credentials } = setupLegacyLogout({ stdinIsTty: false, pipedAnswers: ["n"] });
+    const { layer, credentials } = setupLegacyLogout({
+      stdinIsTty: false,
+      pipedAnswers: ["n"],
+      env: { SUPABASE_YES: "1" },
+    });
     return Effect.gen(function* () {
       yield* legacyLogout();
       expect(credentials.deletedAll).toBe(true);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(layer),
-    );
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("not logged in: prints to stderr, exits 0, and does not sweep credentials", () => {
@@ -151,7 +159,7 @@ describe("legacy logout integration", () => {
       const exit = yield* Effect.exit(legacyLogout());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyDeleteTokenError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyDeleteTokenError");
       }
       expect(credentials.deletedAll).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -223,7 +231,7 @@ describe("legacy logout integration", () => {
       const exit = yield* Effect.exit(legacyLogout());
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("NonInteractiveError");
+        expect(Formatter.formatJson(exit.cause)).toContain("NonInteractiveError");
       }
     }).pipe(Effect.provide(layer));
   });

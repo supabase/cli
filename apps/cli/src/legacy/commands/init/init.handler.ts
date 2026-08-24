@@ -1,5 +1,4 @@
-import { resolve } from "node:path";
-import { Effect, Option } from "effect";
+import { Effect, Option, Path } from "effect";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { initProject } from "../../../shared/init/project-init.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -20,15 +19,15 @@ export const legacyInit = Effect.fn("legacy.init")(function* (flags: LegacyInitF
   if (flags.useOrioledb && !experimental) {
     // Go marks `experimental` required in PreRun (`cmd/init.go:32-36`), so cobra's
     // `ValidateRequiredFlags` fails with its standard required-flag message.
-    return yield* Effect.fail(
-      new LegacyInitExperimentalRequiredError({
-        message: `required flag(s) "experimental" not set`,
-      }),
-    );
+    return yield* new LegacyInitExperimentalRequiredError({
+      message: `required flag(s) "experimental" not set`,
+    });
   }
 
   const result = yield* initProject({
-    cwd: Option.isSome(workdir) ? resolve(runtimeInfo.cwd, workdir.value) : runtimeInfo.cwd,
+    cwd: Option.isSome(workdir)
+      ? yield* Path.Path.pipe(Effect.map((path) => path.resolve(runtimeInfo.cwd, workdir.value)))
+      : runtimeInfo.cwd,
     force: flags.force,
     useOrioledb: flags.useOrioledb,
     interactive: flags.interactive,
@@ -54,12 +53,10 @@ export const legacyInit = Effect.fn("legacy.init")(function* (flags: LegacyInitF
       runtimeInfo.platform === "win32"
         ? "failed to create config file: open supabase\\config.toml: The file exists."
         : "failed to create config file: open supabase/config.toml: file exists";
-    return yield* Effect.fail(
-      new LegacyInitConfigExistsError({
-        message,
-        suggestion: "Run supabase init --force to overwrite existing config file.",
-      }),
-    );
+    return yield* new LegacyInitConfigExistsError({
+      message,
+      suggestion: "Run supabase init --force to overwrite existing config file.",
+    });
   }
 
   yield* output.raw("Finished supabase init.\n");

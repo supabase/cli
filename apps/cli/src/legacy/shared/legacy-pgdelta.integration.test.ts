@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Cause, Effect, Exit, Layer } from "effect";
+import { Cause, ConfigProvider, Effect, Exit, Layer } from "effect";
 
 import {
   type LegacyEdgeRuntimeRunOpts,
@@ -19,6 +19,11 @@ import {
   legacyExportCatalogPgDelta,
   type LegacyPgDeltaContext,
 } from "./legacy-pgdelta.ts";
+import { makeLegacyViperEnvLayer } from "../../shared/legacy/legacy-viper-env.ts";
+
+const legacyViperEnvLayer = makeLegacyViperEnvLayer(
+  ConfigProvider.fromEnv({ preserveEmptyStrings: true }),
+);
 
 const CTX: LegacyPgDeltaContext = {
   projectId: "ref",
@@ -123,7 +128,7 @@ describe("legacyDiffPgDelta", () => {
             ]);
           }),
         ),
-        Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
+        Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer, legacyViperEnvLayer)),
       );
     },
   );
@@ -144,7 +149,7 @@ describe("legacyDiffPgDelta", () => {
           expect(env["FORMAT_OPTIONS"]).toBeUndefined();
         }),
       ),
-      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer, legacyViperEnvLayer)),
     );
   });
 
@@ -165,7 +170,7 @@ describe("legacyDiffPgDelta", () => {
           );
         }),
       ),
-      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer, legacyViperEnvLayer)),
     );
   });
 
@@ -189,7 +194,7 @@ describe("legacyDiffPgDelta", () => {
           });
         }),
       ),
-      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer, legacyViperEnvLayer)),
     );
   });
 
@@ -210,7 +215,7 @@ describe("legacyDiffPgDelta", () => {
           expect(message).toContain("boom");
         }),
       ),
-      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer, legacyViperEnvLayer)),
     );
   });
 
@@ -243,7 +248,7 @@ describe("legacyDiffPgDelta", () => {
           );
         }),
       ),
-      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer, legacyViperEnvLayer)),
     );
   });
 });
@@ -269,7 +274,7 @@ describe("legacyDeclarativeExportPgDelta", () => {
           expect(edge.calls[0]!.errPrefix).toBe("error exporting declarative schema");
         }),
       ),
-      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer, legacyViperEnvLayer)),
     );
   });
 
@@ -290,7 +295,7 @@ describe("legacyDeclarativeExportPgDelta", () => {
           );
         }),
       ),
-      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer, legacyViperEnvLayer)),
     );
   });
 
@@ -311,7 +316,7 @@ describe("legacyDeclarativeExportPgDelta", () => {
           );
         }),
       ),
-      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer, legacyViperEnvLayer)),
     );
   });
 });
@@ -332,7 +337,7 @@ describe("legacyExportCatalogPgDelta", () => {
           expect(opts.env["ROLE"]).toBe("postgres");
         }),
       ),
-      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer, legacyViperEnvLayer)),
     );
   });
 
@@ -345,7 +350,7 @@ describe("legacyExportCatalogPgDelta", () => {
           expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeEmptyOutputError");
         }),
       ),
-      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer, legacyViperEnvLayer)),
     );
   });
 });

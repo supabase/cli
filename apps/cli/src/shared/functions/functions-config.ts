@@ -1,7 +1,10 @@
-import { basename } from "node:path";
+import { BunPath } from "@effect/platform-bun";
 import { Effect, type FileSystem, type Path } from "effect";
+import * as EffectPath from "effect/Path";
 import { loadProjectConfig, type LoadedProjectConfig } from "@supabase/config";
 import { normalizeProjectId } from "./functions-docker.ts";
+
+const { basename } = Effect.runSync(EffectPath.Path.pipe(Effect.provide(BunPath.layer)));
 
 /**
  * Everything the native `functions` Docker paths (`deploy`/`download`/`serve`)

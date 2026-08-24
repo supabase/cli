@@ -10,6 +10,7 @@
  */
 
 import type { ProjectConfig } from "@supabase/config";
+import { DateTime } from "effect";
 
 import { diff } from "./config-sync.diff.ts";
 import { type TomlField, type TomlValue, encodeToml } from "./config-sync.toml.ts";
@@ -2287,7 +2288,7 @@ export function diffAuth(remoteCompare: AuthSubset, local: AuthSubset): string {
  * Port of Go `(*auth).ToUpdateAuthConfigBody`.
  * Returns a flat record whose keys are the snake_case API field names.
  */
-export function authToUpdateBody(local: AuthSubset): RemoteAuthUpdateBody {
+export function authToUpdateBody(local: AuthSubset, now: DateTime.Utc): RemoteAuthUpdateBody {
   const body: Record<string, unknown> = {};
 
   body["site_url"] = local.site_url;
@@ -2490,9 +2491,7 @@ export function authToUpdateBody(local: AuthSubset): RemoteAuthUpdateBody {
     // 10-year validity: calendar-exact, so leap days are counted (a flat
     // 3650-day offset would be 2-3 days short). setUTCFullYear keeps UTC
     // semantics.
-    const validUntil = new Date();
-    validUntil.setUTCFullYear(validUntil.getUTCFullYear() + 10);
-    body["sms_test_otp_valid_until"] = validUntil.toISOString();
+    body["sms_test_otp_valid_until"] = DateTime.formatIso(DateTime.add(now, { years: 10 }));
   }
 
   switch (true) {

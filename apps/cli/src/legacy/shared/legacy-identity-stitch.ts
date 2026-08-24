@@ -1,4 +1,4 @@
-import { Context, Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Clock, Context, DateTime, Effect, FileSystem, Layer, Option, Path, Schema } from "effect";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
@@ -34,6 +34,17 @@ import { readExistingState } from "../telemetry/legacy-telemetry-state.layer.ts"
 
 const HEADER_GOTRUE_ID = "x-gotrue-id";
 const TELEMETRY_SCHEMA_VERSION = 1;
+
+const LegacyTelemetryStateJsonSchema = Schema.fromJsonString(
+  Schema.Struct({
+    enabled: Schema.Boolean,
+    device_id: Schema.String,
+    session_id: Schema.String,
+    session_last_active: Schema.String,
+    distinct_id: Schema.String,
+    schema_version: Schema.optional(Schema.Unknown),
+  }),
+);
 
 interface LegacyTelemetryState {
   readonly enabled: boolean;
@@ -108,9 +119,9 @@ const makeLegacyIdentityStitcher: Effect.Effect<
       // `LoadOrCreateState` already decoded, it never re-parses the file itself.
       // This also fixes a prior bug where a `consent: "denied"` file (no
       // `enabled` key) was treated as `enabled: true`.
-      const prior = Option.match(existing, {
-        onNone: () => undefined,
-        onSome: readExistingState,
+      const prior = yield* Option.match(existing, {
+        onNone: () => Effect.void,
+        onSome: (content) => Effect.succeed(readExistingState(content)),
       });
       const enabled = prior?.enabled ?? true;
       if (!enabled) return;
@@ -129,7 +140,9 @@ const makeLegacyIdentityStitcher: Effect.Effect<
         enabled,
         device_id: prior?.device_id ?? runtime.deviceId,
         session_id: prior?.session_id ?? runtime.sessionId,
-        session_last_active: new Date().toISOString(),
+        session_last_active: DateTime.formatIso(
+          DateTime.makeUnsafe(yield* Clock.currentTimeMillis),
+        ),
         distinct_id: gotrueId,
         schema_version:
           prior?.schemaVersionToken !== undefined
@@ -138,16 +151,15 @@ const makeLegacyIdentityStitcher: Effect.Effect<
       };
 
       yield* fs.makeDirectory(runtime.configDir, { recursive: true });
-      yield* fs.writeFileString(
-        telemetryPath,
+      const encoded = yield* Schema.encodeEffect(LegacyTelemetryStateJsonSchema)(
         // Exact int64 token of the prior schema_version, when there is one:
-        // re-serializing `state.schema_version` directly would round tokens
-        // above 2^53 through `Number` (9007199254740993 → …992) — Go decodes
-        // and re-encodes the 64-bit `int` verbatim.
+        // retaining the raw JSON token avoids rounding values above 2^53
+        // (9007199254740993 → …992) while preserving Go's 64-bit re-encoding.
         prior?.schemaVersionToken === undefined
-          ? JSON.stringify(state)
-          : JSON.stringify({ ...state, schema_version: JSON.rawJSON(prior.schemaVersionToken) }),
+          ? state
+          : { ...state, schema_version: JSON.rawJSON(prior.schemaVersionToken) },
       );
+      yield* fs.writeFileString(telemetryPath, encoded);
     });
 
   const stitch = (response: HttpClientResponse.HttpClientResponse) => {

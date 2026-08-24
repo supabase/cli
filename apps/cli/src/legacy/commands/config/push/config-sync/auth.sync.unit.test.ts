@@ -12,7 +12,7 @@
  */
 
 import { V1UpdateAuthServiceConfigInput } from "@supabase/api/effect";
-import { Exit } from "effect";
+import { DateTime, Exit } from "effect";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vitest";
 
@@ -25,6 +25,7 @@ import {
 } from "./auth.sync.ts";
 
 const lines = (...l: ReadonlyArray<string>) => l.join("\n") + "\n";
+const authNow = DateTime.makeUnsafe("2024-01-01T00:00:00Z");
 
 /** Mirror of Go `newWithDefaults()` projected to AuthSubset. */
 function bareAuth(overrides: Partial<AuthSubset> = {}): AuthSubset {
@@ -1365,7 +1366,7 @@ describe("authToUpdateBody secrets", () => {
         providers: { github: "my-github-plaintext" },
       },
     });
-    const body = authToUpdateBody(local);
+    const body = authToUpdateBody(local, authNow);
     expect(body["security_captcha_secret"]).toBe("my-captcha-plaintext");
     expect(body["external_github_secret"]).toBe("my-github-plaintext");
     expect(body["security_captcha_secret"]).not.toContain("hash:");
@@ -1377,7 +1378,7 @@ describe("authToUpdateBody secrets", () => {
       enabled: true,
       captcha: { enabled: true, provider: "hcaptcha", secret: "" },
     });
-    const body = authToUpdateBody(local);
+    const body = authToUpdateBody(local, authNow);
     expect("security_captcha_secret" in body).toBe(false);
   });
 
@@ -1397,7 +1398,7 @@ describe("authToUpdateBody secrets", () => {
         providers: {},
       },
     });
-    const body = authToUpdateBody(local);
+    const body = authToUpdateBody(local, authNow);
     expect("security_captcha_secret" in body).toBe(false);
     expect(Object.values(body)).not.toContain("encrypted:BvEYU1pXk9ciphertext");
   });
@@ -1407,16 +1408,10 @@ describe("authToUpdateBody secrets", () => {
       enabled: true,
       sms: { ...bareAuth().sms, test_otp: { "123456": "654321" } },
     });
-    const body = authToUpdateBody(local);
-    const validUntil = new Date(String(body["sms_test_otp_valid_until"]));
-    // Recompute the expected value the same way the handler does; allow a small
-    // delta for the clock advancing between the two `new Date()` calls.
-    const expected = new Date();
-    expected.setUTCFullYear(expected.getUTCFullYear() + 10);
-    expect(Math.abs(validUntil.getTime() - expected.getTime())).toBeLessThan(5_000);
-    // Flat 3650-day arithmetic would be ~2-3 days short of the calendar value.
-    const flat3650 = Date.now() + 10 * 365 * 24 * 60 * 60 * 1000;
-    expect(validUntil.getTime() - flat3650).toBeGreaterThan(24 * 60 * 60 * 1000);
+    const body = authToUpdateBody(local, authNow);
+    expect(body["sms_test_otp_valid_until"]).toBe(
+      DateTime.formatIso(DateTime.add(authNow, { years: 10 })),
+    );
   });
 });
 
@@ -1464,7 +1459,8 @@ describe("password_required_characters mapping", () => {
     (req, apiValue) => {
       // local enum → update body (Go ToChar)
       expect(
-        authToUpdateBody(bareAuth({ password_requirements: req })).password_required_characters,
+        authToUpdateBody(bareAuth({ password_requirements: req }), authNow)
+          .password_required_characters,
       ).toBe(apiValue);
       // remote API value → local enum (Go NewPasswordRequirement)
       expect(
@@ -1478,6 +1474,7 @@ describe("password_required_characters mapping", () => {
     for (const [req] of cases) {
       const value = authToUpdateBody(
         bareAuth({ password_requirements: req }),
+        authNow,
       ).password_required_characters;
       const decoded = Schema.decodeUnknownExit(V1UpdateAuthServiceConfigInput)(
         { ref: "a".repeat(20), password_required_characters: value },

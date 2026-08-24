@@ -8,10 +8,7 @@ describe("withAnalyticsContext", () => {
       const before = yield* CurrentAnalyticsContext;
       expect(before).toEqual({});
 
-      const nested = yield* Effect.gen(function* () {
-        const current = yield* CurrentAnalyticsContext;
-        return current;
-      }).pipe(
+      const nested = yield* Effect.service(CurrentAnalyticsContext).pipe(
         withAnalyticsContext({
           command_run_id: "run-123",
           groups: {
@@ -43,11 +40,7 @@ describe("withAnalyticsContext", () => {
   it.live("is inherited by child fibers", () =>
     Effect.gen(function* () {
       const child = yield* Effect.gen(function* () {
-        const fiber = yield* Effect.forkChild(
-          Effect.gen(function* () {
-            return yield* CurrentAnalyticsContext;
-          }),
-        );
+        const fiber = yield* Effect.forkChild(Effect.service(CurrentAnalyticsContext));
         return yield* Fiber.join(fiber);
       }).pipe(
         withAnalyticsContext({

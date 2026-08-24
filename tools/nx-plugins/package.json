@@ -6,5 +6,9 @@
     "@nx/devkit": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
+  },
+  "devDependencies": {
+    "@tsconfig/bun": "catalog:",
+    "@types/bun": "catalog:"
   }
 }

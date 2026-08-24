@@ -1,7 +1,4 @@
-import { rm } from "node:fs/promises";
-import { resolve, sep } from "node:path";
-
-import { Effect } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 
 import type { LegacyContainerIdName } from "./legacy-docker-lifecycle.ts";
 
@@ -73,27 +70,17 @@ import type { LegacyContainerIdName } from "./legacy-docker-lifecycle.ts";
  * empty (would otherwise resolve to the staging root itself and wipe every project's
  * secrets).
  */
-export function legacyCleanupStartSecrets(
+export const legacyCleanupStartSecrets = Effect.fnUntraced(function* (
   containers: ReadonlyArray<LegacyContainerIdName>,
   fallbackWorkdir: string,
-): Effect.Effect<void> {
-  return Effect.tryPromise(() =>
-    Promise.all(
-      containers.map((container) => {
-        const workdir = container.workdir.length > 0 ? container.workdir : fallbackWorkdir;
-        const stagingRoot = resolve(workdir, "supabase", ".temp", "start-secrets");
-        const target = resolve(stagingRoot, container.name);
-        if (target === stagingRoot || !target.startsWith(stagingRoot + sep)) {
-          return Promise.resolve();
-        }
-        return rm(target, {
-          recursive: true,
-          force: true,
-        });
-      }),
-    ),
-  ).pipe(
-    Effect.asVoid,
-    Effect.orElseSucceed(() => undefined),
-  );
-}
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  for (const container of containers) {
+    const workdir = container.workdir.length > 0 ? container.workdir : fallbackWorkdir;
+    const stagingRoot = path.resolve(workdir, "supabase", ".temp", "start-secrets");
+    const target = path.resolve(stagingRoot, container.name);
+    if (target === stagingRoot || !target.startsWith(stagingRoot + path.sep)) continue;
+    yield* fs.remove(target, { recursive: true, force: true }).pipe(Effect.ignore);
+  }
+});

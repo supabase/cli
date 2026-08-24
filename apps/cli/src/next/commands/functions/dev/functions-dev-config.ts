@@ -6,10 +6,10 @@ import {
   resolveProjectSubtree,
 } from "@supabase/config";
 import type { ResolvedFunctionsBundle } from "@supabase/stack/effect";
-import { Effect, Option, Redacted } from "effect";
-import { basename, dirname, join, resolve } from "node:path";
+import { ConfigProvider, Effect, Option, Path, Redacted } from "effect";
 import { ProjectHome } from "../../../config/project-home.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
+import { collectConfigEnvironment } from "../../../../shared/runtime/config-environment.ts";
 
 export interface FunctionsDevConfigOptions {
   readonly envFile: Option.Option<string>;
@@ -25,9 +25,9 @@ function reveal(value: string | Redacted.Redacted<string>): string {
   return Redacted.isRedacted(value) ? Redacted.value(value) : value;
 }
 
-function absoluteProjectPath(supabaseDir: string, path: string): string {
+function absoluteProjectPath(pathService: Path.Path, supabaseDir: string, path: string): string {
   const withoutDotSlash = path.startsWith("./") ? path.slice(2) : path;
-  return resolve(supabaseDir, withoutDotSlash);
+  return pathService.resolve(supabaseDir, withoutDotSlash);
 }
 
 export const resolveFunctionsBundle = Effect.fnUntraced(function* (
@@ -35,11 +35,16 @@ export const resolveFunctionsBundle = Effect.fnUntraced(function* (
 ) {
   const projectHome = yield* ProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
+  const path = yield* Path.Path;
+  const provider = yield* ConfigProvider.ConfigProvider;
+  const baseEnv = yield* collectConfigEnvironment(provider);
   const projectEnvironment = yield* loadProjectEnvironment({
     cwd: projectHome.projectRoot,
-    baseEnv: process.env,
+    baseEnv,
   });
-  const loadedConfig = yield* loadProjectConfig(projectHome.projectRoot);
+  const loadedConfig = yield* loadProjectConfig(projectHome.projectRoot, {
+    projectEnv: projectEnvironment ?? undefined,
+  });
   const projectConfig =
     projectEnvironment === null || loadedConfig === null
       ? undefined
@@ -71,24 +76,25 @@ export const resolveFunctionsBundle = Effect.fnUntraced(function* (
     ...(projectConfig === undefined ? {} : { config: projectConfig }),
   });
   const envFilePath = Option.match(opts.envFile, {
-    onNone: () => join(projectHome.supabaseDir, "functions", ".env"),
-    onSome: (path) => resolve(runtimeInfo.cwd, path),
+    onNone: () => path.join(projectHome.supabaseDir, "functions", ".env"),
+    onSome: (envFile) => path.resolve(runtimeInfo.cwd, envFile),
   });
+  const loadedEnv = yield* loadDotEnvFile(envFilePath);
 
   return {
-    env: yield* loadDotEnvFile(envFilePath),
+    env: loadedEnv,
     functions: Object.entries(manifest)
       .filter(([, config]) => config.enabled)
       .map(([name, config]) => ({
         name,
         verifyJWT: opts.noVerifyJwt ? false : config.verify_jwt,
-        entrypointPath: absoluteProjectPath(projectHome.supabaseDir, config.entrypoint),
+        entrypointPath: absoluteProjectPath(path, projectHome.supabaseDir, config.entrypoint),
         importMapPath:
           config.import_map === ""
             ? null
-            : absoluteProjectPath(projectHome.supabaseDir, config.import_map),
-        staticFiles: config.static_files.map((path) =>
-          absoluteProjectPath(projectHome.supabaseDir, path),
+            : absoluteProjectPath(path, projectHome.supabaseDir, config.import_map),
+        staticFiles: config.static_files.map((staticPath) =>
+          absoluteProjectPath(path, projectHome.supabaseDir, staticPath),
         ),
         env: config.env,
       })),
@@ -98,6 +104,7 @@ export const resolveFunctionsBundle = Effect.fnUntraced(function* (
 export const functionsDevWatchPaths = Effect.fnUntraced(function* (envFile: Option.Option<string>) {
   const projectHome = yield* ProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
+  const path = yield* Path.Path;
 
   return [
     {
@@ -106,11 +113,11 @@ export const functionsDevWatchPaths = Effect.fnUntraced(function* (envFile: Opti
     },
     ...(Option.isSome(envFile)
       ? (() => {
-          const envFilePath = resolve(runtimeInfo.cwd, envFile.value);
+          const envFilePath = path.resolve(runtimeInfo.cwd, envFile.value);
           return [
             {
-              path: dirname(envFilePath),
-              names: [basename(envFilePath)],
+              path: path.dirname(envFilePath),
+              names: [path.basename(envFilePath)],
             },
           ];
         })()

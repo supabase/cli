@@ -53,11 +53,9 @@ export const legacySquashDumpSchema = Effect.fnUntraced(function* <E>(
     projectEnvValues: params.projectEnvValues,
   });
   if (result.exitCode !== 0) {
-    return yield* Effect.fail(
-      new LegacyMigrationSquashDumpError({
-        message: `error running container: exit ${result.exitCode}`,
-      }),
-    );
+    return yield* new LegacyMigrationSquashDumpError({
+      message: `error running container: exit ${result.exitCode}`,
+    });
   }
 });
 

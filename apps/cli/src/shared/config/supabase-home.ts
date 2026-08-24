@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { Path } from "effect";
 
 /**
  * Resolves the global Supabase CLI state root.
@@ -18,11 +18,12 @@ import { join } from "node:path";
  * CLI never relies on them.
  */
 export const resolveSupabaseHome = (
-  env: Readonly<Record<string, string | undefined>>,
+  path: Path.Path,
+  configuredHome: string | undefined,
   homeDir: string,
 ): string => {
-  const configured = env["SUPABASE_HOME"]?.trim();
+  const configured = configuredHome?.trim();
   return configured !== undefined && configured.length > 0
     ? configured
-    : join(homeDir, ".supabase");
+    : path.join(homeDir, ".supabase");
 };

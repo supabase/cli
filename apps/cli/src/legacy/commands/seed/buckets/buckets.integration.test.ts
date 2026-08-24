@@ -1,10 +1,19 @@
-import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-
-import { BunServices } from "@effect/platform-bun";
+import { BunPath, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import {
+  Cause,
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Schema,
+} from "effect";
+import * as PlatformError from "effect/PlatformError";
+import * as Formatter from "effect/Formatter";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 
@@ -22,10 +31,12 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import { makeLegacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { LegacyProjectRefResolver } from "../../../../legacy/config/legacy-project-ref.service.ts";
 import { LegacyProjectNotLinkedError } from "../../../../legacy/config/legacy-project-ref.errors.ts";
 import { legacySeedBucketsRun } from "../../../shared/legacy-seed-buckets.ts";
+import { legacyLocalGatewayHttpClientTestLayer } from "../../../shared/legacy-local-gateway-http-client.ts";
 import { legacySeedBuckets } from "./buckets.handler.ts";
 import type { LegacyBucketsFlags } from "./buckets.command.ts";
 import { LegacyPlatformApi } from "../../../../legacy/auth/legacy-platform-api.service.ts";
@@ -44,6 +55,95 @@ interface MockRoute {
 }
 
 const DEFAULT_FLAGS: LegacyBucketsFlags = { linked: false, local: true, projectRef: Option.none() };
+const fixturePath = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
+const join = (first: string, ...rest: ReadonlyArray<string>) => fixturePath.join(first, ...rest);
+
+interface FixtureState {
+  readonly writes: ReadonlyArray<{ readonly path: string; readonly contents: string | Uint8Array }>;
+  readonly directories: ReadonlyArray<string>;
+  readonly symlinks: ReadonlyArray<{ readonly target: string; readonly path: string }>;
+  readonly chmods: ReadonlyArray<{ readonly path: string; readonly mode: number }>;
+}
+const decodeJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+
+function formatCause(cause: Cause.Cause<unknown>) {
+  return Formatter.formatJson(cause);
+}
+
+interface FixtureBuilder {
+  readonly write: (path: string, contents: string | Uint8Array) => void;
+  readonly mkdir: (path: string) => void;
+  readonly symlink: (target: string, path: string) => void;
+  readonly chmod: (path: string, mode: number) => void;
+  readonly state: () => FixtureState;
+}
+
+function makeFixtureBuilder(): FixtureBuilder {
+  const writes: Array<{ readonly path: string; readonly contents: string | Uint8Array }> = [];
+  const directories: Array<string> = [];
+  const symlinks: Array<{ readonly target: string; readonly path: string }> = [];
+  const chmods: Array<{ readonly path: string; readonly mode: number }> = [];
+  return {
+    write: (path, contents) => writes.push({ path, contents }),
+    mkdir: (path) => directories.push(path),
+    symlink: (target, path) => symlinks.push({ target, path }),
+    chmod: (path, mode) => chmods.push({ path, mode }),
+    state: () => ({
+      writes,
+      directories,
+      symlinks,
+      chmods,
+    }),
+  };
+}
+
+function fixtureState(build: (fixture: FixtureBuilder) => void): FixtureState {
+  const fixture = makeFixtureBuilder();
+  build(fixture);
+  return fixture.state();
+}
+
+function flushFixtureWrites(state: FixtureState) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    for (const path of state.directories) {
+      yield* fs.makeDirectory(path, { recursive: true });
+    }
+    for (const write of state.writes) {
+      yield* fs.makeDirectory(path.dirname(write.path), { recursive: true });
+      if (typeof write.contents === "string") yield* fs.writeFileString(write.path, write.contents);
+      else yield* fs.writeFile(write.path, write.contents);
+    }
+    for (const symlink of state.symlinks) {
+      yield* fs.symlink(symlink.target, symlink.path);
+    }
+    for (const chmod of state.chmods) {
+      yield* fs.chmod(chmod.path, chmod.mode);
+    }
+  });
+}
+
+function createFifo(path: string) {
+  const effect: Effect.Effect<
+    void,
+    PlatformError.PlatformError,
+    ChildProcessSpawner.ChildProcessSpawner
+  > = Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const exitCode = yield* spawner.exitCode(ChildProcess.make("mkfifo", [path]));
+    if (exitCode !== 0) {
+      return yield* PlatformError.systemError({
+        _tag: "Unknown",
+        module: "ChildProcess",
+        method: "mkfifo",
+        pathOrDescriptor: path,
+        description: `mkfifo exited with code ${exitCode}`,
+      });
+    }
+  });
+  return effect;
+}
 
 function setupLegacySeedBuckets(
   workdir: string,
@@ -58,6 +158,10 @@ function setupLegacySeedBuckets(
     readonly pipedAnswers?: ReadonlyArray<string>;
     readonly args?: ReadonlyArray<string>;
     readonly yes?: boolean;
+    /** Explicit shell environment visible to Config/LegacyViperEnv in this scenario. */
+    readonly env?: Readonly<Record<string, string | undefined>>;
+    /** Declarative filesystem fixture operations materialized by the test layer. */
+    readonly fixtures?: FixtureState;
     /** Project ref returned by loadProjectRef for --linked tests. */
     readonly projectRef?: string;
     /** API keys response for Management API mock. */
@@ -73,16 +177,27 @@ function setupLegacySeedBuckets(
     readonly apiKeysFail?: HttpClientError.HttpClientError;
   },
 ) {
+  const fixture = makeFixtureBuilder();
   if (opts.toml !== undefined) {
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), opts.toml);
+    fixture.write(join(workdir, "supabase", "config.toml"), opts.toml);
   }
 
   for (const [rel, content] of Object.entries(opts.files ?? {})) {
     const abs = join(workdir, rel);
-    mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, content);
+    fixture.write(abs, content);
   }
+  const configuredFixtures = opts.fixtures ?? {
+    writes: [],
+    directories: [],
+    symlinks: [],
+    chmods: [],
+  };
+  const fixtures: FixtureState = {
+    writes: [...fixture.state().writes, ...configuredFixtures.writes],
+    directories: [...fixture.state().directories, ...configuredFixtures.directories],
+    symlinks: [...fixture.state().symlinks, ...configuredFixtures.symlinks],
+    chmods: [...fixture.state().chmods, ...configuredFixtures.chmods],
+  };
 
   const out = mockOutput({
     format: opts.format ?? "text",
@@ -104,7 +219,7 @@ function setupLegacySeedBuckets(
       let body: unknown;
       if (reqBody._tag === "Uint8Array") {
         try {
-          body = JSON.parse(new TextDecoder().decode(reqBody.body));
+          body = decodeJson(new TextDecoder().decode(reqBody.body));
         } catch {
           body = undefined;
         }
@@ -130,6 +245,10 @@ function setupLegacySeedBuckets(
 
   const telemetry = mockLegacyTelemetryStateTracked();
   const linkedCache = mockLegacyLinkedProjectCacheTracked();
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(opts.env ?? {})) {
+    if (value !== undefined) env[key] = value;
+  }
 
   const projectRefRef = opts.projectRef ?? LEGACY_VALID_REF;
   const projectRefLayer = Layer.succeed(LegacyProjectRefResolver, {
@@ -186,9 +305,12 @@ function setupLegacySeedBuckets(
   const layer = Layer.mergeAll(
     out.layer,
     httpLayer,
+    legacyLocalGatewayHttpClientTestLayer(httpLayer),
     telemetry.layer,
     mockLegacyCliConfig({ workdir }),
     BunServices.layer,
+    makeLegacyViperEnvLayer(ConfigProvider.fromEnv({ env, preserveEmptyStrings: true })),
+    Layer.effectDiscard(flushFixtureWrites(fixtures)).pipe(Layer.provide(BunServices.layer)),
     // Seed-bucket prompts model an interactive user answering via `confirm`.
     mockTty({ stdinIsTty: true, stdoutIsTty: false }),
     mockStdin(true, opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined),
@@ -553,15 +675,18 @@ describe("legacy seed buckets", () => {
     // a generic text/plain by extension (objects.go:77-108). A PNG named `.txt`
     // must upload as image/png (bytes win), and a JSON text file refines to
     // application/json via its extension.
-    mkdirSync(join(tmp.current, "supabase", "assets"), { recursive: true });
-    // Real PNG magic bytes — written raw (a UTF-8 string would mangle 0x89).
-    writeFileSync(
-      join(tmp.current, "supabase", "assets", "logo.txt"),
-      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00]),
-    );
-    writeFileSync(join(tmp.current, "supabase", "assets", "data.json"), '{"a":1}');
+    const fixtures = fixtureState((fixture) => {
+      fixture.mkdir(join(tmp.current, "supabase", "assets"));
+      // Real PNG magic bytes — written raw (a UTF-8 string would mangle 0x89).
+      fixture.write(
+        join(tmp.current, "supabase", "assets", "logo.txt"),
+        Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00]),
+      );
+      fixture.write(join(tmp.current, "supabase", "assets", "data.json"), '{"a":1}');
+    });
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./assets"\n',
+      fixtures,
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
         { method: "POST", match: "/storage/v1/object/", body: {} },
@@ -582,11 +707,14 @@ describe("legacy seed buckets", () => {
 
   it.live("resolves an absolute objects_path as-is (Go IsAbs guard)", () => {
     const absRoot = join(tmp.current, "external-assets");
-    mkdirSync(absRoot, { recursive: true });
-    writeFileSync(join(absRoot, "a.txt"), "hello");
+    const fixtures = fixtureState((fixture) => {
+      fixture.mkdir(absRoot);
+      fixture.write(join(absRoot, "a.txt"), "hello");
+    });
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       // An absolute objects_path is left untouched — no supabase/ prefix.
       toml: `[storage.buckets.images]\npublic = true\nobjects_path = "${absRoot}"\n`,
+      fixtures,
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
         { method: "POST", match: "/storage/v1/object/", body: {} },
@@ -770,7 +898,7 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain(
+      expect(Formatter.formatJson(exit)).toContain(
         "Invalid config for auth.jwt_secret. Must be at least 16 characters",
       );
       // Validation fails before any Storage call.
@@ -796,7 +924,7 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("invalid size");
+      expect(Formatter.formatJson(exit)).toContain("invalid size");
       // No list/create happened — validation precedes every Storage side effect.
       expect(requests).toHaveLength(0);
     });
@@ -812,7 +940,7 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("invalid size");
+      expect(Formatter.formatJson(exit)).toContain("invalid size");
       expect(requests).toHaveLength(0);
     });
   });
@@ -831,7 +959,7 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("invalid size");
+      expect(Formatter.formatJson(exit)).toContain("invalid size");
       expect(requests).toHaveLength(0);
     });
   });
@@ -846,7 +974,7 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("invalid size");
+      expect(Formatter.formatJson(exit)).toContain("invalid size");
       expect(requests).toHaveLength(0);
     });
   });
@@ -920,7 +1048,7 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const s = JSON.stringify(exit);
+      const s = Formatter.formatJson(exit);
       expect(s).toContain("Another process may be listening on the configured API port 7654");
       expect(s).toContain("lsof -nP -iTCP:7654 -sTCP:LISTEN");
     });
@@ -936,7 +1064,7 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).not.toContain("Another process may be listening");
+      expect(Formatter.formatJson(exit)).not.toContain("Another process may be listening");
     });
   });
 
@@ -957,7 +1085,7 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const s = JSON.stringify(exit);
+      const s = Formatter.formatJson(exit);
       expect(s).toContain("configured API port 9999");
       expect(s).not.toContain("port 7654");
     });
@@ -971,7 +1099,7 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).not.toContain("Another process may be listening");
+      expect(Formatter.formatJson(exit)).not.toContain("Another process may be listening");
     });
   });
 
@@ -989,7 +1117,7 @@ describe("legacy seed buckets", () => {
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).not.toContain("Another process may be listening");
+      expect(Formatter.formatJson(exit)).not.toContain("Another process may be listening");
     });
   });
 
@@ -1005,7 +1133,7 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("failed to parse response body");
+      expect(Formatter.formatJson(exit)).toContain("failed to parse response body");
     });
   });
 
@@ -1026,14 +1154,9 @@ describe("legacy seed buckets", () => {
   });
 
   it.live("falls back to the default host when external_url is empty", () => {
-    // Clear both host overrides so legacyGetHostname resolves to loopback
-    // deterministically, regardless of the test environment's DOCKER_HOST.
-    const previousServices = process.env["SUPABASE_SERVICES_HOSTNAME"];
-    const previousDocker = process.env["DOCKER_HOST"];
-    delete process.env["SUPABASE_SERVICES_HOSTNAME"];
-    delete process.env["DOCKER_HOST"];
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: '[api]\nexternal_url = ""\n[storage.buckets.images]\npublic = true\n',
+      env: {},
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
         { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
@@ -1043,22 +1166,7 @@ describe("legacy seed buckets", () => {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.every((r) => r.url.startsWith("http://127.0.0.1:54321"))).toBe(true);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previousServices === undefined) {
-            delete process.env["SUPABASE_SERVICES_HOSTNAME"];
-          } else {
-            process.env["SUPABASE_SERVICES_HOSTNAME"] = previousServices;
-          }
-          if (previousDocker === undefined) {
-            delete process.env["DOCKER_HOST"];
-          } else {
-            process.env["DOCKER_HOST"] = previousDocker;
-          }
-        }),
-      ),
-    );
+    });
   });
 
   it.live("tolerates bucket entries with a missing field (Go zero value)", () => {
@@ -1095,7 +1203,7 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("failed to parse response body");
+      expect(Formatter.formatJson(exit)).toContain("failed to parse response body");
       expect(requests.some((r) => r.method === "POST")).toBe(false);
     });
   });
@@ -1127,7 +1235,7 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Error status 201");
+      expect(Formatter.formatJson(exit)).toContain("Error status 201");
     });
   });
 
@@ -1157,10 +1265,9 @@ describe("legacy seed buckets", () => {
   );
 
   it.live("builds an https base URL with a host override when tls is enabled", () => {
-    const previousHost = process.env["SUPABASE_SERVICES_HOSTNAME"];
-    process.env["SUPABASE_SERVICES_HOSTNAME"] = "docker.host";
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: "[api]\nport = 7654\n[api.tls]\nenabled = true\n[storage.buckets.images]\npublic = true\n",
+      env: { SUPABASE_SERVICES_HOSTNAME: "docker.host" },
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
         { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
@@ -1170,24 +1277,13 @@ describe("legacy seed buckets", () => {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.every((r) => r.url.startsWith("https://docker.host:7654"))).toBe(true);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previousHost === undefined) {
-            delete process.env["SUPABASE_SERVICES_HOSTNAME"];
-          } else {
-            process.env["SUPABASE_SERVICES_HOSTNAME"] = previousHost;
-          }
-        }),
-      ),
-    );
+    });
   });
 
   it.live("brackets an IPv6 local host when building the gateway URL", () => {
-    const previousHost = process.env["SUPABASE_SERVICES_HOSTNAME"];
-    process.env["SUPABASE_SERVICES_HOSTNAME"] = "::1";
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: "[api]\nport = 54321\n[storage.buckets.images]\npublic = true\n",
+      env: { SUPABASE_SERVICES_HOSTNAME: "::1" },
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
         { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
@@ -1198,26 +1294,13 @@ describe("legacy seed buckets", () => {
       expect(Exit.isSuccess(exit)).toBe(true);
       // `net.JoinHostPort` brackets IPv6: http://[::1]:54321, not http://::1:54321.
       expect(requests.every((r) => r.url.startsWith("http://[::1]:54321"))).toBe(true);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previousHost === undefined) {
-            delete process.env["SUPABASE_SERVICES_HOSTNAME"];
-          } else {
-            process.env["SUPABASE_SERVICES_HOSTNAME"] = previousHost;
-          }
-        }),
-      ),
-    );
+    });
   });
 
   it.live("falls back to the TCP Docker daemon host when only DOCKER_HOST is set", () => {
-    const previousServices = process.env["SUPABASE_SERVICES_HOSTNAME"];
-    const previousDocker = process.env["DOCKER_HOST"];
-    delete process.env["SUPABASE_SERVICES_HOSTNAME"];
-    process.env["DOCKER_HOST"] = "tcp://docker.internal:2375";
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: "[storage.buckets.images]\npublic = true\n",
+      env: { DOCKER_HOST: "tcp://docker.internal:2375" },
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
         { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
@@ -1229,31 +1312,19 @@ describe("legacy seed buckets", () => {
       // `GetHostname` dials the TCP daemon host, not loopback, when only
       // DOCKER_HOST is set (misc.go:305-310).
       expect(requests.every((r) => r.url.startsWith("http://docker.internal:54321"))).toBe(true);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previousServices === undefined) {
-            delete process.env["SUPABASE_SERVICES_HOSTNAME"];
-          } else {
-            process.env["SUPABASE_SERVICES_HOSTNAME"] = previousServices;
-          }
-          if (previousDocker === undefined) {
-            delete process.env["DOCKER_HOST"];
-          } else {
-            process.env["DOCKER_HOST"] = previousDocker;
-          }
-        }),
-      ),
-    );
+    });
   });
 
   it.live("skips non-regular files during the object walk", () => {
     // A FIFO is neither a regular file nor a directory, exercising the skip path.
-    mkdirSync(join(tmp.current, "supabase", "assets"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "assets", "a.txt"), "hello");
-    execFileSync("mkfifo", [join(tmp.current, "supabase", "assets", "pipe")]);
+    const fixtures = fixtureState((fixture) => {
+      fixture.mkdir(join(tmp.current, "supabase", "assets"));
+      fixture.write(join(tmp.current, "supabase", "assets", "a.txt"), "hello");
+    });
+    const fifoPath = join(tmp.current, "supabase", "assets", "pipe");
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./assets"\n',
+      fixtures,
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
         { method: "POST", match: "/storage/v1/object/", body: {} },
@@ -1261,20 +1332,24 @@ describe("legacy seed buckets", () => {
       ],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      yield* createFifo(fifoPath);
+      const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stderrText).toContain("Skipping non-regular file: supabase/assets/pipe");
       const uploads = requests.filter((r) => r.url.includes("/storage/v1/object/"));
       expect(uploads).toHaveLength(1);
-    });
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("skips a dangling symlink without failing (Go isUploadableEntry parity)", () => {
-    mkdirSync(join(tmp.current, "supabase", "assets"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "assets", "a.txt"), "hello");
-    symlinkSync("./does-not-exist", join(tmp.current, "supabase", "assets", "dangling"));
+    const fixtures = fixtureState((fixture) => {
+      fixture.mkdir(join(tmp.current, "supabase", "assets"));
+      fixture.write(join(tmp.current, "supabase", "assets", "a.txt"), "hello");
+      fixture.symlink("./does-not-exist", join(tmp.current, "supabase", "assets", "dangling"));
+    });
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./assets"\n',
+      fixtures,
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
         { method: "POST", match: "/storage/v1/object/", body: {} },
@@ -1296,13 +1371,16 @@ describe("legacy seed buckets", () => {
     // must never be uploaded as seeded objects — they are never even attempted,
     // covering the "silently becomes a public object" failure mode, not just
     // an upload-time abort.
-    mkdirSync(join(tmp.current, "supabase", "assets"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "assets", "a.txt"), "hello");
-    writeFileSync(join(tmp.current, "supabase", "assets", ".DS_Store"), "junk");
-    writeFileSync(join(tmp.current, "supabase", "assets", "Thumbs.db"), "junk");
-    writeFileSync(join(tmp.current, "supabase", "assets", "desktop.ini"), "junk");
+    const fixtures = fixtureState((fixture) => {
+      fixture.mkdir(join(tmp.current, "supabase", "assets"));
+      fixture.write(join(tmp.current, "supabase", "assets", "a.txt"), "hello");
+      fixture.write(join(tmp.current, "supabase", "assets", ".DS_Store"), "junk");
+      fixture.write(join(tmp.current, "supabase", "assets", "Thumbs.db"), "junk");
+      fixture.write(join(tmp.current, "supabase", "assets", "desktop.ini"), "junk");
+    });
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./assets"\n',
+      fixtures,
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
         { method: "POST", match: "/storage/v1/object/", body: {} },
@@ -1329,9 +1407,11 @@ describe("legacy seed buckets", () => {
       // allowed_mime_types server-side (that's real Storage-service behavior), so
       // this doesn't simulate the 415 abort itself — it asserts the junk file is
       // skipped and never uploaded, while the real image file still uploads.
-      mkdirSync(join(tmp.current, "supabase", "assets"), { recursive: true });
-      writeFileSync(join(tmp.current, "supabase", "assets", "logo.png"), "fake-png-bytes");
-      writeFileSync(join(tmp.current, "supabase", "assets", ".DS_Store"), "junk");
+      const fixtures = fixtureState((fixture) => {
+        fixture.mkdir(join(tmp.current, "supabase", "assets"));
+        fixture.write(join(tmp.current, "supabase", "assets", "logo.png"), "fake-png-bytes");
+        fixture.write(join(tmp.current, "supabase", "assets", ".DS_Store"), "junk");
+      });
       const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
         toml: [
           "[storage.buckets.images]",
@@ -1339,6 +1419,7 @@ describe("legacy seed buckets", () => {
           'allowed_mime_types = ["image/png"]',
           'objects_path = "./assets"',
         ].join("\n"),
+        fixtures,
         routes: [
           { method: "GET", match: "/storage/v1/bucket", body: [] },
           { method: "POST", match: "/storage/v1/object/", body: {} },
@@ -1362,10 +1443,13 @@ describe("legacy seed buckets", () => {
   it.live("skips a .DS_Store file when objects_path points directly at it (CLI-1950)", () => {
     // Covers collectFiles' single-file branch: objects_path resolves directly to
     // a junk-named file rather than a directory.
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", ".DS_Store"), "junk");
+    const fixtures = fixtureState((fixture) => {
+      fixture.mkdir(join(tmp.current, "supabase"));
+      fixture.write(join(tmp.current, "supabase", ".DS_Store"), "junk");
+    });
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./.DS_Store"\n',
+      fixtures,
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
         { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
@@ -1393,18 +1477,28 @@ describe("legacy seed buckets", () => {
       // The real unreadable file lives OUTSIDE the walked tree: a plain regular file
       // inside assets/ would be queued without an open-probe and would legitimately
       // abort, so only the symlink may reach the unreadable target.
-      mkdirSync(join(tmp.current, "supabase", "assets"), { recursive: true });
-      mkdirSync(join(tmp.current, "supabase", "private"), { recursive: true });
-      writeFileSync(join(tmp.current, "supabase", "assets", "a.txt"), "hello");
+      const fixtures = fixtureState((fixture) => {
+        fixture.mkdir(join(tmp.current, "supabase", "assets"));
+        fixture.mkdir(join(tmp.current, "supabase", "private"));
+        fixture.write(join(tmp.current, "supabase", "assets", "a.txt"), "hello");
+      });
       const secret = join(tmp.current, "supabase", "private", "secret.txt");
-      writeFileSync(secret, "top secret");
-      chmodSync(secret, 0o000);
-      symlinkSync(
-        "../private/secret.txt",
-        join(tmp.current, "supabase", "assets", "link-to-secret"),
-      );
+      const secretFixture = fixtureState((fixture) => {
+        fixture.write(secret, "top secret");
+        fixture.chmod(secret, 0o000);
+        fixture.symlink(
+          "../private/secret.txt",
+          join(tmp.current, "supabase", "assets", "link-to-secret"),
+        );
+      });
       const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
         toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./assets"\n',
+        fixtures: {
+          writes: [...fixtures.writes, ...secretFixture.writes],
+          directories: [...fixtures.directories, ...secretFixture.directories],
+          symlinks: [...fixtures.symlinks, ...secretFixture.symlinks],
+          chmods: [...fixtures.chmods, ...secretFixture.chmods],
+        },
         routes: [
           { method: "GET", match: "/storage/v1/bucket", body: [] },
           { method: "POST", match: "/storage/v1/object/", body: {} },
@@ -1431,12 +1525,15 @@ describe("legacy seed buckets", () => {
   it.live(
     "does not descend into a symlinked directory (Go does not follow nested symlinks)",
     () => {
-      mkdirSync(join(tmp.current, "supabase", "assets", "realdir"), { recursive: true });
-      writeFileSync(join(tmp.current, "supabase", "assets", "a.txt"), "hello");
-      writeFileSync(join(tmp.current, "supabase", "assets", "realdir", "c.txt"), "world");
-      symlinkSync("./realdir", join(tmp.current, "supabase", "assets", "linkdir"));
+      const fixtures = fixtureState((fixture) => {
+        fixture.mkdir(join(tmp.current, "supabase", "assets", "realdir"));
+        fixture.write(join(tmp.current, "supabase", "assets", "a.txt"), "hello");
+        fixture.write(join(tmp.current, "supabase", "assets", "realdir", "c.txt"), "world");
+        fixture.symlink("./realdir", join(tmp.current, "supabase", "assets", "linkdir"));
+      });
       const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
         toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./assets"\n',
+        fixtures,
         routes: [
           { method: "GET", match: "/storage/v1/bucket", body: [] },
           { method: "POST", match: "/storage/v1/object/", body: {} },
@@ -1464,11 +1561,14 @@ describe("legacy seed buckets", () => {
     // `io/fs.WalkDir` follows a symlinked ROOT ("if root itself is a
     // symbolic link, its target will be walked"); only NESTED symlinks are
     // skipped. fs.stat on the root follows the link, so the target dir is walked.
-    mkdirSync(join(tmp.current, "supabase", "real-assets"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "real-assets", "a.txt"), "hello");
-    symlinkSync("./real-assets", join(tmp.current, "supabase", "linked-assets"));
+    const fixtures = fixtureState((fixture) => {
+      fixture.mkdir(join(tmp.current, "supabase", "real-assets"));
+      fixture.write(join(tmp.current, "supabase", "real-assets", "a.txt"), "hello");
+      fixture.symlink("./real-assets", join(tmp.current, "supabase", "linked-assets"));
+    });
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: '[storage.buckets.images]\npublic = true\nobjects_path = "./linked-assets"\n',
+      fixtures,
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
         { method: "POST", match: "/storage/v1/object/", body: {} },
@@ -1641,7 +1741,7 @@ describe("legacy seed buckets", () => {
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(formatCause(exit.cause)).toContain(
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
         );
       }
@@ -1715,7 +1815,7 @@ describe("legacy seed buckets", () => {
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       // `tenant.GetApiKeys` → errMissingKey, before NewStorageAPI.
-      expect(JSON.stringify(exit)).toContain("Anon key not found.");
+      expect(Formatter.formatJson(exit)).toContain("Anon key not found.");
       expect(requests.some((r) => r.url.includes("/storage/v1/"))).toBe(false);
     });
   });
@@ -1739,7 +1839,7 @@ describe("legacy seed buckets", () => {
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      const json = JSON.stringify(exit);
+      const json = Formatter.formatJson(exit);
       expect(json).toContain("LegacyStorageAuthTokenError");
       expect(json).toContain("Authorization failed for the access token and project ref pair");
       expect(json).not.toContain("unexpected get api keys status");
@@ -1782,12 +1882,11 @@ describe("legacy seed buckets", () => {
   });
 
   it.live("--linked uses SUPABASE_AUTH_SERVICE_ROLE_KEY env var when set", () => {
-    const prevKey = process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
-    process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"] = "env-service-role-key";
     const flags: LegacyBucketsFlags = { linked: true, local: false, projectRef: Option.none() };
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: "[storage.buckets.test]\npublic = true\n",
       projectRef: LEGACY_VALID_REF,
+      env: { SUPABASE_AUTH_SERVICE_ROLE_KEY: "env-service-role-key" },
       args: ["seed", "buckets", "--linked"],
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
@@ -1798,17 +1897,7 @@ describe("legacy seed buckets", () => {
       const exit = yield* legacySeedBuckets(flags).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.every((r) => r.headers["apikey"] === "env-service-role-key")).toBe(true);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prevKey === undefined) {
-            delete process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
-          } else {
-            process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"] = prevKey;
-          }
-        }),
-      ),
-    );
+    });
   });
 
   it.live("upserts analytics buckets when analytics.enabled and --linked", () => {
@@ -1922,10 +2011,9 @@ describe("legacy seed buckets", () => {
     // does not throw, and that the gateway is called with https:// URLs — matching
     // the existing "builds an https base URL" test but going through the full
     // CA-resolution branch in the handler.
-    const previousHost = process.env["SUPABASE_SERVICES_HOSTNAME"];
-    process.env["SUPABASE_SERVICES_HOSTNAME"] = "localhost";
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: "[api]\nport = 54321\n[api.tls]\nenabled = true\n[storage.buckets.images]\npublic = true\n",
+      env: { SUPABASE_SERVICES_HOSTNAME: "localhost" },
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
         { method: "POST", match: "/storage/v1/bucket", body: { name: "images" } },
@@ -1935,17 +2023,7 @@ describe("legacy seed buckets", () => {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.every((r) => r.url.startsWith("https://localhost:54321"))).toBe(true);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previousHost === undefined) {
-            delete process.env["SUPABASE_SERVICES_HOSTNAME"];
-          } else {
-            process.env["SUPABASE_SERVICES_HOSTNAME"] = previousHost;
-          }
-        }),
-      ),
-    );
+    });
   });
 
   it.live("reads cert_path and key_path from disk when both api.tls paths are set", () => {
@@ -1953,11 +2031,14 @@ describe("legacy seed buckets", () => {
     // for the handler to succeed (Go validateLocalKongTls parity).
     const certContent = "-----BEGIN CERTIFICATE-----\nZHVtbXk=\n-----END CERTIFICATE-----\n";
     const keyContent = "-----BEGIN PRIVATE KEY-----\nZHVtbXk=\n-----END PRIVATE KEY-----\n";
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "custom-ca.crt"), certContent);
-    writeFileSync(join(tmp.current, "supabase", "custom-ca.key"), keyContent);
+    const fixtures = fixtureState((fixture) => {
+      fixture.mkdir(join(tmp.current, "supabase"));
+      fixture.write(join(tmp.current, "supabase", "custom-ca.crt"), certContent);
+      fixture.write(join(tmp.current, "supabase", "custom-ca.key"), keyContent);
+    });
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: '[api]\nport = 54321\n[api.tls]\nenabled = true\ncert_path = "custom-ca.crt"\nkey_path = "custom-ca.key"\n[storage.buckets.docs]\npublic = false\n',
+      fixtures,
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
         { method: "POST", match: "/storage/v1/bucket", body: { name: "docs" } },
@@ -1982,11 +2063,14 @@ describe("legacy seed buckets", () => {
       // the literal /tmp path it would fail to read and error out.
       const certContent = "-----BEGIN CERTIFICATE-----\nZHVtbXk=\n-----END CERTIFICATE-----\n";
       const keyContent = "-----BEGIN PRIVATE KEY-----\nZHVtbXk=\n-----END PRIVATE KEY-----\n";
-      mkdirSync(join(tmp.current, "supabase", "tmp"), { recursive: true });
-      writeFileSync(join(tmp.current, "supabase", "tmp", "kong.crt"), certContent);
-      writeFileSync(join(tmp.current, "supabase", "tmp", "kong.key"), keyContent);
+      const fixtures = fixtureState((fixture) => {
+        fixture.mkdir(join(tmp.current, "supabase", "tmp"));
+        fixture.write(join(tmp.current, "supabase", "tmp", "kong.crt"), certContent);
+        fixture.write(join(tmp.current, "supabase", "tmp", "kong.key"), keyContent);
+      });
       const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
         toml: '[api]\nport = 54321\n[api.tls]\nenabled = true\ncert_path = "/tmp/kong.crt"\nkey_path = "/tmp/kong.key"\n[storage.buckets.docs]\npublic = false\n',
+        fixtures,
         routes: [
           { method: "GET", match: "/storage/v1/bucket", body: [] },
           { method: "POST", match: "/storage/v1/bucket", body: { name: "docs" } },
@@ -2097,9 +2181,9 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      // JSON.stringify escapes backslashes once more, so \\w in the message
+      // Formatter output preserves the escaped backslashes in the diagnostic message.
       // becomes \\\\w in the JSON string — use the double-escaped form.
-      expect(JSON.stringify(exit)).toContain(
+      expect(Formatter.formatJson(exit)).toContain(
         "Invalid Bucket name: bad/name. Only lowercase letters, numbers, dots, hyphens, and spaces are allowed. (^(\\\\w|!|-|\\\\.|\\\\*|'|\\\\(|\\\\)| |&|\\\\$|@|=|;|:|\\\\+|,|\\\\?)*$)",
       );
       // Validation fails before any Storage call.
@@ -2133,11 +2217,7 @@ describe("legacy seed buckets", () => {
   // Fix 3 — SUPABASE_AUTH_JWT_SECRET / SUPABASE_AUTH_SERVICE_ROLE_KEY for local
 
   it.live("local run: SUPABASE_AUTH_JWT_SECRET overrides auth.jwt_secret", () => {
-    const prevJwt = process.env["SUPABASE_AUTH_JWT_SECRET"];
-    const prevKey = process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
     // Use a custom secret; the derived JWT will differ from the default secret's JWT.
-    process.env["SUPABASE_AUTH_JWT_SECRET"] = "custom-jwt-secret-at-least-32-chars-long!";
-    delete process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: [
         "[auth]",
@@ -2145,6 +2225,7 @@ describe("legacy seed buckets", () => {
         "[storage.buckets.media]",
         "public = true",
       ].join("\n"),
+      env: { SUPABASE_AUTH_JWT_SECRET: "custom-jwt-secret-at-least-32-chars-long!" },
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
         { method: "POST", match: "/storage/v1/bucket", body: { name: "media" } },
@@ -2157,29 +2238,10 @@ describe("legacy seed buckets", () => {
       expect(
         requests.every((r) => (r.headers["authorization"] ?? "").startsWith("Bearer ey")),
       ).toBe(true);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prevJwt === undefined) {
-            delete process.env["SUPABASE_AUTH_JWT_SECRET"];
-          } else {
-            process.env["SUPABASE_AUTH_JWT_SECRET"] = prevJwt;
-          }
-          if (prevKey === undefined) {
-            delete process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
-          } else {
-            process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"] = prevKey;
-          }
-        }),
-      ),
-    );
+    });
   });
 
   it.live("local run: SUPABASE_AUTH_SERVICE_ROLE_KEY overrides auth.service_role_key", () => {
-    const prevJwt = process.env["SUPABASE_AUTH_JWT_SECRET"];
-    const prevKey = process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
-    process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"] = "env-local-service-role-key";
-    delete process.env["SUPABASE_AUTH_JWT_SECRET"];
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: [
         "[auth]",
@@ -2187,6 +2249,7 @@ describe("legacy seed buckets", () => {
         "[storage.buckets.media]",
         "public = true",
       ].join("\n"),
+      env: { SUPABASE_AUTH_SERVICE_ROLE_KEY: "env-local-service-role-key" },
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
         { method: "POST", match: "/storage/v1/bucket", body: { name: "media" } },
@@ -2198,91 +2261,92 @@ describe("legacy seed buckets", () => {
       expect(requests.every((r) => r.headers["apikey"] === "env-local-service-role-key")).toBe(
         true,
       );
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prevJwt === undefined) {
-            delete process.env["SUPABASE_AUTH_JWT_SECRET"];
-          } else {
-            process.env["SUPABASE_AUTH_JWT_SECRET"] = prevJwt;
-          }
-          if (prevKey === undefined) {
-            delete process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
-          } else {
-            process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"] = prevKey;
-          }
-        }),
-      ),
-    );
+    });
   });
 
   // Fix 5 — validate api.tls cert/key pairing before seeding
 
   it.live("fails when cert_path is set but key_path is missing", () => {
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "custom-ca.crt"),
-      "-----BEGIN CERTIFICATE-----\nZHVtbXk=\n-----END CERTIFICATE-----\n",
-    );
+    const fixtures = fixtureState((fixture) => {
+      fixture.mkdir(join(tmp.current, "supabase"));
+      fixture.write(
+        join(tmp.current, "supabase", "custom-ca.crt"),
+        "-----BEGIN CERTIFICATE-----\nZHVtbXk=\n-----END CERTIFICATE-----\n",
+      );
+    });
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: '[api.tls]\nenabled = true\ncert_path = "custom-ca.crt"\n[storage.buckets.docs]\npublic = false\n',
+      fixtures,
       routes: [],
     });
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Missing required field in config: api.tls.key_path");
+      expect(Formatter.formatJson(exit)).toContain(
+        "Missing required field in config: api.tls.key_path",
+      );
       expect(requests).toHaveLength(0);
     });
   });
 
   it.live("fails when key_path is set but cert_path is missing", () => {
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(
-      join(tmp.current, "supabase", "custom-ca.key"),
-      "-----BEGIN PRIVATE KEY-----\nZHVtbXk=\n-----END PRIVATE KEY-----\n",
-    );
+    const fixtures = fixtureState((fixture) => {
+      fixture.mkdir(join(tmp.current, "supabase"));
+      fixture.write(
+        join(tmp.current, "supabase", "custom-ca.key"),
+        "-----BEGIN PRIVATE KEY-----\nZHVtbXk=\n-----END PRIVATE KEY-----\n",
+      );
+    });
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: '[api.tls]\nenabled = true\nkey_path = "custom-ca.key"\n[storage.buckets.docs]\npublic = false\n',
+      fixtures,
       routes: [],
     });
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Missing required field in config: api.tls.cert_path");
+      expect(Formatter.formatJson(exit)).toContain(
+        "Missing required field in config: api.tls.cert_path",
+      );
       expect(requests).toHaveLength(0);
     });
   });
 
   it.live("fails when cert_path points to an unreadable file", () => {
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    const fixtures = fixtureState((fixture) => {
+      fixture.mkdir(join(tmp.current, "supabase"));
+    });
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: '[api.tls]\nenabled = true\ncert_path = "missing-cert.crt"\nkey_path = "missing-key.key"\n[storage.buckets.docs]\npublic = false\n',
+      fixtures,
       routes: [],
     });
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("failed to read TLS cert:");
+      expect(Formatter.formatJson(exit)).toContain("failed to read TLS cert:");
       expect(requests).toHaveLength(0);
     });
   });
 
   it.live("fails when key_path points to an unreadable file", () => {
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+    const fixtures = fixtureState((fixture) => {
+      fixture.mkdir(join(tmp.current, "supabase"));
+      fixture.write(
+        join(tmp.current, "supabase", "custom-ca.crt"),
+        "-----BEGIN CERTIFICATE-----\nZHVtbXk=\n-----END CERTIFICATE-----\n",
+      );
+    });
     // cert is readable, key is missing.
-    writeFileSync(
-      join(tmp.current, "supabase", "custom-ca.crt"),
-      "-----BEGIN CERTIFICATE-----\nZHVtbXk=\n-----END CERTIFICATE-----\n",
-    );
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: '[api.tls]\nenabled = true\ncert_path = "custom-ca.crt"\nkey_path = "missing-key.key"\n[storage.buckets.docs]\npublic = false\n',
+      fixtures,
       routes: [],
     });
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("failed to read TLS key:");
+      expect(Formatter.formatJson(exit)).toContain("failed to read TLS key:");
       expect(requests).toHaveLength(0);
     });
   });

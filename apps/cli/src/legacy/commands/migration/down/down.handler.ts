@@ -49,15 +49,15 @@ const runDown = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
+  const projectRef = yield* LegacyProjectRefResolver;
+  const linkedProjectCache = yield* LegacyLinkedProjectCache;
 
   // Flag-group mutual-exclusion first: validated at
   // parse time, ahead of the root pre-run.
   if (target.setFlags.length > 1) {
-    return yield* Effect.fail(
-      new LegacyMigrationTargetFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-      }),
-    );
+    return yield* new LegacyMigrationTargetFlagsError({
+      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
+    });
   }
 
   const connType = target.connType ?? "local"; // down defaults to `--local`.
@@ -66,12 +66,10 @@ const runDown = Effect.fnUntraced(function* (
   // discarded on a non-linked target — see push.handler.ts's identical guard
   // (db push) for the full TS-only rationale.
   if (Option.isSome(flags.projectRef) && connType !== "linked") {
-    return yield* Effect.fail(
-      new LegacyMigrationTargetFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      }),
-    );
+    return yield* new LegacyMigrationTargetFlagsError({
+      message:
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+    });
   }
 
   // Resolve the DB config BEFORE the `--last` validation, so an unlinked/invalid
@@ -94,22 +92,14 @@ const runDown = Effect.fnUntraced(function* (
   // on the handler's own failure. Load it now and attach the
   // cache to the whole flow via `Effect.ensuring`, so it runs even on the `--last`/cancel
   // failure paths.
-  const cacheLinkedRef =
-    connType === "linked"
-      ? yield* Effect.gen(function* () {
-          const projectRef = yield* LegacyProjectRefResolver;
-          const linkedProjectCache = yield* LegacyLinkedProjectCache;
-          const linkedRef = yield* projectRef.loadProjectRef(flags.projectRef);
-          return linkedProjectCache.cache(linkedRef);
-        })
-      : undefined;
+  const linkedRef =
+    connType === "linked" ? yield* projectRef.loadProjectRef(flags.projectRef) : undefined;
+  const cacheLinkedRef = linkedRef === undefined ? undefined : linkedProjectCache.cache(linkedRef);
 
   const downFlow = Effect.gen(function* () {
     // `--last` zero-value validation runs after DB-config resolution.
     if (flags.last === 0) {
-      return yield* Effect.fail(
-        new LegacyMigrationLastZeroError({ message: "--last must be greater than 0" }),
-      );
+      return yield* new LegacyMigrationLastZeroError({ message: "--last must be greater than 0" });
     }
 
     const ref = Option.getOrUndefined(cfg.ref ?? Option.none());
@@ -131,12 +121,10 @@ const runDown = Effect.fnUntraced(function* (
         const remote = yield* legacyListRemoteMigrations(session);
         const total = remote.length;
         if (total <= flags.last) {
-          return yield* Effect.fail(
-            new LegacyMigrationLastTooLargeError({
-              message: `--last must be smaller than total applied migrations: ${total}`,
-              suggestion: `Try ${legacyAqua("supabase db reset")} if you want to revert all migrations.`,
-            }),
-          );
+          return yield* new LegacyMigrationLastTooLargeError({
+            message: `--last must be smaller than total applied migrations: ${total}`,
+            suggestion: `Try ${legacyAqua("supabase db reset")} if you want to revert all migrations.`,
+          });
         }
 
         const confirmed = yield* legacyMigrationConfirm(
@@ -147,9 +135,7 @@ const runDown = Effect.fnUntraced(function* (
           },
         );
         if (!confirmed) {
-          return yield* Effect.fail(
-            new LegacyOperationCanceledError({ message: CONTEXT_CANCELED_MESSAGE }),
-          );
+          return yield* new LegacyOperationCanceledError({ message: CONTEXT_CANCELED_MESSAGE });
         }
 
         const version = remote[total - flags.last - 1]!;
@@ -157,6 +143,7 @@ const runDown = Effect.fnUntraced(function* (
         yield* legacyDropUserSchemas(session);
         yield* legacyUpsertVaultSecrets(session, toml.vault);
         yield* legacyMigrateAndSeed(session, fs, path, cliConfig.workdir, version, {
+          projectEnv: toml.projectEnv,
           migrationsEnabled: toml.migrationsEnabled,
           seed: toml.seed,
           // `version` is always non-empty here (`migration down` reverts to a concrete

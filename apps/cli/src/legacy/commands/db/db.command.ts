@@ -1,3 +1,4 @@
+import { BunServices } from "@effect/platform-bun";
 import { Command } from "effect/unstable/cli";
 import { legacyDbDiffCommand } from "./diff/diff.command.ts";
 import { legacyDbDumpCommand } from "./dump/dump.command.ts";
@@ -12,6 +13,7 @@ import { legacyDbTestCommand } from "./test/test.command.ts";
 import { legacyDbBranchCommand } from "./branch/branch.command.ts";
 import { legacyDbRemoteCommand } from "./remote/remote.command.ts";
 import { legacyDbSchemaCommand } from "./schema/schema.command.ts";
+import { legacyLocalGatewayHttpClientLayer } from "../../shared/legacy-local-gateway-http-client.ts";
 
 export const legacyDbCommand = Command.make("db").pipe(
   Command.withDescription("Manage Postgres databases."),
@@ -31,4 +33,6 @@ export const legacyDbCommand = Command.make("db").pipe(
     legacyDbRemoteCommand.pipe(Command.unlisted),
     legacyDbSchemaCommand,
   ]),
+  Command.provide(legacyLocalGatewayHttpClientLayer),
+  Command.provide(BunServices.layer),
 );

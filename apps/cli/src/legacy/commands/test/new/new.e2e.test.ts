@@ -1,7 +1,6 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { BunServices } from "@effect/platform-bun";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { Effect, FileSystem, Path } from "effect";
 
 import { runSupabase } from "../../../../../tests/helpers/cli.ts";
 
@@ -16,29 +15,51 @@ const E2E_TIMEOUT_MS = 30_000;
 describe("supabase test new (legacy)", () => {
   let projectDir: string;
 
-  beforeAll(() => {
-    projectDir = mkdtempSync(join(tmpdir(), "supabase-test-new-e2e-"));
-    mkdirSync(join(projectDir, "supabase"), { recursive: true });
-    writeFileSync(join(projectDir, "supabase", "config.toml"), 'project_id = "test-new-e2e"\n');
-  });
+  beforeAll(() =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        projectDir = yield* fs.makeTempDirectory({ prefix: "supabase-test-new-e2e-" });
+        const supabaseDir = path.join(projectDir, "supabase");
+        yield* fs.makeDirectory(supabaseDir, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(supabaseDir, "config.toml"),
+          'project_id = "test-new-e2e"\n',
+        );
+      }).pipe(Effect.provide(BunServices.layer)),
+    ),
+  );
 
-  afterAll(() => {
-    rmSync(projectDir, { recursive: true, force: true });
-  });
+  afterAll(() =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.remove(projectDir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer)),
+    ),
+  );
 
   test(
     "scaffolds supabase/tests/<name>_test.sql and prints the created path",
     { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      const { exitCode, stdout } = await runSupabase(["test", "new", "pet"], {
-        entrypoint: "legacy",
-        cwd: projectDir,
-      });
-      expect(exitCode).toBe(0);
-      expect(stdout).toContain("Created new pgtap test at");
-      const target = join(projectDir, "supabase", "tests", "pet_test.sql");
-      expect(existsSync(target)).toBe(true);
-      expect(readFileSync(target, "utf8")).toContain("SELECT plan(1);");
-    },
+    () =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fs = yield* FileSystem.FileSystem;
+          const { exitCode, stdout } = yield* Effect.tryPromise(() =>
+            runSupabase(["test", "new", "pet"], {
+              entrypoint: "legacy",
+              cwd: projectDir,
+            }),
+          );
+          expect(exitCode).toBe(0);
+          expect(stdout).toContain("Created new pgtap test at");
+          const target = path.join(projectDir, "supabase", "tests", "pet_test.sql");
+          expect(yield* fs.exists(target)).toBe(true);
+          expect(yield* fs.readFileString(target)).toContain("SELECT plan(1);");
+        }).pipe(Effect.provide(BunServices.layer)),
+      ),
   );
 });

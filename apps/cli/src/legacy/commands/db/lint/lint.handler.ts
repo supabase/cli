@@ -38,8 +38,15 @@ import {
   LEGACY_MANAGED_SCHEMAS,
 } from "./lint.lint-sql.ts";
 
-const asString = (value: unknown): string =>
-  value === null || value === undefined ? "" : String(value);
+const asString = (value: unknown): string => {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+    return value.toString();
+  }
+  if (typeof value === "symbol") return value.toString();
+  return Object.prototype.toString.call(value);
+};
 
 /** Lists the user schemas — used when `--schema` is omitted. */
 const listUserSchemas = Effect.fnUntraced(function* (session: LegacyDbSession) {
@@ -112,23 +119,19 @@ const runLint = Effect.fnUntraced(function* (
   // explicitly-set flags, not the `--local` default value.
   const setFlags = target.setFlags;
   if (setFlags.length > 1) {
-    return yield* Effect.fail(
-      new LegacyDbLintMutuallyExclusiveFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
-      }),
-    );
+    return yield* new LegacyDbLintMutuallyExclusiveFlagsError({
+      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
+    });
   }
 
   // `--project-ref` never implies `--linked` and must not be silently
   // discarded on a non-linked target — see push.handler.ts's identical guard
   // for the full TS-only rationale.
   if (Option.isSome(flags.projectRef) && target.connType !== "linked") {
-    return yield* Effect.fail(
-      new LegacyDbLintMutuallyExclusiveFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      }),
-    );
+    return yield* new LegacyDbLintMutuallyExclusiveFlagsError({
+      message:
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+    });
   }
 
   const level = Option.getOrElse(flags.level, () => "warning");
@@ -208,7 +211,7 @@ const runLint = Effect.fnUntraced(function* (
     if (failed) {
       const message = `fail-on is set to ${LEGACY_LINT_ALLOWED_LEVELS[failOnLevel]}, non-zero exit`;
       if (output.format === "text") {
-        return yield* Effect.fail(new LegacyDbLintFailOnError({ message }));
+        return yield* new LegacyDbLintFailOnError({ message });
       }
       // json / stream-json already emitted the result payload above; signal the
       // non-zero exit without a second stdout write that would corrupt it.

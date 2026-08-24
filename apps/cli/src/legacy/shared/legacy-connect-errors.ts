@@ -292,7 +292,7 @@ function legacyConnectCauseDetail(cause: unknown): string {
       ? message
       : typeof code === "string"
         ? code
-        : String(cause);
+        : Object.prototype.toString.call(cause);
   if (typeof severity === "string" && typeof code === "string" && legacyIsSqlState(code)) {
     return `server error (${severity}: ${text} (SQLSTATE ${code}))`;
   }

@@ -134,11 +134,14 @@ function validInstallMethod(value: string): string {
   return issueInstallMethodValueSet.has(value) ? value : "Other";
 }
 
-export function inferIssueInstallMethod(runtimeInfo: { readonly execPath: string }): string {
-  const explicit = process.env["SUPABASE_INSTALL_METHOD"]?.trim();
+export function inferIssueInstallMethod(
+  runtimeInfo: { readonly execPath: string },
+  env: Readonly<Record<string, string | undefined>>,
+): string {
+  const explicit = env["SUPABASE_INSTALL_METHOD"]?.trim();
   if (explicit) return validInstallMethod(explicit);
 
-  const userAgent = process.env["npm_config_user_agent"]?.toLowerCase();
+  const userAgent = env["npm_config_user_agent"]?.toLowerCase();
   if (userAgent?.startsWith("pnpm/")) return "pnpm";
   if (userAgent?.startsWith("npm/")) return "npm";
   if (userAgent?.startsWith("yarn/")) return "yarn";

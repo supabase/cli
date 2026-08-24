@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { Cause, Duration, Effect, Layer } from "effect";
+import { Cause, Clock, Data, Duration, Effect, Layer } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerTag } from "effect/unstable/process/ChildProcessSpawner";
@@ -11,6 +11,11 @@ type Spawner = ChildProcessSpawnerTag["Service"];
 // Overall per-image ceiling. Deliberately BELOW the tightest e2e test budget
 // (120s): a stalled registry must leave the caller room to run its test body.
 export const RESOLVE_BUDGET_MS = 90_000;
+
+export class DockerImageResolutionError extends Data.TaggedError("DockerImageResolutionError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {}
 
 const resolvedImages = new Map<string, Promise<string>>();
 
@@ -80,7 +85,7 @@ export function ensureImage(
  * window.
  */
 export function resolveDeadline(budgetMs = RESOLVE_BUDGET_MS): number {
-  return Date.now() + budgetMs;
+  return Effect.runSync(Clock.currentTimeMillis) + budgetMs;
 }
 
 /**
@@ -92,12 +97,21 @@ export function resolveDeadline(budgetMs = RESOLVE_BUDGET_MS): number {
  * Deliberately a client-only probe: an unreachable daemon is a different
  * condition that the resolver already reports with its own message.
  */
-function requireDocker(spawner: Spawner): Effect.Effect<void, Error> {
+function requireDocker(spawner: Spawner): Effect.Effect<void, DockerImageResolutionError> {
   return spawner.exitCode(ChildProcess.make("docker", ["--version"])).pipe(
-    Effect.mapError(() => new Error("docker is required for this test but could not be spawned")),
+    Effect.mapError(
+      (cause) =>
+        new DockerImageResolutionError({
+          message: "docker is required for this test but could not be spawned",
+          cause,
+        }),
+    ),
     Effect.filterOrFail(
       (exitCode) => Number(exitCode) === 0,
-      () => new Error("docker is required for this test but exited non-zero"),
+      () =>
+        new DockerImageResolutionError({
+          message: "docker is required for this test but exited non-zero",
+        }),
     ),
     Effect.asVoid,
   );
@@ -111,31 +125,38 @@ export function resolveImage(
   spawner: Spawner,
   image: string,
   deadline: number,
-): Effect.Effect<string, Error> {
-  const remainingMs = Math.max(1, deadline - Date.now());
-  return requireDocker(spawner).pipe(
-    // The deadline goes INTO the resolver, which divides it across the
-    // registry candidates — a stalled registry cannot starve the ECR → GHCR →
-    // Docker Hub fallbacks behind it, and an exhausted share is reported
-    // against the candidate that spent it. The outer timeout is only a
-    // backstop for the paths the resolver does not bound (a wedged daemon
-    // hanging `docker image inspect`); its 1s grace keeps the resolver's own
-    // richer per-candidate error winning every race it can.
-    Effect.andThen(() => legacyMakeDockerImageResolver(spawner)(image, deadline)),
-    Effect.timeout(Duration.millis(remainingMs + 1_000)),
-    Effect.mapError((cause) => {
-      if (Cause.isTimeoutError(cause)) {
-        return new Error(
-          `timed out resolving ${image} after ${remainingMs}ms — is the docker daemon responding?`,
-        );
-      }
-      // The registry-pin hint only helps when the registries themselves were
-      // the problem; gluing it onto a missing binary or an unreachable daemon
-      // would misdirect the CI triage this helper exists to speed up.
-      const hint = cause.message.includes("failed to pull docker image from all registries")
-        ? " (set SUPABASE_INTERNAL_IMAGE_REGISTRY to pin one)"
-        : "";
-      return new Error(`failed to resolve ${image}${hint}: ${cause.message}`);
-    }),
-  );
+): Effect.Effect<string, DockerImageResolutionError> {
+  return Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const remainingMs = Math.max(1, deadline - now);
+    return yield* requireDocker(spawner).pipe(
+      // The deadline goes INTO the resolver, which divides it across the
+      // registry candidates — a stalled registry cannot starve the ECR → GHCR →
+      // Docker Hub fallbacks behind it, and an exhausted share is reported
+      // against the candidate that spent it. The outer timeout is only a
+      // backstop for the paths the resolver does not bound (a wedged daemon
+      // hanging `docker image inspect`); its 1s grace keeps the resolver's own
+      // richer per-candidate error winning every race it can.
+      Effect.andThen(() => legacyMakeDockerImageResolver(spawner, {})(image, deadline)),
+      Effect.timeout(Duration.millis(remainingMs + 1_000)),
+      Effect.mapError((cause) => {
+        if (Cause.isTimeoutError(cause)) {
+          return new DockerImageResolutionError({
+            message: `timed out resolving ${image} after ${remainingMs}ms — is the docker daemon responding?`,
+            cause,
+          });
+        }
+        // The registry-pin hint only helps when the registries themselves were
+        // the problem; gluing it onto a missing binary or an unreachable daemon
+        // would misdirect the CI triage this helper exists to speed up.
+        const hint = cause.message.includes("failed to pull docker image from all registries")
+          ? " (set SUPABASE_INTERNAL_IMAGE_REGISTRY to pin one)"
+          : "";
+        return new DockerImageResolutionError({
+          message: `failed to resolve ${image}${hint}: ${cause.message}`,
+          cause,
+        });
+      }),
+    );
+  });
 }

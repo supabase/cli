@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { Effect, Exit, Layer, Option, Sink, Stream } from "effect";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, Exit, Layer, Option, Schema, Sink, Stream } from "effect";
 import { BunServices } from "@effect/platform-bun";
 import { makeApiClient } from "@supabase/api/effect";
 import * as Stdio from "effect/Stdio";
@@ -31,6 +31,9 @@ const unusedPlatformApiLayer = Layer.effect(
     accessToken: "unused-test-token",
   }),
 ).pipe(Layer.provide(httpClientLayer(() => Effect.die("unused test client"))));
+
+const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Json));
+const decodeJson = Schema.decodeSync(Schema.fromJsonString(Schema.Json));
 
 function findPlatformOperationDescriptor(operationId: string) {
   const descriptor = platformOperationDescriptors.find(
@@ -68,17 +71,17 @@ function mockStdio() {
 }
 
 describe("projects create platform handler", () => {
-  it("supports inline --json with dry-run output", async () => {
-    const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
-    const out = mockOutput({ format: "json" });
+  it.live("supports inline --json with dry-run output", () =>
+    Effect.gen(function* () {
+      const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
+      const out = mockOutput({ format: "json" });
 
-    const handler = runPlatformOperation({ descriptor });
+      const handler = runPlatformOperation({ descriptor });
 
-    await Effect.runPromise(
-      handler({
+      yield* handler({
         params: Option.none(),
         json: Option.some(
-          JSON.stringify({
+          encodeJson({
             name: "from-inline",
             db_pass: "super-secret",
             organization_slug: "my-org",
@@ -92,36 +95,35 @@ describe("projects create platform handler", () => {
         dryRun: true,
         yes: true,
       }).pipe(
-        Effect.provide(out.layer),
-        Effect.provide(mockStdin(true)),
-        Effect.provide(unusedPlatformApiLayer),
-        Effect.provide(BunServices.layer),
-      ),
-    );
+        Effect.provide(
+          Layer.mergeAll(out.layer, mockStdin(true), unusedPlatformApiLayer, BunServices.layer),
+        ),
+      );
 
-    expect(out.messages).toContainEqual(
-      expect.objectContaining({
-        type: "success",
-        message: "",
-        data: expect.objectContaining({
-          dryRun: true,
-          json: expect.objectContaining({
-            name: "from-inline",
-            db_pass: "<redacted>",
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "success",
+          message: "",
+          data: expect.objectContaining({
+            dryRun: true,
+            json: expect.objectContaining({
+              name: "from-inline",
+              db_pass: "<redacted>",
+            }),
           }),
         }),
-      }),
-    );
-  });
+      );
+    }),
+  );
 
-  it("supports stdin-backed --json with dry-run output", async () => {
-    const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
-    const out = mockOutput({ format: "json" });
+  it.live("supports stdin-backed --json with dry-run output", () =>
+    Effect.gen(function* () {
+      const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
+      const out = mockOutput({ format: "json" });
 
-    const handler = runPlatformOperation({ descriptor });
+      const handler = runPlatformOperation({ descriptor });
 
-    await Effect.runPromise(
-      handler({
+      yield* handler({
         params: Option.none(),
         json: Option.some("-"),
         body: Option.none(),
@@ -132,61 +134,67 @@ describe("projects create platform handler", () => {
         dryRun: true,
         yes: true,
       }).pipe(
-        Effect.provide(out.layer),
         Effect.provide(
-          mockStdin(
-            true,
-            '{"name":"from-stdin","db_pass":"stdin-secret","organization_slug":"my-org"}',
+          Layer.mergeAll(
+            out.layer,
+            mockStdin(
+              true,
+              encodeJson({
+                name: "from-stdin",
+                db_pass: "stdin-secret",
+                organization_slug: "my-org",
+              }),
+            ),
+            unusedPlatformApiLayer,
+            BunServices.layer,
           ),
         ),
-        Effect.provide(unusedPlatformApiLayer),
-        Effect.provide(BunServices.layer),
-      ),
-    );
+      );
 
-    expect(out.messages).toContainEqual(
-      expect.objectContaining({
-        type: "success",
-        message: "",
-        data: expect.objectContaining({
-          dryRun: true,
-          json: expect.objectContaining({
-            name: "from-stdin",
-            db_pass: "<redacted>",
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "success",
+          message: "",
+          data: expect.objectContaining({
+            dryRun: true,
+            json: expect.objectContaining({
+              name: "from-stdin",
+              db_pass: "<redacted>",
+            }),
           }),
         }),
-      }),
-    );
-  });
+      );
+    }),
+  );
 
-  it("decodes --json input and projects response fields", async () => {
-    const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
-    const out = mockOutput({ format: "json" });
-    let capturedInput: unknown;
+  it.live("decodes --json input and projects response fields", () =>
+    Effect.gen(function* () {
+      const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
+      const out = mockOutput({ format: "json" });
+      let capturedInput: unknown;
 
-    const handler = runPlatformOperation({
-      descriptor,
-      execute: (input) =>
-        Effect.sync(() => {
-          capturedInput = input;
-          return {
-            id: "project-id",
-            ref: "abcd1234",
-            organization_id: "org-id",
-            organization_slug: "my-org",
-            name: "json-name",
-            region: "us-east-1",
-            created_at: "2026-03-13T10:00:00.000Z",
-            status: "ACTIVE_HEALTHY",
-          };
-        }),
-    });
+      const handler = runPlatformOperation({
+        descriptor,
+        execute: (input) =>
+          Effect.sync(() => {
+            capturedInput = input;
+            return {
+              id: "project-id",
+              ref: "abcd1234",
+              organization_id: "org-id",
+              organization_slug: "my-org",
+              name: "json-name",
+              region: "us-east-1",
+              created_at: "2026-03-13T10:00:00.000Z",
+              status: "ACTIVE_HEALTHY",
+            };
+          }),
+      });
 
-    await Effect.runPromise(
-      handler({
+      yield* handler({
         params: Option.none(),
         json: Option.some(
-          JSON.stringify({
+          encodeJson({
             name: "json-name",
             db_pass: "json-password",
             organization_slug: "my-org",
@@ -200,98 +208,45 @@ describe("projects create platform handler", () => {
         dryRun: false,
         yes: true,
       }).pipe(
-        Effect.provide(out.layer),
-        Effect.provide(mockStdin(true)),
-        Effect.provide(unusedPlatformApiLayer),
-        Effect.provide(BunServices.layer),
-      ),
-    );
+        Effect.provide(
+          Layer.mergeAll(out.layer, mockStdin(true), unusedPlatformApiLayer, BunServices.layer),
+        ),
+      );
 
-    expect(capturedInput).toEqual({
-      name: "json-name",
-      db_pass: "json-password",
-      organization_slug: "my-org",
-    });
-    expect(out.messages).toContainEqual(
-      expect.objectContaining({
-        type: "success",
-        message: "",
-        data: { ref: "abcd1234", status: "ACTIVE_HEALTHY" },
-      }),
-    );
-  });
-
-  it("renders schema without executing the operation", async () => {
-    const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
-    const out = mockOutput({ format: "json" });
-    const stdio = mockStdio();
-    let executed = false;
-
-    const handler = runPlatformOperation({
-      descriptor,
-      execute: (_input) =>
-        Effect.sync(() => {
-          executed = true;
-          return {
-            id: "project-id",
-          };
+      expect(capturedInput).toEqual({
+        name: "json-name",
+        db_pass: "json-password",
+        organization_slug: "my-org",
+      });
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "success",
+          message: "",
+          data: { ref: "abcd1234", status: "ACTIVE_HEALTHY" },
         }),
-    });
+      );
+    }),
+  );
 
-    await Effect.runPromise(
-      handler({
-        params: Option.none(),
-        json: Option.none(),
-        body: Option.none(),
-        bodyFile: Option.none(),
-        upload: [],
-        fields: Option.none(),
-        schema: true,
-        dryRun: false,
-        yes: true,
-      }).pipe(
-        Effect.provide(out.layer),
-        Effect.provide(stdio.layer),
-        Effect.provide(mockStdin(true)),
-        Effect.provide(unusedPlatformApiLayer),
-        Effect.provide(BunServices.layer),
-      ),
-    );
+  it.live("renders schema without executing the operation", () =>
+    Effect.gen(function* () {
+      const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
+      const out = mockOutput({ format: "json" });
+      const stdio = mockStdio();
+      let executed = false;
 
-    expect(executed).toBe(false);
-    expect(out.messages).toEqual([]);
-    expect(JSON.parse(stdio.stdout.join(""))).toEqual(
-      expect.objectContaining({
-        route: "/v1/projects",
-        method: "POST",
-        command: "supabase api request /v1/projects --method POST",
-        input: expect.objectContaining({
-          body: expect.objectContaining({
-            kind: "json",
+      const handler = runPlatformOperation({
+        descriptor,
+        execute: (_input) =>
+          Effect.sync(() => {
+            executed = true;
+            return {
+              id: "project-id",
+            };
           }),
-        }),
-      }),
-    );
-  });
+      });
 
-  it("renders text schema output without a success banner", async () => {
-    const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
-    const out = mockOutput({ format: "text" });
-    let executed = false;
-
-    const handler = runPlatformOperation({
-      descriptor,
-      execute: () =>
-        Effect.sync(() => {
-          executed = true;
-          return {
-            id: "project-id",
-          };
-        }),
-    });
-
-    await Effect.runPromise(
-      handler({
+      yield* handler({
         params: Option.none(),
         json: Option.none(),
         body: Option.none(),
@@ -302,98 +257,152 @@ describe("projects create platform handler", () => {
         dryRun: false,
         yes: true,
       }).pipe(
-        Effect.provide(out.layer),
-        Effect.provide(mockStdin(true)),
-        Effect.provide(unusedPlatformApiLayer),
-        Effect.provide(BunServices.layer),
-      ),
-    );
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            unusedPlatformApiLayer,
+            mockStdin(true),
+            stdio.layer,
+            out.layer,
+          ),
+        ),
+      );
 
-    expect(executed).toBe(false);
-    expect(
-      out.messages.some(
-        (message) => message.type === "success" && message.message === "Schema loaded.",
-      ),
-    ).toBe(false);
-    expect(out.messages).toContainEqual(
-      expect.objectContaining({
-        type: "info",
-        message: expect.stringContaining("Route\n  POST /v1/projects"),
-      }),
-    );
-  });
-
-  it("emits schema payloads as result events in stream-json mode", async () => {
-    const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
-    const out = mockOutput({ format: "stream-json", interactive: false });
-    let executed = false;
-
-    const handler = runPlatformOperation({
-      descriptor,
-      execute: () =>
-        Effect.sync(() => {
-          executed = true;
-          return {
-            id: "project-id",
-          };
-        }),
-    });
-
-    await Effect.runPromise(
-      handler({
-        params: Option.none(),
-        json: Option.none(),
-        body: Option.none(),
-        bodyFile: Option.none(),
-        upload: [],
-        fields: Option.none(),
-        schema: true,
-        dryRun: false,
-        yes: true,
-      }).pipe(
-        Effect.provide(out.layer),
-        Effect.provide(mockStdin(true)),
-        Effect.provide(unusedPlatformApiLayer),
-        Effect.provide(BunServices.layer),
-      ),
-    );
-
-    expect(executed).toBe(false);
-    expect(out.events).toContainEqual(
-      expect.objectContaining({
-        type: "result",
-        data: expect.objectContaining({
+      expect(executed).toBe(false);
+      expect(out.messages).toEqual([]);
+      expect(decodeJson(stdio.stdout.join(""))).toEqual(
+        expect.objectContaining({
           route: "/v1/projects",
           method: "POST",
+          command: "supabase api request /v1/projects --method POST",
           input: expect.objectContaining({
             body: expect.objectContaining({
               kind: "json",
             }),
           }),
         }),
-      }),
-    );
-  });
+      );
+    }),
+  );
 
-  it("renders text dry-run previews without a success banner", async () => {
-    const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
-    const out = mockOutput({ format: "text" });
-    let executed = false;
+  it.live("renders text schema output without a success banner", () =>
+    Effect.gen(function* () {
+      const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
+      const out = mockOutput({ format: "text" });
+      let executed = false;
 
-    const handler = runPlatformOperation({
-      descriptor,
-      execute: () =>
-        Effect.sync(() => {
-          executed = true;
-          return { id: "project-id" };
+      const handler = runPlatformOperation({
+        descriptor,
+        execute: () =>
+          Effect.sync(() => {
+            executed = true;
+            return {
+              id: "project-id",
+            };
+          }),
+      });
+
+      yield* handler({
+        params: Option.none(),
+        json: Option.none(),
+        body: Option.none(),
+        bodyFile: Option.none(),
+        upload: [],
+        fields: Option.none(),
+        schema: true,
+        dryRun: false,
+        yes: true,
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(out.layer, mockStdin(true), unusedPlatformApiLayer, BunServices.layer),
+        ),
+      );
+
+      expect(executed).toBe(false);
+      expect(
+        out.messages.some(
+          (message) => message.type === "success" && message.message === "Schema loaded.",
+        ),
+      ).toBe(false);
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "info",
+          message: expect.stringContaining("Route\n  POST /v1/projects"),
         }),
-    });
+      );
+    }),
+  );
 
-    await Effect.runPromise(
-      handler({
+  it.live("emits schema payloads as result events in stream-json mode", () =>
+    Effect.gen(function* () {
+      const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
+      const out = mockOutput({ format: "stream-json", interactive: false });
+      let executed = false;
+
+      const handler = runPlatformOperation({
+        descriptor,
+        execute: () =>
+          Effect.sync(() => {
+            executed = true;
+            return {
+              id: "project-id",
+            };
+          }),
+      });
+
+      yield* handler({
+        params: Option.none(),
+        json: Option.none(),
+        body: Option.none(),
+        bodyFile: Option.none(),
+        upload: [],
+        fields: Option.none(),
+        schema: true,
+        dryRun: false,
+        yes: true,
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(out.layer, mockStdin(true), unusedPlatformApiLayer, BunServices.layer),
+        ),
+      );
+
+      expect(executed).toBe(false);
+      expect(out.events).toContainEqual(
+        expect.objectContaining({
+          type: "result",
+          data: expect.objectContaining({
+            route: "/v1/projects",
+            method: "POST",
+            input: expect.objectContaining({
+              body: expect.objectContaining({
+                kind: "json",
+              }),
+            }),
+          }),
+        }),
+      );
+    }),
+  );
+
+  it.live("renders text dry-run previews without a success banner", () =>
+    Effect.gen(function* () {
+      const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
+      const out = mockOutput({ format: "text" });
+      let executed = false;
+
+      const handler = runPlatformOperation({
+        descriptor,
+        execute: () =>
+          Effect.sync(() => {
+            executed = true;
+            return { id: "project-id" };
+          }),
+      });
+
+      yield* handler({
         params: Option.none(),
         json: Option.some(
-          JSON.stringify({
+          encodeJson({
             name: "preview-name",
             db_pass: "super-secret",
             organization_slug: "my-org",
@@ -407,51 +416,50 @@ describe("projects create platform handler", () => {
         dryRun: true,
         yes: true,
       }).pipe(
-        Effect.provide(out.layer),
-        Effect.provide(mockStdin(true)),
-        Effect.provide(unusedPlatformApiLayer),
-        Effect.provide(BunServices.layer),
-      ),
-    );
+        Effect.provide(
+          Layer.mergeAll(out.layer, mockStdin(true), unusedPlatformApiLayer, BunServices.layer),
+        ),
+      );
 
-    expect(executed).toBe(false);
-    expect(
-      out.messages.some(
-        (message) => message.type === "success" && message.message === "Dry run complete.",
-      ),
-    ).toBe(false);
-    expect(out.messages).toContainEqual(
-      expect.objectContaining({
-        type: "info",
-        message: expect.stringContaining("db_pass: <redacted>"),
-      }),
-    );
-    expect(out.messages).toContainEqual(
-      expect.objectContaining({
-        type: "info",
-        message: expect.stringContaining("name: preview-name"),
-      }),
-    );
-  });
+      expect(executed).toBe(false);
+      expect(
+        out.messages.some(
+          (message) => message.type === "success" && message.message === "Dry run complete.",
+        ),
+      ).toBe(false);
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "info",
+          message: expect.stringContaining("db_pass: <redacted>"),
+        }),
+      );
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "info",
+          message: expect.stringContaining("name: preview-name"),
+        }),
+      );
+    }),
+  );
 
-  it("omits the generic success banner for structured text responses", async () => {
-    const descriptor = findPlatformOperationDescriptor("v1ListAllOrganizations");
-    const out = mockOutput({ format: "text" });
+  it.live("omits the generic success banner for structured text responses", () =>
+    Effect.gen(function* () {
+      const descriptor = findPlatformOperationDescriptor("v1ListAllOrganizations");
+      const out = mockOutput({ format: "text" });
 
-    const handler = runPlatformOperation({
-      descriptor,
-      execute: () =>
-        Effect.sync(() => [
-          {
-            id: "supabase",
-            slug: "supabase",
-            name: "Supabase",
-          },
-        ]),
-    });
+      const handler = runPlatformOperation({
+        descriptor,
+        execute: () =>
+          Effect.sync(() => [
+            {
+              id: "supabase",
+              slug: "supabase",
+              name: "Supabase",
+            },
+          ]),
+      });
 
-    await Effect.runPromise(
-      handler({
+      yield* handler({
         params: Option.none(),
         json: Option.none(),
         body: Option.none(),
@@ -462,34 +470,33 @@ describe("projects create platform handler", () => {
         dryRun: false,
         yes: true,
       }).pipe(
-        Effect.provide(out.layer),
-        Effect.provide(mockStdin(true)),
-        Effect.provide(unusedPlatformApiLayer),
-        Effect.provide(BunServices.layer),
-      ),
-    );
+        Effect.provide(
+          Layer.mergeAll(out.layer, mockStdin(true), unusedPlatformApiLayer, BunServices.layer),
+        ),
+      );
 
-    expect(
-      out.messages.some(
-        (message) => message.type === "success" && message.message === "Request completed.",
-      ),
-    ).toBe(false);
-    expect(out.messages).toContainEqual(
-      expect.objectContaining({
-        type: "success",
-        message: expect.stringContaining("- id: supabase"),
-      }),
-    );
-  });
+      expect(
+        out.messages.some(
+          (message) => message.type === "success" && message.message === "Request completed.",
+        ),
+      ).toBe(false);
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "success",
+          message: expect.stringContaining("- id: supabase"),
+        }),
+      );
+    }),
+  );
 
-  it("returns a structured non-interactive error when required values are missing", async () => {
-    const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
-    const out = mockOutput({ format: "json", interactive: false });
+  it.live("returns a structured non-interactive error when required values are missing", () =>
+    Effect.gen(function* () {
+      const descriptor = findPlatformOperationDescriptor("v1CreateAProject");
+      const out = mockOutput({ format: "json", interactive: false });
 
-    const handler = runPlatformOperation({ descriptor });
+      const handler = runPlatformOperation({ descriptor });
 
-    const exit = await Effect.runPromise(
-      handler({
+      const exit = yield* handler({
         params: Option.none(),
         json: Option.none(),
         body: Option.none(),
@@ -500,14 +507,13 @@ describe("projects create platform handler", () => {
         dryRun: false,
         yes: true,
       }).pipe(
-        Effect.provide(out.layer),
-        Effect.provide(mockStdin(false)),
-        Effect.provide(unusedPlatformApiLayer),
-        Effect.provide(BunServices.layer),
+        Effect.provide(
+          Layer.mergeAll(out.layer, mockStdin(false), unusedPlatformApiLayer, BunServices.layer),
+        ),
         Effect.exit,
-      ),
-    );
+      );
 
-    expect(Exit.isFailure(exit)).toBe(true);
-  });
+      expect(Exit.isFailure(exit)).toBe(true);
+    }),
+  );
 });

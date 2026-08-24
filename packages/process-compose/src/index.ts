@@ -12,6 +12,7 @@ export type {
   LifecycleHook,
   OrchestratorConfig,
   ServiceStartOptions,
+  ServiceEffectError,
   ServiceDef,
 } from "./ServiceDef.ts";
 export { defaults } from "./ServiceDef.ts";
@@ -40,6 +41,7 @@ export {
   isSupervisorRuntimeRequested,
 } from "./supervisor-protocol.ts";
 export { runSupervisorRuntime, runSupervisorRuntimeFromEnv } from "./supervisor-runtime.ts";
+export { childSignalFromCause } from "./ChildSignal.ts";
 
 export type { ServiceEvent } from "./ServiceTransition.ts";
 export { applyEvent, transition } from "./ServiceTransition.ts";

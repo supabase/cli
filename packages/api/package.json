@@ -72,8 +72,5 @@
         ]
       }
     }
-  },
-  "oxlint": {
-    "typeAware": true
   }
 }

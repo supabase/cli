@@ -1,5 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Option, Schema } from "effect";
+
+const stringifyJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -160,7 +162,7 @@ describe("legacy branches pause integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = stringifyJson(exit.cause);
         expect(json).toContain("LegacyBranchesPauseUnexpectedStatusError");
         expect(json).toContain("unexpected pause branch status 500");
       }

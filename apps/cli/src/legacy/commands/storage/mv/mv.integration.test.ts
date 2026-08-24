@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Formatter, Option } from "effect";
 
 import { setupLegacyStorage } from "../../../../../tests/helpers/legacy-storage.ts";
 import {
@@ -64,7 +64,7 @@ describe("legacy storage mv", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("You must specify an object path");
+      expect(Formatter.formatJson(exit)).toContain("You must specify an object path");
       expect(requests).toHaveLength(0);
     });
   });
@@ -79,7 +79,7 @@ describe("legacy storage mv", () => {
         mvFlags({ src: "ss:///bucket/docs", dst: "ss:///private" }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Moving between buckets is unsupported");
+      expect(Formatter.formatJson(exit)).toContain("Moving between buckets is unsupported");
       expect(requests).toHaveLength(0);
     });
   });
@@ -196,7 +196,7 @@ describe("legacy storage mv", () => {
         mvFlags({ src: "ss:///private/a", dst: "ss:///private/b" }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("not_found");
+      expect(Formatter.formatJson(exit)).toContain("not_found");
     });
   });
 
@@ -219,7 +219,7 @@ describe("legacy storage mv", () => {
         mvFlags({ src: "ss:///private/dir", dst: "ss:///private/other", recursive: true }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Object not found: /private/dir/");
+      expect(Formatter.formatJson(exit)).toContain("Object not found: /private/dir/");
     });
   });
 
@@ -293,7 +293,7 @@ describe("legacy storage mv", () => {
         projectRef: Option.some(FLAG_REF),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain(
+      expect(Formatter.formatJson(exit)).toContain(
         "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
       );
       expect(requests).toHaveLength(0);
@@ -313,7 +313,7 @@ describe("legacy storage mv", () => {
         mvFlags({ src: "ss:///private/a", dst: "ss:///private/b", recursive: true }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Error status 503");
+      expect(Formatter.formatJson(exit)).toContain("Error status 503");
     });
   });
 

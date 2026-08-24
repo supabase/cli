@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit } from "effect";
+import { Effect, Exit, Formatter } from "effect";
 
 import {
   legacyAssertStorageTargetsExclusive,
@@ -64,7 +64,7 @@ describe("legacyStorageChangedTargetFlags", () => {
 });
 
 describe("legacyAssertStorageTargetsExclusive", () => {
-  it("rejects passing both --linked and --local (byte-exact cobra message)", () =>
+  it.effect("rejects passing both --linked and --local (byte-exact cobra message)", () =>
     Effect.gen(function* () {
       const exit = yield* legacyAssertStorageTargetsExclusive([
         "storage",
@@ -73,22 +73,25 @@ describe("legacyAssertStorageTargetsExclusive", () => {
         "ls",
       ]).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain(
+      expect(Formatter.formatJson(exit)).toContain(
         "if any flags in the group [linked local] are set none of the others can be; [linked local] were all set",
       );
-    }));
+    }),
+  );
 
-  it("accepts only --local", () =>
+  it.effect("accepts only --local", () =>
     Effect.gen(function* () {
       const exit = yield* legacyAssertStorageTargetsExclusive(["storage", "--local", "ls"]).pipe(
         Effect.exit,
       );
       expect(Exit.isSuccess(exit)).toBe(true);
-    }));
+    }),
+  );
 
-  it("accepts neither flag", () =>
+  it.effect("accepts neither flag", () =>
     Effect.gen(function* () {
       const exit = yield* legacyAssertStorageTargetsExclusive(["storage", "ls"]).pipe(Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-    }));
+    }),
+  );
 });

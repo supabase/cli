@@ -30,32 +30,24 @@ function getLastImageSegment(imageName: string): string {
 }
 
 /**
- * `projectEnvValues` (dotenv-merged env, ambient-wins) is optional and
- * additive — every existing caller that omits it keeps today's ambient-only
- * behavior unchanged. Only callers that already have a project's dotenv
- * values in scope (currently `start`, via `legacyGetRegistryImageUrlCandidates`)
- * need to pass it so a `SUPABASE_INTERNAL_IMAGE_REGISTRY` set only in
- * `supabase/.env`/project-root dotenv (not the ambient shell) is honored,
- * matching the project dotenv files being loaded into the process env
- * before the registry override is ever read.
+ * `projectEnvValues` is the explicit, already-merged environment visible to
+ * this resolver. Callers that do not load project dotenv values pass an empty
+ * record; no ambient process state is consulted here.
  */
 function legacyGetRegistryOverride(
-  projectEnvValues?: Readonly<Record<string, string>>,
+  projectEnvValues: Readonly<Record<string, string>>,
 ): string | undefined {
-  const registry = (
-    projectEnvValues?.[LEGACY_INTERNAL_IMAGE_REGISTRY_ENV] ??
-    process.env[LEGACY_INTERNAL_IMAGE_REGISTRY_ENV]
-  )?.trim();
+  const registry = projectEnvValues[LEGACY_INTERNAL_IMAGE_REGISTRY_ENV]?.trim();
   return registry === undefined || registry.length === 0 ? undefined : registry.toLowerCase();
 }
 
-function legacyGetRegistry(projectEnvValues?: Readonly<Record<string, string>>): string {
+function legacyGetRegistry(projectEnvValues: Readonly<Record<string, string>>): string {
   return legacyGetRegistryOverride(projectEnvValues) ?? DEFAULT_REGISTRY;
 }
 
 export function legacyGetRegistryImageUrl(
   imageName: string,
-  projectEnvValues?: Readonly<Record<string, string>>,
+  projectEnvValues: Readonly<Record<string, string>>,
 ): string {
   const registry = legacyGetRegistry(projectEnvValues);
   if (registry === DOCKER_HUB_REGISTRY) {
@@ -66,7 +58,7 @@ export function legacyGetRegistryImageUrl(
 
 export function legacyGetRegistryImageUrlCandidates(
   imageName: string,
-  projectEnvValues?: Readonly<Record<string, string>>,
+  projectEnvValues: Readonly<Record<string, string>>,
 ): ReadonlyArray<string> {
   if (legacyGetRegistryOverride(projectEnvValues) !== undefined) {
     return [legacyGetRegistryImageUrl(imageName, projectEnvValues)];

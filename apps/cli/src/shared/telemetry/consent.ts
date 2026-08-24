@@ -1,5 +1,11 @@
-import { Effect, FileSystem, Option, Path, Schema } from "effect";
+import { Crypto, Data, Effect, FileSystem, Option, Path, Schema } from "effect";
+import type * as PlatformError from "effect/PlatformError";
 import { CliConfig } from "../../next/config/cli-config.service.ts";
+import {
+  actionability,
+  ErrorActionabilityId,
+  type CliErrorActionabilityDeclaration,
+} from "./error-actionability.ts";
 import { type ConsentState, TelemetryConfigSchema, type TelemetryConfig } from "./types.ts";
 
 export const getConfigDir = CliConfig.useSync((cliConfig) => cliConfig.supabaseHome);
@@ -11,7 +17,7 @@ const LegacyTelemetryConfigSchema = Schema.Struct({
   session_id: Schema.String,
   session_last_active: Schema.String,
   distinct_id: Schema.optionalKey(Schema.String),
-  schema_version: Schema.optionalKey(Schema.Number),
+  schema_version: Schema.optionalKey(Schema.Finite),
 });
 type LegacyTelemetryConfig = Schema.Schema.Type<typeof LegacyTelemetryConfigSchema>;
 
@@ -43,36 +49,67 @@ function legacyConfigToTelemetryConfig(
   };
 }
 
-const decodeTelemetryConfigFile = Effect.fnUntraced(function* (content: string) {
+export class TelemetryConfigError extends Data.TaggedError("TelemetryConfigError")<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
+
+type TelemetryConfigEffect<A> = Effect.Effect<
+  A,
+  TelemetryConfigError | PlatformError.PlatformError,
+  FileSystem.FileSystem | Path.Path | Crypto.Crypto
+>;
+
+const decodeTelemetryConfigFile: (
+  content: string,
+) => Effect.Effect<TelemetryConfig, TelemetryConfigError> = Effect.fnUntraced(function* (
+  content: string,
+) {
   return yield* decodeCurrentTelemetryConfigFile(content).pipe(
+    Effect.mapError(
+      (cause) => new TelemetryConfigError({ message: "invalid telemetry state", cause }),
+    ),
     Effect.catch(() =>
-      Effect.gen(function* () {
-        const legacyConfig = yield* decodeLegacyTelemetryConfigFile(content);
-        const config = legacyConfigToTelemetryConfig(legacyConfig);
-        if (config === undefined) {
-          return yield* Effect.fail(new Error("invalid legacy telemetry state"));
-        }
-        return config;
-      }),
+      decodeLegacyTelemetryConfigFile(content).pipe(
+        Effect.mapError(
+          (cause) => new TelemetryConfigError({ message: "invalid legacy telemetry state", cause }),
+        ),
+        Effect.flatMap((legacyConfig) => {
+          const config = legacyConfigToTelemetryConfig(legacyConfig);
+          return config === undefined
+            ? Effect.fail(new TelemetryConfigError({ message: "invalid legacy telemetry state" }))
+            : Effect.succeed(config);
+        }),
+      ),
     ),
   );
 });
 
-export const readTelemetryConfig = Effect.fnUntraced(
-  function* (configDir: string) {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const configPath = path.join(configDir, "telemetry.json");
-    const exists = yield* fs.exists(configPath);
-    if (!exists) return Option.none<TelemetryConfig>();
-    const content = yield* fs.readFileString(configPath);
-    const config = yield* decodeTelemetryConfigFile(content);
-    return Option.some(config);
-  },
-  (effect) => Effect.orElseSucceed(effect, () => Option.none<TelemetryConfig>()),
-);
+export const readTelemetryConfig: (
+  configDir: string,
+) => Effect.Effect<Option.Option<TelemetryConfig>, never, FileSystem.FileSystem | Path.Path> =
+  Effect.fnUntraced(
+    function* (configDir: string) {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const configPath = path.join(configDir, "telemetry.json");
+      const exists = yield* fs.exists(configPath);
+      if (!exists) return Option.none<TelemetryConfig>();
+      const content = yield* fs.readFileString(configPath);
+      const config = yield* decodeTelemetryConfigFile(content);
+      return Option.some(config);
+    },
+    (effect) => Effect.orElseSucceed(effect, () => Option.none<TelemetryConfig>()),
+  );
 
-export const writeTelemetryConfig = Effect.fnUntraced(function* (
+export const writeTelemetryConfig: (
+  config: TelemetryConfig,
+  configDir: string,
+) => TelemetryConfigEffect<void> = Effect.fnUntraced(function* (
   config: TelemetryConfig,
   configDir: string,
 ) {
@@ -83,12 +120,13 @@ export const writeTelemetryConfig = Effect.fnUntraced(function* (
   // Random suffix, not a timestamp: concurrent writers (parallel test files,
   // two CLI processes) in the same millisecond would otherwise share a tmp
   // path and race the rename into ENOENT.
-  const tmpPath = `${configPath}.tmp.${crypto.randomUUID()}`;
+  const crypto = yield* Crypto.Crypto;
+  const tmpPath = `${configPath}.tmp.${yield* crypto.randomUUIDv4}`;
   yield* fs.writeFileString(tmpPath, encodePrettyJson(encodeTelemetryConfig(config)), {
     mode: 0o600,
   });
   yield* fs.rename(tmpPath, configPath);
-}, Effect.orDie);
+});
 
 export const getEffectiveConsent = Effect.fnUntraced(function* (
   config: Option.Option<TelemetryConfig>,

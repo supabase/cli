@@ -1,8 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
+import { BunPath, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, FileSystem, Formatter, Layer, Option } from "effect";
+import * as EffectPath from "effect/Path";
 
 import { setupLegacyStorage } from "../../../../../tests/helpers/legacy-storage.ts";
 import {
@@ -15,6 +14,27 @@ import type { LegacyStorageCpFlags } from "./cp.command.ts";
 const BUCKET = "/storage/v1/bucket";
 const OBJECT = (p: string) => `/storage/v1/object/${p}`;
 const LIST = (bucket: string) => `/storage/v1/object/list/${bucket}`;
+const testPath = Effect.runSync(EffectPath.Path.pipe(Effect.provide(BunPath.layer)));
+const windowsRemoteKeyBasenameLayer = Layer.effect(
+  EffectPath.Path,
+  Effect.gen(function* () {
+    const hostPath = yield* EffectPath.Path.pipe(Effect.provide(BunPath.layer));
+    const windowsPath = yield* EffectPath.Path.pipe(Effect.provide(BunPath.layerWin32));
+    return { ...hostPath, basename: windowsPath.basename };
+  }),
+);
+
+const readText = (pathname: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.readFileString(pathname);
+  }).pipe(Effect.provide(BunServices.layer));
+
+const exists = (pathname: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.exists(pathname);
+  }).pipe(Effect.provide(BunServices.layer));
 
 function cpFlags(opts: {
   src: string;
@@ -50,15 +70,15 @@ describe("legacy storage cp", () => {
   const tmp = useLegacyTempWorkdir("supabase-storage-cp-");
 
   it.live("uploads a single local file with a sniffed content-type", () => {
-    writeFileSync(join(tmp.current, "readme.md"), "hello world");
     const { layer, requests } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
+      files: { "readme.md": "hello world" },
       routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
     });
     return Effect.gen(function* () {
       const exit = yield* legacyStorageCp(
-        cpFlags({ src: join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
+        cpFlags({ src: testPath.join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const upload = requests.find((r) => r.url.includes(OBJECT("private/readme.md")));
@@ -71,16 +91,16 @@ describe("legacy storage cp", () => {
   });
 
   it.live("honors --content-type and --cache-control on upload", () => {
-    writeFileSync(join(tmp.current, "data.bin"), "hello");
     const { layer, requests } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
+      files: { "data.bin": "hello" },
       routes: [{ method: "POST", match: OBJECT("private/data.bin"), body: {} }],
     });
     return Effect.gen(function* () {
       const exit = yield* legacyStorageCp(
         cpFlags({
-          src: join(tmp.current, "data.bin"),
+          src: testPath.join(tmp.current, "data.bin"),
           dst: "ss:///private/data.bin",
           contentType: "application/custom",
           cacheControl: "max-age=60",
@@ -94,11 +114,10 @@ describe("legacy storage cp", () => {
   });
 
   it.live("recursively uploads a directory, auto-creating a missing bucket", () => {
-    mkdirSync(join(tmp.current, "upload"), { recursive: true });
-    writeFileSync(join(tmp.current, "upload", "readme.md"), "hello");
     const { layer, requests } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
+      files: { "upload/readme.md": "hello" },
       routes: [
         // first upload → bucket missing
         {
@@ -115,7 +134,7 @@ describe("legacy storage cp", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* legacyStorageCp(
-        cpFlags({ src: join(tmp.current, "upload"), dst: "ss://", recursive: true }),
+        cpFlags({ src: testPath.join(tmp.current, "upload"), dst: "ss://", recursive: true }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       // Recursive uploads set x-upsert; bucket auto-created then upload retried.
@@ -129,7 +148,7 @@ describe("legacy storage cp", () => {
   });
 
   it.live("downloads a single remote object to a new local file", () => {
-    const dst = join(tmp.current, "out.md");
+    const dst = testPath.join(tmp.current, "out.md");
     const { layer } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -141,16 +160,16 @@ describe("legacy storage cp", () => {
         Effect.exit,
       );
       expect(Exit.isSuccess(exit)).toBe(true);
-      expect(readFileSync(dst, "utf8")).toBe("downloaded-bytes");
+      expect(yield* readText(dst)).toBe("downloaded-bytes");
     });
   });
 
   it.live("refuses to overwrite an existing local file on a single download", () => {
-    const dst = join(tmp.current, "exists.md");
-    writeFileSync(dst, "original");
+    const dst = testPath.join(tmp.current, "exists.md");
     const { layer } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
+      files: { "exists.md": "original" },
       routes: [{ method: "GET", match: OBJECT("private/readme.md"), rawBody: "new" }],
     });
     return Effect.gen(function* () {
@@ -159,14 +178,14 @@ describe("legacy storage cp", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("failed to create file");
+      expect(Formatter.formatJson(exit)).toContain("failed to create file");
       // The existing file is untouched.
-      expect(readFileSync(dst, "utf8")).toBe("original");
+      expect(yield* readText(dst)).toBe("original");
     });
   });
 
   it.live("recursively downloads nested objects, creating parent dirs", () => {
-    const dst = join(tmp.current, "dl");
+    const dst = testPath.join(tmp.current, "dl");
     const { layer } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -195,17 +214,17 @@ describe("legacy storage cp", () => {
         cpFlags({ src: "ss:///private/", dst, recursive: true }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      expect(readFileSync(join(dst, "a.txt"), "utf8")).toBe("a-content");
-      expect(readFileSync(join(dst, "folder", "b.txt"), "utf8")).toBe("b-content");
+      expect(yield* readText(testPath.join(dst, "a.txt"))).toBe("a-content");
+      expect(yield* readText(testPath.join(dst, "folder", "b.txt"))).toBe("b-content");
     });
   });
 
   it.live("recursively downloads into an existing directory (nests under the remote base)", () => {
-    const dst = join(tmp.current, "existing");
-    mkdirSync(dst, { recursive: true });
+    const dst = testPath.join(tmp.current, "existing");
     const { layer } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
+      files: { "existing/.keep": "" },
       routes: [
         { method: "POST", match: LIST("private"), body: [{ name: "a.txt", id: "ai" }] },
         { method: "GET", match: OBJECT("private/a.txt"), rawBody: "a" },
@@ -217,12 +236,41 @@ describe("legacy storage cp", () => {
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       // Existing dir → nest under base("/private/") = "private".
-      expect(readFileSync(join(dst, "private", "a.txt"), "utf8")).toBe("a");
+      expect(yield* readText(testPath.join(dst, "private", "a.txt"))).toBe("a");
+    });
+  });
+
+  it.live("preserves backslashes in remote object keys on Windows path semantics", () => {
+    const dst = testPath.join(tmp.current, "existing-backslash");
+    const remotePrefix = "folder\\object/";
+    const { layer } = setupLegacyStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      files: { "existing-backslash/.keep": "" },
+      routes: [
+        {
+          method: "POST",
+          match: LIST("private"),
+          when: (body) => prefixOf(body) === remotePrefix,
+          body: [{ name: "child.txt", id: "child" }],
+        },
+        { method: "GET", match: "child.txt", rawBody: "child-content" },
+      ],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyStorageCp(
+        cpFlags({ src: `ss:///private/${remotePrefix}`, dst, recursive: true }),
+      ).pipe(Effect.provide(Layer.mergeAll(layer, windowsRemoteKeyBasenameLayer)), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(yield* exists(testPath.join(dst, "object", "child.txt"))).toBe(false);
+      expect(yield* readText(testPath.join(dst, "folder\\object", "child.txt"))).toBe(
+        "child-content",
+      );
     });
   });
 
   it.live("creates a directory for an empty bucket on recursive download", () => {
-    const dst = join(tmp.current, "dl-empty");
+    const dst = testPath.join(tmp.current, "dl-empty");
     const { layer } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -238,17 +286,15 @@ describe("legacy storage cp", () => {
       );
       expect(Exit.isSuccess(exit)).toBe(true);
       // Empty bucket reported as "empty/" → mkdir under the destination.
-      expect(existsSync(join(dst, "empty"))).toBe(true);
+      expect(yield* exists(testPath.join(dst, "empty"))).toBe(true);
     });
   });
 
   it.live("recursively uploads a nested subdirectory", () => {
-    mkdirSync(join(tmp.current, "tree", "sub"), { recursive: true });
-    writeFileSync(join(tmp.current, "tree", "top.txt"), "t");
-    writeFileSync(join(tmp.current, "tree", "sub", "nested.txt"), "n");
     const { layer, requests } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
+      files: { "tree/top.txt": "t", "tree/sub/nested.txt": "n" },
       routes: [
         { method: "POST", match: LIST("private"), body: [{ name: "dir", id: null }] },
         { method: "POST", match: OBJECT("private/dir/tree/top.txt"), body: {} },
@@ -257,7 +303,11 @@ describe("legacy storage cp", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* legacyStorageCp(
-        cpFlags({ src: join(tmp.current, "tree"), dst: "ss:///private/dir/", recursive: true }),
+        cpFlags({
+          src: testPath.join(tmp.current, "tree"),
+          dst: "ss:///private/dir/",
+          recursive: true,
+        }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.some((r) => r.url.includes(OBJECT("private/dir/tree/sub/nested.txt")))).toBe(
@@ -267,11 +317,10 @@ describe("legacy storage cp", () => {
   });
 
   it.live("auto-creates a bucket using its config from supabase/config.toml", () => {
-    mkdirSync(join(tmp.current, "media"), { recursive: true });
-    writeFileSync(join(tmp.current, "media", "a.png"), "x");
     const { layer, requests } = setupLegacyStorage(tmp.current, {
       toml: "[storage.buckets.media]\npublic = true\n",
       local: true,
+      files: { "media/a.png": "x" },
       routes: [
         {
           method: "POST",
@@ -285,7 +334,7 @@ describe("legacy storage cp", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* legacyStorageCp(
-        cpFlags({ src: join(tmp.current, "media"), dst: "ss://", recursive: true }),
+        cpFlags({ src: testPath.join(tmp.current, "media"), dst: "ss://", recursive: true }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const create = requests.find(
@@ -305,15 +354,19 @@ describe("legacy storage cp", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* legacyStorageCp(
-        cpFlags({ src: "ss:///private/empty/", dst: join(tmp.current, "dl"), recursive: true }),
+        cpFlags({
+          src: "ss:///private/empty/",
+          dst: testPath.join(tmp.current, "dl"),
+          recursive: true,
+        }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Object not found: /private/empty/");
+      expect(Formatter.formatJson(exit)).toContain("Object not found: /private/empty/");
     });
   });
 
   it.live("runs already-queued downloads when the walk errors partway (errors.Join parity)", () => {
-    const dst = join(tmp.current, "partial");
+    const dst = testPath.join(tmp.current, "partial");
     const { layer } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -346,7 +399,7 @@ describe("legacy storage cp", () => {
       // The queued a.txt download runs (file written) before the walk error
       // surfaces — the command still fails.
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(readFileSync(join(dst, "a.txt"), "utf8")).toBe("a-content");
+      expect(yield* readText(testPath.join(dst, "a.txt"))).toBe("a-content");
     });
   });
 
@@ -361,7 +414,7 @@ describe("legacy storage cp", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Copying between buckets is not supported");
+      expect(Formatter.formatJson(exit)).toContain("Copying between buckets is not supported");
     });
   });
 
@@ -376,7 +429,7 @@ describe("legacy storage cp", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      const json = JSON.stringify(exit);
+      const json = Formatter.formatJson(exit);
       expect(json).toContain("Unsupported operation");
       expect(json).toContain("to copy between local directories");
     });
@@ -393,7 +446,7 @@ describe("legacy storage cp", () => {
         Effect.exit,
       );
       expect(Exit.isFailure(exit)).toBe(true);
-      const json = JSON.stringify(exit);
+      const json = Formatter.formatJson(exit);
       expect(json).toContain("failed to parse src url");
       expect(json).toContain("missing protocol scheme");
       expect(requests).toHaveLength(0);
@@ -407,42 +460,46 @@ describe("legacy storage cp", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* legacyStorageCp(
-        cpFlags({ src: join(tmp.current, "missing"), dst: "ss:///private", recursive: true }),
+        cpFlags({
+          src: testPath.join(tmp.current, "missing"),
+          dst: "ss:///private",
+          recursive: true,
+        }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
     });
   });
 
   it.live("emits an { uploaded, downloaded } result in json mode", () => {
-    writeFileSync(join(tmp.current, "readme.md"), "hello");
     const { layer, out } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       format: "json",
+      files: { "readme.md": "hello" },
       routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
     });
     return Effect.gen(function* () {
       const exit = yield* legacyStorageCp(
-        cpFlags({ src: join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
+        cpFlags({ src: testPath.join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const success = out.messages.find((m) => m.type === "success");
       const uploaded = success?.data?.["uploaded"] as Array<{ to: string }>;
       expect(uploaded?.[0]?.to).toBe("/private/readme.md");
-      expect(existsSync(join(tmp.current, "readme.md"))).toBe(true);
+      expect(yield* exists(testPath.join(tmp.current, "readme.md"))).toBe(true);
     });
   });
 
   it.live("targets the linked project's Storage host and flushes telemetry on upload", () => {
-    writeFileSync(join(tmp.current, "readme.md"), "hello world");
     const { layer, requests, telemetry, linkedCache } = setupLegacyStorage(tmp.current, {
+      files: { "readme.md": "hello world" },
       // No `--local`, so the linked path resolves the ref + service-role key.
       routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
     });
     return Effect.gen(function* () {
       const exit = yield* legacyStorageCp(
         cpFlags({
-          src: join(tmp.current, "readme.md"),
+          src: testPath.join(tmp.current, "readme.md"),
           dst: "ss:///private/readme.md",
           local: false,
         }),
@@ -461,13 +518,16 @@ describe("legacy storage cp", () => {
     // `opts.projectRef` (the fake's own fallback) is left at its default
     // (LEGACY_VALID_REF) — the flag must win over it and drive the gateway host.
     const FLAG_REF = "flagflagflagflagflag";
-    writeFileSync(join(tmp.current, "readme.md"), "hello world");
     const { layer, requests, linkedCache } = setupLegacyStorage(tmp.current, {
+      files: { "readme.md": "hello world" },
       routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
     });
     return Effect.gen(function* () {
       const exit = yield* legacyStorageCp({
-        ...cpFlags({ src: join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
+        ...cpFlags({
+          src: testPath.join(tmp.current, "readme.md"),
+          dst: "ss:///private/readme.md",
+        }),
         local: false,
         projectRef: Option.some(FLAG_REF),
       }).pipe(Effect.provide(layer), Effect.exit);
@@ -481,19 +541,22 @@ describe("legacy storage cp", () => {
 
   it.live("rejects --project-ref combined with --local", () => {
     const FLAG_REF = "flagflagflagflagflag";
-    writeFileSync(join(tmp.current, "readme.md"), "hello world");
     const { layer, requests, linkedCache } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
+      files: { "readme.md": "hello world" },
     });
     return Effect.gen(function* () {
       const exit = yield* legacyStorageCp({
-        ...cpFlags({ src: join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
+        ...cpFlags({
+          src: testPath.join(tmp.current, "readme.md"),
+          dst: "ss:///private/readme.md",
+        }),
         local: true,
         projectRef: Option.some(FLAG_REF),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain(
+      expect(Formatter.formatJson(exit)).toContain(
         "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
       );
       expect(requests).toHaveLength(0);
@@ -502,10 +565,10 @@ describe("legacy storage cp", () => {
   });
 
   it.live("propagates a non-200 from the gateway on upload", () => {
-    writeFileSync(join(tmp.current, "readme.md"), "hello");
     const { layer } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
+      files: { "readme.md": "hello" },
       routes: [
         {
           method: "POST",
@@ -517,24 +580,24 @@ describe("legacy storage cp", () => {
     });
     return Effect.gen(function* () {
       const exit = yield* legacyStorageCp(
-        cpFlags({ src: join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
+        cpFlags({ src: testPath.join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Error status 503");
+      expect(Formatter.formatJson(exit)).toContain("Error status 503");
     });
   });
 
   it.live("emits the uploaded result as a streamed event in stream-json mode", () => {
-    writeFileSync(join(tmp.current, "readme.md"), "hello");
     const { layer, out } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
       format: "stream-json",
+      files: { "readme.md": "hello" },
       routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
     });
     return Effect.gen(function* () {
       const exit = yield* legacyStorageCp(
-        cpFlags({ src: join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
+        cpFlags({ src: testPath.join(tmp.current, "readme.md"), dst: "ss:///private/readme.md" }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const success = out.messages.find((m) => m.type === "success");
@@ -544,16 +607,16 @@ describe("legacy storage cp", () => {
   });
 
   it.live("clamps --jobs below 1 to a single worker", () => {
-    writeFileSync(join(tmp.current, "readme.md"), "hello");
     const { layer, requests } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
+      files: { "readme.md": "hello" },
       routes: [{ method: "POST", match: OBJECT("private/readme.md"), body: {} }],
     });
     return Effect.gen(function* () {
       const exit = yield* legacyStorageCp(
         cpFlags({
-          src: join(tmp.current, "readme.md"),
+          src: testPath.join(tmp.current, "readme.md"),
           dst: "ss:///private/readme.md",
           jobs: 0,
         }),
@@ -564,7 +627,7 @@ describe("legacy storage cp", () => {
   });
 
   it.live("downloads nested objects in parallel with --jobs 2", () => {
-    const dst = join(tmp.current, "dl-parallel");
+    const dst = testPath.join(tmp.current, "dl-parallel");
     const { layer } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -586,8 +649,8 @@ describe("legacy storage cp", () => {
         cpFlags({ src: "ss:///private/", dst, recursive: true, jobs: 2 }),
       ).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      expect(readFileSync(join(dst, "a.txt"), "utf8")).toBe("a-content");
-      expect(readFileSync(join(dst, "b.txt"), "utf8")).toBe("b-content");
+      expect(yield* readText(testPath.join(dst, "a.txt"))).toBe("a-content");
+      expect(yield* readText(testPath.join(dst, "b.txt"))).toBe("b-content");
     });
   });
 });

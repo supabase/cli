@@ -1,5 +1,5 @@
 import { Cause, Effect, Exit } from "effect";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 
 import { stripAnsi } from "../../../../../../tests/helpers/ansi.ts";
 import { LegacyDeclarativeNotEnabledError } from "./declarative.errors.ts";
@@ -33,35 +33,39 @@ describe("legacyPgDeltaSuggestion", () => {
 });
 
 describe("legacyRequirePgDelta", () => {
-  it("passes through when the gate is open", async () => {
-    const exit = await Effect.runPromiseExit(
-      legacyRequirePgDelta({
-        experimental: true,
-        pgDeltaEnabled: false,
-        configPath: "supabase/config.toml",
-      }),
-    );
-    expect(Exit.isSuccess(exit)).toBe(true);
-  });
+  it.effect("passes through when the gate is open", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyRequirePgDelta({
+          experimental: true,
+          pgDeltaEnabled: false,
+          configPath: "supabase/config.toml",
+        }),
+      );
+      expect(Exit.isSuccess(exit)).toBe(true);
+    }),
+  );
 
-  it("fails with LegacyDeclarativeNotEnabledError when the gate is closed", async () => {
-    const exit = await Effect.runPromiseExit(
-      legacyRequirePgDelta({
-        experimental: false,
-        pgDeltaEnabled: false,
-        configPath: "supabase/config.toml",
-      }),
-    );
-    expect(Exit.isFailure(exit)).toBe(true);
-    if (Exit.isFailure(exit)) {
-      const error = exit.cause.reasons.find(Cause.isFailReason)?.error;
-      expect(error).toBeInstanceOf(LegacyDeclarativeNotEnabledError);
-      expect(error?.message).toBe(
-        "declarative commands require --experimental flag or pg-delta enabled in config",
+  it.effect("fails with LegacyDeclarativeNotEnabledError when the gate is closed", () =>
+    Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyRequirePgDelta({
+          experimental: false,
+          pgDeltaEnabled: false,
+          configPath: "supabase/config.toml",
+        }),
       );
-      expect(stripAnsi((error as LegacyDeclarativeNotEnabledError).suggestion)).toBe(
-        EXPECTED_SUGGESTION,
-      );
-    }
-  });
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const error = exit.cause.reasons.find(Cause.isFailReason)?.error;
+        expect(error).toBeInstanceOf(LegacyDeclarativeNotEnabledError);
+        expect(error?.message).toBe(
+          "declarative commands require --experimental flag or pg-delta enabled in config",
+        );
+        expect(stripAnsi((error as LegacyDeclarativeNotEnabledError).suggestion)).toBe(
+          EXPECTED_SUGGESTION,
+        );
+      }
+    }),
+  );
 });

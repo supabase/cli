@@ -1,3 +1,4 @@
+import { Data } from "effect";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -530,8 +531,8 @@ export function goStringCompare(a: string, b: string): number {
  * r3685767973). The ASCII-only {@link isDigit} stays for the scalar parser.
  */
 function yamlKeyLess(a: string, b: string): boolean {
-  const ar = [...a];
-  const br = [...b];
+  const ar = Array.from(a);
+  const br = Array.from(b);
   let digits = false;
   for (let i = 0; i < ar.length && i < br.length; i++) {
     const ac = ar[i] as string;
@@ -1055,11 +1056,12 @@ function yamlBlockLiteral(s: string, indent: number): string {
  * `nullable.Nullable` field (`map[bool]T` has a non-string key type — observed
  * on `snippets list -o toml`) or a `nil` element inside an inline array.
  */
-export class LegacyGoTomlEncodeError extends Error {
+export class LegacyGoTomlEncodeError extends Data.TaggedError("LegacyGoTomlEncodeError")<{
+  readonly message: string;
+}> {
   static readonly [ErrorActionabilityFingerprintId] = "LegacyGoTomlEncodeError";
   constructor(message = "toml: cannot encode a map with non-string key type") {
-    super(message);
-    this.name = "LegacyGoTomlEncodeError";
+    super({ message });
   }
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

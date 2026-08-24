@@ -1,10 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { BunPath, BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, Path } from "effect";
 
-import { BunServices } from "@effect/platform-bun";
-import { afterAll, describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem } from "effect";
+import { useLegacyTempWorkdir } from "../../../tests/helpers/legacy-mocks.ts";
 
 import {
   legacyLoadProfile,
@@ -12,8 +10,8 @@ import {
   type LegacyProfileLoadError,
 } from "./legacy-profile-load.ts";
 
-const tempRoot = mkdtempSync(join(tmpdir(), "supabase-profile-load-"));
-afterAll(() => rmSync(tempRoot, { recursive: true, force: true }));
+const tempRoot = useLegacyTempWorkdir("supabase-profile-load-");
+const testPath = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
 
 const load = (token: string) =>
   Effect.gen(function* () {
@@ -27,11 +25,13 @@ const loadError = (token: string) =>
     Effect.map((error: LegacyProfileLoadError) => error.message),
   );
 
-const writeProfile = (name: string, content: string): string => {
-  const filePath = join(tempRoot, name);
-  writeFileSync(filePath, content);
-  return filePath;
-};
+const writeProfile = (name: string, content: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const filePath = testPath.join(tempRoot.current, name);
+    yield* fs.writeFileString(filePath, content);
+    return filePath;
+  }).pipe(Effect.provide(BunServices.layer));
 
 describe("legacyLoadProfile", () => {
   it.effect("resolves built-in profile names case-insensitively (Go strings.EqualFold)", () =>
@@ -69,8 +69,8 @@ describe("legacyLoadProfile", () => {
     Effect.gen(function* () {
       // Node's `path.extname(".yml")` is "" — Go's filepath.Ext is ".yml", so
       // viper accepts the type and fails at the open() instead.
-      expect(yield* loadError(join(tempRoot, ".yml"))).toBe(
-        `failed to read profile: open ${join(tempRoot, ".yml")}: no such file or directory`,
+      expect(yield* loadError(testPath.join(tempRoot.current, ".yml"))).toBe(
+        `failed to read profile: open ${testPath.join(tempRoot.current, ".yml")}: no such file or directory`,
       );
     }),
   );
@@ -85,15 +85,16 @@ describe("legacyLoadProfile", () => {
 
   it.effect("fails on a directory with Go's read error", () =>
     Effect.gen(function* () {
-      const dir = join(tempRoot, "dir.yml");
-      mkdirSync(dir, { recursive: true });
+      const fs = yield* FileSystem.FileSystem;
+      const dir = testPath.join(tempRoot.current, "dir.yml");
+      yield* fs.makeDirectory(dir, { recursive: true });
       expect(yield* loadError(dir)).toBe(`failed to read profile: read ${dir}: is a directory`);
-    }),
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it.effect("resolves a valid YAML profile to its api_url", () =>
     Effect.gen(function* () {
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "valid.yml",
         [
           "name: harness",
@@ -111,7 +112,7 @@ describe("legacyLoadProfile", () => {
       const fs = yield* FileSystem.FileSystem;
       // `Name:` / `API_URL:` decode exactly like their lowercase spellings
       // (viper `insensitiviseMap`; review r3689635101).
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "mixed-case.yml",
         [
           "Name: harness",
@@ -136,7 +137,7 @@ describe("legacyLoadProfile", () => {
       expect(builtin.dashboardUrl).toBe("https://supabase.green/dashboard");
       // YAML: `project_host`/`dashboard_url` are required, `pooler_host` is
       // `omitempty` and stays empty when absent (disables the MITM assertion).
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "endpoints.yml",
         [
           "name: harness",
@@ -154,7 +155,7 @@ describe("legacyLoadProfile", () => {
 
   it.effect("reports unknown keys LOWERCASED, like viper's pre-decode normalization", () =>
     Effect.gen(function* () {
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "bogus-upper.yml",
         [
           "name: harness",
@@ -178,7 +179,7 @@ describe("legacyLoadProfile", () => {
         expect((yield* legacyLoadProfile("SUPABASE-LOCAL", fs)).name).toBe("supabase-local");
         // File profile: `UnmarshalExact` populates Name from the required
         // `name:` key, NOT from the file path.
-        const file = writeProfile(
+        const file = yield* writeProfile(
           "named.yml",
           [
             "name: harness",
@@ -195,7 +196,7 @@ describe("legacyLoadProfile", () => {
     Effect.gen(function* () {
       // Byte-captured from the Go binary (`od -c`, PR #5974 round 7): keys
       // sorted, every line padded with spaces to the longest line's width.
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "extra-keys.yml",
         [
           "name: extra",
@@ -220,7 +221,7 @@ describe("legacyLoadProfile", () => {
       Effect.gen(function* () {
         // Byte-captured from the Go binary: `invalid profile: ` + one line per
         // failing field (struct order), padded to the longest line's width.
-        const file = writeProfile("incomplete.yml", "name: incomplete\n");
+        const file = yield* writeProfile("incomplete.yml", "name: incomplete\n");
         const lines = [
           "invalid profile: Key: 'Profile.APIURL' Error:Field validation for 'APIURL' failed on the 'required' tag",
           "Key: 'Profile.DashboardURL' Error:Field validation for 'DashboardURL' failed on the 'required' tag",
@@ -233,7 +234,7 @@ describe("legacyLoadProfile", () => {
 
   it.effect("reports a missing name (only) — required covers empty strings", () =>
     Effect.gen(function* () {
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "noname.yml",
         [
           "api_url: http://127.0.0.1:44444",
@@ -253,7 +254,7 @@ describe("legacyLoadProfile", () => {
       Effect.gen(function* () {
         // Binary-verified: viper decodes with WeaklyTypedInput, so the int
         // reaches go-playground/validator and fails the `http_url` tag.
-        const file = writeProfile(
+        const file = yield* writeProfile(
           "typebad.yml",
           [
             "name: t",
@@ -270,7 +271,7 @@ describe("legacyLoadProfile", () => {
 
   it.effect("validates the hostname_rfc1123 and http_url format tags", () =>
     Effect.gen(function* () {
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "badhost.yml",
         [
           "name: t",
@@ -292,7 +293,7 @@ describe("legacyLoadProfile", () => {
     Effect.gen(function* () {
       // Detail text comes from the JS yaml package (documented micro-
       // divergence); the class — abort before any request — matches Go.
-      const file = writeProfile("malformed.yml", "name: [broken\n  api_url");
+      const file = yield* writeProfile("malformed.yml", "name: [broken\n  api_url");
       const message = yield* loadError(file);
       expect(message).toMatch(/^failed to read profile: While parsing config: /);
     }),
@@ -300,7 +301,7 @@ describe("legacyLoadProfile", () => {
 
   it.effect("fails closed on unconvertible values (array on a string field)", () =>
     Effect.gen(function* () {
-      const file = writeProfile(
+      const file = yield* writeProfile(
         "arrayval.yml",
         [
           "name: t",

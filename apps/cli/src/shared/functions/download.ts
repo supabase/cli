@@ -1,9 +1,9 @@
 import { operationDefinitions, SupabaseApiInputError, type ApiClient } from "@supabase/api/effect";
 import { randomUUID } from "node:crypto";
-import { mkdir, open, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
+import { BunPath } from "@effect/platform-bun";
 import { fileURLToPath } from "node:url";
-import { Effect, FileSystem, Option } from "effect";
+import { Config, Effect, FileSystem, Option, Schema } from "effect";
+import * as EffectPath from "effect/Path";
 import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -28,6 +28,12 @@ import {
   runChildProcess,
 } from "./functions-docker.ts";
 import { loadFunctionsProjectConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
+
+const { dirname, isAbsolute, join, relative, resolve, sep } = Effect.runSync(
+  EffectPath.Path.pipe(Effect.provide(BunPath.layer)),
+);
+const posix = Effect.runSync(EffectPath.Path.pipe(Effect.provide(BunPath.layerPosix)));
+const decodeJsonText = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 import {
   edgeRuntimeImage,
   FUNCTIONS_BUNDLER_MUTEX_GROUP,
@@ -41,7 +47,11 @@ import {
   InvalidFunctionSlugError,
   UnsafeFunctionDownloadPathError,
 } from "./download.errors.ts";
-import { FunctionsApiStatusError, FunctionsApiTransportError } from "./functions-api.errors.ts";
+import {
+  FunctionsApiStatusError,
+  FunctionsApiTransportError,
+  FunctionsOperationError,
+} from "./functions-api.errors.ts";
 
 const legacyEntrypointPath = "file:///src/index.ts";
 // Go: `utils.DockerDenoDir`/`utils.DockerEszipDir` (`internal/utils/deno.go:34-35`)
@@ -452,7 +462,10 @@ function readContentDispositionParam(
     new RegExp(`(?:^|;)\\s*${paramPattern}=([^;]*)`, "i"),
   );
   if (assignmentMatch === null) {
-    return Effect.succeed(undefined);
+    return Effect.gen(function* () {
+      yield* Effect.void;
+      return undefined;
+    });
   }
   const token = assignmentMatch[1]?.trim() ?? "";
   if (token.length > 0 && !token.startsWith('"') && !/\s/.test(token)) {
@@ -502,7 +515,10 @@ function readFormFieldName(
 ): Effect.Effect<string | undefined, InvalidFunctionDownloadResponseError> {
   const contentDisposition = headers["content-disposition"];
   if (contentDisposition === undefined) {
-    return Effect.succeed(undefined);
+    return Effect.gen(function* () {
+      yield* Effect.void;
+      return undefined;
+    });
   }
   return readContentDispositionParam(contentDisposition, "name");
 }
@@ -652,32 +668,26 @@ function writeFileWithoutFollowingSymlinks(
   sourcePath: string,
 ) {
   return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
     const tempDestination = join(dirname(destination), `.supabase-download-${randomUUID()}.tmp`);
-    const file = yield* Effect.tryPromise({
-      try: () => open(tempDestination, "wx"),
-      catch: (cause) =>
-        new UnsafeFunctionDownloadPathError({
-          message: `failed to create temporary Function file while extracting ${sourcePath}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        }),
-    });
+    yield* fs.writeFile(tempDestination, body, { flag: "wx" }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new UnsafeFunctionDownloadPathError({
+            message: `failed to write Function file: ${sourcePath}: ${cause.message}`,
+          }),
+      ),
+    );
 
-    yield* Effect.tryPromise({
-      try: () => file.writeFile(body),
-      catch: (cause) =>
-        new UnsafeFunctionDownloadPathError({
-          message: `failed to write Function file: ${sourcePath}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        }),
-    }).pipe(Effect.ensuring(Effect.promise(() => file.close()).pipe(Effect.ignore)));
-
-    yield* Effect.tryPromise({
-      try: () => rename(tempDestination, destination),
-      catch: (cause) =>
-        new UnsafeFunctionDownloadPathError({
-          message: `failed to move Function file into place: ${sourcePath}: ${cause instanceof Error ? cause.message : String(cause)}`,
-        }),
-    }).pipe(
+    yield* fs.rename(tempDestination, destination).pipe(
+      Effect.mapError(
+        (cause) =>
+          new UnsafeFunctionDownloadPathError({
+            message: `failed to move Function file into place: ${sourcePath}: ${cause.message}`,
+          }),
+      ),
       Effect.catch((error) =>
-        Effect.promise(() => rm(tempDestination, { force: true })).pipe(
+        fs.remove(tempDestination, { force: true }).pipe(
           Effect.ignore,
           Effect.andThen(() => Effect.fail(error)),
         ),
@@ -695,17 +705,15 @@ const listRemoteFunctionSlugs = Effect.fnUntraced(function* (api: ApiClient, pro
 
   const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
   if (response.status !== 200) {
-    return yield* Effect.fail(
-      new FunctionsApiStatusError({
-        status: response.status,
-        message: `unexpected list functions status ${response.status}: ${body}`,
-      }),
-    );
+    return yield* new FunctionsApiStatusError({
+      status: response.status,
+      message: `unexpected list functions status ${response.status}: ${body}`,
+    });
   }
 
   return yield* Effect.try({
     try: () => {
-      const parsed = JSON.parse(body);
+      const parsed = decodeJsonText(body);
       if (!Array.isArray(parsed)) {
         throw new Error("expected functions list response to be an array");
       }
@@ -771,23 +779,19 @@ const getRemoteFunction = Effect.fnUntraced(function* (
     case 200:
       break;
     case 404:
-      return yield* Effect.fail(
-        new FunctionDownloadNotFoundError({
-          message: `Function ${slug} does not exist on the Supabase project.`,
-        }),
-      );
+      return yield* new FunctionDownloadNotFoundError({
+        message: `Function ${slug} does not exist on the Supabase project.`,
+      });
     default:
-      return yield* Effect.fail(
-        new FunctionsApiStatusError({
-          status: response.status,
-          message: `Failed to download Function ${slug} on the Supabase project: ${body}`,
-        }),
-      );
+      return yield* new FunctionsApiStatusError({
+        status: response.status,
+        message: `Failed to download Function ${slug} on the Supabase project: ${body}`,
+      });
   }
 
   return yield* Effect.try({
     try: () => {
-      const parsed = JSON.parse(body);
+      const parsed = decodeJsonText(body);
       const entrypointPath = getObjectProperty(parsed, "entrypoint_path");
       return typeof entrypointPath === "string" && entrypointPath.length > 0
         ? { entrypoint_path: entrypointPath }
@@ -821,13 +825,11 @@ const downloadBody = Effect.fnUntraced(function* (
   }
 
   const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-  return yield* Effect.fail(
-    new FunctionsApiStatusError({
-      status: response.status,
-      message: `Error status ${response.status}: ${body}`,
-      notFoundIsInvalidInput: true,
-    }),
-  );
+  return yield* new FunctionsApiStatusError({
+    status: response.status,
+    message: `Error status ${response.status}: ${body}`,
+    notFoundIsInvalidInput: true,
+  });
 });
 
 // Go: `downloadOne` (`apps/cli-go/internal/functions/download/download.go:218-245`)
@@ -870,16 +872,19 @@ const downloadEszipBody = Effect.fnUntraced(function* (
 
   if (response.status !== 200) {
     const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-    return yield* Effect.fail(new Error(`Error status ${response.status}: ${body}`));
+    return yield* new FunctionsOperationError({
+      message: `Error status ${response.status}: ${body}`,
+    });
   }
 
   return new Uint8Array(
     yield* response.arrayBuffer.pipe(
       Effect.mapError(
         (cause) =>
-          new Error(
-            `failed to download file: ${cause instanceof Error ? cause.message : String(cause)}`,
-          ),
+          new FunctionsOperationError({
+            message: `failed to download file: ${cause instanceof Error ? cause.message : String(cause)}`,
+            cause,
+          }),
       ),
     ),
   );
@@ -1007,6 +1012,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
   projectRef: string,
   slug: string,
 ) {
+  const fs = yield* FileSystem.FileSystem;
   const output = yield* Output;
   const styleEmphasis = dependencies.styleEmphasis ?? ((text: string) => text);
   const styleAqua = dependencies.styleAqua ?? ((text: string) => text);
@@ -1022,20 +1028,26 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
   const eszip = yield* downloadEszipBody(dependencies.api, projectRef, slug);
 
   const tempDir = join(dependencies.projectRoot, "supabase", ".temp");
-  yield* Effect.tryPromise({
-    try: () => mkdir(tempDir, { recursive: true }),
-    catch: (cause) =>
-      new Error(`failed to mkdir: ${cause instanceof Error ? cause.message : String(cause)}`),
-  });
+  yield* fs.makeDirectory(tempDir, { recursive: true }).pipe(
+    Effect.mapError(
+      (cause) =>
+        new FunctionsOperationError({
+          message: `failed to mkdir: ${cause.message}`,
+          cause,
+        }),
+    ),
+  );
   const eszipFileName = `output_${slug}.eszip`;
   const eszipPath = join(tempDir, eszipFileName);
-  yield* Effect.tryPromise({
-    try: () => writeFile(eszipPath, eszip),
-    catch: (cause) =>
-      new Error(
-        `failed to download file: ${cause instanceof Error ? cause.message : String(cause)}`,
-      ),
-  });
+  yield* fs.writeFile(eszipPath, eszip).pipe(
+    Effect.mapError(
+      (cause) =>
+        new FunctionsOperationError({
+          message: `failed to download file: ${cause.message}`,
+          cause,
+        }),
+    ),
+  );
 
   // Go: the `defer fsys.Remove(eszipPath)` cleanup is registered right after
   // the write and covers the whole of `extractOne`, including the container
@@ -1057,10 +1069,9 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
   const debugEnabled = explicitBooleanLongFlag(dependencies.rawArgs, "debug") ?? false;
   const cleanupEszip = debugEnabled
     ? Effect.void
-    : Effect.tryPromise({
-        try: () => rm(eszipPath, { force: true }),
-        catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
-      }).pipe(Effect.catch((message) => output.raw(`${message}\n`, "stderr")));
+    : fs
+        .remove(eszipPath, { force: true })
+        .pipe(Effect.catch((cause) => output.raw(`${cause.message}\n`, "stderr")));
 
   const { projectId, denoVersion, image, projectEnvValues } = edgeRuntimeImage;
   const functionsDir = resolve(dependencies.projectRoot, "supabase", "functions");
@@ -1081,7 +1092,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
     envOverride:
       projectEnvValues === undefined
         ? undefined
-        : legacyViperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
+        : yield* legacyViperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
     projectId,
   });
 
@@ -1091,9 +1102,11 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
     yield* ensureDockerNetwork(networkMode, projectId).pipe(
       Effect.mapError(withLegacyBundleSuggestion(slug, styleAqua)),
     );
-    yield* ensureDockerNamedVolume(localDockerId("edge_runtime", projectId), projectId).pipe(
-      Effect.mapError(withLegacyBundleSuggestion(slug, styleAqua)),
-    );
+    yield* ensureDockerNamedVolume(
+      localDockerId("edge_runtime", projectId),
+      projectId,
+      projectEnvValues,
+    ).pipe(Effect.mapError(withLegacyBundleSuggestion(slug, styleAqua)));
 
     // Bind order matches `extractOne` (`download.go:260-266`) exactly. Go's
     // `DockerStart` drops the named-volume bind entirely on Bitbucket
@@ -1102,8 +1115,12 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
     // implicitly create the named volume, which Bitbucket's restricted Docker
     // environment doesn't allow, same carve-out as `deploy.ts`'s
     // `buildDockerBinds`.
+    const bitbucketCloneDir =
+      projectEnvValues === undefined
+        ? Option.getOrUndefined(yield* Config.option(Config.string("BITBUCKET_CLONE_DIR")))
+        : yield* legacyViperEnvStringWithProjectFallback("BITBUCKET_CLONE_DIR", projectEnvValues);
     const binds = [
-      ...(process.env["BITBUCKET_CLONE_DIR"] === undefined
+      ...(bitbucketCloneDir === undefined || bitbucketCloneDir.length === 0
         ? [`${localDockerId("edge_runtime", projectId)}:/root/.cache/deno:rw`]
         : []),
       `${hostEszipPath}:${dockerEszipPath}:ro`,
@@ -1153,11 +1170,10 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
           .some((line) => line.trim().toLowerCase() === "invalid eszip v2");
       const suggestion =
         (invalidEszipV2 ? suggestDenoV2(styleEmphasis) : "") + suggestLegacyBundle(slug, styleAqua);
-      return yield* Effect.fail(
-        Object.assign(new Error(`error running container: exit ${result.exitCode}`), {
-          suggestion,
-        }),
-      );
+      return yield* new FunctionsOperationError({
+        message: `error running container: exit ${result.exitCode}`,
+        suggestion,
+      });
     }
 
     // Go: `downloadWithDockerUnbundle` has no final "Downloaded Function ..."

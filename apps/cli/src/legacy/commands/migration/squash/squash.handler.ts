@@ -255,9 +255,7 @@ const squashToVersion = Effect.fnUntraced(function* (
   const output = yield* Output;
   const migrations = yield* legacyLoadPartialMigrations(fs, path, migrationsDir, version);
   if (migrations.length === 0) {
-    return yield* Effect.fail(
-      new LegacyMigrationSquashMissingVersionError({ message: "version not found" }),
-    );
+    return yield* new LegacyMigrationSquashMissingVersionError({ message: "version not found" });
   }
 
   const local = migrations[migrations.length - 1]!;
@@ -361,11 +359,9 @@ const baselineMigrations = Effect.fnUntraced(function* (
         resolvedVersion,
       );
       if (Option.isNone(resolvedFile)) {
-        return yield* Effect.fail(
-          new LegacyMigrationFileNotFoundError({
-            message: `glob supabase/migrations/${resolvedVersion}_*.sql: file does not exist`,
-          }),
-        );
+        return yield* new LegacyMigrationFileNotFoundError({
+          message: `glob supabase/migrations/${resolvedVersion}_*.sql: file does not exist`,
+        });
       }
       const m = yield* legacyReadMigrationFile(fs, path, resolvedFile.value);
 
@@ -417,24 +413,14 @@ const runSquash = Effect.fnUntraced(function* (
     // 1. Flag groups — parse-time mutual-exclusivity check, ahead of the root
     // pre-run.
     if (target.setFlags.length > 1) {
-      return yield* Effect.fail(
-        new LegacyMigrationTargetFlagsError({
-          message: cobraMutuallyExclusiveErrorMessage(
-            ["db-url", "linked", "local"],
-            target.setFlags,
-          ),
-        }),
-      );
+      return yield* new LegacyMigrationTargetFlagsError({
+        message: cobraMutuallyExclusiveErrorMessage(["db-url", "linked", "local"], target.setFlags),
+      });
     }
     if (Option.isSome(flags.dbUrl) && Option.isSome(flags.password)) {
-      return yield* Effect.fail(
-        new LegacyMigrationPasswordFlagsError({
-          message: cobraMutuallyExclusiveErrorMessage(
-            ["db-url", "password"],
-            ["db-url", "password"],
-          ),
-        }),
-      );
+      return yield* new LegacyMigrationPasswordFlagsError({
+        message: cobraMutuallyExclusiveErrorMessage(["db-url", "password"], ["db-url", "password"]),
+      });
     }
 
     const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
@@ -445,12 +431,10 @@ const runSquash = Effect.fnUntraced(function* (
     // discarded on a non-linked target — see push.handler.ts's identical guard
     // (db push) for the full TS-only rationale.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* Effect.fail(
-        new LegacyMigrationTargetFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
+      return yield* new LegacyMigrationTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      });
     }
 
     // 2/3. Linked pre-resolution (mirrors `db diff --linked`, `diff.handler.ts:400-430`):
@@ -505,25 +489,36 @@ const runSquash = Effect.fnUntraced(function* (
     // before any container starts, and each of squash's three
     // pg_dump containers resolves its image through the same registry-mirror lookup —
     // so a dotenv-only mirror override reaches all three dumps below.
-    yield* legacyApplyProjectEnv(projectEnv);
-    const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
+    const effectiveProjectEnv = {
+      ...toml.projectEnv,
+      ...projectEnv,
+      ...(yield* legacyApplyProjectEnv(projectEnv)),
+    };
+    const effectiveToml = { ...toml, projectEnv: effectiveProjectEnv };
+    const effectiveLocalInputs = {
+      ...localInputs,
+      context: {
+        ...localInputs.context,
+        projectEnvValues: {
+          ...localInputs.context.projectEnvValues,
+          ...effectiveProjectEnv,
+        },
+      },
+    };
+    const yes = yield* legacyResolveYesWithProjectEnv(effectiveProjectEnv);
 
     // 7. `--version` validation happens AFTER db-config resolution.
     const version = Option.getOrElse(flags.version, () => "");
     if (version.length > 0) {
       if (legacyParseMigrationVersion(version) === undefined) {
         // Bare message — squash does NOT inherit repair's "failed to parse <v>: " prefix.
-        return yield* Effect.fail(
-          new LegacyMigrationInvalidVersionError({ message: "invalid version number" }),
-        );
+        return yield* new LegacyMigrationInvalidVersionError({ message: "invalid version number" });
       }
       const versionFile = yield* legacyResolveMigrationFile(fs, path, migrationsDir, version);
       if (Option.isNone(versionFile)) {
-        return yield* Effect.fail(
-          new LegacyMigrationFileNotFoundError({
-            message: `glob supabase/migrations/${version}_*.sql: file does not exist`,
-          }),
-        );
+        return yield* new LegacyMigrationFileNotFoundError({
+          message: `glob supabase/migrations/${version}_*.sql: file does not exist`,
+        });
       }
     }
 
@@ -535,8 +530,8 @@ const runSquash = Effect.fnUntraced(function* (
       cliConfig.workdir,
       migrationsDir,
       version,
-      localInputs,
-      toml,
+      effectiveLocalInputs,
+      effectiveToml,
     );
 
     // 9. Local target: suggest `migration repair` instead of touching the remote history.

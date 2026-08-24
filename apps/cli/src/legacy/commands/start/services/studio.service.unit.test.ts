@@ -1,4 +1,7 @@
+import { BunPath } from "@effect/platform-bun";
 import { describe, expect, test } from "vitest";
+import { Effect } from "effect";
+import * as EffectPath from "effect/Path";
 
 import {
   legacyBuildStudioContainerSpec,
@@ -6,7 +9,10 @@ import {
   type LegacyBuildStudioEnvInput,
 } from "./studio.service.ts";
 
+const testPath = Effect.runSync(EffectPath.Path.pipe(Effect.provide(BunPath.layer)));
+
 const baseEnvInput: LegacyBuildStudioEnvInput = {
+  path: testPath,
   dbPassword: "postgres",
   workdir: "/project",
   containerSnippetsPath: "/project/supabase/.temp/snippets",
@@ -112,6 +118,7 @@ describe("legacyBuildStudioEnv", () => {
 
 describe("legacyBuildStudioContainerSpec", () => {
   const baseSpecInput = {
+    path: testPath,
     image: "supabase/studio:2026.07.07-sha-a6a04f2",
     containerName: "supabase_studio_proj",
     networkId: "supabase_network_proj",

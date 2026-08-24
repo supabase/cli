@@ -1,12 +1,11 @@
-import { statSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
-
+import { Data, Effect, FileSystem, Path } from "effect";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityFingerprintId,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
+import { legacyFilesystemErrorMessage } from "../../shared/legacy/legacy-filesystem-error.ts";
 import { legacyGoUrlParse } from "./legacy-storage-url.ts";
 
 /**
@@ -169,8 +168,14 @@ export function legacyParseGoBool(value: string): boolean | undefined {
  * `.toThrow("substring")`), so swapping their inline `throw new Error(...)` calls for this class
  * is a byte-identical, purely internal refactor.
  */
-export class LegacyConfigValidateError extends Error {
+export class LegacyConfigValidateError extends Data.TaggedError("LegacyConfigValidateError")<{
+  readonly message: string;
+}> {
   static readonly [ErrorActionabilityFingerprintId] = "LegacyConfigValidateError";
+  constructor(message: string) {
+    super({ message });
+  }
+
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;
   }
@@ -714,13 +719,19 @@ function isValidJson(value: string): boolean {
 // ── signing keys (path rule: guarded by an isAbsolute check) ──
 
 /** Absolute → verbatim; relative → join(workdir, "supabase", p). */
-export function legacyResolveSigningKeysPath(workdir: string, signingKeysPath: string): string {
-  return isAbsolute(signingKeysPath) ? signingKeysPath : join(workdir, "supabase", signingKeysPath);
+export function legacyResolveSigningKeysPath(
+  path: Path.Path,
+  workdir: string,
+  signingKeysPath: string,
+): string {
+  return path.isAbsolute(signingKeysPath)
+    ? signingKeysPath
+    : path.join(workdir, "supabase", signingKeysPath);
 }
 
 /** `failed to read signing keys: ${msg(cause)}` */
 export function legacySigningKeysReadErrorMessage(cause: unknown): string {
-  return `failed to read signing keys: ${messageOf(cause)}`;
+  return `failed to read signing keys: ${legacyFilesystemErrorMessage(cause)}`;
 }
 
 /** `failed to decode signing keys: ${msg(cause)}` */
@@ -743,6 +754,8 @@ export function legacySigningKeysDecodeErrorMessage(cause: unknown): string {
  * `base` is the caller-resolved project root for both templates and notifications.
  */
 export function legacyResolveEmailTemplateContentPath(args: {
+  readonly path: Path.Path;
+  readonly fileSystem: FileSystem.FileSystem;
   readonly section: "template" | "notification";
   readonly name: string;
   /** Post-env-expand; `""` = absent. */
@@ -750,19 +763,30 @@ export function legacyResolveEmailTemplateContentPath(args: {
   /** Raw `content` key present in the TOML document. */
   readonly contentPresent: boolean;
   readonly base: string;
-}): string | undefined {
+}): Effect.Effect<string | void, LegacyConfigValidateError> {
   if (args.contentPath.length === 0) {
     if (args.contentPresent) {
-      throw new LegacyConfigValidateError(
-        `Invalid config for auth.email.${args.section}.${args.name}.content: please use content_path instead`,
+      return Effect.fail(
+        new LegacyConfigValidateError(
+          `Invalid config for auth.email.${args.section}.${args.name}.content: please use content_path instead`,
+        ),
       );
     }
-    return undefined;
+    return Effect.void.pipe(Effect.asVoid);
   }
   if (args.section === "notification") {
-    return legacyResolveNotificationContentPath(args.base, args.contentPath);
+    return legacyResolveNotificationContentPath(
+      args.path,
+      args.fileSystem,
+      args.base,
+      args.contentPath,
+    );
   }
-  return isAbsolute(args.contentPath) ? args.contentPath : join(args.base, args.contentPath);
+  return Effect.succeed(
+    args.path.isAbsolute(args.contentPath)
+      ? args.contentPath
+      : args.path.join(args.base, args.contentPath),
+  );
 }
 
 /**
@@ -775,19 +799,28 @@ export function legacyResolveEmailTemplateContentPath(args: {
  * loading, and the Kong template mount builder so every consumer sees the
  * SAME file.
  */
-export function legacyResolveNotificationContentPath(base: string, contentPath: string): string {
-  if (isAbsolute(contentPath)) return contentPath;
-  const resolved = join(base, contentPath);
-  if (!legacyIsExistingFile(resolved)) {
-    const legacyResolved = join(base, "supabase", contentPath);
-    if (legacyIsExistingFile(legacyResolved)) return legacyResolved;
-  }
-  return resolved;
-}
-
-/** A directory at the root-resolved path must not suppress the legacy-file fallback. */
-function legacyIsExistingFile(path: string): boolean {
-  return statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
+export function legacyResolveNotificationContentPath(
+  path: Path.Path,
+  fileSystem: FileSystem.FileSystem,
+  base: string,
+  contentPath: string,
+): Effect.Effect<string> {
+  if (path.isAbsolute(contentPath)) return Effect.succeed(contentPath);
+  const resolved = path.join(base, contentPath);
+  const isFile = (candidate: string) =>
+    fileSystem.stat(candidate).pipe(
+      Effect.map((info) => info.type === "File"),
+      Effect.orElseSucceed(() => false),
+    );
+  return isFile(resolved).pipe(
+    Effect.flatMap((exists) => {
+      if (exists) return Effect.succeed(resolved);
+      const legacyResolved = path.join(base, "supabase", contentPath);
+      return isFile(legacyResolved).pipe(
+        Effect.map((legacyExists) => (legacyExists ? legacyResolved : resolved)),
+      );
+    }),
+  );
 }
 
 /** `Invalid config for auth.email.${section}.${name}.content_path: ${msg(cause)}` */
@@ -796,22 +829,22 @@ export function legacyEmailContentPathReadErrorMessage(
   name: string,
   cause: unknown,
 ): string {
-  return `Invalid config for auth.email.${section}.${name}.content_path: ${messageOf(cause)}`;
+  return `Invalid config for auth.email.${section}.${name}.content_path: ${legacyFilesystemErrorMessage(cause)}`;
 }
 
 // ── api.tls cert/key (path rule: NO isAbsolute guard) ──
 
 /** Unconditional join(workdir, "supabase", p) — `path.Join` absorbs a leading "/" too. */
-export function legacyResolveApiTlsPath(workdir: string, p: string): string {
-  return join(workdir, "supabase", p);
+export function legacyResolveApiTlsPath(path: Path.Path, workdir: string, p: string): string {
+  return path.join(workdir, "supabase", p);
 }
 
 /** `failed to read TLS cert: ${msg(cause)}` */
 export function legacyApiTlsCertReadErrorMessage(cause: unknown): string {
-  return `failed to read TLS cert: ${messageOf(cause)}`;
+  return `failed to read TLS cert: ${legacyFilesystemErrorMessage(cause)}`;
 }
 
 /** `failed to read TLS key: ${msg(cause)}` */
 export function legacyApiTlsKeyReadErrorMessage(cause: unknown): string {
-  return `failed to read TLS key: ${messageOf(cause)}`;
+  return `failed to read TLS key: ${legacyFilesystemErrorMessage(cause)}`;
 }

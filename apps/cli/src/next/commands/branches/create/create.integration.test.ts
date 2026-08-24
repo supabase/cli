@@ -1,12 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
 import { makeApiClient, V1CreateABranchOutput } from "@supabase/api/effect";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
-import { ProjectLinkState } from "../../../config/project-link-state.service.ts";
+import {
+  ProjectLinkState,
+  ProjectNotLinkedError,
+} from "../../../config/project-link-state.service.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { classifyCliCauseActionability } from "../../../../shared/telemetry/error-actionability.ts";
 import {
@@ -17,6 +20,7 @@ import {
 } from "../../../../../tests/helpers/mocks.ts";
 import type { CreateFlags } from "./create.command.ts";
 import { create } from "./create.handler.ts";
+import { BranchAlreadyExistsError, NoBranchNameError } from "../errors.ts";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -245,8 +249,15 @@ describe("branches create handler", () => {
 
       const exit = yield* create(BASE_FLAGS).pipe(Effect.provide(layer), Effect.exit);
 
-      expect(JSON.stringify(exit)).toContain("NoBranchNameError");
-      expect(JSON.stringify(exit)).toContain("cancelled");
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBeInstanceOf(NoBranchNameError);
+          expect(error.value).toMatchObject({ _tag: "NoBranchNameError", cancelled: true });
+        }
+      }
     }),
   );
 
@@ -256,8 +267,18 @@ describe("branches create handler", () => {
 
       const exit = yield* create(BASE_FLAGS).pipe(Effect.provide(layer), Effect.exit);
 
-      expect(JSON.stringify(exit)).toContain("NoBranchNameError");
-      expect(JSON.stringify(exit)).toContain("supabase branches create");
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBeInstanceOf(NoBranchNameError);
+          expect(error.value).toMatchObject({
+            _tag: "NoBranchNameError",
+            suggestion: "Provide a branch name: `supabase branches create <name>`",
+          });
+        }
+      }
     }),
   );
 
@@ -283,7 +304,15 @@ describe("branches create handler", () => {
 
       const exit = yield* create(BASE_FLAGS).pipe(Effect.provide(layer), Effect.exit);
 
-      expect(JSON.stringify(exit)).toContain("NoBranchNameError");
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBeInstanceOf(NoBranchNameError);
+          expect(error.value).toMatchObject({ _tag: "NoBranchNameError" });
+        }
+      }
     }),
   );
 
@@ -294,8 +323,18 @@ describe("branches create handler", () => {
 
       const exit = yield* create(flags).pipe(Effect.provide(layer), Effect.exit);
 
-      expect(JSON.stringify(exit)).toContain("ProjectNotLinkedError");
-      expect(JSON.stringify(exit)).toContain("supabase link");
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBeInstanceOf(ProjectNotLinkedError);
+          expect(error.value).toMatchObject({
+            _tag: "ProjectNotLinkedError",
+            suggestion: "Run `supabase link` first.",
+          });
+        }
+      }
     }),
   );
 
@@ -413,8 +452,15 @@ describe("branches create handler", () => {
 
       const exit = yield* create(BASE_FLAGS).pipe(Effect.provide(layer), Effect.exit);
 
-      expect(JSON.stringify(exit)).toContain("BranchAlreadyExistsError");
-      expect(JSON.stringify(exit)).toContain("supabase branches create <name>");
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBeInstanceOf(BranchAlreadyExistsError);
+          expect(error.value).toMatchObject({ _tag: "BranchAlreadyExistsError" });
+        }
+      }
     }),
   );
 
@@ -425,8 +471,18 @@ describe("branches create handler", () => {
 
       const exit = yield* create(flags).pipe(Effect.provide(layer), Effect.exit);
 
-      expect(JSON.stringify(exit)).toContain("BranchAlreadyExistsError");
-      expect(JSON.stringify(exit)).toContain("existing-branch");
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBeInstanceOf(BranchAlreadyExistsError);
+          expect(error.value).toMatchObject({
+            _tag: "BranchAlreadyExistsError",
+            detail: 'A branch named "existing-branch" already exists.',
+          });
+        }
+      }
     }),
   );
 

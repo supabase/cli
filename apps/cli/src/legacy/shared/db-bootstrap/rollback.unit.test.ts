@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
+import { BunServices } from "@effect/platform-bun";
 import { Data, Deferred, Effect, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -85,7 +86,7 @@ describe("legacyRollbackStart", () => {
       // call) -> container prune -> network prune; no stop calls (empty list)
       // and no volume prune (deleteVolumes: false).
       expect(mock.spawned.map((args) => args[0])).toEqual(["ps", "container", "network"]);
-    });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.live("requests a volume prune when deleteVolumes is true", () => {
@@ -105,7 +106,7 @@ describe("legacyRollbackStart", () => {
         "volume",
         "network",
       ]);
-    });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.live("swallows a rollback failure, logging it to stderr instead of failing the effect", () => {
@@ -124,7 +125,7 @@ describe("legacyRollbackStart", () => {
       expect(stderr).toHaveBeenCalledTimes(2);
       expect(stderr).toHaveBeenNthCalledWith(1, "Stopping containers...\n");
       expect(stderr).toHaveBeenNthCalledWith(2, "failed to list containers: permission denied\n");
-    });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.live("logs a generic message to stderr when the underlying failure has no stderr text", () => {
@@ -141,7 +142,7 @@ describe("legacyRollbackStart", () => {
       expect(stderr).toHaveBeenCalledTimes(2);
       expect(stderr).toHaveBeenNthCalledWith(1, "Stopping containers...\n");
       expect(stderr).toHaveBeenNthCalledWith(2, "failed to list containers\n");
-    });
+    }).pipe(Effect.provide(BunServices.layer));
   });
 });
 

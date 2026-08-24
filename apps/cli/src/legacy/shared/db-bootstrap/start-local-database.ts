@@ -587,9 +587,9 @@ export const legacyStartLocalDatabase = Effect.fnUntraced(function* (fromBackupF
     ),
   );
   if (studioEnabledForValidation && studioPortForValidation === 0) {
-    yield* Effect.fail(
-      new LegacyDbConfigLoadError({ message: "Missing required field in config: studio.port" }),
-    );
+    return yield* new LegacyDbConfigLoadError({
+      message: "Missing required field in config: studio.port",
+    });
   }
   const studioApiUrlForValidation =
     legacyEnvOverride("SUPABASE_STUDIO_API_URL", config.studio.api_url, projectEnvValues) ??
@@ -612,9 +612,9 @@ export const legacyStartLocalDatabase = Effect.fnUntraced(function* (fromBackupF
     ),
   );
   if (localSmtpEnabledForValidation && localSmtpPortForValidation === 0) {
-    yield* Effect.fail(
-      new LegacyDbConfigLoadError({ message: "Missing required field in config: local_smtp.port" }),
-    );
+    return yield* new LegacyDbConfigLoadError({
+      message: "Missing required field in config: local_smtp.port",
+    });
   }
 
   // Closes an entire recurring class of gaps in the battery above, rather than adding another
@@ -626,20 +626,13 @@ export const legacyStartLocalDatabase = Effect.fnUntraced(function* (fromBackupF
   // auth.external.* required-field validation, auth.email/notification template reads) to
   // surface early. Its result is discarded here — only the fail-fast behavior matters — and
   // `legacyBuildLocalDbContainerInputs` below re-resolves the REAL `values`.
-  yield* Effect.try({
-    try: () =>
-      legacyResolveLocalConfigValues(
-        config,
-        hostnameForValidation,
-        cliConfig.workdir,
-        projectEnvValues,
-        loaded?.document,
-      ),
-    catch: (cause) =>
-      new LegacyDbConfigLoadError({
-        message: cause instanceof Error ? cause.message : String(cause),
-      }),
-  });
+  yield* legacyResolveLocalConfigValues(
+    config,
+    hostnameForValidation,
+    cliConfig.workdir,
+    projectEnvValues,
+    loaded?.document,
+  ).pipe(Effect.mapError((cause) => new LegacyDbConfigLoadError({ message: cause.message })));
 
   // If the db container is already up, tell the caller and stop here. Runs AFTER the config
   // load/validation above, matching the established order of loading config before the

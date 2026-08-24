@@ -103,28 +103,9 @@ export class LegacyHealthCheckTimeoutError extends Data.TaggedError(
  * `fetcher.NewServiceGateway(utils.Config.Api.ExternalUrl,
  * utils.Config.Auth.SecretKey.Value, ...)` (`status.go:213-218`). TLS/CA trust
  * for a local https gateway is the caller's responsibility when composing the
- * `HttpClient.HttpClient` layer this module requires — same split as
- * `legacy-storage-gateway.ts`/`legacyStorageGatewayFetch`.
- *
- * `start.command.ts` composes the `HttpClient.HttpClient` this module
- * requires via `legacyHttpClientLayer` (itself `FetchHttpClient`-backed, and
- * on its own CA-unaware; see that layer's own header) — the same layer
- * `db reset`/`seed buckets` compose for the equivalent gateway calls.
- * `start.handler.ts` layers a CA-trusting override on top of that: when
- * `api.tls.enabled`, `apiExternalUrl` is `https://` against Kong's
- * self-signed local cert (`KONG_LOCAL_CA_CERT`, or a validated
- * `api.tls.cert_path` override), so before calling
- * {@link legacyWaitForHealthyServices} it resolves that same CA via
- * `legacy-storage-credentials.ts`'s `legacyResolveStorageCredentials` (the
- * mechanism `seed buckets`/`storage`/`db reset` already use) and, when a
- * local CA resolves, overrides `FetchHttpClient.Fetch` with
- * `legacyStorageGatewayFetch` around the health-check call via
- * `Effect.provideService`. That override only takes effect against a
- * `FetchHttpClient`-backed `HttpClient.HttpClient` — exactly what
- * `legacyHttpClientLayer` provides — so a stack started with
- * `[api.tls] enabled = true` now gets a `legacyCheckHttpReady` probe that
- * trusts the local Kong CA instead of exhausting `legacyWaitForHealthyServices`'s
- * full 30s budget on a TLS verification failure.
+ * `HttpClient.HttpClient` layer this module requires. The start command also
+ * composes the explicit `LegacyLocalGatewayHttpClient` boundary, which selects
+ * a direct Node transport and the resolved local Kong CA for loopback probes.
  */
 export interface LegacyHealthCheckPostgrestGateway {
   readonly containerId: string;
@@ -388,7 +369,7 @@ export function legacyWaitForHealthyServices(
         );
         stillWatching = failures.map((failure) => failure.containerId);
         if (failures.length > 0) {
-          return yield* Effect.fail(new LegacyHealthCheckProbeError({ failures }));
+          return yield* new LegacyHealthCheckProbeError({ failures });
         }
       });
 
@@ -419,19 +400,17 @@ export function legacyWaitForHealthyServices(
             opts.images,
             scans.find((scan) => scan.runtime !== undefined)?.runtime ?? "docker",
           );
-          return yield* Effect.fail(
-            new LegacyHealthCheckTimeoutError({
-              // Go's `assertContainerHealthy` embeds the id INSIDE the message
-              // (`errors.Errorf("%s container is not running: %s", …)`,
-              // `status.go:150,154`) — a bare space, not an `<id>: ` prefix, so the
-              // joined `errors.Join` text is `<id> container is not ready: <health>`.
-              message: probeError.failures
-                .map((failure) => `${failure.containerId} ${failure.reason}`)
-                .join("\n"),
-              unhealthy: probeError.failures,
-              ...(suggestion === undefined ? {} : { suggestion }),
-            }),
-          );
+          return yield* new LegacyHealthCheckTimeoutError({
+            // Go's `assertContainerHealthy` embeds the id INSIDE the message
+            // (`errors.Errorf("%s container is not running: %s", …)`,
+            // `status.go:150,154`) — a bare space, not an `<id>: ` prefix, so the
+            // joined `errors.Join` text is `<id> container is not ready: <health>`.
+            message: probeError.failures
+              .map((failure) => `${failure.containerId} ${failure.reason}`)
+              .join("\n"),
+            unhealthy: probeError.failures,
+            ...(suggestion === undefined ? {} : { suggestion }),
+          });
         }),
       ),
     );

@@ -159,22 +159,18 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     if (Option.isSome(flags.usePgSchema)) engineSet.push("use-pg-schema");
     if (Option.isSome(flags.usePgDelta)) engineSet.push("use-pg-delta");
     if (engineSet.length > 1) {
-      return yield* Effect.fail(
-        new LegacyDbDiffEngineConflictError({
-          message: `if any flags in the group [use-migra use-pgadmin use-pg-schema use-pg-delta] are set none of the others can be; [${[...engineSet].sort().join(" ")}] were all set`,
-        }),
-      );
+      return yield* new LegacyDbDiffEngineConflictError({
+        message: `if any flags in the group [use-migra use-pgadmin use-pg-schema use-pg-delta] are set none of the others can be; [${[...engineSet].sort().join(" ")}] were all set`,
+      });
     }
     const targetSet: Array<string> = [];
     if (Option.isSome(flags.dbUrl)) targetSet.push("db-url");
     if (Option.isSome(flags.linked)) targetSet.push("linked");
     if (Option.isSome(flags.local)) targetSet.push("local");
     if (targetSet.length > 1) {
-      return yield* Effect.fail(
-        new LegacyDbDiffTargetFlagsError({
-          message: `if any flags in the group [db-url linked local] are set none of the others can be; [${[...targetSet].sort().join(" ")}] were all set`,
-        }),
-      );
+      return yield* new LegacyDbDiffTargetFlagsError({
+        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${[...targetSet].sort().join(" ")}] were all set`,
+      });
     }
 
     // Config is read lazily per path, not unconditionally up front: reading the base
@@ -192,11 +188,9 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     const toSet = to.length > 0;
     if (fromSet || toSet) {
       if (!fromSet || !toSet) {
-        return yield* Effect.fail(
-          new LegacyDbDiffExplicitFlagsError({
-            message: "must set both --from and --to when using explicit diff mode",
-          }),
-        );
+        return yield* new LegacyDbDiffExplicitFlagsError({
+          message: "must set both --from and --to when using explicit diff mode",
+        });
       }
       // `--project-ref` never implies `--linked` and must not be silently
       // discarded — see push.handler.ts's identical guard for the full TS-only
@@ -216,12 +210,10 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         legacyClassifyExplicitRef(from) !== "linked" &&
         legacyClassifyExplicitRef(to) !== "linked"
       ) {
-        return yield* Effect.fail(
-          new LegacyDbDiffTargetFlagsError({
-            message:
-              "--project-ref only applies when targeting the linked project; use it with --linked, or --from/--to linked, in explicit mode",
-          }),
-        );
+        return yield* new LegacyDbDiffTargetFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked, or --from/--to linked, in explicit mode",
+        });
       }
       // `mergedLinkedRef` tracks the linked ref resolved so far (preflight or
       // cascade) so the config read below + a later `migrations` catalog export
@@ -268,12 +260,12 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // Each ref resolves in order; the `linked` branch re-merges the matching
       // `[remotes.<ref>]` block so a later `local` ref read and the trailing
       // `pgDeltaFormatOptions()` see the override. Thread the merged config through.
-      const resolveRef = (ref: string): Effect.Effect<LegacyPgDeltaEndpoint, unknown> =>
+      const resolveRef = (ref: string) =>
         Effect.gen(function* () {
           switch (legacyClassifyExplicitRef(ref)) {
             case "local": {
               const connection = {
-                host: legacyGetHostname(),
+                host: yield* legacyGetHostname,
                 port: cfg.port,
                 user: "postgres",
                 password: cfg.password,
@@ -327,9 +319,9 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
                 connectOptions: { isLocal: false, dnsResolver },
               } satisfies LegacyPgDeltaDatabaseEndpoint;
             default:
-              return yield* Effect.fail(
-                new LegacyDbDiffUnknownTargetError({ message: legacyUnknownTargetMessage(ref) }),
-              );
+              return yield* new LegacyDbDiffUnknownTargetError({
+                message: legacyUnknownTargetMessage(ref),
+              });
           }
         });
       const source = yield* resolveRef(from);
@@ -348,7 +340,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         desired,
         schema: flags.schema,
         formatOptions: Option.getOrElse(cfg.pgDelta.formatOptions, () => ""),
-        debug: legacyIsPgDeltaDebugEnabled(),
+        debug: legacyIsPgDeltaDebugEnabled(cfg.projectEnv),
         strictCoverage: flags.strictCoverage,
       });
       // Explicit-mode output: `--output` file, or stdout with no trailing newline
@@ -407,11 +399,9 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     // as of CLI-1968 and honors `--project-ref` through this function's own
     // target resolve, like every other native engine.)
     if (usePgSchema && Option.isSome(flags.projectRef)) {
-      return yield* Effect.fail(
-        new LegacyDbDiffTargetFlagsError({
-          message: "--project-ref is not supported with --use-pg-schema",
-        }),
-      );
+      return yield* new LegacyDbDiffTargetFlagsError({
+        message: "--project-ref is not supported with --use-pg-schema",
+      });
     }
     if (usePgSchema) {
       // TS-only deprecation notice, printed before delegating (in both text and
@@ -455,12 +445,10 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     // earlier guard, with the `--from/--to linked` exception; this native path
     // never reaches here when explicit mode ran.)
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* Effect.fail(
-        new LegacyDbDiffTargetFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
+      return yield* new LegacyDbDiffTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      });
     }
 
     // Go's `ParseDatabaseConfig` resolves the linked ref via the hard `LoadProjectRef`, THEN
@@ -490,7 +478,10 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     // Make an allowlisted `supabase/.env` registry override visible to the
     // synchronous `process.env` reader the pgAdmin differ's (and the migra/pg-delta
     // shadow's) own image resolver falls back to, reverted when this scope closes.
-    yield* legacyApplyProjectEnv(cfg.projectEnv);
+    const effectiveProjectEnv = {
+      ...cfg.projectEnv,
+      ...(yield* legacyApplyProjectEnv(cfg.projectEnv)),
+    };
     if (cfg.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${cfg.appliedRemote}]\n`, "stderr");
     }
@@ -547,7 +538,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       cwd: cliConfig.workdir,
       npmVersion: Option.getOrUndefined(cfg.pgDelta.npmVersion),
       denoVersion: cfg.denoVersion,
-      projectEnv: cfg.projectEnv,
+      projectEnv: effectiveProjectEnv,
     };
     const formatOptions = Option.getOrElse(cfg.pgDelta.formatOptions, () => "");
 
@@ -623,11 +614,9 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         ),
       );
       if (!running) {
-        return yield* Effect.fail(
-          new LegacyDbDiffDbNotRunningError({
-            message: `${legacyAqua("supabase start")} is not running.`,
-          }),
-        );
+        return yield* new LegacyDbDiffDbNotRunningError({
+          message: `${legacyAqua("supabase start")} is not running.`,
+        });
       }
       yield* emitStatus("Creating shadow database...");
       const shadowBase = yield* resolveShadowRunInput();
@@ -722,7 +711,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
                 },
                 schema: flags.schema,
                 formatOptions,
-                debug: legacyIsPgDeltaDebugEnabled(),
+                debug: legacyIsPgDeltaDebugEnabled(effectiveProjectEnv),
                 strictCoverage: flags.strictCoverage,
               });
               // Keep the per-unit plan files so a multi-unit plan can be written as one

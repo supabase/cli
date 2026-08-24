@@ -19,22 +19,29 @@ export function makePromiseClient<Operations extends object, Error>(
   runtime: ManagedRuntime.ManagedRuntime<never, Error>,
   operations: Operations,
 ): PromiseClient<Operations> {
-  const wrapOperation = (value: unknown): unknown => {
-    if (typeof value === "function") {
-      return (...args: ReadonlyArray<unknown>) =>
-        runtime.runPromise(
-          (value as (...args: ReadonlyArray<unknown>) => Effect.Effect<unknown, unknown, never>)(
-            ...args,
-          ),
-        );
+  const isOperation = (
+    value: unknown,
+  ): value is (...args: ReadonlyArray<unknown>) => Effect.Effect<unknown, Error, never> =>
+    typeof value === "function";
+
+  function wrapOperation<Args extends ReadonlyArray<unknown>, Output>(
+    value: (...args: Args) => Effect.Effect<Output, Error, never>,
+  ): (...args: Args) => Promise<Output>;
+  function wrapOperation<Value extends object>(value: Value): PromiseClient<Value>;
+  function wrapOperation(value: unknown): unknown {
+    if (isOperation(value)) {
+      return (...args: ReadonlyArray<unknown>) => runtime.runPromise(value(...args));
     }
     if (isRecord(value)) {
       return Object.fromEntries(
-        Object.entries(value).map(([key, entry]) => [key, wrapOperation(entry)]),
+        Object.entries(value).map(([key, entry]) => [
+          key,
+          isOperation(entry) || isRecord(entry) ? wrapOperation(entry) : entry,
+        ]),
       );
     }
     return value;
-  };
+  }
 
-  return wrapOperation(operations) as PromiseClient<Operations>;
+  return wrapOperation(operations);
 }

@@ -19,10 +19,9 @@ const config = {
 
 export type FunctionsDeleteFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-const functionsDeleteRuntimeLayer = Layer.mergeAll(
-  platformApiLayer.pipe(Layer.provide(credentialsLayer)),
-  projectLinkStateLayer,
-  commandRuntimeLayer(["functions", "delete"]),
+const functionsDeleteRuntimeLayer = Layer.mergeAll(projectLinkStateLayer).pipe(
+  Layer.provideMerge(platformApiLayer.pipe(Layer.provide(credentialsLayer))),
+  Layer.provideMerge(commandRuntimeLayer(["functions", "delete"])),
 );
 
 export const functionsDeleteCommand = Command.make("delete", config).pipe(

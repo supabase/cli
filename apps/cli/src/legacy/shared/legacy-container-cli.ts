@@ -76,10 +76,10 @@ export const legacySpawnContainerCliWithRuntime = (
 ) =>
   spawner.spawn(ChildProcess.make("docker", args, options)).pipe(
     Effect.map((handle) => ({ handle, runtime: dockerRuntime })),
-    Effect.catch(() =>
+    Effect.catchTag("PlatformError", () =>
       spawner.spawn(ChildProcess.make("podman", args, options)).pipe(
         Effect.map((handle) => ({ handle, runtime: podmanRuntime })),
-        Effect.catch(() =>
+        Effect.catchTag("PlatformError", () =>
           Effect.fail(
             new LegacyContainerRuntimeNotFoundError({
               message: legacyContainerRuntimeNotFoundMessage,
@@ -120,9 +120,9 @@ export const containerCliExitCode = (
   podmanArgs?: ReadonlyArray<string>,
 ) =>
   spawner.exitCode(ChildProcess.make("docker", args, options)).pipe(
-    Effect.catch(() =>
+    Effect.catchTag("PlatformError", () =>
       spawner.exitCode(ChildProcess.make("podman", podmanArgs ?? args, options)).pipe(
-        Effect.catch(() =>
+        Effect.catchTag("PlatformError", () =>
           Effect.fail(
             new LegacyContainerRuntimeNotFoundError({
               message: legacyContainerRuntimeNotFoundMessage,
@@ -139,7 +139,7 @@ export const containerCliExitCode = (
  * `legacy-docker-lifecycle.ts` — every module that spawns `docker`/`podman` and
  * needs its stdout/stderr as text — stop each defining their own copy.
  */
-export function legacyCollectText(stream: Stream.Stream<Uint8Array, unknown>) {
+export function legacyCollectText<E>(stream: Stream.Stream<Uint8Array, E>) {
   const decoder = new TextDecoder();
   return Stream.runFold(
     stream,
@@ -235,9 +235,9 @@ export const legacyContainerCliExitCodeAndStdout = (
         stderr: "ignore",
       } satisfies ChildProcess.CommandOptions;
       const handle = yield* spawner.spawn(ChildProcess.make("docker", args, options)).pipe(
-        Effect.catch(() =>
+        Effect.catchTag("PlatformError", () =>
           spawner.spawn(ChildProcess.make("podman", podmanArgs ?? args, options)).pipe(
-            Effect.catch(() =>
+            Effect.catchTag("PlatformError", () =>
               Effect.fail(
                 new LegacyContainerRuntimeNotFoundError({
                   message: legacyContainerRuntimeNotFoundMessage,

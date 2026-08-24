@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Clock, Effect, FileSystem, Option, Path } from "effect";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyLoadProjectEnv } from "../../../shared/legacy-db-config.toml-read.ts";
 import { legacySignJwtWithJwk } from "../../../shared/legacy-go-jwt.ts";
@@ -57,18 +57,16 @@ export const legacyGenBearerJwt = Effect.fn("legacy.gen.bearer-jwt")(function* (
 
   return yield* Effect.gen(function* () {
     if (Option.isNone(flags.role)) {
-      return yield* Effect.fail(
-        new LegacyGenBearerJwtRoleRequiredError({
-          message: `required flag(s) "role" not set`,
-        }),
-      );
+      return yield* new LegacyGenBearerJwtRoleRequiredError({
+        message: `required flag(s) "role" not set`,
+      });
     }
     const role = flags.role.value;
 
     // Built directly from `Date.now()`'s integer milliseconds, NOT floored to whole
     // seconds — see `LegacyBearerJwtClaimsInput.nowInstant`'s own doc comment for why
     // pre-flooring here would shorten a sub-second `--valid-for`'s effective lifetime.
-    const nowMs = Date.now();
+    const nowMs = yield* Clock.currentTimeMillis;
     const nowInstant = {
       wholeSeconds: Math.floor(nowMs / 1000),
       nanos: (nowMs % 1000) * 1_000_000,

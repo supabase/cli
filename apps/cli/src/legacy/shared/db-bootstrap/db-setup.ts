@@ -121,6 +121,7 @@ import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSp
 import type { LocalServiceVersionOverrides } from "../../../shared/services/services.shared.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import { LegacyViperEnv } from "../../../shared/legacy/legacy-viper-env.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -130,11 +131,7 @@ import { LegacyDbConnection, type LegacyDbSession } from "../legacy-db-connectio
 import type { LegacyDbConnectError } from "../legacy-db-connection.errors.ts";
 import { LegacyDbConfigLoadError } from "../legacy-db-config.errors.ts";
 import { redactLegacyConnectionString } from "../legacy-db-config.parse.ts";
-import {
-  legacyApplyProjectEnv,
-  legacyCheckDbToml,
-  legacyResolveSeedSqlPath,
-} from "../legacy-db-config.toml-read.ts";
+import { legacyCheckDbToml, legacyResolveSeedSqlPath } from "../legacy-db-config.toml-read.ts";
 import { legacyParseBoolEnv } from "../legacy-diff-engine.ts";
 import { LEGACY_CLI_PROJECT_LABEL, localDbContainerId } from "../legacy-docker-ids.ts";
 import { LegacyDockerRun, type LegacyDockerRunOpts } from "../legacy-docker-run.service.ts";
@@ -702,12 +699,10 @@ const legacyRunStartMigrateJob = Effect.fnUntraced(function* (
       ),
     );
   if (result.exitCode !== 0) {
-    return yield* Effect.fail(
-      new LegacyDbSetupError({
-        message: `error running container: exit ${result.exitCode}`,
-        reason: "database",
-      }),
-    );
+    return yield* new LegacyDbSetupError({
+      message: `error running container: exit ${result.exitCode}`,
+      reason: "database",
+    });
   }
 });
 
@@ -984,40 +979,25 @@ export const legacyStartInitCurrentBranch = Effect.fnUntraced(function* (
   workdir: string,
 ) {
   const currentBranchPath = path.join(workdir, "supabase", ".branches", "_current_branch");
-  const exists = yield* fs.exists(currentBranchPath).pipe(
-    Effect.mapError(
-      (error) =>
-        new LegacyDbSetupError({
-          message: `failed init current branch: ${errMessage(error)}`,
-          reason: "filesystem",
-        }),
-    ),
-  );
+  const mapFsError = (error: unknown) =>
+    new LegacyDbSetupError({
+      message: `failed init current branch: ${errMessage(error)}`,
+      reason: "filesystem",
+    });
+  const exists = yield* fs.exists(currentBranchPath).pipe(Effect.mapError(mapFsError));
   if (exists) return;
-  yield* fs.makeDirectory(path.dirname(currentBranchPath), { recursive: true }).pipe(
-    Effect.mapError(
-      (error) =>
-        new LegacyDbSetupError({
-          message: `failed init current branch: ${errMessage(error)}`,
-          reason: "filesystem",
-        }),
-    ),
-  );
+  yield* fs
+    .makeDirectory(path.dirname(currentBranchPath), { recursive: true })
+    .pipe(Effect.mapError(mapFsError));
   // Go's `utils.WriteFile` writes through `afero.WriteFile(fsys, path, contents, 0644)`
   // (`internal/utils/misc.go:280-286`) — an explicit mode, not the platform default. Effect's
   // `writeFileString` falls back to Node's default file mode (`0666` before the umask) when no
   // `mode` is given, so under a permissive/group-writable umask (`000`/`002`) this file could be
   // created `0666`/`0664` instead of Go's `0644`, making project branch metadata writable by
   // additional local users.
-  yield* fs.writeFileString(currentBranchPath, "main", { mode: 0o644 }).pipe(
-    Effect.mapError(
-      (error) =>
-        new LegacyDbSetupError({
-          message: `failed init current branch: ${errMessage(error)}`,
-          reason: "filesystem",
-        }),
-    ),
-  );
+  yield* fs
+    .writeFileString(currentBranchPath, "main", { mode: 0o644 })
+    .pipe(Effect.mapError(mapFsError));
 });
 
 /**
@@ -1141,6 +1121,7 @@ export const legacyStartSetupLocalDatabase = (
   // at the CLI root runtime, same as `db push`'s own composition.
   | FileSystem.FileSystem
   | Path.Path
+  | LegacyViperEnv
 > =>
   Effect.gen(function* () {
     const { session, fs, path, workdir } = input;
@@ -1183,6 +1164,7 @@ export const legacyStartSetupLocalDatabase = (
     // `--sql-paths` overrides on top of the loaded `[db.seed]` config — a no-op for
     // `db start`, which has neither flag.
     yield* legacyMigrateAndSeed(session, fs, path, workdir, input.version, {
+      projectEnv: toml.projectEnv,
       migrationsEnabled: toml.migrationsEnabled,
       seed: legacyResolveResetSeedConfig(toml.seed, input.seedFlags, path),
       experimental: input.experimental,
@@ -1215,7 +1197,7 @@ export const legacyStartSetupLocalDatabase = (
         legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")));
     const pgDeltaImplementation = legacyResolvePgDeltaImplementation(
       legacyPgDeltaImplementationFlag(
-        process.env[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
+        toml.envLookup(LEGACY_PG_DELTA_NEXT_FLAG_NAME),
         toml.projectEnv[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
       ),
     );
@@ -1227,42 +1209,31 @@ export const legacyStartSetupLocalDatabase = (
       projectEnv: toml.projectEnv,
     };
     const hostDbUrl = new URL(input.dbUrl);
-    // Scope the `PGDELTA_NPM_REGISTRY`-from-project-`.env` apply to just this call:
-    // `legacyExportCatalogPgDelta` reads it off bare `process.env`
-    // (`legacyPgDeltaNpmRegistryOption`), same as `db push`/`db pull`/`db dump`/
-    // `bootstrap`'s own calls into pg-delta — Go's `loadNestedEnv` already made it
-    // process-wide by this point (`config.go:788`), but this module otherwise threads
-    // every override through `projectEnvValues` explicitly rather than mutating
-    // `process.env`, so this one shared-code call needs the same opt-in helper those
-    // other commands use. `legacyApplyProjectEnv` registers a finalizer that reverts it.
     yield* Effect.scoped(
-      Effect.gen(function* () {
-        yield* legacyApplyProjectEnv(input.projectEnvValues ?? {});
-        yield* legacyTryCacheMigrationsCatalog(fs, path, pgDeltaCtx, {
-          // The catalog is a legacy-engine artifact with no in-process consumer.
-          enabled: cacheEnabled && pgDeltaImplementation === "legacy",
-          targetUrl: input.dbUrl,
-          conn: {
-            host: hostDbUrl.hostname,
-            port: Number(hostDbUrl.port),
-            user: "postgres",
-            database: "postgres",
-          },
-          isLocal: true,
-          migrationsDir: path.join(workdir, "supabase", "migrations"),
-        }).pipe(
-          // Best-effort: Go's own `TryCacheMigrationsCatalog` failure only ever warns
-          // (`fmt.Fprintln(os.Stderr, "Warning: failed to cache migrations catalog:", err)`,
-          // start.go:378) and never fails `legacyStartSetupLocalDatabase` — same shape
-          // `legacy-db-push-core.ts` already established for this exact call.
-          Effect.catch((error) =>
-            output.raw(
-              `Warning: failed to cache migrations catalog: ${redactLegacyConnectionString(error.message)}\n`,
-              "stderr",
-            ),
+      legacyTryCacheMigrationsCatalog(fs, path, pgDeltaCtx, {
+        // The catalog is a legacy-engine artifact with no in-process consumer.
+        enabled: cacheEnabled && pgDeltaImplementation === "legacy",
+        targetUrl: input.dbUrl,
+        conn: {
+          host: hostDbUrl.hostname,
+          port: Number(hostDbUrl.port),
+          user: "postgres",
+          database: "postgres",
+        },
+        isLocal: true,
+        migrationsDir: path.join(workdir, "supabase", "migrations"),
+      }).pipe(
+        // Best-effort: Go's own `TryCacheMigrationsCatalog` failure only ever warns
+        // (`fmt.Fprintln(os.Stderr, "Warning: failed to cache migrations catalog:", err)`,
+        // start.go:378) and never fails `legacyStartSetupLocalDatabase` — same shape
+        // `legacy-db-push-core.ts` already established for this exact call.
+        Effect.catch((error) =>
+          output.raw(
+            `Warning: failed to cache migrations catalog: ${redactLegacyConnectionString(error.message)}\n`,
+            "stderr",
           ),
-        );
-      }),
+        ),
+      ),
     );
 
     // `initCurrentBranch` (start.go:233-241) is NOT called here — see this
@@ -1424,6 +1395,7 @@ export const legacyRunFreshDbSetup = <E>(
   | LegacyPgDeltaSslProbe
   | FileSystem.FileSystem
   | Path.Path
+  | LegacyViperEnv
 > =>
   Effect.scoped(
     Effect.gen(function* () {

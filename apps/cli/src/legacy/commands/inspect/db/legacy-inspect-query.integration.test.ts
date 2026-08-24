@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Formatter, Layer, Option } from "effect";
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { mockLegacyTelemetryStateTracked } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -414,7 +414,7 @@ describe("legacy inspect db query runner", () => {
       const exit = yield* Effect.exit(legacyInspectDbDbStats(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("syntax error");
+        expect(Formatter.formatJson(exit.cause)).toContain("syntax error");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -425,7 +425,7 @@ describe("legacy inspect db query runner", () => {
       const exit = yield* Effect.exit(legacyInspectDbDbStats(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to connect to postgres");
+        expect(Formatter.formatJson(exit.cause)).toContain("failed to connect to postgres");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -436,7 +436,7 @@ describe("legacy inspect db query runner", () => {
       const exit = yield* Effect.exit(legacyInspectDbDbStats(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("cannot load config");
+        expect(Formatter.formatJson(exit.cause)).toContain("cannot load config");
       }
     }).pipe(Effect.provide(layer));
   });

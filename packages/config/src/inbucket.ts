@@ -20,7 +20,7 @@ export const inbucket = Schema.Struct({
     tags,
     links,
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnabled))),
-  port: Schema.Number.annotate({
+  port: Schema.Finite.annotate({
     default: defaultPort,
     description: dedent`
       Port to use for the email testing server web interface.
@@ -31,14 +31,14 @@ export const inbucket = Schema.Struct({
     links,
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultPort))),
   smtp_port: Schema.optionalKey(
-    Schema.Number.annotate({
+    Schema.Finite.annotate({
       description: "Optional SMTP port to expose for local testing.",
       tags,
       links,
     }),
   ),
   pop3_port: Schema.optionalKey(
-    Schema.Number.annotate({
+    Schema.Finite.annotate({
       description: "Optional POP3 port to expose for local testing.",
       tags,
       links,

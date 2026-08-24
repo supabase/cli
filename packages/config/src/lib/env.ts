@@ -50,7 +50,7 @@ export const secret = (annotations?: SecretAnnotations) =>
 // ---------------------------------------------------------------------------
 //
 // TOML/JSON parsers turn `port = "env(SUPABASE_ANALYTICS_PORT)"` into a string
-// at `analytics.port`, but the schema declares `port: Schema.Number`. Without
+// at `analytics.port`, but the schema declares `port: Schema.Finite`. Without
 // pre-decode handling the strict decoder rejects the string and crashes
 // `supabase db start` (CLI-1489).
 //
@@ -124,7 +124,7 @@ function leafExpectedType(ast: SchemaAST.AST): ExpectedType {
       return isHomogeneousStringArray(node) ? "array" : "unknown";
     case "Union": {
       // Walk Union branches in declared order; first concrete primitive wins.
-      // For unions like `Schema.Union(Schema.Number, Schema.Null)` this picks
+      // For unions like `Schema.Union(Schema.Finite, Schema.Null)` this picks
       // the meaningful side. If the union mixes Number and String we err on
       // the side of the first match — the schema decode will still validate
       // membership after coercion.

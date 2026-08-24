@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import { createDecipheriv, createECDH, randomUUID, type ECDH } from "node:crypto";
 import { hostname, userInfo } from "node:os";
-import { Effect, Layer } from "effect";
+import { Clock, Effect, Layer } from "effect";
 
 import {
   LegacyLoginCrypto,
@@ -23,17 +23,19 @@ export const legacyLoginCryptoLayer = Layer.sync(LegacyLoginCrypto, () =>
         new LegacyLoginCryptoError({ message: `cannot generate crypto keys: ${String(cause)}` }),
     }),
     generateSessionId: Effect.sync(() => randomUUID()),
-    defaultTokenName: Effect.sync(() => {
-      const ts = Math.floor(Date.now() / 1000);
-      try {
-        const user = userInfo().username;
-        const host = hostname();
-        if (user && host) return `cli_${user}@${host}_${ts}`;
-      } catch {
-        /* fall through to the fallback name (Go's generateTokenNameWithFallback) */
-      }
-      return `cli_${ts}`;
-    }),
+    defaultTokenName: Clock.currentTimeMillis.pipe(
+      Effect.map((currentTimeMillis) => {
+        const ts = Math.floor(currentTimeMillis / 1000);
+        try {
+          const user = userInfo().username;
+          const host = hostname();
+          if (user && host) return `cli_${user}@${host}_${ts}`;
+        } catch {
+          /* fall through to the fallback name (Go's generateTokenNameWithFallback) */
+        }
+        return `cli_${ts}`;
+      }),
+    ),
     decryptToken: (ecdh: ECDH, payload: LegacyEncryptedPayload) =>
       Effect.try({
         try: () => {

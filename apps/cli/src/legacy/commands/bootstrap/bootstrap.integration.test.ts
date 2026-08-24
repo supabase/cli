@@ -1,9 +1,16 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-
-import { BunServices } from "@effect/platform-bun";
+import { BunPath, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option, Schedule } from "effect";
+import {
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Formatter,
+  Layer,
+  Option,
+  Path,
+  Schedule,
+} from "effect";
 
 import {
   mockAnalytics,
@@ -34,6 +41,7 @@ import {
   LegacyYesFlag,
   LegacyOutputFlag,
 } from "../../../shared/legacy/global-flags.ts";
+import { makeLegacyViperEnvLayer } from "../../../shared/legacy/legacy-viper-env.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import { LegacyDbConnectError } from "../../shared/legacy-db-connection.errors.ts";
 import {
@@ -70,6 +78,17 @@ const API_KEYS = [
 const HEALTHY = [{ name: "db", healthy: true, status: "ACTIVE_HEALTHY" }];
 
 const tempRoot = useLegacyTempWorkdir("supabase-bootstrap-int-");
+const path = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
+
+const readText = (file: string) =>
+  Effect.gen(function* () {
+    return yield* (yield* FileSystem.FileSystem).readFileString(file);
+  });
+
+const exists = (file: string) =>
+  Effect.gen(function* () {
+    return yield* (yield* FileSystem.FileSystem).exists(file);
+  });
 
 const NEXTJS_TEMPLATE: LegacyStarterTemplate = {
   name: "nextjs",
@@ -100,9 +119,14 @@ interface SetupOpts {
   readonly promptTextResponses?: ReadonlyArray<string>;
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
   readonly promptPasswordResponses?: ReadonlyArray<string>;
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 function setup(opts: SetupOpts = {}) {
+  const configProvider = ConfigProvider.fromEnv({
+    env: opts.env ?? {},
+    preserveEmptyStrings: true,
+  });
   const out = mockOutput({
     format: opts.format ?? "text",
     promptTextResponses: opts.promptTextResponses,
@@ -226,6 +250,8 @@ function setup(opts: SetupOpts = {}) {
 
   const layer = Layer.mergeAll(
     BunServices.layer,
+    ConfigProvider.layer(configProvider),
+    makeLegacyViperEnvLayer(configProvider),
     out.layer,
     api.layer,
     api.factoryLayer,
@@ -234,7 +260,7 @@ function setup(opts: SetupOpts = {}) {
     mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
     // cwd differs from the (absolute) workdir so the "Using workdir" line prints,
     // matching the established `cwd != CurrentDirAbs` guard.
-    mockRuntimeInfo({ cwd: dirname(tempRoot.current) }),
+    mockRuntimeInfo({ cwd: path.dirname(tempRoot.current) }),
     telemetry.layer,
     linkedCache.layer,
     analytics.layer,
@@ -289,13 +315,13 @@ describe("legacy bootstrap integration", () => {
     return Effect.gen(function* () {
       yield* legacyBootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
       // Blank init scaffolded config.toml.
-      expect(existsSync(join(s.workdir, "supabase", "config.toml"))).toBe(true);
+      expect(yield* exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(true);
       // Project ref written for the delegated db push.
-      expect(readFileSync(join(s.workdir, "supabase", ".temp", "project-ref"), "utf8")).toBe(
+      expect(yield* readText(path.join(s.workdir, "supabase", ".temp", "project-ref"))).toBe(
         LEGACY_VALID_REF,
       );
       // .env populated with derived keys.
-      const env = readFileSync(join(s.workdir, ".env"), "utf8");
+      const env = yield* readText(path.join(s.workdir, ".env"));
       expect(env).toContain('SUPABASE_ANON_KEY="anon-key"');
       expect(env).toContain("SUPABASE_URL=");
       expect(env).toContain("POSTGRES_URL=");
@@ -312,7 +338,7 @@ describe("legacy bootstrap integration", () => {
       yield* legacyBootstrap(flags({ template: Option.some("NextJS") }), FAST_BACKOFF);
       expect(s.downloads).toHaveLength(1);
       expect(s.downloads[0]).toEqual({ url: NEXTJS_TEMPLATE.url, targetDir: s.workdir });
-      expect(existsSync(join(s.workdir, "supabase", "config.toml"))).toBe(false);
+      expect(yield* exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(false);
       expect(s.out.stdoutText).toContain(`Downloading: ${NEXTJS_TEMPLATE.url}`);
     }).pipe(Effect.provide(s.layer));
   });
@@ -325,7 +351,7 @@ describe("legacy bootstrap integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyBootstrapInvalidTemplateError");
         expect(json).toContain("Invalid template: nope");
       }
@@ -349,45 +375,42 @@ describe("legacy bootstrap integration", () => {
       workdir: Option.none(),
       promptTextResponses: [tempRoot.current],
     });
-    const prevWorkdir = process.env["SUPABASE_WORKDIR"];
-    delete process.env["SUPABASE_WORKDIR"];
     return Effect.gen(function* () {
       yield* legacyBootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
-      expect(existsSync(join(s.workdir, "supabase", "config.toml"))).toBe(true);
-    }).pipe(
-      Effect.provide(s.layer),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prevWorkdir !== undefined) process.env["SUPABASE_WORKDIR"] = prevWorkdir;
-        }),
-      ),
-    );
+      expect(yield* exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(true);
+    }).pipe(Effect.provide(s.layer));
   });
 
   it.live("aborts when the user declines to overwrite a non-empty workdir", () => {
     const s = setup({ promptConfirmResponses: [false] });
-    writeFileSync(join(tempRoot.current, "existing.txt"), "keep me");
     return Effect.gen(function* () {
+      yield* (yield* FileSystem.FileSystem).writeFileString(
+        path.join(tempRoot.current, "existing.txt"),
+        "keep me",
+      );
       const exit = yield* Effect.exit(
         legacyBootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF),
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyBootstrapOverwriteDeclinedError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyBootstrapOverwriteDeclinedError");
       }
     }).pipe(Effect.provide(s.layer));
   });
 
   it.live("proceeds past a non-empty workdir with --yes", () => {
     const s = setup({ yes: true });
-    writeFileSync(join(tempRoot.current, "existing.txt"), "keep me");
     return Effect.gen(function* () {
+      yield* (yield* FileSystem.FileSystem).writeFileString(
+        path.join(tempRoot.current, "existing.txt"),
+        "keep me",
+      );
       yield* legacyBootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
       // Established behavior: the auto-accepted overwrite question echoes to
       // stderr under the global YES flag.
       expect(s.out.stderrText).toContain("Do you want to overwrite existing files in ");
       expect(s.out.stderrText).toContain(" directory? [Y/n] y\n");
-      expect(existsSync(join(s.workdir, "supabase", "config.toml"))).toBe(true);
+      expect(yield* exists(path.join(s.workdir, "supabase", "config.toml"))).toBe(true);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -454,7 +477,7 @@ describe("legacy bootstrap integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("Service not healthy: db (UNHEALTHY)");
+        expect(Formatter.formatJson(exit.cause)).toContain("Service not healthy: db (UNHEALTHY)");
       }
     }).pipe(Effect.provide(s.layer));
   });
@@ -467,21 +490,21 @@ describe("legacy bootstrap integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("Error status 503");
+        expect(Formatter.formatJson(exit.cause)).toContain("Error status 503");
       }
     }).pipe(Effect.provide(s.layer));
   });
 
   it.live("merges .env.example derived keys", () => {
     const s = setup();
-    mkdirSync(tempRoot.current, { recursive: true });
-    writeFileSync(
-      join(tempRoot.current, ".env.example"),
-      "POSTGRES_USER=example\nNEXT_PUBLIC_SUPABASE_ANON_KEY=example\n",
-    );
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(
+        path.join(tempRoot.current, ".env.example"),
+        "POSTGRES_USER=example\nNEXT_PUBLIC_SUPABASE_ANON_KEY=example\n",
+      );
       yield* legacyBootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
-      const env = readFileSync(join(s.workdir, ".env"), "utf8");
+      const env = yield* readText(path.join(s.workdir, ".env"));
       expect(env).toContain('POSTGRES_USER="postgres"');
       expect(env).toContain('NEXT_PUBLIC_SUPABASE_ANON_KEY="anon-key"');
     }).pipe(Effect.provide(s.layer));
@@ -489,9 +512,11 @@ describe("legacy bootstrap integration", () => {
 
   it.live("continues (non-fatal) when the .env.example is malformed", () => {
     const s = setup();
-    mkdirSync(tempRoot.current, { recursive: true });
-    writeFileSync(join(tempRoot.current, ".env.example"), "!=");
     return Effect.gen(function* () {
+      yield* (yield* FileSystem.FileSystem).writeFileString(
+        path.join(tempRoot.current, ".env.example"),
+        "!=",
+      );
       yield* legacyBootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
       expect(s.out.stderrText).toContain("Failed to create .env file:");
       // Bootstrap still completes through the native db push step.
@@ -564,44 +589,24 @@ describe("legacy bootstrap integration", () => {
     // step always uses the create-resolved password; there is no separate
     // flag/env channel to preserve once the call is in-process, CLI-1953).
     const s = setup({ promptPasswordResponses: ["prompted-pw"] });
-    const prev = process.env["SUPABASE_DB_PASSWORD"];
-    delete process.env["SUPABASE_DB_PASSWORD"];
     return Effect.gen(function* () {
       yield* legacyBootstrap(
         flags({ template: Option.some("scratch"), password: Option.some("") }),
         FAST_BACKOFF,
       );
       expect(s.pushConnectCalls[0]?.password).toBe("prompted-pw");
-    }).pipe(
-      Effect.provide(s.layer),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
-          else process.env["SUPABASE_DB_PASSWORD"] = prev;
-        }),
-      ),
-    );
+    }).pipe(Effect.provide(s.layer));
   });
 
   it.live("pushes with a SUPABASE_DB_PASSWORD env var-sourced password", () => {
-    const s = setup();
-    const prev = process.env["SUPABASE_DB_PASSWORD"];
-    process.env["SUPABASE_DB_PASSWORD"] = "env-pw";
+    const s = setup({ env: { SUPABASE_DB_PASSWORD: "env-pw" } });
     return Effect.gen(function* () {
       yield* legacyBootstrap(
         flags({ template: Option.some("scratch"), password: Option.none() }),
         FAST_BACKOFF,
       );
       expect(s.pushConnectCalls[0]?.password).toBe("env-pw");
-    }).pipe(
-      Effect.provide(s.layer),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
-          else process.env["SUPABASE_DB_PASSWORD"] = prev;
-        }),
-      ),
-    );
+    }).pipe(Effect.provide(s.layer));
   });
 
   it.live("flushes telemetry and caches the linked project via ensuring", () => {
@@ -631,9 +636,11 @@ describe("legacy bootstrap integration", () => {
 
   it.live("reports env_file: null in the json result when the .env write fails", () => {
     const s = setup({ format: "json" });
-    mkdirSync(tempRoot.current, { recursive: true });
-    writeFileSync(join(tempRoot.current, ".env.example"), "!=");
     return Effect.gen(function* () {
+      yield* (yield* FileSystem.FileSystem).writeFileString(
+        path.join(tempRoot.current, ".env.example"),
+        "!=",
+      );
       yield* legacyBootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
       const success = s.out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ env_file: null });

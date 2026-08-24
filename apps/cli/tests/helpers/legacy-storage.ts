@@ -1,8 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Layer, Option } from "effect";
+import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
@@ -11,6 +8,8 @@ import { LegacyPlatformApi } from "../../src/legacy/auth/legacy-platform-api.ser
 import { LegacyPlatformApiFactory } from "../../src/legacy/auth/legacy-platform-api-factory.service.ts";
 import { LegacyProjectNotLinkedError } from "../../src/legacy/config/legacy-project-ref.errors.ts";
 import { LegacyProjectRefResolver } from "../../src/legacy/config/legacy-project-ref.service.ts";
+import { legacyLocalGatewayHttpClientTestLayer } from "../../src/legacy/shared/legacy-local-gateway-http-client.ts";
+import { makeLegacyViperEnvLayer } from "../../src/shared/legacy/legacy-viper-env.ts";
 import { LegacyYesFlag } from "../../src/shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../src/shared/output/types.ts";
 import { mockOutput, mockRuntimeInfo, mockStdin, mockTty } from "./mocks.ts";
@@ -73,6 +72,8 @@ export interface SetupLegacyStorageOptions {
   readonly pipedAnswers?: ReadonlyArray<string>;
   /** Raw argv seen by the handler (e.g. to exercise an explicit `--yes=false`). */
   readonly cliArgs?: ReadonlyArray<string>;
+  /** Explicit shell environment visible to the legacy Viper compatibility service. */
+  readonly env?: Readonly<Record<string, string>>;
   /** Project ref returned by the resolver for the linked path. */
   readonly projectRef?: string;
   /** api-keys list returned by the Management API mock (linked path). */
@@ -94,15 +95,26 @@ export interface SetupLegacyStorageOptions {
  * `--local` scoped-global flag value.
  */
 export function setupLegacyStorage(workdir: string, opts: SetupLegacyStorageOptions) {
-  if (opts.toml !== undefined) {
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), opts.toml);
-  }
-  for (const [rel, content] of Object.entries(opts.files ?? {})) {
-    const abs = join(workdir, rel);
-    mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, content);
-  }
+  const fixtureLayer = Layer.effectDiscard(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const writeFixture = (relativePath: string, content: string) => {
+        const absolutePath = path.join(workdir, relativePath);
+        return Effect.gen(function* () {
+          yield* fs.makeDirectory(path.dirname(absolutePath), { recursive: true });
+          yield* fs.writeFileString(absolutePath, content);
+        });
+      };
+
+      if (opts.toml !== undefined) {
+        yield* writeFixture("supabase/config.toml", opts.toml);
+      }
+      yield* Effect.forEach(Object.entries(opts.files ?? {}), ([relativePath, content]) =>
+        writeFixture(relativePath, content),
+      );
+    }),
+  ).pipe(Layer.provide(BunServices.layer));
 
   const out = mockOutput({
     format: opts.format ?? "text",
@@ -203,12 +215,17 @@ export function setupLegacyStorage(workdir: string, opts: SetupLegacyStorageOpti
   });
 
   const layer = Layer.mergeAll(
+    fixtureLayer,
     out.layer,
     httpLayer,
     telemetry.layer,
     linkedCache.layer,
     mockLegacyCliConfig({ workdir }),
     BunServices.layer,
+    makeLegacyViperEnvLayer(
+      ConfigProvider.fromEnv({ env: opts.env ?? {}, preserveEmptyStrings: true }),
+    ),
+    legacyLocalGatewayHttpClientTestLayer(httpLayer),
     projectRefLayer,
     Layer.succeed(LegacyPlatformApiFactory, {
       make: LegacyPlatformApi.pipe(Effect.provide(managementApi.layer)),

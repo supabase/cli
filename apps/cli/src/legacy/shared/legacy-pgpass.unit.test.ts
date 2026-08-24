@@ -1,7 +1,6 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, Path } from "effect";
 
 import { legacyFindPgpassPassword, legacyPgpassPassword } from "./legacy-pgpass.ts";
 
@@ -39,34 +38,71 @@ describe("legacyFindPgpassPassword", () => {
 });
 
 describe("legacyPgpassPassword (passfile + injected env precedence)", () => {
-  let tmp: string;
-  let explicitPath: string;
-  let envPath: string;
+  const fixture = (
+    run: (
+      tmp: string,
+      explicitPath: string,
+      envPath: string,
+      files: ReadonlyMap<string, string>,
+    ) => Effect.Effect<void>,
+  ) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tmp = yield* fs.makeTempDirectory({ prefix: "pgpass-fn-" });
+      const explicitPath = path.join(tmp, "explicit");
+      const envPath = path.join(tmp, "env");
+      yield* fs.writeFileString(explicitPath, "h:5432:d:u:explicit-secret\n");
+      yield* fs.writeFileString(envPath, "h:5432:d:u:env-secret\n");
+      const files = new Map([
+        [explicitPath, yield* fs.readFileString(explicitPath)],
+        [envPath, yield* fs.readFileString(envPath)],
+      ]);
+      yield* run(tmp, explicitPath, envPath, files);
+      yield* fs.remove(tmp, { recursive: true });
+    }).pipe(Effect.provide(BunServices.layer));
 
-  beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), "pgpass-fn-"));
-    explicitPath = join(tmp, "explicit");
-    envPath = join(tmp, "env");
-    writeFileSync(explicitPath, "h:5432:d:u:explicit-secret\n");
-    writeFileSync(envPath, "h:5432:d:u:env-secret\n");
-  });
+  it.effect("prefers an explicit passfile over PGPASSFILE from the injected env", () =>
+    fixture((_tmp, explicitPath, envPath, files) => {
+      const env = (name: string): string | undefined =>
+        name === "PGPASSFILE" ? envPath : undefined;
+      return Effect.sync(() =>
+        expect(
+          legacyPgpassPassword("h", 5432, "d", "u", env, explicitPath, {
+            join: (base, ...parts) => [base, ...parts].join("/"),
+            files,
+          }),
+        ).toBe("explicit-secret"),
+      );
+    }),
+  );
 
-  afterEach(() => {
-    rmSync(tmp, { recursive: true, force: true });
-  });
+  it.effect("falls back to PGPASSFILE from the injected env when no explicit passfile", () =>
+    fixture((_tmp, _explicitPath, envPath, files) => {
+      const env = (name: string): string | undefined =>
+        name === "PGPASSFILE" ? envPath : undefined;
+      return Effect.sync(() =>
+        expect(
+          legacyPgpassPassword("h", 5432, "d", "u", env, undefined, {
+            join: (base, ...parts) => [base, ...parts].join("/"),
+            files,
+          }),
+        ).toBe("env-secret"),
+      );
+    }),
+  );
 
-  it("prefers an explicit passfile over PGPASSFILE from the injected env", () => {
-    const env = (name: string): string | undefined => (name === "PGPASSFILE" ? envPath : undefined);
-    expect(legacyPgpassPassword("h", 5432, "d", "u", env, explicitPath)).toBe("explicit-secret");
-  });
-
-  it("falls back to PGPASSFILE from the injected env when no explicit passfile", () => {
-    const env = (name: string): string | undefined => (name === "PGPASSFILE" ? envPath : undefined);
-    expect(legacyPgpassPassword("h", 5432, "d", "u", env)).toBe("env-secret");
-  });
-
-  it("returns empty string when the resolved passfile is unreadable", () => {
-    const env = (): string | undefined => undefined;
-    expect(legacyPgpassPassword("h", 5432, "d", "u", env, join(tmp, "missing"))).toBe("");
-  });
+  it.effect("returns empty string when the resolved passfile is unreadable", () =>
+    fixture((tmp, _explicitPath, _envPath, files) => {
+      const env = (): string | undefined => undefined;
+      return Effect.sync(() =>
+        expect(
+          legacyPgpassPassword("h", 5432, "d", "u", env, `${tmp}/missing`, {
+            join: (base, ...parts) => [base, ...parts].join("/"),
+            files,
+          }),
+        ).toBe(""),
+      );
+    }),
+  );
 });

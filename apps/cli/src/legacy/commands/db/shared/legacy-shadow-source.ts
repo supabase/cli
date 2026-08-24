@@ -14,7 +14,7 @@
  * is nothing to port.
  */
 
-import { Effect, Result, type FileSystem, type Path } from "effect";
+import { Config, Effect, Result, type FileSystem, type Path } from "effect";
 import type { GlobalFlag } from "effect/unstable/cli";
 import type * as HttpClient from "effect/unstable/http/HttpClient";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
@@ -61,6 +61,7 @@ import {
 } from "./legacy-pgdelta.apply.ts";
 import { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
 import type { LegacyPgDeltaContext } from "../../../shared/legacy-pgdelta.ts";
+import { LegacyViperEnv } from "../../../../shared/legacy/legacy-viper-env.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
@@ -127,7 +128,7 @@ export const legacyPrepareShadowSource = <E>(
   input: LegacyPrepareShadowSourceInput<E>,
 ): Effect.Effect<
   LegacyShadowSourceResult,
-  LegacyPrepareShadowSourceError | E,
+  LegacyPrepareShadowSourceError | E | Config.ConfigError,
   | Output
   | LegacyDockerRun
   | RuntimeInfo
@@ -141,6 +142,7 @@ export const legacyPrepareShadowSource = <E>(
   // PRRT_kwDOErm0O86XL_oz) needs `CliArgs` to detect an explicit `--debug=false`, same as
   // `legacyResolveYes`/`legacyResolveExperimental`.
   | CliArgs
+  | LegacyViperEnv
 > =>
   Effect.gen(function* () {
     const { containerId } = handle;
@@ -385,9 +387,7 @@ function legacyGlobDeclaredSchemaPaths(
       for (const pattern of skipped) problems.push(`no files matched pattern: ${pattern}`);
     }
     if (problems.length > 0) {
-      return yield* Effect.fail(
-        new LegacyDeclarativeShadowDbError({ message: problems.join("\n") }),
-      );
+      return yield* new LegacyDeclarativeShadowDbError({ message: problems.join("\n") });
     }
     return result;
   });

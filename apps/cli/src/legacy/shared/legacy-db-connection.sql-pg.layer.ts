@@ -1,8 +1,7 @@
-import { readFileSync } from "node:fs";
 import * as net from "node:net";
 import type { ConnectionOptions } from "node:tls";
 import { PgClient } from "@effect/sql-pg";
-import { Cause, Duration, Effect, Exit, Layer, Scope } from "effect";
+import { Cause, Duration, Effect, Exit, FileSystem, Layer, Scope } from "effect";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import { ConnectionError, SqlError } from "effect/unstable/sql/SqlError";
 // `pg` is also `@effect/sql-pg`'s transitive driver; we depend on it directly for
@@ -22,6 +21,7 @@ import {
   LegacyDbCopyError,
   LegacyDbExecError,
 } from "./legacy-db-connection.errors.ts";
+import { legacyErrorMessage } from "./legacy-error-message.ts";
 import {
   type LegacyDbBatchStatement,
   type LegacyDbBatchValue,
@@ -687,8 +687,17 @@ const legacyToConnectError = (
 const acquirePgPoolConnection = (
   cfg: LegacyPgConnInput,
   { isLocal, dnsResolver }: LegacyDbConnectOptions,
-) =>
+): Effect.Effect<
+  {
+    readonly pool: Pg.Pool;
+    readonly winningRawConfig: Pg.ClientConfig;
+    readonly stepDownRequired: boolean;
+  },
+  LegacyDbConnectError,
+  Scope.Scope | FileSystem.FileSystem
+> =>
   Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
     // pgconn dials the primary host then each HA fallback in order;
     // `cfg.fallbacks` carries the extras parsed from a
     // libpq multi-host connection string. Go installs the Cloudflare DoH resolver
@@ -769,13 +778,14 @@ const acquirePgPoolConnection = (
     const anyTcpTarget = dialTargets.some(({ dialHost }) => !legacyIsUnixSocketHost(dialHost));
     const caCert =
       rootcertPath !== undefined && rootcertPath.length > 0 && !isLocal && anyTcpTarget
-        ? yield* Effect.try({
-            try: () => readFileSync(rootcertPath, "utf8"),
-            catch: (error) =>
-              new LegacyDbConnectError({
-                message: `failed to read sslrootcert ${rootcertPath}: ${error}`,
-              }),
-          })
+        ? yield* fs.readFileString(rootcertPath).pipe(
+            Effect.mapError(
+              (error) =>
+                new LegacyDbConnectError({
+                  message: `failed to read sslrootcert ${rootcertPath}: ${legacyErrorMessage(error)}`,
+                }),
+            ),
+          )
         : undefined;
 
     // Load the client `sslcert`/`sslkey` (pgconn's `configTLS` reads both into
@@ -788,20 +798,22 @@ const acquirePgPoolConnection = (
     const clientCert =
       certPath !== undefined && keyPath !== undefined && !isLocal && anyTcpTarget
         ? {
-            cert: yield* Effect.try({
-              try: () => readFileSync(certPath, "utf8"),
-              catch: (error) =>
-                new LegacyDbConnectError({
-                  message: `failed to read sslcert ${certPath}: ${error}`,
-                }),
-            }),
-            key: yield* Effect.try({
-              try: () => readFileSync(keyPath, "utf8"),
-              catch: (error) =>
-                new LegacyDbConnectError({
-                  message: `failed to read sslkey ${keyPath}: ${error}`,
-                }),
-            }),
+            cert: yield* fs.readFileString(certPath).pipe(
+              Effect.mapError(
+                (error) =>
+                  new LegacyDbConnectError({
+                    message: `failed to read sslcert ${certPath}: ${legacyErrorMessage(error)}`,
+                  }),
+              ),
+            ),
+            key: yield* fs.readFileString(keyPath).pipe(
+              Effect.mapError(
+                (error) =>
+                  new LegacyDbConnectError({
+                    message: `failed to read sslkey ${keyPath}: ${legacyErrorMessage(error)}`,
+                  }),
+              ),
+            ),
             ...(cfg.sslpassword !== undefined ? { passphrase: cfg.sslpassword } : {}),
           }
         : undefined;
@@ -881,7 +893,9 @@ const acquirePgPoolConnection = (
       yield* Effect.tryPromise({
         try: () => pool.query(SET_SESSION_ROLE),
         catch: (error) =>
-          new LegacyDbConnectError({ message: `failed to set session role: ${error}` }),
+          new LegacyDbConnectError({
+            message: `failed to set session role: ${legacyErrorMessage(error)}`,
+          }),
       });
     }
 
@@ -897,7 +911,7 @@ const acquirePgPoolConnection = (
 export const legacyAcquirePgPool = (
   cfg: LegacyPgConnInput,
   options: LegacyDbConnectOptions,
-): Effect.Effect<Pg.Pool, LegacyDbConnectError, Scope.Scope> =>
+): Effect.Effect<Pg.Pool, LegacyDbConnectError, Scope.Scope | FileSystem.FileSystem> =>
   acquirePgPoolConnection(cfg, options).pipe(Effect.map(({ pool }) => pool));
 
 /**
@@ -908,7 +922,7 @@ export const legacyAcquirePgPool = (
 const connect = (
   cfg: LegacyPgConnInput,
   options: LegacyDbConnectOptions,
-): Effect.Effect<LegacyDbSession, LegacyDbConnectError, Scope.Scope> =>
+): Effect.Effect<LegacyDbSession, LegacyDbConnectError, Scope.Scope | FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const { pool, winningRawConfig, stepDownRequired } = yield* acquirePgPoolConnection(
       cfg,
@@ -954,7 +968,9 @@ const connect = (
         yield* Effect.tryPromise({
           try: () => fresh.query(SET_SESSION_ROLE),
           catch: (error) =>
-            new LegacyDbConnectError({ message: `failed to set session role: ${error}` }),
+            new LegacyDbConnectError({
+              message: `failed to set session role: ${legacyErrorMessage(error)}`,
+            }),
         });
       }
       rawClient = fresh;
@@ -1100,7 +1116,9 @@ const connect = (
                 types: legacyQueryRawTypes,
               }),
             catch: (error) =>
-              new LegacyDbExecError({ message: `failed to execute query: ${error}` }),
+              new LegacyDbExecError({
+                message: `failed to execute query: ${legacyErrorMessage(error)}`,
+              }),
           }).pipe(
             Effect.ensuring(
               Effect.sync(() =>
@@ -1136,4 +1154,17 @@ const connect = (
     return session;
   });
 
-export const legacyDbConnectionSqlPgLayer = Layer.succeed(LegacyDbConnection, { connect });
+export const legacyDbConnectionSqlPgLayer = Layer.effect(
+  LegacyDbConnection,
+  Effect.gen(function* () {
+    // DNS-over-HTTPS host resolution is part of the connection implementation,
+    // but callers should only carry the scoped connection requirement. Capture
+    // the platform filesystem at the owning layer boundary and provide it to
+    // each connection effect rather than widening LegacyDbConnection.connect.
+    const fs = yield* FileSystem.FileSystem;
+    return {
+      connect: (cfg: LegacyPgConnInput, options: LegacyDbConnectOptions) =>
+        connect(cfg, options).pipe(Effect.provideService(FileSystem.FileSystem, fs)),
+    };
+  }),
+);

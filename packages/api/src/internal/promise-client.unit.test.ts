@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { Effect, Layer, ManagedRuntime, Option } from "effect";
+import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -51,15 +52,10 @@ function formDataTextValue(formData: FormData, key: string): string {
   return value;
 }
 
-async function formDataFileTexts(formData: FormData, key: string): Promise<Array<string>> {
+function formDataFileTexts(formData: FormData, key: string): Promise<Array<string>> {
   const values = formData.getAll(key);
   return Promise.all(
-    values.map(async (value) => {
-      if (typeof value === "string") {
-        return value;
-      }
-      return value.text();
-    }),
+    values.map((value) => (typeof value === "string" ? Promise.resolve(value) : value.text())),
   );
 }
 
@@ -78,34 +74,63 @@ const config = {
 } as const;
 
 describe("makePromiseClient", () => {
-  test("preserves only the versioned facade namespace", async () => {
-    const seenRequests: Array<{ method: string; url: string }> = [];
-    const runtime = ManagedRuntime.make(
-      httpClientLayer((request) => {
-        seenRequests.push({
-          method: request.method,
-          url: request.url,
-        });
+  test("preserves only the versioned facade namespace", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const seenRequests: Array<{ method: string; url: string }> = [];
+        const runtime = ManagedRuntime.make(
+          httpClientLayer((request) => {
+            seenRequests.push({
+              method: request.method,
+              url: request.url,
+            });
 
-        if (request.method === "POST" && request.url === "https://api.supabase.com/v1/projects") {
-          return Effect.succeed(
-            jsonResponse(request, 200, {
-              id: "project-id",
-              ref: "abcdefghijklmnopqrst",
-              organization_id: "org-id",
-              organization_slug: "my-org",
-              name: "project-name",
-              region: "us-east-1",
-              created_at: "2026-03-13T12:00:00.000Z",
-              status: "ACTIVE_HEALTHY",
-            }),
-          );
-        }
+            if (
+              request.method === "POST" &&
+              request.url === "https://api.supabase.com/v1/projects"
+            ) {
+              return Effect.succeed(
+                jsonResponse(request, 200, {
+                  id: "project-id",
+                  ref: "abcdefghijklmnopqrst",
+                  organization_id: "org-id",
+                  organization_slug: "my-org",
+                  name: "project-name",
+                  region: "us-east-1",
+                  created_at: "2026-03-13T12:00:00.000Z",
+                  status: "ACTIVE_HEALTHY",
+                }),
+              );
+            }
 
-        if (request.method === "GET" && request.url === "https://api.supabase.com/v1/projects") {
-          return Effect.succeed(
-            jsonResponse(request, 200, [
-              {
+            if (
+              request.method === "GET" &&
+              request.url === "https://api.supabase.com/v1/projects"
+            ) {
+              return Effect.succeed(
+                jsonResponse(request, 200, [
+                  {
+                    id: "project-id",
+                    ref: "abcdefghijklmnopqrst",
+                    organization_id: "org-id",
+                    organization_slug: "my-org",
+                    name: "project-name",
+                    region: "us-east-1",
+                    created_at: "2026-03-13T12:00:00.000Z",
+                    status: "ACTIVE_HEALTHY",
+                    database: {
+                      host: "db.supabase.internal",
+                      version: "17.0.1",
+                      postgres_engine: "17",
+                      release_channel: "ga",
+                    },
+                  },
+                ]),
+              );
+            }
+
+            return Effect.succeed(
+              jsonResponse(request, 200, {
                 id: "project-id",
                 ref: "abcdefghijklmnopqrst",
                 organization_id: "org-id",
@@ -120,134 +145,131 @@ describe("makePromiseClient", () => {
                   postgres_engine: "17",
                   release_channel: "ga",
                 },
-              },
-            ]),
-          );
-        }
-
-        return Effect.succeed(
-          jsonResponse(request, 200, {
-            id: "project-id",
-            ref: "abcdefghijklmnopqrst",
-            organization_id: "org-id",
-            organization_slug: "my-org",
-            name: "project-name",
-            region: "us-east-1",
-            created_at: "2026-03-13T12:00:00.000Z",
-            status: "ACTIVE_HEALTHY",
-            database: {
-              host: "db.supabase.internal",
-              version: "17.0.1",
-              postgres_engine: "17",
-              release_channel: "ga",
-            },
+              }),
+            );
           }),
         );
+
+        try {
+          const effectClient = yield* Effect.promise(() =>
+            runtime.runPromise(makeApiClient(config)),
+          );
+          const client = makePromiseClient(runtime, effectClient);
+
+          expect("createAProject" in client).toBe(false);
+          expect("getProject" in client).toBe(false);
+          expect("listAllProjects" in client).toBe(false);
+          expect(typeof client.v1.createAProject).toBe("function");
+          expect(typeof client.v1.getProject).toBe("function");
+          expect(typeof client.v1.listAllProjects).toBe("function");
+
+          const created = yield* Effect.promise(() =>
+            client.v1.createAProject({
+              db_pass: "hunter2",
+              name: "project-name",
+              organization_slug: "my-org",
+            }),
+          );
+          const project = yield* Effect.promise(() =>
+            client.v1.getProject({
+              ref: "abcdefghijklmnopqrst",
+            }),
+          );
+          const projects = yield* Effect.promise(() => client.v1.listAllProjects());
+
+          expect(created.ref).toBe("abcdefghijklmnopqrst");
+          expect(project.database.host).toBe("db.supabase.internal");
+          expect(projects).toHaveLength(1);
+          expect(seenRequests).toEqual([
+            {
+              method: "POST",
+              url: "https://api.supabase.com/v1/projects",
+            },
+            {
+              method: "GET",
+              url: "https://api.supabase.com/v1/projects/abcdefghijklmnopqrst",
+            },
+            {
+              method: "GET",
+              url: "https://api.supabase.com/v1/projects",
+            },
+          ]);
+        } finally {
+          yield* Effect.promise(() => runtime.dispose());
+        }
       }),
-    );
+    ));
 
-    try {
-      const effectClient = await runtime.runPromise(makeApiClient(config));
-      const client = makePromiseClient(runtime, effectClient);
+  test("serializes generated multipart methods through the promise facade", () =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        let seenRequest: HttpClientRequest.HttpClientRequest | undefined;
 
-      expect("createAProject" in client).toBe(false);
-      expect("getProject" in client).toBe(false);
-      expect("listAllProjects" in client).toBe(false);
-      expect(typeof client.v1.createAProject).toBe("function");
-      expect(typeof client.v1.getProject).toBe("function");
-      expect(typeof client.v1.listAllProjects).toBe("function");
+        const runtime = ManagedRuntime.make(
+          httpClientLayer((request) => {
+            seenRequest = request;
+            return Effect.succeed(
+              jsonResponse(request, 201, {
+                id: "function-id",
+                slug: "demo",
+                name: "Demo Function",
+                status: "ACTIVE",
+                version: 1,
+                created_at: 1_710_000_000,
+                updated_at: 1_710_000_001,
+                verify_jwt: true,
+                entrypoint_path: "functions/demo/index.ts",
+                import_map_path: "functions/demo/deno.json",
+              }),
+            );
+          }),
+        );
 
-      const created = await client.v1.createAProject({
-        db_pass: "hunter2",
-        name: "project-name",
-        organization_slug: "my-org",
-      });
-      const project = await client.v1.getProject({
-        ref: "abcdefghijklmnopqrst",
-      });
-      const projects = await client.v1.listAllProjects();
+        try {
+          const effectClient = yield* Effect.promise(() =>
+            runtime.runPromise(makeApiClient(config)),
+          );
+          const client = makePromiseClient(runtime, effectClient);
 
-      expect(created.ref).toBe("abcdefghijklmnopqrst");
-      expect(project.database.host).toBe("db.supabase.internal");
-      expect(projects).toHaveLength(1);
-      expect(seenRequests).toEqual([
-        {
-          method: "POST",
-          url: "https://api.supabase.com/v1/projects",
-        },
-        {
-          method: "GET",
-          url: "https://api.supabase.com/v1/projects/abcdefghijklmnopqrst",
-        },
-        {
-          method: "GET",
-          url: "https://api.supabase.com/v1/projects",
-        },
-      ]);
-    } finally {
-      await runtime.dispose();
-    }
-  });
-
-  test("serializes generated multipart methods through the promise facade", async () => {
-    let seenRequest: HttpClientRequest.HttpClientRequest | undefined;
-
-    const runtime = ManagedRuntime.make(
-      httpClientLayer((request) => {
-        seenRequest = request;
-        return Effect.succeed(
-          jsonResponse(request, 201, {
-            id: "function-id",
-            slug: "demo",
-            name: "Demo Function",
-            status: "ACTIVE",
-            version: 1,
-            created_at: 1_710_000_000,
-            updated_at: 1_710_000_001,
-            verify_jwt: true,
+          const metadata = {
             entrypoint_path: "functions/demo/index.ts",
             import_map_path: "functions/demo/deno.json",
-          }),
-        );
+            verify_jwt: true,
+            name: "demo",
+          } as const;
+
+          const result = yield* Effect.promise(() =>
+            client.v1.deployAFunction({
+              ref: "abcdefghijklmnopqrst",
+              slug: "demo",
+              bundleOnly: true,
+              body: {
+                metadata,
+                file: [new Uint8Array([1, 2, 3]), new Blob(["deno.json"])],
+              },
+            }),
+          );
+
+          expect(result.slug).toBe("demo");
+          expect(new URL(seenRequest!.url).pathname).toBe(
+            "/v1/projects/abcdefghijklmnopqrst/functions/deploy",
+          );
+          expect(requestUrlParam(seenRequest!, "slug")).toBe("demo");
+          expect(requestUrlParam(seenRequest!, "bundleOnly")).toBe("true");
+
+          const formData = requestFormData(seenRequest!);
+          expect(
+            yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+              formDataTextValue(formData, "metadata"),
+            ),
+          ).toEqual(metadata);
+          expect(yield* Effect.promise(() => formDataFileTexts(formData, "file"))).toEqual([
+            "\u0001\u0002\u0003",
+            "deno.json",
+          ]);
+        } finally {
+          yield* Effect.promise(() => runtime.dispose());
+        }
       }),
-    );
-
-    try {
-      const effectClient = await runtime.runPromise(makeApiClient(config));
-      const client = makePromiseClient(runtime, effectClient);
-
-      const metadata = {
-        entrypoint_path: "functions/demo/index.ts",
-        import_map_path: "functions/demo/deno.json",
-        verify_jwt: true,
-        name: "demo",
-      } as const;
-
-      const result = await client.v1.deployAFunction({
-        ref: "abcdefghijklmnopqrst",
-        slug: "demo",
-        bundleOnly: true,
-        body: {
-          metadata,
-          file: [new Uint8Array([1, 2, 3]), new Blob(["deno.json"])],
-        },
-      });
-
-      expect(result.slug).toBe("demo");
-      expect(new URL(seenRequest!.url).pathname).toBe(
-        "/v1/projects/abcdefghijklmnopqrst/functions/deploy",
-      );
-      expect(requestUrlParam(seenRequest!, "slug")).toBe("demo");
-      expect(requestUrlParam(seenRequest!, "bundleOnly")).toBe("true");
-
-      const formData = requestFormData(seenRequest!);
-      expect(JSON.parse(formDataTextValue(formData, "metadata"))).toEqual(metadata);
-      expect(await formDataFileTexts(formData, "file")).toEqual([
-        "\u0001\u0002\u0003",
-        "deno.json",
-      ]);
-    } finally {
-      await runtime.dispose();
-    }
-  });
+    ));
 });

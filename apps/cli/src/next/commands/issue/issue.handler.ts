@@ -1,4 +1,4 @@
-import { Effect } from "effect";
+import { Config, Effect, Option } from "effect";
 import { Browser } from "../../../shared/runtime/browser.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -24,9 +24,19 @@ const openIssueUrl = Effect.fnUntraced(function* (url: string, noBrowser: boolea
   }
 });
 
+const issueInstallEnvironment = Effect.gen(function* () {
+  const installMethod = yield* Config.option(Config.string("SUPABASE_INSTALL_METHOD"));
+  const userAgent = yield* Config.option(Config.string("npm_config_user_agent"));
+  return {
+    SUPABASE_INSTALL_METHOD: Option.getOrUndefined(installMethod),
+    npm_config_user_agent: Option.getOrUndefined(userAgent),
+  };
+});
+
 export const openBugIssue = Effect.fn("issue.bug")(function* (flags: BugIssueFlags) {
   const runtimeInfo = yield* RuntimeInfo;
   const telemetryRuntime = yield* TelemetryRuntime;
+  const environment = yield* issueInstallEnvironment;
 
   const url = buildIssueUrl({
     template: issueTemplateContract.bug.template,
@@ -34,7 +44,7 @@ export const openBugIssue = Effect.fn("issue.bug")(function* (flags: BugIssueFla
       "affected-area": readIssueFlagValue(flags.area),
       "cli-version": telemetryRuntime.cliVersion,
       os: `${runtimeInfo.platform} ${runtimeInfo.arch}`,
-      "install-method": inferIssueInstallMethod(runtimeInfo),
+      "install-method": inferIssueInstallMethod(runtimeInfo, environment),
       command: readIssueFlagValue(flags.command),
       "actual-output": readIssueFlagValue(flags.actualOutput),
       "expected-behavior": readIssueFlagValue(flags.expectedBehavior),

@@ -30,25 +30,17 @@ const makeProjectLinkState = Effect.gen(function* () {
 
   const loadFromPath = (filePath: string) =>
     Effect.gen(function* () {
-      const exists = yield* fs
-        .exists(filePath)
-        .pipe(Effect.mapError(() => invalidProjectLinkStateError(filePath)));
+      const exists = yield* fs.exists(filePath);
       if (!exists) {
         return Option.none<ProjectLinkStateValue>();
       }
 
-      const content = yield* fs
-        .readFileString(filePath)
-        .pipe(Effect.mapError(() => invalidProjectLinkStateError(filePath)));
-      const decoded = yield* decodeProjectLinkStateValue(content).pipe(
-        Effect.mapError(() => invalidProjectLinkStateError(filePath)),
-      );
+      const content = yield* fs.readFileString(filePath);
+      const decoded = yield* decodeProjectLinkStateValue(content);
       return Option.some(decoded);
-    });
+    }).pipe(Effect.mapError(() => invalidProjectLinkStateError(filePath)));
 
-  const load = Effect.gen(function* () {
-    return yield* loadFromPath(projectHome.projectLinkPath);
-  });
+  const load = loadFromPath(projectHome.projectLinkPath);
 
   const save = (state: ProjectLinkStateValue) =>
     Effect.gen(function* () {
@@ -67,12 +59,10 @@ const makeProjectLinkState = Effect.gen(function* () {
     Effect.gen(function* () {
       const current = yield* load;
       if (Option.isNone(current)) {
-        return yield* Effect.fail(
-          new ProjectNotLinkedError({
-            detail: "Cannot set active branch: no linked project found.",
-            suggestion: "Run `supabase link` to link this checkout to a Supabase project first.",
-          }),
-        );
+        return yield* new ProjectNotLinkedError({
+          detail: "Cannot set active branch: no linked project found.",
+          suggestion: "Run `supabase link` to link this checkout to a Supabase project first.",
+        });
       }
       yield* save({ ...current.value, active_branch: branch });
     });

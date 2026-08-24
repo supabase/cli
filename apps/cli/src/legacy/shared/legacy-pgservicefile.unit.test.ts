@@ -1,7 +1,6 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, Path } from "effect";
 
 import { legacyServiceSettings, parseLegacyServicefile } from "./legacy-pgservicefile.ts";
 
@@ -41,40 +40,63 @@ describe("parseLegacyServicefile", () => {
 });
 
 describe("legacyServiceSettings", () => {
-  let tmp: string;
-  let path: string;
+  const fixture = (
+    run: (
+      tmp: string,
+      servicePath: string,
+      files: ReadonlyMap<string, string>,
+    ) => Effect.Effect<void>,
+  ) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const tmp = yield* fs.makeTempDirectory({ prefix: "pgservice-" });
+      const servicePath = path.join(tmp, "pg_service.conf");
+      const files = new Map([
+        [servicePath, "[prod]\nhost=db.example.com\nport=6543\ndbname=appdb\nuser=alice\n"],
+      ]);
+      yield* run(tmp, servicePath, files);
+      yield* fs.remove(tmp, { recursive: true });
+    }).pipe(Effect.provide(BunServices.layer));
 
-  beforeEach(() => {
-    tmp = mkdtempSync(join(tmpdir(), "pgservice-"));
-    path = join(tmp, "pg_service.conf");
-    writeFileSync(path, "[prod]\nhost=db.example.com\nport=6543\ndbname=appdb\nuser=alice\n");
-  });
+  it.effect("returns the named section's settings, remapping dbname → database", () =>
+    fixture((_tmp, servicePath, files) =>
+      Effect.sync(() => {
+        const settings = legacyServiceSettings("prod", servicePath, files);
+        expect(settings).toBeDefined();
+        expect(Object.fromEntries(settings!)).toEqual({
+          host: "db.example.com",
+          port: "6543",
+          database: "appdb",
+          user: "alice",
+        });
+      }),
+    ),
+  );
 
-  afterEach(() => {
-    rmSync(tmp, { recursive: true, force: true });
-  });
+  it.effect("returns undefined for an unknown service", () =>
+    fixture((_tmp, servicePath, files) =>
+      Effect.sync(() => {
+        expect(legacyServiceSettings("missing", servicePath, files)).toBeUndefined();
+      }),
+    ),
+  );
 
-  it("returns the named section's settings, remapping dbname → database", () => {
-    const settings = legacyServiceSettings("prod", path);
-    expect(settings).toBeDefined();
-    expect(Object.fromEntries(settings!)).toEqual({
-      host: "db.example.com",
-      port: "6543",
-      database: "appdb",
-      user: "alice",
-    });
-  });
+  it.effect("returns undefined when the service file is unreadable", () =>
+    fixture((tmp, _servicePath, files) => {
+      const missingPath = `${tmp}/nope.conf`;
+      return Effect.sync(() => {
+        expect(legacyServiceSettings("prod", missingPath, files)).toBeUndefined();
+      });
+    }),
+  );
 
-  it("returns undefined for an unknown service", () => {
-    expect(legacyServiceSettings("missing", path)).toBeUndefined();
-  });
-
-  it("returns undefined when the service file is unreadable", () => {
-    expect(legacyServiceSettings("prod", join(tmp, "nope.conf"))).toBeUndefined();
-  });
-
-  it("returns undefined when the file is malformed", () => {
-    writeFileSync(path, "host=orphan\n");
-    expect(legacyServiceSettings("prod", path)).toBeUndefined();
-  });
+  it.effect("returns undefined when the file is malformed", () =>
+    fixture((_tmp, servicePath, files) => {
+      const malformed = new Map(files).set(servicePath, "host=orphan\n");
+      return Effect.sync(() => {
+        expect(legacyServiceSettings("prod", servicePath, malformed)).toBeUndefined();
+      });
+    }),
+  );
 });

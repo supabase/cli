@@ -1,8 +1,6 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, ManagedRuntime, Option, Path } from "effect";
 
 import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
@@ -29,6 +27,34 @@ import { legacyMigrationList } from "./list.handler.ts";
 import type { LegacyMigrationListFlags } from "./list.command.ts";
 
 const LIST_SQL = "SELECT version FROM supabase_migrations.schema_migrations ORDER BY version";
+
+const fixturePath = ManagedRuntime.make(BunServices.layer).runSync(Path.Path);
+const join = (first: string, ...rest: ReadonlyArray<string>) => fixturePath.join(first, ...rest);
+const pendingDirectories: string[] = [];
+const pendingWrites: Array<{ readonly path: string; readonly contents: string | Uint8Array }> = [];
+const mkdirSync = (path: string, _options?: { readonly recursive?: boolean }) => {
+  pendingDirectories.push(path);
+};
+const writeFileSync = (path: string, contents: string | Uint8Array) => {
+  pendingWrites.push({ path, contents });
+};
+const flushFixtureWrites = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  for (const directory of pendingDirectories) {
+    yield* fs.makeDirectory(directory, { recursive: true });
+  }
+  for (const write of pendingWrites) {
+    yield* fs.makeDirectory(fixturePath.dirname(write.path), { recursive: true });
+    yield* fs.writeFileString(
+      write.path,
+      typeof write.contents === "string"
+        ? write.contents
+        : new TextDecoder().decode(write.contents),
+    );
+  }
+  pendingDirectories.length = 0;
+  pendingWrites.length = 0;
+});
 
 interface SetupOpts {
   readonly format?: OutputFormat;
@@ -105,6 +131,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockLegacyCliConfig({ workdir }),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
+    Layer.effectDiscard(flushFixtureWrites.pipe(Effect.provide(BunServices.layer))),
     BunServices.layer,
   );
   return {

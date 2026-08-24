@@ -188,11 +188,9 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
     const goOutput = Option.getOrUndefined(legacyOutput);
 
     if (goOutput === "env") {
-      return yield* Effect.fail(
-        new LegacyServicesEnvNotSupportedError({
-          message: "--output env flag is not supported",
-        }),
-      );
+      return yield* new LegacyServicesEnvNotSupportedError({
+        message: "--output env flag is not supported",
+      });
     }
 
     if (goOutput === "json") {

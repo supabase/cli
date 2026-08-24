@@ -24,7 +24,7 @@ export const api = Schema.Struct({
     tags,
     links,
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnabled))),
-  port: Schema.Number.annotate({
+  port: Schema.Finite.annotate({
     default: defaultPort,
     description: "Port to use for the API URL.",
     tags,
@@ -49,7 +49,7 @@ export const api = Schema.Struct({
   )
     .annotate({ default: defaultExtraSearchPath })
     .pipe(Schema.withDecodingDefaultKey(Effect.succeed([...defaultExtraSearchPath]))),
-  max_rows: Schema.Number.annotate({
+  max_rows: Schema.Finite.annotate({
     default: defaultMaxRows,
     description:
       "The maximum number of rows returned from a view, table, or stored procedure. Limits payload size for accidental or malicious requests.",

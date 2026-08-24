@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Option, Path, Schedule } from "effect";
+import { Cause, Effect, FileSystem, Option, Path, Schedule } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 import { LegacyPlatformApi } from "../../auth/legacy-platform-api.service.ts";
@@ -22,8 +22,10 @@ import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { Tty } from "../../../shared/runtime/tty.service.ts";
 import { legacyAqua, legacyBold } from "../../shared/legacy-colors.ts";
 import { legacyEnsureLogin } from "../../shared/legacy-ensure-login.ts";
+import { LegacyViperEnv } from "../../../shared/legacy/legacy-viper-env.ts";
 import { legacyGetProjectApiKeys } from "../../shared/legacy-get-api-keys.ts";
 import { sanitizeLegacyErrorBody } from "../../shared/legacy-http-errors.ts";
+import { legacyErrorMessage } from "../../shared/legacy-error-message.ts";
 import type { LegacyConnectSuggestionContext } from "../../shared/legacy-connect-errors.ts";
 import { legacyResolveLinkedConn } from "../../shared/legacy-db-config.layer.ts";
 import {
@@ -79,6 +81,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
   const telemetryState = yield* LegacyTelemetryState;
   const workdirFlag = yield* LegacyWorkdirFlag;
   const dnsResolver = yield* LegacyDnsResolverFlag;
+  const viperEnv = yield* LegacyViperEnv;
   // `--yes` OR `SUPABASE_YES`.
   const yesFlag = yield* legacyResolveYes;
 
@@ -100,7 +103,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     // Reads the prefixed `SUPABASE_WORKDIR` only (never plain `WORKDIR`).
     const workdirRaw = Option.isSome(workdirFlag)
       ? workdirFlag.value
-      : process.env["SUPABASE_WORKDIR"];
+      : Option.getOrUndefined(yield* viperEnv.get("SUPABASE_WORKDIR"));
     const workdirInput =
       workdirRaw ??
       (yield* output.promptText(
@@ -136,14 +139,14 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
 
     // C. mkdir + overwrite prompt.
     yield* fs.makeDirectory(workdir, { recursive: true });
-    const entries = yield* fs
-      .readDirectory(workdir)
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new LegacyBootstrapWorkdirReadError({ message: `failed to read workdir: ${cause}` }),
-        ),
-      );
+    const entries = yield* fs.readDirectory(workdir).pipe(
+      Effect.mapError(
+        (cause) =>
+          new LegacyBootstrapWorkdirReadError({
+            message: `failed to read workdir: ${legacyErrorMessage(cause)}`,
+          }),
+      ),
+    );
     if (entries.length > 0) {
       // Established prompt behavior: `--yes`/`SUPABASE_YES` auto-confirms with
       // the `<title> [Y/n] y` stderr echo instead of silently skipping the
@@ -194,7 +197,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     // fallback is `SUPABASE_DB_PASSWORD` (consumed by `flags.PromptPassword`).
     const seededPassword = Option.isSome(flags.password)
       ? flags.password.value
-      : (process.env["SUPABASE_DB_PASSWORD"] ?? "");
+      : Option.getOrElse(yield* viperEnv.get("SUPABASE_DB_PASSWORD"), () => "");
     const created = yield* legacyProjectCreateCore({
       name: path.basename(workdir),
       orgId: "",
@@ -230,8 +233,11 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     // here and stays open for the rest of the handler — see the `Effect.scoped`
     // on this function's own outer pipe below.
     const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
-    yield* legacyApplyProjectEnv(projectEnv);
-    const pushYes = yield* legacyResolveYesWithProjectEnv(projectEnv);
+    const effectiveProjectEnv = {
+      ...projectEnv,
+      ...(yield* legacyApplyProjectEnv(projectEnv)),
+    };
+    const pushYes = yield* legacyResolveYesWithProjectEnv(effectiveProjectEnv);
     const toml = yield* legacyCheckDbToml(fs, path, workdir, projectRef);
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
@@ -280,7 +286,8 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
         const content = yield* fs.readFileString(examplePath);
         example = yield* Effect.try({
           try: () => parseDotEnv(content),
-          catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+          catch: (cause) =>
+            new Cause.UnknownError(cause, cause instanceof Error ? cause.message : String(cause)),
         });
       }
       const env = buildDotEnv(keys, dbConfig, supabaseUrl, example);
@@ -378,14 +385,14 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       includeVault: true,
       dnsResolver,
       projectId: cliConfig.projectId,
-      toml,
+      toml: { ...toml, projectEnv: { ...toml.projectEnv, ...effectiveProjectEnv } },
       yes: pushYes,
       emitStructuredResult: false,
     }).pipe(pushNotify, Effect.retry(retry));
 
     // M. Start suggestion.
     if (isText) {
-      const suggestion = suggestAppStart(runtimeInfo.cwd, workdir, starter.start, legacyAqua);
+      const suggestion = suggestAppStart(path, runtimeInfo.cwd, workdir, starter.start, legacyAqua);
       yield* emitSuccessTrailer(`${suggestion}\n`);
     } else {
       yield* output.success("", {
@@ -452,7 +459,13 @@ const mapHealthError = (cause: unknown): Effect.Effect<never, LegacyBootstrapHea
   }
   return Effect.fail(
     isDecodeFailureCause(cause)
-      ? new LegacyBootstrapHealthError({ message: `Error status 0: ${cause}`, decode: true })
-      : new LegacyBootstrapHealthError({ message: `Error status 0: ${cause}`, transport: true }),
+      ? new LegacyBootstrapHealthError({
+          message: `Error status 0: ${legacyErrorMessage(cause)}`,
+          decode: true,
+        })
+      : new LegacyBootstrapHealthError({
+          message: `Error status 0: ${legacyErrorMessage(cause)}`,
+          transport: true,
+        }),
   );
 };

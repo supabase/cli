@@ -16,6 +16,7 @@ import {
   legacyGlobalFlagValues,
   legacyResolveDebugWithProjectEnv,
 } from "./global-flags.ts";
+import { legacyViperEnvLayer } from "./legacy-viper-env.ts";
 
 describe("legacyGlobalFlagValues", () => {
   it.live(
@@ -96,6 +97,7 @@ describe("legacyResolveDebugWithProjectEnv", () => {
       const layer = Layer.mergeAll(
         Layer.succeed(LegacyDebugFlag, true),
         Layer.succeed(CliArgs, { args: ["db", "pull", "--", "--debug=false"] }),
+        legacyViperEnvLayer,
       );
       return legacyResolveDebugWithProjectEnv({}).pipe(
         Effect.provide(layer),
@@ -118,6 +120,7 @@ describe("legacyResolveDebugWithProjectEnv", () => {
       const layer = Layer.mergeAll(
         Layer.succeed(LegacyDebugFlag, true),
         Layer.succeed(CliArgs, { args: ["db", "pull", "--password", "--debug=false"] }),
+        legacyViperEnvLayer,
       );
       return legacyResolveDebugWithProjectEnv({}).pipe(
         Effect.provide(layer),

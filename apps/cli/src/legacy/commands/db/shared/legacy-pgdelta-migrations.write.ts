@@ -81,11 +81,9 @@ export const legacyWritePgDeltaMigrations = (
     const { workdir, name, files } = opts;
     for (const file of files) {
       if (file.transactionMode !== "transactional" && file.transactionMode !== "none") {
-        return yield* Effect.fail(
-          new LegacyPgDeltaMigrationWriteError({
-            message: `unknown pg-delta transaction mode ${JSON.stringify(file.transactionMode)}`,
-          }),
-        );
+        return yield* new LegacyPgDeltaMigrationWriteError({
+          message: `unknown pg-delta transaction mode ${String(file.transactionMode)}`,
+        });
       }
     }
     const single = files.length === 1;
@@ -156,11 +154,9 @@ export const legacyWritePgDeltaMigrations = (
       }
       if (!collision) break;
       if (attempt + 1 >= MAX_VERSION_COLLISION_ATTEMPTS) {
-        return yield* Effect.fail(
-          new LegacyPgDeltaMigrationWriteError({
-            message: `failed to find a unique migration version after ${MAX_VERSION_COLLISION_ATTEMPTS} attempts`,
-          }),
-        );
+        return yield* new LegacyPgDeltaMigrationWriteError({
+          message: `failed to find a unique migration version after ${MAX_VERSION_COLLISION_ATTEMPTS} attempts`,
+        });
       }
       baseMillis += 1000;
       set = buildSet(baseMillis);

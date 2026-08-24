@@ -1,6 +1,6 @@
 import { type V1GetNetworkRestrictionsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Option, Formatter } from "effect";
 
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
@@ -248,7 +248,7 @@ describe("legacy network-restrictions get integration", () => {
       const exit = yield* Effect.exit(legacyNetworkRestrictionsGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacyNetworkRestrictionsGetUnexpectedStatusError");
         expect(errorJson).toContain("failed to retrieve network restrictions; received:");
       }
@@ -261,7 +261,7 @@ describe("legacy network-restrictions get integration", () => {
       const exit = yield* Effect.exit(legacyNetworkRestrictionsGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacyNetworkRestrictionsGetNetworkError");
         expect(errorJson).toContain("failed to retrieve network restrictions:");
       }

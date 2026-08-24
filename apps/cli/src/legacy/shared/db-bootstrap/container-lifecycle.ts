@@ -324,15 +324,13 @@ export function legacyEnsureNetwork(
       );
       if (exitCode !== 0 && !legacyIsNetworkAlreadyExistsError(stderr)) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new LegacyNetworkCreateError({
-            message:
-              message.length > 0
-                ? `failed to create docker network: ${message}`
-                : "failed to create docker network",
-            reason: legacyContainerCliReason(message),
-          }),
-        );
+        return yield* new LegacyNetworkCreateError({
+          message:
+            message.length > 0
+              ? `failed to create docker network: ${message}`
+              : "failed to create docker network",
+          reason: legacyContainerCliReason(message),
+        });
       }
     }),
   );
@@ -399,15 +397,11 @@ export function legacyEnsureVolume(
       );
       if (exitCode !== 0 && !legacyIsVolumeAlreadyExistsError(stderr)) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new LegacyVolumeCreateError({
-            message:
-              message.length > 0
-                ? `failed to create volume: ${message}`
-                : "failed to create volume",
-            reason: legacyContainerCliReason(message),
-          }),
-        );
+        return yield* new LegacyVolumeCreateError({
+          message:
+            message.length > 0 ? `failed to create volume: ${message}` : "failed to create volume",
+          reason: legacyContainerCliReason(message),
+        });
       }
     }),
   );
@@ -605,15 +599,13 @@ function legacyDockerCreateContainer(
       );
       if (exitCode !== 0) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new LegacyContainerCreateError({
-            message:
-              message.length > 0
-                ? `failed to create docker container: ${message}`
-                : "failed to create docker container",
-            reason: legacyContainerCliReason(message),
-          }),
-        );
+        return yield* new LegacyContainerCreateError({
+          message:
+            message.length > 0
+              ? `failed to create docker container: ${message}`
+              : "failed to create docker container",
+          reason: legacyContainerCliReason(message),
+        });
       }
       return stdout.trim();
     }),
@@ -659,20 +651,16 @@ function legacyDockerStartContainer(
         }`;
         const hostPort = legacyParsePortBindError(trimmed);
         if (hostPort === undefined) {
-          return yield* Effect.fail(
-            new LegacyContainerStartError({
-              message: base,
-              reason: legacyContainerCliReason(trimmed),
-            }),
-          );
+          return yield* new LegacyContainerStartError({
+            message: base,
+            reason: legacyContainerCliReason(trimmed),
+          });
         }
         const serviceLabel = spec.networkAliases?.[0] ?? spec.containerName;
-        return yield* Effect.fail(
-          new LegacyContainerStartError({
-            message: `${base}${legacyPortConflictSuggestion(hostPort, serviceLabel)}`,
-            reason: "port_conflict",
-          }),
-        );
+        return yield* new LegacyContainerStartError({
+          message: `${base}${legacyPortConflictSuggestion(hostPort, serviceLabel)}`,
+          reason: "port_conflict",
+        });
       }
     }),
   );
@@ -718,15 +706,13 @@ function legacyDockerCopyArchiveIntoContainer(
       );
       if (exitCode !== 0) {
         const message = stderr.trim();
-        return yield* Effect.fail(
-          new LegacyContainerCreateError({
-            message:
-              message.length > 0
-                ? `failed to create docker container: failed to copy secret file into container: ${message}`
-                : "failed to create docker container: failed to copy secret file into container",
-            reason: legacyContainerCliReason(message),
-          }),
-        );
+        return yield* new LegacyContainerCreateError({
+          message:
+            message.length > 0
+              ? `failed to create docker container: failed to copy secret file into container: ${message}`
+              : "failed to create docker container: failed to copy secret file into container",
+          reason: legacyContainerCliReason(message),
+        });
       }
     }),
   );
@@ -746,21 +732,18 @@ function legacyCopyStartSecretFilesIntoContainer(
 ): Effect.Effect<void, LegacyContainerCreateError> {
   if (secretFiles.length === 0) return Effect.void;
 
-  return Effect.tryPromise({
-    try: () =>
-      containerArchiveBytes(
-        Object.fromEntries(
-          secretFiles.map((secretFile) => [secretFile.containerPath, secretFile.content]),
-        ),
-      ),
-    catch: (cause) =>
-      new LegacyContainerCreateError({
-        message: `failed to create docker container: failed to prepare container secret files: ${
-          cause instanceof Error ? cause.message : String(cause)
-        }`,
-        reason: "internal",
-      }),
-  }).pipe(
+  return containerArchiveBytes(
+    Object.fromEntries(
+      secretFiles.map((secretFile) => [secretFile.containerPath, secretFile.content]),
+    ),
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new LegacyContainerCreateError({
+          message: `failed to create docker container: failed to prepare container secret files: ${cause.message}`,
+          reason: "internal",
+        }),
+    ),
     Effect.flatMap((archive) =>
       legacyDockerCopyArchiveIntoContainer(spawner, archive, `${containerId}:/`),
     ),

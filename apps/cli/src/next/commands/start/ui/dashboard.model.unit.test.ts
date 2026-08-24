@@ -3,6 +3,7 @@ import * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry";
 import { Effect, Layer, SubscriptionRef } from "effect";
 import { StackServiceState, type StackInfo, type StackServiceStatus } from "@supabase/stack/effect";
 import { StartDashboardState } from "./dashboard-state.ts";
+import { createStartDashboardModel } from "./dashboard.model.ts";
 
 function state(name: string, status: StackServiceStatus) {
   return new StackServiceState({
@@ -40,12 +41,8 @@ describe("createStartDashboardModel", () => {
     }),
   );
 
-  test("creates dashboard-scoped writable and derived atoms", async () => {
-    const modelModule = await import("./dashboard.model.ts");
-    expect("createStartDashboardModel" in modelModule).toBe(true);
-    if (!("createStartDashboardModel" in modelModule)) return;
-
-    const model = modelModule.createStartDashboardModel(dashboardStateLayer);
+  test("creates dashboard-scoped writable and derived atoms", () => {
+    const model = createStartDashboardModel(dashboardStateLayer);
     const registry = AtomRegistry.make();
 
     expect(registry.get(model.stackInfoAtom)).toBeNull();
@@ -72,12 +69,8 @@ describe("createStartDashboardModel", () => {
     expect(registry.get(model.showConnectionInfoAtom)).toBe(true);
   });
 
-  test("shows the foreground failure message when startup fails", async () => {
-    const modelModule = await import("./dashboard.model.ts");
-    expect("createStartDashboardModel" in modelModule).toBe(true);
-    if (!("createStartDashboardModel" in modelModule)) return;
-
-    const model = modelModule.createStartDashboardModel(dashboardStateLayer);
+  test("shows the foreground failure message when startup fails", () => {
+    const model = createStartDashboardModel(dashboardStateLayer);
     const registry = AtomRegistry.make();
 
     registry.set(model.errorAtom, "startup failed");

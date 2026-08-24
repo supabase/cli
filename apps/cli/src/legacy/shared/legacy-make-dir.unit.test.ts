@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem, Layer, PlatformError } from "effect";
+import { Effect, Exit, FileSystem, Formatter, Layer, PlatformError } from "effect";
 
 import { legacyMakeDir } from "./legacy-make-dir.ts";
 
@@ -83,7 +83,7 @@ describe("legacyMakeDir", () => {
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("PermissionDenied");
+            expect(Formatter.formatJson(exit.cause)).toContain("PermissionDenied");
           }
         }),
       ),

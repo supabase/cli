@@ -1,6 +1,6 @@
 import { type V1GetASnippetOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Option, Formatter } from "effect";
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -139,7 +139,7 @@ describe("legacy snippets download integration", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const dump = JSON.stringify(exit.cause);
+          const dump = Formatter.formatJson(exit.cause);
           expect(dump).toContain("LegacySnippetsInvalidIdError");
           // `uuid.Parse` returns `invalid UUID length: 10` for "not-a-uuid"
           // (length 10), wrapped as `invalid snippet ID: %w`.
@@ -161,7 +161,7 @@ describe("legacy snippets download integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("invalid snippet ID: invalid UUID length: 42");
       }
     }).pipe(Effect.provide(layer));
@@ -175,7 +175,7 @@ describe("legacy snippets download integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("invalid snippet ID: invalid UUID format");
         // The offending value must NOT be embedded in the error message.
         expect(dump).not.toContain(WRONG_FORMAT_ID);
@@ -225,7 +225,7 @@ describe("legacy snippets download integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySnippetsDownloadUnexpectedStatusError");
         expect(dump).toContain("unexpected download snippet status 503");
       }
@@ -240,7 +240,7 @@ describe("legacy snippets download integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySnippetsDownloadNetworkError");
         expect(dump).toContain("failed to download snippet");
       }

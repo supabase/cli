@@ -18,13 +18,14 @@ const nodeHttpClientLayer = NodeHttpClient.layerUndiciNoDispatcher.pipe(
   Layer.provide(nodeDispatcherLayer),
 );
 
-export async function createApiClient(
+export function createApiClient(
   config: SupabaseApiConfig = {},
   options?: SupabaseApiClientOptions,
 ): Promise<PromiseSupabaseApiClient> {
   const runtime = ManagedRuntime.make(nodeHttpClientLayer);
-  const effectClient = await runtime.runPromise(makeApiClient(config, options));
-  return makePromiseClient(runtime, effectClient);
+  return runtime
+    .runPromise(makeApiClient(config, options))
+    .then((effectClient) => makePromiseClient(runtime, effectClient));
 }
 
 export type PromiseSupabaseApiClient = PromiseClient<ApiClient>;

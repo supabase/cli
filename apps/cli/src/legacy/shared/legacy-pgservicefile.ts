@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-
 /**
  * PostgreSQL service file (`pg_service.conf`) support, a 1:1 port of
  * `jackc/pgservicefile` as used by `pgconn.ParseConfig`:
@@ -53,13 +51,10 @@ export function parseLegacyServicefile(contents: string): Map<string, Map<string
 export function legacyServiceSettings(
   serviceName: string,
   servicefilePath: string,
+  files: ReadonlyMap<string, string> = new Map(),
 ): Map<string, string> | undefined {
-  let contents: string;
-  try {
-    contents = readFileSync(servicefilePath, "utf8");
-  } catch {
-    return undefined;
-  }
+  const contents = files.get(servicefilePath);
+  if (contents === undefined) return undefined;
   let services: Map<string, Map<string, string>>;
   try {
     services = parseLegacyServicefile(contents);

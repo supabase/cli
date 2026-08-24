@@ -1,18 +1,25 @@
-import { BunServices } from "@effect/platform-bun";
 import { Layer } from "effect";
 import { Command } from "effect/unstable/cli";
 import { FetchHttpClient } from "effect/unstable/http";
 import { credentialsLayer } from "../../../auth/credentials.layer.ts";
+import {
+  discoveredProjectContextLayer,
+  provideProjectCommandRuntime,
+} from "../../../config/project-runtime.layer.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandInstrumentation } from "../../../../shared/telemetry/command-instrumentation.ts";
 import { functionsList } from "./list.handler.ts";
 
 const functionsListRuntimeLayer = Layer.mergeAll(
-  BunServices.layer,
-  FetchHttpClient.layer,
-  credentialsLayer,
-  commandRuntimeLayer(["functions", "list"]),
+  discoveredProjectContextLayer,
+  provideProjectCommandRuntime(
+    Layer.mergeAll(
+      FetchHttpClient.layer,
+      credentialsLayer,
+      commandRuntimeLayer(["functions", "list"]),
+    ),
+  ),
 );
 
 export const functionsListCommand = Command.make("list").pipe(

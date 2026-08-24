@@ -1,9 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { Option, Context, Tracer } from "effect";
+import { Clock, Context, Effect, Option, Tracer } from "effect";
 import { formatSpanForDebugConsole, makeDebugConsoleExporter } from "./debug-console.ts";
 
 function makeEndedSpan(name: string, attrs: Record<string, unknown> = {}): Tracer.Span {
-  const startTime = BigInt(Date.now()) * BigInt(1_000_000);
+  const startTime = BigInt(Effect.runSync(Clock.currentTimeMillis)) * BigInt(1_000_000);
   const endTime = startTime + BigInt(50_000_000); // 50ms later
   const attributes = new Map(Object.entries(attrs));
   return {
@@ -51,7 +51,7 @@ describe("debug-console exporter", () => {
       ...makeEndedSpan("pending-span"),
       status: {
         _tag: "Started",
-        startTime: BigInt(Date.now()) * BigInt(1_000_000),
+        startTime: BigInt(Effect.runSync(Clock.currentTimeMillis)) * BigInt(1_000_000),
       } as Tracer.SpanStatus,
     };
 

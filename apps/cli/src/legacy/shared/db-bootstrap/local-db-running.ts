@@ -1,5 +1,6 @@
 import { Data, Effect, type FileSystem, Option, type Path, Stream } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
+import { LegacyViperEnv } from "../../../shared/legacy/legacy-viper-env.ts";
 
 import {
   actionability,
@@ -74,7 +75,11 @@ export function legacyIsLocalDbRunning(
   path: Path.Path,
   workdir: string,
   configuredProjectId: string | undefined,
-): Effect.Effect<boolean, LegacyLocalDbRunningError> {
+): Effect.Effect<
+  boolean,
+  LegacyLocalDbRunningError,
+  FileSystem.FileSystem | Path.Path | LegacyViperEnv
+> {
   return Effect.scoped(
     Effect.gen(function* () {
       // `warnOnUnresolvedEnv: false` — this doc comment's own `resolveDbToml` note:
@@ -141,16 +146,14 @@ export function legacyIsLocalDbRunning(
         // on a daemon-connection failure (`misc.go:148-154`), so a down daemon
         // still surfaces the actionable Docker Desktop hint, not just raw stderr.
         const daemonDown = legacyIsDockerDaemonUnreachable(stderr);
-        return yield* Effect.fail(
-          new LegacyLocalDbRunningError({
-            message:
-              stderr.length > 0
-                ? `failed to inspect service: ${stderr}`
-                : "failed to inspect service",
-            daemonDown,
-            ...(daemonDown ? { suggestion: LEGACY_SUGGEST_DOCKER_INSTALL } : {}),
-          }),
-        );
+        return yield* new LegacyLocalDbRunningError({
+          message:
+            stderr.length > 0
+              ? `failed to inspect service: ${stderr}`
+              : "failed to inspect service",
+          daemonDown,
+          ...(daemonDown ? { suggestion: LEGACY_SUGGEST_DOCKER_INSTALL } : {}),
+        });
       }
       return false;
     }),

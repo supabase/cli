@@ -68,13 +68,11 @@ const functionsDeployPlatformApiLayer = platformApiLayer.pipe(
   Layer.provide(Layer.mergeAll(credentialsLayer, functionsDeployCommandRuntimeLayer)),
 );
 
-const functionsDeployRuntimeLayer = Layer.mergeAll(
-  BunServices.layer,
-  functionsDeployPlatformApiLayer,
-  projectLinkStateLayer,
-  functionsDeployCommandRuntimeLayer,
+const functionsDeployRuntimeLayer = BunServices.layer.pipe(
+  Layer.provideMerge(projectLinkStateLayer),
+  Layer.provideMerge(functionsDeployPlatformApiLayer),
   // `stdinLayer`: the `--prune` confirmation reads piped stdin on a non-TTY stdin.
-  stdinLayer,
+  Layer.provideMerge(stdinLayer),
 );
 
 export const functionsDeployCommand = Command.make("deploy", config).pipe(

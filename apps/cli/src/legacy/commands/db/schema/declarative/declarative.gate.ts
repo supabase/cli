@@ -48,10 +48,8 @@ export const legacyRequirePgDelta = Effect.fnUntraced(function* (opts: {
   readonly configPath: string;
 }) {
   if (legacyIsPgDeltaEnabled(opts.experimental, opts.pgDeltaEnabled)) return;
-  return yield* Effect.fail(
-    new LegacyDeclarativeNotEnabledError({
-      message: "declarative commands require --experimental flag or pg-delta enabled in config",
-      suggestion: legacyPgDeltaSuggestion(opts.configPath),
-    }),
-  );
+  return yield* new LegacyDeclarativeNotEnabledError({
+    message: "declarative commands require --experimental flag or pg-delta enabled in config",
+    suggestion: legacyPgDeltaSuggestion(opts.configPath),
+  });
 });

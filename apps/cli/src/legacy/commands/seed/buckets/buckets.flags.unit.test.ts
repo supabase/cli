@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Effect, Exit } from "effect";
+import { Effect, Exit, Formatter } from "effect";
 
 import { legacyAssertSeedTargetsExclusive, legacySeedChangedTargetFlags } from "./buckets.flags.ts";
 
@@ -57,7 +57,7 @@ describe("legacyAssertSeedTargetsExclusive", () => {
       legacyAssertSeedTargetsExclusive(["seed", "buckets", "--local", "--linked"]),
     );
     expect(Exit.isFailure(exit)).toBe(true);
-    expect(JSON.stringify(exit)).toContain(
+    expect(Formatter.formatJson(exit)).toContain(
       "if any flags in the group [local linked] are set none of the others can be; [linked local] were all set",
     );
   });
@@ -67,7 +67,7 @@ describe("legacyAssertSeedTargetsExclusive", () => {
       legacyAssertSeedTargetsExclusive(["seed", "buckets", "--no-local", "--linked"]),
     );
     expect(Exit.isFailure(exit)).toBe(true);
-    expect(JSON.stringify(exit)).toContain("[linked local] were all set");
+    expect(Formatter.formatJson(exit)).toContain("[linked local] were all set");
   });
 
   it("succeeds when at most one target flag is set", () => {

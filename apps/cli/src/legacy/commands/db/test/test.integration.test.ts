@@ -35,7 +35,7 @@
  */
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option, Stdio } from "effect";
+import { ConfigProvider, Effect, Layer, Option, Stdio } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 
 import {
@@ -45,13 +45,14 @@ import {
   mockTelemetryRuntime,
   mockTty,
 } from "../../../../../tests/helpers/mocks.ts";
+import { alwaysReadyHttpClientLayer } from "../../../../../tests/helpers/legacy-local-reset.ts";
 import {
   mockLegacyCliConfig,
   mockLegacyTelemetryStateTracked,
   legacySequentialExecBatch,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
-import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { commandRuntimeLayer as rawCommandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { textCliOutputFormatter } from "../../../../shared/output/text-formatter.ts";
 import {
   LEGACY_GLOBAL_FLAGS,
@@ -84,6 +85,11 @@ import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.
 import { legacyRunTestDbCommand } from "../../../shared/legacy-test-db.command-handler.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { legacyDbCommand } from "../db.command.ts";
+import { makeLegacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
+import { legacyLocalGatewayHttpClientTestLayer } from "../../../shared/legacy-local-gateway-http-client.ts";
+
+const commandRuntimeLayer = (commandPath: ReadonlyArray<string>) =>
+  rawCommandRuntimeLayer(commandPath).pipe(Layer.provide(BunServices.layer));
 
 const LOCAL_CONN: LegacyPgConnInput = {
   host: "127.0.0.1",
@@ -193,6 +199,7 @@ function setup(opts: SetupOpts = {}) {
   const telemetry = mockLegacyTelemetryStateTracked();
   const connection = mockDbConnection();
   const docker = mockDockerRun({ exitCode: opts.exitCode, stdout: opts.stdout });
+  const configProvider = ConfigProvider.fromEnv({ preserveEmptyStrings: true });
   const args = ["db", "test"];
   const layer = Layer.mergeAll(
     out.layer,
@@ -211,6 +218,8 @@ function setup(opts: SetupOpts = {}) {
     Stdio.layerTest({ args: Effect.succeed(args) }),
     commandRuntimeLayer(["db", "test"]),
     BunServices.layer,
+    ConfigProvider.layer(configProvider),
+    makeLegacyViperEnvLayer(configProvider),
   );
   return { layer, out, analytics, processControl, connection, docker };
 }
@@ -287,10 +296,12 @@ describe("legacy db test (alias) integration", () => {
           requireSslForHost: () =>
             Effect.die("LegacyPgDeltaSslProbe not needed for `db test` dispatch"),
         }),
+        makeLegacyViperEnvLayer(),
+        legacyLocalGatewayHttpClientTestLayer(alwaysReadyHttpClientLayer),
       );
       const root = Command.make("supabase").pipe(
-        Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
         Command.withSubcommands([legacyDbCommand]),
+        Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
       );
       return Effect.gen(function* () {
         yield* Effect.exit(Command.runWith(root, { version: "0.0.0-test" })(args));

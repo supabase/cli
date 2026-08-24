@@ -28,6 +28,7 @@ import {
   legacyPromptProjectName,
   legacyPromptProjectRegion,
 } from "../commands/projects/projects.prompt.ts";
+import { legacyErrorMessage } from "./legacy-error-message.ts";
 
 type CreateInput = typeof V1CreateAProjectInput.Type;
 
@@ -143,7 +144,9 @@ export const legacyProjectCreateCore = Effect.fnUntraced(function* (
     Effect.tapError(() => creating?.fail() ?? Effect.void),
     Effect.mapError(
       (cause) =>
-        new LegacyProjectsCreateNetworkError({ message: `failed to create project: ${cause}` }),
+        new LegacyProjectsCreateNetworkError({
+          message: `failed to create project: ${legacyErrorMessage(cause)}`,
+        }),
     ),
   );
 

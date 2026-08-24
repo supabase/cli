@@ -56,7 +56,7 @@ export const startStackWithProgress = Effect.fnUntraced(function* () {
     );
 
   const fiber = yield* Stream.runForEach(stack.allStateChanges(), updateProgress).pipe(
-    Effect.catch(() => Effect.void),
+    Effect.ignore,
     Effect.forkChild({ startImmediately: true }),
   );
 

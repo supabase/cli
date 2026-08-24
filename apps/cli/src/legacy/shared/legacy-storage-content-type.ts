@@ -1,5 +1,3 @@
-import * as nodePath from "node:path";
-
 import { Effect, FileSystem, Option } from "effect";
 
 import { legacyDetectContentType } from "./legacy-detect-content-type.ts";
@@ -33,7 +31,7 @@ export const legacyReadSniffBytes = Effect.fnUntraced(function* (
     }),
   ).pipe(
     Effect.map(Option.getOrElse(() => new Uint8Array(0))),
-    Effect.catch(() => Effect.succeed(new Uint8Array(0))),
+    Effect.orElseSucceed(() => new Uint8Array(0)),
   );
 });
 
@@ -45,7 +43,11 @@ export const legacyReadSniffBytes = Effect.fnUntraced(function* (
  */
 export function legacyRefineUploadContentType(contentType: string, filePath: string): string {
   if (contentType.includes("text/plain")) {
-    const ext = nodePath.extname(filePath).toLowerCase();
+    const fileName = filePath.slice(
+      Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\")) + 1,
+    );
+    const dot = fileName.lastIndexOf(".");
+    const ext = dot > 0 ? fileName.slice(dot).toLowerCase() : "";
     const refined = MIME_BY_EXTENSION[ext];
     if (refined !== undefined && refined !== "") return refined;
   }

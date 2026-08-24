@@ -7,15 +7,18 @@ import {
   serveFileWatcherLayer,
 } from "../../../../shared/functions/serve.ts";
 import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
+import { legacyHttpClientLayer } from "../../../auth/legacy-http-debug.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 import { legacyFunctionsServe } from "./serve.handler.ts";
 
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const legacyFunctionsServeRuntimeLayer = Layer.mergeAll(
   serveFileWatcherLayer,
   cliConfig,
+  httpClient,
   legacyDebugLoggerLayer,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["functions", "serve"]),

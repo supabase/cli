@@ -120,11 +120,9 @@ export const legacyValidateOutputFormat = (allowed: ReadonlyArray<string>) =>
     if (Option.isNone(flag) || Option.isNone(flag.value)) return;
     const value = flag.value.value;
     if (allowed.includes(value)) return;
-    return yield* Effect.fail(
-      new LegacyInvalidOutputFormatError({
-        message: legacyInvalidOutputFormatMessage(value, allowed),
-      }),
-    );
+    return yield* new LegacyInvalidOutputFormatError({
+      message: legacyInvalidOutputFormatMessage(value, allowed),
+    });
   });
 
 const REDACTED_VALUE = "<redacted>";
@@ -238,7 +236,7 @@ function extractChangedFlagNames(
   return [...used].sort((left, right) => left.localeCompare(right));
 }
 
-function normalizeFlagValue(value: unknown): unknown | undefined {
+function normalizeFlagValue(value: unknown): unknown {
   if (value === undefined) return undefined;
   if (!Option.isOption(value)) return value;
   if (Option.isNone(value)) return undefined;

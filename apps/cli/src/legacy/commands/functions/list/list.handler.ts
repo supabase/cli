@@ -6,6 +6,7 @@ import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { mapLegacyHttpError, sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
+import { legacyErrorMessage } from "../../../shared/legacy-error-message.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import {
@@ -26,7 +27,7 @@ import type { LegacyFunctionsListFlags } from "./list.command.ts";
 const mapListError = mapLegacyHttpError({
   networkError: LegacyFunctionsListNetworkError,
   statusError: LegacyFunctionsListUnexpectedStatusError,
-  networkMessage: (cause) => `failed to list functions: ${cause}`,
+  networkMessage: (cause) => `failed to list functions: ${legacyErrorMessage(cause)}`,
   statusMessage: (status, body) => `unexpected list functions status ${status}: ${body}`,
 });
 
@@ -71,7 +72,9 @@ export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* 
       Effect.tapError(() => fetching?.fail() ?? Effect.void),
       Effect.catch(
         (cause) =>
-          new LegacyFunctionsListNetworkError({ message: `failed to list functions: ${cause}` }),
+          new LegacyFunctionsListNetworkError({
+            message: `failed to list functions: ${legacyErrorMessage(cause)}`,
+          }),
       ),
     );
     if (!hasJsonContentType(response)) {

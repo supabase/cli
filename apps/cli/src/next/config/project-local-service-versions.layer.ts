@@ -38,9 +38,7 @@ const makeProjectLocalServiceVersions = Effect.gen(function* () {
       return Option.some(decoded);
     });
 
-  const load = Effect.gen(function* () {
-    return yield* loadFromPath(projectHome.projectLocalVersionsPath);
-  });
+  const load = loadFromPath(projectHome.projectLocalVersionsPath);
 
   return ProjectLocalServiceVersions.of({
     load,

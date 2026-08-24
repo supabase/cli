@@ -1,4 +1,4 @@
-import { relative } from "node:path";
+import type { Path } from "effect";
 
 /**
  * Builds the "To start your app:" hint printed at the end of bootstrap. Computes
@@ -11,12 +11,13 @@ import { relative } from "node:path";
  * the raw text, matching a non-TTY (uncoloured) profile.
  */
 export function suggestAppStart(
+  path: Pick<Path.Path, "relative">,
   currentDirAbs: string,
   workdir: string,
   command: string,
   colorize: (line: string) => string = (line) => line,
 ): string {
-  const rel = relative(currentDirAbs, workdir);
+  const rel = path.relative(currentDirAbs, workdir);
   const lines: Array<string> = [];
   if (rel.length > 0 && rel !== ".") {
     lines.push(`cd ${rel}`);

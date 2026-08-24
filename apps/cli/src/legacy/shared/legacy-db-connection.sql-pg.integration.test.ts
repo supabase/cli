@@ -7,8 +7,9 @@
  * node-postgres error shapes, not libpq wording.
  */
 import * as net from "node:net";
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Duration, Effect } from "effect";
+import { Duration, Effect, Layer } from "effect";
 
 import { LEGACY_SUGGEST_ENV_VAR, LEGACY_SUGGEST_LOCAL_STACK } from "./legacy-connect-errors.ts";
 import type { LegacyDbConnectError, LegacyDbExecError } from "./legacy-db-connection.errors.ts";
@@ -61,17 +62,22 @@ const connectFailure = (
         Effect.mapError(() => new Error("expected the connection to fail")),
         Effect.orDie,
       );
-  }).pipe(Effect.provide(legacyDbConnectionSqlPgLayer));
+  }).pipe(Effect.provide(legacyDbConnectionSqlPgLayer.pipe(Layer.provide(BunServices.layer))));
 
 /** A TCP port that is guaranteed closed: bind an ephemeral port, then release it. */
-const acquireClosedPort = (): Promise<number> =>
-  new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address() as net.AddressInfo;
-      server.close((error) => (error === undefined ? resolve(address.port) : reject(error)));
-    });
+const acquireClosedPort = Effect.callback<number, Error>((resume) => {
+  const server = net.createServer();
+  const close = () => {
+    if (server.listening) server.close();
+  };
+  server.listen(0, "127.0.0.1", () => {
+    const address = server.address() as net.AddressInfo;
+    server.close((error) =>
+      error === undefined ? resume(Effect.succeed(address.port)) : resume(Effect.fail(error)),
+    );
   });
+  return Effect.sync(close);
+});
 
 /** Encode a Postgres wire-protocol ErrorResponse ('E') message. */
 const errorResponse = (fields: Record<string, string>): Buffer => {
@@ -92,10 +98,8 @@ const errorResponse = (fields: Record<string, string>): Buffer => {
  * first startup message to `onStartup`, so tests can drive the real driver
  * through real server-side failure shapes.
  */
-const fakePostgresServer = (
-  onStartup: (socket: net.Socket) => void,
-): Promise<{ readonly port: number; readonly close: () => void }> =>
-  new Promise((resolve) => {
+const fakePostgresServer = (onStartup: (socket: net.Socket) => void) =>
+  Effect.callback<{ readonly port: number; readonly close: () => void }, Error>((resume) => {
     const server = net.createServer((socket) => {
       let sawStartup = false;
       socket.on("data", (data: Buffer) => {
@@ -113,7 +117,10 @@ const fakePostgresServer = (
     });
     server.listen(0, "127.0.0.1", () => {
       const address = server.address() as net.AddressInfo;
-      resolve({ port: address.port, close: () => server.close() });
+      resume(Effect.succeed({ port: address.port, close: () => server.close() }));
+    });
+    return Effect.sync(() => {
+      if (server.listening) server.close();
     });
   });
 
@@ -177,12 +184,15 @@ const fakeBatchServer = (
     /** Never answer an extended-protocol frame, so a batch hangs until interrupted. */
     readonly stall?: boolean;
   } = {},
-): Promise<{
-  readonly port: number;
-  readonly close: () => void;
-  readonly state: FakeBatchServerState;
-}> =>
-  new Promise((resolve) => {
+): Effect.Effect<
+  {
+    readonly port: number;
+    readonly close: () => void;
+    readonly state: FakeBatchServerState;
+  },
+  Error
+> =>
+  Effect.callback((resume) => {
     const state: FakeBatchServerState = {
       frameTypes: [],
       statements: [],
@@ -288,7 +298,10 @@ const fakeBatchServer = (
     });
     server.listen(0, "127.0.0.1", () => {
       const address = server.address() as net.AddressInfo;
-      resolve({ port: address.port, close: () => server.close(), state });
+      resume(Effect.succeed({ port: address.port, close: () => server.close(), state }));
+    });
+    return Effect.sync(() => {
+      if (server.listening) server.close();
     });
   });
 
@@ -299,10 +312,8 @@ const fakeBatchServer = (
  * `@effect/sql-pg`'s `SqlError` wrapping → `legacyToExecError` — through real
  * server-side statement failures.
  */
-const fakeQueryServer = (
-  onQuery: (sql: string) => Buffer,
-): Promise<{ readonly port: number; readonly close: () => void }> =>
-  new Promise((resolve) => {
+const fakeQueryServer = (onQuery: (sql: string) => Buffer) =>
+  Effect.callback<{ readonly port: number; readonly close: () => void }, Error>((resume) => {
     const server = net.createServer((socket) => {
       let sawStartup = false;
       let pending = Buffer.alloc(0);
@@ -342,7 +353,10 @@ const fakeQueryServer = (
     });
     server.listen(0, "127.0.0.1", () => {
       const address = server.address() as net.AddressInfo;
-      resolve({ port: address.port, close: () => server.close() });
+      resume(Effect.succeed({ port: address.port, close: () => server.close() }));
+    });
+    return Effect.sync(() => {
+      if (server.listening) server.close();
     });
   });
 
@@ -351,7 +365,7 @@ describe("legacyDbConnectionSqlPgLayer connect failures", () => {
     "surfaces host, user, database, and the driver cause when a remote (--linked) connection is refused",
     () =>
       Effect.gen(function* () {
-        const port = yield* Effect.promise(acquireClosedPort);
+        const port = yield* acquireClosedPort;
         const error = yield* connectFailure({ port }, false);
         expect(error._tag).toBe("LegacyDbConnectError");
         expect(error.message).toBe(
@@ -368,7 +382,7 @@ describe("legacyDbConnectionSqlPgLayer connect failures", () => {
 
   it.live("surfaces the local-stack hint when a local connection is refused", () =>
     Effect.gen(function* () {
-      const port = yield* Effect.promise(acquireClosedPort);
+      const port = yield* acquireClosedPort;
       const error = yield* connectFailure({ port });
       expect(error.suggestion).toBe(LEGACY_SUGGEST_LOCAL_STACK);
       expect(error.retryable).toBe(true);
@@ -379,22 +393,20 @@ describe("legacyDbConnectionSqlPgLayer connect failures", () => {
     "reproduces pgconn's server-error rendering for an auth failure and suggests SUPABASE_DB_PASSWORD",
     () =>
       Effect.gen(function* () {
-        const server = yield* Effect.promise(() =>
-          fakePostgresServer((socket) => {
-            socket.write(
-              errorResponse({
-                S: "FATAL",
-                V: "FATAL",
-                C: "28P01",
-                M: 'password authentication failed for user "postgres"',
-                F: "auth.c",
-                L: "326",
-                R: "auth_failed",
-              }),
-            );
-            socket.end();
-          }),
-        );
+        const server = yield* fakePostgresServer((socket) => {
+          socket.write(
+            errorResponse({
+              S: "FATAL",
+              V: "FATAL",
+              C: "28P01",
+              M: 'password authentication failed for user "postgres"',
+              F: "auth.c",
+              L: "326",
+              R: "auth_failed",
+            }),
+          );
+          socket.end();
+        });
         const error = yield* connectFailure({ port: server.port }).pipe(
           Effect.ensuring(Effect.sync(server.close)),
         );
@@ -416,9 +428,7 @@ describe("legacyDbConnectionSqlPgLayer connect failures", () => {
         // node-postgres' `Connection terminated unexpectedly`. Go has no
         // suggestion branch for the equivalent `unexpected EOF`, so no
         // suggestion may fire — the generic --debug fallback applies.
-        const server = yield* Effect.promise(() =>
-          fakePostgresServer((socket) => socket.destroy()),
-        );
+        const server = yield* fakePostgresServer((socket) => socket.destroy());
         const error = yield* connectFailure({
           port: server.port,
           user: "postgres.abcdefghijklmnopqrst",
@@ -446,32 +456,30 @@ describe("legacyDbConnectionSqlPgLayer exec failures", () => {
       // migration-apply failures back to the opaque driver text.
       Effect.gen(function* () {
         const failing = "CREATE TABLE test (path ltree NOT NULL)";
-        const server = yield* Effect.promise(() =>
-          fakeQueryServer((sql) =>
-            sql === failing
-              ? Buffer.concat([
-                  // `S` (localized) and `V` (unlocalized) are deliberately distinct:
-                  // Go renders pgconn's `PgError.Severity`, populated from the wire
-                  // `S` field (pgproto3 `error_response.go` maps 'S'→Severity,
-                  // 'V'→SeverityUnlocalized), so a localized server prints e.g.
-                  // `FEHLER: …`. pg-protocol likewise assigns `severity = fields.S`
-                  // (`parser.js` parseErrorMessage); asserting `FEHLER` below fails
-                  // the tripwire if a dependency bump ever renders `V` instead.
-                  errorResponse({
-                    S: "FEHLER",
-                    V: "ERROR",
-                    C: "42704",
-                    M: 'type "ltree" does not exist',
-                    D: "Detail from the server.",
-                    P: "25",
-                    F: "parse_type.c",
-                    L: "270",
-                    R: "typenameType",
-                  }),
-                  READY_FOR_QUERY,
-                ])
-              : Buffer.concat([commandComplete("SELECT 1"), READY_FOR_QUERY]),
-          ),
+        const server = yield* fakeQueryServer((sql) =>
+          sql === failing
+            ? Buffer.concat([
+                // `S` (localized) and `V` (unlocalized) are deliberately distinct:
+                // Go renders pgconn's `PgError.Severity`, populated from the wire
+                // `S` field (pgproto3 `error_response.go` maps 'S'→Severity,
+                // 'V'→SeverityUnlocalized), so a localized server prints e.g.
+                // `FEHLER: …`. pg-protocol likewise assigns `severity = fields.S`
+                // (`parser.js` parseErrorMessage); asserting `FEHLER` below fails
+                // the tripwire if a dependency bump ever renders `V` instead.
+                errorResponse({
+                  S: "FEHLER",
+                  V: "ERROR",
+                  C: "42704",
+                  M: 'type "ltree" does not exist',
+                  D: "Detail from the server.",
+                  P: "25",
+                  F: "parse_type.c",
+                  L: "270",
+                  R: "typenameType",
+                }),
+                READY_FOR_QUERY,
+              ])
+            : Buffer.concat([commandComplete("SELECT 1"), READY_FOR_QUERY]),
         );
         const error: LegacyDbConnectError | LegacyDbExecError = yield* Effect.gen(function* () {
           const conn = yield* LegacyDbConnection;
@@ -494,7 +502,7 @@ describe("legacyDbConnectionSqlPgLayer exec failures", () => {
               Effect.orDie,
             );
         }).pipe(
-          Effect.provide(legacyDbConnectionSqlPgLayer),
+          Effect.provide(legacyDbConnectionSqlPgLayer.pipe(Layer.provide(BunServices.layer))),
           Effect.ensuring(Effect.sync(server.close)),
         );
         expect(error._tag).toBe("LegacyDbExecError");
@@ -519,9 +527,9 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
     throw new Error(`expected a batch exec failure, got ${error._tag}`);
   };
 
-  const runWithBatchServer = <A>(
-    server: Awaited<ReturnType<typeof fakeBatchServer>>,
-    use: (session: LegacyDbSession) => Effect.Effect<A, unknown>,
+  const runWithBatchServer = <A, E>(
+    server: Effect.Success<ReturnType<typeof fakeBatchServer>>,
+    use: (session: LegacyDbSession) => Effect.Effect<A, E>,
   ) =>
     Effect.gen(function* () {
       const conn = yield* LegacyDbConnection;
@@ -540,13 +548,13 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
       return yield* use(session);
     }).pipe(
       Effect.scoped,
-      Effect.provide(legacyDbConnectionSqlPgLayer),
+      Effect.provide(legacyDbConnectionSqlPgLayer.pipe(Layer.provide(BunServices.layer))),
       Effect.ensuring(Effect.sync(server.close)),
     );
 
   it.live("sends every statement and parameter set before one Sync", () =>
     Effect.gen(function* () {
-      const server = yield* Effect.promise(() => fakeBatchServer({ emptyAt: 1 }));
+      const server = yield* fakeBatchServer({ emptyAt: 1 });
       const values = ["plain", 'quote"', "slash\\", "comma,", "{brace}", "line\nbreak", "NULL", ""];
       yield* runWithBatchServer(server, (session) =>
         session.execBatch([
@@ -593,7 +601,7 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
 
   it.live("maps a later parse failure to its statement and keeps its local position", () =>
     Effect.gen(function* () {
-      const server = yield* Effect.promise(() => fakeBatchServer({ emptyAt: 1, failAt: 2 }));
+      const server = yield* fakeBatchServer({ emptyAt: 1, failAt: 2 });
       yield* runWithBatchServer(server, (session) =>
         Effect.gen(function* () {
           const error = asBatchExecError(
@@ -614,7 +622,7 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
 
   it.live("maps a position-less runtime failure from completed commands", () =>
     Effect.gen(function* () {
-      const server = yield* Effect.promise(() => fakeBatchServer({ failExecuteAt: 1 }));
+      const server = yield* fakeBatchServer({ failExecuteAt: 1 });
       yield* runWithBatchServer(server, (session) =>
         session
           .execBatch([{ sql: "SELECT 1" }, { sql: "INSERT duplicate" }, { sql: "SELECT 3" }])
@@ -636,7 +644,7 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
 
   it.live("reports a deferred Sync failure after every completed statement", () =>
     Effect.gen(function* () {
-      const server = yield* Effect.promise(() => fakeBatchServer({ failOnSync: true }));
+      const server = yield* fakeBatchServer({ failOnSync: true });
       yield* runWithBatchServer(server, (session) =>
         session.execBatch([{ sql: "SELECT 1" }, { sql: "SELECT 2" }]).pipe(
           Effect.flip,
@@ -658,7 +666,7 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
     // would drop the connect suggestion and make the migration-apply formatter blame
     // the migration's first statement for the database being unreachable.
     Effect.gen(function* () {
-      const server = yield* Effect.promise(() => fakeBatchServer({ stall: true }));
+      const server = yield* fakeBatchServer({ stall: true });
       const error = yield* runWithBatchServer(server, (session) =>
         Effect.gen(function* () {
           // Interrupting a batch discards its pooled connection, so the next batch has
@@ -678,15 +686,15 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
         );
         expect(error.suggestion).toBe(LEGACY_SUGGEST_LOCAL_STACK);
       }
-    }),
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 });
 
 describe("legacyAcquirePgPool", () => {
   it.live("returns the winning raw pool and ends it when the caller scope closes", () =>
     Effect.gen(function* () {
-      const server = yield* Effect.promise(() =>
-        fakeQueryServer(() => Buffer.concat([commandComplete("SELECT 1"), READY_FOR_QUERY])),
+      const server = yield* fakeQueryServer(() =>
+        Buffer.concat([commandComplete("SELECT 1"), READY_FOR_QUERY]),
       );
       yield* Effect.gen(function* () {
         let acquired: import("pg").Pool | undefined;
@@ -712,6 +720,6 @@ describe("legacyAcquirePgPool", () => {
         expect(acquired?.ending).toBe(true);
         expect(acquired?.ended).toBe(true);
       }).pipe(Effect.ensuring(Effect.sync(server.close)));
-    }),
+    }).pipe(Effect.provide(BunServices.layer)),
   );
 });

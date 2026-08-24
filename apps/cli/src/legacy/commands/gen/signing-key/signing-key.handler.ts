@@ -1,6 +1,6 @@
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { styleText } from "node:util";
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Formatter, Option, Path } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
@@ -97,11 +97,9 @@ const generatePrivateKey = Effect.fnUntraced(function* (algorithm: SigningAlgori
     });
     const exported = privateKey.export({ format: "jwk" });
     if (!isRecord(exported)) {
-      return yield* Effect.fail(
-        new LegacyGenSigningKeyGenerateError({
-          message: "failed to generate signing key: rsa jwk export failed",
-        }),
-      );
+      return yield* new LegacyGenSigningKeyGenerateError({
+        message: "failed to generate signing key: rsa jwk export failed",
+      });
     }
     return {
       kty: "RSA",
@@ -124,11 +122,9 @@ const generatePrivateKey = Effect.fnUntraced(function* (algorithm: SigningAlgori
   const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-256" });
   const exported = privateKey.export({ format: "jwk" });
   if (!isRecord(exported)) {
-    return yield* Effect.fail(
-      new LegacyGenSigningKeyGenerateError({
-        message: "failed to generate signing key: ec jwk export failed",
-      }),
-    );
+    return yield* new LegacyGenSigningKeyGenerateError({
+      message: "failed to generate signing key: ec jwk export failed",
+    });
   }
   return {
     kty: "EC",
@@ -185,7 +181,7 @@ const loadSigningKeysConfig = Effect.fnUntraced(function* (cwd: string) {
 
 const isGitIgnored = Effect.fnUntraced(function* (filePath: string, searchFrom: string) {
   const path = yield* Path.Path;
-  const gitRoot = yield* Effect.tryPromise(() => findGitRootPath(searchFrom)).pipe(Effect.orDie);
+  const gitRoot = yield* findGitRootPath(searchFrom).pipe(Effect.orDie);
   if (gitRoot === undefined) {
     return Option.none<boolean>();
   }
@@ -238,7 +234,7 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
     const configured = signingKeysConfig.configured;
 
     if (Option.isNone(configured)) {
-      yield* output.raw(`${JSON.stringify(key)}\n`, "stdout");
+      yield* output.raw(`${Formatter.formatJson(key)}\n`, "stdout");
       const defaultPath = path.join("supabase", "signing_keys.json");
       yield* emitSuccessTrailer(
         `\nTo enable JWT signing keys in your local project:\n1. Save the generated key to ${emphasize(defaultPath)}\n2. Update your ${emphasize(signingKeysConfig.configDisplayPath)} with the new keys path\n\n[auth]\nsigning_keys_path = "./signing_keys.json"\n\n`,
@@ -273,17 +269,21 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
                   true,
                 );
           if (!confirmed) {
-            return yield* Effect.fail(
-              new LegacyGenSigningKeyCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
-            );
+            return yield* new LegacyGenSigningKeyCancelledError({
+              message: CONTEXT_CANCELED_MESSAGE,
+            });
           }
           return [key];
         });
 
     yield* fs
-      .writeFileString(configured.value.actualPath, `${JSON.stringify(nextKeys, null, 2)}\n`, {
-        mode: 0o600,
-      })
+      .writeFileString(
+        configured.value.actualPath,
+        `${Formatter.formatJson(nextKeys, { space: 2 })}\n`,
+        {
+          mode: 0o600,
+        },
+      )
       .pipe(
         Effect.mapError(
           (cause) =>

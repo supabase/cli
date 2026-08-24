@@ -1,8 +1,17 @@
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option, Stdio } from "effect";
+import { BunServices } from "@effect/platform-bun";
+import {
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Path,
+  Schema,
+  Stdio,
+} from "effect";
+import * as Formatter from "effect/Formatter";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts";
@@ -31,6 +40,34 @@ const RESPONSE_PROVIDER = {
 };
 
 const tempRoot = useLegacyTempWorkdir("supabase-sso-add-int-");
+const fixturePath = ManagedRuntime.make(BunServices.layer).runSync(Path.Path);
+const join = (first: string, ...rest: ReadonlyArray<string>) => fixturePath.join(first, ...rest);
+const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const AttributeMappingSchema = Schema.Struct({
+  keys: Schema.Record(Schema.String, Schema.Struct({ default: Schema.Finite })),
+});
+const encodeAttributeMapping = Schema.encodeSync(Schema.fromJsonString(AttributeMappingSchema));
+const pendingWrites: Array<{ readonly path: string; readonly contents: string | Uint8Array }> = [];
+
+function writeFileSync(path: string, contents: string | Uint8Array) {
+  pendingWrites.push({ path, contents });
+}
+
+function flushFixtureWrites() {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    for (const write of pendingWrites) {
+      yield* fs.makeDirectory(fixturePath.dirname(write.path), { recursive: true });
+      yield* fs.writeFile(
+        write.path,
+        typeof write.contents === "string"
+          ? new TextEncoder().encode(write.contents)
+          : write.contents,
+      );
+    }
+    pendingWrites.length = 0;
+  });
+}
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -49,6 +86,7 @@ interface SetupOpts {
    * (usually via `cliArgsFor`), exactly as the real parser guarantees.
    */
   cliArgs?: ReadonlyArray<string>;
+  env?: Readonly<Record<string, string>>;
   /**
    * The Effect-parsed `--profile` value (`LegacyProfileFlag`), which the real
    * parser sets for any `--profile` it accepted. Tests whose `cliArgs` carry a
@@ -65,7 +103,7 @@ function jsonResponse(
 ) {
   return HttpClientResponse.fromWeb(
     request,
-    new Response(JSON.stringify(body), {
+    new Response(encodeJson(body), {
       status,
       headers: { "content-type": "application/json" },
     }),
@@ -150,6 +188,7 @@ function setup(opts: SetupOpts = {}) {
 
   const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
   const layer = Layer.mergeAll(
+    Layer.effectDiscard(flushFixtureWrites().pipe(Effect.provide(BunServices.layer))),
     buildLegacyTestRuntime({
       out,
       api: { layer: api.layer, httpClientLayer: api.httpClientLayer },
@@ -157,6 +196,7 @@ function setup(opts: SetupOpts = {}) {
       telemetry: telemetry.layer,
       linkedProjectCache: cache.layer,
       analytics,
+      env: opts.env,
       goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
     }),
     Stdio.layerTest({
@@ -256,7 +296,7 @@ describe("legacy sso add integration", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const dump = JSON.stringify(exit.cause);
+          const dump = Formatter.formatJson(exit.cause);
           expect(dump).toContain("LegacySsoMutexFlagError");
           // Established mutual-exclusion error template: group in
           // declaration order, changed flags sorted alphabetically.
@@ -296,7 +336,7 @@ describe("legacy sso add integration", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const dump = JSON.stringify(exit.cause);
+          const dump = Formatter.formatJson(exit.cause);
           expect(dump).toContain("LegacySsoMutexFlagError");
           expect(dump).toContain(
             "if any flags in the group [metadata-file metadata-url] are set none of the others can be; [metadata-file metadata-url] were all set",
@@ -325,7 +365,7 @@ describe("legacy sso add integration", () => {
         const exit = yield* Effect.exit(legacySsoAdd(defaultFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const dump = JSON.stringify(exit.cause);
+          const dump = Formatter.formatJson(exit.cause);
           expect(dump).toContain("LegacySsoAddMetadataFileError");
           expect(dump).toContain("failed to open metadata file");
         }
@@ -370,7 +410,7 @@ describe("legacy sso add integration", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const dump = JSON.stringify(exit.cause);
+          const dump = Formatter.formatJson(exit.cause);
           expect(dump).toContain("LegacyInvalidProjectRefError");
           expect(dump).toContain("Invalid project ref format. Must be like");
         }
@@ -396,7 +436,7 @@ describe("legacy sso add integration", () => {
         const exit = yield* Effect.exit(legacySsoAdd(defaultFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const dump = JSON.stringify(exit.cause);
+          const dump = Formatter.formatJson(exit.cause);
           expect(dump).toContain("LegacySsoAddRequiredFlagError");
           expect(dump).toContain('required flag(s) \\"type\\" not set');
         }
@@ -433,7 +473,7 @@ describe("legacy sso add integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySsoAddRequiredFlagError");
         expect(dump).not.toContain("LegacySsoMutexFlagError");
       }
@@ -474,7 +514,7 @@ describe("legacy sso add integration", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const dump = JSON.stringify(exit.cause);
+          const dump = Formatter.formatJson(exit.cause);
           expect(dump).toContain("LegacyPflagWorkdirError");
           expect(dump).toContain(
             "failed to change workdir: chdir --metadata-file: no such file or directory",
@@ -513,7 +553,7 @@ describe("legacy sso add integration", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const dump = JSON.stringify(exit.cause);
+          const dump = Formatter.formatJson(exit.cause);
           expect(dump).toContain("LegacyPflagWorkdirError");
           expect(dump).toContain(
             "failed to change workdir: chdir /nonexistent-sso-add-workdir: no such file or directory",
@@ -590,7 +630,7 @@ describe("legacy sso add integration", () => {
         const exit = yield* Effect.exit(legacySsoAdd(defaultFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const dump = JSON.stringify(exit.cause);
+          const dump = Formatter.formatJson(exit.cause);
           expect(dump).toContain("LegacySsoAddRequiredFlagError");
           expect(dump).toContain('required flag(s) \\"type\\" not set');
         }
@@ -615,7 +655,7 @@ describe("legacy sso add integration", () => {
         const exit = yield* Effect.exit(legacySsoAdd(defaultFlags));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const dump = JSON.stringify(exit.cause);
+          const dump = Formatter.formatJson(exit.cause);
           expect(dump).toContain("LegacySsoInvalidFlagValueError");
           expect(dump).toContain(
             'invalid argument \\"bogus\\" for \\"-t, --type\\" flag: must be one of [ saml ]',
@@ -657,7 +697,7 @@ describe("legacy sso add integration", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const dump = JSON.stringify(exit.cause);
+          const dump = Formatter.formatJson(exit.cause);
           expect(dump).toContain("LegacySsoInvalidFlagValueError");
           expect(dump).toContain(
             'invalid argument \\"\\" for \\"--skip-url-validation\\" flag: strconv.ParseBool: parsing \\"\\": invalid syntax',
@@ -744,7 +784,7 @@ describe("legacy sso add integration", () => {
       const exit = yield* Effect.exit(legacySsoAdd(defaultFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySsoFlagNeedsArgumentError");
         expect(dump).toContain("flag needs an argument: --domains");
       }
@@ -803,7 +843,7 @@ describe("legacy sso add integration", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const dump = JSON.stringify(exit.cause);
+          const dump = Formatter.formatJson(exit.cause);
           // URL validation runs against the consumed token, not the parsed
           // Option — it is not a valid HTTPS URL, so the command fails before
           // any request, like Go. URL implementations do not consistently
@@ -853,7 +893,7 @@ describe("legacy sso add integration", () => {
       const exit = yield* Effect.exit(legacySsoAdd(flags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoAddMetadataFileError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacySsoAddMetadataFileError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -914,7 +954,7 @@ describe("legacy sso add integration", () => {
       const exit = yield* Effect.exit(legacySsoAdd(flags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("only HTTPS Metadata URLs are supported");
         expect(dump).toContain("Use --skip-url-validation to suppress this error");
         expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
@@ -928,7 +968,7 @@ describe("legacy sso add integration", () => {
 
   it.live("reads attribute mapping JSON and preserves user-defined `default` field", () => {
     const path = join(tempRoot.current, "mapping.json");
-    writeFileSync(path, JSON.stringify({ keys: { a: { default: 3 } } }));
+    writeFileSync(path, encodeAttributeMapping({ keys: { a: { default: 3 } } }));
     const flags = { ...defaultFlags, attributeMappingFile: Option.some(path) };
     const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
@@ -989,7 +1029,7 @@ describe("legacy sso add integration", () => {
       const exit = yield* Effect.exit(legacySsoAdd(defaultFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoAddSamlDisabledError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacySsoAddSamlDisabledError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1008,7 +1048,7 @@ describe("legacy sso add integration", () => {
       const exit = yield* Effect.exit(legacySsoAdd(defaultFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySsoAddUnexpectedStatusError");
         expect(dump).toContain("Unexpected error adding identity provider");
       }
@@ -1042,7 +1082,7 @@ describe("legacy sso add integration", () => {
 
   it.live("preserves attribute_mapping `default` field in POST body", () => {
     const path = join(tempRoot.current, "mapping.json");
-    writeFileSync(path, JSON.stringify({ keys: { a: { default: 42 } } }));
+    writeFileSync(path, encodeAttributeMapping({ keys: { a: { default: 42 } } }));
     const flags = { ...defaultFlags, attributeMappingFile: Option.some(path) };
     const { layer, api } = setup({ cliArgs: cliArgsFor(flags) });
     return Effect.gen(function* () {
@@ -1068,7 +1108,7 @@ describe("legacy sso add integration", () => {
       const exit = yield* Effect.exit(legacySsoAdd(flags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const dump = JSON.stringify(exit.cause);
+        const dump = Formatter.formatJson(exit.cause);
         expect(dump).toContain("LegacySsoAddMetadataFileError");
         // Error tail is `… Use --skip-url-validation to suppress this error`
         // (no trailing period).
@@ -1093,7 +1133,7 @@ describe("legacy sso add integration", () => {
       const exit = yield* Effect.exit(legacySsoAdd(flags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoAddMetadataFileError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacySsoAddMetadataFileError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1122,7 +1162,7 @@ describe("legacy sso add integration", () => {
       const exit = yield* Effect.exit(legacySsoAdd(flags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySsoAddAttributeMappingFileError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacySsoAddAttributeMappingFileError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -1148,22 +1188,6 @@ describe("legacy sso add integration", () => {
     return path;
   };
 
-  const withProfileEnv = (value: string | undefined) => {
-    const previous = process.env["SUPABASE_PROFILE"];
-    if (value === undefined) {
-      delete process.env["SUPABASE_PROFILE"];
-    } else {
-      process.env["SUPABASE_PROFILE"] = value;
-    }
-    return Effect.sync(() => {
-      if (previous === undefined) {
-        delete process.env["SUPABASE_PROFILE"];
-      } else {
-        process.env["SUPABASE_PROFILE"] = previous;
-      }
-    });
-  };
-
   it.live(
     "profile emulation: --domains consuming --profile POSTs to the env profile's host, not the parsed file's",
     () => {
@@ -1176,10 +1200,10 @@ describe("legacy sso add integration", () => {
       // profile's api_url; the parsed file's host receives nothing.
       const envProfile = writeProfileYaml("env-profile.yml", "http://reconciled.example");
       const alternate = writeProfileYaml("alternate.yml", "http://alternate.example");
-      const restoreEnv = withProfileEnv(envProfile);
       const { layer, api, cache } = setup({
         cliArgs: ["sso", "add", "--type", "saml", "--domains", "--profile", alternate],
         profileFlag: alternate,
+        env: { SUPABASE_PROFILE: envProfile },
       });
       return Effect.gen(function* () {
         yield* legacySsoAdd(defaultFlags);
@@ -1194,7 +1218,7 @@ describe("legacy sso add integration", () => {
         // The linked-project cache fill targets the reconciled host too —
         // it uses the process-wide profile.
         expect(cache.cachedApiUrl).toBe("http://reconciled.example");
-      }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+      }).pipe(Effect.provide(layer));
     },
   );
 
@@ -1205,7 +1229,6 @@ describe("legacy sso add integration", () => {
       // `"--metadata-url"` as the profile value; viper's extension gate
       // rejects it before any request (binary-verified: `failed to read
       // profile: Unsupported Config Type ""`).
-      const restoreEnv = withProfileEnv(undefined);
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -1226,12 +1249,12 @@ describe("legacy sso add integration", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const dump = JSON.stringify(exit.cause);
+          const dump = Formatter.formatJson(exit.cause);
           expect(dump).toContain("LegacyProfileLoadError");
           expect(dump).toContain(`failed to read profile: Unsupported Config Type \\"\\"`);
         }
         expect(api.requests.length).toBe(0);
-      }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+      }).pipe(Effect.provide(layer));
     },
   );
 
@@ -1241,7 +1264,6 @@ describe("legacy sso add integration", () => {
     // on b.yml — binary-verified: Go POSTs to b.yml's api_url.
     const first = writeProfileYaml("first.yml", "http://first.example");
     const second = writeProfileYaml("second.yml", "http://second.example");
-    const restoreEnv = withProfileEnv(undefined);
     const { layer, api } = setup({
       cliArgs: ["sso", "add", "--type", "saml", "--profile", first, "--profile", second],
       profileFlag: first,
@@ -1253,7 +1275,7 @@ describe("legacy sso add integration", () => {
       expect(posts[0]?.url).toBe(
         `http://second.example/v1/projects/${LEGACY_VALID_REF}/config/auth/sso/providers`,
       );
-    }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+    }).pipe(Effect.provide(layer));
   });
 
   it.live(
@@ -1262,7 +1284,6 @@ describe("legacy sso add integration", () => {
       // Go loads the profile BEFORE ChangeWorkDir (`cmd/root.go:98-105` —
       // "Load profile before changing workdir"), and both run before
       // `ValidateRequiredFlags` and `ValidateFlagGroups`.
-      const restoreEnv = withProfileEnv(undefined);
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -1286,14 +1307,14 @@ describe("legacy sso add integration", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const dump = JSON.stringify(exit.cause);
+          const dump = Formatter.formatJson(exit.cause);
           expect(dump).toContain("LegacyProfileLoadError");
           expect(dump).not.toContain("LegacyPflagWorkdirError");
           expect(dump).not.toContain("LegacySsoAddRequiredFlagError");
           expect(dump).not.toContain("LegacySsoMutexFlagError");
         }
         expect(api.requests.length).toBe(0);
-      }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+      }).pipe(Effect.provide(layer));
     },
   );
 
@@ -1305,7 +1326,6 @@ describe("legacy sso add integration", () => {
       // targets `LegacyCliConfig.apiUrl` — the layer already loaded exactly
       // the profile Go would.
       const agreed = writeProfileYaml("agreed.yml", "http://agreed.example");
-      const restoreEnv = withProfileEnv(undefined);
       const { layer, api } = setup({
         cliArgs: ["sso", "add", "--type", "saml", "--profile", agreed],
         profileFlag: agreed,
@@ -1319,7 +1339,7 @@ describe("legacy sso add integration", () => {
         expect(posts[0]?.url).toBe(
           `${LEGACY_DEFAULT_API_URL}/v1/projects/${LEGACY_VALID_REF}/config/auth/sso/providers`,
         );
-      }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
+      }).pipe(Effect.provide(layer));
     },
   );
 });

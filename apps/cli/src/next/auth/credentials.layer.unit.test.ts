@@ -1,11 +1,8 @@
-import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { afterEach, beforeEach, vi } from "vitest";
-import { Effect, FileSystem, Layer, Option, Redacted } from "effect";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem, Layer, Option, Path, PlatformError, Redacted } from "effect";
+import { beforeEach, vi } from "vitest";
+
 import {
   mockProjectContext,
   mockRuntimeInfo,
@@ -67,17 +64,39 @@ vi.mock("@napi-rs/keyring", () => ({
 function makeLayer(home: string, env: Record<string, string> = {}) {
   const runtimeInfoLayer = mockRuntimeInfo({ homeDir: home });
   const projectContextLayer = mockProjectContext();
+  const envLayer = processEnvLayer({ HOME: home, ...env });
+  const configuredCliConfigLayer = cliConfigLayer.pipe(
+    Layer.provide(runtimeInfoLayer),
+    Layer.provide(projectContextLayer),
+    Layer.provide(envLayer),
+    Layer.provideMerge(BunServices.layer),
+  );
   const baseLayer = Layer.mergeAll(
     BunServices.layer,
     runtimeInfoLayer,
     projectContextLayer,
-    processEnvLayer({ HOME: home, ...env }),
-    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
+    envLayer,
+    configuredCliConfigLayer,
   );
   return credentialsLayer.pipe(Layer.provide(baseLayer));
 }
 
-let tempHome: string;
+const withTempHome = <A, E>(
+  body: (
+    home: string,
+    fs: FileSystem.FileSystem,
+    path: Path.Path,
+  ) => Effect.Effect<A, E, Credentials>,
+  env: Record<string, string> = {},
+) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-creds-test-" });
+      return yield* body(home, fs, path).pipe(Effect.orDie, Effect.provide(makeLayer(home, env)));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 
 beforeEach(() => {
   passwords.clear();
@@ -85,11 +104,6 @@ beforeEach(() => {
   throwOnGetPasswordAccounts.clear();
   returnNullForAccounts.clear();
   throwOnDeletePasswordAccounts.clear();
-  tempHome = mkdtempSync(join(tmpdir(), "supabase-creds-test-"));
-});
-
-afterEach(() => {
-  rmSync(tempHome, { recursive: true, force: true });
 });
 
 describe("Credentials", () => {
@@ -103,252 +117,332 @@ describe("Credentials", () => {
   describe("getAccessToken", () => {
     it.effect("reads from current account", () => {
       passwords.set("Supabase CLI/access-token", "current-token");
-      return Effect.gen(function* () {
-        const { getAccessToken } = yield* Credentials;
-        const token = yield* getAccessToken;
-        expectSomeToken(token, "current-token");
-      }).pipe(Effect.provide(makeLayer(tempHome)));
+      return withTempHome(() =>
+        Effect.gen(function* () {
+          const { getAccessToken } = yield* Credentials;
+          const token = yield* getAccessToken;
+          expectSomeToken(token, "current-token");
+        }),
+      );
     });
 
     it.effect("decodes Go keyring base64 values from current account", () => {
       passwords.set("Supabase CLI/access-token", encodeGoKeyringBase64("current-token"));
-      return Effect.gen(function* () {
-        const { getAccessToken } = yield* Credentials;
-        const token = yield* getAccessToken;
-        expectSomeToken(token, "current-token");
-      }).pipe(Effect.provide(makeLayer(tempHome)));
+      return withTempHome(() =>
+        Effect.gen(function* () {
+          const { getAccessToken } = yield* Credentials;
+          const token = yield* getAccessToken;
+          expectSomeToken(token, "current-token");
+        }),
+      );
     });
 
     it.effect("falls back to legacy account when current is missing", () => {
       passwords.set("Supabase CLI/supabase", "legacy-token");
-      return Effect.gen(function* () {
-        const { getAccessToken } = yield* Credentials;
-        const token = yield* getAccessToken;
-        expectSomeToken(token, "legacy-token");
-      }).pipe(Effect.provide(makeLayer(tempHome)));
+      return withTempHome(() =>
+        Effect.gen(function* () {
+          const { getAccessToken } = yield* Credentials;
+          const token = yield* getAccessToken;
+          expectSomeToken(token, "legacy-token");
+        }),
+      );
     });
 
     it.effect("prefers current account over legacy", () => {
       passwords.set("Supabase CLI/access-token", "current-token");
       passwords.set("Supabase CLI/supabase", "legacy-token");
-      return Effect.gen(function* () {
-        const { getAccessToken } = yield* Credentials;
-        const token = yield* getAccessToken;
-        expectSomeToken(token, "current-token");
-      }).pipe(Effect.provide(makeLayer(tempHome)));
+      return withTempHome(() =>
+        Effect.gen(function* () {
+          const { getAccessToken } = yield* Credentials;
+          const token = yield* getAccessToken;
+          expectSomeToken(token, "current-token");
+        }),
+      );
     });
 
-    it.effect("returns none when no token found anywhere", () => {
-      return Effect.gen(function* () {
-        const { getAccessToken } = yield* Credentials;
-        const token = yield* getAccessToken;
-        expect(token).toEqual(Option.none());
-      }).pipe(Effect.provide(makeLayer(tempHome)));
-    });
+    it.effect("returns none when no token found anywhere", () =>
+      withTempHome(() =>
+        Effect.gen(function* () {
+          const { getAccessToken } = yield* Credentials;
+          const token = yield* getAccessToken;
+          expect(token).toEqual(Option.none());
+        }),
+      ),
+    );
 
     it.effect("falls back to filesystem when keyring throws", () => {
       throwOnGetPasswordAccounts.add("Supabase CLI/access-token");
       throwOnGetPasswordAccounts.add("Supabase CLI/supabase");
-      const supaDir = join(tempHome, ".supabase");
-      mkdirSync(supaDir, { recursive: true });
-      writeFileSync(join(supaDir, "access-token"), "fs-token-123", { mode: 0o600 });
-      return Effect.gen(function* () {
-        const { getAccessToken } = yield* Credentials;
-        const token = yield* getAccessToken;
-        expectSomeToken(token, "fs-token-123");
-      }).pipe(Effect.provide(makeLayer(tempHome)));
+      return withTempHome((home, fs, path) =>
+        Effect.gen(function* () {
+          const supaDir = path.join(home, ".supabase");
+          yield* fs.makeDirectory(supaDir, { recursive: true });
+          yield* fs.writeFileString(path.join(supaDir, "access-token"), "fs-token-123", {
+            mode: 0o600,
+          });
+          const { getAccessToken } = yield* Credentials;
+          const token = yield* getAccessToken;
+          expectSomeToken(token, "fs-token-123");
+        }),
+      );
     });
 
-    it.effect("returns Some from filesystem in no-keyring mode", () => {
-      const supaDir = join(tempHome, ".supabase");
-      mkdirSync(supaDir, { recursive: true });
-      writeFileSync(join(supaDir, "access-token"), "fs-only-token", { mode: 0o600 });
-      return Effect.gen(function* () {
-        const { getAccessToken } = yield* Credentials;
-        const token = yield* getAccessToken;
-        expectSomeToken(token, "fs-only-token");
-      }).pipe(Effect.provide(makeLayer(tempHome, { SUPABASE_NO_KEYRING: "1" })));
-    });
+    it.effect("returns Some from filesystem in no-keyring mode", () =>
+      withTempHome(
+        (home, fs, path) =>
+          Effect.gen(function* () {
+            const supaDir = path.join(home, ".supabase");
+            yield* fs.makeDirectory(supaDir, { recursive: true });
+            yield* fs.writeFileString(path.join(supaDir, "access-token"), "fs-only-token", {
+              mode: 0o600,
+            });
+            const { getAccessToken } = yield* Credentials;
+            const token = yield* getAccessToken;
+            expectSomeToken(token, "fs-only-token");
+          }),
+        { SUPABASE_NO_KEYRING: "1" },
+      ),
+    );
 
     it.effect("returns None when filesystem file is empty", () => {
       throwOnGetPasswordAccounts.add("Supabase CLI/access-token");
       throwOnGetPasswordAccounts.add("Supabase CLI/supabase");
-      const supaDir = join(tempHome, ".supabase");
-      mkdirSync(supaDir, { recursive: true });
-      writeFileSync(join(supaDir, "access-token"), "", { mode: 0o600 });
-      return Effect.gen(function* () {
-        const { getAccessToken } = yield* Credentials;
-        const token = yield* getAccessToken;
-        expect(token).toEqual(Option.none());
-      }).pipe(Effect.provide(makeLayer(tempHome)));
+      return withTempHome((home, fs, path) =>
+        Effect.gen(function* () {
+          const supaDir = path.join(home, ".supabase");
+          yield* fs.makeDirectory(supaDir, { recursive: true });
+          yield* fs.writeFileString(path.join(supaDir, "access-token"), "", { mode: 0o600 });
+          const { getAccessToken } = yield* Credentials;
+          const token = yield* getAccessToken;
+          expect(token).toEqual(Option.none());
+        }),
+      );
     });
 
     it.effect("returns None when filesystem file has only whitespace", () => {
       throwOnGetPasswordAccounts.add("Supabase CLI/access-token");
       throwOnGetPasswordAccounts.add("Supabase CLI/supabase");
-      const supaDir = join(tempHome, ".supabase");
-      mkdirSync(supaDir, { recursive: true });
-      writeFileSync(join(supaDir, "access-token"), "   \n  \t  ", { mode: 0o600 });
-      return Effect.gen(function* () {
-        const { getAccessToken } = yield* Credentials;
-        const token = yield* getAccessToken;
-        expect(token).toEqual(Option.none());
-      }).pipe(Effect.provide(makeLayer(tempHome)));
+      return withTempHome((home, fs, path) =>
+        Effect.gen(function* () {
+          const supaDir = path.join(home, ".supabase");
+          yield* fs.makeDirectory(supaDir, { recursive: true });
+          yield* fs.writeFileString(path.join(supaDir, "access-token"), "   \n  \t  ", {
+            mode: 0o600,
+          });
+          const { getAccessToken } = yield* Credentials;
+          const token = yield* getAccessToken;
+          expect(token).toEqual(Option.none());
+        }),
+      );
     });
 
     it.effect("falls through when keyring returns null for both accounts", () => {
       returnNullForAccounts.add("Supabase CLI/access-token");
       returnNullForAccounts.add("Supabase CLI/supabase");
-      const supaDir = join(tempHome, ".supabase");
-      mkdirSync(supaDir, { recursive: true });
-      writeFileSync(join(supaDir, "access-token"), "fs-fallback-token", { mode: 0o600 });
-      return Effect.gen(function* () {
-        const { getAccessToken } = yield* Credentials;
-        const token = yield* getAccessToken;
-        // keyring returns null (falsy) for both → falls through to filesystem
-        expectSomeToken(token, "fs-fallback-token");
-      }).pipe(Effect.provide(makeLayer(tempHome)));
-    });
-
-    it.effect(
-      "returns None when filesystem check fails unexpectedly (orElseSucceed branch)",
-      () => {
-        throwOnGetPasswordAccounts.add("Supabase CLI/access-token");
-        throwOnGetPasswordAccounts.add("Supabase CLI/supabase");
-        const failingFs = Layer.succeed(FileSystem.FileSystem, {
-          exists: (_path: string) => Effect.fail(new Error("permission denied") as any),
-          readFileString: (_path: string) => Effect.fail(new Error("permission denied") as any),
-        } as any);
-        const runtimeInfoLayer = mockRuntimeInfo({ homeDir: tempHome });
-        const projectContextLayer = mockProjectContext();
-        const layer = credentialsLayer.pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              failingFs,
-              BunServices.layer,
-              runtimeInfoLayer,
-              projectContextLayer,
-              processEnvLayer({ HOME: tempHome }),
-              cliConfigLayer.pipe(
-                Layer.provide(runtimeInfoLayer),
-                Layer.provide(projectContextLayer),
-              ),
-            ),
-          ),
-        );
-        return Effect.gen(function* () {
+      return withTempHome((home, fs, path) =>
+        Effect.gen(function* () {
+          const supaDir = path.join(home, ".supabase");
+          yield* fs.makeDirectory(supaDir, { recursive: true });
+          yield* fs.writeFileString(path.join(supaDir, "access-token"), "fs-fallback-token", {
+            mode: 0o600,
+          });
           const { getAccessToken } = yield* Credentials;
           const token = yield* getAccessToken;
-          expect(token).toEqual(Option.none());
-        }).pipe(Effect.provide(layer));
-      },
+          expectSomeToken(token, "fs-fallback-token");
+        }),
+      );
+    });
+
+    it.effect("returns None when filesystem check fails unexpectedly (orElseSucceed branch)", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const home = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-creds-test-" });
+          const failingFs = Layer.succeed(
+            FileSystem.FileSystem,
+            FileSystem.makeNoop({
+              exists: (path) =>
+                Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "exists",
+                    description: "permission denied",
+                    pathOrDescriptor: path,
+                  }),
+                ),
+              readFileString: (path) =>
+                Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "readFileString",
+                    description: "permission denied",
+                    pathOrDescriptor: path,
+                  }),
+                ),
+            }),
+          );
+          const runtimeInfoLayer = mockRuntimeInfo({ homeDir: home });
+          const projectContextLayer = mockProjectContext();
+          const layer = credentialsLayer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                failingFs,
+                BunServices.layer,
+                runtimeInfoLayer,
+                projectContextLayer,
+                processEnvLayer({ HOME: home }),
+                cliConfigLayer.pipe(
+                  Layer.provide(runtimeInfoLayer),
+                  Layer.provide(projectContextLayer),
+                  Layer.provideMerge(BunServices.layer),
+                ),
+              ),
+            ),
+          );
+          yield* Effect.gen(function* () {
+            const { getAccessToken } = yield* Credentials;
+            const token = yield* getAccessToken;
+            expect(token).toEqual(Option.none());
+          }).pipe(Effect.provide(layer));
+        }).pipe(Effect.provide(BunServices.layer)),
+      ),
     );
   });
 
   describe("saveAccessToken", () => {
-    it.effect("saves to keyring when available", () => {
-      return Effect.gen(function* () {
-        const { saveAccessToken } = yield* Credentials;
-        yield* saveAccessToken("new-token");
-        expect(passwords.get("Supabase CLI/access-token")).toBe("new-token");
-      }).pipe(Effect.provide(makeLayer(tempHome)));
-    });
+    it.effect("saves to keyring when available", () =>
+      withTempHome(() =>
+        Effect.gen(function* () {
+          const { saveAccessToken } = yield* Credentials;
+          yield* saveAccessToken("new-token");
+          expect(passwords.get("Supabase CLI/access-token")).toBe("new-token");
+        }),
+      ),
+    );
 
     it.effect("falls back to filesystem when setPassword throws", () => {
       throwOnSetPassword = true;
-      return Effect.gen(function* () {
-        const { saveAccessToken } = yield* Credentials;
-        yield* saveAccessToken("fallback-token");
-        const content = readFileSync(join(tempHome, ".supabase", "access-token"), "utf-8");
-        expect(content).toBe("fallback-token");
-      }).pipe(Effect.provide(makeLayer(tempHome)));
+      return withTempHome((home, fs, path) =>
+        Effect.gen(function* () {
+          const { saveAccessToken } = yield* Credentials;
+          yield* saveAccessToken("fallback-token");
+          const content = yield* fs.readFileString(path.join(home, ".supabase", "access-token"));
+          expect(content).toBe("fallback-token");
+        }),
+      );
     });
 
-    it.effect("saves to filesystem in no-keyring mode", () => {
-      return Effect.gen(function* () {
-        const { saveAccessToken } = yield* Credentials;
-        yield* saveAccessToken("no-keyring-token");
-        const content = readFileSync(join(tempHome, ".supabase", "access-token"), "utf-8");
-        expect(content).toBe("no-keyring-token");
-      }).pipe(Effect.provide(makeLayer(tempHome, { SUPABASE_NO_KEYRING: "1" })));
-    });
+    it.effect("saves to filesystem in no-keyring mode", () =>
+      withTempHome(
+        (home, fs, path) =>
+          Effect.gen(function* () {
+            const { saveAccessToken } = yield* Credentials;
+            yield* saveAccessToken("no-keyring-token");
+            const content = yield* fs.readFileString(path.join(home, ".supabase", "access-token"));
+            expect(content).toBe("no-keyring-token");
+          }),
+        { SUPABASE_NO_KEYRING: "1" },
+      ),
+    );
 
     it.effect("creates .supabase directory if missing", () => {
       throwOnSetPassword = true;
-      return Effect.gen(function* () {
-        expect(existsSync(join(tempHome, ".supabase"))).toBe(false);
-        const { saveAccessToken } = yield* Credentials;
-        yield* saveAccessToken("create-dir-token");
-        expect(existsSync(join(tempHome, ".supabase"))).toBe(true);
-      }).pipe(Effect.provide(makeLayer(tempHome)));
+      return withTempHome((home, fs, path) =>
+        Effect.gen(function* () {
+          expect(yield* fs.exists(path.join(home, ".supabase"))).toBe(false);
+          const { saveAccessToken } = yield* Credentials;
+          yield* saveAccessToken("create-dir-token");
+          expect(yield* fs.exists(path.join(home, ".supabase"))).toBe(true);
+        }),
+      );
     });
   });
 
   describe("deleteAccessToken", () => {
-    it.effect("returns false when no token exists anywhere", () => {
-      return Effect.gen(function* () {
-        const { deleteAccessToken } = yield* Credentials;
-        const deleted = yield* deleteAccessToken;
-        expect(deleted).toBe(false);
-      }).pipe(Effect.provide(makeLayer(tempHome)));
-    });
+    it.effect("returns false when no token exists anywhere", () =>
+      withTempHome(() =>
+        Effect.gen(function* () {
+          const { deleteAccessToken } = yield* Credentials;
+          const deleted = yield* deleteAccessToken;
+          expect(deleted).toBe(false);
+        }),
+      ),
+    );
 
     it.effect("deletes current keyring account and returns true", () => {
       passwords.set("Supabase CLI/access-token", "my-token");
-      return Effect.gen(function* () {
-        const { deleteAccessToken } = yield* Credentials;
-        const deleted = yield* deleteAccessToken;
-        expect(deleted).toBe(true);
-        expect(passwords.has("Supabase CLI/access-token")).toBe(false);
-      }).pipe(Effect.provide(makeLayer(tempHome)));
+      return withTempHome(() =>
+        Effect.gen(function* () {
+          const { deleteAccessToken } = yield* Credentials;
+          const deleted = yield* deleteAccessToken;
+          expect(deleted).toBe(true);
+          expect(passwords.has("Supabase CLI/access-token")).toBe(false);
+        }),
+      );
     });
 
     it.effect("deletes legacy keyring account when current is absent", () => {
       passwords.set("Supabase CLI/supabase", "legacy-token");
-      return Effect.gen(function* () {
-        const { deleteAccessToken } = yield* Credentials;
-        const deleted = yield* deleteAccessToken;
-        expect(deleted).toBe(true);
-        expect(passwords.has("Supabase CLI/supabase")).toBe(false);
-      }).pipe(Effect.provide(makeLayer(tempHome)));
+      return withTempHome(() =>
+        Effect.gen(function* () {
+          const { deleteAccessToken } = yield* Credentials;
+          const deleted = yield* deleteAccessToken;
+          expect(deleted).toBe(true);
+          expect(passwords.has("Supabase CLI/supabase")).toBe(false);
+        }),
+      );
     });
 
     it.effect("deletes both keyring accounts when both exist", () => {
       passwords.set("Supabase CLI/access-token", "current-token");
       passwords.set("Supabase CLI/supabase", "legacy-token");
-      return Effect.gen(function* () {
-        const { deleteAccessToken } = yield* Credentials;
-        const deleted = yield* deleteAccessToken;
-        expect(deleted).toBe(true);
-        expect(passwords.has("Supabase CLI/access-token")).toBe(false);
-        expect(passwords.has("Supabase CLI/supabase")).toBe(false);
-      }).pipe(Effect.provide(makeLayer(tempHome)));
+      return withTempHome(() =>
+        Effect.gen(function* () {
+          const { deleteAccessToken } = yield* Credentials;
+          const deleted = yield* deleteAccessToken;
+          expect(deleted).toBe(true);
+          expect(passwords.has("Supabase CLI/access-token")).toBe(false);
+          expect(passwords.has("Supabase CLI/supabase")).toBe(false);
+        }),
+      );
     });
 
     it.effect("deletes filesystem token and returns true", () => {
       throwOnDeletePasswordAccounts.add("Supabase CLI/access-token");
       throwOnDeletePasswordAccounts.add("Supabase CLI/supabase");
-      const supaDir = join(tempHome, ".supabase");
-      mkdirSync(supaDir, { recursive: true });
-      writeFileSync(join(supaDir, "access-token"), "fs-token", { mode: 0o600 });
-      return Effect.gen(function* () {
-        const { deleteAccessToken } = yield* Credentials;
-        const deleted = yield* deleteAccessToken;
-        expect(deleted).toBe(true);
-        expect(existsSync(join(supaDir, "access-token"))).toBe(false);
-      }).pipe(Effect.provide(makeLayer(tempHome)));
+      return withTempHome((home, fs, path) =>
+        Effect.gen(function* () {
+          const supaDir = path.join(home, ".supabase");
+          yield* fs.makeDirectory(supaDir, { recursive: true });
+          yield* fs.writeFileString(path.join(supaDir, "access-token"), "fs-token", {
+            mode: 0o600,
+          });
+          const { deleteAccessToken } = yield* Credentials;
+          const deleted = yield* deleteAccessToken;
+          expect(deleted).toBe(true);
+          expect(yield* fs.exists(path.join(supaDir, "access-token"))).toBe(false);
+        }),
+      );
     });
 
-    it.effect("deletes filesystem token in no-keyring mode", () => {
-      const supaDir = join(tempHome, ".supabase");
-      mkdirSync(supaDir, { recursive: true });
-      writeFileSync(join(supaDir, "access-token"), "fs-token", { mode: 0o600 });
-      return Effect.gen(function* () {
-        const { deleteAccessToken } = yield* Credentials;
-        const deleted = yield* deleteAccessToken;
-        expect(deleted).toBe(true);
-        expect(existsSync(join(supaDir, "access-token"))).toBe(false);
-      }).pipe(Effect.provide(makeLayer(tempHome, { SUPABASE_NO_KEYRING: "1" })));
-    });
+    it.effect("deletes filesystem token in no-keyring mode", () =>
+      withTempHome(
+        (home, fs, path) =>
+          Effect.gen(function* () {
+            const supaDir = path.join(home, ".supabase");
+            yield* fs.makeDirectory(supaDir, { recursive: true });
+            yield* fs.writeFileString(path.join(supaDir, "access-token"), "fs-token", {
+              mode: 0o600,
+            });
+            const { deleteAccessToken } = yield* Credentials;
+            const deleted = yield* deleteAccessToken;
+            expect(deleted).toBe(true);
+            expect(yield* fs.exists(path.join(supaDir, "access-token"))).toBe(false);
+          }),
+        { SUPABASE_NO_KEYRING: "1" },
+      ),
+    );
   });
 });

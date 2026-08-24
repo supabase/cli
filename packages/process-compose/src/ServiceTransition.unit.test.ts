@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { Match } from "effect";
 import { applyEvent, type ServiceEvent } from "./ServiceTransition.ts";
-import { ServiceState, initial, type ServiceStatus } from "./ServiceState.ts";
+import {
+  fields as serviceStateFields,
+  ServiceState,
+  initial,
+  type ServiceStatus,
+} from "./ServiceState.ts";
 
 const make = (
   name: string,
@@ -15,7 +20,7 @@ const make = (
   }> = {},
 ): ServiceState =>
   new ServiceState({
-    ...initial(name),
+    ...serviceStateFields(initial(name)),
     ...overrides,
   });
 

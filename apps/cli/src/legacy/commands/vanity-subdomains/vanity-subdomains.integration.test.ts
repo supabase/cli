@@ -4,7 +4,7 @@ import type {
   V1GetVanitySubdomainConfigOutput,
 } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Formatter, Option } from "effect";
 
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
@@ -266,7 +266,7 @@ describe("legacy vanity-subdomains get", () => {
       const exit = yield* Effect.exit(legacyVanitySubdomainsGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacyVanitySubdomainsGetUnexpectedStatusError");
         expect(errorJson).toContain("unexpected vanity subdomain status 503");
       }
@@ -283,7 +283,7 @@ describe("legacy vanity-subdomains get", () => {
       const exit = yield* Effect.exit(legacyVanitySubdomainsGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacyVanitySubdomainsGetNetworkError");
         expect(errorJson).toContain("failed to get vanity subdomain");
       }
@@ -416,7 +416,7 @@ describe("legacy vanity-subdomains check-availability", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacyVanitySubdomainsCheckNetworkError");
         expect(errorJson).toContain("failed to check vanity subdomain");
       }
@@ -594,7 +594,7 @@ describe("legacy vanity-subdomains activate", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacyVanitySubdomainsActivateNetworkError");
         expect(errorJson).toContain("failed activate vanity subdomain");
       }
@@ -688,7 +688,7 @@ describe("legacy vanity-subdomains delete", () => {
       const exit = yield* Effect.exit(legacyVanitySubdomainsDelete({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacyVanitySubdomainsDeleteUnexpectedStatusError");
         expect(errorJson).toContain("unexpected delete vanity subdomain status 503");
       }
@@ -705,7 +705,7 @@ describe("legacy vanity-subdomains delete", () => {
       const exit = yield* Effect.exit(legacyVanitySubdomainsDelete({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacyVanitySubdomainsDeleteNetworkError");
         expect(errorJson).toContain("failed to delete vanity subdomain");
       }

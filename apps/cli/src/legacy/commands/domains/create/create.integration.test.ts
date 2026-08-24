@@ -1,6 +1,6 @@
 import { type V1GetHostnameConfigOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Option, Formatter } from "effect";
 
 import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -166,7 +166,7 @@ describe("legacy domains create integration", () => {
       const exit = yield* Effect.exit(legacyDomainsCreate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyDomainsCnameError");
         expect(json).toContain("but it failed to resolve");
       }
@@ -180,7 +180,9 @@ describe("legacy domains create integration", () => {
       const exit = yield* Effect.exit(legacyDomainsCreate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to locate appropriate CNAME record");
+        expect(Formatter.formatJson(exit.cause)).toContain(
+          "failed to locate appropriate CNAME record",
+        );
       }
       expect(postedToInitialize(api)).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -192,7 +194,7 @@ describe("legacy domains create integration", () => {
       const exit = yield* Effect.exit(legacyDomainsCreate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Formatter.formatJson(exit.cause)).toContain(
           "but it is currently set to 'wrong.example.com.'",
         );
       }
@@ -208,7 +210,7 @@ describe("legacy domains create integration", () => {
       const exit = yield* Effect.exit(legacyDomainsCreate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("but it failed to resolve");
         expect(json).toContain("unexpected DNS query status 500");
       }
@@ -258,7 +260,7 @@ describe("legacy domains create integration", () => {
       const exit = yield* Effect.exit(legacyDomainsCreate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("unexpected create hostname status 503");
+        expect(Formatter.formatJson(exit.cause)).toContain("unexpected create hostname status 503");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -269,7 +271,7 @@ describe("legacy domains create integration", () => {
       const exit = yield* Effect.exit(legacyDomainsCreate(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to create custom hostname");
+        expect(Formatter.formatJson(exit.cause)).toContain("failed to create custom hostname");
       }
     }).pipe(Effect.provide(layer));
   });

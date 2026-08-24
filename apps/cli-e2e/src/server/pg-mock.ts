@@ -1,3 +1,5 @@
+import { Effect } from "effect";
+
 /**
  * Minimal Postgres wire protocol mock server (Bun.listen TCP).
  *
@@ -26,7 +28,7 @@
 // Public types
 // ---------------------------------------------------------------------------
 
-export interface PgFixture {
+interface PgFixture {
   /** Lowercase column names matching Go Result struct field names. */
   columns: string[];
   /**
@@ -466,13 +468,13 @@ export function startPgMock(): PgMockHandle {
         try {
           processMessages(socket, () => state);
         } catch (err) {
-          console.error("[pg-mock] error processing message:", err);
+          Effect.runSync(Effect.logError("[pg-mock] error processing message", err));
           socket.end();
         }
       },
       close(_socket) {},
       error(_socket, err) {
-        console.error("[pg-mock] socket error:", err);
+        Effect.runSync(Effect.logError("[pg-mock] socket error", err));
       },
     },
   });

@@ -5,7 +5,6 @@ import {
   ProjectConfigSchema,
 } from "@supabase/config";
 import { Effect, FileSystem, Path, Schema } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
 import type { PlatformError } from "effect/PlatformError";
 
 import { Output } from "../../shared/output/output.service.ts";
@@ -14,10 +13,8 @@ import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { legacyBold, legacyYellow } from "./legacy-colors.ts";
 import { legacyLoadProjectEnv } from "./legacy-db-config.toml-read.ts";
 import { legacyPromptYesNo } from "../../shared/legacy/legacy-prompt-yes-no.ts";
-import {
-  legacyResolveStorageCredentials,
-  legacyStorageGatewayFetch,
-} from "./legacy-storage-credentials.ts";
+import { legacyResolveStorageCredentials } from "./legacy-storage-credentials.ts";
+import { LegacyLocalGatewayHttpClient } from "./legacy-local-gateway-http-client.ts";
 import {
   legacyParseFileSizeLimit,
   legacyResolveBucketProps,
@@ -251,11 +248,12 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
 
   // Build the Storage service-gateway client (local or remote).
   const credentials = yield* legacyResolveStorageCredentials({ projectRef, config });
+  const localGatewayHttpClient = yield* LegacyLocalGatewayHttpClient;
 
-  // All gateway operations run with an explicit non-DoH fetch (CA-trusting for
-  // local + https, plain `globalThis.fetch` otherwise). The api-keys lookup inside
-  // `legacyResolveStorageCredentials` runs BEFORE this scope, so it still honors
-  // `--dns-resolver https`, matching `tenant.GetApiKeys`.
+  // All gateway operations run through the explicit local-gateway transport
+  // boundary. The api-keys lookup inside `legacyResolveStorageCredentials` runs
+  // BEFORE this scope, so it still honors `--dns-resolver https`, matching
+  // `tenant.GetApiKeys`.
   const gatewayOps = Effect.gen(function* () {
     const gateway = yield* legacyMakeStorageGateway({
       baseUrl: credentials.baseUrl,
@@ -302,12 +300,7 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
     }
   });
 
-  yield* gatewayOps.pipe(
-    Effect.provideService(
-      FetchHttpClient.Fetch,
-      legacyStorageGatewayFetch(credentials.localKongCa),
-    ),
-  );
+  yield* localGatewayHttpClient.use(credentials.localKongCa, gatewayOps);
 });
 
 type BucketsConfig = Readonly<
@@ -359,7 +352,7 @@ const upsertBuckets = Effect.fnUntraced(function* (
   propsByName: ReadonlyMap<string, LegacyUpsertBucketProps>,
   summary: SeedSummary,
 ) {
-  const existing = yield* gateway.listBuckets();
+  const existing = yield* gateway.listBuckets;
   const byName = new Map(existing.map((b) => [b.name, b.id]));
 
   for (const [name, props] of propsByName) {
@@ -396,7 +389,7 @@ const upsertVectorBuckets = Effect.fnUntraced(function* (
   configuredNames: ReadonlyArray<string>,
   summary: SeedSummary,
 ) {
-  const existing = yield* gateway.listVectorBuckets();
+  const existing = yield* gateway.listVectorBuckets;
   const existingSet = new Set(existing);
   const configuredSet = new Set(configuredNames);
   const toDelete = existing.filter((name) => !configuredSet.has(name));
@@ -437,7 +430,7 @@ const upsertAnalyticsBuckets = Effect.fnUntraced(function* (
   configuredNames: ReadonlyArray<string>,
   summary: SeedSummary,
 ) {
-  const existing = yield* gateway.listAnalyticsBuckets();
+  const existing = yield* gateway.listAnalyticsBuckets;
   const existingSet = new Set(existing);
   const configuredSet = new Set(configuredNames);
   const toDelete = existing.filter((name) => !configuredSet.has(name));
@@ -495,7 +488,7 @@ const handleVectorError = Effect.fnUntraced(function* (
     summary.vector_skipped = true;
     return;
   }
-  return yield* Effect.fail(error);
+  return yield* error;
 });
 
 // Port of `pkg/storage/batch.go:UpsertObjects` (+ object walk in objects.go).
@@ -508,6 +501,7 @@ const uploadObjects = Effect.fnUntraced(function* (
   bucketsConfig: BucketsConfig,
   summary: SeedSummary,
 ) {
+  const posixPath = yield* Path.Path.pipe(Effect.provide(Path.layer));
   for (const [name, bucket] of Object.entries(bucketsConfig)) {
     const objectsPath = bucket.objects_path;
     if (objectsPath.length === 0) {
@@ -528,7 +522,13 @@ const uploadObjects = Effect.fnUntraced(function* (
       files,
       (file) =>
         Effect.gen(function* () {
-          const dstPath = legacyBucketObjectKey(name, displayRoot, file.displayPath);
+          const dstPath = legacyBucketObjectKey(
+            path,
+            posixPath,
+            name,
+            displayRoot,
+            file.displayPath,
+          );
           yield* output.raw(`Uploading: ${file.displayPath} => ${dstPath}\n`, "stderr");
           // Content-type is byte-driven: Go sniffs the first 512 bytes with
           // http.DetectContentType, refining only a generic text/plain by
@@ -604,19 +604,20 @@ const collectDir = (
       // `stat` follows symlinks and has no `lstat`).
       const isSymlink = yield* fs.readLink(absChild).pipe(
         Effect.as(true),
-        Effect.catch(() => Effect.succeed(false)),
+        Effect.orElseSucceed(() => false),
       );
       if (isSymlink) {
         // `isUploadableEntry` OPENS the target then stats the
         // handle; it uploads only a regular file. `stat` alone would queue an
         // unreadable target and abort later at upload, so mirror that: open + stat.
+        const unknownFileType = "Unknown";
         const targetType = yield* Effect.scoped(
           Effect.gen(function* () {
             const handle = yield* fs.open(absChild, { flag: "r" });
             const targetInfo = yield* handle.stat;
             return targetInfo.type;
           }),
-        ).pipe(Effect.catch(() => Effect.succeed("Unknown" as const)));
+        ).pipe(Effect.orElseSucceed(() => unknownFileType));
         if (targetType === "File") {
           collected.push({ absPath: absChild, displayPath: displayChild });
         } else {

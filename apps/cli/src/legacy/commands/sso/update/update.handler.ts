@@ -1,5 +1,5 @@
 import type { SupabaseApiError } from "@supabase/api/effect";
-import { Effect, Option, Redacted, Result, Stdio } from "effect";
+import { Effect, Option, Redacted, Result, Schema, Stdio } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
@@ -52,7 +52,12 @@ import {
   LegacySsoAccessTokenError,
   LegacySsoTomlEncodeError,
 } from "../sso.errors.ts";
-import { renderSingleProvider, toLegacySsoProviderView, validateUuid } from "../sso.format.ts";
+import {
+  legacyQuoteSsoValue,
+  renderSingleProvider,
+  toLegacySsoProviderView,
+  validateUuid,
+} from "../sso.format.ts";
 import { validateMetadataUrl } from "../sso.metadata-url.ts";
 import {
   LEGACY_SSO_NAME_ID_FORMATS,
@@ -129,23 +134,19 @@ const handleGetError = (ref: string, providerId: string, cause: SupabaseApiError
         response: legacyGateResponse(cause),
       });
       if (mapped.status === 404) {
-        return yield* Effect.fail(
-          new LegacySsoUpdateNotFoundError({
-            message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
-            upgradeSuggested,
-          }),
-        );
-      }
-      return yield* Effect.fail(
-        new LegacySsoUpdateUnexpectedStatusError({
-          status: mapped.status,
-          body: mapped.body,
-          message: mapped.message,
+        return yield* new LegacySsoUpdateNotFoundError({
+          message: `An identity provider with ID ${legacyQuoteSsoValue(providerId)} could not be found.`,
           upgradeSuggested,
-        }),
-      );
+        });
+      }
+      return yield* new LegacySsoUpdateUnexpectedStatusError({
+        status: mapped.status,
+        body: mapped.body,
+        message: mapped.message,
+        upgradeSuggested,
+      });
     }
-    return yield* Effect.fail(mapped);
+    return yield* mapped;
   });
 
 interface ExistingDomainItem {
@@ -270,9 +271,7 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
     // Effect parser accepts that argv (the flag parses as unset), so no
     // GET/PUT may happen here either. Keep this ahead of the arity check.
     if (scan.missingValueError !== undefined) {
-      return yield* Effect.fail(
-        new LegacySsoFlagNeedsArgumentError({ message: scan.missingValueError }),
-      );
+      return yield* new LegacySsoFlagNeedsArgumentError({ message: scan.missingValueError });
     }
 
     // Arity validation counts pflag-effective positionals, which shift away
@@ -284,11 +283,9 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
     // so re-count from the scan (gated on `anchored`: an unscoped scan has
     // no positional information).
     if (scan.anchored && scan.positionals.length !== 1) {
-      return yield* Effect.fail(
-        new LegacySsoUpdateArityError({
-          message: `accepts 1 arg(s), received ${scan.positionals.length}`,
-        }),
-      );
+      return yield* new LegacySsoUpdateArityError({
+        message: `accepts 1 arg(s), received ${scan.positionals.length}`,
+      });
     }
 
     // The effective `--profile`/`SUPABASE_PROFILE` is resolved immediately
@@ -318,9 +315,9 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
       : undefined;
     const reconciledTokenForAux =
       reconciledTokenCached === undefined
-        ? Effect.succeed<Option.Option<Redacted.Redacted<string>> | undefined>(undefined)
-        : Effect.catch(reconciledTokenCached, () =>
-            Effect.succeed(Option.none<Redacted.Redacted<string>>()),
+        ? Effect.succeed(Option.none<Redacted.Redacted<string>>())
+        : Effect.orElseSucceed(reconciledTokenCached, () =>
+            Option.none<Redacted.Redacted<string>>(),
           );
 
     // The effective `--workdir`/`SUPABASE_WORKDIR` is validated after arity
@@ -334,11 +331,9 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
     for (const group of SSO_UPDATE_MUTEX_GROUPS) {
       const changed = group.filter((flagName) => occurrences.has(flagName));
       if (changed.length > 1) {
-        return yield* Effect.fail(
-          new LegacySsoMutexFlagError({
-            message: cobraMutuallyExclusiveErrorMessage(group, changed),
-          }),
-        );
+        return yield* new LegacySsoMutexFlagError({
+          message: cobraMutuallyExclusiveErrorMessage(group, changed),
+        });
       }
     }
 
@@ -429,20 +424,19 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
         const contentType = response.headers["content-type"] ?? "";
         if (response.status === 200 && contentType.includes("json")) {
           // A 200 JSON body that fails to parse exits with the parse error
-          // before any PUT; detail text is `JSON.parse`'s (documented
-          // micro-divergence).
-          let parsed: unknown;
-          try {
-            parsed = JSON.parse(rawBody);
-          } catch (cause) {
-            yield* fetching?.fail() ?? Effect.void;
-            return yield* Effect.fail(
-              new LegacySsoUpdateNetworkError({
-                message: `failed to get sso provider: ${cause instanceof Error ? cause.message : String(cause)}`,
-                decode: true,
-              }),
-            );
-          }
+          // before any PUT; detail text is the decoder's documented message.
+          const parsed = yield* Schema.decodeEffect(
+            Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)),
+          )(rawBody).pipe(
+            Effect.mapError(
+              (cause) =>
+                new LegacySsoUpdateNetworkError({
+                  message: `failed to get sso provider: ${String(cause)}`,
+                  decode: true,
+                }),
+            ),
+            Effect.tapError(() => fetching?.fail() ?? Effect.void),
+          );
           return { domains: extractDomainItems(parsed) };
         }
         // Non-200 — or a 200 without a JSON content type, which falls into
@@ -455,26 +449,20 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
           statusCode: response.status,
           response,
           apiUrl,
-          ...(yield* Effect.map(reconciledTokenForAux, (token) =>
-            token !== undefined ? { accessToken: token } : {},
-          )),
+          ...(yield* Effect.map(reconciledTokenForAux, (accessToken) => ({ accessToken }))),
         });
         if (response.status === 404) {
-          return yield* Effect.fail(
-            new LegacySsoUpdateNotFoundError({
-              message: `An identity provider with ID ${JSON.stringify(providerId)} could not be found.`,
-              upgradeSuggested,
-            }),
-          );
-        }
-        return yield* Effect.fail(
-          new LegacySsoUpdateUnexpectedStatusError({
-            status: response.status,
-            body: bodyText,
-            message: `unexpected error fetching identity provider: ${bodyText}`,
+          return yield* new LegacySsoUpdateNotFoundError({
+            message: `An identity provider with ID ${legacyQuoteSsoValue(providerId)} could not be found.`,
             upgradeSuggested,
-          }),
-        );
+          });
+        }
+        return yield* new LegacySsoUpdateUnexpectedStatusError({
+          status: response.status,
+          body: bodyText,
+          message: `unexpected error fetching identity provider: ${bodyText}`,
+          upgradeSuggested,
+        });
       });
 
       // Always GETs first, regardless of which flags are set.
@@ -569,19 +557,17 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
           statusCode: response.status,
           response,
           apiUrl,
-          ...(yield* Effect.map(reconciledTokenForAux, (token) =>
-            token !== undefined ? { accessToken: token } : {},
-          )),
+          ...(yield* Effect.map(reconciledTokenForAux, (accessToken) => ({ accessToken }))),
         });
         yield* fetching?.fail() ?? Effect.void;
-        return yield* Effect.fail(
+        return yield* (
           // Reuses the GET error message even for PUT.
           new LegacySsoUpdateUnexpectedStatusError({
             status: response.status,
             body: bodyText,
             message: `unexpected error fetching identity provider: ${bodyText}`,
             upgradeSuggested,
-          }),
+          })
         );
       }
 

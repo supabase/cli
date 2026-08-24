@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Config, Crypto, DateTime, Effect, FileSystem, Layer, Option, Path } from "effect";
 import { homedir } from "node:os";
 
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
@@ -27,9 +27,10 @@ interface State {
 const SCHEMA_VERSION = 1;
 const SESSION_ROTATION_MS = 30 * 60 * 1000;
 
-function legacyTelemetryPath(env: Record<string, string | undefined>, pathSvc: Path.Path): string {
-  return pathSvc.join(legacySupabaseHome(homedir(), env), "telemetry.json");
-}
+const legacyTelemetryPath = (pathSvc: Path.Path, configuredHome: string | undefined): string =>
+  pathSvc.join(legacySupabaseHome(pathSvc, configuredHome, homedir()), "telemetry.json");
+
+const resolveTelemetryHome = Config.option(Config.string("SUPABASE_HOME"));
 
 /**
  * Serializes the state like Go's `json.Marshal` of `State` (`state.go:25-31`):
@@ -106,11 +107,15 @@ function parseGoRfc3339Ms(text: string): number | undefined {
   if (day < 1 || day > daysInMonth(year, month)) return undefined;
   if (hour > 23 || minute > 59 || second > 59) return undefined;
   if (match[9] !== undefined && (Number(match[9]) > 24 || Number(match[10]) > 60)) return undefined;
-  // `setUTCFullYear` (not `Date.UTC`) so years 0000-0099 aren't remapped to
-  // 1900-1999; components are already range-checked, so no rollover occurs.
-  const date = new Date(0);
-  date.setUTCFullYear(year, month - 1, day);
-  date.setUTCHours(hour, minute, second, 0);
+  const date = DateTime.makeUnsafe({
+    year,
+    month,
+    day,
+    hour,
+    minute,
+    second,
+    millisecond: 0,
+  });
   // Go reads at most 9 fractional digits (nanoseconds); ms precision is
   // exact for the 30-minute comparison this feeds.
   const fractionMs = match[7] !== undefined ? Number(`0.${match[7].slice(0, 9)}`) * 1000 : 0;
@@ -118,7 +123,7 @@ function parseGoRfc3339Ms(text: string): number | undefined {
     match[8] !== undefined
       ? (match[8] === "-" ? -1 : 1) * (Number(match[9]) * 3600 + Number(match[10]) * 60) * 1000
       : 0;
-  return date.getTime() + fractionMs - offsetMs;
+  return DateTime.toEpochMillis(date) + fractionMs - offsetMs;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -435,48 +440,56 @@ export function readExistingState(text: string): PriorState | undefined {
   }
 }
 
+const loadOrCreateLegacyTelemetryStateWithEnv = Effect.fn(
+  "legacy.telemetry.loadOrCreateStateWithEnv",
+)(function* (opts: { readonly now?: Date }, configuredHome: string | undefined) {
+  const fs = yield* FileSystem.FileSystem;
+  const pathSvc = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
+  const filePath = legacyTelemetryPath(pathSvc, configuredHome);
+  const exists = yield* fs.exists(filePath);
+  const existing = exists ? yield* fs.readFileString(filePath) : undefined;
+  const prior = existing !== undefined ? readExistingState(existing) : undefined;
+  const now = opts.now ?? (yield* DateTime.nowAsDate);
+  const nowIso = now.toISOString();
+
+  // The expiry comparison uses the epoch computed by `parseGoRfc3339Ms`
+  // during decode — NOT a `new Date(string)` re-parse. Go-valid forms JS
+  // cannot parse (comma fraction `…00,5Z`, offsets `+24:00`/`+05:60`)
+  // would NaN there and read as expired, rotating `session_id` where Go —
+  // which decoded the instant fine — retains it inside the 30-minute
+  // window (`LoadOrCreateState`, `state.go:140-148`; verified against the
+  // Go binary: a recent `…00,5Z` keeps the seeded session id).
+  const priorActiveMs = prior?.sessionLastActiveMs;
+  const expired =
+    priorActiveMs === undefined || now.getTime() - priorActiveMs > SESSION_ROTATION_MS;
+
+  const state: State = {
+    enabled: prior?.enabled ?? true,
+    device_id: prior?.device_id ?? (yield* crypto.randomUUIDv4),
+    session_id:
+      !expired && prior?.session_id !== undefined ? prior.session_id : yield* crypto.randomUUIDv4,
+    session_last_active: nowIso,
+    ...(prior?.distinct_id !== undefined ? { distinct_id: prior.distinct_id } : {}),
+    // Go keeps a decoded file's non-zero schema_version (`state.go:103-106`).
+    // The numeric field is for in-memory readers; the exact token rides
+    // along for the write so magnitudes above 2^53 round-trip like Go.
+    schema_version:
+      prior?.schemaVersionToken !== undefined ? Number(prior.schemaVersionToken) : SCHEMA_VERSION,
+    ...(prior?.schemaVersionToken !== undefined
+      ? { schemaVersionToken: prior.schemaVersionToken }
+      : {}),
+  };
+
+  yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
+  yield* fs.writeFileString(filePath, serializeLegacyTelemetryState(state));
+  return state;
+});
+
 export const loadOrCreateLegacyTelemetryState = Effect.fn("legacy.telemetry.loadOrCreateState")(
   function* (opts: { readonly now?: Date } = {}) {
-    const fs = yield* FileSystem.FileSystem;
-    const pathSvc = yield* Path.Path;
-    const filePath = legacyTelemetryPath(process.env, pathSvc);
-    const exists = yield* fs.exists(filePath);
-    const existing = exists ? yield* fs.readFileString(filePath) : undefined;
-    const prior = existing !== undefined ? readExistingState(existing) : undefined;
-    const now = opts.now ?? new Date();
-    const nowIso = now.toISOString();
-
-    // The expiry comparison uses the epoch computed by `parseGoRfc3339Ms`
-    // during decode — NOT a `new Date(string)` re-parse. Go-valid forms JS
-    // cannot parse (comma fraction `…00,5Z`, offsets `+24:00`/`+05:60`)
-    // would NaN there and read as expired, rotating `session_id` where Go —
-    // which decoded the instant fine — retains it inside the 30-minute
-    // window (`LoadOrCreateState`, `state.go:140-148`; verified against the
-    // Go binary: a recent `…00,5Z` keeps the seeded session id).
-    const priorActiveMs = prior?.sessionLastActiveMs;
-    const expired =
-      priorActiveMs === undefined || now.getTime() - priorActiveMs > SESSION_ROTATION_MS;
-
-    const state: State = {
-      enabled: prior?.enabled ?? true,
-      device_id: prior?.device_id ?? crypto.randomUUID(),
-      session_id:
-        !expired && prior?.session_id !== undefined ? prior.session_id : crypto.randomUUID(),
-      session_last_active: nowIso,
-      ...(prior?.distinct_id !== undefined ? { distinct_id: prior.distinct_id } : {}),
-      // Go keeps a decoded file's non-zero schema_version (`state.go:103-106`).
-      // The numeric field is for in-memory readers; the exact token rides
-      // along for the write so magnitudes above 2^53 round-trip like Go.
-      schema_version:
-        prior?.schemaVersionToken !== undefined ? Number(prior.schemaVersionToken) : SCHEMA_VERSION,
-      ...(prior?.schemaVersionToken !== undefined
-        ? { schemaVersionToken: prior.schemaVersionToken }
-        : {}),
-    };
-
-    yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
-    yield* fs.writeFileString(filePath, serializeLegacyTelemetryState(state));
-    return state;
+    const configuredHome = Option.getOrUndefined(yield* resolveTelemetryHome);
+    return yield* loadOrCreateLegacyTelemetryStateWithEnv(opts, configuredHome);
   },
 );
 
@@ -490,7 +503,8 @@ export const setLegacyTelemetryEnabled = Effect.fn("legacy.telemetry.setEnabled"
   const fs = yield* FileSystem.FileSystem;
   const pathSvc = yield* Path.Path;
   const nextState: State = { ...state, enabled };
-  const filePath = legacyTelemetryPath(process.env, pathSvc);
+  const configuredHome = Option.getOrUndefined(yield* resolveTelemetryHome);
+  const filePath = legacyTelemetryPath(pathSvc, configuredHome);
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
   yield* fs.writeFileString(filePath, serializeLegacyTelemetryState(nextState));
   return nextState;
@@ -505,25 +519,29 @@ export const setLegacyTelemetryEnabled = Effect.fn("legacy.telemetry.setEnabled"
  */
 const persistLegacyDistinctId = Effect.fn("legacy.telemetry.persistDistinctId")(function* (
   distinctId: string | undefined,
+  configuredHome: string | undefined,
 ) {
-  const base = yield* loadOrCreateLegacyTelemetryState();
+  const base = yield* loadOrCreateLegacyTelemetryStateWithEnv({}, configuredHome);
   const fs = yield* FileSystem.FileSystem;
   const pathSvc = yield* Path.Path;
   const { distinct_id: _drop, ...rest } = base;
   const nextState: State =
     distinctId !== undefined && distinctId.length > 0 ? { ...rest, distinct_id: distinctId } : rest;
-  const filePath = legacyTelemetryPath(process.env, pathSvc);
+  const filePath = legacyTelemetryPath(pathSvc, configuredHome);
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
   yield* fs.writeFileString(filePath, serializeLegacyTelemetryState(nextState));
 });
 
-const persistLegacyIdentityReset = Effect.fn("legacy.telemetry.persistIdentityReset")(function* () {
-  const base = yield* loadOrCreateLegacyTelemetryState();
+const persistLegacyIdentityReset = Effect.fn("legacy.telemetry.persistIdentityReset")(function* (
+  configuredHome: string | undefined,
+) {
+  const base = yield* loadOrCreateLegacyTelemetryStateWithEnv({}, configuredHome);
   const fs = yield* FileSystem.FileSystem;
   const pathSvc = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
   const { distinct_id: _drop, ...rest } = base;
-  const nextState: State = { ...rest, device_id: crypto.randomUUID() };
-  const filePath = legacyTelemetryPath(process.env, pathSvc);
+  const nextState: State = { ...rest, device_id: yield* crypto.randomUUIDv4 };
+  const filePath = legacyTelemetryPath(pathSvc, configuredHome);
   yield* fs.makeDirectory(pathSvc.dirname(filePath), { recursive: true });
   yield* fs.writeFileString(filePath, serializeLegacyTelemetryState(nextState));
 });
@@ -552,14 +570,24 @@ export const legacyTelemetryStateLayer = Layer.effect(
     const analytics = yield* Analytics;
     const runtime = yield* TelemetryRuntime;
 
-    const provide = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>) =>
-      effect.pipe(
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, pathSvc),
-      );
+    const crypto = yield* Crypto.Crypto;
+    const configuredHome = Option.getOrUndefined(yield* resolveTelemetryHome);
+
+    const services = Layer.mergeAll(
+      Layer.succeed(FileSystem.FileSystem, fs),
+      Layer.succeed(Path.Path, pathSvc),
+      Layer.succeed(Crypto.Crypto, crypto),
+    );
+
+    const provide = <A, E>(
+      effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | Crypto.Crypto>,
+    ) => Effect.provide(effect, services);
 
     return LegacyTelemetryState.of({
-      flush: provide(loadOrCreateLegacyTelemetryState()).pipe(Effect.asVoid, Effect.ignore),
+      flush: provide(loadOrCreateLegacyTelemetryStateWithEnv({}, configuredHome)).pipe(
+        Effect.asVoid,
+        Effect.ignore,
+      ),
       stitchLogin: (distinctId: string) =>
         // Mirrors Go's `StitchLogin`: the in-memory stamp always happens so
         // subsequent captures in this process carry the user's id; the alias
@@ -577,18 +605,22 @@ export const legacyTelemetryStateLayer = Layer.effect(
           if (firstIdentity) {
             yield* analytics.alias(distinctId, runtime.deviceId).pipe(Effect.ignore);
           }
-          yield* provide(persistLegacyDistinctId(distinctId));
+          yield* provide(persistLegacyDistinctId(distinctId, configuredHome));
         }).pipe(Effect.ignore),
       clearDistinctId: Effect.sync(() => {
         runtime.identity.clear();
       }).pipe(
-        Effect.andThen(provide(persistLegacyDistinctId(undefined))),
+        Effect.andThen(provide(persistLegacyDistinctId(undefined, configuredHome))),
         Effect.asVoid,
         Effect.ignore,
       ),
       resetIdentity: Effect.sync(() => {
         runtime.identity.clear();
-      }).pipe(Effect.andThen(provide(persistLegacyIdentityReset())), Effect.asVoid, Effect.ignore),
+      }).pipe(
+        Effect.andThen(provide(persistLegacyIdentityReset(configuredHome))),
+        Effect.asVoid,
+        Effect.ignore,
+      ),
     });
   }),
 );

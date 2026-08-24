@@ -1,9 +1,6 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import type { V1ListAllProjectsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
 
 import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -42,6 +39,9 @@ const SAMPLE_PROJECT: (typeof V1ListAllProjectsOutput.Type)[number] = {
 };
 
 const tempRoot = useLegacyTempWorkdir("supabase-projects-delete-int-");
+const pathService = Effect.runSync(Effect.provide(Path.Path, Path.layer));
+const join = pathService.join;
+const stringifyJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
@@ -53,6 +53,7 @@ interface SetupOpts {
   readonly network?: "fail";
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
   readonly promptSelectResponses?: ReadonlyArray<string>;
+  readonly env?: Record<string, string>;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -81,6 +82,7 @@ function setup(opts: SetupOpts = {}) {
       stdin: mockStdin(opts.stdinIsTty ?? false, opts.stdinInput),
       telemetry: telemetry.layer,
       linkedProjectCache: cache.layer,
+      env: opts.env,
     }),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
   );
@@ -89,8 +91,18 @@ function setup(opts: SetupOpts = {}) {
 
 function writeRefFile(content: string) {
   const tempDir = join(tempRoot.current, "supabase", ".temp");
-  mkdirSync(tempDir, { recursive: true });
-  writeFileSync(join(tempDir, "project-ref"), content);
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(tempDir, { recursive: true });
+    yield* fs.writeFileString(join(tempDir, "project-ref"), content);
+  });
+}
+
+function pathExists(path: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.exists(path);
+  });
 }
 
 function hasMethod(
@@ -125,7 +137,7 @@ describe("legacy projects delete integration", () => {
       const exit = yield* Effect.exit(legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectsDeleteCancelledError");
+        expect(stringifyJson(exit.cause)).toContain("LegacyProjectsDeleteCancelledError");
       }
       expect(hasMethod(api, "DELETE")).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -154,7 +166,7 @@ describe("legacy projects delete integration", () => {
       const exit = yield* Effect.exit(legacyProjectsDelete({ ref: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectsDeleteRefRequiredError");
+        expect(stringifyJson(exit.cause)).toContain("LegacyProjectsDeleteRefRequiredError");
       }
       // No ref resolved → no linked-project cache write.
       expect(cache.cached).toBe(false);
@@ -167,7 +179,7 @@ describe("legacy projects delete integration", () => {
       const exit = yield* Effect.exit(legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectsDeleteCancelledError");
+        expect(stringifyJson(exit.cause)).toContain("LegacyProjectsDeleteCancelledError");
       }
       // Established non-TTY behavior: still prints the label and echoes the
       // (empty) scanned line before the No default cancels.
@@ -178,24 +190,14 @@ describe("legacy projects delete integration", () => {
   });
 
   it.live("SUPABASE_YES=1 in the environment auto-confirms with the [y/N] y echo", () => {
-    const prev = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "1";
-    const { layer, out, api } = setup({ yes: false });
+    const { layer, out, api } = setup({ yes: false, env: { SUPABASE_YES: "1" } });
     return Effect.gen(function* () {
       yield* legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) });
       // Established `--yes` branch bytes.
       expect(out.stderrText).toContain("Do you want to delete project ");
       expect(out.stderrText).toContain("? This action is irreversible. [y/N] y\n");
       expect(hasMethod(api, "DELETE")).toBe(true);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(layer),
-    );
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("non-TTY with piped `y` confirms like Go", () => {
@@ -233,26 +235,28 @@ describe("legacy projects delete integration", () => {
       const exit = yield* Effect.exit(legacyProjectsDelete({ ref: Option.some("BADREF") }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidProjectRefError");
+        expect(stringifyJson(exit.cause)).toContain("LegacyInvalidProjectRefError");
       }
     }).pipe(Effect.provide(layer));
   });
 
   it.live("removes the linked supabase/.temp dir when the deleted ref matches", () => {
-    writeRefFile(LEGACY_VALID_REF);
     const { layer } = setup({ yes: true });
     return Effect.gen(function* () {
+      yield* writeRefFile(LEGACY_VALID_REF);
       yield* legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) });
-      expect(existsSync(join(tempRoot.current, "supabase", ".temp"))).toBe(false);
+      expect(yield* pathExists(join(tempRoot.current, "supabase", ".temp"))).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("leaves the linked dir intact when the deleted ref differs", () => {
-    writeRefFile(OTHER_REF);
     const { layer } = setup({ yes: true });
     return Effect.gen(function* () {
+      yield* writeRefFile(OTHER_REF);
       yield* legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) });
-      expect(existsSync(join(tempRoot.current, "supabase", ".temp", "project-ref"))).toBe(true);
+      expect(yield* pathExists(join(tempRoot.current, "supabase", ".temp", "project-ref"))).toBe(
+        true,
+      );
     }).pipe(Effect.provide(layer));
   });
 
@@ -262,7 +266,7 @@ describe("legacy projects delete integration", () => {
       const exit = yield* Effect.exit(legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = stringifyJson(exit.cause);
         expect(json).toContain("LegacyProjectsDeleteNotFoundError");
         expect(json).toContain(`Project does not exist:${LEGACY_VALID_REF}`);
       }
@@ -275,7 +279,7 @@ describe("legacy projects delete integration", () => {
       const exit = yield* Effect.exit(legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = stringifyJson(exit.cause);
         expect(json).toContain("LegacyProjectsDeleteUnexpectedStatusError");
         expect(json).toContain(`Failed to delete project ${LEGACY_VALID_REF}`);
       }
@@ -288,7 +292,7 @@ describe("legacy projects delete integration", () => {
       const exit = yield* Effect.exit(legacyProjectsDelete({ ref: Option.some(LEGACY_VALID_REF) }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = stringifyJson(exit.cause);
         expect(json).toContain("LegacyProjectsDeleteNetworkError");
         expect(json).toContain("failed to delete project");
       }

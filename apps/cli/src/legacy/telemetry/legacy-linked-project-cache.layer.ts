@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Redacted, Schema } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
@@ -9,6 +9,13 @@ import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { GroupOrganization, GroupProject } from "../../shared/telemetry/event-catalog.ts";
 import { legacyReadProjectRefFile, legacyTempPaths } from "../shared/legacy-temp-paths.ts";
 import { LegacyLinkedProjectCache } from "./legacy-linked-project-cache.service.ts";
+
+const LinkedProjectCacheSchema = Schema.Struct({
+  ref: Schema.String,
+  name: Schema.String,
+  organization_id: Schema.String,
+  organization_slug: Schema.String,
+});
 
 function readString(obj: unknown, key: string): string {
   if (typeof obj === "object" && obj !== null && key in obj) {
@@ -136,7 +143,10 @@ export const legacyLinkedProjectCacheLayer = Layer.effect(
           };
 
           yield* fs.makeDirectory(path.dirname(cachePath), { recursive: true });
-          yield* fs.writeFileString(cachePath, JSON.stringify(linked));
+          const encoded = yield* Schema.encodeEffect(
+            Schema.fromJsonString(LinkedProjectCacheSchema),
+          )(linked);
+          yield* fs.writeFileString(cachePath, encoded);
 
           // Go's CacheProjectAndIdentifyGroups (telemetry/project.go:66-88) does
           // not just write the file — on the same cache miss it also publishes the

@@ -1,17 +1,26 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
-import { mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import {
+  ConfigProvider,
+  DateTime,
+  Effect,
+  Exit,
+  FileSystem,
+  Formatter,
+  Layer,
+  Option,
+  Path,
+} from "effect";
 
 import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import {
   mockLegacyCliConfig,
   mockLegacyTelemetryStateTracked,
+  useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
+import { makeLegacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConfigLoadError } from "../../../shared/legacy-db-config.errors.ts";
 import type { LegacyResolvedDbConfig } from "../../../shared/legacy-db-config.types.ts";
@@ -49,8 +58,11 @@ for (const { fileName, sql } of LEGACY_REPORT_QUERIES) {
   );
 }
 
+const tempRoot = useLegacyTempWorkdir("supabase-inspect-report-");
+const path = Effect.runSync(Path.Path.pipe(Effect.provide(BunServices.layer)));
+
 function tempDir(prefix: string): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  return path.join(tempRoot.current, prefix);
 }
 
 function mockResolver(opts: { conn?: LegacyPgConnInput; isLocal?: boolean; fails?: boolean } = {}) {
@@ -131,6 +143,7 @@ interface SetupOpts {
 }
 
 function setupLegacyReport(opts: SetupOpts = {}) {
+  const configProvider = ConfigProvider.fromEnv({ preserveEmptyStrings: true });
   const out = mockOutput({ format: opts.format ?? "text" });
   const resolver = mockResolver({
     conn: opts.conn,
@@ -146,6 +159,8 @@ function setupLegacyReport(opts: SetupOpts = {}) {
   const workdir = opts.workdir ?? tempDir("supabase-report-workdir-");
   const layer = Layer.mergeAll(
     out.layer,
+    ConfigProvider.layer(configProvider),
+    makeLegacyViperEnvLayer(configProvider),
     resolver.layer,
     connection.layer,
     telemetry.layer,
@@ -156,7 +171,7 @@ function setupLegacyReport(opts: SetupOpts = {}) {
     mockTty({ stdoutIsTty: opts.stdoutIsTty ?? false }),
     BunServices.layer,
   );
-  return { layer, out, resolver, connection, telemetry, workdir };
+  return { layer, configProvider, out, resolver, connection, telemetry, workdir };
 }
 
 const flags = (over: Partial<LegacyInspectReportFlags> = {}): LegacyInspectReportFlags => ({
@@ -184,25 +199,30 @@ const DEFAULT_RULE_CSVS: Record<string, string> = {
 };
 
 function localDateFolder(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return DateTime.formatIsoDate(DateTime.nowUnsafe());
 }
 
-function dateFolderContents(base: string): { dir: string; files: Array<string> } {
-  const entries = readdirSync(base, { withFileTypes: true }).filter((e) => e.isDirectory());
-  expect(entries.length).toBe(1);
-  const dir = join(base, entries[0]!.name);
-  return { dir, files: readdirSync(dir) };
+function dateFolderContents(base: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const entries = yield* fs.readDirectory(base);
+    const directories: Array<string> = [];
+    for (const entry of entries) {
+      if ((yield* fs.stat(path.join(base, entry))).type === "Directory") directories.push(entry);
+    }
+    expect(directories.length).toBe(1);
+    const dir = path.join(base, directories[0]!);
+    return { dir, files: yield* fs.readDirectory(dir) };
+  });
 }
 
 describe("legacy inspect report", () => {
   it.live("writes one CSV per inspect query for the linked project", () => {
     const base = tempDir("supabase-report-out-");
     const { layer, connection } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS });
-    const prevUmask = process.umask(0);
     return Effect.gen(function* () {
       yield* legacyInspectReport(flags({ outputDir: base }));
-      const { dir, files } = dateFolderContents(base);
+      const { dir, files } = yield* dateFolderContents(base);
       expect(files.length).toBe(14);
       expect(files).toContain("db_stats.csv");
       expect(files).toContain("unused_indexes.csv");
@@ -215,9 +235,10 @@ describe("legacy inspect report", () => {
         ),
       ).toBe(true);
       // The date folder is pinned to 0755 and each CSV to 0644.
-      expect(statSync(dir).mode & 0o777).toBe(0o755);
-      expect(statSync(join(dir, "db_stats.csv")).mode & 0o777).toBe(0o644);
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => process.umask(prevUmask))));
+      const fs = yield* FileSystem.FileSystem;
+      expect((yield* fs.stat(dir)).mode & 0o777).toBe(0o755);
+      expect((yield* fs.stat(path.join(dir, "db_stats.csv"))).mode & 0o777).toBe(0o644);
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("inspects the local database with --local", () => {
@@ -264,7 +285,7 @@ describe("legacy inspect report", () => {
       const exit = yield* Effect.exit(legacyInspectReport(flags({ linked: true, local: true })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("are set none of the others can be");
+        expect(Formatter.formatJson(exit.cause)).toContain("are set none of the others can be");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -289,8 +310,8 @@ describe("legacy inspect report", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("are set none of the others can be");
-        expect(JSON.stringify(exit.cause)).toContain("[linked local]");
+        expect(Formatter.formatJson(exit.cause)).toContain("are set none of the others can be");
+        expect(Formatter.formatJson(exit.cause)).toContain("[linked local]");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -336,7 +357,7 @@ describe("legacy inspect report", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Formatter.formatJson(exit.cause)).toContain(
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }
@@ -383,23 +404,24 @@ describe("legacy inspect report", () => {
     () => {
       const base = tempDir("supabase-report-out-");
       const workdir = tempDir("supabase-report-workdir-");
-      mkdirSync(join(workdir, "supabase"), { recursive: true });
-      writeFileSync(
-        join(workdir, "supabase", "config.toml"),
-        [
-          "[[experimental.inspect.rules]]",
-          "query = \"SELECT COUNT(*) FROM `locks.csv` WHERE granted = 'f'\"",
-          'name = "Custom rule"',
-          'pass = "good"',
-          'fail = "bad"',
-          "",
-        ].join("\n"),
-      );
       const { layer, out } = setupLegacyReport({
         workdir,
         csvs: { "locks.csv": "stmt,granted\nA,t\n" },
       });
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+        yield* fs.writeFileString(
+          path.join(workdir, "supabase", "config.toml"),
+          [
+            "[[experimental.inspect.rules]]",
+            "query = \"SELECT COUNT(*) FROM `locks.csv` WHERE granted = 'f'\"",
+            'name = "Custom rule"',
+            'pass = "good"',
+            'fail = "bad"',
+            "",
+          ].join("\n"),
+        );
         yield* legacyInspectReport(flags({ outputDir: base }));
         expect(out.stderrText).not.toContain("Loading default rules...");
         expect(out.stdoutText).toContain("Custom rule");
@@ -412,22 +434,23 @@ describe("legacy inspect report", () => {
   it.live("surfaces a malformed rule query as the STATUS cell without failing", () => {
     const base = tempDir("supabase-report-out-");
     const workdir = tempDir("supabase-report-workdir-");
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    writeFileSync(
-      join(workdir, "supabase", "config.toml"),
-      [
-        "[[experimental.inspect.rules]]",
-        // References a CSV that was never produced — the provider returns no table
-        // and the evaluator surfaces the error as the STATUS cell (not a failure).
-        'query = "SELECT COUNT(*) FROM `nope.csv`"',
-        'name = "Broken rule"',
-        'pass = "ok"',
-        'fail = "bad"',
-        "",
-      ].join("\n"),
-    );
     const { layer, out } = setupLegacyReport({ workdir, csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+      yield* fs.writeFileString(
+        path.join(workdir, "supabase", "config.toml"),
+        [
+          "[[experimental.inspect.rules]]",
+          // References a CSV that was never produced — the provider returns no table
+          // and the evaluator surfaces the error as the STATUS cell (not a failure).
+          'query = "SELECT COUNT(*) FROM `nope.csv`"',
+          'name = "Broken rule"',
+          'pass = "ok"',
+          'fail = "bad"',
+          "",
+        ].join("\n"),
+      );
       const exit = yield* Effect.exit(legacyInspectReport(flags({ outputDir: base })));
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stdoutText).toContain("Broken rule");
@@ -437,32 +460,34 @@ describe("legacy inspect report", () => {
   it.live("aborts on a malformed config.toml before connecting or writing any CSV", () => {
     const base = tempDir("supabase-report-out-");
     const workdir = tempDir("supabase-report-workdir-");
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    // An invalid rule config (unknown key) must abort before the DB connection
-    // and before any CSV files are written.
-    writeFileSync(
-      join(workdir, "supabase", "config.toml"),
-      [
-        "[[experimental.inspect.rules]]",
-        'query = "SELECT 1"',
-        'name = "r"',
-        'pass = "ok"',
-        'fail = "bad"',
-        'typo = "x"',
-        "",
-      ].join("\n"),
-    );
     const { layer, connection } = setupLegacyReport({ workdir });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+      // An invalid rule config (unknown key) must abort before the DB connection
+      // and before any CSV files are written.
+      yield* fs.writeFileString(
+        path.join(workdir, "supabase", "config.toml"),
+        [
+          "[[experimental.inspect.rules]]",
+          'query = "SELECT 1"',
+          'name = "r"',
+          'pass = "ok"',
+          'fail = "bad"',
+          'typo = "x"',
+          "",
+        ].join("\n"),
+      );
+      yield* fs.makeDirectory(base, { recursive: true });
       const exit = yield* Effect.exit(legacyInspectReport(flags({ outputDir: base })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("invalid keys: typo");
+        expect(Formatter.formatJson(exit.cause)).toContain("invalid keys: typo");
       }
       // No connection and no dated output folder — config validation ran first,
       // before mkdir / connect / COPY (base itself is the pre-created temp dir).
       expect(connection.copiedSql.length).toBe(0);
-      expect(readdirSync(base).length).toBe(0);
+      expect(yield* fs.readDirectory(base)).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 
@@ -482,7 +507,7 @@ describe("legacy inspect report", () => {
       expect(data?.files?.length).toBe(14);
       expect(typeof data?.outputDir).toBe("string");
       expect(data?.rules?.length).toBe(13);
-      expect(dateFolderContents(base).files.length).toBe(14);
+      expect((yield* dateFolderContents(base)).files.length).toBe(14);
       expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));
   });
@@ -500,14 +525,16 @@ describe("legacy inspect report", () => {
 
   it.live("aborts with a failed-to-mkdir error when the output directory cannot be created", () => {
     // Point --output-dir at a regular file so mkdir of `<file>/<date>` fails.
-    const fileAsDir = join(tempDir("supabase-report-out-"), "afile");
-    writeFileSync(fileAsDir, "x");
+    const fileAsDir = path.join(tempDir("supabase-report-out-"), "afile");
     const { layer } = setupLegacyReport();
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(path.dirname(fileAsDir), { recursive: true });
+      yield* fs.writeFileString(fileAsDir, "x");
       const exit = yield* Effect.exit(legacyInspectReport(flags({ outputDir: fileAsDir })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to mkdir");
+        expect(Formatter.formatJson(exit.cause)).toContain("failed to mkdir");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -519,7 +546,7 @@ describe("legacy inspect report", () => {
       const exit = yield* Effect.exit(legacyInspectReport(flags({ outputDir: base })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to copy output");
+        expect(Formatter.formatJson(exit.cause)).toContain("failed to copy output");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -528,13 +555,14 @@ describe("legacy inspect report", () => {
     const base = tempDir("supabase-report-out-");
     // Pre-create the first CSV target (`bloat.csv`) as a DIRECTORY so the file
     // write fails (EISDIR) while mkdir (recursive, idempotent) still succeeds.
-    mkdirSync(join(base, localDateFolder(), "bloat.csv"), { recursive: true });
     const { layer } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(path.join(base, localDateFolder(), "bloat.csv"), { recursive: true });
       const exit = yield* Effect.exit(legacyInspectReport(flags({ outputDir: base })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to create output file");
+        expect(Formatter.formatJson(exit.cause)).toContain("failed to create output file");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -546,7 +574,7 @@ describe("legacy inspect report", () => {
       const exit = yield* Effect.exit(legacyInspectReport(flags({ outputDir: base })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to connect to postgres");
+        expect(Formatter.formatJson(exit.cause)).toContain("failed to connect to postgres");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -558,7 +586,7 @@ describe("legacy inspect report", () => {
       const exit = yield* Effect.exit(legacyInspectReport(flags({ outputDir: base })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("cannot load config");
+        expect(Formatter.formatJson(exit.cause)).toContain("cannot load config");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -568,7 +596,7 @@ describe("legacy inspect report", () => {
     const { layer } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS, cwd });
     return Effect.gen(function* () {
       yield* legacyInspectReport(flags({ outputDir: "reports" }));
-      const { files } = dateFolderContents(join(cwd, "reports"));
+      const { files } = yield* dateFolderContents(path.join(cwd, "reports"));
       expect(files.length).toBe(14);
     }).pipe(Effect.provide(layer));
   });
@@ -578,10 +606,12 @@ describe("legacy inspect report", () => {
     const cwd = tempDir("supabase-report-cwd-");
     const { layer } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS, cwd });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(cwd, { recursive: true });
       yield* legacyInspectReport(flags({ outputDir: base }));
       // Written under the absolute base, not under the CWD.
-      expect(dateFolderContents(base).files.length).toBe(14);
-      expect(readdirSync(cwd).length).toBe(0);
+      expect((yield* dateFolderContents(base)).files.length).toBe(14);
+      expect(yield* fs.readDirectory(cwd)).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 

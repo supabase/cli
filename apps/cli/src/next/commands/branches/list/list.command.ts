@@ -9,10 +9,8 @@ import { withCommandInstrumentation } from "../../../../shared/telemetry/command
 import { list } from "./list.handler.ts";
 
 const branchesPlatformApiLayer = platformApiLayer.pipe(Layer.provide(credentialsLayer));
-const branchesRuntimeLayer = Layer.mergeAll(
-  branchesPlatformApiLayer,
-  projectLinkStateLayer,
-  commandRuntimeLayer(["branches", "list"]),
+const branchesRuntimeLayer = Layer.mergeAll(branchesPlatformApiLayer, projectLinkStateLayer).pipe(
+  Layer.provideMerge(commandRuntimeLayer(["branches", "list"])),
 );
 
 export const listBranchesCommand = Command.make("list").pipe(

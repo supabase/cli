@@ -8,7 +8,7 @@ import {
 } from "@supabase/config";
 import { V1BulkCreateSecretsInput } from "@supabase/api/effect";
 import { parse as parseDotenv } from "dotenv";
-import { Effect, FileSystem, Option, Path, Redacted, Schema } from "effect";
+import { ConfigProvider, Effect, FileSystem, Option, Path, Redacted, Schema } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -16,6 +16,7 @@ import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.t
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { collectConfigEnvironment } from "../../../../shared/runtime/config-environment.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import {
@@ -153,6 +154,7 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
   const runtimeInfo = yield* RuntimeInfo;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const provider = yield* ConfigProvider.ConfigProvider;
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
@@ -259,33 +261,33 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
       // in this failure path, unlike the schema-decode-only case above. Recover
       // to `null`, not `recoverEdgeRuntimeConfig`: there is no parsed document
       // to recover a subtree from.
-      Effect.catchTag("ProjectEnvParseError", (cause) =>
-        debugLogger.debug(`failed to parse ${cause.path}:${cause.line}`).pipe(Effect.as(null)),
-      ),
-      // Two `[remotes.*]` blocks declare the same `project_id` as `ref` —
-      // `flags.LoadConfig` swallows *any* `Load()` error non-fatally,
-      // including this one, which `loadFromFile` raises before
-      // `mapstructure` ever runs (`pkg/config/config.go:601`).
-      // `cause.message` already matches that string verbatim (see
-      // `DuplicateRemoteProjectIdError`'s field doc).
-      Effect.catchTag("DuplicateRemoteProjectIdError", (cause) =>
-        debugLogger.debug(cause.message).pipe(Effect.as(null)),
-      ),
-      // A `[remotes.*]` block's `project_id` fails the ref-pattern check —
-      // raised from `Config.Validate` (`pkg/config/config.go:996-1001`), which
-      // runs inside the same `Config.Load()` call as the duplicate check above
-      // (`config.go:882`). `flags.LoadConfig` swallows this the same
-      // non-fatal way, so a malformed remote block must not abort an
-      // otherwise-valid `secrets set`. `cause.message` already matches that
-      // string verbatim (see `InvalidRemoteProjectIdError`'s field doc).
-      Effect.catchTag("InvalidRemoteProjectIdError", (cause) =>
-        debugLogger.debug(cause.message).pipe(Effect.as(null)),
-      ),
+      Effect.catchTags({
+        ProjectEnvParseError: (cause) =>
+          debugLogger.debug(`failed to parse ${cause.path}:${cause.line}`).pipe(Effect.as(null)),
+        // Two `[remotes.*]` blocks declare the same `project_id` as `ref` —
+        // `flags.LoadConfig` swallows *any* `Load()` error non-fatally,
+        // including this one, which `loadFromFile` raises before
+        // `mapstructure` ever runs (`pkg/config/config.go:601`).
+        // `cause.message` already matches that string verbatim (see
+        // `DuplicateRemoteProjectIdError`'s field doc).
+        DuplicateRemoteProjectIdError: (cause) =>
+          debugLogger.debug(cause.message).pipe(Effect.as(null)),
+        // A `[remotes.*]` block's `project_id` fails the ref-pattern check —
+        // raised from `Config.Validate` (`pkg/config/config.go:996-1001`), which
+        // runs inside the same `Config.Load()` call as the duplicate check above
+        // (`config.go:882`). `flags.LoadConfig` swallows this the same
+        // non-fatal way, so a malformed remote block must not abort an
+        // otherwise-valid `secrets set`. `cause.message` already matches that
+        // string verbatim (see `InvalidRemoteProjectIdError`'s field doc).
+        InvalidRemoteProjectIdError: (cause) =>
+          debugLogger.debug(cause.message).pipe(Effect.as(null)),
+      }),
     );
     if (loadedConfig !== null) {
+      const baseEnv = yield* collectConfigEnvironment(provider);
       const projectEnv = yield* loadProjectEnvironment({
         cwd: runtimeInfo.cwd,
-        baseEnv: process.env,
+        baseEnv,
       });
       if (projectEnv !== null) {
         const resolved = yield* resolveProjectSubtree(
@@ -330,16 +332,13 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
             }),
         ),
       );
-      let parsed: Record<string, string>;
-      try {
-        parsed = parseDotenv(content);
-      } catch (cause) {
-        return yield* Effect.fail(
+      const parsed = yield* Effect.try({
+        try: () => parseDotenv(content),
+        catch: (cause) =>
           new LegacySecretsEnvFileParseError({
             message: `failed to parse env file: ${String(cause)}`,
           }),
-        );
-      }
+      });
       for (const [name, value] of Object.entries(parsed)) {
         merged.set(name, value);
       }
@@ -349,12 +348,10 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
     for (const pair of flags.secrets) {
       const eqIdx = pair.indexOf("=");
       if (eqIdx === -1) {
-        return yield* Effect.fail(
-          new LegacyInvalidSecretPairError({
-            pair,
-            message: `Invalid secret pair: ${pair}. Must be NAME=VALUE.`,
-          }),
-        );
+        return yield* new LegacyInvalidSecretPairError({
+          pair,
+          message: `Invalid secret pair: ${pair}. Must be NAME=VALUE.`,
+        });
       }
       merged.set(pair.slice(0, eqIdx), pair.slice(eqIdx + 1));
     }
@@ -373,11 +370,9 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
     }
 
     if (body.length === 0) {
-      return yield* Effect.fail(
-        new LegacySecretsNoArgumentsError({
-          message: "No arguments found. Use --env-file to read from a .env file.",
-        }),
-      );
+      return yield* new LegacySecretsNoArgumentsError({
+        message: "No arguments found. Use --env-file to read from a .env file.",
+      });
     }
 
     // The Management API caps a single bulk-create request at 100 secrets
@@ -399,7 +394,7 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
     // user-derived, so keep it distinct from response-schema decode failures.
     yield* Effect.forEach(
       batches,
-      (batch) => Schema.decodeUnknownEffect(V1BulkCreateSecretsInput)({ ref, body: batch }),
+      (batch) => Schema.decodeEffect(V1BulkCreateSecretsInput)({ ref, body: batch }),
       { discard: true },
     ).pipe(
       Effect.mapError(

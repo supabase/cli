@@ -1,10 +1,6 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-import { BunServices } from "@effect/platform-bun";
+import { BunPath, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option, Schedule } from "effect";
+import { ConfigProvider, Effect, FileSystem, Layer, Option, Path, Schedule } from "effect";
 
 import {
   mockAnalytics,
@@ -24,6 +20,7 @@ import {
   mockLegacyLoginCrypto,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
+  useLegacyTempWorkdir,
 } from "../../../../tests/helpers/legacy-mocks.ts";
 import {
   LegacyDebugFlag,
@@ -49,6 +46,7 @@ import { legacyLinkedProjectCacheLayer } from "../../telemetry/legacy-linked-pro
 import { LegacyTemplateService } from "./bootstrap.templates.ts";
 import { legacyBootstrap } from "./bootstrap.handler.ts";
 import type { LegacyBootstrapFlags } from "./bootstrap.command.ts";
+import { makeLegacyViperEnvLayer } from "../../../shared/legacy/legacy-viper-env.ts";
 
 const FAST_BACKOFF = Schedule.exponential("1 milli");
 
@@ -64,6 +62,8 @@ const PROJECT = {
 const ORGS = [{ id: "org-1", slug: "acme", name: "Acme Inc" }];
 const API_KEYS = [{ name: "anon", api_key: "anon-key" }];
 const HEALTHY = [{ name: "db", healthy: true, status: "ACTIVE_HEALTHY" }];
+const tempRoot = useLegacyTempWorkdir("bootstrap-cache-");
+const path = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
 
 // Drives the handler through the *prompt* workdir path (no `--workdir` flag and no
 // `SUPABASE_WORKDIR` env) with the real config + linked-project-cache layers. This is
@@ -75,29 +75,24 @@ describe("legacy bootstrap linked-project cache location", () => {
   it.live(
     "writes linked-project.json into the prompted bootstrap workdir, not cliConfig.workdir",
     () => {
-      const parent = mkdtempSync(join(tmpdir(), "bootstrap-cache-"));
+      const parent = path.join(tempRoot.current, "parent");
       const subdir = "myproj";
-      const bootstrapWorkdir = join(parent, subdir);
+      const bootstrapWorkdir = path.join(parent, subdir);
 
       // Pre-seed a migration file at the bootstrap workdir (before it even exists) so
       // the push step's migrations lookup is empirically provable: `legacyDbPushCore`
       // must find it via the `workdir` local variable — the prompted bootstrap
       // workdir — never `cliConfig.workdir` (the cwd-walk result from `parent`, which
       // has no `supabase/migrations` of its own and would wrongly report "up to date").
-      const migrationsDir = join(bootstrapWorkdir, "supabase", "migrations");
-      mkdirSync(migrationsDir, { recursive: true });
-      writeFileSync(join(migrationsDir, "20240101000000_test.sql"), "create table t ();");
+      const migrationsDir = path.join(bootstrapWorkdir, "supabase", "migrations");
       // Also pre-seed `supabase/roles.sql` so the push step's `includeRoles: true`
       // (bootstrap always passes it) is actually pinned under test — without a
       // roles.sql file present, the
       // custom-roles branch is a no-op and `includeRoles`'s value is unasserted.
-      writeFileSync(join(bootstrapWorkdir, "supabase", "roles.sql"), "create role app;");
-
-      // Token via env => ensure-login is a no-op and the cache has a bearer token.
-      const prevToken = process.env["SUPABASE_ACCESS_TOKEN"];
-      const prevWorkdir = process.env["SUPABASE_WORKDIR"];
-      process.env["SUPABASE_ACCESS_TOKEN"] = "sbp_" + "a".repeat(40);
-      delete process.env["SUPABASE_WORKDIR"];
+      const configProvider = ConfigProvider.fromEnv({
+        env: { SUPABASE_ACCESS_TOKEN: "sbp_" + "a".repeat(40) },
+        preserveEmptyStrings: true,
+      });
 
       const out = mockOutput({ format: "text", promptTextResponses: [subdir] });
 
@@ -206,6 +201,7 @@ describe("legacy bootstrap linked-project cache location", () => {
         Layer.provide(debugLoggerLayer),
         Layer.provide(runtime),
         Layer.provide(BunServices.layer),
+        Layer.provide(ConfigProvider.layer(configProvider)),
       );
       const cacheLayer = legacyLinkedProjectCacheLayer.pipe(
         Layer.provide(configLayer),
@@ -229,6 +225,7 @@ describe("legacy bootstrap linked-project cache location", () => {
 
       const layer = Layer.mergeAll(
         BunServices.layer,
+        ConfigProvider.layer(configProvider),
         out.layer,
         api.layer,
         api.factoryLayer,
@@ -248,6 +245,7 @@ describe("legacy bootstrap linked-project cache location", () => {
         mockLegacyLoginCrypto().layer,
         mockBrowser(),
         mockStdin(true),
+        makeLegacyViperEnvLayer(configProvider),
         flagsLayer,
         debugLoggerLayer,
         successTrailerLayer,
@@ -259,20 +257,35 @@ describe("legacy bootstrap linked-project cache location", () => {
       };
 
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(migrationsDir, { recursive: true });
+        yield* fs.writeFileString(
+          path.join(migrationsDir, "20240101000000_test.sql"),
+          "create table t ();",
+        );
+        yield* fs.writeFileString(
+          path.join(bootstrapWorkdir, "supabase", "roles.sql"),
+          "create role app;",
+        );
         const successTrailer = yield* SuccessTrailer;
         yield* legacyBootstrap(flags, FAST_BACKOFF);
 
         expect(yield* successTrailer.workingDirectory).toBe(bootstrapWorkdir);
 
-        const projectRef = join(bootstrapWorkdir, "supabase", ".temp", "project-ref");
-        const cacheInWorkdir = join(bootstrapWorkdir, "supabase", ".temp", "linked-project.json");
-        const cacheInParent = join(parent, "supabase", ".temp", "linked-project.json");
+        const projectRef = path.join(bootstrapWorkdir, "supabase", ".temp", "project-ref");
+        const cacheInWorkdir = path.join(
+          bootstrapWorkdir,
+          "supabase",
+          ".temp",
+          "linked-project.json",
+        );
+        const cacheInParent = path.join(parent, "supabase", ".temp", "linked-project.json");
 
         // project-ref already goes to the right place...
-        expect(existsSync(projectRef)).toBe(true);
+        expect(yield* fs.exists(projectRef)).toBe(true);
         // ...so linked-project.json must land beside it (Go writes both into workdir).
-        expect(existsSync(cacheInWorkdir)).toBe(true);
-        expect(existsSync(cacheInParent)).toBe(false);
+        expect(yield* fs.exists(cacheInWorkdir)).toBe(true);
+        expect(yield* fs.exists(cacheInParent)).toBe(false);
 
         // Native push (CLI-1953) correctness: `legacyDbPushCore` connects to the
         // just-created project (the `projectRef` bootstrap already holds in
@@ -304,17 +317,7 @@ describe("legacy bootstrap linked-project cache location", () => {
         // glob matches nothing, so the push step reports seeds up to date — a
         // line that only prints at all when `includeSeed` is true.
         expect(out.stderrText).toContain("Seed files are up to date.");
-      }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (prevToken !== undefined) process.env["SUPABASE_ACCESS_TOKEN"] = prevToken;
-            else delete process.env["SUPABASE_ACCESS_TOKEN"];
-            if (prevWorkdir !== undefined) process.env["SUPABASE_WORKDIR"] = prevWorkdir;
-            rmSync(parent, { recursive: true, force: true });
-          }),
-        ),
-      );
+      }).pipe(Effect.provide(layer));
     },
   );
 });

@@ -7,22 +7,19 @@ describe("supabase branches list", () => {
   test(
     "exits with an error and suggestion when the project is not linked",
     { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      const { exitCode, stdout, stderr } = await runSupabase(["branches", "list"], {
+    () =>
+      runSupabase(["branches", "list"], {
         env: { SUPABASE_ACCESS_TOKEN: "fake-token-for-testing" },
-      });
-      expect(exitCode).toBe(1);
-      expect(`${stdout}${stderr}`).toContain("supabase link");
-    },
+      }).then(({ exitCode, stdout, stderr }) => {
+        expect(exitCode).toBe(1);
+        expect(`${stdout}${stderr}`).toContain("supabase link");
+      }),
   );
 
-  test(
-    "--help exits successfully and describes the command",
-    { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      const { exitCode, stdout } = await runSupabase(["branches", "list", "--help"]);
+  test("--help exits successfully and describes the command", { timeout: E2E_TIMEOUT_MS }, () =>
+    runSupabase(["branches", "list", "--help"]).then(({ exitCode, stdout }) => {
       expect(exitCode).toBe(0);
       expect(stdout).toContain("List all remote branches");
-    },
+    }),
   );
 });

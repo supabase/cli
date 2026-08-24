@@ -220,15 +220,13 @@ const browserOAuthFlow = Effect.fnUntraced(function* (flags: LoginFlags) {
             // body, and a pending 4xx / no signal stays "run supabase login".
             const { statusCode, decode } = err.cause;
             const network = statusCode === undefined && decode !== true;
-            return yield* Effect.fail(
-              new LoginFailedError({
-                detail: "Login failed after maximum retries",
-                suggestion: "Try running `supabase login` again",
-                statusCode,
-                network,
-                decode,
-              }),
-            );
+            return yield* new LoginFailedError({
+              detail: "Login failed after maximum retries",
+              suggestion: "Try running `supabase login` again",
+              statusCode,
+              network,
+              decode,
+            });
           }
           return yield* verifyWithRetries(remainingRetries - 1);
         }),

@@ -1,9 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { ConfigProvider, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -23,6 +21,34 @@ import { legacyConfigPush } from "./push.handler.ts";
 
 const tempRoot = useLegacyTempWorkdir("supabase-config-push-int-");
 
+const fixturePath = Effect.runSync(Effect.provide(Path.Path, Path.layer));
+const join = fixturePath.join;
+const pendingFixtureDirectories = new Set<string>();
+const pendingFixtureWrites = new Map<string, string>();
+
+function mkdirSync(path: string, _options?: { readonly recursive?: boolean }): void {
+  pendingFixtureDirectories.add(path);
+}
+
+function writeFileSync(path: string, contents: string): void {
+  pendingFixtureWrites.set(path, contents);
+}
+
+function flushFixtureFiles() {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    for (const directory of pendingFixtureDirectories) {
+      yield* fs.makeDirectory(directory, { recursive: true });
+    }
+    for (const [path, contents] of pendingFixtureWrites) {
+      yield* fs.makeDirectory(fixturePath.dirname(path), { recursive: true });
+      yield* fs.writeFileString(path, contents);
+    }
+    pendingFixtureDirectories.clear();
+    pendingFixtureWrites.clear();
+  });
+}
+
 function writeConfig(toml: string): void {
   const dir = join(tempRoot.current, "supabase");
   mkdirSync(dir, { recursive: true });
@@ -34,24 +60,6 @@ function writeConfig(toml: string): void {
 const DOTENVX_PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
 const DOTENVX_ENCRYPTED_VALUE =
   "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
-
-/** Save/restore `DOTENV_PRIVATE_KEY` around a test — mirrors the SUPABASE_YES pattern below. */
-function withDotenvPrivateKey<A, E, R>(
-  value: string | undefined,
-  effect: Effect.Effect<A, E, R>,
-): Effect.Effect<A, E, R> {
-  const prev = process.env["DOTENV_PRIVATE_KEY"];
-  if (value === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
-  else process.env["DOTENV_PRIVATE_KEY"] = value;
-  return effect.pipe(
-    Effect.ensuring(
-      Effect.sync(() => {
-        if (prev === undefined) delete process.env["DOTENV_PRIVATE_KEY"];
-        else process.env["DOTENV_PRIVATE_KEY"] = prev;
-      }),
-    ),
-  );
-}
 
 // Schema-valid PostgREST GET response with the api disabled remotely (empty
 // schema). The real API client validates GET bodies against the generated
@@ -88,6 +96,8 @@ function setup(opts: {
   readonly pipedAnswers?: ReadonlyArray<string>;
   /** Working directory the handler runs from; defaults to the temp project root. */
   readonly runtimeCwd?: string;
+  /** Explicit shell environment for Config/LegacyViperEnv in this scenario. */
+  readonly env?: Record<string, string>;
 }) {
   writeConfig(opts.toml);
   const routes = opts.routes ?? {};
@@ -137,21 +147,26 @@ function setup(opts: {
   });
   const telemetry = mockLegacyTelemetryStateTracked();
   const linkedProjectCache = mockLegacyLinkedProjectCacheTracked();
+  const runtimeLayer = buildLegacyTestRuntime({
+    out,
+    api,
+    cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+    runtimeInfo: mockRuntimeInfo({ cwd: opts.runtimeCwd ?? tempRoot.current }),
+    env: opts.env,
+    telemetry: telemetry.layer,
+    linkedProjectCache: linkedProjectCache.layer,
+    tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
+  }).pipe(Layer.tap((context) => flushFixtureFiles().pipe(Effect.provideContext(context))));
   const layer = Layer.mergeAll(
-    buildLegacyTestRuntime({
-      out,
-      api,
-      cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
-      runtimeInfo: mockRuntimeInfo({ cwd: opts.runtimeCwd ?? tempRoot.current }),
-      telemetry: telemetry.layer,
-      linkedProjectCache: linkedProjectCache.layer,
-      tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
-    }),
+    runtimeLayer,
     mockStdin(
       opts.stdinIsTty ?? true,
       opts.pipedAnswers ? `${opts.pipedAnswers.join("\n")}\n` : undefined,
     ),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
+    ConfigProvider.layer(
+      ConfigProvider.fromEnv({ env: opts.env ?? {}, preserveEmptyStrings: true }),
+    ),
   );
   return { layer, out, api, telemetry, linkedProjectCache };
 }
@@ -180,6 +195,25 @@ const STORAGE_CONFIG_WITHOUT_POOL_MODE = {
 };
 
 describe("legacy config push integration", () => {
+  it.live("resolves numeric config fields from the injected shell environment", () => {
+    const { layer, out } = setup({
+      toml: `${API_ONLY_TOML}
+[api]
+port = "env(SHELL_API_PORT)"
+`,
+      env: { SHELL_API_PORT: "65432" },
+      yes: true,
+      routes: {
+        postgrestGet: { status: 200, body: POSTGREST_DISABLED },
+        postgresGet: { status: 200, body: {} },
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyConfigPush({ projectRef: Option.none() });
+      expect(out.stderrText).toContain("Pushing config to project:");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("pushes local config (text, Go parity) and surfaces a PATCH failure", () => {
     const { layer, out } = setup({
       toml: API_ONLY_TOML,
@@ -381,8 +415,6 @@ project_id = "abcdefghijklmnopqrst"
     // `config push` imports `supabase/.env` before the confirmation prompt,
     // so a project-local `SUPABASE_YES=true` auto-confirms before stdin is
     // read — the push proceeds despite the piped `n`.
-    const prev = process.env["SUPABASE_YES"];
-    delete process.env["SUPABASE_YES"];
     const { layer, api } = setup({
       toml: API_ONLY_TOML,
       stdinIsTty: false,
@@ -399,15 +431,7 @@ project_id = "abcdefghijklmnopqrst"
       expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
         true,
       );
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(layer),
-    );
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("loads config-push env from the project root when run from a subdirectory", () => {
@@ -415,8 +439,6 @@ project_id = "abcdefghijklmnopqrst"
     // SUPABASE_YES in <root>/supabase/.env auto-confirms even when invoked
     // from a subdir. The env load must walk up like loadProjectConfig, not
     // use the raw cwd.
-    const prev = process.env["SUPABASE_YES"];
-    delete process.env["SUPABASE_YES"];
     const sub = join(tempRoot.current, "nested", "dir");
     mkdirSync(sub, { recursive: true });
     const { layer, api } = setup({
@@ -436,15 +458,7 @@ project_id = "abcdefghijklmnopqrst"
       expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
         true,
       );
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(layer),
-    );
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("emits a structured summary in json mode without prompts", () => {
@@ -582,25 +596,31 @@ function setupService(opts: {
   readonly yes?: boolean;
   readonly confirm?: ReadonlyArray<boolean>;
   readonly runtimeCwd?: string;
+  readonly env?: Record<string, string>;
 }) {
   writeConfig(opts.toml);
   const out = mockOutput({ format: "text", promptConfirmResponses: opts.confirm });
   const apiMock = mockLegacyPlatformApiService({ v1: { ...baseStubs, ...opts.v1 } });
   const telemetry = mockLegacyTelemetryStateTracked();
   const linkedProjectCache = mockLegacyLinkedProjectCacheTracked();
+  const runtimeLayer = buildLegacyTestRuntime({
+    out,
+    api: { layer: apiMock.layer, httpClientLayer: addonsHttpLayer() },
+    cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+    runtimeInfo: mockRuntimeInfo({ cwd: opts.runtimeCwd ?? tempRoot.current }),
+    env: opts.env,
+    telemetry: telemetry.layer,
+    linkedProjectCache: linkedProjectCache.layer,
+    // Gated-service prompts model an interactive user answering via `confirm`.
+    tty: mockTty({ stdinIsTty: true, stdoutIsTty: false }),
+  }).pipe(Layer.tap((context) => flushFixtureFiles().pipe(Effect.provideContext(context))));
   const layer = Layer.mergeAll(
-    buildLegacyTestRuntime({
-      out,
-      api: { layer: apiMock.layer, httpClientLayer: addonsHttpLayer() },
-      cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
-      runtimeInfo: mockRuntimeInfo({ cwd: opts.runtimeCwd ?? tempRoot.current }),
-      telemetry: telemetry.layer,
-      linkedProjectCache: linkedProjectCache.layer,
-      // Gated-service prompts model an interactive user answering via `confirm`.
-      tty: mockTty({ stdinIsTty: true, stdoutIsTty: false }),
-    }),
+    runtimeLayer,
     mockStdin(true),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
+    ConfigProvider.layer(
+      ConfigProvider.fromEnv({ env: opts.env ?? {}, preserveEmptyStrings: true }),
+    ),
   );
   return { layer, out, apiMock };
 }
@@ -763,23 +783,21 @@ secret = "${DOTENVX_ENCRYPTED_VALUE}"
       const { layer, apiMock } = setupService({
         toml,
         yes: true,
+        env: { DOTENV_PRIVATE_KEY: DOTENVX_PRIVATE_KEY },
         v1: {
           getAuthServiceConfig: () => Effect.succeed({}),
           updateAuthServiceConfig: () => Effect.succeed({}),
         },
       });
-      return withDotenvPrivateKey(
-        DOTENVX_PRIVATE_KEY,
-        Effect.gen(function* () {
-          yield* legacyConfigPush({ projectRef: Option.none() });
-          const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
-          expect(update).toBeDefined();
-          const input = update?.input as Record<string, unknown>;
-          // Go decrypts before hashing/pushing — the plaintext goes to the API,
-          // never the dotenvx ciphertext.
-          expect(input["security_captcha_secret"]).toBe("value");
-        }).pipe(Effect.provide(layer)),
-      );
+      return Effect.gen(function* () {
+        yield* legacyConfigPush({ projectRef: Option.none() });
+        const update = apiMock.requests.find((r) => r.method === "updateAuthServiceConfig");
+        expect(update).toBeDefined();
+        const input = update?.input as Record<string, unknown>;
+        // Go decrypts before hashing/pushing — the plaintext goes to the API,
+        // never the dotenvx ciphertext.
+        expect(input["security_captcha_secret"]).toBe("value");
+      }).pipe(Effect.provide(layer));
     },
   );
 
@@ -801,20 +819,17 @@ provider = "hcaptcha"
 secret = "${DOTENVX_ENCRYPTED_VALUE}"
 `;
       const { layer, api } = setup({ toml, yes: true });
-      return withDotenvPrivateKey(
-        undefined,
-        Effect.gen(function* () {
-          const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
-            Effect.catchTag("LegacyConfigPushLoadConfigError", (error) =>
-              Effect.succeed(error.message),
-            ),
-          );
-          expect(message).toBe("failed to parse config: missing private key");
-          // The guard runs during config load, before any network call — not
-          // even the cost-matrix (list-addons) request that normally runs first.
-          expect(api.requests).toHaveLength(0);
-        }).pipe(Effect.provide(layer)),
-      );
+      return Effect.gen(function* () {
+        const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
+          Effect.catchTag("LegacyConfigPushLoadConfigError", (error) =>
+            Effect.succeed(error.message),
+          ),
+        );
+        expect(message).toBe("failed to parse config: missing private key");
+        // The guard runs during config load, before any network call — not
+        // even the cost-matrix (list-addons) request that normally runs first.
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
     },
   );
 
@@ -835,18 +850,15 @@ enabled = false
 openai_api_key = "${DOTENVX_ENCRYPTED_VALUE}"
 `;
       const { layer, api } = setup({ toml, yes: true });
-      return withDotenvPrivateKey(
-        undefined,
-        Effect.gen(function* () {
-          const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
-            Effect.catchTag("LegacyConfigPushLoadConfigError", (error) =>
-              Effect.succeed(error.message),
-            ),
-          );
-          expect(message).toBe("failed to parse config: missing private key");
-          expect(api.requests).toHaveLength(0);
-        }).pipe(Effect.provide(layer)),
-      );
+      return Effect.gen(function* () {
+        const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
+          Effect.catchTag("LegacyConfigPushLoadConfigError", (error) =>
+            Effect.succeed(error.message),
+          ),
+        );
+        expect(message).toBe("failed to parse config: missing private key");
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
     },
   );
 
@@ -866,18 +878,15 @@ enabled = false
 my_secret = "${DOTENVX_ENCRYPTED_VALUE}"
 `;
     const { layer, api } = setup({ toml, yes: true });
-    return withDotenvPrivateKey(
-      undefined,
-      Effect.gen(function* () {
-        const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
-          Effect.catchTag("LegacyConfigPushLoadConfigError", (error) =>
-            Effect.succeed(error.message),
-          ),
-        );
-        expect(message).toBe("failed to parse config: missing private key");
-        expect(api.requests).toHaveLength(0);
-      }).pipe(Effect.provide(layer)),
-    );
+    return Effect.gen(function* () {
+      const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
+        Effect.catchTag("LegacyConfigPushLoadConfigError", (error) =>
+          Effect.succeed(error.message),
+        ),
+      );
+      expect(message).toBe("failed to parse config: missing private key");
+      expect(api.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
   });
 
   it.live(
@@ -899,18 +908,15 @@ enabled = false
 secret = "${DOTENVX_ENCRYPTED_VALUE}"
 `;
       const { layer, api } = setup({ toml, yes: true });
-      return withDotenvPrivateKey(
-        undefined,
-        Effect.gen(function* () {
-          const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
-            Effect.catchTag("LegacyConfigPushLoadConfigError", (error) =>
-              Effect.succeed(error.message),
-            ),
-          );
-          expect(message).toBe("failed to parse config: missing private key");
-          expect(api.requests).toHaveLength(0);
-        }).pipe(Effect.provide(layer)),
-      );
+      return Effect.gen(function* () {
+        const message = yield* legacyConfigPush({ projectRef: Option.none() }).pipe(
+          Effect.catchTag("LegacyConfigPushLoadConfigError", (error) =>
+            Effect.succeed(error.message),
+          ),
+        );
+        expect(message).toBe("failed to parse config: missing private key");
+        expect(api.requests).toHaveLength(0);
+      }).pipe(Effect.provide(layer));
     },
   );
 

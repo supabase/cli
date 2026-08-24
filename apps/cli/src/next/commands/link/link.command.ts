@@ -19,14 +19,14 @@ const flags = {
 
 export type LinkFlags = CliCommand.Command.Config.Infer<typeof flags>;
 
-const linkPlatformApiLayer = platformApiLayer.pipe(Layer.provide(credentialsLayer));
+const linkCommandRuntimeLayer = commandRuntimeLayer(["link"]);
+const linkPlatformApiLayer = platformApiLayer.pipe(
+  Layer.provide(credentialsLayer),
+  Layer.provide(linkCommandRuntimeLayer),
+);
 const linkProjectLinkRemoteLayer = projectLinkRemoteLayer.pipe(Layer.provide(linkPlatformApiLayer));
 
-const linkRuntimeLayer = Layer.mergeAll(
-  linkProjectLinkRemoteLayer,
-  projectLinkStateLayer,
-  commandRuntimeLayer(["link"]),
-);
+const linkRuntimeLayer = Layer.mergeAll(linkProjectLinkRemoteLayer, projectLinkStateLayer);
 
 export const linkCommand = Command.make("link", flags).pipe(
   Command.withDescription(

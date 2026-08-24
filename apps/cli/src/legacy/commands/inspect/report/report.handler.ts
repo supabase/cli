@@ -1,4 +1,4 @@
-import { Clock, Effect, FileSystem, Option, Path } from "effect";
+import { Clock, DateTime, Effect, FileSystem, Option, Path } from "effect";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
@@ -10,6 +10,7 @@ import { legacyBold } from "../../../output/legacy-bold.ts";
 import { renderGlamourTable } from "../../../output/legacy-glamour-table.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
+import { legacyErrorMessage } from "../../../shared/legacy-error-message.ts";
 import { resolveLegacyDbTargetFlags } from "../../../shared/legacy-db-target-flags.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyInspectMutuallyExclusiveFlagsError } from "../db/legacy-inspect-query.ts";
@@ -34,11 +35,7 @@ import {
 
 /** Local-time `YYYY-MM-DD`, the report's dated output folder format. */
 function legacyReportDateFolder(epochMillis: number): string {
-  const date = new Date(epochMillis);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return DateTime.formatIsoDate(DateTime.makeUnsafe(epochMillis));
 }
 
 /**
@@ -79,11 +76,9 @@ const legacyRunInspectReport = Effect.fnUntraced(function* (
   // it and route to linked incorrectly.
   const target = resolveLegacyDbTargetFlags(cliArgs.args);
   if (target.setFlags.length > 1) {
-    return yield* Effect.fail(
-      new LegacyInspectMutuallyExclusiveFlagsError({
-        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-      }),
-    );
+    return yield* new LegacyInspectMutuallyExclusiveFlagsError({
+      message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
+    });
   }
 
   // Read + validate the custom `[experimental.inspect.rules]` BEFORE any DB work,
@@ -99,12 +94,10 @@ const legacyRunInspectReport = Effect.fnUntraced(function* (
   // discarded on a non-linked target — see push.handler.ts's identical guard
   // (db push) for the full TS-only rationale.
   if (Option.isSome(flags.projectRef) && connType !== "linked") {
-    return yield* Effect.fail(
-      new LegacyInspectMutuallyExclusiveFlagsError({
-        message:
-          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-      }),
-    );
+    return yield* new LegacyInspectMutuallyExclusiveFlagsError({
+      message:
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+    });
   }
 
   const cfg = yield* resolver.resolve({
@@ -122,13 +115,14 @@ const legacyRunInspectReport = Effect.fnUntraced(function* (
     outDir = path.join(runtimeInfo.cwd, outDir);
   }
   // The output dir is pinned to 0755 and each CSV to 0644.
-  yield* fs
-    .makeDirectory(outDir, { recursive: true, mode: 0o755 })
-    .pipe(
-      Effect.mapError(
-        (error) => new LegacyInspectReportMkdirError({ message: `failed to mkdir: ${error}` }),
-      ),
-    );
+  yield* fs.makeDirectory(outDir, { recursive: true, mode: 0o755 }).pipe(
+    Effect.mapError(
+      (error) =>
+        new LegacyInspectReportMkdirError({
+          message: `failed to mkdir: ${legacyErrorMessage(error)}`,
+        }),
+    ),
+  );
 
   // The connect diagnostic is written to stderr before dialing.
   if (isText) {
@@ -153,7 +147,7 @@ const legacyRunInspectReport = Effect.fnUntraced(function* (
           Effect.mapError(
             (error) =>
               new LegacyInspectReportWriteError({
-                message: `failed to create output file: ${error}`,
+                message: `failed to create output file: ${legacyErrorMessage(error)}`,
               }),
           ),
         );

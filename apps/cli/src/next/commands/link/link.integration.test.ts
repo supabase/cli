@@ -1,11 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
-import { mkdtempSync } from "node:fs";
-import { execFile } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { BunFileSystem, BunPath, BunServices } from "@effect/platform-bun";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option } from "effect";
+import type { PlatformError } from "effect/PlatformError";
+import * as EffectPath from "effect/Path";
+import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/unstable/process/ChildProcess";
+import { Data } from "effect";
 import {
   mockAnalytics,
   mockOutput,
@@ -21,22 +23,74 @@ import { ProjectLinkState } from "../../config/project-link-state.service.ts";
 import { NoAccessibleProjectsError, ProjectRefRequiredError } from "./link.errors.ts";
 import { link } from "./link.handler.ts";
 
+const { join } = Effect.runSync(EffectPath.Path.pipe(Effect.provide(BunPath.layer)));
+
 function makeTempDir(): string {
-  return mkdtempSync(join(tmpdir(), "supabase-link-command-"));
+  return join(tmpdir(), `supabase-link-command-${randomUUID()}`);
 }
 
-const runGit = (cwd: string, args: ReadonlyArray<string>): Promise<void> =>
-  new Promise((resolve, reject) => {
-    execFile("git", args, { cwd }, (error) => (error === null ? resolve() : reject(error)));
-  });
+class GitCommandFailedError extends Data.TaggedError("GitCommandFailedError")<{
+  readonly cwd: string;
+  readonly args: ReadonlyArray<string>;
+  readonly exitCode: number;
+}> {}
 
-const initializeRepository = async (projectRoot: string): Promise<void> => {
-  await mkdir(projectRoot, { recursive: true });
-  await runGit(projectRoot, ["init", "--initial-branch=main"]);
-  await runGit(projectRoot, ["config", "user.email", "stack-tests@supabase.local"]);
-  await runGit(projectRoot, ["config", "user.name", "Stack Tests"]);
-  await runGit(projectRoot, ["commit", "--allow-empty", "-m", "initial"]);
-};
+const withFileSystem = <A>(
+  effect: Effect.Effect<A, PlatformError, FileSystem.FileSystem>,
+): Effect.Effect<A, PlatformError, never> => effect.pipe(Effect.provide(BunFileSystem.layer));
+
+const mkdir = (path: string, options?: { readonly recursive?: boolean }) =>
+  withFileSystem(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(path, options);
+    }),
+  );
+
+const readFile = (path: string, _encoding?: "utf8") =>
+  withFileSystem(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      return yield* fs.readFileString(path);
+    }),
+  );
+
+const writeFile = (path: string, content: string) =>
+  withFileSystem(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(path, content);
+    }),
+  );
+
+const rm = (path: string, options?: { readonly recursive?: boolean; readonly force?: boolean }) =>
+  withFileSystem(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.remove(path, options);
+    }),
+  );
+
+const cleanupTempDir = (path: string) =>
+  rm(path, { recursive: true, force: true }).pipe(Effect.orDie);
+
+const runGit = (cwd: string, args: ReadonlyArray<string>) =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const exitCode = yield* spawner.exitCode(ChildProcess.make("git", args, { cwd }));
+    if (Number(exitCode) !== 0) {
+      return yield* new GitCommandFailedError({ cwd, args, exitCode: Number(exitCode) });
+    }
+  }).pipe(Effect.provide(BunServices.layer));
+
+const initializeRepository = (projectRoot: string) =>
+  Effect.gen(function* () {
+    yield* mkdir(projectRoot, { recursive: true });
+    yield* runGit(projectRoot, ["init", "--initial-branch=main"]);
+    yield* runGit(projectRoot, ["config", "user.email", "stack-tests@supabase.local"]);
+    yield* runGit(projectRoot, ["config", "user.name", "Stack Tests"]);
+    yield* runGit(projectRoot, ["commit", "--allow-empty", "-m", "initial"]);
+  });
 
 function buildLayer(opts: {
   cwd: string;
@@ -66,6 +120,7 @@ function buildLayer(opts: {
   const discoveredCliConfigLayer = cliConfigLayer.pipe(
     Layer.provide(runtimeInfoLayer),
     Layer.provide(discoveredProjectContextLayer),
+    Layer.provideMerge(BunServices.layer),
   );
   const discoveredProjectHomeLayer = projectHomeLayer.pipe(
     Layer.provide(BunServices.layer),
@@ -147,11 +202,9 @@ describe("link handler", () => {
     const initialConfig = 'project_id = "legacy-project"\n';
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(projectRoot, "supabase"), { recursive: true }));
-      yield* Effect.tryPromise(() => initializeRepository(projectRoot));
-      yield* Effect.tryPromise(() =>
-        writeFile(join(projectRoot, "supabase", "config.toml"), initialConfig),
-      );
+      yield* mkdir(join(projectRoot, "supabase"), { recursive: true });
+      yield* initializeRepository(projectRoot);
+      yield* writeFile(join(projectRoot, "supabase", "config.toml"), initialConfig);
 
       const { layer, out, analytics } = buildLayer({
         cwd: projectRoot,
@@ -163,17 +216,11 @@ describe("link handler", () => {
 
       yield* link({ projectRef: Option.some(projectRef) }).pipe(Effect.provide(layer));
 
-      const configContent = yield* Effect.tryPromise(() =>
-        readFile(join(projectRoot, "supabase", "config.toml"), "utf8"),
-      );
+      const configContent = yield* readFile(join(projectRoot, "supabase", "config.toml"), "utf8");
       expect(configContent).toBe(initialConfig);
-      expect(
-        yield* Effect.tryPromise(() => readFile(join(projectRoot, ".gitignore"), "utf8")),
-      ).toContain(".supabase/");
+      expect(yield* readFile(join(projectRoot, ".gitignore"), "utf8")).toContain(".supabase/");
 
-      const linkState = yield* Effect.gen(function* () {
-        return yield* ProjectLinkState;
-      }).pipe(Effect.provide(layer));
+      const linkState = yield* ProjectLinkState.pipe(Effect.provide(layer));
       const cached = yield* linkState.load;
       expect(Option.isSome(cached)).toBe(true);
       if (Option.isSome(cached)) {
@@ -222,9 +269,7 @@ describe("link handler", () => {
           organization_slug: "my-org",
         },
       });
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("links successfully without requiring a local Supabase config", () => {
@@ -234,7 +279,7 @@ describe("link handler", () => {
     const projectRef = "abcdefghijklmnopqrst";
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => initializeRepository(projectRoot));
+      yield* initializeRepository(projectRoot);
 
       const { layer } = buildLayer({
         cwd: projectRoot,
@@ -244,19 +289,13 @@ describe("link handler", () => {
 
       yield* link({ projectRef: Option.some(projectRef) }).pipe(Effect.provide(layer));
 
-      const linkState = yield* Effect.gen(function* () {
-        return yield* ProjectLinkState;
-      }).pipe(Effect.provide(layer));
+      const linkState = yield* ProjectLinkState.pipe(Effect.provide(layer));
       const cached = yield* linkState.load;
       expect(Option.isSome(cached)).toBe(true);
       expect(Option.isSome(cached) && cached.value.project.ref).toBe(projectRef);
 
-      expect(
-        yield* Effect.tryPromise(() => readFile(join(projectRoot, ".gitignore"), "utf8")),
-      ).toContain(".supabase/");
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+      expect(yield* readFile(join(projectRoot, ".gitignore"), "utf8")).toContain(".supabase/");
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("active_branch.ref matches project.ref on a default fresh link (round-trip)", () => {
@@ -266,7 +305,7 @@ describe("link handler", () => {
     const projectRef = "abcdefghijklmnopqrst";
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => initializeRepository(projectRoot));
+      yield* initializeRepository(projectRoot);
 
       const { layer } = buildLayer({
         cwd: projectRoot,
@@ -276,9 +315,7 @@ describe("link handler", () => {
 
       yield* link({ projectRef: Option.some(projectRef) }).pipe(Effect.provide(layer));
 
-      const linkState = yield* Effect.gen(function* () {
-        return yield* ProjectLinkState;
-      }).pipe(Effect.provide(layer));
+      const linkState = yield* ProjectLinkState.pipe(Effect.provide(layer));
 
       const activeBranch = yield* linkState.getActiveBranch;
       expect(Option.isSome(activeBranch)).toBe(true);
@@ -287,9 +324,7 @@ describe("link handler", () => {
         expect(activeBranch.value.name).toBe("main");
         expect(activeBranch.value.is_default).toBe(true);
       }
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("selects an accessible project interactively when no project ref is provided", () => {
@@ -300,10 +335,8 @@ describe("link handler", () => {
     const initialConfig = "# local project config\n";
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(projectRoot, "supabase"), { recursive: true }));
-      yield* Effect.tryPromise(() =>
-        writeFile(join(projectRoot, "supabase", "config.toml"), initialConfig),
-      );
+      yield* mkdir(join(projectRoot, "supabase"), { recursive: true });
+      yield* writeFile(join(projectRoot, "supabase", "config.toml"), initialConfig);
 
       const { layer, out } = buildLayer({
         cwd: projectRoot,
@@ -321,14 +354,10 @@ describe("link handler", () => {
 
       yield* link({ projectRef: Option.none() }).pipe(Effect.provide(layer));
 
-      const configContent = yield* Effect.tryPromise(() =>
-        readFile(join(projectRoot, "supabase", "config.toml"), "utf8"),
-      );
+      const configContent = yield* readFile(join(projectRoot, "supabase", "config.toml"), "utf8");
       expect(configContent).toBe(initialConfig);
 
-      const linkState = yield* Effect.gen(function* () {
-        return yield* ProjectLinkState;
-      }).pipe(Effect.provide(layer));
+      const linkState = yield* ProjectLinkState.pipe(Effect.provide(layer));
       const cached = yield* linkState.load;
       expect(Option.isSome(cached)).toBe(true);
       if (Option.isSome(cached)) {
@@ -352,9 +381,7 @@ describe("link handler", () => {
           },
         },
       ]);
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("prompts before refreshing an existing interactive link", () => {
@@ -364,7 +391,7 @@ describe("link handler", () => {
     const projectRef = "abcdefghijklmnopqrst";
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => initializeRepository(projectRoot));
+      yield* initializeRepository(projectRoot);
 
       const { layer, out } = buildLayer({
         cwd: projectRoot,
@@ -373,9 +400,7 @@ describe("link handler", () => {
         interactive: true,
       });
 
-      const linkState = yield* Effect.gen(function* () {
-        return yield* ProjectLinkState;
-      }).pipe(Effect.provide(layer));
+      const linkState = yield* ProjectLinkState.pipe(Effect.provide(layer));
 
       yield* linkState.save({
         project: {
@@ -434,9 +459,7 @@ describe("link handler", () => {
           storage: "v1.39.2",
         });
       }
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("allows choosing a different project when already linked interactively", () => {
@@ -447,7 +470,7 @@ describe("link handler", () => {
     const newProjectRef = "qrstabcdefghijklmnop";
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => initializeRepository(projectRoot));
+      yield* initializeRepository(projectRoot);
 
       const { layer, out } = buildLayer({
         cwd: projectRoot,
@@ -464,9 +487,7 @@ describe("link handler", () => {
         promptSelectResponses: ["relink", newProjectRef],
       });
 
-      const linkState = yield* Effect.gen(function* () {
-        return yield* ProjectLinkState;
-      }).pipe(Effect.provide(layer));
+      const linkState = yield* ProjectLinkState.pipe(Effect.provide(layer));
 
       yield* linkState.save({
         project: {
@@ -528,9 +549,7 @@ describe("link handler", () => {
         expect(cached.value.project.ref).toBe(newProjectRef);
         expect(cached.value.project.name).toBe("Linked Project");
       }
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("fails in non-interactive mode when no project ref is available", () => {
@@ -539,8 +558,8 @@ describe("link handler", () => {
     const supabaseHome = join(tempDir, "supabase-home");
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(projectRoot, "supabase"), { recursive: true }));
-      yield* Effect.tryPromise(() => writeFile(join(projectRoot, "supabase", "config.toml"), ""));
+      yield* mkdir(join(projectRoot, "supabase"), { recursive: true });
+      yield* writeFile(join(projectRoot, "supabase", "config.toml"), "");
 
       const { layer } = buildLayer({
         cwd: projectRoot,
@@ -558,9 +577,7 @@ describe("link handler", () => {
       expect(error.suggestion).toBe(
         "Pass --project-ref or link this checkout interactively first.",
       );
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("makes cached-link refresh explicit in non-interactive mode", () => {
@@ -570,7 +587,7 @@ describe("link handler", () => {
     const projectRef = "abcdefghijklmnopqrst";
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => initializeRepository(projectRoot));
+      yield* initializeRepository(projectRoot);
 
       const { layer, out } = buildLayer({
         cwd: projectRoot,
@@ -578,9 +595,7 @@ describe("link handler", () => {
         remoteProjectRef: projectRef,
       });
 
-      const linkState = yield* Effect.gen(function* () {
-        return yield* ProjectLinkState;
-      }).pipe(Effect.provide(layer));
+      const linkState = yield* ProjectLinkState.pipe(Effect.provide(layer));
 
       yield* linkState.save({
         project: {
@@ -608,9 +623,7 @@ describe("link handler", () => {
           message: `This local project is already linked to Linked Project (${projectRef}); refreshing linked project metadata.`,
         }),
       );
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("fails with NoAccessibleProjectsError when interactive selection has no projects", () => {
@@ -619,8 +632,8 @@ describe("link handler", () => {
     const supabaseHome = join(tempDir, "supabase-home");
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(join(projectRoot, "supabase"), { recursive: true }));
-      yield* Effect.tryPromise(() => writeFile(join(projectRoot, "supabase", "config.toml"), ""));
+      yield* mkdir(join(projectRoot, "supabase"), { recursive: true });
+      yield* writeFile(join(projectRoot, "supabase", "config.toml"), "");
 
       const { layer } = buildLayer({
         cwd: projectRoot,
@@ -639,8 +652,6 @@ describe("link handler", () => {
       expect(error.suggestion).toBe(
         "Create a project in the dashboard or log in with a different account.",
       );
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 });

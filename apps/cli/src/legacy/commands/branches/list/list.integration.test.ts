@@ -1,9 +1,6 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, FileSystem, Option, Path, Schema } from "effect";
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -40,6 +37,9 @@ const SAMPLE_BRANCH_PIPE: Branches[number] = {
 };
 
 const tempRoot = useLegacyTempWorkdir("supabase-branches-list-int-");
+const pathService = Effect.runSync(Effect.provide(Path.Path, Path.layer));
+const join = pathService.join;
+const stringifyJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 // Distinct 20-lowercase-letter refs used across the parent-scoped resolution
 // tests below (CLI-2167 follow-up), so it's unambiguous which candidate a
@@ -55,24 +55,27 @@ function tempFile(workdir: string, name: string): string {
   return join(workdir, "supabase", ".temp", name);
 }
 
-function writeTempContent(workdir: string, name: string, content: string): void {
-  mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
-  writeFileSync(tempFile(workdir, name), content);
+function writeTempContent(workdir: string, name: string, content: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.makeDirectory(join(workdir, "supabase", ".temp"), { recursive: true });
+    yield* fs.writeFileString(tempFile(workdir, name), content);
+  });
 }
 
 // Seeds `supabase/.temp/project-ref` — the 3rd-priority parent candidate, and
 // (pre-CLI-2167-follow-up) the ONLY thing `branches` subcommands read.
-function writeProjectRefFile(workdir: string, ref: string): void {
-  writeTempContent(workdir, "project-ref", ref);
+function writeProjectRefFile(workdir: string, ref: string) {
+  return writeTempContent(workdir, "project-ref", ref);
 }
 
 // Seeds `supabase/.temp/linked-project.json` — the 2nd-priority parent
 // candidate, written by `link`'s own success path only for a REAL project.
-function writeLinkedProjectCacheFile(workdir: string, ref: string): void {
-  writeTempContent(
+function writeLinkedProjectCacheFile(workdir: string, ref: string) {
+  return writeTempContent(
     workdir,
     "linked-project.json",
-    JSON.stringify({
+    stringifyJson({
       ref,
       name: "Parent Project",
       organization_id: "org_1",
@@ -288,7 +291,7 @@ describe("legacy branches list integration", () => {
       const exit = yield* Effect.exit(legacyBranchesList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = stringifyJson(exit.cause);
         expect(json).toContain("LegacyBranchesEnvNotSupportedError");
         expect(json).toContain("--output env flag is not supported");
       }
@@ -335,9 +338,9 @@ describe("legacy branches list integration", () => {
           projectId: Option.none(),
           response: [SAMPLE_BRANCH],
         });
-        writeProjectRefFile(workdir, BRANCH_OWN_REF);
-        writeLinkedProjectCacheFile(workdir, PARENT_REF);
         return Effect.gen(function* () {
+          yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
+          yield* writeLinkedProjectCacheFile(workdir, PARENT_REF);
           yield* legacyBranchesList({ projectRef: Option.none() });
           expect(api.requests).toHaveLength(1);
           expect(api.requests[0]?.url).toContain(`/v1/projects/${PARENT_REF}/branches`);
@@ -354,9 +357,9 @@ describe("legacy branches list integration", () => {
           projectId: Option.none(),
           response: [SAMPLE_BRANCH],
         });
-        writeProjectRefFile(workdir, BRANCH_OWN_REF);
-        writeLinkedProjectCacheFile(workdir, PARENT_REF);
         return Effect.gen(function* () {
+          yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
+          yield* writeLinkedProjectCacheFile(workdir, PARENT_REF);
           yield* legacyBranchesList({ projectRef: Option.some(EXPLICIT_REF) });
           expect(api.requests[0]?.url).toContain(`/v1/projects/${EXPLICIT_REF}/branches`);
         }).pipe(Effect.provide(layer));
@@ -368,9 +371,9 @@ describe("legacy branches list integration", () => {
         projectId: Option.some(ENV_REF),
         response: [SAMPLE_BRANCH],
       });
-      writeProjectRefFile(workdir, BRANCH_OWN_REF);
-      writeLinkedProjectCacheFile(workdir, CACHE_REF);
       return Effect.gen(function* () {
+        yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
+        yield* writeLinkedProjectCacheFile(workdir, CACHE_REF);
         yield* legacyBranchesList({ projectRef: Option.none() });
         expect(api.requests[0]?.url).toContain(`/v1/projects/${ENV_REF}/branches`);
       }).pipe(Effect.provide(layer));
@@ -387,9 +390,9 @@ describe("legacy branches list integration", () => {
           projectId: Option.some(BRANCH_OWN_REF),
           response: [SAMPLE_BRANCH],
         });
-        writeProjectRefFile(workdir, BRANCH_OWN_REF);
-        writeLinkedProjectCacheFile(workdir, PARENT_REF);
         return Effect.gen(function* () {
+          yield* writeProjectRefFile(workdir, BRANCH_OWN_REF);
+          yield* writeLinkedProjectCacheFile(workdir, PARENT_REF);
           yield* legacyBranchesList({ projectRef: Option.none() });
           expect(api.requests[0]?.url).toContain(`/v1/projects/${PARENT_REF}/branches`);
         }).pipe(Effect.provide(layer));
@@ -408,13 +411,13 @@ describe("legacy branches list integration", () => {
           projectId: Option.some("not-a-valid-ref"),
           response: [SAMPLE_BRANCH],
         });
-        writeProjectRefFile(workdir, FILE_ONLY_REF);
-        writeLinkedProjectCacheFile(workdir, CACHE_REF);
         return Effect.gen(function* () {
+          yield* writeProjectRefFile(workdir, FILE_ONLY_REF);
+          yield* writeLinkedProjectCacheFile(workdir, CACHE_REF);
           const exit = yield* Effect.exit(legacyBranchesList({ projectRef: Option.none() }));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidProjectRefError");
+            expect(stringifyJson(exit.cause)).toContain("LegacyInvalidProjectRefError");
           }
           expect(api.requests).toHaveLength(0);
         }).pipe(Effect.provide(layer));
@@ -429,7 +432,7 @@ describe("legacy branches list integration", () => {
           const exit = yield* Effect.exit(legacyBranchesList({ projectRef: Option.none() }));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidProjectRefError");
+            expect(stringifyJson(exit.cause)).toContain("LegacyInvalidProjectRefError");
           }
           expect(api.requests).toHaveLength(0);
         }).pipe(Effect.provide(layer));
@@ -442,7 +445,7 @@ describe("legacy branches list integration", () => {
         const exit = yield* Effect.exit(legacyBranchesList({ projectRef: Option.none() }));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyProjectNotLinkedError");
+          expect(stringifyJson(exit.cause)).toContain("LegacyProjectNotLinkedError");
         }
         expect(api.requests).toHaveLength(0);
       }).pipe(Effect.provide(layer));
@@ -461,12 +464,12 @@ describe("legacy branches list integration", () => {
           projectId: Option.none(),
           response: [SAMPLE_BRANCH],
         });
-        writeLinkedProjectCacheFile(workdir, PARENT_REF);
         return Effect.gen(function* () {
+          yield* writeLinkedProjectCacheFile(workdir, PARENT_REF);
           const exit = yield* Effect.exit(legacyBranchesList({ projectRef: Option.none() }));
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyProjectNotLinkedError");
+            expect(stringifyJson(exit.cause)).toContain("LegacyProjectNotLinkedError");
           }
           expect(api.requests).toHaveLength(0);
         }).pipe(Effect.provide(layer));
@@ -480,8 +483,8 @@ describe("legacy branches list integration", () => {
           projectId: Option.none(),
           response: [SAMPLE_BRANCH],
         });
-        writeProjectRefFile(workdir, FILE_ONLY_REF);
         return Effect.gen(function* () {
+          yield* writeProjectRefFile(workdir, FILE_ONLY_REF);
           yield* legacyBranchesList({ projectRef: Option.none() });
           expect(api.requests[0]?.url).toContain(`/v1/projects/${FILE_ONLY_REF}/branches`);
         }).pipe(Effect.provide(layer));
@@ -502,8 +505,8 @@ describe("legacy branches list integration", () => {
         projectId: Option.none(),
         response: [SAMPLE_BRANCH, OTHER_BRANCH],
       });
-      writeProjectRefFile(workdir, SAMPLE_BRANCH.project_ref);
       return Effect.gen(function* () {
+        yield* writeProjectRefFile(workdir, SAMPLE_BRANCH.project_ref);
         yield* legacyBranchesList({ projectRef: Option.none() });
         expect(out.stdoutText).toContain("feat-1 (active)");
         expect(out.stdoutText).not.toContain("other (active)");
@@ -518,8 +521,8 @@ describe("legacy branches list integration", () => {
           projectId: Option.none(),
           response: [SAMPLE_BRANCH],
         });
-        writeProjectRefFile(workdir, SAMPLE_BRANCH.project_ref);
         return Effect.gen(function* () {
+          yield* writeProjectRefFile(workdir, SAMPLE_BRANCH.project_ref);
           yield* legacyBranchesList({ projectRef: Option.none() });
           expect(out.stdoutText).not.toContain("active");
         }).pipe(Effect.provide(layer));
@@ -534,8 +537,8 @@ describe("legacy branches list integration", () => {
           projectId: Option.none(),
           response: [SAMPLE_BRANCH],
         });
-        writeProjectRefFile(workdir, SAMPLE_BRANCH.project_ref);
         return Effect.gen(function* () {
+          yield* writeProjectRefFile(workdir, SAMPLE_BRANCH.project_ref);
           yield* legacyBranchesList({ projectRef: Option.none() });
           const success = out.messages.find((m) => m.type === "success");
           expect(success?.data).toEqual({ branches: [SAMPLE_BRANCH] });
@@ -561,7 +564,7 @@ describe("legacy branches list integration", () => {
       const exit = yield* Effect.exit(legacyBranchesList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = stringifyJson(exit.cause);
         expect(json).toContain("LegacyBranchesListUnexpectedStatusError");
         expect(json).toContain("unexpected list branch status 503");
       }
@@ -574,7 +577,7 @@ describe("legacy branches list integration", () => {
       const exit = yield* Effect.exit(legacyBranchesList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = stringifyJson(exit.cause);
         expect(json).toContain("LegacyBranchesListNetworkError");
         expect(json).toContain("failed to list branch");
       }

@@ -23,17 +23,91 @@
  * parsed flag value with this read (flag-set wins, matching viper precedence).
  */
 
+import { Config, ConfigProvider, Context, Effect, Layer, Match, Option } from "effect";
+
 const LEGACY_VIPER_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
+
+interface LegacyViperEnvShape {
+  readonly get: (name: string) => Effect.Effect<Option.Option<string>, Config.ConfigError>;
+  readonly entries: (
+    prefix: string,
+  ) => Effect.Effect<Readonly<Record<string, string>>, Config.ConfigError>;
+}
+
+/**
+ * Environment view used by the legacy viper compatibility helpers.
+ *
+ * The provider is deliberately injected rather than read from Effect's ambient
+ * default. Viper treats an explicitly empty shell variable as present, while
+ * the default Effect environment provider treats empty strings as missing.
+ */
+export class LegacyViperEnv extends Context.Service<LegacyViperEnv, LegacyViperEnvShape>()(
+  "supabase/legacy/LegacyViperEnv",
+) {}
+
+export const makeLegacyViperEnvLayer = (
+  provider: ConfigProvider.ConfigProvider = ConfigProvider.fromEnv({
+    preserveEmptyStrings: true,
+  }),
+): Layer.Layer<LegacyViperEnv> =>
+  Layer.succeed(LegacyViperEnv, {
+    get: (name) =>
+      Config.option(Config.string(name)).pipe(
+        Effect.provideService(ConfigProvider.ConfigProvider, provider),
+      ),
+    entries: (prefix) =>
+      Effect.gen(function* () {
+        const output: Record<string, string> = {};
+        const basePath = prefix.split("_");
+        const load = (path: ReadonlyArray<string>) =>
+          provider.load(path).pipe(Effect.mapError((cause) => new Config.ConfigError(cause)));
+        const visit = (
+          path: ReadonlyArray<string>,
+          node: ConfigProvider.Node | undefined,
+        ): Effect.Effect<void, Config.ConfigError> =>
+          Effect.gen(function* () {
+            if (node === undefined) return;
+            if (node.value !== undefined) output[path.join("_")] = node.value;
+            const children = Match.valueTags(node, {
+              Value: () => [],
+              Record: ({ keys }) => [...keys],
+              Array: ({ length }) => Array.from({ length }, (_, index) => String(index)),
+            });
+            for (const child of children) {
+              const childPath = [...path, child];
+              yield* visit(childPath, yield* load(childPath));
+            }
+          });
+        yield* visit(basePath, yield* load(basePath));
+        return output;
+      }),
+  });
+
+/** Production boundary layer. Tests should use `makeLegacyViperEnvLayer` with a fixed provider. */
+export const legacyViperEnvLayer = makeLegacyViperEnvLayer();
 
 /** `viper.GetBool` truthiness for an already-resolved env value (see module doc). */
 function legacyViperBool(raw: string | undefined): boolean {
   return raw !== undefined && LEGACY_VIPER_TRUE.has(raw);
 }
 
-/** `viper.GetBool` for a single `SUPABASE_*` env var read from `process.env` (see module doc). */
-export function legacyViperEnvBool(name: string): boolean {
-  return legacyViperBool(process.env[name]);
-}
+/** `viper.GetBool` for a single `SUPABASE_*` env var from the injected Effect ConfigProvider. */
+export const legacyViperEnvBool = (
+  name: string,
+): Effect.Effect<boolean, Config.ConfigError, LegacyViperEnv> =>
+  Effect.gen(function* () {
+    const env = yield* LegacyViperEnv;
+    return legacyViperBool(Option.getOrUndefined(yield* env.get(name)));
+  });
+
+/** Enumerate exact environment keys rooted at a prefix (for example `DOTENV_PRIVATE_KEY`). */
+export const legacyViperEnvEntries = (
+  prefix: string,
+): Effect.Effect<Readonly<Record<string, string>>, Config.ConfigError, LegacyViperEnv> =>
+  Effect.gen(function* () {
+    const env = yield* LegacyViperEnv;
+    return yield* env.entries(prefix);
+  });
 
 /**
  * `viper.GetBool` for a `SUPABASE_*` key where a project `supabase/.env` value may also
@@ -52,8 +126,11 @@ export function legacyViperEnvBool(name: string): boolean {
 export function legacyViperEnvBoolWithProjectFallback(
   name: string,
   projectEnv: Record<string, string>,
-): boolean {
-  return legacyViperBool(process.env[name] ?? projectEnv[name]);
+): Effect.Effect<boolean, Config.ConfigError, LegacyViperEnv> {
+  return Effect.gen(function* () {
+    const env = yield* LegacyViperEnv;
+    return legacyViperBool(Option.getOrElse(yield* env.get(name), () => projectEnv[name]));
+  });
 }
 
 /**
@@ -68,6 +145,9 @@ export function legacyViperEnvBoolWithProjectFallback(
 export function legacyViperEnvStringWithProjectFallback(
   name: string,
   projectEnv: Record<string, string>,
-): string {
-  return process.env[name] ?? projectEnv[name] ?? "";
+): Effect.Effect<string, Config.ConfigError, LegacyViperEnv> {
+  return Effect.gen(function* () {
+    const env = yield* LegacyViperEnv;
+    return Option.getOrElse(yield* env.get(name), () => projectEnv[name] ?? "");
+  });
 }

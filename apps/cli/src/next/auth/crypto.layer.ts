@@ -1,9 +1,20 @@
 import { Buffer } from "node:buffer";
 import { createDecipheriv, createECDH, randomUUID, type ECDH } from "node:crypto";
 import { hostname, userInfo } from "node:os";
-import { Effect, Layer } from "effect";
+import { Clock, Data, Effect, Layer } from "effect";
 
 import { Crypto, type EncryptedPayload } from "./crypto.service.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
+
+class IdentityResolutionError extends Data.TaggedError("IdentityResolutionError") {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.impossibleState;
+  }
+}
 
 export const cryptoLayer = Layer.sync(Crypto, () =>
   Crypto.of({
@@ -13,16 +24,17 @@ export const cryptoLayer = Layer.sync(Crypto, () =>
       return { ecdh, publicKeyHex: ecdh.getPublicKey("hex", "uncompressed") };
     }),
     generateSessionId: Effect.sync(() => randomUUID()),
-    defaultTokenName: Effect.sync(() => {
-      const ts = Date.now();
-      try {
-        const user = userInfo().username;
-        const host = hostname();
-        if (user && host) return `cli_${user}@${host}_${ts}`;
-      } catch {
-        /* fall through */
-      }
-      return `cli_${ts}`;
+    defaultTokenName: Effect.gen(function* () {
+      const ts = yield* Clock.currentTimeMillis;
+      const identity = yield* Effect.try({
+        try: () => {
+          const user = userInfo().username;
+          const host = hostname();
+          return user && host ? `${user}@${host}` : undefined;
+        },
+        catch: () => new IdentityResolutionError(),
+      }).pipe(Effect.orElseSucceed(() => undefined));
+      return identity ? `cli_${identity}_${ts}` : `cli_${ts}`;
     }),
     decryptToken: (ecdh: ECDH, payload: EncryptedPayload) =>
       Effect.sync(() => {

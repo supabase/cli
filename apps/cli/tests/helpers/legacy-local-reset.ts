@@ -37,14 +37,12 @@ export function mockContainerCliSpawner(route: (args: ReadonlyArray<string>) => 
         spawned.push({ args });
 
         if (command._tag !== "StandardCommand") {
-          return yield* Effect.fail(
-            PlatformError.systemError({
-              _tag: "NotFound",
-              module: "ChildProcess",
-              method: "spawn",
-              description: "spawn failed",
-            }),
-          );
+          return yield* PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            description: "spawn failed",
+          });
         }
 
         const result = route(args);
@@ -91,7 +89,7 @@ function containerNameFromCreateArgs(args: ReadonlyArray<string>): string {
 }
 
 function fakeContainerId(name: string): string {
-  return [...name]
+  return Array.from(name)
     .map((char) => (char.codePointAt(0) ?? 0).toString(16).padStart(2, "0"))
     .join("")
     .padEnd(64, "0")

@@ -5,7 +5,7 @@ import { cliConfigLayer } from "./cli-config.layer.ts";
 import { projectContextLayer } from "./project-context.layer.ts";
 import { projectHomeLayer } from "./project-home.layer.ts";
 
-const discoveredProjectContextLayer = projectContextLayer.pipe(
+export const discoveredProjectContextLayer = projectContextLayer.pipe(
   Layer.provide(runtimeInfoLayer),
   Layer.provide(BunServices.layer),
 );

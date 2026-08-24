@@ -1,39 +1,47 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Path } from "effect";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { ConfigProvider, Effect, FileSystem, Formatter, Layer, Path } from "effect";
 
+import { useLegacyTempWorkdir } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { legacyReadInspectRules } from "./report.config.ts";
+import { makeLegacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
 
-function makeWorkdir(configToml?: string): string {
-  const workdir = mkdtempSync(join(tmpdir(), "supabase-report-config-"));
-  if (configToml !== undefined) {
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), configToml);
-  }
-  return workdir;
-}
+const tempRoot = useLegacyTempWorkdir("supabase-report-config-");
 
-const readRules = (workdir: string) =>
+const readRules = (configToml?: string, projectEnv?: string) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const workdir = tempRoot.current;
+    if (configToml !== undefined) {
+      yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+      yield* fs.writeFileString(path.join(workdir, "supabase", "config.toml"), configToml);
+    }
+    if (projectEnv !== undefined) {
+      yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+      yield* fs.writeFileString(path.join(workdir, "supabase", ".env"), projectEnv);
+    }
     return yield* legacyReadInspectRules(fs, path, workdir);
-  }).pipe(Effect.provide(BunServices.layer));
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        BunServices.layer,
+        makeLegacyViperEnvLayer(ConfigProvider.fromEnv({ env: {}, preserveEmptyStrings: true })),
+      ),
+    ),
+  );
 
 describe("legacyReadInspectRules", () => {
   it.effect("returns [] when config.toml is absent", () =>
     Effect.gen(function* () {
-      const rules = yield* readRules(makeWorkdir());
+      const rules = yield* readRules();
       expect(rules).toEqual([]);
     }),
   );
 
   it.effect("returns [] when there are no inspect rules", () =>
     Effect.gen(function* () {
-      const rules = yield* readRules(makeWorkdir('project_id = "demo"\n'));
+      const rules = yield* readRules('project_id = "demo"\n');
       expect(rules).toEqual([]);
     }),
   );
@@ -41,16 +49,14 @@ describe("legacyReadInspectRules", () => {
   it.effect("parses [experimental.inspect.rules]", () =>
     Effect.gen(function* () {
       const rules = yield* readRules(
-        makeWorkdir(
-          [
-            "[[experimental.inspect.rules]]",
-            'query = "SELECT COUNT(*) FROM `locks.csv`"',
-            'name = "No locks"',
-            'pass = "ok"',
-            'fail = "bad"',
-            "",
-          ].join("\n"),
-        ),
+        [
+          "[[experimental.inspect.rules]]",
+          'query = "SELECT COUNT(*) FROM `locks.csv`"',
+          'name = "No locks"',
+          'pass = "ok"',
+          'fail = "bad"',
+          "",
+        ].join("\n"),
       );
       expect(rules).toEqual([
         { query: "SELECT COUNT(*) FROM `locks.csv`", name: "No locks", pass: "ok", fail: "bad" },
@@ -60,30 +66,27 @@ describe("legacyReadInspectRules", () => {
 
   it.effect("expands env(VAR) in rule string fields", () =>
     Effect.gen(function* () {
-      process.env["LEGACY_REPORT_TEST_FAIL"] = "from-env";
       const rules = yield* readRules(
-        makeWorkdir(
-          [
-            "[[experimental.inspect.rules]]",
-            'query = "SELECT COUNT(*) FROM `locks.csv`"',
-            'name = "r"',
-            'pass = "ok"',
-            'fail = "env(LEGACY_REPORT_TEST_FAIL)"',
-            "",
-          ].join("\n"),
-        ),
+        [
+          "[[experimental.inspect.rules]]",
+          'query = "SELECT COUNT(*) FROM `locks.csv`"',
+          'name = "r"',
+          'pass = "ok"',
+          'fail = "env(LEGACY_REPORT_TEST_FAIL)"',
+          "",
+        ].join("\n"),
+        "LEGACY_REPORT_TEST_FAIL=from-env\n",
       );
-      delete process.env["LEGACY_REPORT_TEST_FAIL"];
       expect(rules[0]?.fail).toBe("from-env");
     }),
   );
 
   it.effect("fails with LegacyDbConfigLoadError on a malformed config.toml", () =>
     Effect.gen(function* () {
-      const exit = yield* Effect.exit(readRules(makeWorkdir("this is = = not valid toml [[[")));
+      const exit = yield* Effect.exit(readRules("this is = = not valid toml [[["));
       expect(exit._tag).toBe("Failure");
       if (exit._tag === "Failure") {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyDbConfigLoadError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyDbConfigLoadError");
       }
     }),
   );
@@ -93,16 +96,14 @@ describe("legacyReadInspectRules", () => {
       // Weakly-typed decoding: an int/bool field
       // coerces to its string form (123 → "123", true → "1") rather than erroring.
       const rules = yield* readRules(
-        makeWorkdir(
-          [
-            "[[experimental.inspect.rules]]",
-            "query = 123",
-            'name = "r"',
-            "pass = true",
-            'fail = "bad"',
-            "",
-          ].join("\n"),
-        ),
+        [
+          "[[experimental.inspect.rules]]",
+          "query = 123",
+          'name = "r"',
+          "pass = true",
+          'fail = "bad"',
+          "",
+        ].join("\n"),
       );
       expect(rules[0]?.query).toBe("123");
       expect(rules[0]?.pass).toBe("1");
@@ -112,11 +113,11 @@ describe("legacyReadInspectRules", () => {
   it.effect("fails when an inspect.rules entry is not a table (Go aborts)", () =>
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
-        readRules(makeWorkdir('[experimental.inspect]\nrules = ["not-a-table"]\n')),
+        readRules('[experimental.inspect]\nrules = ["not-a-table"]\n'),
       );
       expect(exit._tag).toBe("Failure");
       if (exit._tag === "Failure") {
-        expect(JSON.stringify(exit.cause)).toContain("expected a map or struct");
+        expect(Formatter.formatJson(exit.cause)).toContain("expected a map or struct");
       }
     }),
   );
@@ -125,22 +126,20 @@ describe("legacyReadInspectRules", () => {
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
         readRules(
-          makeWorkdir(
-            [
-              "[[experimental.inspect.rules]]",
-              'query = "SELECT 1"',
-              'name = "r"',
-              'pass = "ok"',
-              'fail = "bad"',
-              'fails = "typo"',
-              "",
-            ].join("\n"),
-          ),
+          [
+            "[[experimental.inspect.rules]]",
+            'query = "SELECT 1"',
+            'name = "r"',
+            'pass = "ok"',
+            'fail = "bad"',
+            'fails = "typo"',
+            "",
+          ].join("\n"),
         ),
       );
       expect(exit._tag).toBe("Failure");
       if (exit._tag === "Failure") {
-        expect(JSON.stringify(exit.cause)).toContain("invalid keys: fails");
+        expect(Formatter.formatJson(exit.cause)).toContain("invalid keys: fails");
       }
     }),
   );
@@ -148,16 +147,14 @@ describe("legacyReadInspectRules", () => {
   it.effect("accepts a single inline rules table as one rule (Go weak-typing wrap)", () =>
     Effect.gen(function* () {
       const rules = yield* readRules(
-        makeWorkdir(
-          [
-            "[experimental.inspect.rules]",
-            'query = "SELECT 1"',
-            'name = "solo"',
-            'pass = "ok"',
-            'fail = "bad"',
-            "",
-          ].join("\n"),
-        ),
+        [
+          "[experimental.inspect.rules]",
+          'query = "SELECT 1"',
+          'name = "solo"',
+          'pass = "ok"',
+          'fail = "bad"',
+          "",
+        ].join("\n"),
       );
       expect(rules).toEqual([{ query: "SELECT 1", name: "solo", pass: "ok", fail: "bad" }]);
     }),
@@ -165,12 +162,10 @@ describe("legacyReadInspectRules", () => {
 
   it.effect("fails when rules is a scalar string (Go aborts)", () =>
     Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        readRules(makeWorkdir('[experimental.inspect]\nrules = "oops"\n')),
-      );
+      const exit = yield* Effect.exit(readRules('[experimental.inspect]\nrules = "oops"\n'));
       expect(exit._tag).toBe("Failure");
       if (exit._tag === "Failure") {
-        expect(JSON.stringify(exit.cause)).toContain("expected a map or struct");
+        expect(Formatter.formatJson(exit.cause)).toContain("expected a map or struct");
       }
     }),
   );
@@ -179,19 +174,17 @@ describe("legacyReadInspectRules", () => {
     Effect.gen(function* () {
       const exit = yield* Effect.exit(
         readRules(
-          makeWorkdir(
-            [
-              "[[experimental.inspect.rules]]",
-              "[experimental.inspect.rules.query]",
-              'a = "b"',
-              "",
-            ].join("\n"),
-          ),
+          [
+            "[[experimental.inspect.rules]]",
+            "[experimental.inspect.rules.query]",
+            'a = "b"',
+            "",
+          ].join("\n"),
         ),
       );
       expect(exit._tag).toBe("Failure");
       if (exit._tag === "Failure") {
-        expect(JSON.stringify(exit.cause)).toContain("expected a string");
+        expect(Formatter.formatJson(exit.cause)).toContain("expected a string");
       }
     }),
   );

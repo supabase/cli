@@ -1,5 +1,4 @@
-import { join } from "node:path";
-import { Effect, Option, Stdio } from "effect";
+import { Effect, Option, Path, Stdio } from "effect";
 import {
   downloadFunctions,
   makeGoProxyLegacyBundleArgs,
@@ -24,10 +23,12 @@ export const legacyFunctionsDownload = Effect.fn("legacy.functions.download")(fu
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
   const proxy = yield* LegacyGoProxy;
+  const goConfigCompat = yield* legacyFunctionsGoConfigCompat;
+  const path = yield* Path.Path;
   const stdio = yield* Stdio.Stdio;
   const rawArgs = yield* stdio.args;
   const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersionPin(
-    join(cliConfig.workdir, "supabase"),
+    path.join(cliConfig.workdir, "supabase"),
   );
   let resolvedProjectRef = Option.none<string>();
 
@@ -35,7 +36,7 @@ export const legacyFunctionsDownload = Effect.fn("legacy.functions.download")(fu
     api,
     projectRoot: cliConfig.workdir,
     rawArgs,
-    goConfigCompat: legacyFunctionsGoConfigCompat,
+    goConfigCompat,
     edgeRuntimeVersion,
     // Established styling: bold on the `Downloading function:` slug
     // (stderr) — matches `legacyBold`'s default TTY gate.

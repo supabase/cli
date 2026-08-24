@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer, Option } from "effect";
+import { ConfigProvider, Effect, Layer, Option } from "effect";
 import { buildIssueUrl } from "../../../shared/issue/issue-url.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import type { OutputFormat } from "../../../shared/output/types.ts";
@@ -14,32 +14,6 @@ type LegacyIssueOutputMessage = {
   readonly message: string;
   readonly data?: Record<string, unknown>;
 };
-
-function legacyIssueProcessEnvLayer(values: Readonly<Record<string, string | undefined>> = {}) {
-  return Layer.effectDiscard(
-    Effect.acquireRelease(
-      Effect.sync(() => {
-        const snapshot = { ...process.env };
-        for (const key of Object.keys(process.env)) {
-          delete process.env[key];
-        }
-        for (const [key, value] of Object.entries(values)) {
-          if (value !== undefined) process.env[key] = value;
-        }
-        return snapshot;
-      }),
-      (snapshot) =>
-        Effect.sync(() => {
-          for (const key of Object.keys(process.env)) {
-            delete process.env[key];
-          }
-          for (const [key, value] of Object.entries(snapshot)) {
-            if (value !== undefined) process.env[key] = value;
-          }
-        }),
-    ),
-  );
-}
 
 function legacyIssueMockOutput(opts: { readonly format?: OutputFormat } = {}) {
   const messages: LegacyIssueOutputMessage[] = [];
@@ -156,7 +130,9 @@ function legacyIssueSetup(
     browser.layer,
     runtimeInfo,
     telemetryRuntime,
-    legacyIssueProcessEnvLayer(opts.env ?? {}),
+    ConfigProvider.layer(
+      ConfigProvider.fromEnv({ env: opts.env ?? {}, preserveEmptyStrings: true }),
+    ),
   );
   return { layer, out, browser };
 }

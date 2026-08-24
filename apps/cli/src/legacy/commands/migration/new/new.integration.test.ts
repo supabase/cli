@@ -1,8 +1,16 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Stream } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Path,
+  Stream,
+} from "effect";
 import { badArgument } from "effect/PlatformError";
 
 import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
@@ -24,6 +32,26 @@ interface SetupOpts {
   readonly openDoesNotMaterialize?: boolean;
   readonly writeDoesNotMaterialize?: boolean;
 }
+
+const fixturePath = ManagedRuntime.make(BunServices.layer).runSync(Path.Path);
+const join = (first: string, ...rest: ReadonlyArray<string>) => fixturePath.join(first, ...rest);
+const pendingWrites: Array<{ readonly path: string; readonly contents: string | Uint8Array }> = [];
+const writeFileSync = (path: string, contents: string | Uint8Array) => {
+  pendingWrites.push({ path, contents });
+};
+const flushFixtureWrites = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  for (const write of pendingWrites) {
+    yield* fs.makeDirectory(fixturePath.dirname(write.path), { recursive: true });
+    yield* fs.writeFileString(
+      write.path,
+      typeof write.contents === "string"
+        ? write.contents
+        : new TextDecoder().decode(write.contents),
+    );
+  }
+  pendingWrites.length = 0;
+});
 
 function nonMaterializingFsLayer(
   workdir: string,
@@ -53,6 +81,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     telemetry.layer,
     mockStdin(opts.isTTY ?? true, opts.piped),
     mockLegacyCliConfig({ workdir }),
+    Layer.effectDiscard(flushFixtureWrites.pipe(Effect.provide(BunServices.layer))),
     BunServices.layer,
     ...(opts.openDoesNotMaterialize === true || opts.writeDoesNotMaterialize === true
       ? [nonMaterializingFsLayer(workdir, opts)]
@@ -64,11 +93,28 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 const tmp = useLegacyTempWorkdir();
 
 const migrationsDir = (workdir: string) => join(workdir, "supabase", "migrations");
-const onlyMigration = (workdir: string) => {
-  const files = readdirSync(migrationsDir(workdir));
-  expect(files).toHaveLength(1);
-  return files[0]!;
-};
+const onlyMigration = (workdir: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const files = yield* fs.readDirectory(migrationsDir(workdir));
+    expect(files).toHaveLength(1);
+    return files[0]!;
+  });
+const readText = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.readFileString(path);
+  });
+const readDirectory = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.readDirectory(path);
+  });
+const exists = (path: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    return yield* fs.exists(path).pipe(Effect.orElseSucceed(() => false));
+  });
 
 describe("legacy migration new", () => {
   it.live("creates a timestamped migration file and prints its relative path", () => {
@@ -76,10 +122,10 @@ describe("legacy migration new", () => {
     return Effect.gen(function* () {
       yield* legacyMigrationNew({ migrationName: "create_widgets" });
 
-      const file = onlyMigration(tmp.current);
+      const file = yield* onlyMigration(tmp.current);
       expect(file).toMatch(/^\d{14}_create_widgets\.sql$/u);
       // Empty file when stdin is a TTY (nothing is written).
-      expect(readFileSync(join(migrationsDir(tmp.current), file), "utf8")).toBe("");
+      expect(yield* readText(join(migrationsDir(tmp.current), file))).toBe("");
       // The workdir-relative path prints, not the absolute write path.
       expect(stripAnsi(out.stdoutText)).toBe(
         `Created new migration at supabase/migrations/${file}\n`,
@@ -94,9 +140,9 @@ describe("legacy migration new", () => {
     return Effect.gen(function* () {
       yield* legacyMigrationNew({ migrationName: "from_stdin" });
 
-      const file = onlyMigration(tmp.current);
+      const file = yield* onlyMigration(tmp.current);
       // Byte-exact: the trailing newline is preserved (raw stdin bytes are copied verbatim).
-      expect(readFileSync(join(migrationsDir(tmp.current), file), "utf8")).toBe(script);
+      expect(yield* readText(join(migrationsDir(tmp.current), file))).toBe(script);
       expect(stripAnsi(out.stdoutText)).toContain(`Created new migration at supabase/migrations/`);
     }).pipe(Effect.provide(layer));
   });
@@ -105,8 +151,8 @@ describe("legacy migration new", () => {
     const { layer } = setup(tmp.current, { isTTY: false });
     return Effect.gen(function* () {
       yield* legacyMigrationNew({ migrationName: "empty_pipe" });
-      const file = onlyMigration(tmp.current);
-      expect(readFileSync(join(migrationsDir(tmp.current), file), "utf8")).toBe("");
+      const file = yield* onlyMigration(tmp.current);
+      expect(yield* readText(join(migrationsDir(tmp.current), file))).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
@@ -114,8 +160,8 @@ describe("legacy migration new", () => {
     const { layer } = setup(tmp.current, { openDoesNotMaterialize: true });
     return Effect.gen(function* () {
       yield* legacyMigrationNew({ migrationName: "windows_open" });
-      const file = onlyMigration(tmp.current);
-      expect(readFileSync(join(migrationsDir(tmp.current), file), "utf8")).toBe("");
+      const file = yield* onlyMigration(tmp.current);
+      expect(yield* readText(join(migrationsDir(tmp.current), file))).toBe("");
     }).pipe(Effect.provide(layer));
   });
 
@@ -137,7 +183,7 @@ describe("legacy migration new", () => {
           }
         }
       }
-      expect(readdirSync(migrationsDir(tmp.current))).toEqual([]);
+      expect(yield* readDirectory(migrationsDir(tmp.current))).toEqual([]);
       expect(out.stdoutText).toBe("");
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -148,7 +194,7 @@ describe("legacy migration new", () => {
     return Effect.gen(function* () {
       yield* legacyMigrationNew({ migrationName: "as_json" });
 
-      const file = onlyMigration(tmp.current);
+      const file = yield* onlyMigration(tmp.current);
       expect(out.stdoutText).toBe("");
       expect(out.messages).toContainEqual(
         expect.objectContaining({
@@ -184,7 +230,7 @@ describe("legacy migration new", () => {
           expect(failure.value).toBeInstanceOf(LegacyMigrationNewWriteError);
         }
       }
-      expect(existsSync(migrationsDir(tmp.current))).toBe(false);
+      expect(yield* exists(migrationsDir(tmp.current))).toBe(false);
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -203,7 +249,7 @@ describe("legacy migration new", () => {
           expect(failure.value).toBeInstanceOf(LegacyMigrationNewWriteError);
         }
       }
-      expect(existsSync(join(tmp.current, "supabase"))).toBe(false);
+      expect(yield* exists(join(tmp.current, "supabase"))).toBe(false);
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -245,7 +291,7 @@ describe("legacy migration new", () => {
             }
           }
         }
-        const file = onlyMigration(tmp.current);
+        const file = yield* onlyMigration(tmp.current);
         expect(stripAnsi(out.stdoutText)).toBe(
           `Created new migration at supabase/migrations/${file}\n`,
         );

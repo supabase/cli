@@ -39,9 +39,7 @@ export const legacyLogout = Effect.fn("legacy.logout")(function* () {
       return yield* legacyPromptYesNo(output, yes, confirmLabel, false);
     });
     if (!confirmed) {
-      return yield* Effect.fail(
-        new LegacyLogoutCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
-      );
+      return yield* new LegacyLogoutCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
     }
 
     // Delete the access token. `LegacyNotLoggedInError` is the not-logged-in

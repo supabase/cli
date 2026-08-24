@@ -1,4 +1,5 @@
 import type { ProjectConfig } from "@supabase/config";
+import { Effect, FileSystem, Path } from "effect";
 
 import { dockerfileServiceImage } from "../../shared/services/dockerfile-images.ts";
 import { legacyServiceContainerIds } from "./legacy-docker-ids.ts";
@@ -284,9 +285,9 @@ export function legacyResolveStatusLocalState(
   config: ProjectConfig,
   hostname: string,
   workdir: string,
-  projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
+  projectEnvValues: Readonly<Record<string, string>>,
   /** `LoadedProjectConfig.document` — see {@link legacyResolveLocalConfigValues}'s doc comment. */
-  document: Readonly<Record<string, unknown>> | undefined = undefined,
+  document?: Readonly<Record<string, unknown>>,
   /**
    * An already-resolved {@link legacyResolveLocalConfigValues} result to reuse
    * instead of re-deriving one. Callers that resolved `local` earlier in the
@@ -303,65 +304,73 @@ export function legacyResolveStatusLocalState(
    * sees the same value.
    */
   precomputedLocal?: LegacyLocalConfigValues,
-): LegacyStatusLocalState {
-  const local =
-    precomputedLocal ??
-    legacyResolveLocalConfigValues(config, hostname, workdir, projectEnvValues, document);
+): Effect.Effect<LegacyStatusLocalState, Error, FileSystem.FileSystem | Path.Path> {
+  return Effect.gen(function* () {
+    const local =
+      precomputedLocal ??
+      (yield* legacyResolveLocalConfigValues(
+        config,
+        hostname,
+        workdir,
+        projectEnvValues,
+        document,
+      ));
 
-  const apiEnabled = legacyEnvOverrideBool(
-    "SUPABASE_API_ENABLED",
-    config.api.enabled,
-    "api.enabled",
-    projectEnvValues,
-  );
-  const studioSectionEnabled = legacyEnvOverrideBool(
-    "SUPABASE_STUDIO_ENABLED",
-    config.studio.enabled,
-    "studio.enabled",
-    projectEnvValues,
-  );
-  const authSectionEnabled = legacyEnvOverrideBool(
-    "SUPABASE_AUTH_ENABLED",
-    config.auth.enabled,
-    "auth.enabled",
-    projectEnvValues,
-  );
-  const inbucketSectionEnabled = legacyEnvOverrideBool(
-    "SUPABASE_LOCAL_SMTP_ENABLED",
-    config.local_smtp.enabled,
-    "local_smtp.enabled",
-    projectEnvValues,
-  );
-  const storageSectionEnabled = legacyEnvOverrideBool(
-    "SUPABASE_STORAGE_ENABLED",
-    config.storage.enabled,
-    "storage.enabled",
-    projectEnvValues,
-  );
-  const edgeRuntimeEnabled = legacyEnvOverrideBool(
-    "SUPABASE_EDGE_RUNTIME_ENABLED",
-    config.edge_runtime.enabled,
-    "edge_runtime.enabled",
-    projectEnvValues,
-  );
-  const storageS3ProtocolEnabled = legacyEnvOverrideBool(
-    "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
-    config.storage.s3_protocol.enabled,
-    "storage.s3_protocol.enabled",
-    projectEnvValues,
-  );
+    const apiEnabled = legacyEnvOverrideBool(
+      "SUPABASE_API_ENABLED",
+      config.api.enabled,
+      "api.enabled",
+      projectEnvValues,
+    );
+    const studioSectionEnabled = legacyEnvOverrideBool(
+      "SUPABASE_STUDIO_ENABLED",
+      config.studio.enabled,
+      "studio.enabled",
+      projectEnvValues,
+    );
+    const authSectionEnabled = legacyEnvOverrideBool(
+      "SUPABASE_AUTH_ENABLED",
+      config.auth.enabled,
+      "auth.enabled",
+      projectEnvValues,
+    );
+    const inbucketSectionEnabled = legacyEnvOverrideBool(
+      "SUPABASE_LOCAL_SMTP_ENABLED",
+      config.local_smtp.enabled,
+      "local_smtp.enabled",
+      projectEnvValues,
+    );
+    const storageSectionEnabled = legacyEnvOverrideBool(
+      "SUPABASE_STORAGE_ENABLED",
+      config.storage.enabled,
+      "storage.enabled",
+      projectEnvValues,
+    );
+    const edgeRuntimeEnabled = legacyEnvOverrideBool(
+      "SUPABASE_EDGE_RUNTIME_ENABLED",
+      config.edge_runtime.enabled,
+      "edge_runtime.enabled",
+      projectEnvValues,
+    );
+    const storageS3ProtocolEnabled = legacyEnvOverrideBool(
+      "SUPABASE_STORAGE_S3_PROTOCOL_ENABLED",
+      config.storage.s3_protocol.enabled,
+      "storage.s3_protocol.enabled",
+      projectEnvValues,
+    );
 
-  return {
-    config,
-    local,
-    apiEnabled,
-    studioSectionEnabled,
-    authSectionEnabled,
-    inbucketSectionEnabled,
-    storageSectionEnabled,
-    edgeRuntimeEnabled,
-    storageS3ProtocolEnabled,
-  };
+    return {
+      config,
+      local,
+      apiEnabled,
+      studioSectionEnabled,
+      authSectionEnabled,
+      inbucketSectionEnabled,
+      storageSectionEnabled,
+      edgeRuntimeEnabled,
+      storageS3ProtocolEnabled,
+    };
+  });
 }
 
 /**
@@ -489,17 +498,19 @@ export function legacyStatusValues(
   excluded: ReadonlyArray<string>,
   overrides: ReadonlyMap<string, string>,
   workdir: string,
-  projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
+  projectEnvValues: Readonly<Record<string, string>>,
   /** `LoadedProjectConfig.document` — see {@link legacyResolveLocalConfigValues}'s doc comment. */
-  document: Readonly<Record<string, unknown>> | undefined = undefined,
-): LegacyStatusValuesResult {
-  const localState = legacyResolveStatusLocalState(
-    config,
-    hostname,
-    workdir,
-    projectEnvValues,
-    document,
-  );
-  const state = legacyGateStatusState(localState, containerIds, excluded);
-  return legacyStatusValuesFromState(state, overrides);
+  document?: Readonly<Record<string, unknown>>,
+): Effect.Effect<LegacyStatusValuesResult, Error, FileSystem.FileSystem | Path.Path> {
+  return Effect.gen(function* () {
+    const localState = yield* legacyResolveStatusLocalState(
+      config,
+      hostname,
+      workdir,
+      projectEnvValues,
+      document,
+    );
+    const state = legacyGateStatusState(localState, containerIds, excluded);
+    return legacyStatusValuesFromState(state, overrides);
+  });
 }

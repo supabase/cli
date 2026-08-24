@@ -1,6 +1,6 @@
 import { type V1ListAllSecretsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Effect, Exit, Layer, Option, Schema } from "effect";
 
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
@@ -30,9 +30,11 @@ interface SetupOpts {
   listNetwork?: "fail";
   deleteStatus?: number;
   deleteNetwork?: "fail";
+  env?: Record<string, string>;
 }
 
 const tempRoot = useLegacyTempWorkdir("supabase-secrets-unset-int-");
+const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({
@@ -64,6 +66,7 @@ function setup(opts: SetupOpts = {}) {
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
       stdin: mockStdin(opts.stdinIsTty ?? false, opts.stdinInput),
       goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
+      env: opts.env,
     }),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
   );
@@ -170,7 +173,7 @@ describe("legacy secrets unset integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySecretsUnsetCancelledError");
+        expect(encodeJson(exit.cause)).toContain("LegacySecretsUnsetCancelledError");
       }
       // The piped answer is echoed to stderr, matching non-TTY `PromptText`.
       expect(out.stderrText).toContain("[Y/n] n\n");
@@ -188,9 +191,7 @@ describe("legacy secrets unset integration", () => {
   });
 
   it.live("SUPABASE_YES=1 in the environment auto-confirms with the [Y/n] y echo", () => {
-    const prev = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "1";
-    const { layer, out, api } = setup();
+    const { layer, out, api } = setup({ env: { SUPABASE_YES: "1" } });
     return Effect.gen(function* () {
       yield* legacySecretsUnset({ projectRef: Option.none(), names: ["FOO"] });
       // Same bytes as the `viper.GetBool("YES")` branch (`console.go:70-72`).
@@ -198,15 +199,7 @@ describe("legacy secrets unset integration", () => {
         "Do you want to unset these function secrets?\n • FOO\n\n [Y/n] y\n",
       );
       expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(1);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(layer),
-    );
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("TTY without --yes prompts via output.promptConfirm and proceeds on accept", () => {
@@ -225,7 +218,7 @@ describe("legacy secrets unset integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySecretsUnsetCancelledError");
+        expect(encodeJson(exit.cause)).toContain("LegacySecretsUnsetCancelledError");
       }
       expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(0);
     }).pipe(Effect.provide(layer));
@@ -237,7 +230,7 @@ describe("legacy secrets unset integration", () => {
       const exit = yield* Effect.exit(legacySecretsUnset({ projectRef: Option.none(), names: [] }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySecretsListNetworkError");
+        expect(encodeJson(exit.cause)).toContain("LegacySecretsListNetworkError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -248,7 +241,7 @@ describe("legacy secrets unset integration", () => {
       const exit = yield* Effect.exit(legacySecretsUnset({ projectRef: Option.none(), names: [] }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacySecretsListUnexpectedStatusError");
+        expect(encodeJson(exit.cause)).toContain("LegacySecretsListUnexpectedStatusError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -261,7 +254,7 @@ describe("legacy secrets unset integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
+        const errJson = encodeJson(exit.cause);
         expect(errJson).toContain("LegacySecretsUnsetNetworkError");
         expect(errJson).toContain("failed to delete secrets");
       }
@@ -276,7 +269,7 @@ describe("legacy secrets unset integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
+        const errJson = encodeJson(exit.cause);
         expect(errJson).toContain("LegacySecretsUnsetUnexpectedStatusError");
         expect(errJson).toContain("Unexpected error unsetting project secrets");
       }

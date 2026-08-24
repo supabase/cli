@@ -81,7 +81,10 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // not apply the env as a side effect of `resolveDbPassword`, so `db dump` opts
     // in explicitly here.
     const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
-    yield* legacyApplyProjectEnv(projectEnv);
+    const effectiveProjectEnv = {
+      ...projectEnv,
+      ...(yield* legacyApplyProjectEnv(projectEnv)),
+    };
 
     // The grouped boolean flags are modelled as `Option` (presence = explicitly
     // set) for the mutex/target checks; resolve their effective values here for
@@ -95,11 +98,9 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     //    `--use-copy --data-only=false` passes the check and runs the schema
     //    dump with dataOnly=false. Gate on absence, not the resolved value.
     if ((flags.useCopy || flags.exclude.length > 0) && Option.isNone(flags.dataOnly)) {
-      return yield* Effect.fail(
-        new LegacyDbDumpRequiresDataOnlyError({
-          message: `required flag(s) "data-only" not set`,
-        }),
-      );
+      return yield* new LegacyDbDumpRequiresDataOnlyError({
+        message: `required flag(s) "data-only" not set`,
+      });
     }
 
     // 2. Mutually-exclusive flag groups. "Set" means explicitly set: an
@@ -128,11 +129,9 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     for (const group of LEGACY_DUMP_EXCLUSIVE_GROUPS) {
       const set = group.filter(isSet);
       if (set.length > 1) {
-        return yield* Effect.fail(
-          new LegacyDbDumpMutuallyExclusiveFlagsError({
-            message: cobraMutuallyExclusiveErrorMessage(group, set),
-          }),
-        );
+        return yield* new LegacyDbDumpMutuallyExclusiveFlagsError({
+          message: cobraMutuallyExclusiveErrorMessage(group, set),
+        });
       }
     }
 
@@ -153,12 +152,10 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // on a non-linked target — one-liner: see push.handler.ts's identical guard
     // for the full TS-only rationale.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* Effect.fail(
-        new LegacyDbDumpMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
+      return yield* new LegacyDbDumpMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      });
     }
     // The project ref is resolved before the connection is built, and the
     // linked-project cache is refreshed unconditionally afterward — including on a
@@ -289,28 +286,26 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
         ? // `--file`: (re)truncate then append-stream. Truncating per attempt
           // ensures the file ends up holding only the successful attempt's
           // output when a pooler retry runs.
-          fs
-            .writeFile(resolvedFile.value, new Uint8Array(0), { mode: DUMP_FILE_MODE })
-            .pipe(Effect.mapError(toOpenFileError))
-            .pipe(
-              Effect.andThen(
-                Effect.scoped(
-                  Effect.gen(function* () {
-                    const file = yield* fs
-                      .open(resolvedFile.value, { flag: "a" })
-                      .pipe(Effect.mapError(toOpenFileError));
-                    return yield* legacyStreamPgDump({
-                      image,
-                      script: mode.script,
-                      env,
-                      onStdout: (chunk) =>
-                        file.writeAll(chunk).pipe(Effect.mapError(toOpenFileError)),
-                      projectEnvValues: projectEnv,
-                    });
-                  }),
-                ),
+          fs.writeFile(resolvedFile.value, new Uint8Array(0), { mode: DUMP_FILE_MODE }).pipe(
+            Effect.mapError(toOpenFileError),
+            Effect.andThen(
+              Effect.scoped(
+                Effect.gen(function* () {
+                  const file = yield* fs
+                    .open(resolvedFile.value, { flag: "a" })
+                    .pipe(Effect.mapError(toOpenFileError));
+                  return yield* legacyStreamPgDump({
+                    image,
+                    script: mode.script,
+                    env,
+                    onStdout: (chunk) =>
+                      file.writeAll(chunk).pipe(Effect.mapError(toOpenFileError)),
+                    projectEnvValues: effectiveProjectEnv,
+                  });
+                }),
               ),
-            )
+            ),
+          )
         : // stdout: write each chunk straight to stdout (binary-safe, no decode).
           // On a pooler retry the partial first-attempt bytes are left on
           // stdout (a pipe can't be rewound); streaming matches that.
@@ -319,7 +314,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
             script: mode.script,
             env,
             onStdout: (chunk) => output.rawBytes(chunk),
-            projectEnvValues: projectEnv,
+            projectEnvValues: effectiveProjectEnv,
           });
 
     // 7b. Container-level IPv6 → IPv4-pooler retry, shared with `db pull`. A
@@ -364,14 +359,12 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     //    exposed through the resolver and is left as a follow-up — the
     //    generic hint is restored.)
     if (result.exitCode !== 0) {
-      return yield* Effect.fail(
-        new LegacyDbDumpRunError({
-          message: `error running container: exit ${result.exitCode}`,
-          ...(legacyIsIPv6ConnectivityError(result.stderr)
-            ? { suggestion: legacyIpv6Suggestion() }
-            : {}),
-        }),
-      );
+      return yield* new LegacyDbDumpRunError({
+        message: `error running container: exit ${result.exitCode}`,
+        ...(legacyIsIPv6ConnectivityError(result.stderr)
+          ? { suggestion: legacyIpv6Suggestion() }
+          : {}),
+      });
     }
 
     // Report the absolute output path on stderr.

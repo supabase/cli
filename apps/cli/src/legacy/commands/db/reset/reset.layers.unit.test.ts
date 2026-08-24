@@ -57,6 +57,7 @@ import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
+import { makeLegacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
 
 import { legacyDbResetRuntimeLayer } from "./reset.layers.ts";
 
@@ -120,6 +121,7 @@ function ambientStubs() {
     mockLegacyLinkedProjectCacheLayer,
     mockLegacyTelemetryStateLayer,
     heavyServiceStubs,
+    makeLegacyViperEnvLayer(),
   );
 }
 
@@ -130,7 +132,7 @@ describe("legacyDbResetRuntimeLayer — pg-delta service exposure (regression gu
       return Effect.gen(function* () {
         const edgeRuntime = yield* Effect.serviceOption(LegacyEdgeRuntimeScript);
         expect(Option.isSome(edgeRuntime)).toBe(true);
-      }).pipe(Effect.provide(legacyDbResetRuntimeLayer), Effect.provide(ambientStubs()));
+      }).pipe(Effect.provide(legacyDbResetRuntimeLayer.pipe(Layer.provideMerge(ambientStubs()))));
     },
   );
 
@@ -140,7 +142,7 @@ describe("legacyDbResetRuntimeLayer — pg-delta service exposure (regression gu
       return Effect.gen(function* () {
         const sslProbe = yield* Effect.serviceOption(LegacyPgDeltaSslProbe);
         expect(Option.isSome(sslProbe)).toBe(true);
-      }).pipe(Effect.provide(legacyDbResetRuntimeLayer), Effect.provide(ambientStubs()));
+      }).pipe(Effect.provide(legacyDbResetRuntimeLayer.pipe(Layer.provideMerge(ambientStubs()))));
     },
   );
 });

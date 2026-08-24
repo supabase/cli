@@ -96,7 +96,7 @@ describe("ProcessControl", () => {
         Effect.gen(function* () {
           yield* processControl.holdSignals(["SIGINT", "SIGTERM"]);
           yield* Effect.sync(() => Deferred.doneUnsafe(ready, Effect.void));
-          yield* Effect.never;
+          return yield* Effect.never;
         }),
       ).pipe(Effect.forkChild({ startImmediately: true }));
 

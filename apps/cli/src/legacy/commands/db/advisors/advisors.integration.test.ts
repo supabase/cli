@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, Redacted } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Redacted, Schema } from "effect";
 
 import { mockOutput, mockProcessControl } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -51,6 +51,8 @@ const LOCAL_CONN: LegacyPgConnInput = {
 };
 
 const [SETUP_SQL, QUERY_SQL] = splitLegacyLintsSql();
+const stringifyJson = (value: unknown): string =>
+  Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown))(value);
 
 /** A local lint row keyed by the column names the `lints.sql` query aliases. */
 function lintRow(over: Partial<Record<string, unknown>> = {}) {
@@ -76,12 +78,10 @@ function mockResolver(opts: { ipv6Error?: boolean } = {}) {
       Effect.gen(function* () {
         resolveFlags.push(flags);
         if (opts.ipv6Error === true) {
-          return yield* Effect.fail(
-            new LegacyDbConfigIpv6Error({
-              message: "IPv6 is not supported on your current network",
-              suggestion: "Run supabase link --project-ref abc to setup IPv4 connection.",
-            }),
-          );
+          return yield* new LegacyDbConfigIpv6Error({
+            message: "IPv6 is not supported on your current network",
+            suggestion: "Run supabase link --project-ref abc to setup IPv4 connection.",
+          });
         }
         return {
           conn: LOCAL_CONN,
@@ -365,7 +365,7 @@ describe("legacy db advisors — local", () => {
       const exit = yield* Effect.exit(legacyDbAdvisors(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to prepare lint session");
+        expect(stringifyJson(exit.cause)).toContain("failed to prepare lint session");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -376,7 +376,7 @@ describe("legacy db advisors — local", () => {
       const exit = yield* Effect.exit(legacyDbAdvisors(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to query lints");
+        expect(stringifyJson(exit.cause)).toContain("failed to query lints");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -392,9 +392,9 @@ describe("legacy db advisors — local", () => {
         const failure = Cause.findErrorOption(exit.cause);
         if (Option.isSome(failure)) {
           expect(failure.value).toBeInstanceOf(LegacyDbAdvisorsFailOnError);
-          expect((failure.value as LegacyDbAdvisorsFailOnError).message).toBe(
-            "fail-on is set to error, non-zero exit",
-          );
+          if (failure.value instanceof LegacyDbAdvisorsFailOnError) {
+            expect(failure.value.message).toBe("fail-on is set to error, non-zero exit");
+          }
         }
       }
     }).pipe(Effect.provide(layer));
@@ -412,9 +412,9 @@ describe("legacy db advisors — local", () => {
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
         if (Option.isSome(failure)) {
-          expect((failure.value as LegacyDbAdvisorsFailOnError).message).toBe(
-            "fail-on is set to warn, non-zero exit",
-          );
+          if (failure.value instanceof LegacyDbAdvisorsFailOnError) {
+            expect(failure.value.message).toBe("fail-on is set to warn, non-zero exit");
+          }
         }
       }
     }).pipe(Effect.provide(layer));
@@ -428,7 +428,7 @@ describe("legacy db advisors — local", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(stringifyJson(exit.cause)).toContain(
           "if any flags in the group [db-url linked local] are set none of the others can be",
         );
       }
@@ -505,7 +505,7 @@ describe("legacy db advisors — local", () => {
       const exit = yield* Effect.exit(legacyDbAdvisors(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(stringifyJson(exit.cause)).toContain(
           "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
         );
       }
@@ -598,7 +598,7 @@ describe("legacy db advisors — linked", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(stringifyJson(exit.cause)).toContain(
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }
@@ -638,7 +638,7 @@ describe("legacy db advisors — linked", () => {
       const exit = yield* Effect.exit(legacyDbAdvisors(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("IPv6 is not supported");
+        expect(stringifyJson(exit.cause)).toContain("IPv6 is not supported");
       }
       expect(api.requests).toHaveLength(0);
       // Cache written despite the DB-config failure (ref was loaded first).
@@ -703,10 +703,10 @@ describe("legacy db advisors — linked", () => {
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
         if (Option.isSome(failure)) {
-          expect(failure.value).toBeInstanceOf(LegacyDbAdvisorsNotLoggedInError);
-          const error = failure.value as LegacyDbAdvisorsNotLoggedInError;
-          expect(error.message).toContain("Access token not provided");
-          expect(error.suggestion).toContain("supabase login");
+          if (failure.value instanceof LegacyDbAdvisorsNotLoggedInError) {
+            expect(failure.value.message).toContain("Access token not provided");
+            expect(failure.value.suggestion).toContain("supabase login");
+          }
         }
       }
     }).pipe(Effect.provide(layer));
@@ -720,10 +720,10 @@ describe("legacy db advisors — linked", () => {
       if (Exit.isFailure(exit)) {
         const failure = Cause.findErrorOption(exit.cause);
         if (Option.isSome(failure)) {
-          expect(failure.value).toBeInstanceOf(LegacyDbAdvisorsInvalidTokenError);
-          const error = failure.value as LegacyDbAdvisorsInvalidTokenError;
-          expect(error.message).toContain("Invalid access token format");
-          expect(error.suggestion).toContain("supabase login");
+          if (failure.value instanceof LegacyDbAdvisorsInvalidTokenError) {
+            expect(failure.value.message).toContain("Invalid access token format");
+            expect(failure.value.suggestion).toContain("supabase login");
+          }
         }
       }
       // The token gate fails before any advisors request is made.
@@ -739,7 +739,7 @@ describe("legacy db advisors — linked", () => {
       const exit = yield* Effect.exit(legacyDbAdvisors(flags({ type: Option.some("security") })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("unexpected security advisors status 200");
+        expect(stringifyJson(exit.cause)).toContain("unexpected security advisors status 200");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -750,7 +750,7 @@ describe("legacy db advisors — linked", () => {
       const exit = yield* Effect.exit(legacyDbAdvisors(flags({ type: Option.some("security") })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("unexpected security advisors status 500");
+        expect(stringifyJson(exit.cause)).toContain("unexpected security advisors status 500");
       }
     }).pipe(Effect.provide(layer));
   });

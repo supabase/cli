@@ -1,8 +1,9 @@
 import { loadProjectConfig, loadProjectEnvironment } from "@supabase/config";
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Config, ConfigProvider, Effect, FileSystem, Option, Path, Schema } from "effect";
 import { legacyAssertDecodableJwkAlgorithm } from "../../shared/legacy-go-jwt.ts";
 import { legacyGoJsonKindName } from "../../shared/legacy-go-json.ts";
 import { legacyResolveProjectEnvironmentValues } from "../../shared/legacy-project-environment.ts";
+import { collectConfigEnvironment } from "../../../shared/runtime/config-environment.ts";
 
 /**
  * Shared `[auth].signing_keys_path` config-loading logic for the `gen` command
@@ -20,6 +21,8 @@ import { legacyResolveProjectEnvironmentValues } from "../../shared/legacy-proje
  */
 
 export type LegacyStoredSigningKeyJwk = Readonly<Record<string, unknown>>;
+
+const decodeJsonString = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 interface LegacyGenSigningKeysConfigPaths {
   /** CWD-relative `supabase/config.toml` (or the resolved config file's own display path). */
@@ -489,18 +492,24 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
   // with it fine. Fills the exact same gap `legacy-local-project-context.ts`'s
   // `legacyLoadLocalProjectContext` already fills for `stop`/`status`, via the
   // same two-step resolution.
+  const supabaseEnv = yield* Config.option(Config.string("SUPABASE_ENV")).pipe(
+    Effect.orElseSucceed(() => Option.none<string>()),
+  );
+  const provider = yield* ConfigProvider.ConfigProvider;
+  const shellEnv = yield* collectConfigEnvironment(provider);
   const projectEnv = yield* loadProjectEnvironment({
     cwd,
-    baseEnv: process.env,
+    baseEnv: shellEnv,
     search: false,
-    skipEnvLocal: (process.env["SUPABASE_ENV"] || "development") === "test",
+    skipEnvLocal: Option.isSome(supabaseEnv) && supabaseEnv.value === "test",
   }).pipe(
     Effect.mapError((cause) => onConfigParseError(`failed to read config: ${String(cause)}`)),
   );
-  const projectEnvValues = yield* Effect.try({
-    try: () => legacyResolveProjectEnvironmentValues(projectEnv, cwd),
-    catch: (cause) => onConfigParseError(`failed to read config: ${String(cause)}`),
-  });
+  const projectEnvValues = yield* legacyResolveProjectEnvironmentValues(
+    projectEnv,
+    cwd,
+    shellEnv,
+  ).pipe(Effect.mapError((cause) => onConfigParseError(cause.message)));
   const loaded = yield* loadProjectConfig(cwd, {
     projectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
     goViperCompat: true,
@@ -592,19 +601,11 @@ export const legacyReadSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
   const raw = yield* fs
     .readFileString(actualPath)
     .pipe(Effect.mapError((cause) => onReadError(`failed to read signing keys: ${String(cause)}`)));
+  // Decoding is a single `json.Decoder.Decode`-style call, which reads exactly
+  // ONE JSON value and never checks for trailing bytes. Parse only the first
+  // value's own source span to preserve that established behavior.
   const decoded = yield* Effect.try({
-    // Decoding is a single `json.Decoder.Decode`-style call, which reads
-    // exactly ONE JSON value and never checks for trailing bytes — content
-    // after that first value (even further syntactically-valid JSON, e.g. a
-    // `signing_keys_path` file containing `"[validKey] []"`) is silently
-    // ignored, not an error. Plain `JSON.parse` requires the ENTIRE string to
-    // be exactly one value and throws on anything left over, so parse only
-    // the first value's own source span — reusing the same
-    // {@link skipJsonValue} span-scanner {@link splitJsonArrayElementTexts}
-    // already uses below — to match the established decode-once-ignore-the-rest
-    // behavior: signing still succeeds with `validKey` from a
-    // `signing_keys_path` file containing `[validKey] []`.
-    try: () => JSON.parse(raw.slice(0, skipJsonValue(raw, 0))),
+    try: () => decodeJsonString(raw.slice(0, skipJsonValue(raw, 0))),
     catch: (cause) => onDecodeError(`failed to decode signing keys: ${String(cause)}`),
   });
   if (!Array.isArray(decoded)) {
@@ -638,29 +639,30 @@ export const legacyReadSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
   }
   const elementTexts = splitJsonArrayElementTexts(raw);
   const normalized: Array<Record<string, unknown>> = [];
-  for (const [index, item] of (
-    decoded as ReadonlyArray<Record<string, unknown> | null>
-  ).entries()) {
+  const records = decoded.map((item): Record<string, unknown> | null =>
+    item === null ? null : isRecord(item) ? item : {},
+  );
+  for (const [index, item] of records.entries()) {
     const record = item === null ? {} : item;
     const elementText = elementTexts[index];
-    try {
+    yield* Effect.try({
       // Case-insensitive lookup (`resolveJwkFieldValue`) — the `alg`
       // allowlist check (`config.Algorithm.UnmarshalText`) runs at
       // JSON-decode time regardless of the key's casing; see that
       // function's doc comment.
-      const alg = resolveJwkFieldValue(record, "alg");
-      legacyAssertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined);
-      if (elementText !== undefined) {
-        assertNoMalformedDuplicateJwkField(elementText);
-      }
-    } catch (cause) {
-      return yield* Effect.fail(
+      try: () => {
+        const alg = resolveJwkFieldValue(record, "alg");
+        legacyAssertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined);
+        if (elementText !== undefined) {
+          assertNoMalformedDuplicateJwkField(elementText);
+        }
+      },
+      catch: (cause) =>
         onDecodeError(
           `failed to decode signing keys: failed to parse response body: ${cause instanceof Error ? cause.message : String(cause)}`,
         ),
-      );
-    }
+    });
     normalized.push(record);
   }
-  return normalized as ReadonlyArray<LegacyStoredSigningKeyJwk>;
+  return normalized;
 });

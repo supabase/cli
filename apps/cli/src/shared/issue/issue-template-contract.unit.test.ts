@@ -1,6 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, FileSystem, Layer, Path } from "effect";
 import { parse } from "yaml";
 import {
   buildIssueUrl,
@@ -8,6 +8,8 @@ import {
   issueInstallMethodValues,
   issueTemplateContract,
 } from "./issue-url.ts";
+import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
+import { runtimeInfoLayer } from "../runtime/runtime-info.layer.ts";
 
 type IssueFormOption =
   | string
@@ -34,15 +36,22 @@ function isBodyItem(value: unknown): value is IssueFormBodyItem {
   return isRecord(value);
 }
 
-function issueTemplateDir() {
-  return resolve(process.cwd(), "../../.github/ISSUE_TEMPLATE");
-}
+const testLayer = Layer.mergeAll(BunServices.layer, runtimeInfoLayer);
 
-function readTemplate(template: string): ReadonlyArray<IssueFormBodyItem> {
-  const path = resolve(issueTemplateDir(), template);
-  const parsed = parse(readFileSync(path, "utf8"));
-  if (!isRecord(parsed) || !Array.isArray(parsed.body)) return [];
-  return parsed.body.filter(isBodyItem);
+const issueTemplateDir = Effect.gen(function* () {
+  const runtimeInfo = yield* RuntimeInfo;
+  const path = yield* Path.Path;
+  return path.resolve(runtimeInfo.cwd, "../../.github/ISSUE_TEMPLATE");
+});
+
+function readTemplate(templateDir: string, template: string) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parsed = parse(yield* fs.readFileString(path.resolve(templateDir, template)));
+    if (!isRecord(parsed) || !Array.isArray(parsed.body)) return [];
+    return parsed.body.filter(isBodyItem);
+  });
 }
 
 function fieldIds(body: ReadonlyArray<IssueFormBodyItem>) {
@@ -67,42 +76,53 @@ function requiredFields(body: ReadonlyArray<IssueFormBodyItem>) {
 
     const options = item.attributes?.options;
     if (!Array.isArray(options) || typeof item.id !== "string") return [];
+    const fieldId = item.id;
     return options.flatMap((option: IssueFormOption) => {
       if (typeof option === "string") return [];
-      return option.required === true ? [`${item.id}:${String(option.label)}`] : [];
+      return option.required === true ? [`${fieldId}:${String(option.label)}`] : [];
     });
   });
 }
 
 describe("issue template contract", () => {
-  it("points to issue form templates that exist", () => {
-    for (const form of Object.values(issueTemplateContract)) {
-      expect(existsSync(resolve(issueTemplateDir(), form.template))).toBe(true);
-    }
-  });
-
-  it("keeps issue command field ids aligned with the GitHub issue forms", () => {
-    for (const form of Object.values(issueTemplateContract)) {
-      const ids = fieldIds(readTemplate(form.template));
-      expect(ids).toEqual(expect.arrayContaining([...form.fields]));
-      expect(form.fields).toEqual(expect.arrayContaining(ids));
-    }
-  });
-
-  it("keeps issue command prefilled option values valid for their fields", () => {
-    for (const form of Object.values(issueTemplateContract)) {
-      const body = readTemplate(form.template);
-      for (const [fieldId, values] of Object.entries(form.optionValues)) {
-        const item = body.find((entry) => entry.id === fieldId);
-        expect(item, `${form.template} should include field ${fieldId}`).toBeDefined();
-        expect(optionLabels(item!)).toEqual(expect.arrayContaining([...values]));
+  it.effect("points to issue form templates that exist", () =>
+    Effect.gen(function* () {
+      const templateDir = yield* issueTemplateDir;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      for (const form of Object.values(issueTemplateContract)) {
+        expect(yield* fs.exists(path.resolve(templateDir, form.template))).toBe(true);
       }
-    }
-  });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("keeps issue command field ids aligned with the GitHub issue forms", () =>
+    Effect.gen(function* () {
+      const templateDir = yield* issueTemplateDir;
+      for (const form of Object.values(issueTemplateContract)) {
+        const ids = fieldIds(yield* readTemplate(templateDir, form.template));
+        expect(ids).toEqual(expect.arrayContaining([...form.fields]));
+        expect(form.fields).toEqual(expect.arrayContaining(ids));
+      }
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("keeps issue command prefilled option values valid for their fields", () =>
+    Effect.gen(function* () {
+      const templateDir = yield* issueTemplateDir;
+      for (const form of Object.values(issueTemplateContract)) {
+        const body = yield* readTemplate(templateDir, form.template);
+        for (const [fieldId, values] of Object.entries(form.optionValues)) {
+          const item = body.find((entry) => entry.id === fieldId);
+          expect(item, `${form.template} should include field ${fieldId}`).toBeDefined();
+          if (item === undefined) continue;
+          expect(optionLabels(item)).toEqual(expect.arrayContaining([...values]));
+        }
+      }
+    }).pipe(Effect.provide(testLayer)),
+  );
 
   it("keeps inferred install methods compatible with the template dropdown", () => {
-    const originalUserAgent = process.env["npm_config_user_agent"];
-    const originalInstallMethod = process.env["SUPABASE_INSTALL_METHOD"];
     const cases = [
       { userAgent: "pnpm/10.0.0", execPath: "/usr/local/bin/supabase", expected: "pnpm" },
       { userAgent: "npm/11.0.0", execPath: "/usr/local/bin/supabase", expected: "npm" },
@@ -112,30 +132,27 @@ describe("issue template contract", () => {
       { userAgent: undefined, execPath: "/usr/local/bin/supabase", expected: "Other" },
     ] as const;
 
-    try {
-      delete process.env["SUPABASE_INSTALL_METHOD"];
-      for (const testcase of cases) {
-        if (testcase.userAgent === undefined) {
-          delete process.env["npm_config_user_agent"];
-        } else {
-          process.env["npm_config_user_agent"] = testcase.userAgent;
-        }
-        const value = inferIssueInstallMethod({ execPath: testcase.execPath });
-        expect(value).toBe(testcase.expected);
-        expect(issueInstallMethodValues).toContain(value);
-      }
-
-      process.env["SUPABASE_INSTALL_METHOD"] = "Docker image";
-      expect(inferIssueInstallMethod({ execPath: "/usr/local/bin/supabase" })).toBe("Docker image");
-
-      process.env["SUPABASE_INSTALL_METHOD"] = "asdf";
-      expect(inferIssueInstallMethod({ execPath: "/usr/local/bin/supabase" })).toBe("Other");
-    } finally {
-      if (originalUserAgent === undefined) delete process.env["npm_config_user_agent"];
-      else process.env["npm_config_user_agent"] = originalUserAgent;
-      if (originalInstallMethod === undefined) delete process.env["SUPABASE_INSTALL_METHOD"];
-      else process.env["SUPABASE_INSTALL_METHOD"] = originalInstallMethod;
+    for (const testcase of cases) {
+      const value = inferIssueInstallMethod(
+        { execPath: testcase.execPath },
+        { npm_config_user_agent: testcase.userAgent },
+      );
+      expect(value).toBe(testcase.expected);
+      expect(issueInstallMethodValues).toContain(value);
     }
+
+    expect(
+      inferIssueInstallMethod(
+        { execPath: "/usr/local/bin/supabase" },
+        { SUPABASE_INSTALL_METHOD: "Docker image" },
+      ),
+    ).toBe("Docker image");
+    expect(
+      inferIssueInstallMethod(
+        { execPath: "/usr/local/bin/supabase" },
+        { SUPABASE_INSTALL_METHOD: "asdf" },
+      ),
+    ).toBe("Other");
   });
 
   it("keeps generated issue URLs under the browser-friendly limit", () => {
@@ -150,9 +167,13 @@ describe("issue template contract", () => {
     expect(url.length).toBeLessThanOrEqual(8_000);
   });
 
-  it("keeps issue form required fields aligned with the command contract", () => {
-    for (const form of Object.values(issueTemplateContract)) {
-      expect(requiredFields(readTemplate(form.template))).toEqual([...form.requiredFields]);
-    }
-  });
+  it.effect("keeps issue form required fields aligned with the command contract", () =>
+    Effect.gen(function* () {
+      const templateDir = yield* issueTemplateDir;
+      for (const form of Object.values(issueTemplateContract)) {
+        const body = yield* readTemplate(templateDir, form.template);
+        expect(requiredFields(body)).toEqual([...form.requiredFields]);
+      }
+    }).pipe(Effect.provide(testLayer)),
+  );
 });

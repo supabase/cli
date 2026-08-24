@@ -1,4 +1,4 @@
-import { Effect, type FileSystem, type Path } from "effect";
+import { Effect, Schema, type FileSystem, type Path } from "effect";
 import { classifySqlFiles } from "@supabase/pg-delta/frontends";
 
 import { Output } from "../../../../shared/output/output.service.ts";
@@ -223,7 +223,9 @@ const writeNextDeclarativeSchemas = Effect.fnUntraced(function* (
     ...output.manifest,
     files: proposed.map((file) => file.name).sort(),
   };
-  const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
+  const serialized = `${yield* Schema.encodeEffect(
+    Schema.fromJsonString(Schema.Unknown, { space: 2 }),
+  )(manifest)}\n`;
   const manifestPath = path.join(declarativeDir, EXPORT_MANIFEST_FILE);
   const manifestExists = yield* fs
     .exists(manifestPath)

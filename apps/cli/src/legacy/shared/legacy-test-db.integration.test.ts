@@ -1,8 +1,6 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { ConfigProvider, Effect, Exit, FileSystem, Formatter, Layer, Option, Path } from "effect";
 
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
@@ -17,6 +15,7 @@ import {
   LegacyNetworkIdFlag,
 } from "../../shared/legacy/global-flags.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
+import { makeLegacyViperEnvLayer } from "../../shared/legacy/legacy-viper-env.ts";
 import { LegacyDbConfigResolver } from "./legacy-db-config.service.ts";
 import { LegacyDbConnectError, LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import {
@@ -78,10 +77,10 @@ function mockDbConnection(opts: {
       Effect.gen(function* () {
         execCalls.push(sql);
         if (opts.enableFails === true && sql.includes("create extension")) {
-          return yield* Effect.fail(new LegacyDbExecError({ message: "permission denied" }));
+          return yield* new LegacyDbExecError({ message: "permission denied" });
         }
         if (opts.dropFails === true && sql.includes("drop extension")) {
-          return yield* Effect.fail(new LegacyDbExecError({ message: "cannot drop" }));
+          return yield* new LegacyDbExecError({ message: "cannot drop" });
         }
       }),
     // `test db` never runs a migration batch; keep the seam explicit rather than silent.
@@ -211,6 +210,7 @@ interface SetupOpts {
   dnsResolver?: "native" | "https";
   /** Raw CLI args for `CliArgs` — drives DB target selection (Changed-based). */
   args?: ReadonlyArray<string>;
+  env?: Readonly<Record<string, string>>;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -234,6 +234,9 @@ function setup(opts: SetupOpts = {}) {
     ),
     Layer.succeed(LegacyDnsResolverFlag, opts.dnsResolver ?? "native"),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
+    makeLegacyViperEnvLayer(
+      ConfigProvider.fromEnv({ env: opts.env ?? {}, preserveEmptyStrings: true }),
+    ),
     BunServices.layer,
   );
   return { layer, out, telemetry, connection, docker, resolver };
@@ -292,21 +295,13 @@ describe("legacy test db integration", () => {
   it.live("omits --security-opt inside Bitbucket Pipelines (BITBUCKET_CLONE_DIR set)", () => {
     // Go clears hostConfig.SecurityOpt when BITBUCKET_CLONE_DIR is set, because
     // Bitbucket rejects --security-opt (apps/cli-go/internal/utils/docker.go:288-293).
-    const { layer, docker } = setup();
-    const prev = process.env["BITBUCKET_CLONE_DIR"];
-    process.env["BITBUCKET_CLONE_DIR"] = "/opt/atlassian/pipelines/agent/build";
+    const { layer, docker } = setup({
+      env: { BITBUCKET_CLONE_DIR: "/opt/atlassian/pipelines/agent/build" },
+    });
     return Effect.gen(function* () {
       yield* legacyTestDb(flags());
       expect(docker.lastOpts?.securityOpt).toEqual([]);
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["BITBUCKET_CLONE_DIR"];
-          else process.env["BITBUCKET_CLONE_DIR"] = prev;
-        }),
-      ),
-    );
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("skips dropping pgtap when it already existed", () => {
@@ -402,7 +397,9 @@ describe("legacy test db integration", () => {
       const exit = yield* Effect.exit(legacyTestDb(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to enable pgTAP: permission denied");
+        expect(Formatter.formatJson(exit.cause)).toContain(
+          "failed to enable pgTAP: permission denied",
+        );
       }
     }).pipe(Effect.provide(layer));
   });
@@ -413,7 +410,7 @@ describe("legacy test db integration", () => {
       const exit = yield* Effect.exit(legacyTestDb(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to connect to postgres");
+        expect(Formatter.formatJson(exit.cause)).toContain("failed to connect to postgres");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -424,7 +421,7 @@ describe("legacy test db integration", () => {
       const exit = yield* Effect.exit(legacyTestDb(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("error running container: exit 3");
+        expect(Formatter.formatJson(exit.cause)).toContain("error running container: exit 3");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -438,7 +435,7 @@ describe("legacy test db integration", () => {
       const exit = yield* Effect.exit(legacyTestDb(flags({ paths: ["tests/db"] })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Formatter.formatJson(exit.cause)).toContain(
           "no pgTAP tests found in /work/project/tests/db",
         );
       }
@@ -456,7 +453,7 @@ describe("legacy test db integration", () => {
   it.live("detects the NOTESTS verdict arriving one byte per chunk", () => {
     const { layer } = setup({
       exitCode: 0,
-      stdout: [..."Files=0, Tests=0\nResult: NOTESTS\n"],
+      stdout: Array.from("Files=0, Tests=0\nResult: NOTESTS\n"),
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyTestDb(flags()));
@@ -544,7 +541,7 @@ describe("legacy test db integration", () => {
       const exit = yield* Effect.exit(legacyTestDb(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to run docker");
+        expect(Formatter.formatJson(exit.cause)).toContain("failed to run docker");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -573,7 +570,7 @@ describe("legacy test db integration", () => {
       const exit = yield* Effect.exit(legacyTestDb(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Formatter.formatJson(exit.cause)).toContain(
           "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
         );
       }
@@ -587,7 +584,7 @@ describe("legacy test db integration", () => {
       const exit = yield* Effect.exit(legacyTestDb(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Formatter.formatJson(exit.cause)).toContain(
           "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
         );
       }
@@ -599,11 +596,9 @@ describe("legacy test db integration", () => {
     // `--linked=false` is still "explicitly set" → linked branch.
     // The resolver mock will be called with connType="linked".
     const { layer } = setup({ args: ["--linked=false"] });
-    return Effect.gen(function* () {
-      // The resolver mock doesn't validate — success means routing reached resolver.resolve
-      // with connType "linked" (no mutual-exclusion error, no local fallback error).
-      yield* legacyTestDb(flags());
-    }).pipe(Effect.provide(layer));
+    // The resolver mock doesn't validate — success means routing reached resolver.resolve
+    // with connType "linked" (no mutual-exclusion error, no local fallback error).
+    return legacyTestDb(flags()).pipe(Effect.provide(layer));
   });
 
   it.live("tests the project given via --project-ref --linked", () => {
@@ -627,7 +622,7 @@ describe("legacy test db integration", () => {
       const exit = yield* Effect.exit(legacyTestDb(flags({ projectRef: Option.some(FLAG_REF) })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(Formatter.formatJson(exit.cause)).toContain(
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }
@@ -683,13 +678,19 @@ describe("legacy test db integration", () => {
   const tempWorkdir = useLegacyTempWorkdir();
   it.live("sanitizes a configured project_id when naming the local network (Go parity)", () => {
     const workdir = tempWorkdir.current;
-    mkdirSync(join(workdir, "supabase"), { recursive: true });
     // Go auto-fixes an invalid project_id via sanitizeProjectId (config.go:471,
     // 803-805); the local stack network is created from the sanitized id, so
     // `test db --local` must join `supabase_network_My_Project`, not the raw value.
-    writeFileSync(join(workdir, "supabase", "config.toml"), 'project_id = "My Project"\n');
     const { layer, docker } = setup({ workdir });
     return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const supabaseDir = path.join(workdir, "supabase");
+      yield* fs.makeDirectory(supabaseDir, { recursive: true });
+      yield* fs.writeFileString(
+        path.join(supabaseDir, "config.toml"),
+        'project_id = "My Project"\n',
+      );
       yield* legacyTestDb(flags());
       expect(docker.lastOpts?.network).toEqual({
         _tag: "named",

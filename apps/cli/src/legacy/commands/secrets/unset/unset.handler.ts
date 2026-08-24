@@ -77,9 +77,7 @@ export const legacySecretsUnset = Effect.fn("legacy.secrets.unset")(function* (
     const confirmed = yield* legacyPromptYesNo(output, yes, label, true);
 
     if (!confirmed) {
-      return yield* Effect.fail(
-        new LegacySecretsUnsetCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
-      );
+      return yield* new LegacySecretsUnsetCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
     }
 
     const unsetting =

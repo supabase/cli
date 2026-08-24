@@ -1,12 +1,7 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
 import type { ApiClient } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
-import { Effect, Exit, Layer, Option } from "effect";
-import { afterEach, beforeEach } from "vitest";
+import { BunPath, BunServices } from "@effect/platform-bun";
+import { Effect, Exit, FileSystem, Formatter, Layer, Option, Path } from "effect";
 
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
@@ -14,6 +9,7 @@ import { mockOutput, mockTty } from "../../../tests/helpers/mocks.ts";
 import { LegacyCliConfig } from "./legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "./legacy-project-ref.service.ts";
 import { legacyProjectRefLayer } from "./legacy-project-ref.layer.ts";
+import { useLegacyTempWorkdir } from "../../../tests/helpers/legacy-mocks.ts";
 
 const VALID_REF = "abcdefghijklmnopqrst";
 const ANOTHER_REF = "qrstuvwxyzabcdefghij";
@@ -60,12 +56,13 @@ function makeLayer(opts: {
     region: string;
   }>;
   promptSelectResponses?: ReadonlyArray<string>;
+  refFile?: string;
 }) {
   const out = mockOutput({
     format: opts.format ?? "text",
     promptSelectResponses: opts.promptSelectResponses,
   });
-  const layer = legacyProjectRefLayer.pipe(
+  const baseLayer = legacyProjectRefLayer.pipe(
     Layer.provide(mockCliConfig(opts)),
     Layer.provide(mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false })),
     Layer.provide(out.layer),
@@ -76,29 +73,33 @@ function makeLayer(opts: {
     ),
     Layer.provide(BunServices.layer),
   );
+  const refFile = opts.refFile;
+  const refFileLayer =
+    refFile === undefined
+      ? Layer.empty
+      : Layer.effectDiscard(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const refPath = path.join(opts.workdir, "supabase", ".temp", "project-ref");
+            yield* fs.makeDirectory(path.dirname(refPath), { recursive: true });
+            yield* fs.writeFileString(refPath, refFile);
+          }).pipe(Effect.provide(BunServices.layer)),
+        );
+  const layer = Layer.mergeAll(baseLayer.pipe(Layer.provide(refFileLayer)), BunServices.layer);
   return { layer, out };
 }
 
-let tempRoot: string;
-
-beforeEach(() => {
-  tempRoot = mkdtempSync(join(tmpdir(), "supabase-legacy-project-ref-"));
-});
-
-afterEach(() => {
-  rmSync(tempRoot, { recursive: true, force: true });
-});
-
-function writeRefFile(workdir: string, content: string) {
-  const tempDir = join(workdir, "supabase", ".temp");
-  mkdirSync(tempDir, { recursive: true });
-  writeFileSync(join(tempDir, "project-ref"), content);
-}
+const tempRoot = useLegacyTempWorkdir("supabase-legacy-project-ref-");
+const path = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
 
 describe("legacyProjectRefLayer", () => {
   it.effect("prefers --project-ref flag over env and file", () => {
-    writeRefFile(tempRoot, ANOTHER_REF);
-    const { layer } = makeLayer({ workdir: tempRoot, projectId: ANOTHER_REF });
+    const { layer } = makeLayer({
+      workdir: tempRoot.current,
+      projectId: ANOTHER_REF,
+      refFile: ANOTHER_REF,
+    });
     return Effect.gen(function* () {
       const { resolve } = yield* LegacyProjectRefResolver;
       const ref = yield* resolve(Option.some(VALID_REF));
@@ -107,8 +108,11 @@ describe("legacyProjectRefLayer", () => {
   });
 
   it.effect("uses SUPABASE_PROJECT_ID when flag is unset", () => {
-    writeRefFile(tempRoot, ANOTHER_REF);
-    const { layer } = makeLayer({ workdir: tempRoot, projectId: VALID_REF });
+    const { layer } = makeLayer({
+      workdir: tempRoot.current,
+      projectId: VALID_REF,
+      refFile: ANOTHER_REF,
+    });
     return Effect.gen(function* () {
       const { resolve } = yield* LegacyProjectRefResolver;
       const ref = yield* resolve(Option.none());
@@ -117,8 +121,7 @@ describe("legacyProjectRefLayer", () => {
   });
 
   it.effect("reads <workdir>/supabase/.temp/project-ref when env and flag are unset", () => {
-    writeRefFile(tempRoot, VALID_REF);
-    const { layer } = makeLayer({ workdir: tempRoot });
+    const { layer } = makeLayer({ workdir: tempRoot.current, refFile: VALID_REF });
     return Effect.gen(function* () {
       const { resolve } = yield* LegacyProjectRefResolver;
       const ref = yield* resolve(Option.none());
@@ -127,8 +130,7 @@ describe("legacyProjectRefLayer", () => {
   });
 
   it.effect("trims whitespace from the temp/project-ref file content", () => {
-    writeRefFile(tempRoot, `  ${VALID_REF}\n\n`);
-    const { layer } = makeLayer({ workdir: tempRoot });
+    const { layer } = makeLayer({ workdir: tempRoot.current, refFile: `  ${VALID_REF}\n\n` });
     return Effect.gen(function* () {
       const { resolve } = yield* LegacyProjectRefResolver;
       const ref = yield* resolve(Option.none());
@@ -142,7 +144,7 @@ describe("legacyProjectRefLayer", () => {
       { id: ANOTHER_REF, name: "beta", organization_slug: "acme", region: "eu-west-1" },
     ];
     const { layer, out } = makeLayer({
-      workdir: tempRoot,
+      workdir: tempRoot.current,
       stdinIsTty: true,
       projects,
       promptSelectResponses: [ANOTHER_REF],
@@ -168,9 +170,9 @@ describe("legacyProjectRefLayer", () => {
     const projects = [
       { id: VALID_REF, name: "alpha", organization_slug: "acme", region: "us-east-1" },
     ];
-    const refPath = join(tempRoot, "supabase", ".temp", "project-ref");
+    const refPath = path.join(tempRoot.current, "supabase", ".temp", "project-ref");
     const { layer } = makeLayer({
-      workdir: tempRoot,
+      workdir: tempRoot.current,
       stdinIsTty: true,
       projects,
       promptSelectResponses: [VALID_REF],
@@ -179,18 +181,19 @@ describe("legacyProjectRefLayer", () => {
       const { resolve } = yield* LegacyProjectRefResolver;
       yield* resolve(Option.none());
       // The resolver must not write the file — only `supabase link` does.
-      expect(existsSync(refPath)).toBe(false);
+      const fs = yield* FileSystem.FileSystem;
+      expect(yield* fs.exists(refPath)).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
   it.effect("fails with LegacyProjectNotLinkedError on non-TTY with no source", () => {
-    const { layer } = makeLayer({ workdir: tempRoot });
+    const { layer } = makeLayer({ workdir: tempRoot.current });
     return Effect.gen(function* () {
       const { resolve } = yield* LegacyProjectRefResolver;
       const exit = yield* Effect.exit(resolve(Option.none()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacyProjectNotLinkedError");
         expect(errorJson).toContain("supabase link");
       }
@@ -198,13 +201,13 @@ describe("legacyProjectRefLayer", () => {
   });
 
   it.effect("fails with LegacyInvalidProjectRefError when the resolved ref is malformed", () => {
-    const { layer } = makeLayer({ workdir: tempRoot, projectId: "not-a-valid-ref" });
+    const { layer } = makeLayer({ workdir: tempRoot.current, projectId: "not-a-valid-ref" });
     return Effect.gen(function* () {
       const { resolve } = yield* LegacyProjectRefResolver;
       const exit = yield* Effect.exit(resolve(Option.none()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacyInvalidProjectRefError");
         expect(errorJson).toContain("Invalid project ref format");
       }
@@ -212,7 +215,7 @@ describe("legacyProjectRefLayer", () => {
   });
 
   it.effect("rejects invalid ref from --project-ref flag", () => {
-    const { layer } = makeLayer({ workdir: tempRoot });
+    const { layer } = makeLayer({ workdir: tempRoot.current });
     return Effect.gen(function* () {
       const { resolve } = yield* LegacyProjectRefResolver;
       const exit = yield* Effect.exit(resolve(Option.some("BADREF")));
@@ -221,8 +224,7 @@ describe("legacyProjectRefLayer", () => {
   });
 
   it.effect("rejects invalid ref from temp/project-ref file", () => {
-    writeRefFile(tempRoot, "BADREF");
-    const { layer } = makeLayer({ workdir: tempRoot });
+    const { layer } = makeLayer({ workdir: tempRoot.current, refFile: "BADREF" });
     return Effect.gen(function* () {
       const { resolve } = yield* LegacyProjectRefResolver;
       const exit = yield* Effect.exit(resolve(Option.none()));
@@ -232,8 +234,11 @@ describe("legacyProjectRefLayer", () => {
 
   describe("resolveOptional", () => {
     it.effect("prefers the flag value", () => {
-      writeRefFile(tempRoot, ANOTHER_REF);
-      const { layer } = makeLayer({ workdir: tempRoot, projectId: ANOTHER_REF });
+      const { layer } = makeLayer({
+        workdir: tempRoot.current,
+        projectId: ANOTHER_REF,
+        refFile: ANOTHER_REF,
+      });
       return Effect.gen(function* () {
         const { resolveOptional } = yield* LegacyProjectRefResolver;
         const ref = yield* resolveOptional(Option.some(VALID_REF));
@@ -242,7 +247,7 @@ describe("legacyProjectRefLayer", () => {
     });
 
     it.effect("falls back to projectId then the ref file", () => {
-      const { layer } = makeLayer({ workdir: tempRoot, projectId: VALID_REF });
+      const { layer } = makeLayer({ workdir: tempRoot.current, projectId: VALID_REF });
       return Effect.gen(function* () {
         const { resolveOptional } = yield* LegacyProjectRefResolver;
         const ref = yield* resolveOptional(Option.none());
@@ -251,8 +256,7 @@ describe("legacyProjectRefLayer", () => {
     });
 
     it.effect("reads the ref file when flag and projectId are unset", () => {
-      writeRefFile(tempRoot, VALID_REF);
-      const { layer } = makeLayer({ workdir: tempRoot });
+      const { layer } = makeLayer({ workdir: tempRoot.current, refFile: VALID_REF });
       return Effect.gen(function* () {
         const { resolveOptional } = yield* LegacyProjectRefResolver;
         const ref = yield* resolveOptional(Option.none());
@@ -261,7 +265,7 @@ describe("legacyProjectRefLayer", () => {
     });
 
     it.effect("returns None and never fails when nothing resolves", () => {
-      const { layer } = makeLayer({ workdir: tempRoot });
+      const { layer } = makeLayer({ workdir: tempRoot.current });
       return Effect.gen(function* () {
         const { resolveOptional } = yield* LegacyProjectRefResolver;
         const ref = yield* resolveOptional(Option.none());
@@ -272,8 +276,11 @@ describe("legacyProjectRefLayer", () => {
 
   describe("loadProjectRef (Go flags.LoadProjectRef — non-prompting)", () => {
     it.effect("prefers flag, then projectId, then the ref file", () => {
-      writeRefFile(tempRoot, ANOTHER_REF);
-      const { layer } = makeLayer({ workdir: tempRoot, projectId: ANOTHER_REF });
+      const { layer } = makeLayer({
+        workdir: tempRoot.current,
+        projectId: ANOTHER_REF,
+        refFile: ANOTHER_REF,
+      });
       return Effect.gen(function* () {
         const { loadProjectRef } = yield* LegacyProjectRefResolver;
         expect(yield* loadProjectRef(Option.some(VALID_REF))).toBe(VALID_REF);
@@ -281,8 +288,7 @@ describe("legacyProjectRefLayer", () => {
     });
 
     it.effect("reads the ref file when flag and projectId are unset", () => {
-      writeRefFile(tempRoot, VALID_REF);
-      const { layer } = makeLayer({ workdir: tempRoot });
+      const { layer } = makeLayer({ workdir: tempRoot.current, refFile: VALID_REF });
       return Effect.gen(function* () {
         const { loadProjectRef } = yield* LegacyProjectRefResolver;
         expect(yield* loadProjectRef(Option.none())).toBe(VALID_REF);
@@ -295,7 +301,7 @@ describe("legacyProjectRefLayer", () => {
       // lint`/`db advisors --linked` use loadProjectRef, which fails with
       // LegacyProjectNotLinkedError instead of prompting.
       const { layer, out } = makeLayer({
-        workdir: tempRoot,
+        workdir: tempRoot.current,
         stdinIsTty: true,
         projects: [
           { id: VALID_REF, name: "alpha", organization_slug: "acme", region: "us-east-1" },
@@ -307,7 +313,7 @@ describe("legacyProjectRefLayer", () => {
         const exit = yield* Effect.exit(loadProjectRef(Option.none()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const errorJson = JSON.stringify(exit.cause);
+          const errorJson = Formatter.formatJson(exit.cause);
           expect(errorJson).toContain("LegacyProjectNotLinkedError");
           expect(errorJson).toContain("supabase link");
         }
@@ -316,13 +322,13 @@ describe("legacyProjectRefLayer", () => {
     });
 
     it.effect("validates the resolved ref format", () => {
-      const { layer } = makeLayer({ workdir: tempRoot, projectId: "not-a-valid-ref" });
+      const { layer } = makeLayer({ workdir: tempRoot.current, projectId: "not-a-valid-ref" });
       return Effect.gen(function* () {
         const { loadProjectRef } = yield* LegacyProjectRefResolver;
         const exit = yield* Effect.exit(loadProjectRef(Option.none()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidProjectRefError");
+          expect(Formatter.formatJson(exit.cause)).toContain("LegacyInvalidProjectRefError");
         }
       }).pipe(Effect.provide(layer));
     });
@@ -330,7 +336,7 @@ describe("legacyProjectRefLayer", () => {
 
   describe("resolveForLink", () => {
     it.effect("prefers the --project-ref flag", () => {
-      const { layer } = makeLayer({ workdir: tempRoot, projectId: ANOTHER_REF });
+      const { layer } = makeLayer({ workdir: tempRoot.current, projectId: ANOTHER_REF });
       return Effect.gen(function* () {
         const { resolveForLink } = yield* LegacyProjectRefResolver;
         const ref = yield* resolveForLink(Option.some(VALID_REF));
@@ -339,7 +345,7 @@ describe("legacyProjectRefLayer", () => {
     });
 
     it.effect("uses SUPABASE_PROJECT_ID when the flag is unset", () => {
-      const { layer } = makeLayer({ workdir: tempRoot, projectId: VALID_REF });
+      const { layer } = makeLayer({ workdir: tempRoot.current, projectId: VALID_REF });
       return Effect.gen(function* () {
         const { resolveForLink } = yield* LegacyProjectRefResolver;
         const ref = yield* resolveForLink(Option.none());
@@ -350,14 +356,13 @@ describe("legacyProjectRefLayer", () => {
     it.effect("skips the ref file (Go MemMapFs) and fails off-TTY with no flag/projectId", () => {
       // A ref file is present, but link must ignore it and fail like cobra's
       // required-flag check would.
-      writeRefFile(tempRoot, VALID_REF);
-      const { layer } = makeLayer({ workdir: tempRoot });
+      const { layer } = makeLayer({ workdir: tempRoot.current, refFile: VALID_REF });
       return Effect.gen(function* () {
         const { resolveForLink } = yield* LegacyProjectRefResolver;
         const exit = yield* Effect.exit(resolveForLink(Option.none()));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const errorJson = JSON.stringify(exit.cause);
+          const errorJson = Formatter.formatJson(exit.cause);
           expect(errorJson).toContain("LegacyProjectRefRequiredError");
           expect(errorJson).toContain(`required flag(s) \\"project-ref\\" not set`);
         }
@@ -369,7 +374,7 @@ describe("legacyProjectRefLayer", () => {
         { id: VALID_REF, name: "alpha", organization_slug: "acme", region: "us-east-1" },
       ];
       const { layer, out } = makeLayer({
-        workdir: tempRoot,
+        workdir: tempRoot.current,
         stdinIsTty: true,
         projects,
         promptSelectResponses: [VALID_REF],
@@ -383,13 +388,13 @@ describe("legacyProjectRefLayer", () => {
     });
 
     it.effect("rejects an invalid --project-ref flag", () => {
-      const { layer } = makeLayer({ workdir: tempRoot });
+      const { layer } = makeLayer({ workdir: tempRoot.current });
       return Effect.gen(function* () {
         const { resolveForLink } = yield* LegacyProjectRefResolver;
         const exit = yield* Effect.exit(resolveForLink(Option.some("BADREF")));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidProjectRefError");
+          expect(Formatter.formatJson(exit.cause)).toContain("LegacyInvalidProjectRefError");
         }
       }).pipe(Effect.provide(layer));
     });
@@ -402,7 +407,7 @@ describe("legacyProjectRefLayer", () => {
         { id: ANOTHER_REF, name: "beta", organization_slug: "acme", region: "eu-west-1" },
       ];
       const { layer, out } = makeLayer({
-        workdir: tempRoot,
+        workdir: tempRoot.current,
         stdinIsTty: true,
         projects,
         promptSelectResponses: [ANOTHER_REF],

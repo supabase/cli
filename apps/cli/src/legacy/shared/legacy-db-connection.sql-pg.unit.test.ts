@@ -1,7 +1,8 @@
 import { EventEmitter } from "node:events";
-import { Effect, Exit } from "effect";
+import { Effect, Exit, Fiber } from "effect";
 import { SqlError, SqlSyntaxError, UnknownError } from "effect/unstable/sql/SqlError";
-import { describe, expect, it } from "vitest";
+import * as TestClock from "effect/testing/TestClock";
+import { describe, expect, it } from "@effect/vitest";
 
 import {
   legacyAcquireProbedPool,
@@ -364,33 +365,41 @@ describe("legacyBuildPoolConfig", () => {
 });
 
 describe("legacyPoolStepDownVerify", () => {
-  it("runs SET SESSION ROLE postgres and reports success to the pool", async () => {
-    const queries: Array<string> = [];
-    const client = { query: (sql: string) => (queries.push(sql), Promise.resolve()) };
-    const done = await new Promise<Error | undefined>((resolve) => {
-      legacyPoolStepDownVerify(client, resolve);
+  const runVerify = (client: { query: (sql: string) => Promise<void> }) =>
+    Effect.callback<Error | undefined>((resume) => {
+      legacyPoolStepDownVerify(client, (error) => resume(Effect.succeed(error)));
+      return Effect.void;
     });
-    expect(queries).toEqual(["SET SESSION ROLE postgres"]);
-    expect(done).toBeUndefined();
-  });
 
-  it("propagates a failing step-down to the pool callback so the checkout fails (Go AfterConnect parity)", async () => {
-    const failure = new Error("permission denied to set role");
-    const client = { query: () => Promise.reject(failure) };
-    const done = await new Promise<Error | undefined>((resolve) => {
-      legacyPoolStepDownVerify(client, resolve);
-    });
-    expect(done).toBe(failure);
-  });
+  it.effect("runs SET SESSION ROLE postgres and reports success to the pool", () =>
+    Effect.gen(function* () {
+      const queries: Array<string> = [];
+      const client = { query: (sql: string) => (queries.push(sql), Promise.resolve()) };
+      const done = yield* runVerify(client);
+      expect(queries).toEqual(["SET SESSION ROLE postgres"]);
+      expect(done).toBeUndefined();
+    }),
+  );
 
-  it("wraps a non-Error rejection into an Error for the pool callback", async () => {
-    const client = { query: () => Promise.reject("boom") };
-    const done = await new Promise<Error | undefined>((resolve) => {
-      legacyPoolStepDownVerify(client, resolve);
-    });
-    expect(done).toBeInstanceOf(Error);
-    expect(String(done)).toContain("boom");
-  });
+  it.effect(
+    "propagates a failing step-down to the pool callback so the checkout fails (Go AfterConnect parity)",
+    () =>
+      Effect.gen(function* () {
+        const failure = new Error("permission denied to set role");
+        const client = { query: () => Promise.reject(failure) };
+        const done = yield* runVerify(client);
+        expect(done).toBe(failure);
+      }),
+  );
+
+  it.effect("wraps a non-Error rejection into an Error for the pool callback", () =>
+    Effect.gen(function* () {
+      const client = { query: () => Promise.reject("boom") };
+      const done = yield* runVerify(client);
+      expect(done).toBeInstanceOf(Error);
+      expect(String(done)).toContain("boom");
+    }),
+  );
 });
 
 describe("legacyInstallPoolErrorSwallow", () => {
@@ -421,42 +430,52 @@ describe("legacyAcquireProbedPool", () => {
     return { pool, calls };
   }
 
-  it("ends the pool when the connect probe rejects", async () => {
-    const fake = makeFakePool(() => Promise.reject(new Error("ECONNREFUSED")));
-    const exit = await Effect.runPromiseExit(
-      legacyAcquireProbedPool(() => fake.pool, 2).pipe(Effect.scoped),
-    );
-    expect(Exit.isFailure(exit)).toBe(true);
-    expect(fake.calls.query).toBe(1);
-    // The finalizer, installed the moment the pool exists, closes it on failure.
-    expect(fake.calls.end).toBe(1);
-  });
+  it.effect("ends the pool when the connect probe rejects", () =>
+    Effect.gen(function* () {
+      const fake = makeFakePool(() => Promise.reject(new Error("ECONNREFUSED")));
+      const exit = yield* legacyAcquireProbedPool(() => fake.pool, 2).pipe(
+        Effect.scoped,
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(fake.calls.query).toBe(1);
+      // The finalizer, installed the moment the pool exists, closes it on failure.
+      expect(fake.calls.end).toBe(1);
+    }),
+  );
 
-  it("ends the pool when the connect probe times out (black-holed host)", async () => {
-    // A never-resolving probe models a black-holed host: `timeoutOrElse` fires and
-    // the already-installed finalizer still closes the pool + its in-flight dial.
-    const fake = makeFakePool(() => new Promise<unknown>(() => {}));
-    const exit = await Effect.runPromiseExit(
-      legacyAcquireProbedPool(() => fake.pool, 0.05).pipe(Effect.scoped),
-    );
-    expect(Exit.isFailure(exit)).toBe(true);
-    expect(fake.calls.end).toBe(1);
-  });
+  it.effect("ends the pool when the connect probe times out (black-holed host)", () =>
+    Effect.gen(function* () {
+      // A never-resolving probe models a black-holed host: `timeoutOrElse` fires and
+      // the already-installed finalizer still closes the pool + its in-flight dial.
+      const never = Promise.race([]);
+      const fake = makeFakePool(() => never);
+      const fiber = yield* legacyAcquireProbedPool(() => fake.pool, 0.05).pipe(
+        Effect.scoped,
+        Effect.exit,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* TestClock.adjust("50 millis");
+      const exit = yield* Fiber.join(fiber);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(fake.calls.end).toBe(1);
+    }),
+  );
 
-  it("keeps the pool open until the scope closes on a successful probe", async () => {
-    const fake = makeFakePool(() => Promise.resolve({ rows: [{ "?column?": 1 }] }));
-    const observed = await Effect.runPromise(
-      Effect.gen(function* () {
+  it.effect("keeps the pool open until the scope closes on a successful probe", () =>
+    Effect.gen(function* () {
+      const fake = makeFakePool(() => Promise.resolve({ rows: [{ "?column?": 1 }] }));
+      const observed = yield* Effect.gen(function* () {
         const pool = yield* legacyAcquireProbedPool(() => fake.pool, 2);
         // While the scope is open the pool is live and not yet ended.
         return { isSamePool: pool === fake.pool, endWhileOpen: fake.calls.end };
-      }).pipe(Effect.scoped),
-    );
-    expect(observed.isSamePool).toBe(true);
-    expect(observed.endWhileOpen).toBe(0);
-    // Closing the scope ends the pool exactly once.
-    expect(fake.calls.end).toBe(1);
-  });
+      }).pipe(Effect.scoped);
+      expect(observed.isSamePool).toBe(true);
+      expect(observed.endWhileOpen).toBe(0);
+      // Closing the scope ends the pool exactly once.
+      expect(fake.calls.end).toBe(1);
+    }),
+  );
 });
 
 describe("legacyIsUnixSocketHost", () => {

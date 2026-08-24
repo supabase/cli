@@ -1,10 +1,12 @@
-import { Effect, type FileSystem, type Path } from "effect";
+import { Effect, Option, type FileSystem, type Path } from "effect";
 import * as SmolToml from "smol-toml";
 import { LegacyDbConfigLoadError } from "../../../shared/legacy-db-config.errors.ts";
+import { legacyErrorMessage } from "../../../shared/legacy-error-message.ts";
 import {
   legacyExpandEnv,
   legacyLoadProjectEnv,
 } from "../../../shared/legacy-db-config.toml-read.ts";
+import { LegacyViperEnv } from "../../../../shared/legacy/legacy-viper-env.ts";
 import type { LegacyInspectRule } from "./report.rules.ts";
 
 type RawDoc = { readonly [key: string]: unknown };
@@ -56,7 +58,7 @@ export const legacyReadInspectRules = Effect.fnUntraced(function* (
     Effect.map((text): string | undefined => text),
     Effect.catchTag("PlatformError", (error) =>
       error.reason._tag === "NotFound"
-        ? Effect.succeed(undefined)
+        ? Effect.void
         : Effect.fail(
             new LegacyDbConfigLoadError({
               message: `failed to read file config: ${error.message}`,
@@ -67,16 +69,13 @@ export const legacyReadInspectRules = Effect.fnUntraced(function* (
 
   if (content === undefined) return [] as ReadonlyArray<LegacyInspectRule>;
 
-  let doc: RawDoc | undefined;
-  try {
-    doc = asRecord(SmolToml.parse(content));
-  } catch (cause) {
-    return yield* Effect.fail(
+  const doc = yield* Effect.try({
+    try: () => asRecord(SmolToml.parse(content)),
+    catch: (cause) =>
       new LegacyDbConfigLoadError({
-        message: `failed to load config: ${cause instanceof Error ? cause.message : String(cause)}`,
+        message: `failed to load config: ${legacyErrorMessage(cause)}`,
       }),
-    );
-  }
+  });
 
   const inspect = asRecord(asRecord(doc?.["experimental"])?.["inspect"]);
   const rawRules = inspect?.["rules"];
@@ -107,7 +106,26 @@ export const legacyReadInspectRules = Effect.fnUntraced(function* (
 
   // Resolve `env(VAR)` against the shell env first, then the project `.env` files.
   const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
-  const lookup = (name: string): string | undefined => process.env[name] ?? projectEnv[name];
+  const viperEnv = yield* LegacyViperEnv;
+  const expandField = (value: string) => {
+    const match = /^env\((.*)\)$/u.exec(value);
+    if (match === null) return Effect.succeed(value);
+    const name = match[1] ?? "";
+    return viperEnv.get(name).pipe(
+      Effect.map((shellValue) =>
+        legacyExpandEnv(
+          value,
+          (requested) => Option.getOrUndefined(shellValue) ?? projectEnv[requested],
+        ),
+      ),
+      Effect.mapError(
+        (cause) =>
+          new LegacyDbConfigLoadError({
+            message: `failed to load config environment: ${legacyErrorMessage(cause)}`,
+          }),
+      ),
+    );
+  };
 
   const rules: Array<LegacyInspectRule> = [];
   for (let index = 0; index < entries.length; index++) {
@@ -116,11 +134,9 @@ export const legacyReadInspectRules = Effect.fnUntraced(function* (
     // it fails to load with "expected a map or struct" rather than being
     // silently skipped.
     if (record === undefined) {
-      return yield* Effect.fail(
-        new LegacyDbConfigLoadError({
-          message: `failed to load config: experimental.inspect.rules[${index}] expected a map or struct`,
-        }),
-      );
+      return yield* new LegacyDbConfigLoadError({
+        message: `failed to load config: experimental.inspect.rules[${index}] expected a map or struct`,
+      });
     }
     // An unknown/misspelled key in a rule table (e.g.
     // `fails = "bad"`) aborts the whole config load — there is no escape hatch.
@@ -128,24 +144,20 @@ export const legacyReadInspectRules = Effect.fnUntraced(function* (
       (key) => !(RULE_FIELDS as ReadonlyArray<string>).includes(key),
     );
     if (unknownKeys.length > 0) {
-      return yield* Effect.fail(
-        new LegacyDbConfigLoadError({
-          message: `failed to load config: experimental.inspect.rules[${index}] has invalid keys: ${unknownKeys.join(", ")}`,
-        }),
-      );
+      return yield* new LegacyDbConfigLoadError({
+        message: `failed to load config: experimental.inspect.rules[${index}] has invalid keys: ${unknownKeys.join(", ")}`,
+      });
     }
     const fields: Record<string, string> = {};
     for (const field of RULE_FIELDS) {
       const coerced = coerceRuleField(record[field]);
       // A non-coercible field type (nested table/array/datetime) aborts too.
       if (coerced === undefined) {
-        return yield* Effect.fail(
-          new LegacyDbConfigLoadError({
-            message: `failed to load config: experimental.inspect.rules[${index}].${field} expected a string`,
-          }),
-        );
+        return yield* new LegacyDbConfigLoadError({
+          message: `failed to load config: experimental.inspect.rules[${index}].${field} expected a string`,
+        });
       }
-      fields[field] = legacyExpandEnv(coerced, lookup);
+      fields[field] = yield* expandField(coerced);
     }
     rules.push({
       query: fields["query"]!,

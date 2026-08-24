@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Schema } from "effect";
 
 import { mockOutput, mockProcessControl } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -42,12 +42,14 @@ const LOCAL_CONN: LegacyPgConnInput = {
 
 const ERROR_ISSUE = { level: "error", message: `record "r" has no field "c"` };
 const WARNING_ISSUE = { level: "warning", message: "never read variable" };
+const stringifyJson = (value: unknown): string =>
+  Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown))(value);
 
 /** Builds a plpgsql_check row keyed by the driver's column names. */
 function checkRow(proname: string, issues: ReadonlyArray<Record<string, unknown>>) {
   return {
     proname,
-    plpgsql_check_function: JSON.stringify({ function: proname, issues }),
+    plpgsql_check_function: stringifyJson({ function: proname, issues }),
   };
 }
 
@@ -235,7 +237,7 @@ describe("legacy db lint", () => {
     return Effect.gen(function* () {
       yield* legacyDbLint(flags({ schema: ["public"] }));
       const expected = encodeLegacyLintResults([
-        parseLegacyLintResult(JSON.stringify({ issues: [ERROR_ISSUE] }), "public.f1"),
+        parseLegacyLintResult(stringifyJson({ issues: [ERROR_ISSUE] }), "public.f1"),
       ]);
       expect(out.stdoutText).toBe(expected);
       expect(out.stderrText).toContain("Connecting to local database...");
@@ -265,7 +267,7 @@ describe("legacy db lint", () => {
       const exit = yield* Effect.exit(legacyDbLint(flags({ schema: ["public"] })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to enable pgsql_check");
+        expect(stringifyJson(exit.cause)).toContain("failed to enable pgsql_check");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -276,7 +278,7 @@ describe("legacy db lint", () => {
       const exit = yield* Effect.exit(legacyDbLint(flags({ schema: ["public"] })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to marshal json");
+        expect(stringifyJson(exit.cause)).toContain("failed to marshal json");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -287,7 +289,7 @@ describe("legacy db lint", () => {
       const exit = yield* Effect.exit(legacyDbLint(flags({ schema: ["public"] })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to query rows");
+        expect(stringifyJson(exit.cause)).toContain("failed to query rows");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -298,7 +300,7 @@ describe("legacy db lint", () => {
       const exit = yield* Effect.exit(legacyDbLint(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to list schemas");
+        expect(stringifyJson(exit.cause)).toContain("failed to list schemas");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -332,10 +334,11 @@ describe("legacy db lint", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure)).toBe(true);
         if (Option.isSome(failure)) {
-          expect(failure.value).toBeInstanceOf(LegacyDbLintFailOnError);
-          expect((failure.value as LegacyDbLintFailOnError).message).toBe(
-            "fail-on is set to warning, non-zero exit",
-          );
+          if (failure.value instanceof LegacyDbLintFailOnError) {
+            expect(failure.value.message).toBe("fail-on is set to warning, non-zero exit");
+          } else {
+            expect.fail("expected LegacyDbLintFailOnError");
+          }
         }
       }
       // The result is still printed to stdout before the non-zero exit.
@@ -351,7 +354,7 @@ describe("legacy db lint", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("fail-on is set to error, non-zero exit");
+        expect(stringifyJson(exit.cause)).toContain("fail-on is set to error, non-zero exit");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -390,7 +393,7 @@ describe("legacy db lint", () => {
       const exit = yield* Effect.exit(legacyDbLint(flags({ dbUrl: Option.some("postgres://x") })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(stringifyJson(exit.cause)).toContain(
           "if any flags in the group [db-url linked local] are set none of the others can be",
         );
       }
@@ -532,7 +535,7 @@ describe("legacy db lint", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(stringifyJson(exit.cause)).toContain(
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }
@@ -591,7 +594,7 @@ describe("legacy db lint", () => {
       const exit = yield* Effect.exit(legacyDbLint(flags({ schema: ["public"] })));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain(
+        expect(stringifyJson(exit.cause)).toContain(
           "if any flags in the group [db-url linked local] are set none of the others can be; [linked local] were all set",
         );
       }

@@ -1,6 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
-import { afterEach } from "vitest";
+import { Effect, Exit, Formatter, Option } from "effect";
 
 import { setupLegacyStorage } from "../../../../../tests/helpers/legacy-storage.ts";
 import {
@@ -24,10 +23,6 @@ function prefixCount(body: unknown): number {
 
 describe("legacy storage rm", () => {
   const tmp = useLegacyTempWorkdir("supabase-storage-rm-");
-
-  afterEach(() => {
-    delete process.env["SUPABASE_YES"];
-  });
 
   it.live("deletes multiple objects after confirmation", () => {
     const { layer, requests } = setupLegacyStorage(tmp.current, {
@@ -83,10 +78,10 @@ describe("legacy storage rm", () => {
   it.live("auto-confirms via SUPABASE_YES even without the --yes flag", () => {
     // viper AutomaticEnv (root.go:318-320) means `SUPABASE_YES` is equivalent to
     // `--yes`; the flag layer is left at its default `false` to prove the env path.
-    process.env["SUPABASE_YES"] = "1";
     const { layer, out, requests } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
+      env: { SUPABASE_YES: "1" },
       routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
     });
     return Effect.gen(function* () {
@@ -149,8 +144,8 @@ describe("legacy storage rm", () => {
           projectRef: Option.none(),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(JSON.stringify(exit)).toContain("Cannot find project ref");
-        expect(JSON.stringify(exit)).not.toContain("failed to parse environment file");
+        expect(Formatter.formatJson(exit)).toContain("Cannot find project ref");
+        expect(Formatter.formatJson(exit)).not.toContain("failed to parse environment file");
         expect(requests).toHaveLength(0);
       });
     },
@@ -297,7 +292,7 @@ describe("legacy storage rm", () => {
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("You must specify a bucket to delete.");
+      expect(Formatter.formatJson(exit)).toContain("You must specify a bucket to delete.");
       expect(requests).toHaveLength(0);
     });
   });
@@ -316,7 +311,9 @@ describe("legacy storage rm", () => {
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("You must specify -r flag to delete directories.");
+      expect(Formatter.formatJson(exit)).toContain(
+        "You must specify -r flag to delete directories.",
+      );
       expect(requests).toHaveLength(0);
     });
   });
@@ -335,7 +332,9 @@ describe("legacy storage rm", () => {
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("You must specify -r flag to delete directories.");
+      expect(Formatter.formatJson(exit)).toContain(
+        "You must specify -r flag to delete directories.",
+      );
     });
   });
 
@@ -511,7 +510,7 @@ describe("legacy storage rm", () => {
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Object not found: private/dir/");
+      expect(Formatter.formatJson(exit)).toContain("Object not found: private/dir/");
     });
   });
 
@@ -562,7 +561,7 @@ describe("legacy storage rm", () => {
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Error status 500");
+      expect(Formatter.formatJson(exit)).toContain("Error status 500");
     });
   });
 
@@ -582,7 +581,7 @@ describe("legacy storage rm", () => {
         projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain("Error status 503");
+      expect(Formatter.formatJson(exit)).toContain("Error status 503");
       expect(requests.some((r) => r.method === "DELETE")).toBe(false);
     });
   });
@@ -651,7 +650,7 @@ describe("legacy storage rm", () => {
         projectRef: Option.some(FLAG_REF),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(JSON.stringify(exit)).toContain(
+      expect(Formatter.formatJson(exit)).toContain(
         "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
       );
       expect(requests).toHaveLength(0);

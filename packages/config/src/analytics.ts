@@ -22,7 +22,7 @@ export const analytics = Schema.Struct({
     tags,
     links,
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultEnabled))),
-  port: Schema.Number.annotate({
+  port: Schema.Finite.annotate({
     default: defaultPort,
     description: "Port to the local Logflare service.",
     tags,
@@ -40,7 +40,7 @@ export const analytics = Schema.Struct({
     links,
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultBackend))),
   vector_port: Schema.optionalKey(
-    Schema.Number.annotate({
+    Schema.Finite.annotate({
       description: "Port to the local syslog ingest service.",
       tags,
     }),

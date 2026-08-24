@@ -373,21 +373,16 @@ const legacyParseScannerBufferSize = (raw: string): number => {
  * before a suggestion is ever set), so it carries no
  * suggestion, same as the file-open failure above.
  *
- * `projectEnv`, when given, is the caller's already-loaded `legacyLoadProjectEnv` map:
- * `loadNestedEnv` `os.Setenv`s every project-`.env`
- * key that isn't already in the shell env BEFORE `ParseDatabaseConfig` returns — i.e.
- * before ANY command body (including this scan) runs — so `viper.AutomaticEnv()` sees a
- * `supabase/.env`-only `SUPABASE_SCANNER_BUFFER_SIZE` exactly like a real shell-exported
- * one. Defaults to `{}` for callers that haven't threaded a project-env map through
- * (shell-only, same as before this parameter existed).
+ * `projectEnv` is the caller's already-loaded `legacyLoadProjectEnv` map. The
+ * parser receives the fully resolved environment explicitly and never consults
+ * process-global environment state.
  */
 export const checkScannerBufferSize = <E>(
   content: string,
   mapError: (message: string, phase: "read" | "exec") => E,
-  projectEnv: Readonly<Record<string, string>> = {},
+  projectEnv: Readonly<Record<string, string>>,
 ): Effect.Effect<void, E> => {
-  const raw =
-    process.env["SUPABASE_SCANNER_BUFFER_SIZE"] ?? projectEnv["SUPABASE_SCANNER_BUFFER_SIZE"];
+  const raw = projectEnv["SUPABASE_SCANNER_BUFFER_SIZE"];
   if (raw === undefined) return Effect.void;
   const configuredLimit = legacyParseScannerBufferSize(raw);
   // `configuredLimit <= 0` covers both an explicit non-positive size and an unparseable

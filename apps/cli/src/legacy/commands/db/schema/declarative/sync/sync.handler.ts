@@ -1,4 +1,4 @@
-import { Cause, Clock, Effect, Exit, FileSystem, Option, Path, Result } from "effect";
+import { Cause, Clock, DateTime, Effect, Exit, FileSystem, Option, Path, Result } from "effect";
 
 import {
   LegacyDnsResolverFlag,
@@ -85,7 +85,7 @@ const DEFAULT_SYNC_NAME = "declarative_sync";
 
 /** Go's `GetCurrentTimestamp`: UTC `YYYYMMDDHHmmss`. */
 const formatTimestamp = (millis: number): string =>
-  new Date(millis).toISOString().replace(/\D/g, "").slice(0, 14);
+  DateTime.formatIso(DateTime.makeUnsafe(millis)).replace(/\D/gu, "").slice(0, 14);
 
 // Go's debug-bundle id layout `20060102-150405` (UTC) — hoisted to
 // `legacy-debug-bundle.ts` and reused by the `db pull` empty-diff bundle.
@@ -146,11 +146,9 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       if (Option.isSome(flags.apply)) exclusive.push("apply");
       if (Option.isSome(flags.noApply)) exclusive.push("no-apply");
       if (exclusive.length > 1) {
-        return yield* Effect.fail(
-          new LegacyDeclarativeMutuallyExclusiveFlagsError({
-            message: `if any flags in the group [apply no-apply] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
-          }),
-        );
+        return yield* new LegacyDeclarativeMutuallyExclusiveFlagsError({
+          message: `if any flags in the group [apply no-apply] are set none of the others can be; [${exclusive.join(" ")}] were all set`,
+        });
       }
 
       // Go's `utils.GetDeclarativeDir()` — the config value verbatim (already
@@ -186,11 +184,11 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         declarativeDirDisplay: declarativeDirRel,
         schema: flags.schema,
         noCache: flags.noCache,
-        debug: legacyIsPgDeltaDebugEnabled(),
+        debug: legacyIsPgDeltaDebugEnabled(toml.projectEnv),
         strictCoverage: flags.strictCoverage,
         dnsResolver,
       };
-      const ensureLocalPostgresImageCurrent = seam.ensureLocalPostgresImageCurrent();
+      const ensureLocalPostgresImageCurrent = seam.ensureLocalPostgresImageCurrent;
       yield* legacyWarnFormerDeclarativeDefault(fs, path, cliConfig.workdir, toml.pgDelta);
       const declarativeFilesExist = yield* declarativeDirHasFiles(fs, declarativeDir);
 
@@ -215,7 +213,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         const noFiles = new LegacyDeclarativeNonInteractiveError({
           message: "no declarative schema found. Run supabase db schema declarative generate first",
         });
-        if (!tty.stdinIsTty && !yes) return yield* Effect.fail(noFiles);
+        if (!tty.stdinIsTty && !yes) return yield* noFiles;
         // Go asks via Console.PromptYesNo (db_schema_declarative.go:381, default
         // true): --yes/SUPABASE_YES auto-confirms WITH the `<label> [Y/n] y`
         // stderr echo (console.go:70-72) — routed through `legacyPromptYesNo`
@@ -226,7 +224,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           "No declarative schema found. Generate a new one ?",
           true,
         );
-        if (!ok) return yield* Effect.fail(noFiles);
+        if (!ok) return yield* noFiles;
         // Go delegates to the full smart-generate flow (`runDeclarativeGenerate`,
         // db_schema_declarative.go:321): with migrations present it offers the
         // local / linked / custom target choice + local-reset prompt, so a linked
@@ -280,11 +278,9 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         // files go straight into the plan below — warn before diffing against them.
         yield* legacyWarnPreservedUnmanagedDeclarativeFiles(declarativeDirRel, written);
         if (!(yield* declarativeDirHasFiles(fs, declarativeDir))) {
-          return yield* Effect.fail(
-            new LegacyDeclarativeNoFilesGeneratedError({
-              message: "declarative schema generation did not produce any files",
-            }),
-          );
+          return yield* new LegacyDeclarativeNoFilesGeneratedError({
+            message: "declarative schema generation did not produce any files",
+          });
         }
         // Go's bootstrap delegates to the full `declarative.Generate`, which warms the
         // declarative catalog cache when --no-cache is unset (`declarative.go:133-157`,
@@ -328,11 +324,9 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           stagedRelative === "" ||
           (!stagedRelative.startsWith("..") && !path.isAbsolute(stagedRelative))
         ) {
-          return yield* Effect.fail(
-            new LegacyDeclarativeCompatibilityError({
-              message: `${stagedDirRel} is inside the active declarative schema directory; choose a different staging directory.`,
-            }),
-          );
+          return yield* new LegacyDeclarativeCompatibilityError({
+            message: `${stagedDirRel} is inside the active declarative schema directory; choose a different staging directory.`,
+          });
         }
         const stagedExists = yield* fs.exists(stagedDir).pipe(Effect.orElseSucceed(() => false));
         if (stagedExists) {
@@ -341,15 +335,13 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
             fs.exists(path.join(stagedDir, ".pgdelta-export.json")),
           ]);
           if (entries.length > 0 && !hasManifest) {
-            return yield* Effect.fail(
-              new LegacyDeclarativeCompatibilityError({
-                message: `${stagedDirRel} already contains files without a pg-delta export manifest. Move or remove that directory, then run sync again so the staged export cannot preserve unrelated SQL.`,
-              }),
-            );
+            return yield* new LegacyDeclarativeCompatibilityError({
+              message: `${stagedDirRel} already contains files without a pg-delta export manifest. Move or remove that directory, then run sync again so the staged export cannot preserve unrelated SQL.`,
+            });
           }
         }
         yield* ensureLocalPostgresImageCurrent;
-        yield* seam.ensureLocalDatabaseStarted();
+        yield* seam.ensureLocalDatabaseStarted;
         // The staged export snapshots the RUNNING local database verbatim — not a
         // shadow built from migrations, which is what the failed plan compared. Say
         // so, and offer the same reset the smart-target local path offers, so stale
@@ -380,7 +372,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         const generated = yield* legacyGenerateDeclarativeOutput(
           { ...run, declarativeDir: stagedDir },
           toml,
-          legacyLocalEndpoint({ port: toml.port, password: toml.password }, dnsResolver),
+          yield* legacyLocalEndpoint({ port: toml.port, password: toml.password }, dnsResolver),
         );
         const written = yield* legacyWriteDeclarativeSchemas(fs, path, stagedDir, generated);
         yield* legacyWarnPreservedUnmanagedDeclarativeFiles(stagedDirRel, written);
@@ -443,24 +435,22 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
             !(error instanceof LegacyDeclarativeCompatibilityError) ||
             error.loadFindings === undefined
           ) {
-            return yield* Effect.fail(error);
+            return yield* error;
           }
 
           const missingExtensions = [
             ...new Set(error.loadFindings.map((finding) => finding.extension)),
           ].sort();
           if (missingExtensions.includes("pg_net") && !toml.webhooksEnabled) {
-            return yield* Effect.fail(
-              new LegacyDeclarativeCompatibilityError({
-                message: [
-                  "The declarative schema uses pg_net, but Database Webhooks are not enabled in the local project config.",
-                  "",
-                  LEGACY_ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
-                ].join("\n"),
-              }),
-            );
+            return yield* new LegacyDeclarativeCompatibilityError({
+              message: [
+                "The declarative schema uses pg_net, but Database Webhooks are not enabled in the local project config.",
+                "",
+                LEGACY_ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
+              ].join("\n"),
+            });
           }
-          if (!tty.stdinIsTty || yes) return yield* Effect.fail(error);
+          if (!tty.stdinIsTty || yes) return yield* error;
 
           yield* output.raw(`${legacyYellow(error.message)}\n`, "stderr");
           const choice = yield* output.promptSelect("How would you like to continue?", [
@@ -506,15 +496,13 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           !toml.webhooksEnabled &&
           result.removals.extensions.includes("pg_net")
         ) {
-          return yield* Effect.fail(
-            new LegacyDeclarativeCompatibilityError({
-              message: [
-                "The migrations state includes pg_net, but Database Webhooks are not enabled in the local project config.",
-                "",
-                LEGACY_ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
-              ].join("\n"),
-            }),
-          );
+          return yield* new LegacyDeclarativeCompatibilityError({
+            message: [
+              "The migrations state includes pg_net, but Database Webhooks are not enabled in the local project config.",
+              "",
+              LEGACY_ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
+            ].join("\n"),
+          });
         }
         const compatibility = legacyClassifyDeclarativeCompatibilityGap({
           implementation: engine.implementation,
@@ -537,12 +525,10 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           },
         });
         if (!tty.stdinIsTty || yes) {
-          return yield* Effect.fail(
-            new LegacyDeclarativeCompatibilityError({
-              message: gate.message,
-              suggestion: gate.suggestion,
-            }),
-          );
+          return yield* new LegacyDeclarativeCompatibilityError({
+            message: gate.message,
+            suggestion: gate.suggestion,
+          });
         }
         yield* output.raw(`${legacyYellow(gate.message)}\n`, "stderr");
 
@@ -758,7 +744,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
               );
             }
             yield* output.raw(legacyDebugBundleMessage(""), "stderr");
-            return yield* Effect.fail(resetError);
+            return yield* resetError;
           }
           yield* output.raw("Database reset and all migrations applied successfully.\n", "stderr");
           return;
@@ -769,7 +755,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       if (debugDir.length > 0) {
         yield* output.raw(legacyDebugBundleMessage(debugDir), "stderr");
       }
-      return yield* Effect.fail(applyError);
+      return yield* applyError;
     }).pipe(
       // Mirror Go's `ensureProjectGroupsCached` PersistentPostRun (`cmd/root.go:176,
       // 214-218`): when the bootstrap path resolved a linked ref, write the
@@ -813,7 +799,7 @@ const applyMigrationToLocal = (
           // (`apps/cli-go/cmd/db_schema_declarative.go:463`, deleted in
           // CLI-1970; last present at commit 7b469f5b3), honoring
           // SUPABASE_SERVICES_HOSTNAME / tcp DOCKER_HOST — not a hardcoded loopback.
-          host: legacyGetHostname(),
+          host: yield* legacyGetHostname,
           port: local.port,
           user: "postgres",
           password: local.password,

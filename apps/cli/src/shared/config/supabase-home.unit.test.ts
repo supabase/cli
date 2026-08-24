@@ -1,31 +1,29 @@
-import { join } from "node:path";
+import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "vitest";
+import { Effect, Path } from "effect";
 import { resolveSupabaseHome } from "./supabase-home.ts";
 
-const HOME = join("/home", "test");
+const testPath = Effect.runSync(Path.Path.pipe(Effect.provide(BunServices.layer)));
+const HOME = testPath.join("/home", "test");
 
 describe("resolveSupabaseHome", () => {
   it("returns SUPABASE_HOME when set to a non-empty value", () => {
-    expect(resolveSupabaseHome({ SUPABASE_HOME: "/custom/supabase" }, HOME)).toBe(
-      "/custom/supabase",
-    );
+    expect(resolveSupabaseHome(testPath, "/custom/supabase", HOME)).toBe("/custom/supabase");
   });
 
   it("trims surrounding whitespace from SUPABASE_HOME", () => {
-    expect(resolveSupabaseHome({ SUPABASE_HOME: "  /custom/supabase  " }, HOME)).toBe(
-      "/custom/supabase",
-    );
+    expect(resolveSupabaseHome(testPath, "  /custom/supabase  ", HOME)).toBe("/custom/supabase");
   });
 
   it("falls back to <homeDir>/.supabase when SUPABASE_HOME is unset", () => {
-    expect(resolveSupabaseHome({}, HOME)).toBe(join(HOME, ".supabase"));
+    expect(resolveSupabaseHome(testPath, undefined, HOME)).toBe(testPath.join(HOME, ".supabase"));
   });
 
   it("falls back to <homeDir>/.supabase when SUPABASE_HOME is empty", () => {
-    expect(resolveSupabaseHome({ SUPABASE_HOME: "" }, HOME)).toBe(join(HOME, ".supabase"));
+    expect(resolveSupabaseHome(testPath, "", HOME)).toBe(testPath.join(HOME, ".supabase"));
   });
 
   it("falls back to <homeDir>/.supabase when SUPABASE_HOME is whitespace only", () => {
-    expect(resolveSupabaseHome({ SUPABASE_HOME: "   " }, HOME)).toBe(join(HOME, ".supabase"));
+    expect(resolveSupabaseHome(testPath, "   ", HOME)).toBe(testPath.join(HOME, ".supabase"));
   });
 });

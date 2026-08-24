@@ -1,36 +1,19 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit } from "effect";
+import { BunServices } from "@effect/platform-bun";
+import { ConfigProvider, Effect, Exit, Layer } from "effect";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
+import { makeLegacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
 import { legacyParseSchemaFlags } from "../../../shared/legacy-schema-flags.ts";
 import {
   buildPostgresUrl,
   defaultSchemas,
   legacyRootCaBundle,
   localDbContainerId,
-  localDbPassword,
   localNetworkId,
   parseDatabaseUrl,
   parseQueryTimeoutSeconds,
   resolvePgmetaImage,
 } from "./types.shared.ts";
-
-function withEnv<T>(key: string, value: string | undefined, run: () => T): T {
-  const previous = process.env[key];
-  if (value === undefined) {
-    delete process.env[key];
-  } else {
-    process.env[key] = value;
-  }
-  try {
-    return run();
-  } finally {
-    if (previous === undefined) {
-      delete process.env[key];
-    } else {
-      process.env[key] = previous;
-    }
-  }
-}
 
 describe("parseQueryTimeoutSeconds", () => {
   it.effect("parses compound Go durations", () =>
@@ -127,57 +110,51 @@ describe("parseDatabaseUrl", () => {
 
 describe("resolvePgmetaImage", () => {
   it("uses the default pgmeta version when no override is given", () => {
-    const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, () =>
-      resolvePgmetaImage(),
-    );
+    const image = resolvePgmetaImage(undefined, {});
     expect(image).toContain("postgres-meta");
   });
 
   it("strips a leading v from a version override", () => {
-    const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "docker.io", () =>
-      resolvePgmetaImage("v1.2.3"),
-    );
+    const image = resolvePgmetaImage("v1.2.3", {
+      SUPABASE_INTERNAL_IMAGE_REGISTRY: "docker.io",
+    });
     expect(image).toBe("supabase/postgres-meta:v1.2.3");
   });
 
   it("falls back to the default when the override is blank", () => {
-    const withOverride = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "docker.io", () =>
-      resolvePgmetaImage("   "),
-    );
-    const withoutOverride = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "docker.io", () =>
-      resolvePgmetaImage(),
-    );
+    const withOverride = resolvePgmetaImage("   ", {
+      SUPABASE_INTERNAL_IMAGE_REGISTRY: "docker.io",
+    });
+    const withoutOverride = resolvePgmetaImage(undefined, {
+      SUPABASE_INTERNAL_IMAGE_REGISTRY: "docker.io",
+    });
     expect(withOverride).toBe(withoutOverride);
   });
 
   it("uses the supabase registry for any non docker.io registry", () => {
-    const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, () =>
-      resolvePgmetaImage("1.2.3"),
-    );
+    const image = resolvePgmetaImage("1.2.3", {});
     expect(image).not.toBe("supabase/postgres-meta:v1.2.3");
     expect(image).toContain("postgres-meta:v1.2.3");
   });
 
   it("defaults to the ECR mirror when no registry override is set", () => {
-    const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", undefined, () =>
-      resolvePgmetaImage("1.2.3"),
-    );
+    const image = resolvePgmetaImage("1.2.3", {});
     expect(image).toBe("public.ecr.aws/supabase/postgres-meta:v1.2.3");
   });
 
   it("honors SUPABASE_INTERNAL_IMAGE_REGISTRY for a non docker.io registry (e.g. ghcr.io)", () => {
     // Regression: setup-cli exports `ghcr.io` on shared CI runners to dodge ECR
     // rate limits, but gen types used to ignore it and still pull from ECR.
-    const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "ghcr.io", () =>
-      resolvePgmetaImage("1.2.3"),
-    );
+    const image = resolvePgmetaImage("1.2.3", {
+      SUPABASE_INTERNAL_IMAGE_REGISTRY: "ghcr.io",
+    });
     expect(image).toBe("ghcr.io/supabase/postgres-meta:v1.2.3");
   });
 
   it("rewrites to an arbitrary configured mirror registry", () => {
-    const image = withEnv("SUPABASE_INTERNAL_IMAGE_REGISTRY", "my.registry.example", () =>
-      resolvePgmetaImage("1.2.3"),
-    );
+    const image = resolvePgmetaImage("1.2.3", {
+      SUPABASE_INTERNAL_IMAGE_REGISTRY: "my.registry.example",
+    });
     expect(image).toBe("my.registry.example/supabase/postgres-meta:v1.2.3");
   });
 });
@@ -209,17 +186,26 @@ describe("schema and id helpers", () => {
     expect(localDbContainerId(longId)).toBe(`supabase_db_${"a".repeat(40)}`);
   });
 
-  it("reads the services hostname and db password from the environment", () => {
-    expect(
-      withEnv("DOCKER_HOST", undefined, () =>
-        withEnv("SUPABASE_SERVICES_HOSTNAME", undefined, () => legacyGetHostname()),
-      ),
-    ).toBe("127.0.0.1");
-    expect(withEnv("SUPABASE_SERVICES_HOSTNAME", "db.internal", () => legacyGetHostname())).toBe(
-      "db.internal",
+  it.effect("reads the services hostname and db password from the environment", () => {
+    const layer = Layer.mergeAll(
+      BunServices.layer,
+      makeLegacyViperEnvLayer(ConfigProvider.fromEnv({ env: {}, preserveEmptyStrings: true })),
     );
-    expect(withEnv("SUPABASE_DB_PASSWORD", undefined, () => localDbPassword())).toBe("postgres");
-    expect(withEnv("SUPABASE_DB_PASSWORD", "secret", () => localDbPassword())).toBe("secret");
+    return Effect.gen(function* () {
+      expect(yield* legacyGetHostname).toBe("127.0.0.1");
+      expect(
+        yield* legacyGetHostname.pipe(
+          Effect.provide(
+            makeLegacyViperEnvLayer(
+              ConfigProvider.fromEnv({
+                env: { SUPABASE_SERVICES_HOSTNAME: "db.internal" },
+                preserveEmptyStrings: true,
+              }),
+            ),
+          ),
+        ),
+      ).toBe("db.internal");
+    }).pipe(Effect.provide(layer));
   });
 
   it("brackets ipv6 hosts in the generated postgres url", () => {

@@ -45,11 +45,9 @@ export const legacyMigrationNew = Effect.fn("legacy.migration.new")(function* (
     // vector — the same TS-only hardening `migration fetch` applies to remote rows.
     const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
     if (!migrationPath.startsWith(migrationsDir + path.sep)) {
-      return yield* Effect.fail(
-        new LegacyMigrationNewWriteError({
-          message: `invalid migration name: "${flags.migrationName}" must not escape the ${path.join("supabase", "migrations")} directory`,
-        }),
-      );
+      return yield* new LegacyMigrationNewWriteError({
+        message: `invalid migration name: "${flags.migrationName}" must not escape the ${path.join("supabase", "migrations")} directory`,
+      });
     }
 
     yield* fs

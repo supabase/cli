@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Option, Formatter } from "effect";
 
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
@@ -158,7 +158,7 @@ describe("legacy network-bans remove integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(0);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("invalid IP address: notanip");
+        expect(Formatter.formatJson(exit.cause)).toContain("invalid IP address: notanip");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -233,7 +233,7 @@ describe("legacy network-bans remove integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(0);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
+        const errJson = Formatter.formatJson(exit.cause);
         expect(errJson).toContain("LegacyNetworkBansInvalidIpError");
         expect(errJson).toContain("invalid IP address: 12.3.4");
       }
@@ -264,7 +264,7 @@ describe("legacy network-bans remove integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         expect(api.requests).toHaveLength(0);
         if (Exit.isFailure(exit)) {
-          const errJson = JSON.stringify(exit.cause);
+          const errJson = Formatter.formatJson(exit.cause);
           expect(errJson).toContain("LegacyProjectNotLinkedError");
           expect(errJson).not.toContain("LegacyNetworkBansInvalidIpError");
         }
@@ -286,7 +286,7 @@ describe("legacy network-bans remove integration", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         expect(api.requests).toHaveLength(0);
         if (Exit.isFailure(exit)) {
-          const errJson = JSON.stringify(exit.cause);
+          const errJson = Formatter.formatJson(exit.cause);
           expect(errJson).toContain("LegacyInvalidProjectRefError");
           expect(errJson).not.toContain("LegacyNetworkBansInvalidIpError");
         }
@@ -305,7 +305,7 @@ describe("legacy network-bans remove integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
+        const errJson = Formatter.formatJson(exit.cause);
         expect(errJson).toContain("LegacyNetworkBansRemoveUnexpectedStatusError");
         expect(errJson).toContain("unexpected unban status 503");
       }
@@ -323,7 +323,7 @@ describe("legacy network-bans remove integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
+        const errJson = Formatter.formatJson(exit.cause);
         expect(errJson).toContain("LegacyNetworkBansRemoveNetworkError");
         expect(errJson).toContain("failed to remove network bans:");
       }

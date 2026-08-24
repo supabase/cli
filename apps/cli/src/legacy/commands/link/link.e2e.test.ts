@@ -12,13 +12,13 @@ describe("supabase link (legacy)", () => {
   test(
     "without a resolvable project ref exits 1 with the required-flag error",
     { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      const { exitCode, stdout, stderr } = await runSupabase(["link"], {
+    () =>
+      runSupabase(["link"], {
         entrypoint: "legacy",
         env: { SUPABASE_ACCESS_TOKEN: TEST_TOKEN },
-      });
-      expect(exitCode).toBe(1);
-      expect(`${stdout}${stderr}`).toContain(`required flag(s) "project-ref" not set`);
-    },
+      }).then(({ exitCode, stdout, stderr }) => {
+        expect(exitCode).toBe(1);
+        expect(`${stdout}${stderr}`).toContain(`required flag(s) "project-ref" not set`);
+      }),
   );
 });

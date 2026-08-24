@@ -18,6 +18,14 @@ export class SpawnError extends Data.TaggedError("SpawnError")<{
   readonly cause: unknown;
 }> {}
 
+export class HookExecutionError extends Data.TaggedError("HookExecutionError")<{
+  readonly cause: unknown;
+}> {}
+
+export class CleanupExecutionError extends Data.TaggedError("CleanupExecutionError")<{
+  readonly cause: unknown;
+}> {}
+
 export class ServiceReadyError extends Data.TaggedError("ServiceReadyError")<{
   readonly name: string;
   readonly reason: string;

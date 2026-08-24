@@ -1,6 +1,5 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, FileSystem } from "effect";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import { runSupabase, stripAnsi } from "../../../../tests/helpers/cli.ts";
@@ -10,13 +9,23 @@ const E2E_TIMEOUT_MS = 30_000;
 describe("supabase start (legacy)", () => {
   let projectDir: string;
 
-  beforeEach(() => {
-    projectDir = mkdtempSync(join(tmpdir(), "sb-start-e2e-"));
-  });
+  beforeEach(() =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        projectDir = yield* fs.makeTempDirectory({ prefix: "sb-start-e2e-" });
+      }).pipe(Effect.provide(BunServices.layer)),
+    ),
+  );
 
-  afterEach(() => {
-    rmSync(projectDir, { recursive: true, force: true });
-  });
+  afterEach(() =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.remove(projectDir, { recursive: true, force: true });
+      }).pipe(Effect.provide(BunServices.layer)),
+    ),
+  );
 
   // Golden-path smoke test for the real subprocess boundary: exclude-flag
   // validation runs unconditionally as the handler's very first step, before
@@ -34,17 +43,16 @@ describe("supabase start (legacy)", () => {
   test(
     "prints the invalid --exclude warning then fails cleanly on the Docker call",
     { timeout: E2E_TIMEOUT_MS },
-    async () => {
-      const { exitCode, stdout, stderr } = await runSupabase(["start", "--exclude", "bogus"], {
+    () =>
+      runSupabase(["start", "--exclude", "bogus"], {
         entrypoint: "legacy",
         cwd: projectDir,
         env: { DOCKER_HOST: "tcp://127.0.0.1:1" },
-      });
-
-      expect(stripAnsi(stderr), `stdout:\n${stdout}\nstderr:\n${stderr}`).toContain(
-        "WARNING: The following container names are not valid to exclude: bogus",
-      );
-      expect(exitCode, `stdout:\n${stdout}\nstderr:\n${stderr}`).not.toBe(0);
-    },
+      }).then(({ exitCode, stdout, stderr }) => {
+        expect(stripAnsi(stderr), `stdout:\n${stdout}\nstderr:\n${stderr}`).toContain(
+          "WARNING: The following container names are not valid to exclude: bogus",
+        );
+        expect(exitCode, `stdout:\n${stdout}\nstderr:\n${stderr}`).not.toBe(0);
+      }),
   );
 });

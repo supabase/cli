@@ -1,10 +1,26 @@
 import { $ } from "bun";
-import { copyFile } from "node:fs/promises";
-import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
+import { BunServices } from "@effect/platform-bun";
+import { Data, Effect, FileSystem, Layer, Schema } from "effect";
+import * as EffectPath from "effect/Path";
+import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
 
-const root = path.resolve(import.meta.dir, "../../..");
+class PublishError extends Data.TaggedError("PublishError")<{
+  readonly operation: string;
+  readonly cause: unknown;
+}> {}
+
+const errorMessage = (error: unknown) =>
+  error instanceof PublishError
+    ? `${error.operation}: ${error.cause instanceof Error ? error.cause.message : String(error.cause)}`
+    : error instanceof Error
+      ? error.message
+      : String(error);
+const writeStderr = (message: string) =>
+  Effect.sync(() => {
+    process.stderr.write(`${message}\n`);
+  });
 
 const PLATFORM_PACKAGES = [
   "cli-darwin-arm64",
@@ -15,9 +31,10 @@ const PLATFORM_PACKAGES = [
   "cli-linux-x64-musl",
   "cli-windows-arm64",
   "cli-windows-x64",
-];
+] as const;
 
 const VALID_TAGS = new Set(["latest", "alpha", "beta"]);
+const PackageJson = Schema.Struct({ name: Schema.String, version: Schema.String });
 
 const { values } = parseArgs({
   options: {
@@ -26,149 +43,185 @@ const { values } = parseArgs({
   },
 });
 
-const dryRun = values["dry-run"];
-const tag = values.tag;
-if (!VALID_TAGS.has(tag)) {
-  console.error(
-    `Invalid --tag value: ${String(tag)}. Expected one of: ${[...VALID_TAGS].join(", ")}.`,
-  );
-  process.exit(1);
-}
+const dryRun = values["dry-run"] === true;
+const tag = values.tag ?? "latest";
 
-const cliDir = path.join(root, "apps/cli");
-const cliPkgJson = await Bun.file(path.join(cliDir, "package.json")).json();
-const umbrellaName: string = cliPkgJson.name;
-const umbrellaVersion: string = cliPkgJson.version;
-
-const dryRunFlag = dryRun ? ["--dry-run"] : [];
-const tagFlag = ["--tag", tag];
-const provenanceFlag = ["--provenance"];
-const noGitChecksFlag = ["--no-git-checks"];
-
-// Reads the active npm registry once. We honour `npm config get registry`
-// rather than hard-coding registry.npmjs.org so the existence probe and the
-// publish target stay aligned — important for the local Verdaccio harness
-// (`pnpm local-registry`), which rewrites the global npm/pnpm registry config.
-const registryUrl = (await $`npm config get registry`.quiet().text()).trim().replace(/\/$/, "");
-
-// Probes the registry for `<name>@<version>`:
-//   200 → already published, 404 → not, anything else throws.
-// Used both as a pre-flight skip check and as a post-failure reconciliation
-// when the actual publish errors with E403 (registry CDN cache may lag).
-async function isAlreadyPublished(name: string, version: string): Promise<boolean> {
-  const encodedName = name.replace("/", "%2F");
-  const res = await fetch(`${registryUrl}/${encodedName}/${version}`, { method: "GET" });
-  if (res.status === 200) return true;
-  if (res.status === 404) return false;
-  throw new Error(`npm registry probe for ${name}@${version} returned HTTP ${res.status}`);
-}
+const runShell = <A>(operation: string, command: () => PromiseLike<A>) =>
+  Effect.tryPromise({
+    try: command,
+    catch: (cause) => new PublishError({ operation, cause }),
+  });
 
 type PublishResult = "published" | "skipped";
 
-// Publishes one workspace package idempotently. If the version is already
-// on the registry — either before we start or after a publish-time conflict
-// — we skip and return "skipped". Any other failure propagates.
-async function publishPackage(opts: {
-  name: string;
-  version: string;
-  cwd: string;
-  extraFlags?: string[];
-}): Promise<PublishResult> {
-  const { name, version, cwd, extraFlags = [] } = opts;
-  const label = `${name}@${version}`;
+const main = Effect.gen(function* () {
+  const path = yield* EffectPath.Path;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const client = yield* HttpClient.HttpClient;
+  const root = path.resolve(import.meta.dir, "../../..");
+  const cliDir = path.join(root, "apps/cli");
+  const dryRunFlag = dryRun ? ["--dry-run"] : [];
+  const tagFlag = ["--tag", tag];
+  const provenanceFlag = ["--provenance"];
+  const noGitChecksFlag = ["--no-git-checks"];
 
-  if (await isAlreadyPublished(name, version)) {
-    console.log(`  [skip] ${label} already published.`);
-    return "skipped";
-  }
+  const log = (message: string) =>
+    Effect.sync(() => {
+      process.stdout.write(`${message}\n`);
+    });
+  const logError = (message: string) => writeStderr(message);
 
-  console.log(`  Publishing ${label}...`);
-  try {
-    await $`pnpm publish ${extraFlags} ${provenanceFlag} ${tagFlag} ${noGitChecksFlag} ${dryRunFlag}`.cwd(
-      cwd,
+  const readPackageJson = (filePath: string) =>
+    fileSystem.readFileString(filePath, "utf8").pipe(
+      Effect.flatMap((contents) =>
+        Schema.decodeEffect(Schema.fromJsonString(PackageJson))(contents),
+      ),
+      Effect.mapError((cause) => new PublishError({ operation: `read ${filePath}`, cause })),
     );
-    console.log(`  ${label} published.`);
-    return "published";
-  } catch (error) {
-    if (await isAlreadyPublished(name, version)) {
-      console.log(
-        `  [skip] ${label} reported a conflict but is now present on the registry; treating as success.`,
+
+  const isAlreadyPublished = (name: string, version: string) => {
+    const encodedName = name.replace("/", "%2F");
+    const url = `${registryUrl}/${encodedName}/${version}`;
+    return client.execute(HttpClientRequest.get(url)).pipe(
+      Effect.flatMap((response) => {
+        if (response.status === 200) return Effect.succeed(true);
+        if (response.status === 404) return Effect.succeed(false);
+        return Effect.fail(
+          new PublishError({
+            operation: `probe ${name}@${version}`,
+            cause: `HTTP ${response.status}`,
+          }),
+        );
+      }),
+      Effect.mapError((cause) =>
+        cause instanceof PublishError
+          ? cause
+          : new PublishError({ operation: `probe ${name}@${version}`, cause }),
+      ),
+    );
+  };
+
+  const publishPackage = (opts: {
+    readonly name: string;
+    readonly version: string;
+    readonly cwd: string;
+    readonly extraFlags?: ReadonlyArray<string>;
+  }): Effect.Effect<PublishResult, PublishError> => {
+    const { name, version, cwd, extraFlags = [] } = opts;
+    const label = `${name}@${version}`;
+    return Effect.gen(function* () {
+      if (yield* isAlreadyPublished(name, version)) {
+        yield* log(`  [skip] ${label} already published.`);
+        return "skipped" satisfies PublishResult;
+      }
+
+      yield* log(`  Publishing ${label}...`);
+      return yield* runShell(`publish ${label}`, () =>
+        $`pnpm publish ${extraFlags} ${provenanceFlag} ${tagFlag} ${noGitChecksFlag} ${dryRunFlag}`.cwd(
+          cwd,
+        ),
+      ).pipe(
+        Effect.as<PublishResult>("published"),
+        Effect.catch((error) =>
+          isAlreadyPublished(name, version).pipe(
+            Effect.flatMap((alreadyPublished) =>
+              alreadyPublished
+                ? log(
+                    `  [skip] ${label} reported a conflict but is now present on the registry; treating as success.`,
+                  ).pipe(Effect.as<PublishResult>("skipped"))
+                : Effect.fail(error),
+            ),
+          ),
+        ),
       );
-      return "skipped";
-    }
-    throw error;
-  }
-}
+    });
+  };
 
-console.log(
-  dryRun
-    ? `Publishing to npm with tag "${tag}" (dry run)...\n`
-    : `Publishing to npm with tag "${tag}"...\n`,
-);
+  const registryUrl = (yield* runShell("npm registry lookup", () =>
+    $`npm config get registry`.quiet().text(),
+  ))
+    .trim()
+    .replace(/\/$/, "");
+  const cliPackage = yield* readPackageJson(path.join(cliDir, "package.json"));
 
-// Defensive: every platform package must already be at the umbrella version.
-// `sync-versions.ts` runs in the workflow before publish (`release-shared.yml`),
-// so a mismatch here means the script was invoked out of order — fail loud
-// rather than publishing an inconsistent set of packages.
-for (const pkg of PLATFORM_PACKAGES) {
-  const pkgJson = await Bun.file(path.join(root, "packages", pkg, "package.json")).json();
-  if (pkgJson.version !== umbrellaVersion) {
-    console.error(
-      `Version mismatch: @supabase/${pkg} is ${pkgJson.version}, expected ${umbrellaVersion}. Run sync-versions.ts first.`,
+  yield* log(
+    dryRun
+      ? `Publishing to npm with tag "${tag}" (dry run)...\n`
+      : `Publishing to npm with tag "${tag}"...\n`,
+  );
+
+  const platformPackages = yield* Effect.forEach(PLATFORM_PACKAGES, (pkg) =>
+    readPackageJson(path.join(root, "packages", pkg, "package.json")).pipe(
+      Effect.flatMap((pkgJson) =>
+        pkgJson.version === cliPackage.version
+          ? Effect.succeed({ pkg, pkgJson })
+          : Effect.fail(
+              new PublishError({
+                operation: `validate ${pkg}`,
+                cause: `Version mismatch: @supabase/${pkg} is ${pkgJson.version}, expected ${cliPackage.version}. Run sync-versions.ts first.`,
+              }),
+            ),
+      ),
+    ),
+  );
+
+  yield* log("Publishing platform packages...");
+  const platformResults = yield* Effect.forEach(
+    platformPackages,
+    ({ pkg }) =>
+      publishPackage({
+        name: `@supabase/${pkg}`,
+        version: cliPackage.version,
+        cwd: path.join(root, "packages", pkg),
+        extraFlags: ["--access", "public"],
+      }),
+    { concurrency: "unbounded" },
+  );
+
+  yield* log("\nBuilding umbrella package shim...");
+  yield* runShell("build umbrella shim", () => $`pnpm build:shim`.cwd(cliDir));
+  yield* log("\nStaging root README for umbrella package...");
+  yield* fileSystem.copyFile(path.join(root, "README.md"), path.join(cliDir, "README.md"));
+  yield* log(`Publishing umbrella package ${cliPackage.name}...`);
+  const umbrellaResult = yield* publishPackage({
+    name: cliPackage.name,
+    version: cliPackage.version,
+    cwd: cliDir,
+  });
+
+  const results = [...platformResults, umbrellaResult];
+  const publishedCount = results.filter((result) => result === "published").length;
+  const skippedCount = results.filter((result) => result === "skipped").length;
+  yield* log(`\nPublished: ${publishedCount}, Skipped: ${skippedCount}.`);
+  if (publishedCount === 0) {
+    yield* logError(
+      `\n[warn] No packages were published — every package was already on the registry at ${cliPackage.version}.\n` +
+        "       If today's commits were expected to ship, the version did not advance.\n" +
+        "       Re-cut as a fresh version via the Release workflow (workflow_dispatch).",
     );
-    process.exit(1);
   }
-}
-
-// Publish all platform packages in parallel
-console.log("Publishing platform packages...");
-const platformResults = await Promise.all(
-  PLATFORM_PACKAGES.map((pkg) =>
-    publishPackage({
-      name: `@supabase/${pkg}`,
-      version: umbrellaVersion,
-      cwd: path.join(root, "packages", pkg),
-      extraFlags: ["--access", "public"],
-    }),
-  ),
-);
-
-// Build the umbrella package bin shim, then publish
-console.log("\nBuilding umbrella package shim...");
-await $`pnpm build:shim`.cwd(cliDir);
-
-// npm renders the README from the package directory on the package page.
-// The workspace-internal apps/cli/README.md documents the source layout for
-// contributors, which is not what we want users to see on npmjs.com. Copy
-// the repo root README — the user-facing one — over it just before publish.
-console.log("\nStaging root README for umbrella package...");
-await copyFile(path.join(root, "README.md"), path.join(cliDir, "README.md"));
-
-console.log(`Publishing umbrella package ${umbrellaName}...`);
-const umbrellaResult = await publishPackage({
-  name: umbrellaName,
-  version: umbrellaVersion,
-  cwd: cliDir,
+  yield* log("\nAll packages published successfully.");
+  return 0;
 });
 
-const results = [...platformResults, umbrellaResult];
-const publishedCount = results.filter((r) => r === "published").length;
-const skippedCount = results.filter((r) => r === "skipped").length;
+const checkedMain =
+  tag && VALID_TAGS.has(tag)
+    ? main
+    : Effect.fail(
+        new PublishError({
+          operation: "validate --tag",
+          cause: `Invalid --tag value: ${String(tag)}. Expected one of: ${[...VALID_TAGS].join(", ")}.`,
+        }),
+      );
 
-console.log(`\nPublished: ${publishedCount}, Skipped: ${skippedCount}.`);
-
-// All-skipped is ambiguous: it can mean "recovering from a downstream-only
-// failure (GH release / brew / scoop) — bytes already on npm, just continue"
-// OR "semantic-release re-computed a version whose bytes are already live, so
-// today's commits silently did not ship". Since we cannot tell those apart
-// here, log a loud warning so the human reviewing the workflow run can decide
-// whether to re-cut as a fresh version via `workflow_dispatch`.
-if (publishedCount === 0) {
-  console.warn(
-    `\n[warn] No packages were published — every package was already on the registry at ${umbrellaVersion}.\n` +
-      `       If today's commits were expected to ship, the version did not advance.\n` +
-      `       Re-cut as a fresh version via the Release workflow (workflow_dispatch).`,
-  );
-}
-
-console.log("\nAll packages published successfully.");
+Effect.runPromise(
+  checkedMain.pipe(Effect.provide(Layer.mergeAll(BunServices.layer, FetchHttpClient.layer))),
+).then(
+  (exitCode) => {
+    process.exitCode = exitCode;
+  },
+  (error: unknown) => {
+    Effect.runSync(writeStderr(errorMessage(error)));
+    process.exitCode = 1;
+  },
+);

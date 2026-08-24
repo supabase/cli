@@ -102,69 +102,53 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
   // `supabase/.env` is honored. Load the project env first and resolve both
   // gates against it, as `db pull` does for `yes`.
   const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
+  const effectiveProjectEnv = {
+    ...projectEnv,
+    ...(yield* legacyApplyProjectEnv(projectEnv)),
+  };
   const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
   const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnv);
   let linkedRefForCache: string | undefined;
 
   const body = Effect.gen(function* () {
-    // The project `.env` is applied to make every key visible to the WHOLE
-    // reset run, not just the flag-gate reads above — in particular
-    // `legacyGetRegistryImageUrl` / `legacyPgDeltaNpmRegistryOption` read
-    // `SUPABASE_INTERNAL_IMAGE_REGISTRY` / `PGDELTA_NPM_REGISTRY` straight from
-    // `process.env` for the pg-delta catalog export below (review CLI-1958). `db push`
-    // (`push.handler.ts`) scopes this the same way, as the first statement of its own
-    // `body` — mirror that exactly so a private/air-gapped registry configured only in
-    // `supabase/.env` reaches the catalog export instead of silently falling back to the
-    // default registries.
-    yield* legacyApplyProjectEnv(projectEnv);
     const target = resolveLegacyDbTargetFlags(cliArgs.args);
     // Mutually-exclusive db-url/linked/local group.
     if (target.setFlags.length > 1) {
-      return yield* Effect.fail(
-        new LegacyDbResetTargetFlagsError({
-          message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
-        }),
-      );
+      return yield* new LegacyDbResetTargetFlagsError({
+        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${target.setFlags.join(" ")}] were all set`,
+      });
     }
     // `--last` is an unsigned flag, so a negative value is rejected at parse
     // time (`Flag.integer` here accepts it). Reject it the same way rather
     // than silently treating it as "no --last" and resetting the full history.
     if (Option.isSome(flags.last) && flags.last.value < 0) {
-      return yield* Effect.fail(
-        new LegacyDbResetLastFlagError({
-          message: `invalid argument "${flags.last.value}" for "--last" flag: strconv.ParseUint: parsing "${flags.last.value}": invalid syntax`,
-        }),
-      );
+      return yield* new LegacyDbResetLastFlagError({
+        message: `invalid argument "${flags.last.value}" for "--last" flag: strconv.ParseUint: parsing "${flags.last.value}": invalid syntax`,
+      });
     }
     // Mutually-exclusive version/last group — alphabetical group.
     if (Option.isSome(flags.version) && Option.isSome(flags.last)) {
-      return yield* Effect.fail(
-        new LegacyDbResetVersionFlagsError({
-          message:
-            "if any flags in the group [last version] are set none of the others can be; [last version] were all set",
-        }),
-      );
+      return yield* new LegacyDbResetVersionFlagsError({
+        message:
+          "if any flags in the group [last version] are set none of the others can be; [last version] were all set",
+      });
     }
 
     // `--no-seed` conflicts with `--sql-paths`, and each `--sql-paths` value
     // must be non-empty.
     if (flags.noSeed && flags.sqlPaths.length > 0) {
-      return yield* Effect.fail(
-        new LegacyDbResetSeedFlagsError({
-          message: "--no-seed cannot be used with --sql-paths",
-          suggestion: `Use either ${legacyAqua("--no-seed")} to skip seeding or ${legacyAqua(
-            "--sql-paths",
-          )} to override seed files, not both.`,
-        }),
-      );
+      return yield* new LegacyDbResetSeedFlagsError({
+        message: "--no-seed cannot be used with --sql-paths",
+        suggestion: `Use either ${legacyAqua("--no-seed")} to skip seeding or ${legacyAqua(
+          "--sql-paths",
+        )} to override seed files, not both.`,
+      });
     }
     if (flags.sqlPaths.some((p) => p.length === 0)) {
-      return yield* Effect.fail(
-        new LegacyDbResetSeedFlagsError({
-          message: "--sql-paths requires a non-empty path or glob pattern",
-          suggestion: `Pass a non-empty file path or glob pattern to ${legacyAqua("--sql-paths")}.`,
-        }),
-      );
+      return yield* new LegacyDbResetSeedFlagsError({
+        message: "--sql-paths requires a non-empty path or glob pattern",
+        suggestion: `Pass a non-empty file path or glob pattern to ${legacyAqua("--sql-paths")}.`,
+      });
     }
     // A remote target flag + --sql-paths warns about the seed override.
     if (
@@ -189,11 +173,9 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       if (legacyParseMigrationVersion(v) === undefined) {
         // The bare "invalid version number" is returned unwrapped; the
         // `failed to parse <v>:` wrapper belongs to `migration repair` only.
-        return yield* Effect.fail(
-          new LegacyDbResetInvalidVersionError({
-            message: "invalid version number",
-          }),
-        );
+        return yield* new LegacyDbResetInvalidVersionError({
+          message: "invalid version number",
+        });
       }
       // The version is validated by globbing `supabase/migrations/<version>_*.sql`
       // DIRECTLY with no filtering — so a deprecated first migration (e.g.
@@ -207,11 +189,9 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
         (name) => legacyPathMatch(`${v}_*.sql`, path.basename(name)).matched,
       );
       if (!found) {
-        return yield* Effect.fail(
-          new LegacyDbResetMigrationFileError({
-            message: `glob supabase/migrations/${v}_*.sql: file does not exist`,
-          }),
-        );
+        return yield* new LegacyDbResetMigrationFileError({
+          message: `glob supabase/migrations/${v}_*.sql: file does not exist`,
+        });
       }
       resolvedVersion = v;
     } else if (Option.isSome(flags.last) && flags.last.value > 0) {
@@ -231,12 +211,10 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     // discarded on a non-linked target — see push.handler.ts's identical guard
     // for the full TS-only rationale.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* Effect.fail(
-        new LegacyDbResetTargetFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
+      return yield* new LegacyDbResetTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      });
     }
 
     // The project ref is loaded BEFORE the fallible linked resolution, and
@@ -307,9 +285,7 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       false,
     );
     if (!shouldReset) {
-      return yield* Effect.fail(
-        new LegacyDbResetCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
-      );
+      return yield* new LegacyDbResetCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
     }
     yield* output.raw(`Resetting remote database${toLogMessage(resolvedVersion)}\n`, "stderr");
 
@@ -341,7 +317,7 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
             workdir,
             toml.schemaPaths,
             applyError,
-            projectEnv,
+            effectiveProjectEnv,
           );
         } else if (toml.migrationsEnabled) {
           const locals = yield* legacyListLocalMigrations(fs, path, migrationsDir);
@@ -373,7 +349,7 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
             resolvedSeed.sqlPaths,
             workdir,
           );
-          yield* legacySeedData(session, fs, workdir, path, seeds, applyError);
+          yield* legacySeedData(session, fs, workdir, path, seeds, effectiveProjectEnv, applyError);
         }
 
         // Best-effort caches the migrations catalog for pg-delta right after
@@ -399,7 +375,7 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
           cwd: workdir,
           npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
           denoVersion: toml.denoVersion,
-          projectEnv: toml.projectEnv,
+          projectEnv: { ...toml.projectEnv, ...effectiveProjectEnv },
         };
         yield* legacyTryCacheMigrationsCatalog(fs, path, pgDeltaCtx, {
           enabled: cacheEnabled,

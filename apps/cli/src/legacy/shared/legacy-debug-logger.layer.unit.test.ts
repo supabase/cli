@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
-import { afterEach, vi } from "vitest";
+import { DateTime, Effect, Layer } from "effect";
+import { TestClock } from "effect/testing";
+import { vi } from "vitest";
 
 import { LegacyDebugFlag } from "../../shared/legacy/global-flags.ts";
 import { legacyDebugLoggerLayer } from "./legacy-debug-logger.layer.ts";
@@ -13,10 +14,6 @@ function makeLayer(debug: boolean) {
 function captureStderr() {
   return vi.spyOn(process.stderr, "write").mockImplementation(() => true);
 }
-
-afterEach(() => {
-  vi.useRealTimers();
-});
 
 describe("legacyDebugLoggerLayer", () => {
   it.effect("does not write stderr bytes when debug is disabled", () => {
@@ -47,10 +44,13 @@ describe("legacyDebugLoggerLayer", () => {
   });
 
   it.effect("http emits Go timestamp order and method/url format", () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date(2026, 5, 4, 8, 24, 47));
     const stderr = captureStderr();
     return Effect.gen(function* () {
+      const localTime = DateTime.makeZonedUnsafe(
+        { year: 2026, month: 6, day: 4, hour: 8, minute: 24, second: 47, millisecond: 0 },
+        { timeZone: DateTime.zoneMakeLocal(), adjustForTimeZone: true },
+      );
+      yield* TestClock.setTime(DateTime.toEpochMillis(localTime));
       const logger = yield* LegacyDebugLogger;
       yield* logger.http("GET", "https://api.supabase.green/v1/projects");
       expect(stderr.mock.calls.map(([chunk]) => String(chunk)).join("")).toBe(

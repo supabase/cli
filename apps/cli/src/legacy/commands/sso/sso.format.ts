@@ -1,4 +1,4 @@
-import { Result } from "effect";
+import { DateTime, Option, Result, Schema } from "effect";
 
 import { renderGlamourTable } from "../../output/legacy-glamour-table.ts";
 import { LegacySsoInvalidUuidError } from "./sso.errors.ts";
@@ -96,19 +96,17 @@ export function validateUuid(input: string): Result.Result<string, LegacySsoInva
   );
 }
 
-const pad2 = (n: number): string => String(n).padStart(2, "0");
+export const legacyQuoteSsoValue = Schema.encodeSync(Schema.fromJsonString(Schema.String));
 
 /**
  * RFC3339 → `YYYY-MM-DD HH:MM:SS` (UTC, no timezone label).
  */
 export function formatSsoTimestamp(input?: string): string {
   if (input === undefined || input === null) return "";
-  const date = new Date(input);
-  if (Number.isNaN(date.getTime())) return input;
-  return (
-    `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())} ` +
-    `${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())}:${pad2(date.getUTCSeconds())}`
-  );
+  return Option.match(DateTime.make(input), {
+    onNone: () => input,
+    onSome: (date) => DateTime.formatIso(date).replace("T", " ").slice(0, 19),
+  });
 }
 
 export function formatProtocol(saml: LegacySsoProviderView["saml"]): string {

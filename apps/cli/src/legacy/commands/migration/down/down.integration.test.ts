@@ -1,9 +1,17 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import {
+  Cause,
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Path,
+} from "effect";
 
 import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
@@ -17,6 +25,7 @@ import {
 import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import { makeLegacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
@@ -54,7 +63,36 @@ interface SetupOpts {
 
 const SELECT_SEED = "SELECT path, hash FROM supabase_migrations.seed_files";
 
+const fixturePath = ManagedRuntime.make(BunServices.layer).runSync(Path.Path);
+const join = (first: string, ...rest: ReadonlyArray<string>) => fixturePath.join(first, ...rest);
+const pendingDirectories: string[] = [];
+const pendingWrites: Array<{ readonly path: string; readonly contents: string | Uint8Array }> = [];
+const mkdirSync = (path: string, _options?: { readonly recursive?: boolean }) => {
+  pendingDirectories.push(path);
+};
+const writeFileSync = (path: string, contents: string | Uint8Array) => {
+  pendingWrites.push({ path, contents });
+};
+const flushFixtureWrites = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  for (const directory of pendingDirectories) {
+    yield* fs.makeDirectory(directory, { recursive: true });
+  }
+  for (const write of pendingWrites) {
+    yield* fs.makeDirectory(fixturePath.dirname(write.path), { recursive: true });
+    yield* fs.writeFileString(
+      write.path,
+      typeof write.contents === "string"
+        ? write.contents
+        : new TextDecoder().decode(write.contents),
+    );
+  }
+  pendingDirectories.length = 0;
+  pendingWrites.length = 0;
+});
+
 function setup(workdir: string, opts: SetupOpts = {}) {
+  const configProvider = ConfigProvider.fromEnv({ preserveEmptyStrings: true });
   if (opts.config !== undefined) {
     mkdirSync(join(workdir, "supabase"), { recursive: true });
     writeFileSync(join(workdir, "supabase", "config.toml"), opts.config);
@@ -139,6 +177,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   const layer = Layer.mergeAll(
     out.layer,
+    ConfigProvider.layer(configProvider),
+    makeLegacyViperEnvLayer(configProvider),
     telemetry.layer,
     cache.layer,
     resolver,
@@ -155,6 +195,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       // supplied via piped stdin rather than the Output prompt mock.
       opts.pipedInput ?? (opts.confirm === undefined ? undefined : opts.confirm ? "y\n" : "n\n"),
     ),
+    Layer.effectDiscard(flushFixtureWrites.pipe(Effect.provide(BunServices.layer))),
     BunServices.layer,
   );
   return { layer, out, telemetry, execs, queries, cache };

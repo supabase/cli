@@ -1,6 +1,6 @@
 import type { V1ListAllFunctionsOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Effect, Exit, Formatter, Layer, Option } from "effect";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import {
@@ -204,7 +204,7 @@ describe("legacy functions list integration", () => {
       const exit = yield* Effect.exit(legacyFunctionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyFunctionsEnvNotSupportedError");
         expect(json).toContain("--output env flag is not supported");
       }
@@ -270,7 +270,7 @@ describe("legacy functions list integration", () => {
       const exit = yield* Effect.exit(legacyFunctionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyFunctionsListUnexpectedStatusError");
         expect(json).toContain("unexpected list functions status 503");
       }
@@ -283,7 +283,7 @@ describe("legacy functions list integration", () => {
       const exit = yield* Effect.exit(legacyFunctionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyFunctionsListNetworkError");
         expect(json).toContain("failed to list functions");
       }
@@ -310,7 +310,7 @@ describe("legacy functions list integration", () => {
       const exit = yield* Effect.exit(legacyFunctionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyFunctionsListNetworkError");
         expect(json).toContain("failed to list functions:");
       }
@@ -337,7 +337,7 @@ describe("legacy functions list integration", () => {
       const exit = yield* Effect.exit(legacyFunctionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyFunctionsListUnexpectedStatusError");
         expect(json).toContain("unexpected list functions status 200");
         expect(json).toContain("Hello World");
@@ -351,7 +351,7 @@ describe("legacy functions list integration", () => {
       const exit = yield* Effect.exit(legacyFunctionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyFunctionsListNetworkError");
         expect(json).toContain("failed to list functions");
       }
@@ -364,7 +364,7 @@ describe("legacy functions list integration", () => {
       const exit = yield* Effect.exit(legacyFunctionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = Formatter.formatJson(exit.cause);
         expect(json).toContain("LegacyFunctionsListNetworkError");
         expect(json).toContain("failed to list functions");
       }

@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
 import * as Arr from "effect/Array";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, FileSystem, Path } from "effect";
 import * as JsonSchema from "effect/JsonSchema";
+import * as Schema from "effect/Schema";
 import * as SchemaRepresentation from "effect/SchemaRepresentation";
+import openApiSnapshot from "../src/generated/openapi.json" with { type: "json" };
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD";
 type OpenApiHttpMethod = Lowercase<HttpMethod>;
@@ -135,19 +135,20 @@ const httpMethods: Record<OpenApiHttpMethod, HttpMethod> = {
   head: "HEAD",
 };
 
-const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-const repoRoot = path.resolve(scriptDir, "../../..");
-const sourceSpecPath = path.join(repoRoot, "packages/api/src/generated/openapi.json");
-const generatedDir = path.join(repoRoot, "packages/api/src/generated");
+const SOURCE_SPEC_URL = new URL("../src/generated/openapi.json", import.meta.url);
+const GENERATED_DIR_URL = new URL("../src/generated/", import.meta.url);
+
+const runScript = <A, E extends Error>(
+  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>,
+): Promise<A> => Effect.runPromise(Effect.orDie(Effect.provide(effect, BunServices.layer)));
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-export function loadSpec(): OpenApiDocument {
-  const parsed = JSON.parse(readFileSync(sourceSpecPath, "utf8"));
+function parseSpec(parsed: unknown, sourceLabel: string): OpenApiDocument {
   if (!isRecord(parsed) || !isRecord(parsed.paths)) {
-    throw new Error(`Invalid OpenAPI document at ${sourceSpecPath}`);
+    throw new Error(`Invalid OpenAPI document at ${sourceLabel}`);
   }
 
   const paths: OpenApiDocument["paths"] = {};
@@ -179,6 +180,10 @@ export function loadSpec(): OpenApiDocument {
     paths,
     components,
   };
+}
+
+export function loadSpec(): OpenApiDocument {
+  return parseSpec(openApiSnapshot, SOURCE_SPEC_URL.pathname);
 }
 
 function camelize(value: string): string {
@@ -854,7 +859,10 @@ function renderSchemaSource(
     }
   }
 
-  return parts.join("\n") + "\n";
+  // Effect's `Schema.Number` accepts non-finite values. OpenAPI numeric fields
+  // represent wire values, so keep the generated contracts finite by default
+  // and satisfy the Effect lint rule without hand-editing generated output.
+  return parts.join("\n").replace(/Schema\.Number\b/gu, "Schema.Finite") + "\n";
 }
 
 function renderRequestBody(definition: RequestBodyDefinition): string {
@@ -1020,20 +1028,36 @@ ${executorCases}
 `;
 }
 
-function main() {
-  const document = loadSpec();
-  const operations = extractOperations(document);
+const generate = () =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const fs = yield* FileSystem.FileSystem;
+    const generatedDir = yield* path.fromFileUrl(GENERATED_DIR_URL);
+    const document = loadSpec();
+    const operations = extractOperations(document);
 
-  rmSync(generatedDir, { recursive: true, force: true });
-  mkdirSync(generatedDir, { recursive: true });
+    yield* fs.remove(generatedDir, { recursive: true, force: true });
+    yield* fs.makeDirectory(generatedDir, { recursive: true });
 
-  writeFileSync(path.join(generatedDir, "contracts.ts"), renderContracts(document, operations));
-  writeFileSync(path.join(generatedDir, "effect-client.ts"), renderEffectClient(operations));
-  writeFileSync(path.join(generatedDir, "openapi.json"), `${JSON.stringify(document, null, 2)}\n`);
+    yield* fs.writeFileString(
+      path.join(generatedDir, "contracts.ts"),
+      renderContracts(document, operations),
+    );
+    yield* fs.writeFileString(
+      path.join(generatedDir, "effect-client.ts"),
+      renderEffectClient(operations),
+    );
+    const encodedDocument = yield* Schema.encodeEffect(
+      Schema.fromJsonString(Schema.Unknown, { space: 2 }),
+    )(document);
+    yield* fs.writeFileString(path.join(generatedDir, "openapi.json"), `${encodedDocument}\n`);
 
-  console.log(`Generated ${operations.length} API operations in ${generatedDir}`);
-}
+    yield* Effect.log(`Generated ${operations.length} API operations in ${generatedDir}`);
+  });
 
 if (import.meta.main) {
-  main();
+  runScript(generate()).catch((error: unknown) => {
+    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.exitCode = 1;
+  });
 }

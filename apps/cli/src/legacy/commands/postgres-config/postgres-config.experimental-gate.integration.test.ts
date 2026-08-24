@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Layer } from "effect";
+import { Effect, Exit, Layer, Schema } from "effect";
 import { CliOutput, Command } from "effect/unstable/cli";
 
 import { normalizeCause } from "../../../shared/output/normalize-error.ts";
@@ -14,6 +14,8 @@ import {
   useLegacyTempWorkdir,
 } from "../../../../tests/helpers/legacy-mocks.ts";
 import { legacyPostgresConfigCommand } from "./postgres-config.command.ts";
+
+const encodeJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 // This suite proves the `--experimental` gate is wired into the actual
 // `.command.ts` handler pipeline (not just the shared helper in isolation),
@@ -78,7 +80,7 @@ describe("legacy postgres-config experimental gate (Go PersistentPreRunE parity)
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).toContain("LegacyExperimentalRequiredError");
+            expect(encodeJson(exit.cause)).toContain("LegacyExperimentalRequiredError");
           }
           // The gate must run before any API call (and before the eager
           // access-token resolution inside `legacyManagementApiRuntimeLayer`) —
@@ -100,7 +102,7 @@ describe("legacy postgres-config experimental gate (Go PersistentPreRunE parity)
         // experimental gate error once the flag is on.
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          const causeText = JSON.stringify(exit.cause);
+          const causeText = encodeJson(exit.cause);
           expect(causeText).not.toContain("LegacyExperimentalRequiredError");
           expect(causeText).toContain("LegacyPlatformAuthRequiredError");
         }
@@ -145,7 +147,7 @@ describe("legacy postgres-config experimental gate (Go PersistentPreRunE parity)
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            expect(JSON.stringify(exit.cause)).not.toContain("LegacyExperimentalRequiredError");
+            expect(encodeJson(exit.cause)).not.toContain("LegacyExperimentalRequiredError");
             expect(normalizeCause(exit.cause).message).toBe(message);
           }
           expect(api.requests).toHaveLength(0);

@@ -1,5 +1,5 @@
 import { Effect, Match, SubscriptionRef } from "effect";
-import { ServiceState, type ServiceStatus } from "./ServiceState.ts";
+import { fields as serviceStateFields, ServiceState, type ServiceStatus } from "./ServiceState.ts";
 
 // ---------------------------------------------------------------------------
 // Events
@@ -75,14 +75,15 @@ const transitionStatuses = Match.type<ServiceEvent>().pipe(
 const applyTransition = Match.type<ServiceEvent>().pipe(
   Match.tag(
     "DependenciesSatisfied",
-    () => (state: ServiceState) => new ServiceState({ ...state, status: "Starting" }),
+    () => (state: ServiceState) =>
+      new ServiceState({ ...serviceStateFields(state), status: "Starting" }),
   ),
   Match.tag(
     "DependencyFailed",
     "SpawnFailed",
     (event) => (state: ServiceState) =>
       new ServiceState({
-        ...state,
+        ...serviceStateFields(state),
         status: "Failed",
         pid: null,
         exitCode: null,
@@ -93,7 +94,7 @@ const applyTransition = Match.type<ServiceEvent>().pipe(
     "ProcessSpawned",
     (event) => (state: ServiceState) =>
       new ServiceState({
-        ...state,
+        ...serviceStateFields(state),
         status: "Running",
         pid: event.pid,
         startedAt: event.startedAt,
@@ -101,21 +102,23 @@ const applyTransition = Match.type<ServiceEvent>().pipe(
   ),
   Match.tag(
     "HealthCheckPassed",
-    () => (state: ServiceState) => new ServiceState({ ...state, status: "Healthy" }),
+    () => (state: ServiceState) =>
+      new ServiceState({ ...serviceStateFields(state), status: "Healthy" }),
   ),
   Match.tag(
     "HealthCheckFailed",
-    () => (state: ServiceState) => new ServiceState({ ...state, status: "Unhealthy" }),
+    () => (state: ServiceState) =>
+      new ServiceState({ ...serviceStateFields(state), status: "Unhealthy" }),
   ),
   Match.tag(
     "ProcessTerminated",
-    () => (state: ServiceState) => new ServiceState({ ...state, pid: null }),
+    () => (state: ServiceState) => new ServiceState({ ...serviceStateFields(state), pid: null }),
   ),
   Match.tag(
     "UnhealthyRestartExhausted",
     (event) => (state: ServiceState) =>
       new ServiceState({
-        ...state,
+        ...serviceStateFields(state),
         status: "Failed",
         pid: null,
         exitCode: null,
@@ -125,18 +128,23 @@ const applyTransition = Match.type<ServiceEvent>().pipe(
   Match.tag("ProcessExited", (event) => (state: ServiceState) => {
     const status: ServiceStatus =
       state.status === "Stopping" ? "Stopped" : event.exitCode === 0 ? "Stopped" : "Failed";
-    return new ServiceState({ ...state, status, pid: null, exitCode: event.exitCode });
+    return new ServiceState({
+      ...serviceStateFields(state),
+      status,
+      pid: null,
+      exitCode: event.exitCode,
+    });
   }),
   Match.tag("StopRequested", () => (state: ServiceState) => {
     const stopStatus =
       state.status === "Pending" || state.status === "Restarting" ? "Stopped" : "Stopping";
-    return new ServiceState({ ...state, status: stopStatus });
+    return new ServiceState({ ...serviceStateFields(state), status: stopStatus });
   }),
   Match.tag(
     "RestartTriggered",
     (event) => (state: ServiceState) =>
       new ServiceState({
-        ...state,
+        ...serviceStateFields(state),
         status: "Restarting",
         pid: null,
         restartCount: event.restartCount,
@@ -146,7 +154,7 @@ const applyTransition = Match.type<ServiceEvent>().pipe(
     "BackoffElapsed",
     () => (state: ServiceState) =>
       new ServiceState({
-        ...state,
+        ...serviceStateFields(state),
         status: "Starting",
         pid: null,
         exitCode: null,
@@ -157,7 +165,12 @@ const applyTransition = Match.type<ServiceEvent>().pipe(
   Match.tag(
     "HookFailed",
     (event) => (state: ServiceState) =>
-      new ServiceState({ ...state, status: "Failed", pid: null, error: event.error }),
+      new ServiceState({
+        ...serviceStateFields(state),
+        status: "Failed",
+        pid: null,
+        error: event.error,
+      }),
   ),
   Match.exhaustive,
 );

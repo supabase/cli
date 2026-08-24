@@ -1,8 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, FileSystem, Option, Path, Schema } from "effect";
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -36,6 +33,9 @@ const BRANCH_CONFIG = {
 };
 
 const tempRoot = useLegacyTempWorkdir("supabase-branches-delete-int-");
+const pathService = Effect.runSync(Effect.provide(Path.Path, Path.layer));
+const join = pathService.join;
+const stringifyJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 interface SetupOpts {
   readonly deleteStatus?: number;
@@ -119,7 +119,7 @@ describe("legacy branches delete integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = stringifyJson(exit.cause);
         expect(json).toContain("LegacyBranchesDeleteUnexpectedStatusError");
         expect(json).toContain("unexpected delete branch status 500");
       }
@@ -187,18 +187,20 @@ describe("legacy branches delete integration", () => {
       // the branch's OWN ref, but linked-project.json still holds the real
       // parent — `branches delete` must resolve the parent for the name
       // lookup, not the branch ref sitting in project-ref.
-      mkdirSync(join(tempRoot.current, "supabase", ".temp"), { recursive: true });
-      writeFileSync(join(tempRoot.current, "supabase", ".temp", "project-ref"), BRANCH_OWN_REF);
-      writeFileSync(
-        join(tempRoot.current, "supabase", ".temp", "linked-project.json"),
-        JSON.stringify({
-          ref: PARENT_REF,
-          name: "Parent Project",
-          organization_id: "org_1",
-          organization_slug: "acme",
-        }),
-      );
       return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const tempDir = join(tempRoot.current, "supabase", ".temp");
+        yield* fs.makeDirectory(tempDir, { recursive: true });
+        yield* fs.writeFileString(join(tempDir, "project-ref"), BRANCH_OWN_REF);
+        yield* fs.writeFileString(
+          join(tempDir, "linked-project.json"),
+          stringifyJson({
+            ref: PARENT_REF,
+            name: "Parent Project",
+            organization_id: "org_1",
+            organization_slug: "acme",
+          }),
+        );
         yield* legacyBranchesDelete({ ...baseFlags, name: Option.some("my-feature") });
         const lookup = api.requests.find(
           (r) => r.method === "GET" && r.url.includes("/branches/my-feature"),

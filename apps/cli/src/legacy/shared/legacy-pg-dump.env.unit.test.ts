@@ -1,6 +1,7 @@
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem } from "effect";
 
 import type { LegacyPgConnInput } from "./legacy-db-connection.service.ts";
 import {
@@ -42,7 +43,8 @@ const baseOpt: LegacyDumpOptions = {
 const goScriptsDir = fileURLToPath(
   new URL("../../../../cli-go/pkg/migration/scripts/", import.meta.url),
 );
-const readGoScript = (name: string) => readFileSync(`${goScriptsDir}${name}`, "utf8");
+const readGoScript = (name: string, fs: FileSystem.FileSystem) =>
+  fs.readFileString(`${goScriptsDir}${name}`);
 
 describe("legacyToDumpEnv", () => {
   it("maps the connection to PG* env vars (port stringified)", () => {
@@ -152,9 +154,12 @@ describe("legacyExpandScript", () => {
 });
 
 describe("embedded dump scripts", () => {
-  it("match the Go sources byte-for-byte", () => {
-    expect(legacyDumpSchemaScript).toBe(readGoScript("dump_schema.sh"));
-    expect(legacyDumpDataScript).toBe(readGoScript("dump_data.sh"));
-    expect(legacyDumpRoleScript).toBe(readGoScript("dump_role.sh"));
-  });
+  it.effect("match the Go sources byte-for-byte", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      expect(legacyDumpSchemaScript).toBe(yield* readGoScript("dump_schema.sh", fs));
+      expect(legacyDumpDataScript).toBe(yield* readGoScript("dump_data.sh", fs));
+      expect(legacyDumpRoleScript).toBe(yield* readGoScript("dump_role.sh", fs));
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });

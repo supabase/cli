@@ -1,14 +1,25 @@
 import { describe, expect, it } from "@effect/vitest";
 import { makeApiClient, FunctionResponse } from "@supabase/api/effect";
 import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
-import { BunServices } from "@effect/platform-bun";
+import { BunFileSystem, BunPath, BunServices } from "@effect/platform-bun";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { dirname, join, sep } from "node:path";
 import { brotliCompressSync, constants as zlibConstants } from "node:zlib";
-import { Effect, Exit, Layer, Option, Sink, Stdio, Stream } from "effect";
+import {
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Schema,
+  Sink,
+  Stdio,
+  Stream,
+} from "effect";
+import type { PlatformError } from "effect/PlatformError";
+import * as EffectPath from "effect/Path";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -31,9 +42,14 @@ import {
 } from "../../../../../tests/helpers/mocks.ts";
 import { functionsDeploy } from "./deploy.handler.ts";
 import type { FunctionsDeployFlags } from "./deploy.command.ts";
+import { legacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
 
 const PROJECT_REF = "abcdefghijklmnopqrst";
 const BRANCH_REF = "branchrefabcdefghij";
+const { dirname, join, sep } = Effect.runSync(EffectPath.Path.pipe(Effect.provide(BunPath.layer)));
+const jsonSchema = Schema.fromJsonString(Schema.Unknown);
+const decodeJsonText = (text: string) => Schema.decodeSync(jsonSchema)(text);
+const encodeJsonText = (value: unknown) => Schema.encodeUnknownSync(jsonSchema)(value);
 
 const LINK_STATE: ProjectLinkStateValue = {
   project: {
@@ -78,7 +94,7 @@ function readJsonBody(request: HttpClientRequest.HttpClientRequest): unknown {
   if (request.body._tag !== "Uint8Array" || !request.body.contentType.includes("json")) {
     return undefined;
   }
-  return JSON.parse(new TextDecoder().decode(request.body.body));
+  return decodeJsonText(new TextDecoder().decode(request.body.body));
 }
 
 interface RecordedMultipart {
@@ -87,7 +103,7 @@ interface RecordedMultipart {
 }
 
 function makeTempDir(): string {
-  return mkdtempSync(join(tmpdir(), "supabase-functions-deploy-"));
+  return join(tmpdir(), `supabase-functions-deploy-${randomUUID()}`);
 }
 
 function compressedBundleHash(contents: string): string {
@@ -102,20 +118,63 @@ function compressedBundleHash(contents: string): string {
   return createHash("sha256").update(compressed).digest("hex");
 }
 
-async function writeProjectConfig(cwd: string, content = 'project_id = "test-project"\n') {
-  await mkdir(join(cwd, "supabase"), { recursive: true });
-  await writeFile(join(cwd, "supabase", "config.toml"), content);
+const withFileSystem = <A>(
+  effect: Effect.Effect<A, PlatformError, FileSystem.FileSystem>,
+): Effect.Effect<A, PlatformError, never> => effect.pipe(Effect.provide(BunFileSystem.layer));
+
+const mkdir = (path: string, options?: { readonly recursive?: boolean }) =>
+  withFileSystem(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.makeDirectory(path, options);
+    }),
+  );
+
+const writeFile = (path: string, content: string) =>
+  withFileSystem(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.writeFileString(path, content);
+    }),
+  );
+
+const realpath = (path: string) =>
+  withFileSystem(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      return yield* fs.realPath(path);
+    }),
+  );
+
+const rm = (path: string, options?: { readonly recursive?: boolean; readonly force?: boolean }) =>
+  withFileSystem(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      yield* fs.remove(path, options);
+    }),
+  );
+
+function writeProjectConfig(
+  cwd: string,
+  content = 'project_id = "test-project"\n',
+): Effect.Effect<void, PlatformError, never> {
+  return Effect.gen(function* () {
+    yield* mkdir(join(cwd, "supabase"), { recursive: true });
+    yield* writeFile(join(cwd, "supabase", "config.toml"), content);
+  });
 }
 
-async function writeLocalFunction(
+function writeLocalFunction(
   cwd: string,
   slug: string,
   source = "Deno.serve(() => new Response())\n",
-) {
+): Effect.Effect<void, PlatformError, never> {
   const functionDir = join(cwd, "supabase", "functions", slug);
-  await mkdir(functionDir, { recursive: true });
-  await writeFile(join(functionDir, "index.ts"), source);
-  await writeFile(join(functionDir, "deno.json"), '{"imports":{}}\n');
+  return Effect.gen(function* () {
+    yield* mkdir(functionDir, { recursive: true });
+    yield* writeFile(join(functionDir, "index.ts"), source);
+    yield* writeFile(join(functionDir, "deno.json"), '{"imports":{}}\n');
+  });
 }
 
 function cliConfigLayer() {
@@ -180,7 +239,7 @@ function jsonResponse(
 ): HttpClientResponse.HttpClientResponse {
   return HttpClientResponse.fromWeb(
     request,
-    new Response(JSON.stringify(body), {
+    new Response(encodeJsonText(body), {
       status,
       headers: {
         "content-type": "application/json",
@@ -210,6 +269,7 @@ function mockDeployApi(
     readonly deployStatuses?: ReadonlyArray<number>;
     readonly bulkStatuses?: ReadonlyArray<number>;
     readonly listFunctions?: ReadonlyArray<unknown>;
+    readonly retryAfter?: string;
   } = {},
 ) {
   const requests: RecordedRequest[] = [];
@@ -263,7 +323,7 @@ function mockDeployApi(
                   request,
                   429,
                   { message: "Too Many Requests" },
-                  { "Retry-After": "0" },
+                  { "Retry-After": opts.retryAfter ?? "0" },
                 );
               }
               const slug = Option.getOrElse(
@@ -293,7 +353,7 @@ function mockDeployApi(
                   request,
                   429,
                   { message: "Too Many Requests" },
-                  { "Retry-After": "0" },
+                  { "Retry-After": opts.retryAfter ?? "0" },
                 );
               }
               if (status !== 200) {
@@ -381,9 +441,27 @@ function resolveDockerOutputPath(args: ReadonlyArray<string>): string {
   throw new Error(`unable to resolve host output path for ${dockerOutputPath}`);
 }
 
-async function expectedDockerBind(pathname: string, mode: "ro" | "rw" = "ro") {
-  const hostPath = await realpath(pathname);
-  return `${hostPath}:${hostPath.replaceAll("\\", "/").replace(/^[A-Za-z]:/, "")}:${mode}`;
+function writeDockerBundle(record: {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+}): Effect.Effect<void, PlatformError, never> {
+  if (record.command !== "docker" || record.args[0] !== "run") {
+    return Effect.void;
+  }
+  const outputPath = resolveDockerOutputPath(record.args);
+  return mkdir(dirname(outputPath), { recursive: true }).pipe(
+    Effect.andThen(writeFile(outputPath, "eszip-test-output")),
+  );
+}
+
+function expectedDockerBind(
+  pathname: string,
+  mode: "ro" | "rw" = "ro",
+): Effect.Effect<string, PlatformError, never> {
+  return Effect.gen(function* () {
+    const hostPath = yield* realpath(pathname);
+    return `${hostPath}:${hostPath.replaceAll("\\", "/").replace(/^[A-Za-z]:/, "")}:${mode}`;
+  });
 }
 
 function mockChildProcessSpawner(
@@ -391,7 +469,10 @@ function mockChildProcessSpawner(
     readonly exitCode?: number;
     readonly stdout?: string;
     readonly stderr?: string;
-    readonly onSpawn?: (record: { command: string; args: ReadonlyArray<string> }) => void;
+    readonly onSpawn?: (record: {
+      command: string;
+      args: ReadonlyArray<string>;
+    }) => Effect.Effect<void, PlatformError, never>;
   } = {},
 ) {
   const spawned: Array<{ command: string; args: ReadonlyArray<string> }> = [];
@@ -400,12 +481,14 @@ function mockChildProcessSpawner(
     layer: Layer.succeed(
       ChildProcessSpawner.ChildProcessSpawner,
       ChildProcessSpawner.make((command) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
           const cmd = command._tag === "StandardCommand" ? command.command : "";
           const args = command._tag === "StandardCommand" ? command.args : [];
           const record = { command: cmd, args };
           spawned.push(record);
-          opts.onSpawn?.(record);
+          if (opts.onSpawn !== undefined) {
+            yield* opts.onSpawn(record);
+          }
 
           return ChildProcessSpawner.makeHandle({
             pid: ChildProcessSpawner.ProcessId(1000 + spawned.length),
@@ -436,7 +519,7 @@ function mockChildProcessSpawner(
 }
 
 function cleanupTempDir(path: string) {
-  return Effect.tryPromise(() => rm(path, { recursive: true, force: true })).pipe(Effect.orDie);
+  return rm(path, { recursive: true, force: true }).pipe(Effect.orDie);
 }
 
 function setup(
@@ -450,12 +533,22 @@ function setup(
     readonly api?: Parameters<typeof mockDeployApi>[0];
     /** Piped stdin lines consumed by the non-TTY `--prune` confirm read. */
     readonly stdinInput?: string;
+    /** Explicit environment values consumed by Config-backed Docker bundling. */
+    readonly env?: Readonly<Record<string, string>>;
   } = {},
 ) {
   const out = mockOutput({ format: opts.format ?? "text", interactive: false });
   const api = mockDeployApi(opts.api);
   const layer = Layer.mergeAll(
     BunServices.layer,
+    ...(opts.env === undefined
+      ? []
+      : [
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({ env: opts.env, preserveEmptyStrings: true }),
+          ),
+        ]),
+    legacyViperEnvLayer,
     out.layer,
     api.layer,
     cliConfigLayer(),
@@ -479,9 +572,9 @@ describe("functions deploy", () => {
     const child = mockChildProcessSpawner({ exitCode: 0 });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "bye-world"));
+      yield* writeProjectConfig(tempDir);
+      yield* writeLocalFunction(tempDir, "hello-world");
+      yield* writeLocalFunction(tempDir, "bye-world");
 
       const { out, api, layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy"],
@@ -523,8 +616,8 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+      yield* writeProjectConfig(tempDir);
+      yield* writeLocalFunction(tempDir, "hello-world");
 
       const { out, layer } = setup(tempDir);
 
@@ -541,8 +634,8 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+      yield* writeProjectConfig(tempDir);
+      yield* writeLocalFunction(tempDir, "hello-world");
 
       const { api, layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "hello-world"],
@@ -554,7 +647,7 @@ describe("functions deploy", () => {
       }).pipe(Effect.provide(layer));
 
       expect(api.multiparts[0]?.metadata).toBeDefined();
-      const metadata = JSON.parse(api.multiparts[0]!.metadata!);
+      const metadata = decodeJsonText(api.multiparts[0]!.metadata!);
       expect(metadata).not.toHaveProperty("verify_jwt");
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
@@ -563,8 +656,8 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+      yield* writeProjectConfig(tempDir);
+      yield* writeLocalFunction(tempDir, "hello-world");
 
       const { api, layer } = setup(tempDir, {
         api: { listFunctions: [makeFunction({ slug: "hello-world", verify_jwt: false })] },
@@ -584,18 +677,13 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeProjectConfig(
-          tempDir,
-          [
-            'project_id = "test-project"',
-            '[functions."hello-world"]',
-            "verify_jwt = false",
-            "",
-          ].join("\n"),
+      yield* writeProjectConfig(
+        tempDir,
+        ['project_id = "test-project"', '[functions."hello-world"]', "verify_jwt = false", ""].join(
+          "\n",
         ),
       );
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+      yield* writeLocalFunction(tempDir, "hello-world");
 
       const { api, layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "hello-world"],
@@ -614,8 +702,8 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+      yield* writeProjectConfig(tempDir);
+      yield* writeLocalFunction(tempDir, "hello-world");
 
       const { api, layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "hello-world", "--no-verify-jwt=false"],
@@ -634,31 +722,23 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeProjectConfig(
-          tempDir,
-          [
-            'project_id = "test-project"',
-            '[functions."custom-entry"]',
-            'entrypoint = "./functions/custom-entry/handler.ts"',
-            "",
-          ].join("\n"),
-        ),
+      yield* writeProjectConfig(
+        tempDir,
+        [
+          'project_id = "test-project"',
+          '[functions."custom-entry"]',
+          'entrypoint = "./functions/custom-entry/handler.ts"',
+          "",
+        ].join("\n"),
       );
-      yield* Effect.promise(() =>
-        mkdir(join(tempDir, "supabase", "functions", "custom-entry"), { recursive: true }),
+      yield* mkdir(join(tempDir, "supabase", "functions", "custom-entry"), { recursive: true });
+      yield* writeFile(
+        join(tempDir, "supabase", "functions", "custom-entry", "handler.ts"),
+        'Deno.serve(() => new Response("custom"))\n',
       );
-      yield* Effect.promise(() =>
-        writeFile(
-          join(tempDir, "supabase", "functions", "custom-entry", "handler.ts"),
-          'Deno.serve(() => new Response("custom"))\n',
-        ),
-      );
-      yield* Effect.promise(() =>
-        writeFile(
-          join(tempDir, "supabase", "functions", "custom-entry", "deno.json"),
-          '{"imports":{}}\n',
-        ),
+      yield* writeFile(
+        join(tempDir, "supabase", "functions", "custom-entry", "deno.json"),
+        '{"imports":{}}\n',
       );
 
       const { out, api, layer } = setup(tempDir, {
@@ -681,9 +761,9 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "bye-world"));
+      yield* writeProjectConfig(tempDir);
+      yield* writeLocalFunction(tempDir, "hello-world");
+      yield* writeLocalFunction(tempDir, "bye-world");
 
       const { out, api, layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy"],
@@ -714,6 +794,29 @@ describe("functions deploy", () => {
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
+  it.live("uses normal backoff when Retry-After is an invalid date", () => {
+    const tempDir = makeTempDir();
+
+    return Effect.gen(function* () {
+      yield* writeProjectConfig(tempDir);
+      yield* writeLocalFunction(tempDir, "hello-world");
+
+      const { out, layer } = setup(tempDir, {
+        rawArgs: ["functions", "deploy", "hello-world"],
+        api: { deployStatuses: [429, 201], retryAfter: "2024-99-99" },
+      });
+
+      yield* functionsDeploy({
+        ...BASE_FLAGS,
+        functionNames: ["hello-world"],
+      }).pipe(Effect.provide(layer));
+
+      expect(out.stderrText).toContain(
+        "Rate limit exceeded while deploying function hello-world. Retrying in 1s.\n",
+      );
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+  });
+
   // INC-699: a `bundleOnly` upload bumps the remote version without persisting
   // metadata, so a partially failed bulk deploy must still send the final PUT for
   // whatever uploaded — otherwise the remote metadata is stranded and every later
@@ -723,9 +826,9 @@ describe("functions deploy", () => {
       const tempDir = makeTempDir();
 
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
-        yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
-        yield* Effect.promise(() => writeLocalFunction(tempDir, "bye-world"));
+        yield* writeProjectConfig(tempDir);
+        yield* writeLocalFunction(tempDir, "hello-world");
+        yield* writeLocalFunction(tempDir, "bye-world");
 
         const { out, api, layer } = setup(tempDir, {
           api: { deployStatuses: [201, 409] },
@@ -758,9 +861,9 @@ describe("functions deploy", () => {
       const tempDir = makeTempDir();
 
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
-        yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
-        yield* Effect.promise(() => writeLocalFunction(tempDir, "bye-world"));
+        yield* writeProjectConfig(tempDir);
+        yield* writeLocalFunction(tempDir, "hello-world");
+        yield* writeLocalFunction(tempDir, "bye-world");
 
         const { out, api, layer } = setup(tempDir, {
           api: { deployStatuses: [409, 400] },
@@ -790,9 +893,9 @@ describe("functions deploy", () => {
       const tempDir = makeTempDir();
 
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
-        yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
-        yield* Effect.promise(() => writeLocalFunction(tempDir, "bye-world"));
+        yield* writeProjectConfig(tempDir);
+        yield* writeLocalFunction(tempDir, "hello-world");
+        yield* writeLocalFunction(tempDir, "bye-world");
 
         const { api, layer } = setup(tempDir, {
           api: { deployStatuses: [201, 409], bulkStatuses: [400] },
@@ -821,21 +924,17 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeProjectConfig(
-          tempDir,
-          [
-            'project_id = "test-project"',
-            '[functions."hello-world"]',
-            'import_map = "./custom_import_map.json"',
-            "",
-          ].join("\n"),
-        ),
+      yield* writeProjectConfig(
+        tempDir,
+        [
+          'project_id = "test-project"',
+          '[functions."hello-world"]',
+          'import_map = "./custom_import_map.json"',
+          "",
+        ].join("\n"),
       );
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
-      yield* Effect.promise(() =>
-        writeFile(join(tempDir, "supabase", "custom_import_map.json"), '{"imports":{}}\n'),
-      );
+      yield* writeLocalFunction(tempDir, "hello-world");
+      yield* writeFile(join(tempDir, "supabase", "custom_import_map.json"), '{"imports":{}}\n');
 
       const { api, layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "hello-world"],
@@ -864,12 +963,10 @@ describe("functions deploy", () => {
     const sharedDir = join(tempDir, "shared");
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(projectDir));
-      yield* Effect.promise(() => writeLocalFunction(projectDir, "hello-world"));
-      yield* Effect.promise(() => mkdir(sharedDir, { recursive: true }));
-      yield* Effect.promise(() =>
-        writeFile(join(sharedDir, "import_map.json"), '{"imports":{}}\n'),
-      );
+      yield* writeProjectConfig(projectDir);
+      yield* writeLocalFunction(projectDir, "hello-world");
+      yield* mkdir(sharedDir, { recursive: true });
+      yield* writeFile(join(sharedDir, "import_map.json"), '{"imports":{}}\n');
 
       const { api, layer } = setup(projectDir, {
         rawArgs: [
@@ -907,27 +1004,19 @@ describe("functions deploy", () => {
       const sharedDir = join(tempDir, "shared");
 
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(projectDir));
-        yield* Effect.promise(() =>
-          writeLocalFunction(
-            projectDir,
-            "hello-world",
-            'import { value } from "lib"\nDeno.serve(() => new Response(value))\n',
-          ),
+        yield* writeProjectConfig(projectDir);
+        yield* writeLocalFunction(
+          projectDir,
+          "hello-world",
+          'import { value } from "lib"\nDeno.serve(() => new Response(value))\n',
         );
-        yield* Effect.promise(() => mkdir(sharedDir, { recursive: true }));
-        yield* Effect.promise(() =>
-          writeFile(join(sharedDir, "import_map.json"), '{"imports":{"lib":"./lib.ts"}}\n'),
+        yield* mkdir(sharedDir, { recursive: true });
+        yield* writeFile(join(sharedDir, "import_map.json"), '{"imports":{"lib":"./lib.ts"}}\n');
+        yield* writeFile(
+          join(sharedDir, "lib.ts"),
+          'import { helper } from "./helper.ts"\nexport const value = helper\n',
         );
-        yield* Effect.promise(() =>
-          writeFile(
-            join(sharedDir, "lib.ts"),
-            'import { helper } from "./helper.ts"\nexport const value = helper\n',
-          ),
-        );
-        yield* Effect.promise(() =>
-          writeFile(join(sharedDir, "helper.ts"), 'export const helper = "ok"\n'),
-        );
+        yield* writeFile(join(sharedDir, "helper.ts"), 'export const helper = "ok"\n');
 
         const { api, layer } = setup(projectDir, {
           rawArgs: [
@@ -962,15 +1051,11 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
-      yield* Effect.promise(() =>
-        mkdir(join(tempDir, "supabase", "functions", "hello-world"), { recursive: true }),
-      );
-      yield* Effect.promise(() =>
-        writeFile(
-          join(tempDir, "supabase", "functions", "hello-world", "index.ts"),
-          "Deno.serve(() => new Response())\n",
-        ),
+      yield* writeProjectConfig(tempDir);
+      yield* mkdir(join(tempDir, "supabase", "functions", "hello-world"), { recursive: true });
+      yield* writeFile(
+        join(tempDir, "supabase", "functions", "hello-world", "index.ts"),
+        "Deno.serve(() => new Response())\n",
       );
 
       const { api, layer } = setup(tempDir, {
@@ -993,32 +1078,24 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeProjectConfig(
-          tempDir,
-          [
-            'project_id = "test-project"',
-            '[functions."hello-world"]',
-            'entrypoint = "./functions/hello-world/src/main.ts"',
-            "",
-          ].join("\n"),
-        ),
+      yield* writeProjectConfig(
+        tempDir,
+        [
+          'project_id = "test-project"',
+          '[functions."hello-world"]',
+          'entrypoint = "./functions/hello-world/src/main.ts"',
+          "",
+        ].join("\n"),
       );
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
-      yield* Effect.promise(() =>
-        mkdir(join(tempDir, "supabase", "functions", "hello-world", "src")),
+      yield* writeLocalFunction(tempDir, "hello-world");
+      yield* mkdir(join(tempDir, "supabase", "functions", "hello-world", "src"));
+      yield* writeFile(
+        join(tempDir, "supabase", "functions", "hello-world", "src", "main.ts"),
+        "Deno.serve(() => new Response())\n",
       );
-      yield* Effect.promise(() =>
-        writeFile(
-          join(tempDir, "supabase", "functions", "hello-world", "src", "main.ts"),
-          "Deno.serve(() => new Response())\n",
-        ),
-      );
-      yield* Effect.promise(() =>
-        writeFile(
-          join(tempDir, "supabase", "functions", "hello-world", "src", "deno.json"),
-          '{"imports":{}}\n',
-        ),
+      yield* writeFile(
+        join(tempDir, "supabase", "functions", "hello-world", "src", "deno.json"),
+        '{"imports":{}}\n',
       );
 
       const { api, layer } = setup(tempDir, {
@@ -1046,33 +1123,25 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeProjectConfig(
-          tempDir,
-          [
-            'project_id = "test-project"',
-            '[functions."hello-world"]',
-            'entrypoint = "./functions/hello-world/src/main.ts"',
-            'import_map = "./functions/hello-world/deno.json"',
-            "",
-          ].join("\n"),
-        ),
+      yield* writeProjectConfig(
+        tempDir,
+        [
+          'project_id = "test-project"',
+          '[functions."hello-world"]',
+          'entrypoint = "./functions/hello-world/src/main.ts"',
+          'import_map = "./functions/hello-world/deno.json"',
+          "",
+        ].join("\n"),
       );
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
-      yield* Effect.promise(() =>
-        mkdir(join(tempDir, "supabase", "functions", "hello-world", "src")),
+      yield* writeLocalFunction(tempDir, "hello-world");
+      yield* mkdir(join(tempDir, "supabase", "functions", "hello-world", "src"));
+      yield* writeFile(
+        join(tempDir, "supabase", "functions", "hello-world", "src", "main.ts"),
+        "Deno.serve(() => new Response())\n",
       );
-      yield* Effect.promise(() =>
-        writeFile(
-          join(tempDir, "supabase", "functions", "hello-world", "src", "main.ts"),
-          "Deno.serve(() => new Response())\n",
-        ),
-      );
-      yield* Effect.promise(() =>
-        writeFile(
-          join(tempDir, "supabase", "functions", "hello-world", "src", "deno.json"),
-          '{"imports":{}}\n',
-        ),
+      yield* writeFile(
+        join(tempDir, "supabase", "functions", "hello-world", "src", "deno.json"),
+        '{"imports":{}}\n',
       );
 
       const { api, layer } = setup(tempDir, {
@@ -1101,25 +1170,19 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
-      yield* Effect.promise(() =>
-        writeLocalFunction(
-          tempDir,
-          "hello-world",
-          'import { value } from "lib"\nDeno.serve(() => new Response(value))\n',
-        ),
+      yield* writeProjectConfig(tempDir);
+      yield* writeLocalFunction(
+        tempDir,
+        "hello-world",
+        'import { value } from "lib"\nDeno.serve(() => new Response(value))\n',
       );
-      yield* Effect.promise(() =>
-        writeFile(
-          join(tempDir, "supabase", "functions", "hello-world", "deno.json"),
-          '{"scopes":{"./":{"lib":"./lib.ts"}}}\n',
-        ),
+      yield* writeFile(
+        join(tempDir, "supabase", "functions", "hello-world", "deno.json"),
+        '{"scopes":{"./":{"lib":"./lib.ts"}}}\n',
       );
-      yield* Effect.promise(() =>
-        writeFile(
-          join(tempDir, "supabase", "functions", "hello-world", "lib.ts"),
-          'export const value = "ok"\n',
-        ),
+      yield* writeFile(
+        join(tempDir, "supabase", "functions", "hello-world", "lib.ts"),
+        'export const value = "ok"\n',
       );
 
       const { api, layer } = setup(tempDir, {
@@ -1139,13 +1202,11 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
-      yield* Effect.promise(() =>
-        writeFile(
-          join(tempDir, "supabase", "functions", "hello-world", "deno.json"),
-          '{"imports":{"lib":{"path":"./lib.ts"}}}\n',
-        ),
+      yield* writeProjectConfig(tempDir);
+      yield* writeLocalFunction(tempDir, "hello-world");
+      yield* writeFile(
+        join(tempDir, "supabase", "functions", "hello-world", "deno.json"),
+        '{"imports":{"lib":{"path":"./lib.ts"}}}\n',
       );
 
       const { layer } = setup(tempDir, {
@@ -1169,25 +1230,19 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
-      yield* Effect.promise(() =>
-        writeLocalFunction(
-          tempDir,
-          "hello-world",
-          'import "https://deno.land/x/example/mod.ts"\nDeno.serve(() => new Response("ok"))\n',
-        ),
+      yield* writeProjectConfig(tempDir);
+      yield* writeLocalFunction(
+        tempDir,
+        "hello-world",
+        'import "https://deno.land/x/example/mod.ts"\nDeno.serve(() => new Response("ok"))\n',
       );
-      yield* Effect.promise(() =>
-        writeFile(
-          join(tempDir, "supabase", "functions", "hello-world", "deno.json"),
-          '{"scopes":{"https://deno.land/x/example/":{"dep":"./dep.ts"}}}\n',
-        ),
+      yield* writeFile(
+        join(tempDir, "supabase", "functions", "hello-world", "deno.json"),
+        '{"scopes":{"https://deno.land/x/example/":{"dep":"./dep.ts"}}}\n',
       );
-      yield* Effect.promise(() =>
-        writeFile(
-          join(tempDir, "supabase", "functions", "hello-world", "dep.ts"),
-          'export const value = "remote-scope"\n',
-        ),
+      yield* writeFile(
+        join(tempDir, "supabase", "functions", "hello-world", "dep.ts"),
+        'export const value = "remote-scope"\n',
       );
 
       const { api, layer } = setup(tempDir, {
@@ -1208,9 +1263,9 @@ describe("functions deploy", () => {
     const nestedDir = join(tempDir, "nested");
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
-      yield* Effect.promise(() => mkdir(nestedDir));
+      yield* writeProjectConfig(tempDir);
+      yield* writeLocalFunction(tempDir, "hello-world");
+      yield* mkdir(nestedDir);
 
       const { api, layer } = setup(nestedDir, {
         projectRoot: tempDir,
@@ -1233,7 +1288,7 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
 
       const { out, layer } = setup(tempDir);
 
@@ -1253,19 +1308,17 @@ describe("functions deploy", () => {
     const staticDir = join(tempDir, "supabase", "functions", "hello-world", "assets");
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeProjectConfig(
-          tempDir,
-          [
-            'project_id = "test-project"',
-            '[functions."hello-world"]',
-            'static_files = ["./functions/hello-world/assets"]',
-            "",
-          ].join("\n"),
-        ),
+      yield* writeProjectConfig(
+        tempDir,
+        [
+          'project_id = "test-project"',
+          '[functions."hello-world"]',
+          'static_files = ["./functions/hello-world/assets"]',
+          "",
+        ].join("\n"),
       );
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
-      yield* Effect.promise(() => mkdir(staticDir));
+      yield* writeLocalFunction(tempDir, "hello-world");
+      yield* mkdir(staticDir);
 
       const { layer } = setup(tempDir);
       const error = yield* functionsDeploy({
@@ -1286,30 +1339,25 @@ describe("functions deploy", () => {
     const secretPath = join(outsideDir, "access-token.txt");
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeProjectConfig(
-          tempDir,
-          [
-            'project_id = "test-project"',
-            '[functions."hello-world"]',
-            'import_map = "./custom_import_map.json"',
-            "",
-          ].join("\n"),
-        ),
+      yield* writeProjectConfig(
+        tempDir,
+        [
+          'project_id = "test-project"',
+          '[functions."hello-world"]',
+          'import_map = "./custom_import_map.json"',
+          "",
+        ].join("\n"),
       );
-      yield* Effect.promise(() =>
-        writeLocalFunction(
-          tempDir,
-          "hello-world",
-          'import { secret } from "creds"\nDeno.serve(() => new Response(secret))\n',
-        ),
+      yield* writeLocalFunction(
+        tempDir,
+        "hello-world",
+        'import { secret } from "creds"\nDeno.serve(() => new Response(secret))\n',
       );
-      yield* Effect.promise(() => writeFile(secretPath, "secret-token"));
-      yield* Effect.promise(() =>
-        writeFile(
-          join(tempDir, "supabase", "custom_import_map.json"),
-          JSON.stringify({ imports: { creds: secretPath } }),
-        ),
+      yield* mkdir(outsideDir, { recursive: true });
+      yield* writeFile(secretPath, "secret-token");
+      yield* writeFile(
+        join(tempDir, "supabase", "custom_import_map.json"),
+        encodeJsonText({ imports: { creds: secretPath } }),
       );
 
       const { out, api, layer } = setup(tempDir, {
@@ -1338,19 +1386,15 @@ describe("functions deploy", () => {
       const tempDir = makeTempDir();
 
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
-        yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
-        yield* Effect.promise(() =>
-          writeFile(
-            join(tempDir, "supabase", "functions", "hello-world", "vendor.mjs"),
-            "export const x = 1;\n",
-          ),
+        yield* writeProjectConfig(tempDir);
+        yield* writeLocalFunction(tempDir, "hello-world");
+        yield* writeFile(
+          join(tempDir, "supabase", "functions", "hello-world", "vendor.mjs"),
+          "export const x = 1;\n",
         );
-        yield* Effect.promise(() =>
-          writeFile(
-            join(tempDir, "supabase", "functions", "hello-world", "deno.json"),
-            JSON.stringify({ imports: { "@x/": "./vendor.mjs/" } }),
-          ),
+        yield* writeFile(
+          join(tempDir, "supabase", "functions", "hello-world", "deno.json"),
+          encodeJsonText({ imports: { "@x/": "./vendor.mjs/" } }),
         );
 
         const { out, api, layer } = setup(tempDir, {
@@ -1386,28 +1430,24 @@ describe("functions deploy", () => {
       const sharedPath = join(repoRoot, "packages", "shared", "src", "index.ts");
 
       return Effect.gen(function* () {
-        yield* Effect.promise(() => mkdir(join(repoRoot, ".git"), { recursive: true }));
-        yield* Effect.promise(() => writeProjectConfig(projectRoot));
-        yield* Effect.promise(() =>
-          writeLocalFunction(
-            projectRoot,
-            "hello-world",
-            [
-              'import { shared } from "@repo/shared"',
-              "Deno.serve(() => new Response(shared))",
-              "",
-            ].join("\n"),
-          ),
+        yield* mkdir(join(repoRoot, ".git"), { recursive: true });
+        yield* writeProjectConfig(projectRoot);
+        yield* writeLocalFunction(
+          projectRoot,
+          "hello-world",
+          [
+            'import { shared } from "@repo/shared"',
+            "Deno.serve(() => new Response(shared))",
+            "",
+          ].join("\n"),
         );
-        yield* Effect.promise(() => mkdir(dirname(sharedPath), { recursive: true }));
-        yield* Effect.promise(() => writeFile(sharedPath, 'export const shared = "ok"\n'));
-        yield* Effect.promise(() =>
-          writeFile(
-            join(projectRoot, "supabase", "functions", "hello-world", "deno.json"),
-            JSON.stringify({
-              imports: { "@repo/shared": "../../../../packages/shared/src/index.ts" },
-            }),
-          ),
+        yield* mkdir(dirname(sharedPath), { recursive: true });
+        yield* writeFile(sharedPath, 'export const shared = "ok"\n');
+        yield* writeFile(
+          join(projectRoot, "supabase", "functions", "hello-world", "deno.json"),
+          encodeJsonText({
+            imports: { "@repo/shared": "../../../../packages/shared/src/index.ts" },
+          }),
         );
 
         const { out, api, layer } = setup(projectRoot, {
@@ -1440,30 +1480,25 @@ describe("functions deploy", () => {
     const sharedPath = join(repoRoot, "packages", "shared", "src", "index.ts");
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeFile(join(repoRoot, ".git"), "gitdir: /tmp/worktree/.git\n"),
+      yield* mkdir(repoRoot, { recursive: true });
+      yield* writeFile(join(repoRoot, ".git"), "gitdir: /tmp/worktree/.git\n");
+      yield* writeProjectConfig(projectRoot);
+      yield* writeLocalFunction(
+        projectRoot,
+        "hello-world",
+        [
+          'import { shared } from "@repo/shared"',
+          "Deno.serve(() => new Response(shared))",
+          "",
+        ].join("\n"),
       );
-      yield* Effect.promise(() => writeProjectConfig(projectRoot));
-      yield* Effect.promise(() =>
-        writeLocalFunction(
-          projectRoot,
-          "hello-world",
-          [
-            'import { shared } from "@repo/shared"',
-            "Deno.serve(() => new Response(shared))",
-            "",
-          ].join("\n"),
-        ),
-      );
-      yield* Effect.promise(() => mkdir(dirname(sharedPath), { recursive: true }));
-      yield* Effect.promise(() => writeFile(sharedPath, 'export const shared = "ok"\n'));
-      yield* Effect.promise(() =>
-        writeFile(
-          join(projectRoot, "supabase", "functions", "hello-world", "deno.json"),
-          JSON.stringify({
-            imports: { "@repo/shared": "../../../../packages/shared/src/index.ts" },
-          }),
-        ),
+      yield* mkdir(dirname(sharedPath), { recursive: true });
+      yield* writeFile(sharedPath, 'export const shared = "ok"\n');
+      yield* writeFile(
+        join(projectRoot, "supabase", "functions", "hello-world", "deno.json"),
+        encodeJsonText({
+          imports: { "@repo/shared": "../../../../packages/shared/src/index.ts" },
+        }),
       );
 
       const { api, layer } = setup(projectRoot, {
@@ -1493,8 +1528,8 @@ describe("functions deploy", () => {
     const child = mockChildProcessSpawner({ exitCode: 1 });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+      yield* writeProjectConfig(tempDir);
+      yield* writeLocalFunction(tempDir, "hello-world");
 
       const { out, api, layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "hello-world"],
@@ -1530,39 +1565,28 @@ describe("functions deploy", () => {
     const sharedPath = join(repoRoot, "packages", "shared", "src", "index.ts");
     const child = mockChildProcessSpawner({
       exitCode: 0,
-      onSpawn: (record) => {
-        if (record.command !== "docker" || record.args[0] !== "run") {
-          return;
-        }
-        const outputPath = resolveDockerOutputPath(record.args);
-        mkdirSync(dirname(outputPath), { recursive: true });
-        writeFileSync(outputPath, "eszip-test-output");
-      },
+      onSpawn: writeDockerBundle,
     });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => mkdir(join(repoRoot, ".git"), { recursive: true }));
-      yield* Effect.promise(() => writeProjectConfig(projectRoot));
-      yield* Effect.promise(() =>
-        writeLocalFunction(
-          projectRoot,
-          "hello-world",
-          [
-            'import { shared } from "@repo/shared"',
-            "Deno.serve(() => new Response(shared))",
-            "",
-          ].join("\n"),
-        ),
+      yield* mkdir(join(repoRoot, ".git"), { recursive: true });
+      yield* writeProjectConfig(projectRoot);
+      yield* writeLocalFunction(
+        projectRoot,
+        "hello-world",
+        [
+          'import { shared } from "@repo/shared"',
+          "Deno.serve(() => new Response(shared))",
+          "",
+        ].join("\n"),
       );
-      yield* Effect.promise(() => mkdir(dirname(sharedPath), { recursive: true }));
-      yield* Effect.promise(() => writeFile(sharedPath, 'export const shared = "ok"\n'));
-      yield* Effect.promise(() =>
-        writeFile(
-          join(projectRoot, "supabase", "functions", "hello-world", "deno.json"),
-          JSON.stringify({
-            imports: { "@repo/shared": "../../../../packages/shared/src/index.ts" },
-          }),
-        ),
+      yield* mkdir(dirname(sharedPath), { recursive: true });
+      yield* writeFile(sharedPath, 'export const shared = "ok"\n');
+      yield* writeFile(
+        join(projectRoot, "supabase", "functions", "hello-world", "deno.json"),
+        encodeJsonText({
+          imports: { "@repo/shared": "../../../../packages/shared/src/index.ts" },
+        }),
       );
 
       const { layer } = setup(projectRoot, {
@@ -1577,9 +1601,7 @@ describe("functions deploy", () => {
         useDocker: true,
       }).pipe(Effect.provide(layer));
 
-      expect(child.spawned.at(-1)?.args).toContain(
-        yield* Effect.promise(() => expectedDockerBind(sharedPath)),
-      );
+      expect(child.spawned.at(-1)?.args).toContain(yield* expectedDockerBind(sharedPath));
     }).pipe(Effect.ensuring(cleanupTempDir(repoRoot)));
   });
 
@@ -1590,29 +1612,25 @@ describe("functions deploy", () => {
     const sharedPath = join(outerRoot, "packages", "shared", "src", "index.ts");
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => mkdir(repoRoot, { recursive: true }));
-      yield* Effect.promise(() => mkdir(join(repoRoot, ".git"), { recursive: true }));
-      yield* Effect.promise(() => writeProjectConfig(projectRoot));
-      yield* Effect.promise(() =>
-        writeLocalFunction(
-          projectRoot,
-          "hello-world",
-          [
-            'import { shared } from "@repo/shared"',
-            "Deno.serve(() => new Response(shared))",
-            "",
-          ].join("\n"),
-        ),
+      yield* mkdir(repoRoot, { recursive: true });
+      yield* mkdir(join(repoRoot, ".git"), { recursive: true });
+      yield* writeProjectConfig(projectRoot);
+      yield* writeLocalFunction(
+        projectRoot,
+        "hello-world",
+        [
+          'import { shared } from "@repo/shared"',
+          "Deno.serve(() => new Response(shared))",
+          "",
+        ].join("\n"),
       );
-      yield* Effect.promise(() => mkdir(dirname(sharedPath), { recursive: true }));
-      yield* Effect.promise(() => writeFile(sharedPath, 'export const shared = "blocked"\n'));
-      yield* Effect.promise(() =>
-        writeFile(
-          join(projectRoot, "supabase", "functions", "hello-world", "deno.json"),
-          JSON.stringify({
-            imports: { "@repo/shared": "../../../../../packages/shared/src/index.ts" },
-          }),
-        ),
+      yield* mkdir(dirname(sharedPath), { recursive: true });
+      yield* writeFile(sharedPath, 'export const shared = "blocked"\n');
+      yield* writeFile(
+        join(projectRoot, "supabase", "functions", "hello-world", "deno.json"),
+        encodeJsonText({
+          imports: { "@repo/shared": "../../../../../packages/shared/src/index.ts" },
+        }),
       );
 
       const { out, api, layer } = setup(projectRoot, {
@@ -1635,8 +1653,8 @@ describe("functions deploy", () => {
     const child = mockChildProcessSpawner({ exitCode: 1 });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+      yield* writeProjectConfig(tempDir);
+      yield* writeLocalFunction(tempDir, "hello-world");
 
       const { out, layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "hello-world", "--output-format", "json"],
@@ -1667,35 +1685,24 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
     const child = mockChildProcessSpawner({
       exitCode: 0,
-      onSpawn: (record) => {
-        if (record.command !== "docker" || record.args[0] !== "run") {
-          return;
-        }
-        const outputPath = resolveDockerOutputPath(record.args);
-        mkdirSync(dirname(outputPath), { recursive: true });
-        writeFileSync(outputPath, "eszip-test-output");
-      },
+      onSpawn: writeDockerBundle,
     });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeProjectConfig(
-          tempDir,
-          [
-            'project_id = "test-project"',
-            "[edge_runtime]",
-            "deno_version = 1",
-            '[functions."hello-world"]',
-            'import_map = "./custom_import_map.json"',
-            "verify_jwt = false",
-            "",
-          ].join("\n"),
-        ),
+      yield* writeProjectConfig(
+        tempDir,
+        [
+          'project_id = "test-project"',
+          "[edge_runtime]",
+          "deno_version = 1",
+          '[functions."hello-world"]',
+          'import_map = "./custom_import_map.json"',
+          "verify_jwt = false",
+          "",
+        ].join("\n"),
       );
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
-      yield* Effect.promise(() =>
-        writeFile(join(tempDir, "supabase", "custom_import_map.json"), '{"imports":{}}\n'),
-      );
+      yield* writeLocalFunction(tempDir, "hello-world");
+      yield* writeFile(join(tempDir, "supabase", "custom_import_map.json"), '{"imports":{}}\n');
 
       const { out, api, layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "hello-world", "--use-docker"],
@@ -1748,9 +1755,7 @@ describe("functions deploy", () => {
       expect(api.requests[1]?.urlParams).toContain("verify_jwt=false");
       expect(child.spawned.at(-1)?.args).toContain("public.ecr.aws/supabase/edge-runtime:v1.68.4");
       expect(child.spawned.at(-1)?.args).toContain(
-        yield* Effect.promise(() =>
-          expectedDockerBind(join(tempDir, "supabase", "custom_import_map.json")),
-        ),
+        yield* expectedDockerBind(join(tempDir, "supabase", "custom_import_map.json")),
       );
       expect(out.stderrText).toContain("Bundling Function: hello-world\n");
       expect(out.stderrText).toContain("Deploying Function: hello-world (script size:");
@@ -1768,20 +1773,22 @@ describe("functions deploy", () => {
       exitCode: 0,
       onSpawn: (record) => {
         if (record.command !== "docker" || record.args[0] !== "run") {
-          return;
+          return Effect.void;
         }
-        outputPath = resolveDockerOutputPath(record.args);
-        if (!outputPath.startsWith(`${sharedOutputRoot}${sep}`)) {
-          return;
-        }
-        mkdirSync(dirname(outputPath), { recursive: true });
-        writeFileSync(outputPath, "eszip-test-output");
+        return Effect.gen(function* () {
+          outputPath = resolveDockerOutputPath(record.args);
+          if (!outputPath.startsWith(`${sharedOutputRoot}${sep}`)) {
+            return;
+          }
+          yield* mkdir(dirname(outputPath), { recursive: true });
+          yield* writeFile(outputPath, "eszip-test-output");
+        });
       },
     });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+      yield* writeProjectConfig(tempDir);
+      yield* writeLocalFunction(tempDir, "hello-world");
 
       const { layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "hello-world", "--use-docker"],
@@ -1800,44 +1807,22 @@ describe("functions deploy", () => {
 
   it.live("forwards only NPM_CONFIG_REGISTRY to the Docker bundler", () => {
     const tempDir = makeTempDir();
-    const previousRegistry = process.env["NPM_CONFIG_REGISTRY"];
-    const previousToken = process.env["NPM_AUTH_TOKEN"];
     const child = mockChildProcessSpawner({
       exitCode: 0,
-      onSpawn: (record) => {
-        if (record.command !== "docker" || record.args[0] !== "run") {
-          return;
-        }
-        const outputPath = resolveDockerOutputPath(record.args);
-        mkdirSync(dirname(outputPath), { recursive: true });
-        writeFileSync(outputPath, "eszip-test-output");
-      },
-    });
-
-    const restoreEnv = Effect.sync(() => {
-      if (previousRegistry === undefined) {
-        delete process.env["NPM_CONFIG_REGISTRY"];
-      } else {
-        process.env["NPM_CONFIG_REGISTRY"] = previousRegistry;
-      }
-      if (previousToken === undefined) {
-        delete process.env["NPM_AUTH_TOKEN"];
-      } else {
-        process.env["NPM_AUTH_TOKEN"] = previousToken;
-      }
+      onSpawn: writeDockerBundle,
     });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
-      yield* Effect.sync(() => {
-        process.env["NPM_CONFIG_REGISTRY"] = "https://npm.pkg.github.com";
-        process.env["NPM_AUTH_TOKEN"] = "test-token";
-      });
+      yield* writeProjectConfig(tempDir);
+      yield* writeLocalFunction(tempDir, "hello-world");
 
       const { layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "hello-world", "--use-docker"],
         childLayer: child.layer,
+        env: {
+          NPM_CONFIG_REGISTRY: "https://npm.pkg.github.com",
+          NPM_AUTH_TOKEN: "test-token",
+        },
       });
 
       yield* functionsDeploy({
@@ -1858,20 +1843,18 @@ describe("functions deploy", () => {
       expect(forwardedEnv).toContain("NPM_CONFIG_REGISTRY");
       expect(forwardedEnv).not.toContain("NPM_AUTH_TOKEN");
       expect(forwardedEnv).not.toContain("NPM_AUTH_TOKEN=test-token");
-    }).pipe(Effect.ensuring(Effect.all([cleanupTempDir(tempDir), restoreEnv])));
+    }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live("rejects unsupported edge runtime Deno versions for Docker bundling", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeProjectConfig(
-          tempDir,
-          ['project_id = "test-project"', "[edge_runtime]", "deno_version = 3", ""].join("\n"),
-        ),
+      yield* writeProjectConfig(
+        tempDir,
+        ['project_id = "test-project"', "[edge_runtime]", "deno_version = 3", ""].join("\n"),
       );
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+      yield* writeLocalFunction(tempDir, "hello-world");
 
       const { layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "hello-world", "--use-docker"],
@@ -1895,19 +1878,12 @@ describe("functions deploy", () => {
     const child = mockChildProcessSpawner({
       exitCode: 0,
       stdout: "verbose bundle output\n",
-      onSpawn: (record) => {
-        if (record.command !== "docker" || record.args[0] !== "run") {
-          return;
-        }
-        const outputPath = resolveDockerOutputPath(record.args);
-        mkdirSync(dirname(outputPath), { recursive: true });
-        writeFileSync(outputPath, "eszip-test-output");
-      },
+      onSpawn: writeDockerBundle,
     });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+      yield* writeProjectConfig(tempDir);
+      yield* writeLocalFunction(tempDir, "hello-world");
 
       const { out, layer } = setup(tempDir, {
         format: "json",
@@ -1931,8 +1907,8 @@ describe("functions deploy", () => {
     const child = mockChildProcessSpawner({ exitCode: 0 });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+      yield* writeProjectConfig(tempDir);
+      yield* writeLocalFunction(tempDir, "hello-world");
 
       const { out, layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "hello-world", "--use-docker"],
@@ -1960,19 +1936,12 @@ describe("functions deploy", () => {
       const tempDir = makeTempDir();
       const child = mockChildProcessSpawner({
         exitCode: 0,
-        onSpawn: (record) => {
-          if (record.command !== "docker" || record.args[0] !== "run") {
-            return;
-          }
-          const outputPath = resolveDockerOutputPath(record.args);
-          mkdirSync(dirname(outputPath), { recursive: true });
-          writeFileSync(outputPath, "eszip-test-output");
-        },
+        onSpawn: writeDockerBundle,
       });
 
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
-        yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+        yield* writeProjectConfig(tempDir);
+        yield* writeLocalFunction(tempDir, "hello-world");
 
         const { api, layer } = setup(tempDir, {
           rawArgs: ["functions", "deploy", "hello-world", "--use-docker"],
@@ -2012,19 +1981,12 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
     const child = mockChildProcessSpawner({
       exitCode: 0,
-      onSpawn: (record) => {
-        if (record.command !== "docker" || record.args[0] !== "run") {
-          return;
-        }
-        const outputPath = resolveDockerOutputPath(record.args);
-        mkdirSync(dirname(outputPath), { recursive: true });
-        writeFileSync(outputPath, "eszip-test-output");
-      },
+      onSpawn: writeDockerBundle,
     });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+      yield* writeProjectConfig(tempDir);
+      yield* writeLocalFunction(tempDir, "hello-world");
       const expectedHash = compressedBundleHash("eszip-test-output");
 
       const { api, out, layer } = setup(tempDir, {
@@ -2057,27 +2019,16 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
     const child = mockChildProcessSpawner({
       exitCode: 0,
-      onSpawn: (record) => {
-        if (record.command !== "docker" || record.args[0] !== "run") {
-          return;
-        }
-        const outputPath = resolveDockerOutputPath(record.args);
-        mkdirSync(dirname(outputPath), { recursive: true });
-        writeFileSync(outputPath, "eszip-test-output");
-      },
+      onSpawn: writeDockerBundle,
     });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
-      yield* Effect.promise(() =>
-        rm(join(tempDir, "supabase", "functions", "hello-world", "deno.json")),
-      );
-      yield* Effect.promise(() =>
-        writeFile(
-          join(tempDir, "supabase", "functions", "hello-world", "package.json"),
-          '{"dependencies":{"chalk":"^5.0.0"}}\n',
-        ),
+      yield* writeProjectConfig(tempDir);
+      yield* writeLocalFunction(tempDir, "hello-world");
+      yield* rm(join(tempDir, "supabase", "functions", "hello-world", "deno.json"));
+      yield* writeFile(
+        join(tempDir, "supabase", "functions", "hello-world", "package.json"),
+        '{"dependencies":{"chalk":"^5.0.0"}}\n',
       );
 
       const { api, layer } = setup(tempDir, {
@@ -2112,19 +2063,12 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
     const child = mockChildProcessSpawner({
       exitCode: 0,
-      onSpawn: (record) => {
-        if (record.command !== "docker" || record.args[0] !== "run") {
-          return;
-        }
-        const outputPath = resolveDockerOutputPath(record.args);
-        mkdirSync(dirname(outputPath), { recursive: true });
-        writeFileSync(outputPath, "eszip-test-output");
-      },
+      onSpawn: writeDockerBundle,
     });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+      yield* writeProjectConfig(tempDir);
+      yield* writeLocalFunction(tempDir, "hello-world");
 
       const { layer } = setup(tempDir, {
         rawArgs: ["--debug", "functions", "deploy", "hello-world", "--use-docker"],
@@ -2145,23 +2089,14 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
     const child = mockChildProcessSpawner({
       exitCode: 0,
-      onSpawn: (record) => {
-        if (record.command !== "docker" || record.args[0] !== "run") {
-          return;
-        }
-        const outputPath = resolveDockerOutputPath(record.args);
-        mkdirSync(dirname(outputPath), { recursive: true });
-        writeFileSync(outputPath, "eszip-test-output");
-      },
+      onSpawn: writeDockerBundle,
     });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
-      yield* Effect.promise(() => mkdir(join(tempDir, "supabase", ".temp"), { recursive: true }));
-      yield* Effect.promise(() =>
-        writeFile(join(tempDir, "supabase", ".temp", "edge-runtime-version"), "9.9.9\n"),
-      );
+      yield* writeProjectConfig(tempDir);
+      yield* writeLocalFunction(tempDir, "hello-world");
+      yield* mkdir(join(tempDir, "supabase", ".temp"), { recursive: true });
+      yield* writeFile(join(tempDir, "supabase", ".temp", "edge-runtime-version"), "9.9.9\n");
 
       const { layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "hello-world", "--use-docker"],
@@ -2185,32 +2120,23 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
     const child = mockChildProcessSpawner({
       exitCode: 0,
-      onSpawn: (record) => {
-        if (record.command !== "docker" || record.args[0] !== "run") {
-          return;
-        }
-        const outputPath = resolveDockerOutputPath(record.args);
-        mkdirSync(dirname(outputPath), { recursive: true });
-        writeFileSync(outputPath, "eszip-test-output");
-      },
+      onSpawn: writeDockerBundle,
     });
     const staticFile = join(tempDir, "supabase", "shared", "index.html");
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeProjectConfig(
-          tempDir,
-          [
-            'project_id = "test-project"',
-            '[functions."hello-world"]',
-            'static_files = ["./shared/*.html"]',
-            "",
-          ].join("\n"),
-        ),
+      yield* writeProjectConfig(
+        tempDir,
+        [
+          'project_id = "test-project"',
+          '[functions."hello-world"]',
+          'static_files = ["./shared/*.html"]',
+          "",
+        ].join("\n"),
       );
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
-      yield* Effect.promise(() => mkdir(dirname(staticFile), { recursive: true }));
-      yield* Effect.promise(() => writeFile(staticFile, "<h1>hello</h1>\n"));
+      yield* writeLocalFunction(tempDir, "hello-world");
+      yield* mkdir(dirname(staticFile), { recursive: true });
+      yield* writeFile(staticFile, "<h1>hello</h1>\n");
 
       const { layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "hello-world", "--use-docker"],
@@ -2224,9 +2150,7 @@ describe("functions deploy", () => {
       }).pipe(Effect.provide(layer));
 
       expect(child.spawned).toHaveLength(5);
-      expect(child.spawned.at(-1)?.args).toContain(
-        yield* Effect.promise(() => expectedDockerBind(staticFile)),
-      );
+      expect(child.spawned.at(-1)?.args).toContain(yield* expectedDockerBind(staticFile));
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
@@ -2235,12 +2159,10 @@ describe("functions deploy", () => {
     const child = mockChildProcessSpawner({ exitCode: 1 });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeProjectConfig(
-          tempDir,
-          ['project_id = "test-project"', '[functions."disabled-fn"]', "enabled = false", ""].join(
-            "\n",
-          ),
+      yield* writeProjectConfig(
+        tempDir,
+        ['project_id = "test-project"', '[functions."disabled-fn"]', "enabled = false", ""].join(
+          "\n",
         ),
       );
 
@@ -2265,12 +2187,10 @@ describe("functions deploy", () => {
     const child = mockChildProcessSpawner({ exitCode: 1 });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeProjectConfig(
-          tempDir,
-          ['project_id = "test-project"', '[functions."disabled-fn"]', "enabled = false", ""].join(
-            "\n",
-          ),
+      yield* writeProjectConfig(
+        tempDir,
+        ['project_id = "test-project"', '[functions."disabled-fn"]', "enabled = false", ""].join(
+          "\n",
         ),
       );
 
@@ -2302,31 +2222,27 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeProjectConfig(
-          tempDir,
-          [
-            'project_id = "base-project"',
-            '[functions."hello-world"]',
-            'entrypoint = "./functions/hello-world/src/main.ts"',
-            "",
-            "[remotes.preview]",
-            `project_id = "${PROJECT_REF}"`,
-            '[remotes.preview.functions."hello-world"]',
-            "verify_jwt = false",
-            "",
-          ].join("\n"),
-        ),
+      yield* writeProjectConfig(
+        tempDir,
+        [
+          'project_id = "base-project"',
+          '[functions."hello-world"]',
+          'entrypoint = "./functions/hello-world/src/main.ts"',
+          "",
+          "[remotes.preview]",
+          `project_id = "${PROJECT_REF}"`,
+          '[remotes.preview.functions."hello-world"]',
+          "verify_jwt = false",
+          "",
+        ].join("\n"),
       );
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
-      yield* Effect.promise(() =>
-        mkdir(join(tempDir, "supabase", "functions", "hello-world", "src"), { recursive: true }),
-      );
-      yield* Effect.promise(() =>
-        writeFile(
-          join(tempDir, "supabase", "functions", "hello-world", "src", "main.ts"),
-          'Deno.serve(() => new Response("remote"))\n',
-        ),
+      yield* writeLocalFunction(tempDir, "hello-world");
+      yield* mkdir(join(tempDir, "supabase", "functions", "hello-world", "src"), {
+        recursive: true,
+      });
+      yield* writeFile(
+        join(tempDir, "supabase", "functions", "hello-world", "src", "main.ts"),
+        'Deno.serve(() => new Response("remote"))\n',
       );
 
       const { api, layer } = setup(tempDir, {
@@ -2350,20 +2266,18 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeProjectConfig(
-          tempDir,
-          [
-            'project_id = "base-project"',
-            "[remotes.preview]",
-            'project_id = "qrstuvwxyzabcdefghij"',
-            "[remotes.preview.edge_runtime]",
-            "deno_version = 3",
-            "",
-          ].join("\n"),
-        ),
+      yield* writeProjectConfig(
+        tempDir,
+        [
+          'project_id = "base-project"',
+          "[remotes.preview]",
+          'project_id = "qrstuvwxyzabcdefghij"',
+          "[remotes.preview.edge_runtime]",
+          "deno_version = 3",
+          "",
+        ].join("\n"),
       );
-      yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+      yield* writeLocalFunction(tempDir, "hello-world");
 
       const { layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "hello-world", "--project-ref", "qrstuvwxyzabcdefghij"],
@@ -2388,7 +2302,7 @@ describe("functions deploy", () => {
     const child = mockChildProcessSpawner({ exitCode: 0 });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { api, layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "hello.world"],
         childLayer: child.layer,
@@ -2409,7 +2323,7 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "--use-api", "--use-docker"],
       });
@@ -2436,7 +2350,7 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* writeProjectConfig(tempDir);
       const { layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "--use-api", "--use-docker=false"],
       });
@@ -2464,7 +2378,7 @@ describe("functions deploy", () => {
       const tempDir = makeTempDir();
 
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* writeProjectConfig(tempDir);
         const { layer } = setup(tempDir, {
           rawArgs: ["functions", "deploy", "--jobs", "2"],
         });
@@ -2484,8 +2398,8 @@ describe("functions deploy", () => {
       const tempDir = makeTempDir();
 
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
-        yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+        yield* writeProjectConfig(tempDir);
+        yield* writeLocalFunction(tempDir, "hello-world");
 
         const { out, layer } = setup(tempDir, {
           rawArgs: ["functions", "deploy", "hello-world", "--use-api", "--jobs", "2"],
@@ -2506,8 +2420,8 @@ describe("functions deploy", () => {
   describe("--prune confirmation (Go parity: deploy.go:180-195, console.go:64-102)", () => {
     // Strip ANSI SGR (bold slugs via `legacyBold`) so byte-assertions are stable
     // whether or not the test stderr supports color.
-    // eslint-disable-next-line no-control-regex
-    const stripSgr = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
+    const stripSgr = (text: string) =>
+      text.replace(new RegExp(`${String.fromCodePoint(0x1b)}\\[[0-9;]*m`, "gu"), "");
     const PRUNE_PROMPT =
       "Do you want to delete the following Functions from your project?\n \u2022 remote-only\n\n [y/N] ";
 
@@ -2526,8 +2440,8 @@ describe("functions deploy", () => {
     it.live("--yes auto-confirms with the Go prompt echo and deletes the orphan", () => {
       const tempDir = makeTempDir();
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
-        yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+        yield* writeProjectConfig(tempDir);
+        yield* writeLocalFunction(tempDir, "hello-world");
         const { out, api, layer } = pruneSetup(tempDir);
 
         yield* functionsDeploy({
@@ -2553,8 +2467,8 @@ describe("functions deploy", () => {
     it.live("piped `n` declines the prune and cancels like Go", () => {
       const tempDir = makeTempDir();
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
-        yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+        yield* writeProjectConfig(tempDir);
+        yield* writeLocalFunction(tempDir, "hello-world");
         const { out, api, layer } = pruneSetup(tempDir, "n\n");
 
         const exit = yield* Effect.exit(
@@ -2568,7 +2482,7 @@ describe("functions deploy", () => {
 
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          expect(JSON.stringify(exit.cause)).toContain("FunctionDeployCancelledError");
+          expect(encodeJsonText(exit.cause)).toContain("FunctionDeployCancelledError");
         }
         // The piped answer is echoed after the label like Go's non-TTY PromptText.
         expect(stripSgr(out.stderrText)).toContain(`${PRUNE_PROMPT}n\n`);
@@ -2579,8 +2493,8 @@ describe("functions deploy", () => {
     it.live("piped `y` confirms the prune like Go", () => {
       const tempDir = makeTempDir();
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
-        yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+        yield* writeProjectConfig(tempDir);
+        yield* writeLocalFunction(tempDir, "hello-world");
         const { out, api, layer } = pruneSetup(tempDir, "y\n");
 
         yield* functionsDeploy({
@@ -2598,8 +2512,8 @@ describe("functions deploy", () => {
     it.live("empty stdin takes the No default and cancels", () => {
       const tempDir = makeTempDir();
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
-        yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+        yield* writeProjectConfig(tempDir);
+        yield* writeLocalFunction(tempDir, "hello-world");
         const { out, api, layer } = pruneSetup(tempDir);
 
         const exit = yield* Effect.exit(
@@ -2626,8 +2540,8 @@ describe("functions deploy", () => {
         const tempDir = makeTempDir();
 
         return Effect.gen(function* () {
-          yield* Effect.promise(() => writeProjectConfig(tempDir, 'project_id = ""\n'));
-          yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+          yield* writeProjectConfig(tempDir, 'project_id = ""\n');
+          yield* writeLocalFunction(tempDir, "hello-world");
 
           const { out, layer } = setup(tempDir, {
             rawArgs: ["functions", "deploy", "hello-world"],
@@ -2651,13 +2565,11 @@ describe("functions deploy", () => {
         const tempDir = makeTempDir();
 
         return Effect.gen(function* () {
-          yield* Effect.promise(() =>
-            writeProjectConfig(
-              tempDir,
-              ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
-            ),
+          yield* writeProjectConfig(
+            tempDir,
+            ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
           );
-          yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+          yield* writeLocalFunction(tempDir, "hello-world");
 
           const { out, layer } = setup(tempDir, {
             rawArgs: ["functions", "deploy", "hello-world"],
@@ -2681,22 +2593,12 @@ describe("functions deploy", () => {
         const tempDir = makeTempDir();
         const child = mockChildProcessSpawner({
           exitCode: 0,
-          onSpawn: (record) => {
-            if (record.command !== "docker" || record.args[0] !== "run") {
-              return;
-            }
-            const outputPath = resolveDockerOutputPath(record.args);
-            mkdirSync(dirname(outputPath), { recursive: true });
-            writeFileSync(outputPath, "eszip-test-output");
-          },
+          onSpawn: writeDockerBundle,
         });
 
-        const previous = process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
-        process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
-
         return Effect.gen(function* () {
-          yield* Effect.promise(() => writeProjectConfig(tempDir));
-          yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+          yield* writeProjectConfig(tempDir);
+          yield* writeLocalFunction(tempDir, "hello-world");
 
           const { layer } = setup(tempDir, {
             rawArgs: ["functions", "deploy", "hello-world", "--use-docker"],
@@ -2715,18 +2617,7 @@ describe("functions deploy", () => {
             command: "docker",
             args: ["image", "inspect", `public.ecr.aws/${dockerfileServiceImage("edgeruntime")}`],
           });
-        }).pipe(
-          Effect.ensuring(cleanupTempDir(tempDir)),
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (previous === undefined) {
-                delete process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
-              } else {
-                process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = previous;
-              }
-            }),
-          ),
-        );
+        }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
       },
     );
   });

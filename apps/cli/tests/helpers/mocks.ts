@@ -1,8 +1,19 @@
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
-import { Deferred, Effect, Layer, Option, PubSub, Redacted, Stream } from "effect";
+import {
+  ConfigProvider,
+  Deferred,
+  Effect,
+  Layer,
+  Option,
+  Path,
+  PubSub,
+  Redacted,
+  Random,
+  Schema,
+  Stream,
+} from "effect";
 import type { ReactElement } from "react";
 import type { ProjectEnvironment, ProjectPaths } from "@supabase/config";
 import { Stack, StackServiceState, type StackInfo } from "@supabase/stack/effect";
@@ -18,7 +29,10 @@ import {
   ProjectLocalServiceVersions,
   type LocalServiceVersionsState,
 } from "../../src/next/config/project-local-service-versions.service.ts";
-import { ProjectLinkRemote } from "../../src/next/config/project-link-remote.service.ts";
+import {
+  NoProjectApiKeyError,
+  ProjectLinkRemote,
+} from "../../src/next/config/project-link-remote.service.ts";
 import {
   ProjectLinkState,
   type ProjectLinkStateValue,
@@ -62,25 +76,27 @@ type OutputEvent = {
   [key: string]: unknown;
 };
 
-// Default home for mocks that need *some* path value. Unique per process (never
+// Default home for mocks that need *some* path value. Unique per module evaluation (never
 // created on disk here) so a test that accidentally combines this default with a
 // real FileSystem layer can never pick up stale files written by earlier test
 // runs or manual CLI invocations — the failure mode the previous fixed literal
 // `/tmp/supabase-cli-test-home` allowed. Tests that really read or write files
 // under homeDir must pass their own per-test temp dir instead (see
 // `useLegacyTempWorkdir` in `legacy-mocks.ts`).
-const defaultTestHomeDir = join(
-  tmpdir(),
-  `supabase-cli-test-home-${process.pid.toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-);
+const defaultTestHomeDir = `${tmpdir()}/supabase-cli-test-home-${process.pid.toString(36)}-${Effect.runSync(Random.nextInt).toString(36)}`;
 
 // ---------------------------------------------------------------------------
 // Stateless mocks
 // ---------------------------------------------------------------------------
 
-export function mockBrowser(): Layer.Layer<Browser> {
+export function mockBrowser(
+  opts: { readonly onOpen?: (url: string) => void } = {},
+): Layer.Layer<Browser> {
   return Layer.succeed(Browser, {
-    open: () => Effect.void,
+    open: (url) =>
+      Effect.sync(() => {
+        opts.onOpen?.(url);
+      }),
   });
 }
 
@@ -90,8 +106,8 @@ export function mockCrypto(token = "sbp_" + "a".repeat(40)): Layer.Layer<Crypto>
       ecdh: {} as import("node:crypto").ECDH,
       publicKeyHex: "04abcd",
     })),
-    generateSessionId: Effect.sync(() => "test-session-id"),
-    defaultTokenName: Effect.sync(() => "cli_test@host_123"),
+    generateSessionId: Effect.succeed("test-session-id"),
+    defaultTokenName: Effect.succeed("cli_test@host_123"),
     decryptToken: () => Effect.succeed(token),
   });
 }
@@ -156,6 +172,7 @@ export function mockRuntimeInfo(
     homeDir?: string;
     execPath?: string;
     pid?: number;
+    osUser?: string;
   } = {},
 ): Layer.Layer<RuntimeInfo> {
   return Layer.succeed(RuntimeInfo, {
@@ -165,6 +182,7 @@ export function mockRuntimeInfo(
     homeDir: opts.homeDir ?? defaultTestHomeDir,
     execPath: opts.execPath ?? "/test/bin/bun",
     pid: opts.pid ?? 1234,
+    osUser: opts.osUser,
   });
 }
 
@@ -179,31 +197,32 @@ export function mockProcessControl(
   const exitCalls: number[] = [];
   const exitDeferred = Deferred.makeUnsafe<number>();
 
+  const layer: Layer.Layer<ProcessControl> = Layer.succeed(ProcessControl, {
+    awaitSignal: (signals = ["SIGINT", "SIGTERM"]) => {
+      if (opts.awaitSignal !== undefined) {
+        return opts.awaitSignal;
+      }
+      if (opts.signal !== undefined && signals.includes(opts.signal)) {
+        return Effect.succeed(opts.signal);
+      }
+      return Effect.never;
+    },
+    awaitShutdown: opts.awaitShutdown ?? Effect.never,
+    holdSignals: (_signals) => Effect.void,
+    exit: (code: number) =>
+      Effect.gen(function* () {
+        exitCalls.push(code);
+        yield* Deferred.succeed(exitDeferred, code);
+        return yield* Effect.never;
+      }),
+    setExitCode: (code: number) =>
+      Effect.sync(() => {
+        exitCode = code;
+      }),
+    getExitCode: Effect.sync(() => exitCode),
+  });
   return {
-    layer: Layer.succeed(ProcessControl, {
-      awaitSignal: (signals = ["SIGINT", "SIGTERM"]) => {
-        if (opts.awaitSignal !== undefined) {
-          return opts.awaitSignal;
-        }
-        if (opts.signal !== undefined && signals.includes(opts.signal)) {
-          return Effect.succeed(opts.signal);
-        }
-        return Effect.never;
-      },
-      awaitShutdown: opts.awaitShutdown ?? Effect.never,
-      holdSignals: (_signals) => Effect.void,
-      exit: (code: number) =>
-        Effect.gen(function* () {
-          exitCalls.push(code);
-          yield* Deferred.succeed(exitDeferred, code);
-          return yield* Effect.never;
-        }),
-      setExitCode: (code: number) =>
-        Effect.sync(() => {
-          exitCode = code;
-        }),
-      getExitCode: Effect.sync(() => exitCode),
-    }),
+    layer,
     get exitCalls() {
       return exitCalls;
     },
@@ -347,15 +366,15 @@ export function mockOutput(
           };
         }),
       event: (event) =>
-        Effect.sync(() => {
+        Effect.gen(function* () {
+          const message =
+            event.type === "log-entry"
+              ? `[${event.service}] ${event.line}`
+              : yield* Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+                  event,
+                ).pipe(Effect.orDie);
           events.push(event as OutputEvent);
-          messages.push({
-            type: "info",
-            message:
-              event.type === "log-entry"
-                ? `[${event.service}] ${event.line}`
-                : JSON.stringify(event),
-          });
+          messages.push({ type: "info", message });
         }),
       success: (message: string, data?: Record<string, unknown>) =>
         Effect.sync(() => {
@@ -586,31 +605,34 @@ export function mockTelemetryRuntime(
     cliVersion: string;
   }> = {},
 ): Layer.Layer<TelemetryRuntime> {
-  return Layer.succeed(
+  return Layer.effect(
     TelemetryRuntime,
-    TelemetryRuntime.of({
-      configDir: opts.configDir ?? join(defaultTestHomeDir, ".supabase"),
-      tracesDir: opts.tracesDir ?? join(defaultTestHomeDir, ".supabase", "traces"),
-      consent: opts.consent ?? "granted",
-      showDebug: opts.showDebug ?? false,
-      deviceId: opts.deviceId ?? "test-device-id",
-      sessionId: opts.sessionId ?? "test-session-id",
-      identity: makeTelemetryIdentity(opts.distinctId),
-      isFirstRun: opts.isFirstRun ?? false,
-      isTty: opts.isTty ?? false,
-      isCi: opts.isCi ?? false,
-      os: opts.os ?? "linux",
-      arch: opts.arch ?? "x64",
-      cliVersion: opts.cliVersion ?? "0.1.0",
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const configDir = opts.configDir ?? path.join(defaultTestHomeDir, ".supabase");
+      return TelemetryRuntime.of({
+        configDir,
+        tracesDir: opts.tracesDir ?? path.join(configDir, "traces"),
+        consent: opts.consent ?? "granted",
+        showDebug: opts.showDebug ?? false,
+        deviceId: opts.deviceId ?? "test-device-id",
+        sessionId: opts.sessionId ?? "test-session-id",
+        identity: makeTelemetryIdentity(opts.distinctId),
+        isFirstRun: opts.isFirstRun ?? false,
+        isTty: opts.isTty ?? false,
+        isCi: opts.isCi ?? false,
+        os: opts.os ?? "linux",
+        arch: opts.arch ?? "x64",
+        cliVersion: opts.cliVersion ?? "0.1.0",
+      });
     }),
-  );
+  ).pipe(Layer.provide(BunServices.layer));
 }
 
 export function mockStack(
   opts: {
     info?: Partial<StackInfo>;
     stateChanges?: Array<{ name: string; status: StackServiceState["status"] }>;
-    startError?: unknown;
     startPending?: boolean;
     stopPending?: boolean;
     liveStateChanges?: boolean;
@@ -657,9 +679,6 @@ export function mockStack(
       start: () =>
         Effect.gen(function* () {
           started = true;
-          if (opts.startError !== undefined) {
-            return yield* Effect.fail(opts.startError as never);
-          }
           if (opts.startPending) {
             yield* Deferred.await(startDeferred);
           }
@@ -695,28 +714,29 @@ export function mockStack(
             error: null,
           }),
         ),
-      getAllStates: () => {
-        const latestStates = new Map(
-          (stateHistory.length > 0
-            ? stateHistory
-            : [{ name: "postgres", status: "Pending" as const }]
-          ).map((state) => [state.name, state] as const),
-        );
-        return Effect.succeed(
-          [...latestStates.values()].map(
-            (state) =>
-              new StackServiceState({
-                name: state.name,
-                status: state.status,
-                pid: null,
-                exitCode: null,
-                restartCount: 0,
-                startedAt: null,
-                error: null,
-              }),
-          ),
-        );
-      },
+      getAllStates: () =>
+        Effect.suspend(() => {
+          const latestStates = new Map(
+            (stateHistory.length > 0
+              ? stateHistory
+              : [{ name: "postgres", status: "Pending" as const }]
+            ).map((state) => [state.name, state] as const),
+          );
+          return Effect.succeed(
+            [...latestStates.values()].map(
+              (state) =>
+                new StackServiceState({
+                  name: state.name,
+                  status: state.status,
+                  pid: null,
+                  exitCode: null,
+                  restartCount: 0,
+                  startedAt: null,
+                  error: null,
+                }),
+            ),
+          );
+        }),
       stateChanges: () => Effect.succeed(Stream.empty),
       allStateChanges: () =>
         opts.liveStateChanges
@@ -779,10 +799,7 @@ export function mockInk(opts: { manualExit?: boolean } = {}) {
   let rendered = false;
   let unmounted = false;
   let element: ReactElement | null = null;
-  let resolveExit = () => {};
-  const exitPromise = new Promise<unknown>((resolve) => {
-    resolveExit = () => resolve(undefined);
-  });
+  const exitDeferred = Deferred.makeUnsafe<void>();
   return {
     layer: Layer.succeed(Ink, {
       render: (nextElement) =>
@@ -796,7 +813,8 @@ export function mockInk(opts: { manualExit?: boolean } = {}) {
             rerender: (updatedElement) => {
               element = updatedElement;
             },
-            waitUntilExit: () => (opts.manualExit ? exitPromise : Promise.resolve()),
+            waitUntilExit: () =>
+              opts.manualExit ? Effect.runPromise(Deferred.await(exitDeferred)) : Promise.resolve(),
           } satisfies InkInstance;
         }),
     }),
@@ -810,7 +828,7 @@ export function mockInk(opts: { manualExit?: boolean } = {}) {
       return element;
     },
     exit() {
-      resolveExit();
+      Effect.runSync(Deferred.succeed(exitDeferred, undefined));
     },
   };
 }
@@ -819,34 +837,14 @@ export function mockInk(opts: { manualExit?: boolean } = {}) {
 // Environment helpers
 // ---------------------------------------------------------------------------
 
-function applyProcessEnv(values: Readonly<Record<string, string | undefined>>) {
-  const snapshot = { ...process.env };
-
-  for (const key of Object.keys(process.env)) {
-    delete process.env[key];
-  }
-
-  for (const [key, value] of Object.entries(values)) {
-    if (value !== undefined) {
-      process.env[key] = value;
-    }
-  }
-
-  return snapshot;
-}
-
 export function processEnvLayer(
   values: Readonly<Record<string, string | undefined>> = {},
 ): Layer.Layer<never> {
-  return Layer.effectDiscard(
-    Effect.acquireRelease(
-      Effect.sync(() => applyProcessEnv(values)),
-      (snapshot) =>
-        Effect.sync(() => {
-          applyProcessEnv(snapshot);
-        }),
-    ),
-  );
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (value !== undefined) env[key] = value;
+  }
+  return ConfigProvider.layer(ConfigProvider.fromEnv({ env, preserveEmptyStrings: true }));
 }
 
 export function mockProjectContext(
@@ -961,7 +959,7 @@ export function mockProjectLinkRemote(
       fetchLinkedProject: (projectRef: string) =>
         Effect.gen(function* () {
           if (linkedProject === undefined) {
-            return yield* Effect.fail(new Error(`No linked project mock for ${projectRef}`));
+            return yield* new NoProjectApiKeyError({ projectRef });
           }
           return {
             ...linkedProject,
@@ -988,10 +986,12 @@ export function mockProjectLocalServiceVersions(
   );
 }
 
-export function emptyEnv() {
+export function emptyEnv(
+  opts: { readonly env?: Readonly<Record<string, string | undefined>> } = {},
+) {
   const runtimeInfoLayer = mockRuntimeInfo();
   const projectContextLayer = mockProjectContext();
-  const envLayer = processEnvLayer();
+  const envLayer = processEnvLayer(opts.env);
   const projectHomeLayer = mockProjectHome();
   const projectLinkStateLayer = mockProjectLinkState();
   const projectLocalServiceVersionsLayer = mockProjectLocalServiceVersions();
@@ -1005,10 +1005,14 @@ export function emptyEnv() {
     projectLocalServiceVersionsLayer,
     analytics.layer,
     mockTelemetryRuntime(),
-    envLayer,
     mockTty(),
     mockProcessControl().layer,
-    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
+    cliConfigLayer.pipe(
+      Layer.provide(runtimeInfoLayer),
+      Layer.provide(projectContextLayer),
+      Layer.provideMerge(envLayer),
+      Layer.provideMerge(BunServices.layer),
+    ),
     Layer.succeed(HttpTransportClient, {
       request: () => Effect.die("unexpected HttpTransportClient access in tests"),
     }),
@@ -1028,9 +1032,13 @@ export function withEnv(env: Record<string, string>) {
     projectHomeLayer,
     analytics.layer,
     mockTelemetryRuntime(),
-    envLayer,
     mockTty(),
     mockProcessControl().layer,
-    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
+    cliConfigLayer.pipe(
+      Layer.provide(runtimeInfoLayer),
+      Layer.provide(projectContextLayer),
+      Layer.provideMerge(envLayer),
+      Layer.provideMerge(BunServices.layer),
+    ),
   );
 }

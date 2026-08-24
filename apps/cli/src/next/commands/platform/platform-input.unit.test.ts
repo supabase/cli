@@ -7,6 +7,7 @@ import { NonInteractiveError } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { platformOperationDescriptors } from "./platform-descriptors.ts";
 import {
+  buildPlatformRequestPreview,
   decodePlatformInput,
   mergePlatformInput,
   parsePlatformBodySource,
@@ -63,6 +64,14 @@ describe("platform input", () => {
       });
     }),
   );
+
+  it("interpolates array path values instead of their numeric keys", () => {
+    const preview = buildPlatformRequestPreview(deleteBranchDescriptor, {
+      branch_id_or_ref: ["project-a", "project-b"],
+    });
+
+    expect(preview.path).toBe("/v1/branches/project-a%2Cproject-b");
+  });
 
   it.effect("fails when json contains a non-body field", () =>
     Effect.gen(function* () {
@@ -208,7 +217,7 @@ describe("platform input", () => {
       if (Option.isSome(body)) {
         expect(textDecoder.decode(body.value as Uint8Array)).toBe("eszip-bundle");
       }
-    }).pipe(Effect.provide(BunServices.layer), Effect.provide(mockStdin(true))),
+    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, mockStdin(true)))),
   );
 
   it.effect("parses multipart binary upload flags into grouped arrays", () =>
@@ -236,7 +245,7 @@ describe("platform input", () => {
           "deno.json",
         ]);
       }
-    }).pipe(Effect.provide(BunServices.layer), Effect.provide(mockStdin(true))),
+    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, mockStdin(true)))),
   );
 
   it.effect("rejects unknown multipart upload fields", () =>
@@ -254,7 +263,7 @@ describe("platform input", () => {
           detail: "Unknown multipart upload field: missing",
         }),
       );
-    }).pipe(Effect.provide(BunServices.layer), Effect.provide(mockStdin(true))),
+    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, mockStdin(true)))),
   );
 
   it.effect("rejects uploads targeting structured multipart fields", () =>
@@ -272,7 +281,7 @@ describe("platform input", () => {
           detail: "metadata is not a binary multipart field.",
         }),
       );
-    }).pipe(Effect.provide(BunServices.layer), Effect.provide(mockStdin(true))),
+    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, mockStdin(true)))),
   );
 
   it.effect("rejects multiple stdin consumers across flags and uploads", () =>
@@ -314,7 +323,7 @@ describe("platform input", () => {
           suggestion: "Check the path passed to --body-file.",
         }),
       );
-    }).pipe(Effect.provide(BunServices.layer), Effect.provide(mockStdin(true))),
+    }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, mockStdin(true)))),
   );
 
   it.effect("uses the exact command in schema mismatch suggestions", () =>
@@ -347,7 +356,7 @@ describe("platform input", () => {
         name: "123456",
         organization_slug: "123456",
       });
-    }).pipe(Effect.provide(out.layer), Effect.provide(mockStdin(true)));
+    }).pipe(Effect.provide(Layer.mergeAll(out.layer, mockStdin(true))));
   });
 
   it.live("prompts string-only union params as plain text", () => {
@@ -407,7 +416,7 @@ describe("platform input", () => {
         branch_id_or_ref: "abcdefghijklmnopqrst",
       });
       expect(prompts).toEqual(["Branch Id Or Ref"]);
-    }).pipe(Effect.provide(out), Effect.provide(mockStdin(true)));
+    }).pipe(Effect.provide(Layer.mergeAll(out, mockStdin(true))));
   });
 
   it.live("refuses to prompt in json mode", () => {
@@ -417,6 +426,6 @@ describe("platform input", () => {
         Effect.exit,
       );
       expect(getFailError(exit)).toBeInstanceOf(NonInteractiveError);
-    }).pipe(Effect.provide(out.layer), Effect.provide(mockStdin(true)));
+    }).pipe(Effect.provide(Layer.mergeAll(out.layer, mockStdin(true))));
   });
 });

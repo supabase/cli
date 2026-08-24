@@ -1,3 +1,4 @@
+import { DateTime } from "effect";
 import type { Path } from "effect";
 
 import { legacySplitAndTrim } from "./legacy-sql-split.ts";
@@ -45,7 +46,7 @@ export function legacyParseMigrationContent(content: string): LegacyParsedMigrat
  * it stays deterministic under test.
  */
 export function legacyFormatMigrationTimestamp(millis: number): string {
-  return new Date(millis).toISOString().replace(/\D/gu, "").slice(0, 14);
+  return DateTime.formatIso(DateTime.makeUnsafe(millis)).replace(/\D/gu, "").slice(0, 14);
 }
 
 /**

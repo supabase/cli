@@ -5,12 +5,9 @@ import {
   type ProjectConfig,
 } from "@supabase/config";
 import { Effect, Schema } from "effect";
-import { FetchHttpClient } from "effect/unstable/http";
 
-import {
-  legacyResolveStorageCredentials,
-  legacyStorageGatewayFetch,
-} from "../../shared/legacy-storage-credentials.ts";
+import { legacyResolveStorageCredentials } from "../../shared/legacy-storage-credentials.ts";
+import { LegacyLocalGatewayHttpClient } from "../../shared/legacy-local-gateway-http-client.ts";
 import {
   legacyMakeStorageGateway,
   type LegacyStorageGateway,
@@ -76,8 +73,7 @@ export const legacyLoadStorageConfig = Effect.fnUntraced(function* (
 
 /**
  * Resolve Storage credentials and run `body` against a freshly-built gateway,
- * with the `FetchHttpClient.Fetch` override applied to the gateway calls only
- * (CA-trusting for a local https gateway, plain `globalThis.fetch` otherwise).
+ * using the explicit local-gateway transport boundary for gateway calls only.
  *
  * The credential lookup (the `--linked` api-keys call) runs BEFORE the override
  * scope, so it still honors `--dns-resolver https` through the Management API
@@ -97,6 +93,7 @@ export const legacyConnectStorageGateway = <E, R>(
       projectRef: opts.projectRef,
       config: opts.config,
     });
+    const localGatewayHttpClient = yield* LegacyLocalGatewayHttpClient;
     const gatewayOps = Effect.gen(function* () {
       const gateway = yield* legacyMakeStorageGateway({
         baseUrl: credentials.baseUrl,
@@ -105,12 +102,7 @@ export const legacyConnectStorageGateway = <E, R>(
       });
       return yield* body(gateway);
     });
-    return yield* gatewayOps.pipe(
-      Effect.provideService(
-        FetchHttpClient.Fetch,
-        legacyStorageGatewayFetch(credentials.localKongCa),
-      ),
-    );
+    return yield* localGatewayHttpClient.use(credentials.localKongCa, gatewayOps);
   });
 
 /**

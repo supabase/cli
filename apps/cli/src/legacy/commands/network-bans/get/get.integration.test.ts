@@ -1,6 +1,6 @@
 import { type V1ListAllNetworkBansOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Option, Formatter } from "effect";
 
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
@@ -136,7 +136,7 @@ describe("legacy network-bans get integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(out.stderrText).toBe("DB banned IPs:\n");
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
+        const errJson = Formatter.formatJson(exit.cause);
         expect(errJson).toContain("LegacyNetworkBansEnvNotSupportedError");
         expect(errJson).toContain("--output env flag is not supported");
       }
@@ -205,7 +205,7 @@ describe("legacy network-bans get integration", () => {
       const exit = yield* Effect.exit(legacyNetworkBansGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
+        const errJson = Formatter.formatJson(exit.cause);
         expect(errJson).toContain("LegacyNetworkBansGetUnexpectedStatusError");
         expect(errJson).toContain("unexpected list bans status 503");
       }
@@ -218,7 +218,7 @@ describe("legacy network-bans get integration", () => {
       const exit = yield* Effect.exit(legacyNetworkBansGet({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errJson = JSON.stringify(exit.cause);
+        const errJson = Formatter.formatJson(exit.cause);
         expect(errJson).toContain("LegacyNetworkBansGetNetworkError");
         expect(errJson).toContain("failed to list network bans:");
       }

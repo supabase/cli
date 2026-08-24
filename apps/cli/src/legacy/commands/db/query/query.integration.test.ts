@@ -1,9 +1,17 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, Redacted, Stream } from "effect";
+import {
+  Cause,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Redacted,
+  Schema,
+  Stream,
+} from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -43,6 +51,16 @@ import {
 import { LEGACY_RLS_CHECK_SQL } from "./query.advisory.ts";
 import type { LegacyDbQueryFlags } from "./query.command.ts";
 import { legacyDbQuery } from "./query.handler.ts";
+
+const queryJsonEnvelopeSchema = Schema.Struct({
+  boundary: Schema.String,
+  rows: Schema.Unknown,
+  advisory: Schema.optional(Schema.Unknown),
+});
+const queryJsonAdvisorySchema = Schema.Struct({
+  advisory: Schema.Struct({ id: Schema.String }),
+});
+const queryJsonStreamSchema = Schema.Struct({ type: Schema.String, data: Schema.Unknown });
 
 const LOCAL_CONN: LegacyPgConnInput = {
   host: "127.0.0.1",
@@ -358,31 +376,34 @@ describe("legacy db query integration", () => {
   });
 
   it.live("reads SQL from --file", () => {
-    const { layer, out } = setup({ result: SELECT_RESULT });
-    const filePath = join(mkdtempSync(join(tmpdir(), "supabase-query-")), "q.sql");
-    writeFileSync(filePath, "select * from users");
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ local: Option.some(true), file: Option.some(filePath) }));
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-query-" });
+      const filePath = path.join(root, "q.sql");
+      yield* fs.writeFileString(filePath, "select * from users");
+      const { layer, out } = setup({ result: SELECT_RESULT });
+      yield* legacyDbQuery(flags({ local: Option.some(true), file: Option.some(filePath) })).pipe(
+        Effect.provide(layer),
+      );
       expect(out.stdoutText).toContain("alice");
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(Effect.sync(() => rmSync(filePath, { force: true }))),
-    );
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.live("resolves a relative --file against the workdir", () => {
     // A relative `--file` path resolves against the workdir, not the
     // original process cwd.
-    const dir = mkdtempSync(join(tmpdir(), "supabase-query-wd-"));
-    writeFileSync(join(dir, "q.sql"), "select * from users");
-    const { layer, out } = setup({ result: SELECT_RESULT, workdir: dir });
     return Effect.gen(function* () {
-      yield* legacyDbQuery(flags({ local: Option.some(true), file: Option.some("q.sql") }));
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-query-wd-" });
+      yield* fs.writeFileString(path.join(dir, "q.sql"), "select * from users");
+      const { layer, out } = setup({ result: SELECT_RESULT, workdir: dir });
+      yield* legacyDbQuery(flags({ local: Option.some(true), file: Option.some("q.sql") })).pipe(
+        Effect.provide(layer),
+      );
       expect(out.stdoutText).toContain("alice");
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
-    );
+    }).pipe(Effect.provide(BunServices.layer));
   });
 
   it.live("errors when --file cannot be read", () => {
@@ -417,7 +438,9 @@ describe("legacy db query integration", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes" });
     return Effect.gen(function* () {
       yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
-      const parsed = JSON.parse(out.stdoutText);
+      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(queryJsonEnvelopeSchema))(
+        out.stdoutText,
+      );
       expect(parsed.boundary).toBe(BOUNDARY);
       expect(parsed.rows).toEqual([
         { id: 1, name: "alice" },
@@ -431,7 +454,10 @@ describe("legacy db query integration", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "auto", aiTool: "cursor" });
     return Effect.gen(function* () {
       yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
-      expect(JSON.parse(out.stdoutText).boundary).toBe(BOUNDARY);
+      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(queryJsonEnvelopeSchema))(
+        out.stdoutText,
+      );
+      expect(parsed.boundary).toBe(BOUNDARY);
     }).pipe(Effect.provide(layer));
   });
 
@@ -439,7 +465,9 @@ describe("legacy db query integration", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", goOutput: "json" });
     return Effect.gen(function* () {
       yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
-      const parsed = JSON.parse(out.stdoutText);
+      const parsed = yield* Schema.decodeEffect(
+        Schema.fromJsonString(Schema.Array(Schema.Unknown)),
+      )(out.stdoutText);
       expect(Array.isArray(parsed)).toBe(true);
       expect(parsed).toEqual([
         { id: 1, name: "alice" },
@@ -452,7 +480,10 @@ describe("legacy db query integration", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "no", format: "json" });
     return Effect.gen(function* () {
       yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
-      expect(JSON.parse(out.stdoutText)).toEqual([
+      const parsed = yield* Schema.decodeEffect(
+        Schema.fromJsonString(Schema.Array(Schema.Unknown)),
+      )(out.stdoutText);
+      expect(parsed).toEqual([
         { id: 1, name: "alice" },
         { id: 2, name: "bob" },
       ]);
@@ -464,7 +495,10 @@ describe("legacy db query integration", () => {
     return Effect.gen(function* () {
       yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
       expect(out.stdoutText.trimEnd().split("\n")).toHaveLength(1);
-      expect(JSON.parse(out.stdoutText)).toEqual(
+      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(queryJsonStreamSchema))(
+        out.stdoutText,
+      );
+      expect(parsed).toEqual(
         expect.objectContaining({
           type: "result",
           data: [
@@ -581,7 +615,10 @@ describe("legacy db query integration", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
-      expect(JSON.parse(out.stdoutText).advisory.id).toBe("rls_disabled");
+      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(queryJsonAdvisorySchema))(
+        out.stdoutText,
+      );
+      expect(parsed.advisory.id).toBe("rls_disabled");
     }).pipe(Effect.provide(layer));
   });
 
@@ -589,7 +626,10 @@ describe("legacy db query integration", () => {
     const { layer, out } = setup({ result: SELECT_RESULT, agent: "yes", rlsFails: true });
     return Effect.gen(function* () {
       yield* legacyDbQuery(flags({ sql: Option.some("select 1"), local: Option.some(true) }));
-      expect(JSON.parse(out.stdoutText).advisory).toBeUndefined();
+      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(queryJsonEnvelopeSchema))(
+        out.stdoutText,
+      );
+      expect(parsed.advisory).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
@@ -877,7 +917,9 @@ describe("legacy db query integration", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
-      const parsed = JSON.parse(out.stdoutText);
+      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(queryJsonEnvelopeSchema))(
+        out.stdoutText,
+      );
       expect(parsed.boundary).toBe(BOUNDARY);
       expect(parsed.rows).toEqual([{ id: 1 }]);
       expect(parsed.advisory).toBeUndefined();

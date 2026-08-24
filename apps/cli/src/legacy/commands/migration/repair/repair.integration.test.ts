@@ -1,8 +1,16 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import {
+  Cause,
+  ConfigProvider,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  ManagedRuntime,
+  Option,
+  Path,
+} from "effect";
 
 import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
@@ -16,6 +24,7 @@ import {
 import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import { makeLegacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -38,11 +47,16 @@ interface SetupOpts {
   readonly yes?: boolean;
   readonly confirm?: boolean;
   readonly args?: ReadonlyArray<string>;
+  readonly env?: Readonly<Record<string, string>>;
   readonly failSql?: string;
   readonly failResolve?: boolean;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
+  const configProvider = ConfigProvider.fromEnv({
+    env: opts.env ?? {},
+    preserveEmptyStrings: true,
+  });
   const out = mockOutput({
     format: opts.format ?? "text",
     promptConfirmResponses: opts.confirm === undefined ? undefined : [opts.confirm],
@@ -118,7 +132,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   });
 
   const layer = Layer.mergeAll(
+    Layer.effectDiscard(flushFixtureWrites.pipe(Effect.provide(BunServices.layer))),
     out.layer,
+    ConfigProvider.layer(configProvider),
+    makeLegacyViperEnvLayer(configProvider),
     telemetry.layer,
     cache.layer,
     resolver,
@@ -151,10 +168,22 @@ const input = (over: Partial<LegacyMigrationRepairInput> = {}): LegacyMigrationR
 });
 
 const seedMigration = (workdir: string, name: string, body: string) => {
-  const dir = join(workdir, "supabase", "migrations");
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(join(dir, name), body);
+  pendingWrites.push({
+    path: fixturePath.join(workdir, "supabase", "migrations", name),
+    contents: body,
+  });
 };
+
+const fixturePath = ManagedRuntime.make(BunServices.layer).runSync(Path.Path);
+const pendingWrites: Array<{ readonly path: string; readonly contents: string }> = [];
+const flushFixtureWrites = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  for (const write of pendingWrites) {
+    yield* fs.makeDirectory(fixturePath.dirname(write.path), { recursive: true });
+    yield* fs.writeFileString(write.path, write.contents);
+  }
+  pendingWrites.length = 0;
+});
 
 const tmp = useLegacyTempWorkdir();
 
@@ -339,23 +368,13 @@ describe("legacy migration repair", () => {
 
   it.live("auto-confirms repair-all via SUPABASE_YES (no --yes flag)", () => {
     // SUPABASE_YES=1 auto-confirms without --yes.
-    const previous = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "1";
     seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
-    const { layer, execs, queries } = setup(tmp.current);
+    const { layer, execs, queries } = setup(tmp.current, { env: { SUPABASE_YES: "1" } });
     return Effect.gen(function* () {
       yield* legacyMigrationRepair(input({ versions: [], status: "applied" }));
       expect(execs).toContain("TRUNCATE supabase_migrations.schema_migrations");
       expect(queries.some((q) => q.sql.includes("ON CONFLICT"))).toBe(true);
-    }).pipe(
-      Effect.provide(layer),
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (previous === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = previous;
-        }),
-      ),
-    );
+    }).pipe(Effect.provide(layer));
   });
 
   it.live(
@@ -364,7 +383,10 @@ describe("legacy migration repair", () => {
       // SUPABASE_YES set only in supabase/.env (not the shell) — the project env loads it
       // before the repair-all prompt, so it auto-confirms with no --yes flag and no stdin answer.
       seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
-      writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_YES=true\n");
+      pendingWrites.push({
+        path: fixturePath.join(tmp.current, "supabase", ".env"),
+        contents: "SUPABASE_YES=true\n",
+      });
       const { layer, execs, queries } = setup(tmp.current);
       return Effect.gen(function* () {
         yield* legacyMigrationRepair(input({ versions: [], status: "applied" }));

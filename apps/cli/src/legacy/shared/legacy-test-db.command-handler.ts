@@ -31,7 +31,7 @@ export const LEGACY_TEST_DB_SHORT = "Tests local database with pgTAP";
 const onRunFailure = (error: LegacyTestDbRunError | LegacyTestDbNoTestsError) =>
   Effect.gen(function* () {
     const output = yield* Output;
-    if (output.format === "text") return yield* Effect.fail(error);
+    if (output.format === "text") return yield* error;
     const processControl = yield* ProcessControl;
     yield* output.raw(`${error.message}\n`, "stderr");
     yield* processControl.setExitCode(1);

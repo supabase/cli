@@ -10,7 +10,7 @@
  * Go binary until now.
  */
 
-import { Data, Effect, type FileSystem } from "effect";
+import { Data, Effect, Schema, type FileSystem } from "effect";
 
 import { legacyResolveDebugWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
@@ -898,12 +898,10 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
     .exists(params.declarativeDirAbs)
     .pipe(Effect.orElseSucceed(() => false));
   if (!exists) {
-    return yield* Effect.fail(
-      new LegacyPgDeltaDeclarativeApplyError({
-        message: `declarative schema directory not found: ${params.declarativeDirRel}`,
-        reason: "missing_schema_dir",
-      }),
-    );
+    return yield* new LegacyPgDeltaDeclarativeApplyError({
+      message: `declarative schema directory not found: ${params.declarativeDirRel}`,
+      reason: "missing_schema_dir",
+    });
   }
 
   const output = yield* Output;
@@ -931,7 +929,7 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
     `${legacyEdgeRuntimeId(ctx.projectId)}:/root/.cache/deno:rw`,
     `${params.declarativeDirAbs}:${LEGACY_PG_DELTA_APPLY_CONTAINER_SCHEMA_PATH}:ro`,
   ];
-  const npm = legacyPgDeltaNpmRegistryOption(ctx.projectEnv);
+  const npm = yield* legacyPgDeltaNpmRegistryOption(ctx.projectEnv);
   const result = yield* edgeRuntime
     .run({
       script: legacyInterpolatePgDeltaScript(legacyPgDeltaDeclarativeApplyScript, ctx.npmVersion),
@@ -940,6 +938,7 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
       errPrefix: "error running pg-delta script",
       extraFiles: npm.extraFiles,
       extraEnv: npm.extraEnv,
+      projectEnvValues: ctx.projectEnv,
       denoVersion: ctx.denoVersion,
       workdir: ctx.cwd,
     })
@@ -950,28 +949,34 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
       ),
     );
 
-  const parsed = yield* Effect.try({
-    try: () => {
-      const raw: unknown = JSON.parse(result.stdout);
-      // Go's `json.Unmarshal` accepts a top-level JSON `null` for the non-pointer
-      // `ApplyResult` destination and leaves it zero-valued, with no error (verified
-      // empirically) — so a `null` payload must fall through to the normal
-      // `status !== "success"` failure path below, not be misclassified as a parse
-      // failure. See {@link legacyIsPgDeltaApplyResult}'s own doc comment.
-      const normalized: unknown = raw === null ? {} : raw;
-      if (!legacyIsPgDeltaApplyResult(normalized)) {
-        throw new Error("pg-delta apply output was not a JSON object");
-      }
-      return normalized;
-    },
-    catch: (cause) =>
-      new LegacyPgDeltaDeclarativeApplyError({
-        message: debug
-          ? `failed to parse pg-delta apply output: ${errMessage(cause)}\nstdout: ${result.stdout}`
-          : `failed to parse pg-delta apply output: ${errMessage(cause)}`,
-        reason: "output_parse",
-      }),
-  });
+  const decoded = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+    result.stdout,
+  ).pipe(
+    Effect.mapError(
+      (cause) =>
+        new LegacyPgDeltaDeclarativeApplyError({
+          message: debug
+            ? `failed to parse pg-delta apply output: ${errMessage(cause)}\nstdout: ${result.stdout}`
+            : `failed to parse pg-delta apply output: ${errMessage(cause)}`,
+          reason: "output_parse",
+        }),
+    ),
+  );
+  // Go's `json.Unmarshal` accepts a top-level JSON `null` for the non-pointer
+  // `ApplyResult` destination and leaves it zero-valued, with no error (verified
+  // empirically) — so a `null` payload must fall through to the normal
+  // `status !== "success"` failure path below, not be misclassified as a parse
+  // failure. See {@link legacyIsPgDeltaApplyResult}'s own doc comment.
+  const normalized: unknown = decoded === null ? {} : decoded;
+  if (!legacyIsPgDeltaApplyResult(normalized)) {
+    return yield* new LegacyPgDeltaDeclarativeApplyError({
+      message: debug
+        ? `failed to parse pg-delta apply output: pg-delta apply output was not a JSON object\nstdout: ${result.stdout}`
+        : "failed to parse pg-delta apply output: pg-delta apply output was not a JSON object",
+      reason: "output_parse",
+    });
+  }
+  const parsed = normalized;
 
   if (parsed.status !== "success") {
     // `output.rawBytes`, not `output.raw`: `legacyFormatApplyFailure` returns a `Buffer` that
@@ -989,11 +994,9 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
         yield* output.raw(`${debugJson}\n`, "stderr");
       }
     }
-    return yield* Effect.fail(
-      new LegacyPgDeltaDeclarativeApplyError({
-        message: `pg-delta declarative apply failed with status: ${parsed.status ?? ""}`,
-      }),
-    );
+    return yield* new LegacyPgDeltaDeclarativeApplyError({
+      message: `pg-delta declarative apply failed with status: ${parsed.status ?? ""}`,
+    });
   }
   yield* output.raw(
     `Applied ${parsed.totalApplied ?? 0} statements in ${parsed.totalRounds ?? 0} round(s).\n`,

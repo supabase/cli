@@ -8,6 +8,38 @@ const SERVICE = "Supabase CLI";
 const ACCOUNT = "access-token";
 const LEGACY_ACCOUNT = "supabase";
 
+type KeyringModule = typeof import("@napi-rs/keyring");
+
+const readKeyringToken = (keyring: KeyringModule, account: string) =>
+  Effect.try({
+    try: () => {
+      const entry = new keyring.Entry(SERVICE, account);
+      const token = entry.getPassword();
+      return token ? Option.some(Redacted.make(normalizeKeyringToken(token))) : Option.none();
+    },
+    catch: () => undefined,
+  }).pipe(Effect.orElseSucceed(() => Option.none()));
+
+const writeKeyringToken = (keyring: KeyringModule, account: string, token: string) =>
+  Effect.try({
+    try: () => {
+      const entry = new keyring.Entry(SERVICE, account);
+      entry.setPassword(token);
+    },
+    catch: () => undefined,
+  }).pipe(Effect.option);
+
+const deleteKeyringToken = (keyring: KeyringModule, account: string) =>
+  Effect.try({
+    try: () => {
+      const entry = new keyring.Entry(SERVICE, account);
+      if (!entry.getPassword()) return false;
+      entry.deleteCredential();
+      return true;
+    },
+    catch: () => undefined,
+  }).pipe(Effect.orElseSucceed(() => false));
+
 /**
  * credentialsLayer - Token persistence policy for the CLI.
  *
@@ -30,21 +62,10 @@ const makeCredentials = Effect.gen(function* () {
     // Read current storage first, then fall back to legacy account and finally the filesystem.
     getAccessToken: Effect.gen(function* () {
       if (Option.isSome(keyringModule)) {
-        try {
-          const entry = new keyringModule.value.Entry(SERVICE, ACCOUNT);
-          const token = entry.getPassword();
-          if (token) return Option.some(Redacted.make(normalizeKeyringToken(token)));
-        } catch {
-          /* fall through */
-        }
-
-        try {
-          const entry = new keyringModule.value.Entry(SERVICE, LEGACY_ACCOUNT);
-          const token = entry.getPassword();
-          if (token) return Option.some(Redacted.make(normalizeKeyringToken(token)));
-        } catch {
-          /* fall through */
-        }
+        const current = yield* readKeyringToken(keyringModule.value, ACCOUNT);
+        if (Option.isSome(current)) return current;
+        const legacy = yield* readKeyringToken(keyringModule.value, LEGACY_ACCOUNT);
+        if (Option.isSome(legacy)) return legacy;
       }
 
       const exists = yield* fs.exists(fallbackPath);
@@ -62,13 +83,8 @@ const makeCredentials = Effect.gen(function* () {
       Effect.gen(function* () {
         const plainToken = typeof token === "string" ? token : Redacted.value(token);
         if (Option.isSome(keyringModule)) {
-          try {
-            const entry = new keyringModule.value.Entry(SERVICE, ACCOUNT);
-            entry.setPassword(plainToken);
-            return;
-          } catch {
-            /* fall through */
-          }
+          const saved = yield* writeKeyringToken(keyringModule.value, ACCOUNT, plainToken);
+          if (Option.isSome(saved)) return;
         }
 
         yield* fs.makeDirectory(fallbackDir, { recursive: true, mode: 0o700 });
@@ -81,15 +97,8 @@ const makeCredentials = Effect.gen(function* () {
 
       if (Option.isSome(keyringModule)) {
         for (const account of [ACCOUNT, LEGACY_ACCOUNT]) {
-          try {
-            const entry = new keyringModule.value.Entry(SERVICE, account);
-            if (entry.getPassword()) {
-              entry.deleteCredential();
-              anyDeleted = true;
-            }
-          } catch {
-            /* not stored here — fall through */
-          }
+          const deleted = yield* deleteKeyringToken(keyringModule.value, account);
+          anyDeleted ||= deleted;
         }
       }
 

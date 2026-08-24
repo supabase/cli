@@ -37,7 +37,10 @@ type FailCall = {
   suggestion?: string;
 };
 
-function mockOutput(format: "text" | "json" | "stream-json" = "text") {
+function mockOutput(format: "text" | "json" | "stream-json" = "text"): {
+  readonly layer: Layer.Layer<Output>;
+  readonly failCalls: ReadonlyArray<FailCall>;
+} {
   const failCalls: FailCall[] = [];
   return {
     layer: Layer.succeed(Output, {
@@ -92,19 +95,16 @@ function mockOutput(format: "text" | "json" | "stream-json" = "text") {
 describe("withJsonErrorHandling", () => {
   describe("text format", () => {
     it.live("re-raises the original error in text format", () => {
+      const out = mockOutput("text");
       const processControl = mockProcessControl();
       return Effect.gen(function* () {
-        const out = mockOutput("text");
         const error = new TaggedErrorWithDetail({
           message: "something went wrong",
           detail: "some detail",
           suggestion: "try again",
         });
-        const failingEffect = Effect.fail(error);
-        const exit = yield* withJsonErrorHandling(failingEffect).pipe(
-          Effect.exit,
-          Effect.provide(out.layer),
-        );
+        const failingEffect: Effect.Effect<never, TaggedErrorWithDetail> = Effect.fail(error);
+        const exit = yield* withJsonErrorHandling(failingEffect).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         const errorOption = Exit.findErrorOption(exit);
         expect(Option.isSome(errorOption)).toBe(true);
@@ -112,7 +112,7 @@ describe("withJsonErrorHandling", () => {
           expect(errorOption.value).toBe(error);
         }
         expect(out.failCalls).toHaveLength(0);
-      }).pipe(Effect.provide(processControl.layer));
+      }).pipe(Effect.provide(Layer.mergeAll(out.layer, processControl.layer)));
     });
   });
 
@@ -127,7 +127,7 @@ describe("withJsonErrorHandling", () => {
           suggestion: "try again",
         });
         const failingEffect = Effect.fail(error);
-        yield* withJsonErrorHandling(failingEffect).pipe(Effect.provide(out.layer));
+        yield* withJsonErrorHandling(failingEffect);
         expect(out.failCalls).toHaveLength(1);
         expect(out.failCalls[0]).toEqual({
           code: "TaggedErrorWithDetail",
@@ -136,7 +136,7 @@ describe("withJsonErrorHandling", () => {
           suggestion: "try again",
         });
         expect(processControl.exitCode).toBe(1);
-      }).pipe(Effect.provide(out.layer), Effect.provide(processControl.layer));
+      }).pipe(Effect.provide(Layer.mergeAll(out.layer, processControl.layer)));
     });
 
     it.live("includes detail and suggestion when present on error", () => {
@@ -148,12 +148,12 @@ describe("withJsonErrorHandling", () => {
           detail: "in-depth explanation",
           suggestion: "do this instead",
         });
-        yield* withJsonErrorHandling(Effect.fail(error)).pipe(Effect.provide(out.layer));
+        yield* withJsonErrorHandling(Effect.fail(error));
         expect(out.failCalls[0]).toMatchObject({
           detail: "in-depth explanation",
           suggestion: "do this instead",
         });
-      }).pipe(Effect.provide(out.layer), Effect.provide(processControl.layer));
+      }).pipe(Effect.provide(Layer.mergeAll(out.layer, processControl.layer)));
     });
 
     it.live("omits detail and suggestion when absent on error", () => {
@@ -161,14 +161,14 @@ describe("withJsonErrorHandling", () => {
       const processControl = mockProcessControl();
       return Effect.gen(function* () {
         const error = new TaggedErrorMinimal({ message: "minimal error" });
-        yield* withJsonErrorHandling(Effect.fail(error)).pipe(Effect.provide(out.layer));
+        yield* withJsonErrorHandling(Effect.fail(error));
         expect(out.failCalls).toHaveLength(1);
         const call = out.failCalls[0]!;
         expect(call.code).toBe("TaggedErrorMinimal");
         expect(call.message).toBe("minimal error");
         expect("detail" in call).toBe(false);
         expect("suggestion" in call).toBe(false);
-      }).pipe(Effect.provide(out.layer), Effect.provide(processControl.layer));
+      }).pipe(Effect.provide(Layer.mergeAll(out.layer, processControl.layer)));
     });
 
     it.live("uses UnknownError code when error has no _tag", () => {
@@ -176,11 +176,11 @@ describe("withJsonErrorHandling", () => {
       const processControl = mockProcessControl();
       return Effect.gen(function* () {
         const error = new PlainError("plain error message");
-        yield* withJsonErrorHandling(Effect.fail(error)).pipe(Effect.provide(out.layer));
+        yield* withJsonErrorHandling(Effect.fail(error));
         expect(out.failCalls).toHaveLength(1);
         expect(out.failCalls[0]?.code).toBe("UnknownError");
         expect(out.failCalls[0]?.message).toBe("plain error message");
-      }).pipe(Effect.provide(out.layer), Effect.provide(processControl.layer));
+      }).pipe(Effect.provide(Layer.mergeAll(out.layer, processControl.layer)));
     });
 
     // CLI-1879: a delegated Go child's exact exit code must reach the user under
@@ -195,11 +195,11 @@ describe("withJsonErrorHandling", () => {
           exitCode: 130,
           message: "supabase-go exited with code 130 (see stderr for details)",
         });
-        yield* withJsonErrorHandling(Effect.fail(error)).pipe(Effect.provide(out.layer));
+        yield* withJsonErrorHandling(Effect.fail(error));
         expect(out.failCalls).toHaveLength(1);
         expect(out.failCalls[0]?.code).toBe("LegacyGoChildExitError");
         expect(processControl.exitCode).toBe(130);
-      }).pipe(Effect.provide(out.layer), Effect.provide(processControl.layer));
+      }).pipe(Effect.provide(Layer.mergeAll(out.layer, processControl.layer)));
     });
   });
 });

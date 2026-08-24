@@ -11,8 +11,9 @@
  * `v` is stripped) — the workspace package.json version is a semantic-release
  * placeholder, so it is never used.
  */
-import path from "node:path";
 import process from "node:process";
+import { BunPath, BunServices } from "@effect/platform-bun";
+import { Effect, Path } from "effect";
 import { legacyReadDocsContent } from "../src/legacy/docs/legacy-docs-spec.content.ts";
 import {
   legacyBuildDocsSpec,
@@ -26,7 +27,15 @@ function resolveVersion(): string {
   return argument.startsWith("v") ? argument.slice(1) : argument;
 }
 
-const content = legacyReadDocsContent(path.resolve(import.meta.dir, "../docs"));
+const docsRoot = Effect.runSync(
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    return path.resolve(import.meta.dir, "../docs");
+  }).pipe(Effect.provide(BunPath.layer)),
+);
+const content = await Effect.runPromise(
+  legacyReadDocsContent(docsRoot).pipe(Effect.provide(BunServices.layer)),
+);
 
 const spec = legacyBuildDocsSpec({
   root: legacyRoot,

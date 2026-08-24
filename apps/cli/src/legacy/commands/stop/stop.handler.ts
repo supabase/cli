@@ -94,20 +94,13 @@ const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProject
     // discarded); it gives `stop` the same partial-but-growing config validation
     // coverage `status` already has (`status.handler.ts`), rather than a one-off
     // re-implementation.
-    yield* Effect.try({
-      try: () =>
-        legacyResolveLocalConfigValues(
-          context.config,
-          context.hostname,
-          cliConfig.workdir,
-          context.projectEnvValues,
-          context.loaded?.document,
-        ),
-      catch: (cause) =>
-        new LegacyStopConfigLoadError({
-          message: cause instanceof Error ? cause.message : String(cause),
-        }),
-    });
+    yield* legacyResolveLocalConfigValues(
+      context.config,
+      context.hostname,
+      cliConfig.workdir,
+      context.projectEnvValues,
+      context.loaded?.document,
+    ).pipe(Effect.mapError((cause) => new LegacyStopConfigLoadError({ message: cause.message })));
 
     return context.projectId;
   },
@@ -137,14 +130,12 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
     // `all`'s flag definition in `stop.command.ts`) — `--project-id x --all=false`
     // must reject too, not just `--all`/`--all=true`.
     if (Option.isSome(flags.projectId) && Option.isSome(flags.all)) {
-      return yield* Effect.fail(
-        new LegacyStopMutuallyExclusiveError({
-          // The group name keeps declaration order,
-          // but the "were all set" list is sorted.
-          message:
-            "if any flags in the group [project-id all] are set none of the others can be; [all project-id] were all set",
-        }),
-      );
+      return yield* new LegacyStopMutuallyExclusiveError({
+        // The group name keeps declaration order,
+        // but the "were all set" list is sorted.
+        message:
+          "if any flags in the group [project-id all] are set none of the others can be; [all project-id] were all set",
+      });
     }
 
     const searchProjectIdFilter = yield* resolveSearchProjectIdFilter(flags, cliConfig);

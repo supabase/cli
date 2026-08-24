@@ -4,7 +4,7 @@ import {
   type V1UpdateNetworkRestrictionsOutput,
 } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Option, Formatter } from "effect";
 
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
@@ -249,7 +249,7 @@ describe("legacy network-restrictions update integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(api.requests).toHaveLength(0);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("failed to parse IP: notacidr");
+        expect(Formatter.formatJson(exit.cause)).toContain("failed to parse IP: notacidr");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -314,7 +314,7 @@ describe("legacy network-restrictions update integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacyNetworkRestrictionsInvalidCidrError");
         expect(errorJson).toContain("failed to parse IP: 12.3.4.5");
       }
@@ -332,7 +332,7 @@ describe("legacy network-restrictions update integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacyNetworkRestrictionsPrivateIpError");
         expect(errorJson).toContain("private IP provided: 10.0.0.0/8");
       }
@@ -354,7 +354,7 @@ describe("legacy network-restrictions update integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacyNetworkRestrictionsPrivateIpError");
         expect(errorJson).toContain("private IP provided: ::ffff:10.0.0.0/104");
       }
@@ -403,7 +403,7 @@ describe("legacy network-restrictions update integration", () => {
       const exit = yield* Effect.exit(legacyNetworkRestrictionsUpdate(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacyNetworkRestrictionsUpdateNetworkError");
         expect(errorJson).toContain("failed to apply network restrictions:");
       }
@@ -416,7 +416,7 @@ describe("legacy network-restrictions update integration", () => {
       const exit = yield* Effect.exit(legacyNetworkRestrictionsUpdate(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacyNetworkRestrictionsUpdateUnexpectedStatusError");
         expect(errorJson).toContain("failed to apply network restrictions:");
       }
@@ -431,7 +431,7 @@ describe("legacy network-restrictions update integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacyNetworkRestrictionsUpdateNetworkError");
         expect(errorJson).toContain("failed to apply network restrictions:");
       }
@@ -446,7 +446,7 @@ describe("legacy network-restrictions update integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const errorJson = JSON.stringify(exit.cause);
+        const errorJson = Formatter.formatJson(exit.cause);
         expect(errorJson).toContain("LegacyNetworkRestrictionsUpdateUnexpectedStatusError");
         expect(errorJson).toContain("failed to apply network restrictions:");
       }
@@ -630,7 +630,7 @@ describe("legacy network-restrictions update integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidProjectRefError");
+        expect(Formatter.formatJson(exit.cause)).toContain("LegacyInvalidProjectRefError");
       }
     }).pipe(Effect.provide(layer));
   });

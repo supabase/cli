@@ -1,3 +1,4 @@
+import { Data } from "effect";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -33,11 +34,12 @@ const LEGACY_STORAGE_INVALID_URL_MESSAGE = "URL must match pattern ss:///bucket/
  * their own `failed to parse … url: <message>` text, matching Go's
  * `errors.Errorf("failed to parse … url: %w", err)`.
  */
-export class LegacyGoUrlParseError extends Error {
+export class LegacyGoUrlParseError extends Data.TaggedError("LegacyGoUrlParseError")<{
+  readonly message: string;
+}> {
   static readonly [ErrorActionabilityFingerprintId] = "LegacyGoUrlParseError";
   constructor(rawURL: string, inner: string) {
-    super(`parse "${rawURL}": ${inner}`);
-    this.name = "LegacyGoUrlParseError";
+    super({ message: `parse "${rawURL}": ${inner}` });
   }
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -51,11 +53,12 @@ export class LegacyGoUrlParseError extends Error {
  * handler can map it to `LegacyStorageUrlPatternError` rather than the
  * parse-error tagged error.
  */
-export class LegacyStorageUrlPatternError extends Error {
+export class LegacyStorageUrlPatternError extends Data.TaggedError("LegacyStorageUrlPatternError")<{
+  readonly message: string;
+}> {
   static readonly [ErrorActionabilityFingerprintId] = "LegacyStorageUrlPatternError";
   constructor() {
-    super(LEGACY_STORAGE_INVALID_URL_MESSAGE);
-    this.name = "LegacyStorageUrlPatternError";
+    super({ message: LEGACY_STORAGE_INVALID_URL_MESSAGE });
   }
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

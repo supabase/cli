@@ -1,6 +1,7 @@
-import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { BunServices } from "@effect/platform-bun";
+import { describe, expect, it } from "@effect/vitest";
+import { Effect, FileSystem } from "effect";
 
 import { LEGACY_GO_BRANCH_RESPONSE } from "../commands/branches/branches.go-payload.ts";
 import { LEGACY_GO_ORGANIZATION_RESPONSE } from "../commands/orgs/orgs.go-payload.ts";
@@ -66,14 +67,15 @@ const GO_PAYLOAD_SPEC_REGISTRY: ReadonlyArray<GoPayloadSpecEntry> = [
 ];
 
 describe("go-payload specs vs types.gen.go (drift check)", () => {
-  const source = readFileSync(TYPES_GEN_GO_PATH, "utf8");
-
-  it.each(GO_PAYLOAD_SPEC_REGISTRY)(
+  it.effect.each(GO_PAYLOAD_SPEC_REGISTRY)(
     "$specName matches Go's $goTypeName with zero drift",
-    ({ spec, goTypeName }) => {
-      const parsed = parseGoStruct(source, goTypeName);
-      expect(compareLegacyGoTypeToParsedGoType(spec, parsed)).toEqual([]);
-    },
+    ({ spec, goTypeName }) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const source = yield* fs.readFileString(TYPES_GEN_GO_PATH);
+        const parsed = parseGoStruct(source, goTypeName);
+        expect(compareLegacyGoTypeToParsedGoType(spec, parsed)).toEqual([]);
+      }).pipe(Effect.provide(BunServices.layer)),
   );
 
   it("has teeth: reports a mismatch when a field is dropped from the real struct", () => {

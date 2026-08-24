@@ -1,8 +1,6 @@
-import { readFileSync } from "node:fs";
-import { dirname } from "node:path";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
+import { BunServices } from "@effect/platform-bun";
+import { Effect, FileSystem, Path } from "effect";
 
 import { getHelpDoc } from "../../docs/command-docs.ts";
 import { apiRequestCommand } from "./request.command.ts";
@@ -145,14 +143,17 @@ describe("platform example generation", () => {
     }
   });
 
-  it("keeps operation-specific logic isolated to the override map", () => {
-    const sourcePath = path.resolve(
-      dirname(fileURLToPath(import.meta.url)),
-      "platform-examples.ts",
-    );
-    const source = readFileSync(sourcePath, "utf8");
+  it.effect("keeps operation-specific logic isolated to the override map", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const fs = yield* FileSystem.FileSystem;
+      const sourcePath = yield* path.fromFileUrl(
+        new URL("./platform-examples.ts", import.meta.url),
+      );
+      const source = yield* fs.readFileString(sourcePath);
 
-    expect(source).not.toMatch(/case\s+"v1[A-Za-z0-9]+"/);
-    expect(source).toMatch(/bodyExampleOverrides/);
-  });
+      expect(source).not.toMatch(/case\s+"v1[A-Za-z0-9]+"/);
+      expect(source).toMatch(/bodyExampleOverrides/);
+    }).pipe(Effect.provide(BunServices.layer)),
+  );
 });

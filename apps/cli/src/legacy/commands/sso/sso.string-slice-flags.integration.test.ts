@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer } from "effect";
+import * as Formatter from "effect/Formatter";
 import { CliOutput, Command } from "effect/unstable/cli";
 
 import { normalizeCause } from "../../../shared/output/normalize-error.ts";
@@ -115,7 +116,7 @@ describe("legacy sso StringSlice flags (pflag CSV parity)", () => {
         if (Exit.isFailure(exit)) {
           // Parse-time failure: the command's Management API layer (and its
           // eager token resolution) must never have been built.
-          expect(JSON.stringify(exit.cause)).not.toContain("LegacyPlatformAuthRequiredError");
+          expect(Formatter.formatJson(exit.cause)).not.toContain("LegacyPlatformAuthRequiredError");
           expect(normalizeCause(exit.cause).message).toBe(message);
         }
         expect(api.requests).toHaveLength(0);

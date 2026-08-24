@@ -1,7 +1,24 @@
 import { BunServices } from "@effect/platform-bun";
-import { ProjectConfigStore } from "@supabase/config";
+import { ProjectConfigStore, ProjectEnvParseError } from "@supabase/config";
 import { httpTransportClientLayer } from "@supabase/stack/effect";
-import { Cause, Console, Effect, Exit, Fiber, Layer, Runtime, Stdio } from "effect";
+import { controlTransportLayer } from "@supabase/stack/managed";
+import {
+  Cause,
+  ConfigProvider,
+  Console,
+  Crypto,
+  Effect,
+  Exit,
+  Fiber,
+  FileSystem,
+  Layer,
+  Path,
+  Runtime,
+  Stdio,
+} from "effect";
+import type { ConfigError } from "effect/Config";
+import type { SourceError } from "effect/ConfigProvider";
+import type * as PlatformError from "effect/PlatformError";
 import { CliError, CliOutput, Command } from "effect/unstable/cli";
 import { CLI_VERSION } from "./version.ts";
 import { Credentials } from "../../next/auth/credentials.service.ts";
@@ -13,7 +30,10 @@ import type { OutputFormat } from "../output/types.ts";
 import { Output } from "../output/output.service.ts";
 import { LegacyGoChildExitError } from "../legacy/legacy-go-child-exit.error.ts";
 import { GoProxyInvocation, goProxyInvocationLayer } from "../legacy/go-proxy-invocation.ts";
+import { legacyViperEnvLayer } from "../legacy/legacy-viper-env.ts";
 import { cliConfigLayer } from "../../next/config/cli-config.layer.ts";
+import { CliConfig } from "../../next/config/cli-config.service.ts";
+import { ProjectContext } from "../../next/config/project-context.service.ts";
 import { projectHomeLayer } from "../../next/config/project-home.layer.ts";
 import { ProjectLocalServiceVersions } from "../../next/config/project-local-service-versions.service.ts";
 import { projectContextLayer } from "../../next/config/project-context.layer.ts";
@@ -21,12 +41,16 @@ import { projectLinkStateLayer } from "../../next/config/project-link-state.laye
 import { processControlLayer } from "../runtime/process-control.layer.ts";
 import { runtimeInfoLayer } from "../runtime/runtime-info.layer.ts";
 import { ttyLayer } from "../runtime/tty.layer.ts";
+import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
+import { Tty } from "../runtime/tty.service.ts";
 import { CommandRuntime } from "../runtime/command-runtime.service.ts";
 import { ProcessControl } from "../runtime/process-control.service.ts";
 import type { Analytics } from "../telemetry/analytics.service.ts";
 import { aiToolLayer } from "../telemetry/ai-tool.layer.ts";
 import { AiTool } from "../telemetry/ai-tool.service.ts";
 import { telemetryRuntimeLayer } from "../telemetry/runtime.layer.ts";
+import { TelemetryRuntime } from "../telemetry/runtime.service.ts";
+import { TelemetryConfigError } from "../telemetry/consent.ts";
 import { tracingLayer } from "../telemetry/tracing.layer.ts";
 import { CliArgs } from "./cli-args.service.ts";
 import { resolveAgentOutputFormatFromArgs } from "./agent-output.ts";
@@ -98,6 +122,15 @@ const globalFlagsWithValues = new Set([
 // command already uses safely alongside this global handler — so `db reset` was removed from
 // this list too, matching `db start`'s own precedent exactly.
 const selfManagedSignalCommands: ReadonlyArray<ReadonlyArray<string>> = [["functions", "serve"]];
+
+/** Provides project-home dependencies from an already-composed runtime layer. */
+const projectHomeFor = <E>(
+  runtimeServices: Layer.Layer<
+    FileSystem.FileSystem | Path.Path | RuntimeInfo | ProjectContext,
+    E,
+    never
+  >,
+) => projectHomeLayer.pipe(Layer.provideMerge(runtimeServices));
 
 /** Positional command-path tokens from argv, skipping global flags and their values. */
 export function extractCommandPath(args: ReadonlyArray<string>): ReadonlyArray<string> {
@@ -652,19 +685,29 @@ function cliConfigLayerFor(runtimeLayer: Layer.Layer<never>) {
   );
 }
 
-function projectHomeLayerFor(runtimeLayer: Layer.Layer<never>) {
-  return projectHomeLayer.pipe(
-    Layer.provide(cliConfigLayerFor(runtimeLayer)),
-    Layer.provide(projectContextLayerFor(runtimeLayer)),
-    Layer.provide(runtimeLayer),
-    Layer.provide(BunServices.layer),
-  );
-}
+type AnalyticsLayer = Layer.Layer<
+  Analytics,
+  ConfigError | PlatformError.PlatformError | TelemetryConfigError,
+  | AiTool
+  | CliConfig
+  | Crypto.Crypto
+  | FileSystem.FileSystem
+  | Path.Path
+  | RuntimeInfo
+  | Tty
+  | TelemetryRuntime
+>;
 
-type AnyAnalyticsLayer = Layer.Layer<Analytics, never, any>;
+type CliRuntimeError =
+  | CliError.CliError
+  | ConfigError
+  | PlatformError.PlatformError
+  | ProjectEnvParseError
+  | SourceError
+  | TelemetryConfigError;
 
 export interface RunCliOptions {
-  readonly analyticsLayer: AnyAnalyticsLayer;
+  readonly analyticsLayer: AnalyticsLayer;
   /**
    * Extra command paths (on top of the shared `selfManagedSignalCommands` list) that must NOT
    * be wrapped in the global signal-interrupt handler for this shell specifically — see
@@ -691,13 +734,41 @@ export interface RunCliOptions {
   ) => Effect.Effect<void>;
 }
 
-function cliProgramFor(
-  rootCommand: Command.Command.Any,
+function makeCommandServices<
+  const Name extends string,
+  Input,
+  ContextInput,
+  RootError,
+  RootRequirements,
+>(
+  rootCommand: Command.Command<Name, Input, ContextInput, RootError, RootRequirements>,
   args: ReadonlyArray<string>,
   options: RunCliOptions,
-  outputFormat: OutputFormat,
 ) {
-  const runtimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
+  const configProviderLayer = ConfigProvider.layer(
+    ConfigProvider.fromEnv({ preserveEmptyStrings: true }),
+  );
+  const runtimeLayer = Layer.mergeAll(
+    processControlLayer,
+    runtimeInfoLayer,
+    ttyLayer,
+    configProviderLayer,
+  );
+  const projectContext = projectContextLayerFor(runtimeLayer);
+  const cliConfig = cliConfigLayerFor(runtimeLayer);
+  const runtimeServices = cliConfig.pipe(
+    Layer.provideMerge(projectContext),
+    Layer.provideMerge(runtimeLayer),
+    Layer.provideMerge(BunServices.layer),
+  );
+  const projectHome = projectHomeFor(runtimeServices);
+  const telemetryRuntime = telemetryRuntimeLayer.pipe(Layer.provideMerge(runtimeServices));
+  const resolvedAnalyticsLayer = options.analyticsLayer.pipe(
+    Layer.provideMerge(telemetryRuntime),
+    Layer.provideMerge(aiToolLayer),
+  );
+  const tracing = tracingLayer.pipe(Layer.provideMerge(telemetryRuntime));
+  const projectLinkState = projectLinkStateLayer.pipe(Layer.provideMerge(projectHome));
   const fallbackCommandLayer = Layer.mergeAll(
     // Root command env inference currently leaks some subcommand-provided services.
     Layer.succeed(Credentials, {
@@ -721,170 +792,222 @@ function cliProgramFor(
       }),
     ),
   );
-  return withoutParseErrorHelpDump(Command.runWith(rootCommand, { version: CLI_VERSION })(args), {
-    rootCommand,
-    args,
-  }).pipe(
-    Effect.provide(formatterLayerFor(rootCommand, args, outputFormat)),
-    Effect.provide(options.analyticsLayer),
-    Effect.provide(tracingLayer),
-    Effect.provide(telemetryRuntimeLayer),
-    Effect.provide(cliConfigLayerFor(runtimeLayer)),
-    Effect.provide(projectHomeLayerFor(runtimeLayer)),
-    Effect.provide(projectContextLayerFor(runtimeLayer)),
-    Effect.provide(projectLinkStateLayer),
-    Effect.provide(runtimeLayer),
-    Effect.provide(httpTransportClientLayer),
-    Effect.provide(fallbackCommandLayer),
-    Effect.provide(Layer.succeed(CliArgs, { args })),
-    Effect.provide(BunServices.layer),
+  return Layer.mergeAll(
+    resolvedAnalyticsLayer,
+    tracing,
+    projectLinkState,
+    legacyViperEnvLayer,
+    fallbackCommandLayer,
+    httpTransportClientLayer,
+    controlTransportLayer,
+    Layer.succeed(CliArgs, { args }),
+    BunServices.layer,
   );
 }
 
-export async function runCli(rootCommand: Command.Command.Any, options: RunCliOptions) {
-  const args = await Effect.runPromise(
-    Effect.gen(function* () {
+type CliCommandRequirements = Layer.Success<ReturnType<typeof makeCommandServices>>;
+
+function cliProgramFor<const Name extends string, Input, ContextInput, E>(
+  rootCommand: Command.Command<Name, Input, ContextInput, E, CliCommandRequirements>,
+  args: ReadonlyArray<string>,
+  options: RunCliOptions,
+  outputFormat: OutputFormat,
+): Effect.Effect<void, CliRuntimeError | E, never> {
+  const commandServices = makeCommandServices(rootCommand, args, options);
+  const commandEnvironmentLayer: Layer.Layer<Command.Environment> = BunServices.layer;
+  const commandRun = Command.runWith(rootCommand.pipe(Command.provide(commandServices)), {
+    version: CLI_VERSION,
+  })(args).pipe(
+    Effect.provide(
+      Layer.mergeAll(formatterLayerFor(rootCommand, args, outputFormat), commandEnvironmentLayer),
+    ),
+  );
+  const commandProgram: Effect.Effect<void, CliRuntimeError | E, never> = withoutParseErrorHelpDump<
+    void,
+    CliRuntimeError | E,
+    never
+  >(commandRun, {
+    rootCommand,
+    args,
+  });
+  return commandProgram;
+}
+
+function runCliEffect<const Name extends string, Input, ContextInput, E>(
+  rootCommand: Command.Command<Name, Input, ContextInput, E, CliCommandRequirements>,
+  options: RunCliOptions,
+): Effect.Effect<never, CliRuntimeError | E, never> {
+  return Effect.gen(function* () {
+    const args = yield* Effect.gen(function* () {
       const stdio = yield* Stdio.Stdio;
       return yield* stdio.args;
-    }).pipe(Effect.provide(BunServices.layer)),
-  );
+    }).pipe(Effect.provide(BunServices.layer));
 
-  // Same `{ rootCommand, args }` shape `formatterLayerFor` builds below, so
-  // `normalizeCause`'s single-render fallback path (CLI-1901) can reuse
-  // `formatCliErrorsForDisplay` and surface the same subcommand-flag hint the
-  // text/json formatters would have shown before the vendored library's own
-  // duplicate render was suppressed.
-  const suggestionContext = { rootCommand, args };
-  const useGlobalSignalInterrupt = shouldUseGlobalSignalInterrupt(
-    args,
-    options.additionalSelfManagedSignalCommands,
-  );
-  const outputFormat = await Effect.runPromise(
-    Effect.gen(function* () {
+    // Same `{ rootCommand, args }` shape `formatterLayerFor` builds below, so
+    // `normalizeCause`'s single-render fallback path (CLI-1901) can reuse
+    // `formatCliErrorsForDisplay` and surface the same subcommand-flag hint the
+    // text/json formatters would have shown before the vendored library's own
+    // duplicate render was suppressed.
+    const suggestionContext = { rootCommand, args };
+    const useGlobalSignalInterrupt = shouldUseGlobalSignalInterrupt(
+      args,
+      options.additionalSelfManagedSignalCommands,
+    );
+    const outputFormat = yield* Effect.gen(function* () {
       const aiTool = yield* AiTool;
       return resolveAgentOutputFormatFromArgs(args, aiTool.name);
-    }).pipe(Effect.provide(aiToolLayer)),
-  );
-  const cliProgram = cliProgramFor(rootCommand, args, options, outputFormat);
+    }).pipe(Effect.provide(aiToolLayer));
+    const cliProgram = cliProgramFor(rootCommand, args, options, outputFormat);
 
-  const signalAwareProgram = Effect.scoped(
-    Effect.gen(function* () {
-      const processControl = yield* ProcessControl;
-      yield* processControl.holdSignals(["SIGINT", "SIGTERM"]);
-      const cliFiber = yield* cliProgram.pipe(Effect.forkScoped);
-      const outcome = yield* Effect.raceFirst(
-        Fiber.await(cliFiber).pipe(Effect.map((exit) => ({ _tag: "cli" as const, exit }))),
-        processControl
-          .awaitSignal()
-          .pipe(Effect.map((signal) => ({ _tag: "signal" as const, signal }))),
-      );
-
-      if (outcome._tag === "signal") {
-        // SIGHUP must also stay held once cleanup begins.
-        yield* Effect.scoped(
-          processControl.holdSignals(["SIGHUP"]).pipe(Effect.andThen(Fiber.interrupt(cliFiber))),
+    const signalAwareProgram = Effect.scoped(
+      Effect.gen(function* () {
+        const processControl = yield* ProcessControl;
+        yield* processControl.holdSignals(["SIGINT", "SIGTERM"]);
+        const cliFiber = yield* cliProgram.pipe(Effect.forkScoped);
+        const outcome = yield* Effect.raceFirst(
+          Fiber.await(cliFiber).pipe(Effect.map((exit) => ({ _tag: "cli" as const, exit }))),
+          processControl
+            .awaitSignal()
+            .pipe(Effect.map((signal) => ({ _tag: "signal" as const, signal }))),
         );
-        return yield* Effect.interrupt;
-      }
 
-      return yield* outcome.exit;
-    }),
-  ).pipe(
-    Effect.provide(processControlLayer),
-    Effect.provide(runtimeInfoLayer),
-    Effect.provide(ttyLayer),
-    Effect.provide(httpTransportClientLayer),
-    Effect.provide(BunServices.layer),
-  );
-
-  const selfManagedSignalProgram = Effect.scoped(
-    Effect.gen(function* () {
-      const processControl = yield* ProcessControl;
-      yield* processControl.holdSignals(["SIGINT", "SIGTERM"]);
-      return yield* cliProgram;
-    }),
-  ).pipe(Effect.provide(processControlLayer));
-
-  const handledRuntimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
-
-  const handledProgram = <A, E, R>(
-    program: Effect.Effect<A, E, R>,
-  ): Effect.Effect<never, unknown, never> =>
-    Effect.gen(function* () {
-      const processControl = yield* ProcessControl;
-      const goProxyInvocation = yield* GoProxyInvocation;
-      const output = yield* Output;
-      const successTrailer = yield* SuccessTrailer;
-      const exit = yield* program.pipe(Effect.exit);
-      const afterSuccessHook = options.afterSuccess;
-      const afterSuccess = (code: number, cleanShowHelp: boolean) =>
-        code === 0
-          ? Effect.gen(function* () {
-              const trailers = yield* successTrailer.takeAll;
-              if (afterSuccessHook !== undefined || trailers.length > 0) {
-                yield* Effect.scoped(
-                  processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]).pipe(
-                    Effect.andThen(
-                      Effect.gen(function* () {
-                        if (afterSuccessHook !== undefined) {
-                          const delegatedToGo = yield* goProxyInvocation.wasDelegated;
-                          const workingDirectory = yield* successTrailer.workingDirectory;
-                          yield* afterSuccessHook(args, {
-                            cleanShowHelp,
-                            delegatedToGo,
-                            workingDirectory,
-                            isValueTakingFlagToken: valueTakingFlagTokenPredicateForArgv(
-                              rootCommand,
-                              args,
-                            ),
-                          });
-                        }
-
-                        yield* Effect.forEach(trailers, (text) => output.raw(text, "stderr"), {
-                          discard: true,
-                        });
-                      }),
-                    ),
-                  ),
-                );
-              }
-            })
-          : Effect.void;
-      if (Exit.isFailure(exit)) {
-        const exitCode = exitCodeForFailure(exit.cause);
-        // See `shouldReportFailure` for the reporting rules (and why they're
-        // NOT keyed on Effect's shared `[Runtime.errorReported]` marker).
-        // Literal `--help` never reaches this branch — it's handled as a
-        // successful `GlobalFlag.Action` and exits 0 via the success path
-        // below. See `exitCodeForFailure` for why a "clean" ShowHelp failure
-        // (e.g. a bare group command with no subcommand) also maps to exit 0.
-        if (shouldReportFailure(exit.cause, exitCode)) {
-          yield* output.fail(normalizeCause(exit.cause, suggestionContext));
+        if (outcome._tag === "signal") {
+          // SIGHUP must also stay held once cleanup begins.
+          yield* Effect.scoped(
+            processControl.holdSignals(["SIGHUP"]).pipe(Effect.andThen(Fiber.interrupt(cliFiber))),
+          );
+          return yield* Effect.interrupt;
         }
-        yield* afterSuccess(exitCode, true);
-        return yield* processControl.exit(exitCode);
-      }
-      const exitCode = yield* processControl.getExitCode;
-      yield* afterSuccess(exitCode ?? 0, false);
-      return yield* processControl.exit(exitCode ?? 0);
-    }).pipe(
-      Effect.provide(outputLayerFor(outputFormat)),
-      Effect.provide(telemetryRuntimeLayer),
-      Effect.provide(projectHomeLayerFor(handledRuntimeLayer)),
-      Effect.provide(cliConfigLayerFor(handledRuntimeLayer)),
-      Effect.provide(projectContextLayerFor(handledRuntimeLayer)),
-      Effect.provide(processControlLayer),
-      Effect.provide(runtimeInfoLayer),
-      Effect.provide(ttyLayer),
-      Effect.provide(httpTransportClientLayer),
-      Effect.provide(BunServices.layer),
-      Effect.provide(goProxyInvocationLayer),
-      Effect.provide(successTrailerLayer),
+
+        return yield* outcome.exit;
+      }),
+    ).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          processControlLayer,
+          runtimeInfoLayer,
+          ttyLayer,
+          httpTransportClientLayer,
+          BunServices.layer,
+        ),
+      ),
     );
 
-  if (useGlobalSignalInterrupt) {
-    await Effect.runPromise(handledProgram(signalAwareProgram));
-  } else {
-    await Effect.runPromise(handledProgram(selfManagedSignalProgram));
-  }
+    const selfManagedSignalProgram = Effect.scoped(
+      Effect.gen(function* () {
+        const processControl = yield* ProcessControl;
+        yield* processControl.holdSignals(["SIGINT", "SIGTERM"]);
+        return yield* cliProgram;
+      }),
+    ).pipe(Effect.provide(processControlLayer));
+
+    const handledRuntimeLayer = Layer.mergeAll(
+      processControlLayer,
+      runtimeInfoLayer,
+      ttyLayer,
+      ConfigProvider.layer(ConfigProvider.fromEnv({ preserveEmptyStrings: true })),
+    );
+    const handledProjectContext = projectContextLayerFor(handledRuntimeLayer);
+    const handledCliConfig = cliConfigLayerFor(handledRuntimeLayer);
+    const handledRuntimeServices = handledCliConfig.pipe(
+      Layer.provideMerge(handledProjectContext),
+      Layer.provideMerge(handledRuntimeLayer),
+      Layer.provideMerge(BunServices.layer),
+    );
+    const handledProjectHome = projectHomeFor(handledRuntimeServices);
+    const handledTelemetryRuntime = telemetryRuntimeLayer.pipe(
+      Layer.provideMerge(handledRuntimeServices),
+    );
+    const handledOutput = outputLayerFor(outputFormat).pipe(
+      Layer.provideMerge(handledRuntimeServices),
+    );
+    const handledServices = Layer.mergeAll(
+      handledOutput,
+      handledTelemetryRuntime,
+      handledProjectHome,
+      httpTransportClientLayer,
+      goProxyInvocationLayer,
+      successTrailerLayer,
+    );
+
+    const handledProgram = <A, ProgramError>(
+      program: Effect.Effect<A, ProgramError, never>,
+    ): Effect.Effect<never, CliRuntimeError | ProgramError, never> =>
+      Effect.gen(function* () {
+        const processControl = yield* ProcessControl;
+        const goProxyInvocation = yield* GoProxyInvocation;
+        const output = yield* Output;
+        const successTrailer = yield* SuccessTrailer;
+        const exit = yield* program.pipe(Effect.exit);
+        const afterSuccessHook = options.afterSuccess;
+        const afterSuccess = (code: number, cleanShowHelp: boolean) =>
+          code === 0
+            ? Effect.gen(function* () {
+                const trailers = yield* successTrailer.takeAll;
+                if (afterSuccessHook !== undefined || trailers.length > 0) {
+                  yield* Effect.scoped(
+                    processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]).pipe(
+                      Effect.andThen(
+                        Effect.gen(function* () {
+                          if (afterSuccessHook !== undefined) {
+                            const delegatedToGo = yield* goProxyInvocation.wasDelegated;
+                            const workingDirectory = yield* successTrailer.workingDirectory;
+                            yield* afterSuccessHook(args, {
+                              cleanShowHelp,
+                              delegatedToGo,
+                              workingDirectory,
+                              isValueTakingFlagToken: valueTakingFlagTokenPredicateForArgv(
+                                rootCommand,
+                                args,
+                              ),
+                            });
+                          }
+
+                          yield* Effect.forEach(trailers, (text) => output.raw(text, "stderr"), {
+                            discard: true,
+                          });
+                        }),
+                      ),
+                    ),
+                  );
+                }
+              })
+            : Effect.void;
+        if (Exit.isFailure(exit)) {
+          const exitCode = exitCodeForFailure(exit.cause);
+          // See `shouldReportFailure` for the reporting rules (and why they're
+          // NOT keyed on Effect's shared `[Runtime.errorReported]` marker).
+          // Literal `--help` never reaches this branch — it's handled as a
+          // successful `GlobalFlag.Action` and exits 0 via the success path
+          // below. See `exitCodeForFailure` for why a "clean" ShowHelp failure
+          // (e.g. a bare group command with no subcommand) also maps to exit 0.
+          if (shouldReportFailure(exit.cause, exitCode)) {
+            yield* output.fail(normalizeCause(exit.cause, suggestionContext));
+          }
+          yield* afterSuccess(exitCode, true);
+          return yield* processControl.exit(exitCode);
+        }
+        const exitCode = yield* processControl.getExitCode;
+        yield* afterSuccess(exitCode ?? 0, false);
+        return yield* processControl.exit(exitCode ?? 0);
+      }).pipe(Effect.provide(handledServices));
+
+    if (useGlobalSignalInterrupt) {
+      return yield* handledProgram(signalAwareProgram);
+    } else {
+      return yield* handledProgram(selfManagedSignalProgram);
+    }
+  });
+}
+
+/**
+ * Promise facade for the published CLI executable. Internal callers should
+ * compose `runCliEffect` so command failures and service requirements remain
+ * in Effect's typed channels until this outer package boundary.
+ */
+export function runCli<const Name extends string, Input, ContextInput, E>(
+  rootCommand: Command.Command<Name, Input, ContextInput, E, CliCommandRequirements>,
+  options: RunCliOptions,
+): Promise<never> {
+  return Effect.runPromise(runCliEffect(rootCommand, options));
 }

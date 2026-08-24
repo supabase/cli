@@ -1,10 +1,6 @@
-import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
-
-import { BunServices } from "@effect/platform-bun";
+import { BunPath, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer } from "effect";
+import { Cause, ConfigProvider, Effect, Exit, FileSystem, Layer, Path } from "effect";
 
 import {
   mockLegacyCliConfig,
@@ -14,10 +10,32 @@ import {
 import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import { makeLegacyViperEnvLayer } from "../../../../shared/legacy/legacy-viper-env.ts";
 import { legacyFunctionsNew } from "./new.handler.ts";
 import { LEGACY_FUNCTIONS_NEW_DENO_JSON, LEGACY_FUNCTIONS_NEW_NPMRC } from "./new.templates.ts";
 
 const tempRoot = useLegacyTempWorkdir("supabase-functions-new-int-");
+const path = Effect.runSync(Path.Path.pipe(Effect.provide(BunPath.layer)));
+
+const readText = (file: string) =>
+  Effect.gen(function* () {
+    return yield* (yield* FileSystem.FileSystem).readFileString(file);
+  });
+
+const writeText = (file: string, content: string) =>
+  Effect.gen(function* () {
+    return yield* (yield* FileSystem.FileSystem).writeFileString(file, content);
+  });
+
+const makeDirectory = (directory: string) =>
+  Effect.gen(function* () {
+    return yield* (yield* FileSystem.FileSystem).makeDirectory(directory, { recursive: true });
+  });
+
+const exists = (file: string) =>
+  Effect.gen(function* () {
+    return yield* (yield* FileSystem.FileSystem).exists(file);
+  });
 
 interface SetupOptions {
   readonly format?: "text" | "json" | "stream-json";
@@ -27,9 +45,14 @@ interface SetupOptions {
   readonly promptConfirmResponses?: ReadonlyArray<boolean>;
   /** Piped stdin lines consumed by the non-TTY IDE-settings confirm reads. */
   readonly stdinInput?: string;
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 function setup(options: SetupOptions = {}) {
+  const configProvider = ConfigProvider.fromEnv({
+    env: options.env ?? {},
+    preserveEmptyStrings: true,
+  });
   const out = mockOutput({
     format: options.format ?? "text",
     promptConfirmResponses: options.promptConfirmResponses,
@@ -38,6 +61,8 @@ function setup(options: SetupOptions = {}) {
   const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
   const layer = Layer.mergeAll(
     BunServices.layer,
+    ConfigProvider.layer(configProvider),
+    makeLegacyViperEnvLayer(configProvider),
     out.layer,
     telemetry.layer,
     cliConfig,
@@ -72,13 +97,9 @@ describe("legacy functions new integration", () => {
     return Effect.gen(function* () {
       yield* legacyFunctionsNew({ functionName: "hello-world", auth: "apikey" });
 
-      const functionDir = join(workdir, "supabase", "functions", "hello-world");
-      const entrypoint = yield* Effect.tryPromise(() =>
-        readFile(join(functionDir, "index.ts"), "utf8"),
-      );
-      const config = yield* Effect.tryPromise(() =>
-        readFile(join(workdir, "supabase", "config.toml"), "utf8"),
-      );
+      const functionDir = path.join(workdir, "supabase", "functions", "hello-world");
+      const entrypoint = yield* readText(path.join(functionDir, "index.ts"));
+      const config = yield* readText(path.join(workdir, "supabase", "config.toml"));
 
       expect(entrypoint).toContain('withSupabase({ auth: ["publishable", "secret"] }');
       expect(entrypoint).toContain("--header 'apiKey: sb_publishable_");
@@ -86,14 +107,14 @@ describe("legacy functions new integration", () => {
       expect(config).toContain("[functions.hello-world]");
       expect(config).toContain("verify_jwt = false");
       expect(config).toContain('import_map = "./functions/hello-world/deno.json"');
-      expect(readFileSync(join(functionDir, "deno.json"), "utf8")).toBe(
+      expect(yield* readText(path.join(functionDir, "deno.json"))).toBe(
         LEGACY_FUNCTIONS_NEW_DENO_JSON,
       );
-      expect(readFileSync(join(functionDir, ".npmrc"), "utf8")).toBe(LEGACY_FUNCTIONS_NEW_NPMRC);
+      expect(yield* readText(path.join(functionDir, ".npmrc"))).toBe(LEGACY_FUNCTIONS_NEW_NPMRC);
       expect(out.stdoutText).toContain("Created new Function at ");
-      expect(out.stdoutText).toContain(join("supabase", "functions", "hello-world"));
+      expect(out.stdoutText).toContain(path.join("supabase", "functions", "hello-world"));
       expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n]");
-      expect(existsSync(join(workdir, ".vscode", "settings.json"))).toBe(true);
+      expect(yield* exists(path.join(workdir, ".vscode", "settings.json"))).toBe(true);
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -102,12 +123,10 @@ describe("legacy functions new integration", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
       yield* legacyFunctionsNew({ functionName: "public-fn", auth: "none" });
-      const entrypoint = yield* Effect.tryPromise(() =>
-        readFile(join(workdir, "supabase", "functions", "public-fn", "index.ts"), "utf8"),
+      const entrypoint = yield* readText(
+        path.join(workdir, "supabase", "functions", "public-fn", "index.ts"),
       );
-      const config = yield* Effect.tryPromise(() =>
-        readFile(join(workdir, "supabase", "config.toml"), "utf8"),
-      );
+      const config = yield* readText(path.join(workdir, "supabase", "config.toml"));
       expect(entrypoint).toContain('withSupabase({ auth: "none" }');
       expect(entrypoint).toContain("--header 'Content-Type: application/json'");
       expect(config).toContain("verify_jwt = false");
@@ -118,12 +137,10 @@ describe("legacy functions new integration", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
       yield* legacyFunctionsNew({ functionName: "user-fn", auth: "user" });
-      const entrypoint = yield* Effect.tryPromise(() =>
-        readFile(join(workdir, "supabase", "functions", "user-fn", "index.ts"), "utf8"),
+      const entrypoint = yield* readText(
+        path.join(workdir, "supabase", "functions", "user-fn", "index.ts"),
       );
-      const config = yield* Effect.tryPromise(() =>
-        readFile(join(workdir, "supabase", "config.toml"), "utf8"),
-      );
+      const config = yield* readText(path.join(workdir, "supabase", "config.toml"));
       expect(entrypoint).toContain('withSupabase({ auth: "user" }');
       expect(entrypoint).toContain("--header 'Authorization: Bearer <UserToken>'");
       expect(config).toContain("verify_jwt = true");
@@ -133,27 +150,24 @@ describe("legacy functions new integration", () => {
   it.live("uses api.port and auth.publishable_key from config.toml when present", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        mkdir(join(workdir, "supabase"), { recursive: true }).then(() =>
-          writeFile(
-            join(workdir, "supabase", "config.toml"),
-            [
-              'project_id = "test-project"',
-              "",
-              "[api]",
-              "port = 54310",
-              "",
-              "[auth]",
-              'publishable_key = "sb_publishable_custom"',
-              "",
-            ].join("\n"),
-          ),
-        ),
+      yield* makeDirectory(path.join(workdir, "supabase"));
+      yield* writeText(
+        path.join(workdir, "supabase", "config.toml"),
+        [
+          'project_id = "test-project"',
+          "",
+          "[api]",
+          "port = 54310",
+          "",
+          "[auth]",
+          'publishable_key = "sb_publishable_custom"',
+          "",
+        ].join("\n"),
       );
 
       yield* legacyFunctionsNew({ functionName: "customized", auth: "apikey" });
-      const entrypoint = yield* Effect.tryPromise(() =>
-        readFile(join(workdir, "supabase", "functions", "customized", "index.ts"), "utf8"),
+      const entrypoint = yield* readText(
+        path.join(workdir, "supabase", "functions", "customized", "index.ts"),
       );
       expect(entrypoint).toContain("http://127.0.0.1:54310/functions/v1/customized");
       expect(entrypoint).toContain("--header 'apiKey: sb_publishable_custom'");
@@ -163,16 +177,11 @@ describe("legacy functions new integration", () => {
   it.live("appends config even when the existing config.toml is malformed", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        mkdir(join(workdir, "supabase"), { recursive: true }).then(() =>
-          writeFile(join(workdir, "supabase", "config.toml"), "not valid toml ]["),
-        ),
-      );
+      yield* makeDirectory(path.join(workdir, "supabase"));
+      yield* writeText(path.join(workdir, "supabase", "config.toml"), "not valid toml ][");
 
       yield* legacyFunctionsNew({ functionName: "after-bad-config", auth: "none" });
-      const config = yield* Effect.tryPromise(() =>
-        readFile(join(workdir, "supabase", "config.toml"), "utf8"),
-      );
+      const config = yield* readText(path.join(workdir, "supabase", "config.toml"));
       expect(config).toContain("not valid toml ][");
       expect(config).toContain("[functions.after-bad-config]");
     }).pipe(Effect.provide(layer));
@@ -181,19 +190,14 @@ describe("legacy functions new integration", () => {
   it.live("warns and skips the config append when the function is already declared", () => {
     const { layer, out, workdir } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        mkdir(join(workdir, "supabase"), { recursive: true }).then(() =>
-          writeFile(
-            join(workdir, "supabase", "config.toml"),
-            ["[functions.hello-world]", "enabled = true", ""].join("\n"),
-          ),
-        ),
+      yield* makeDirectory(path.join(workdir, "supabase"));
+      yield* writeText(
+        path.join(workdir, "supabase", "config.toml"),
+        ["[functions.hello-world]", "enabled = true", ""].join("\n"),
       );
 
       yield* legacyFunctionsNew({ functionName: "hello-world", auth: "apikey" });
-      const config = yield* Effect.tryPromise(() =>
-        readFile(join(workdir, "supabase", "config.toml"), "utf8"),
-      );
+      const config = yield* readText(path.join(workdir, "supabase", "config.toml"));
       expect(config.match(/\[functions\.hello-world\]/g) ?? []).toHaveLength(1);
       expect(out.stderrText).toContain("[functions.hello-world] is already declared in ");
     }).pipe(Effect.provide(layer));
@@ -202,18 +206,15 @@ describe("legacy functions new integration", () => {
   it.live("does not auto-generate IDE files when another function already exists", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        mkdir(join(workdir, "supabase", "functions", "existing"), { recursive: true }).then(() =>
-          writeFile(
-            join(workdir, "supabase", "functions", "existing", "index.ts"),
-            "// existing\n",
-          ),
-        ),
+      yield* makeDirectory(path.join(workdir, "supabase", "functions", "existing"));
+      yield* writeText(
+        path.join(workdir, "supabase", "functions", "existing", "index.ts"),
+        "// existing\n",
       );
 
       yield* legacyFunctionsNew({ functionName: "second-fn", auth: "apikey" });
-      expect(existsSync(join(workdir, ".vscode", "settings.json"))).toBe(false);
-      expect(existsSync(join(workdir, ".idea", "deno.xml"))).toBe(false);
+      expect(yield* exists(path.join(workdir, ".vscode", "settings.json"))).toBe(false);
+      expect(yield* exists(path.join(workdir, ".idea", "deno.xml"))).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
@@ -222,29 +223,19 @@ describe("legacy functions new integration", () => {
     return Effect.gen(function* () {
       yield* legacyFunctionsNew({ functionName: "with-yes", auth: "apikey" });
       expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y");
-      expect(existsSync(join(workdir, ".vscode", "settings.json"))).toBe(true);
+      expect(yield* exists(path.join(workdir, ".vscode", "settings.json"))).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("SUPABASE_YES=1 in the environment echoes the VS Code prompt and writes settings", () => {
-    const prev = process.env["SUPABASE_YES"];
-    process.env["SUPABASE_YES"] = "1";
-    const { layer, out, workdir } = setup({ yes: false });
+    const { layer, out, workdir } = setup({ yes: false, env: { SUPABASE_YES: "1" } });
     return Effect.gen(function* () {
       yield* legacyFunctionsNew({ functionName: "with-env-yes", auth: "apikey" });
       // Established `--yes` branch bytes, reached through the env var —
       // not just the --yes flag.
       expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y");
-      expect(existsSync(join(workdir, ".vscode", "settings.json"))).toBe(true);
-    }).pipe(
-      Effect.ensuring(
-        Effect.sync(() => {
-          if (prev === undefined) delete process.env["SUPABASE_YES"];
-          else process.env["SUPABASE_YES"] = prev;
-        }),
-      ),
-      Effect.provide(layer),
-    );
+      expect(yield* exists(path.join(workdir, ".vscode", "settings.json"))).toBe(true);
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("piped `n` then `y` declines VS Code and writes IntelliJ settings (Go parity)", () => {
@@ -256,8 +247,8 @@ describe("legacy functions new integration", () => {
       yield* legacyFunctionsNew({ functionName: "piped-idea", auth: "apikey" });
       expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] n");
       expect(out.stderrText).toContain("Generate IntelliJ IDEA settings for Deno? [y/N] y");
-      expect(existsSync(join(workdir, ".vscode", "settings.json"))).toBe(false);
-      expect(existsSync(join(workdir, ".idea", "deno.xml"))).toBe(true);
+      expect(yield* exists(path.join(workdir, ".vscode", "settings.json"))).toBe(false);
+      expect(yield* exists(path.join(workdir, ".idea", "deno.xml"))).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
@@ -269,8 +260,8 @@ describe("legacy functions new integration", () => {
     });
     return Effect.gen(function* () {
       yield* legacyFunctionsNew({ functionName: "idea-fn", auth: "apikey" });
-      expect(existsSync(join(workdir, ".vscode", "settings.json"))).toBe(false);
-      expect(existsSync(join(workdir, ".idea", "deno.xml"))).toBe(true);
+      expect(yield* exists(path.join(workdir, ".vscode", "settings.json"))).toBe(false);
+      expect(yield* exists(path.join(workdir, ".idea", "deno.xml"))).toBe(true);
       expect(out.stdoutText).toContain("Generated IntelliJ settings in .idea/deno.xml.");
     }).pipe(Effect.provide(layer));
   });
@@ -281,7 +272,7 @@ describe("legacy functions new integration", () => {
       yield* legacyFunctionsNew({ functionName: "json-fn", auth: "apikey" });
       const success = out.messages.find((message) => message.type === "success");
       expect(success?.data).toMatchObject({
-        path: join("supabase", "functions", "json-fn"),
+        path: path.join("supabase", "functions", "json-fn"),
         function_name: "json-fn",
         auth: "apikey",
       });
@@ -289,8 +280,8 @@ describe("legacy functions new integration", () => {
       // Machine formats are payload-only: the IDE prompt is suppressed and no IDE settings
       // are scaffolded as an undisclosed side effect.
       expect(out.stderrText).not.toContain("Generate VS Code settings");
-      expect(existsSync(join(workdir, ".vscode", "settings.json"))).toBe(false);
-      expect(existsSync(join(workdir, ".idea", "deno.xml"))).toBe(false);
+      expect(yield* exists(path.join(workdir, ".vscode", "settings.json"))).toBe(false);
+      expect(yield* exists(path.join(workdir, ".idea", "deno.xml"))).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
@@ -300,7 +291,7 @@ describe("legacy functions new integration", () => {
       yield* legacyFunctionsNew({ functionName: "stream-fn", auth: "user" });
       const success = out.messages.find((message) => message.type === "success");
       expect(success?.data).toMatchObject({
-        path: join("supabase", "functions", "stream-fn"),
+        path: path.join("supabase", "functions", "stream-fn"),
         auth: "user",
       });
     }).pipe(Effect.provide(layer));
@@ -318,10 +309,10 @@ describe("legacy functions new integration", () => {
   it.live("fails when the entrypoint already exists", () => {
     const { layer, workdir } = setup();
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() =>
-        mkdir(join(workdir, "supabase", "functions", "dupe"), { recursive: true }).then(() =>
-          writeFile(join(workdir, "supabase", "functions", "dupe", "index.ts"), "// existing\n"),
-        ),
+      yield* makeDirectory(path.join(workdir, "supabase", "functions", "dupe"));
+      yield* writeText(
+        path.join(workdir, "supabase", "functions", "dupe", "index.ts"),
+        "// existing\n",
       );
       const exit = yield* Effect.exit(legacyFunctionsNew({ functionName: "dupe", auth: "apikey" }));
       expect(exitTag(exit)).toBe("LegacyFunctionsNewFileExistsError");
@@ -332,9 +323,7 @@ describe("legacy functions new integration", () => {
     const { layer, telemetry, workdir } = setup();
     return Effect.gen(function* () {
       // A directory at the config.toml path makes the append write fail (EISDIR).
-      yield* Effect.tryPromise(() =>
-        mkdir(join(workdir, "supabase", "config.toml"), { recursive: true }),
-      );
+      yield* makeDirectory(path.join(workdir, "supabase", "config.toml"));
       const exit = yield* Effect.exit(
         legacyFunctionsNew({ functionName: "write-fail", auth: "apikey" }),
       );

@@ -114,16 +114,14 @@ export function legacyParsePgDeltaNextEndpoint(
     if (endpoint.connection !== undefined) return endpoint.connection;
     const parsed = parseLegacyConnectionString(endpoint.ref, legacyLayeredParseEnv(projectEnv));
     if (parsed !== undefined) return parsed;
-    return yield* Effect.fail(
-      new LegacyPgDeltaEngineError({
-        message: "failed to parse Postgres connection string for pg-delta",
-        // `redactLegacyConnectionString`, not a local `:password@` regex: the input
-        // reaching here is by definition unparseable, and a hand-typed password
-        // containing `/`, `@`, or `:` defeats a naive single-character-class match
-        // (CWE-209). The shared redactor over-redacts instead of leaking.
-        cause: redactLegacyConnectionString(endpoint.ref),
-      }),
-    );
+    return yield* new LegacyPgDeltaEngineError({
+      message: "failed to parse Postgres connection string for pg-delta",
+      // `redactLegacyConnectionString`, not a local `:password@` regex: the input
+      // reaching here is by definition unparseable, and a hand-typed password
+      // containing `/`, `@`, or `:` defeats a naive single-character-class match
+      // (CWE-209). The shared redactor over-redacts instead of leaking.
+      cause: redactLegacyConnectionString(endpoint.ref),
+    });
   });
 }
 
@@ -143,7 +141,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
       workdir: string,
       operation: LegacyPgDeltaNextOperation,
       artifacts: LegacyPgDeltaNextDebugArtifacts,
-    ) =>
+    ): Effect.Effect<string | undefined, never> =>
       Effect.gen(function* () {
         const id = legacyFormatPgDeltaNextDebugId(yield* Clock.currentTimeMillis, operation);
         const debugDir = yield* legacySavePgDeltaNextDebugArtifacts(
@@ -153,6 +151,9 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
           id,
           operation,
           artifacts,
+        ).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
         );
         yield* debugLogger.debug(`Saved pg-delta next debug artifacts to ${debugDir}.`);
         return debugDir;
@@ -177,7 +178,11 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
       projectEnv: Readonly<Record<string, string>>,
     ) =>
       legacyParsePgDeltaNextEndpoint(endpoint, projectEnv).pipe(
-        Effect.flatMap((connection) => legacyAcquirePgPool(connection, endpoint.connectOptions)),
+        Effect.flatMap((connection) =>
+          legacyAcquirePgPool(connection, endpoint.connectOptions).pipe(
+            Effect.provideService(FileSystem.FileSystem, fs),
+          ),
+        ),
       );
 
     const reportDiagnostics = (
@@ -246,12 +251,10 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
                   : undefined;
             if (migrationsEndpoint !== undefined) {
               if (input.toml === undefined) {
-                return yield* Effect.fail(
-                  new LegacyPgDeltaEngineError({
-                    message: "pg-delta migrations endpoint requires loaded database config",
-                    cause: "missing database config",
-                  }),
-                );
+                return yield* new LegacyPgDeltaEngineError({
+                  message: "pg-delta migrations endpoint requires loaded database config",
+                  cause: "missing database config",
+                });
               }
               shadow = yield* shadowService.provisionMigrations({
                 context: input.context,
@@ -271,17 +274,15 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
                 }
                 const connection = parseLegacyConnectionString(shadow.migrationsUrl);
                 if (connection === undefined) {
-                  return yield* Effect.fail(
-                    new LegacyPgDeltaEngineError({
-                      message: "failed to parse pg-delta migrations shadow URL",
-                      cause: redactLegacyConnectionString(shadow.migrationsUrl),
-                    }),
-                  );
+                  return yield* new LegacyPgDeltaEngineError({
+                    message: "failed to parse pg-delta migrations shadow URL",
+                    cause: redactLegacyConnectionString(shadow.migrationsUrl),
+                  });
                 }
                 return yield* legacyAcquirePgPool(connection, {
                   isLocal: true,
                   dnsResolver: "native",
-                });
+                }).pipe(Effect.provideService(FileSystem.FileSystem, fs));
               });
             const [sourcePool, desiredPool] = yield* Effect.all(
               [endpointPool(input.source), endpointPool(input.desired)],
@@ -339,17 +340,19 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
             const migrations = parseLegacyConnectionString(shadow.migrationsUrl);
             const declarative = parseLegacyConnectionString(shadow.declarativeUrl);
             if (migrations === undefined || declarative === undefined) {
-              return yield* Effect.fail(
-                new LegacyPgDeltaEngineError({
-                  message: "failed to parse pg-delta next shadow database URL",
-                  cause: "invalid password-free shadow output",
-                }),
-              );
+              return yield* new LegacyPgDeltaEngineError({
+                message: "failed to parse pg-delta next shadow database URL",
+                cause: "invalid password-free shadow output",
+              });
             }
             const [migrationsPool, declarativePool] = yield* Effect.all(
               [
-                legacyAcquirePgPool(migrations, { isLocal: true, dnsResolver: "native" }),
-                legacyAcquirePgPool(declarative, { isLocal: true, dnsResolver: "native" }),
+                legacyAcquirePgPool(migrations, { isLocal: true, dnsResolver: "native" }).pipe(
+                  Effect.provideService(FileSystem.FileSystem, fs),
+                ),
+                legacyAcquirePgPool(declarative, { isLocal: true, dnsResolver: "native" }).pipe(
+                  Effect.provideService(FileSystem.FileSystem, fs),
+                ),
               ],
               { concurrency: 2 },
             );

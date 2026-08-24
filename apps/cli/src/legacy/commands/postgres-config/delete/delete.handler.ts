@@ -44,14 +44,23 @@ export const legacyPostgresConfigDelete = Effect.fn("legacy.postgres-config.dele
       }
 
       const updated = yield* putPostgresConfig(ref, currentConfig, {
-        serializeError: (args) => new LegacyPostgresConfigDeleteSerializeError(args),
-        networkError: (args) => new LegacyPostgresConfigDeleteNetworkError(args),
-        statusError: (args) => new LegacyPostgresConfigDeleteUnexpectedStatusError(args),
-        unmarshalError: (args) => new LegacyPostgresConfigDeleteUnmarshalError(args),
-        networkMessage: (description) => `failed to delete config overrides: ${description}`,
-        statusMessage: (status, body) =>
+        serializeError: (args: { readonly message: string }) =>
+          new LegacyPostgresConfigDeleteSerializeError(args),
+        networkError: (args: { readonly message: string }) =>
+          new LegacyPostgresConfigDeleteNetworkError(args),
+        statusError: (args: {
+          readonly status: number;
+          readonly body: string;
+          readonly message: string;
+        }) => new LegacyPostgresConfigDeleteUnexpectedStatusError(args),
+        unmarshalError: (args: { readonly message: string }) =>
+          new LegacyPostgresConfigDeleteUnmarshalError(args),
+        networkMessage: (description: string) =>
+          `failed to delete config overrides: ${description}`,
+        statusMessage: (status: number, body: string) =>
           `unexpected delete config overrides status ${status}: ${body}`,
-        unmarshalMessage: (description) => `failed to unmarshal delete response: ${description}`,
+        unmarshalMessage: (description: string) =>
+          `failed to unmarshal delete response: ${description}`,
       }).pipe(Effect.tapError(() => deleting?.fail() ?? Effect.void));
 
       yield* deleting?.clear() ?? Effect.void;

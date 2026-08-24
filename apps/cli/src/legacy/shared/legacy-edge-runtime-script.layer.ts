@@ -3,6 +3,7 @@ import * as Net from "node:net";
 
 import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../shared/legacy/global-flags.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
+import { LegacyViperEnv } from "../../shared/legacy/legacy-viper-env.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { legacyReadDbToml } from "./legacy-db-config.toml-read.ts";
 import { legacyGetRegistryImageUrl } from "./legacy-docker-registry.ts";
@@ -52,6 +53,12 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
     const debug = yield* LegacyDebugFlag;
     const networkIdFlag = yield* LegacyNetworkIdFlag;
     const runtimeInfo = yield* RuntimeInfo;
+    const viperEnv = yield* LegacyViperEnv;
+    const runtime = Layer.mergeAll(
+      Layer.succeed(FileSystem.FileSystem, fs),
+      Layer.succeed(Path.Path, path),
+      Layer.succeed(LegacyViperEnv, viperEnv),
+    );
     // `DockerStart` appends `host.docker.internal:host-gateway` to every
     // container's ExtraHosts on Linux only (build-tag `extraHosts` in
     // `apps/cli-go/internal/utils/docker_linux.go:8`; the append at `docker.go:266`
@@ -103,6 +110,7 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
             )).denoVersion;
           const registryImage = legacyGetRegistryImageUrl(
             yield* legacyResolveEdgeRuntimeImage(fs, path, workdir, denoVersion),
+            opts.projectEnvValues ?? {},
           );
           const port = yield* allocateFreeHostPort;
           const startCmd = legacyBuildEdgeRuntimeStartCmd({ port, debug }).join(" ");
@@ -151,11 +159,9 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
           // worker after the script completed (the script's output is still
           // valid). Any other non-zero exit is a real failure.
           if (result.exitCode !== 0 && !result.stderr.includes("main worker has been destroyed")) {
-            return yield* Effect.fail(
-              new LegacyEdgeRuntimeScriptError({
-                message: `${opts.errPrefix}: error running container: exit ${result.exitCode}:\n${result.stderr}`,
-              }),
-            );
+            return yield* new LegacyEdgeRuntimeScriptError({
+              message: `${opts.errPrefix}: error running container: exit ${result.exitCode}:\n${result.stderr}`,
+            });
           }
 
           // The pg-delta templates force the worker to exit by throwing, so a
@@ -166,18 +172,16 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
           // empty diff. Byte-for-byte port of Go's check in
           // apps/cli-go/internal/utils/edgeruntime.go.
           if (result.stderr.includes(LEGACY_EDGE_RUNTIME_SCRIPT_ERROR_SENTINEL)) {
-            return yield* Effect.fail(
-              new LegacyEdgeRuntimeScriptError({
-                message: `${opts.errPrefix}: error running script:\n${result.stderr}`,
-              }),
-            );
+            return yield* new LegacyEdgeRuntimeScriptError({
+              message: `${opts.errPrefix}: error running script:\n${result.stderr}`,
+            });
           }
 
           return {
             stdout: new TextDecoder().decode(result.stdout),
             stderr: result.stderr,
           };
-        }),
+        }).pipe(Effect.provide(runtime)),
     });
   }),
 );

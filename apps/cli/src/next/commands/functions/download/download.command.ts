@@ -38,13 +38,17 @@ const config = {
 
 export type FunctionsDownloadFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-const functionsDownloadRuntimeLayer = Layer.mergeAll(
-  BunServices.layer,
-  platformApiLayer.pipe(Layer.provide(credentialsLayer)),
-  projectLinkStateLayer,
-  commandRuntimeLayer(["functions", "download"]),
-  makeGoProxyLayer(),
+const functionsDownloadCommandRuntimeLayer = commandRuntimeLayer(["functions", "download"]);
+const functionsDownloadPlatformApiLayer = platformApiLayer.pipe(
+  Layer.provide(credentialsLayer),
+  Layer.provide(functionsDownloadCommandRuntimeLayer),
 );
+
+const functionsDownloadRuntimeLayer = Layer.mergeAll(
+  functionsDownloadPlatformApiLayer,
+  projectLinkStateLayer,
+  makeGoProxyLayer(),
+).pipe(Layer.provideMerge(BunServices.layer));
 
 export const functionsDownloadCommand = Command.make("download", config).pipe(
   Command.withDescription(

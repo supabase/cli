@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Data, Effect, Option, Schema } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -18,12 +18,27 @@ import { sanitizeLegacyErrorBody } from "../../shared/legacy-http-errors.ts";
 import { requestWithAuth } from "../../shared/legacy-raw-http.ts";
 import { resolveLegacyAccessToken } from "../../shared/legacy-resolve-token.ts";
 import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../shared/telemetry/error-actionability.ts";
+import {
   LegacyPostgresConfigGetNetworkError,
   LegacyPostgresConfigGetUnexpectedStatusError,
   LegacyPostgresConfigGetUnmarshalError,
 } from "./postgres-config.errors.ts";
 
 export type LegacyPostgresConfigMap = Record<string, unknown>;
+
+const decodeJsonString = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+
+class PostgresConfigJsonShapeError extends Data.TaggedError("PostgresConfigJsonShapeError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.apiStatus;
+  }
+}
 
 function sortConfigEntries(config: LegacyPostgresConfigMap): Array<[string, unknown]> {
   return Object.entries(config).sort(([a], [b]) => a.localeCompare(b));
@@ -133,15 +148,23 @@ function parseJsonObject<E>(
   wrap: (args: { readonly message: string }) => E,
 ): Effect.Effect<LegacyPostgresConfigMap, E> {
   return Effect.try({
-    try: () => {
-      const parsed = JSON.parse(rawBody) as unknown;
-      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-        throw new Error("unexpected non-object JSON response");
-      }
-      return parsed as LegacyPostgresConfigMap;
-    },
+    try: () => decodeJsonString(rawBody),
     catch: (cause) => wrap({ message: errorMessage(String(cause)) }),
-  });
+  }).pipe(
+    Effect.flatMap((parsed) => {
+      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+        return Effect.fail(
+          new PostgresConfigJsonShapeError({ message: "unexpected non-object JSON response" }),
+        );
+      }
+      return Effect.succeed(Object.fromEntries(Object.entries(parsed)));
+    }),
+    Effect.mapError((cause) =>
+      cause instanceof PostgresConfigJsonShapeError
+        ? wrap({ message: errorMessage(cause.message) })
+        : cause,
+    ),
+  );
 }
 
 export const fetchCurrentPostgresConfig = Effect.fn("legacy.postgres-config.fetch-current")(
@@ -169,13 +192,11 @@ export const fetchCurrentPostgresConfig = Effect.fn("legacy.postgres-config.fetc
     if (response.status !== 200) {
       const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
       const body = sanitizeLegacyErrorBody(rawBody);
-      return yield* Effect.fail(
-        new LegacyPostgresConfigGetUnexpectedStatusError({
-          status: response.status,
-          body,
-          message: `unexpected config overrides status ${response.status}: ${body}`,
-        }),
-      );
+      return yield* new LegacyPostgresConfigGetUnexpectedStatusError({
+        status: response.status,
+        body,
+        message: `unexpected config overrides status ${response.status}: ${body}`,
+      });
     }
 
     const rawBody = yield* response.text;
@@ -208,58 +229,62 @@ export interface PutPostgresConfigErrors<SerErr, NetErr, StatErr, UnmErr> {
   readonly unmarshalMessage: (description: string) => string;
 }
 
-export const putPostgresConfig = <SerErr, NetErr, StatErr, UnmErr>(
+export const putPostgresConfig = Effect.fn("legacy.postgres-config.put")(function* <
+  SerErr,
+  NetErr,
+  StatErr,
+  UnmErr,
+>(
   ref: string,
   config: LegacyPostgresConfigMap,
   errors: PutPostgresConfigErrors<SerErr, NetErr, StatErr, UnmErr>,
-) =>
-  Effect.gen(function* () {
-    const httpClient = yield* HttpClient.HttpClient;
-    const cliConfig = yield* LegacyCliConfig;
-    const tokenOpt = yield* resolveLegacyAccessToken;
+) {
+  const httpClient = yield* HttpClient.HttpClient;
+  const cliConfig = yield* LegacyCliConfig;
+  const tokenOpt = yield* resolveLegacyAccessToken;
 
-    // Use raw HTTP instead of the generated input schema: Go accepts arbitrary
-    // config keys from repeated `--config key=value`, while the typed client
-    // only models the currently known OpenAPI fields.
-    const encodedBody = yield* Effect.try({
-      try: () => encodeGoStructJsonBody(config),
-      catch: (cause) =>
-        errors.serializeError({
-          message: `failed to serialize config overrides: ${String(cause)}`,
-        }),
-    });
+  // Use raw HTTP instead of the generated input schema: Go accepts arbitrary
+  // config keys from repeated `--config key=value`, while the typed client
+  // only models the currently known OpenAPI fields.
+  const encodedBody = yield* Effect.try({
+    try: () => encodeGoStructJsonBody(config),
+    catch: (cause) =>
+      errors.serializeError({
+        message: `failed to serialize config overrides: ${String(cause)}`,
+      }),
+  });
 
-    const request = requestWithAuth(
-      HttpClientRequest.put(`${cliConfig.apiUrl}/v1/projects/${ref}/config/database/postgres`).pipe(
-        HttpClientRequest.bodyText(encodedBody, "application/json"),
+  const request = requestWithAuth(
+    HttpClientRequest.put(`${cliConfig.apiUrl}/v1/projects/${ref}/config/database/postgres`).pipe(
+      HttpClientRequest.bodyText(encodedBody, "application/json"),
+    ),
+    tokenOpt,
+    cliConfig.userAgent,
+  );
+
+  const response = yield* httpClient
+    .execute(request)
+    .pipe(
+      Effect.mapError((cause) =>
+        mapTransportMessage(cause, errors.networkMessage, errors.networkError),
       ),
-      tokenOpt,
-      cliConfig.userAgent,
     );
 
-    const response = yield* httpClient
-      .execute(request)
-      .pipe(
-        Effect.mapError((cause) =>
-          mapTransportMessage(cause, errors.networkMessage, errors.networkError),
-        ),
-      );
+  if (response.status !== 200) {
+    const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
+    const body = sanitizeLegacyErrorBody(rawBody);
+    return yield* Effect.fail(
+      errors.statusError({
+        status: response.status,
+        body,
+        message: errors.statusMessage(response.status, body),
+      }),
+    );
+  }
 
-    if (response.status !== 200) {
-      const rawBody = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
-      const body = sanitizeLegacyErrorBody(rawBody);
-      return yield* Effect.fail(
-        errors.statusError({
-          status: response.status,
-          body,
-          message: errors.statusMessage(response.status, body),
-        }),
-      );
-    }
-
-    const rawBody = yield* response.text;
-    return yield* parseJsonObject(rawBody, errors.unmarshalMessage, errors.unmarshalError);
-  }).pipe(Effect.withSpan("legacy.postgres-config.put"));
+  const rawBody = yield* response.text;
+  return yield* parseJsonObject(rawBody, errors.unmarshalMessage, errors.unmarshalError);
+});
 
 export const writePostgresConfigOutput = Effect.fn("legacy.postgres-config.write-output")(
   function* (config: LegacyPostgresConfigMap) {

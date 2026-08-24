@@ -2,6 +2,7 @@ import { Effect, Option } from "effect";
 
 import { LegacyNetworkIdFlag } from "../../shared/legacy/global-flags.ts";
 import { legacyViperEnvStringWithProjectFallback } from "../../shared/legacy/legacy-viper-env.ts";
+import { LegacyViperEnv } from "../../shared/legacy/legacy-viper-env.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { legacyGetRegistryImageUrl } from "./legacy-docker-registry.ts";
 import { LegacyDockerRun } from "./legacy-docker-run.service.ts";
@@ -42,6 +43,7 @@ export const legacyStreamPgDump = Effect.fnUntraced(function* <E>(params: {
   const docker = yield* LegacyDockerRun;
   const runtimeInfo = yield* RuntimeInfo;
   const networkIdFlag = yield* LegacyNetworkIdFlag;
+  yield* LegacyViperEnv;
 
   // `dockerExec` sets `NetworkMode` to host, but
   // `DockerStart` then overrides it with `viper.GetString("network-id")` whenever
@@ -52,7 +54,7 @@ export const legacyStreamPgDump = Effect.fnUntraced(function* <E>(params: {
   // left `NetworkMode` empty, which the dump path never does, so the effective
   // pg_dump fallback is host networking, not the generated `supabase_network_*`.
   const networkId = Option.getOrUndefined(networkIdFlag);
-  const envNetworkId = legacyViperEnvStringWithProjectFallback(
+  const envNetworkId = yield* legacyViperEnvStringWithProjectFallback(
     "SUPABASE_NETWORK_ID",
     params.projectEnvValues ?? {},
   );
@@ -66,7 +68,7 @@ export const legacyStreamPgDump = Effect.fnUntraced(function* <E>(params: {
 
   return yield* docker.runStream<E>(
     {
-      image: legacyGetRegistryImageUrl(params.image),
+      image: legacyGetRegistryImageUrl(params.image, params.projectEnvValues ?? {}),
       cmd: ["bash", "-c", params.script, "--"],
       env: params.env,
       binds: [],

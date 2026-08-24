@@ -1,3 +1,4 @@
+import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer } from "effect";
 import { describe, expect, it } from "vitest";
 import { CurrentAnalyticsContext } from "../../shared/telemetry/analytics-context.ts";
@@ -47,7 +48,7 @@ function makeCaptureTelemetry(
   return (exitCode, durationMs) =>
     Effect.runPromise(
       legacyCaptureCompleteTelemetryEffect(exitCode, durationMs).pipe(
-        Effect.provide(analyticsLayer),
+        Effect.provide(Layer.mergeAll(analyticsLayer, BunServices.layer)),
       ),
     );
 }
@@ -74,43 +75,45 @@ function makeDeps(
 }
 
 describe("legacy __complete telemetry (CLI-1965 review finding)", () => {
-  it("fires cli_command_executed with command: __complete and exit_code: 0 for a normal completion request", async () => {
+  it("fires cli_command_executed with command: __complete and exit_code: 0 for a normal completion request", () => {
     const analytics = mockAnalyticsWithContext();
     const { deps } = makeDeps(
       ["__complete", "migration", "li"],
       makeCaptureTelemetry(analytics.layer),
     );
 
-    expect(await legacyTryComplete(deps)).toBe(true);
-
-    const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
-    expect(event).toBeDefined();
-    expect(event?.command).toBe("__complete");
-    expect(event?.properties[PropExitCode]).toBe(0);
+    return legacyTryComplete(deps).then((result) => {
+      expect(result).toBe(true);
+      const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
+      expect(event).toBeDefined();
+      expect(event?.command).toBe("__complete");
+      expect(event?.properties[PropExitCode]).toBe(0);
+    });
   });
 
-  it("records exit_code: 1 for an unresolvable completion request (zero completion args)", async () => {
+  it("records exit_code: 1 for an unresolvable completion request (zero completion args)", () => {
     const analytics = mockAnalyticsWithContext();
     const { deps } = makeDeps(["__complete"], makeCaptureTelemetry(analytics.layer));
 
-    expect(await legacyTryComplete(deps)).toBe(true);
-
-    const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
-    expect(event).toBeDefined();
-    expect(event?.properties[PropExitCode]).toBe(1);
+    return legacyTryComplete(deps).then((result) => {
+      expect(result).toBe(true);
+      const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
+      expect(event).toBeDefined();
+      expect(event?.properties[PropExitCode]).toBe(1);
+    });
   });
 
-  it("records command: __complete — never __completeNoDesc — when invoked via the no-descriptions alias", async () => {
+  it("records command: __complete — never __completeNoDesc — when invoked via the no-descriptions alias", () => {
     const analytics = mockAnalyticsWithContext();
     const { deps } = makeDeps(
       ["__completeNoDesc", "migration", "li"],
       makeCaptureTelemetry(analytics.layer),
     );
 
-    await legacyTryComplete(deps);
-
-    const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
-    expect(event?.command).toBe("__complete");
-    expect(event?.command).not.toBe("__completeNoDesc");
+    return legacyTryComplete(deps).then(() => {
+      const event = analytics.captured.find((entry) => entry.event === EventCommandExecuted);
+      expect(event?.command).toBe("__complete");
+      expect(event?.command).not.toBe("__completeNoDesc");
+    });
   });
 });

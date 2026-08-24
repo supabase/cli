@@ -6,8 +6,6 @@
  * whether the local stack is running.
  */
 
-import { basename } from "node:path";
-
 /**
  * Resolve the project id Go feeds into `utils.DbId`/`utils.NetId`. viper sets
  * `Config.ProjectId` from config.toml's `project_id`, then `AutomaticEnv` overrides it
@@ -29,7 +27,9 @@ export function legacyResolveLocalProjectId(
   if (envProjectId !== undefined && envProjectId.length > 0) return envProjectId;
   if (tomlProjectId !== undefined && tomlProjectId.length > 0) return tomlProjectId;
   if (projectRefDefault !== undefined && projectRefDefault.length > 0) return projectRefDefault;
-  return basename(workdir);
+  const normalized = workdir.replaceAll("\\", "/").replace(/\/+$/, "");
+  const lastSeparator = normalized.lastIndexOf("/");
+  return lastSeparator >= 0 ? normalized.slice(lastSeparator + 1) : normalized;
 }
 
 const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;

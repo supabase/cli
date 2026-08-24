@@ -25,6 +25,17 @@ export class ServiceState extends Data.Class<{
   readonly desired: ServiceDesiredState;
 }> {}
 
+export const fields = (state: ServiceState) => ({
+  name: state.name,
+  status: state.status,
+  pid: state.pid,
+  exitCode: state.exitCode,
+  restartCount: state.restartCount,
+  startedAt: state.startedAt,
+  error: state.error,
+  desired: state.desired,
+});
+
 export const initial = (name: string, desired: ServiceDesiredState = "inactive"): ServiceState =>
   new ServiceState({
     name,

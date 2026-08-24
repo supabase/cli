@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ServiceState, initial } from "./ServiceState.ts";
+import { fields as serviceStateFields, ServiceState, initial } from "./ServiceState.ts";
 
 describe("ServiceState", () => {
   it("creates initial state with Pending status", () => {
@@ -23,10 +23,10 @@ describe("ServiceState", () => {
   it("can transition via Data.Class copy", () => {
     const state = initial("postgres");
     const running = new ServiceState({
-      ...state,
+      ...serviceStateFields(state),
       status: "Running",
       pid: 1234,
-      startedAt: Date.now(),
+      startedAt: 1_700_000_000_000,
     });
     expect(running.status).toBe("Running");
     expect(running.pid).toBe(1234);

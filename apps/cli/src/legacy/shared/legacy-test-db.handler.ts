@@ -1,4 +1,3 @@
-import * as nodePath from "node:path";
 import { Effect, FileSystem, Option, Path } from "effect";
 
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
@@ -17,6 +16,7 @@ import {
 } from "../../shared/legacy/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
+import { LegacyViperEnv } from "../../shared/legacy/legacy-viper-env.ts";
 import type { LegacyTestDbFlags } from "./legacy-test-db.command-handler.ts";
 import {
   LegacyTestDbEnablePgtapError,
@@ -81,6 +81,7 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
   const networkIdFlag = yield* LegacyNetworkIdFlag;
   const dnsResolver = yield* LegacyDnsResolverFlag;
   const cliArgs = yield* CliArgs;
+  const legacyEnv = yield* LegacyViperEnv;
 
   yield* Effect.gen(function* () {
     // Reproduce cobra's MarkFlagsMutuallyExclusive("db-url","linked","local")
@@ -90,11 +91,9 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
     const target = resolveLegacyDbTargetFlags(cliArgs.args);
     const { setFlags } = target;
     if (setFlags.length > 1) {
-      return yield* Effect.fail(
-        new LegacyTestDbMutuallyExclusiveFlagsError({
-          message: `if any flags in the group [db-url linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
-        }),
-      );
+      return yield* new LegacyTestDbMutuallyExclusiveFlagsError({
+        message: `if any flags in the group [db-url linked local] are set none of the others can be; [${setFlags.join(" ")}] were all set`,
+      });
     }
 
     const connType = target.connType ?? "local";
@@ -103,12 +102,10 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
     // discarded on a non-linked target — see push.handler.ts's identical guard
     // (db push) for the full TS-only rationale.
     if (Option.isSome(flags.projectRef) && connType !== "linked") {
-      return yield* Effect.fail(
-        new LegacyTestDbMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
-        }),
-      );
+      return yield* new LegacyTestDbMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      });
     }
 
     const { conn, isLocal } = yield* resolver.resolve({
@@ -119,6 +116,7 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
     });
 
     const args = buildLegacyPgProveArgs({
+      path,
       paths: flags.paths,
       cwd: runtimeInfo.cwd,
       workdir: cliConfig.workdir,
@@ -154,7 +152,7 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
               // "my project" must join the same sanitized network the local stack
               // created, not the literal raw value.
               const projectId = sanitizeProjectId(
-                Option.getOrElse(toml.projectId, () => nodePath.basename(cliConfig.workdir)),
+                Option.getOrElse(toml.projectId, () => path.basename(cliConfig.workdir)),
               );
               return { _tag: "named" as const, name: `supabase_network_${projectId}` };
             })
@@ -209,10 +207,17 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
         // `hostConfig.SecurityOpt` when `BITBUCKET_CLONE_DIR` is set
         // (`apps/cli-go/internal/utils/docker.go:401-405`). Match that exactly:
         // omit the option in Bitbucket CI, where it would abort container creation.
-        const inBitbucket = (process.env["BITBUCKET_CLONE_DIR"] ?? "") !== "";
+        const inBitbucket = Option.isSome(
+          yield* legacyEnv
+            .get("BITBUCKET_CLONE_DIR")
+            .pipe(Effect.orElseSucceed(() => Option.none<string>())),
+        );
         // Go adds `host.docker.internal:host-gateway` to every container's
         // ExtraHosts on Linux (`apps/cli-go/internal/utils/docker_linux.go`); macOS/
         // Windows Docker Desktop provide the mapping natively (empty there).
+        const registryOverride = yield* legacyEnv
+          .get("SUPABASE_INTERNAL_IMAGE_REGISTRY")
+          .pipe(Effect.orElseSucceed(() => Option.none<string>()));
         const extraHosts =
           runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
         // Stream (rather than inherit) stdout so the verdict can be read on the way
@@ -221,7 +226,9 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
         // inheriting it did.
         return yield* docker.runStream(
           {
-            image: legacyGetRegistryImageUrl(LEGACY_PG_PROVE_IMAGE),
+            image: legacyGetRegistryImageUrl(LEGACY_PG_PROVE_IMAGE, {
+              SUPABASE_INTERNAL_IMAGE_REGISTRY: Option.getOrElse(registryOverride, () => ""),
+            }),
             cmd: args.cmd,
             env: runEnv,
             binds: args.binds,
@@ -260,20 +267,18 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
     // Non-zero pg_prove exit → fail (exit 1), matching Go's cobra error return.
     // The TAP failure detail has already streamed to stdout.
     if (exitCode !== 0) {
-      return yield* Effect.fail(
-        new LegacyTestDbRunError({ message: `error running container: exit ${exitCode}` }),
-      );
+      return yield* new LegacyTestDbRunError({
+        message: `error running container: exit ${exitCode}`,
+      });
     }
 
     // A stream that ends without a trailing newline leaves the verdict unterminated.
     const finalVerdict = pendingLine.startsWith(VERDICT_PREFIX) ? pendingLine : lastVerdict;
     const aggregatedFiles = FILES_SUMMARY.exec(lastSummary)?.[1];
     if (finalVerdict.trimEnd() === NO_TESTS_VERDICT && aggregatedFiles === "0") {
-      return yield* Effect.fail(
-        new LegacyTestDbNoTestsError({
-          message: `no pgTAP tests found in ${args.hostPaths.join(", ")}`,
-        }),
-      );
+      return yield* new LegacyTestDbNoTestsError({
+        message: `no pgTAP tests found in ${args.hostPaths.join(", ")}`,
+      });
     }
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

@@ -1,4 +1,4 @@
-import { Option } from "effect";
+import { DateTime, Option } from "effect";
 
 import { legacyGoFormatFloat } from "../../../shared/legacy-go-float.ts";
 import { legacyStringWidth } from "../../../shared/legacy-rune-width.ts";
@@ -42,7 +42,7 @@ function goFormatValue(value: unknown): string {
     const keys = Object.keys(obj).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
     return `map[${keys.map((k) => `${k}:${goFormatValue(obj[k])}`).join(" ")}]`;
   }
-  return String(value);
+  return Object.prototype.toString.call(value);
 }
 
 /**
@@ -54,8 +54,10 @@ function goFormatValue(value: unknown): string {
 export function legacyFormatValue(value: unknown): string {
   if (value === null || value === undefined) return "NULL";
   if (typeof value === "string") return value;
+  if (typeof value === "number") return value.toString();
+  if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "object") return goFormatValue(value);
-  return String(value);
+  return Object.prototype.toString.call(value);
 }
 
 /**
@@ -121,23 +123,30 @@ function parsePgUtcInstant(raw: string): PgUtcInstant | undefined {
   // `Date.UTC` remaps years 0–99 to 1900–1999, which would corrupt historical dates
   // (`0001-01-01` → `1901-...`). `setUTCFullYear` does not remap, so build the instant
   // explicitly to preserve the original year.
-  const dt = new Date(0);
-  dt.setUTCFullYear(Number(y), Number(mo) - 1, Number(d));
-  dt.setUTCHours(Number(hh ?? "0"), Number(mi ?? "0"), Number(ss ?? "0"), 0);
-  let utcMs = dt.getTime();
+  const dt = DateTime.makeUnsafe({
+    year: Number(y),
+    month: Number(mo),
+    day: Number(d),
+    hour: Number(hh ?? "0"),
+    minute: Number(mi ?? "0"),
+    second: Number(ss ?? "0"),
+    millisecond: 0,
+  });
+  let utcMs = dt.epochMilliseconds;
   if (sign !== undefined) {
     // The text offset is the zone's offset from UTC; subtract it to reach UTC.
     const offsetSeconds = Number(oh) * 3600 + Number(om ?? "0") * 60 + Number(os ?? "0");
     utcMs -= (sign === "-" ? -offsetSeconds : offsetSeconds) * 1000;
   }
-  const u = new Date(utcMs);
+  const u = DateTime.makeUnsafe(utcMs);
+  const parts = DateTime.toPartsUtc(u);
   return {
-    year: u.getUTCFullYear(),
-    month: u.getUTCMonth() + 1,
-    day: u.getUTCDate(),
-    hour: u.getUTCHours(),
-    minute: u.getUTCMinutes(),
-    second: u.getUTCSeconds(),
+    year: parts.year,
+    month: parts.month,
+    day: parts.day,
+    hour: parts.hour,
+    minute: parts.minute,
+    second: parts.second,
     fraction: (frac ?? "").replace(/0+$/, ""),
   };
 }

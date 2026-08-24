@@ -4,7 +4,7 @@ import { interruptOnSignal } from "../signal.ts";
 import { makeStartForegroundSession } from "../ui/foreground-session.ts";
 
 export const startForegroundWithStopSignal = <R>(stopRequested: Effect.Effect<void, never, R>) =>
-  Effect.fnUntraced(function* () {
+  Effect.gen(function* () {
     const stack = yield* Stack;
 
     return yield* Effect.scoped(
@@ -27,7 +27,7 @@ export const startForegroundWithStopSignal = <R>(stopRequested: Effect.Effect<vo
         );
       }),
     );
-  })();
+  });
 
 export const startForeground = Effect.fnUntraced(function* () {
   return yield* startForegroundWithStopSignal(interruptOnSignal);

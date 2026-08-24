@@ -1,9 +1,10 @@
 import { inferFunctionsManifest, type ResolvedFunctionConfig } from "@supabase/config";
 import { makeApiClient } from "@supabase/api/effect";
-import { Effect, Option, Redacted } from "effect";
+import { DateTime, Effect, Option, Redacted } from "effect";
 import { CommandRuntime } from "../../../../shared/runtime/command-runtime.service.ts";
 import { Credentials } from "../../../auth/credentials.service.ts";
 import { CliConfig } from "../../../config/cli-config.service.ts";
+import { ProjectContext } from "../../../config/project-context.service.ts";
 import { ProjectLinkState } from "../../../config/project-link-state.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
@@ -53,12 +54,10 @@ function formatUtcTimestamp(timestamp: number | undefined): string {
     return "-";
   }
 
-  const date = new Date(timestamp);
-  if (Number.isNaN(date.getTime())) {
-    return "Invalid date";
-  }
-
-  return date.toISOString().replace("T", " ").slice(0, 19);
+  return Option.match(DateTime.make(timestamp), {
+    onNone: () => "Invalid date",
+    onSome: (date) => DateTime.formatIso(date).replace("T", " ").slice(0, 19),
+  });
 }
 
 function remoteTextMessage(source: RemoteSource): RemoteTextMessage | undefined {
@@ -173,10 +172,14 @@ function mergeInventory(
 export const functionsList = Effect.fnUntraced(function* () {
   const output = yield* Output;
   const runtimeInfo = yield* RuntimeInfo;
+  const projectContext = yield* ProjectContext;
 
   yield* output.intro("List Edge Functions");
 
-  const local = yield* inferFunctionsManifest({ cwd: runtimeInfo.cwd });
+  const local = yield* inferFunctionsManifest({
+    cwd: runtimeInfo.cwd,
+    projectEnv: Option.getOrUndefined(projectContext.projectEnv),
+  });
   const remote = yield* loadRemoteInventory();
   const functions = mergeInventory(local, remote.functions);
   const sources = {

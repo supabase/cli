@@ -1,9 +1,23 @@
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-
 import type { ProjectEnvironment } from "@supabase/config";
+import { Data, Effect, FileSystem, Path } from "effect";
 
 import { parseDotEnv } from "./legacy-dotenv.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
+
+export class LegacyProjectEnvironmentError extends Data.TaggedError(
+  "LegacyProjectEnvironmentError",
+)<{
+  readonly message: string;
+  readonly cause?: unknown;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
 
 /**
  * Fills the gap between `@supabase/config`'s `loadProjectEnvironment` and
@@ -55,17 +69,40 @@ export function legacyCandidateDotenvFilenames(env: string): ReadonlyArray<strin
  * fails `Config.Load` before `stop`/`status` touch Docker, rather than silently
  * skipping the bad line.
  */
-function readDotEnvFile(path: string): Record<string, string> | undefined {
-  if (!existsSync(path)) return undefined;
-
-  const contents = readFileSync(path, "utf8");
-  try {
-    return parseDotEnv(contents);
-  } catch (cause) {
-    throw new Error(
-      `failed to parse environment file: ${path} (${cause instanceof Error ? cause.message : String(cause)})`,
+function readDotEnvFile(
+  fs: FileSystem.FileSystem,
+  filePath: string,
+): Effect.Effect<Record<string, string> | undefined, LegacyProjectEnvironmentError> {
+  return Effect.gen(function* () {
+    const exists = yield* fs.exists(filePath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new LegacyProjectEnvironmentError({
+            message: `failed to read environment file: ${filePath} (${String(cause)})`,
+            cause,
+          }),
+      ),
     );
-  }
+    if (!exists) return undefined;
+
+    const contents = yield* fs.readFileString(filePath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new LegacyProjectEnvironmentError({
+            message: `failed to read environment file: ${filePath} (${String(cause)})`,
+            cause,
+          }),
+      ),
+    );
+    return yield* Effect.try({
+      try: () => parseDotEnv(contents),
+      catch: (cause) =>
+        new LegacyProjectEnvironmentError({
+          message: `failed to parse environment file: ${filePath} (${cause instanceof Error ? cause.message : String(cause)})`,
+          cause,
+        }),
+    });
+  });
 }
 
 /**
@@ -100,42 +137,54 @@ function readDotEnvFile(path: string): Record<string, string> | undefined {
 export function legacyResolveProjectEnvironmentValues(
   projectEnv: ProjectEnvironment | null,
   workdir: string,
-): Record<string, string> {
-  const env = process.env["SUPABASE_ENV"] || "development";
-  const filenames = legacyCandidateDotenvFilenames(env);
-  const merged: Record<string, string> = {};
+  ambientEnvironment: Readonly<Record<string, string>>,
+): Effect.Effect<
+  Record<string, string>,
+  LegacyProjectEnvironmentError,
+  FileSystem.FileSystem | Path.Path
+> {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const env = ambientEnvironment["SUPABASE_ENV"] || "development";
+    const filenames = legacyCandidateDotenvFilenames(env);
+    const merged: Record<string, string> = {};
 
-  const supabaseDir = projectEnv?.paths.supabaseDir ?? join(workdir, "supabase");
-  const projectRoot = projectEnv?.paths.projectRoot ?? workdir;
+    const supabaseDir = projectEnv?.paths.supabaseDir ?? path.join(workdir, "supabase");
+    const projectRoot = projectEnv?.paths.projectRoot ?? workdir;
 
-  // supabase/ dir first, then its parent (the project root) — matching Go's
-  // directory walk order. Within a directory, `godotenv.Load`'s "never
-  // override an already-set var" means first-processed-wins, so the plain
-  // merge below (skip keys already present) reproduces both orderings at once.
-  for (const dir of [supabaseDir, projectRoot]) {
-    for (const filename of filenames) {
-      const parsed = readDotEnvFile(join(dir, filename));
-      if (parsed === undefined) continue;
-      for (const [key, value] of Object.entries(parsed)) {
-        if (!(key in merged)) merged[key] = value;
+    // supabase/ dir first, then its parent (the project root) — matching Go's
+    // directory walk order. Within a directory, `godotenv.Load`'s "never
+    // override an already-set var" means first-processed-wins, so the plain
+    // merge below (skip keys already present) reproduces both orderings at once.
+    for (const dir of [supabaseDir, projectRoot]) {
+      for (const filename of filenames) {
+        const parsed = yield* readDotEnvFile(fs, path.join(dir, filename));
+        if (parsed === undefined) continue;
+        for (const [key, value] of Object.entries(parsed)) {
+          if (!(key in merged)) merged[key] = value;
+        }
       }
     }
-  }
 
-  const ambientOverrides: Record<string, string> = {};
-  if (projectEnv !== null) {
-    for (const [key, value] of Object.entries(projectEnv.values)) {
-      if (projectEnv.sources[key] === "ambient") {
+    const ambientOverrides: Record<string, string> = {};
+    if (projectEnv !== null) {
+      // `ambientEnvironment` is the explicit shell view supplied by the owning
+      // Effect boundary. It must win over project dotenv values just like the
+      // ambient entries in `loadProjectEnvironment`, while keeping test and
+      // runtime resolution free of process-global mutation.
+      Object.assign(ambientOverrides, ambientEnvironment);
+      for (const [key, value] of Object.entries(projectEnv.values)) {
+        if (projectEnv.sources[key] === "ambient") {
+          ambientOverrides[key] = value;
+        }
+      }
+    } else {
+      for (const [key, value] of Object.entries(ambientEnvironment)) {
         ambientOverrides[key] = value;
       }
     }
-  } else {
-    for (const [key, value] of Object.entries(process.env)) {
-      if (value !== undefined) {
-        ambientOverrides[key] = value;
-      }
-    }
-  }
 
-  return { ...merged, ...ambientOverrides };
+    return { ...merged, ...ambientOverrides };
+  });
 }

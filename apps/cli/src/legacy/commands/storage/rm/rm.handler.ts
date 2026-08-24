@@ -73,12 +73,10 @@ export const legacyStorageRm = Effect.fn("legacy.storage.rm")(function* (
     // discarded on the local target — see push.handler.ts's identical guard
     // (db push) for the full TS-only rationale.
     if (Option.isSome(flags.projectRef) && flags.local) {
-      return yield* Effect.fail(
-        new LegacyStorageMutuallyExclusiveFlagsError({
-          message:
-            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
-        }),
-      );
+      return yield* new LegacyStorageMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+      });
     }
 
     const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
@@ -122,7 +120,7 @@ export const legacyStorageRm = Effect.fn("legacy.storage.rm")(function* (
             if (!flags.recursive) {
               return yield* new LegacyStorageMissingFlagError();
             }
-            const buckets = yield* gateway.listBuckets();
+            const buckets = yield* gateway.listBuckets;
             for (const b of buckets) groups.set(b.name, [""]);
           }
 

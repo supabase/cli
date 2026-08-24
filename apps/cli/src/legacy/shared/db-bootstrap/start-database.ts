@@ -52,6 +52,7 @@ import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSp
 import type * as HttpClient from "effect/unstable/http/HttpClient";
 
 import { Output } from "../../../shared/output/output.service.ts";
+import { LegacyViperEnv } from "../../../shared/legacy/legacy-viper-env.ts";
 import type { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import {
   actionability,
@@ -188,6 +189,7 @@ export const legacyStartDatabase = <E>(
   | LegacyPgDeltaSslProbe
   | FileSystem.FileSystem
   | Path.Path
+  | LegacyViperEnv
 > =>
   Effect.gen(function* () {
     const output = yield* Output;
@@ -207,12 +209,10 @@ export const legacyStartDatabase = <E>(
       // Go's `StartDatabase` (`start.go:170-172`): a `--from-backup` restore into an
       // already-provisioned volume is refused outright, BEFORE any container or network is
       // created.
-      return yield* Effect.fail(
-        new LegacyStartBackupVolumeExistsError({
-          message: "backup volume already exists",
-          suggestion: `Run ${legacyAqua("supabase stop --no-backup")} to remove existing docker volumes.`,
-        }),
-      );
+      return yield* new LegacyStartBackupVolumeExistsError({
+        message: "backup volume already exists",
+        suggestion: `Run ${legacyAqua("supabase stop --no-backup")} to remove existing docker volumes.`,
+      });
     }
 
     // Go's `StartDatabase` (`start.go:168-175`) prints this unconditionally to stderr — Go has
@@ -260,7 +260,7 @@ export const legacyStartDatabase = <E>(
       // BARE — this function has no `--ignore-health-check` knowledge at all, see this module's
       // header for why that's entirely the caller's concern.
       if (fromBackup === undefined) {
-        return yield* Effect.fail(postgresHealthResult.failure);
+        return yield* postgresHealthResult.failure;
       }
     }
 

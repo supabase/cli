@@ -1,4 +1,4 @@
-import { Effect, Exit, Option } from "effect";
+import { DateTime, Effect, Exit, Option } from "effect";
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   parsePlatformFieldsSelection,
@@ -74,7 +74,7 @@ export function runPlatformOperation<
       yield* output.event({
         type: "result",
         data: payload,
-        timestamp: new Date().toISOString(),
+        timestamp: DateTime.formatIso(yield* DateTime.now),
       });
       return;
     }

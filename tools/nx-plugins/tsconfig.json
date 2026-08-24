@@ -1,10 +1,8 @@
 {
+  "extends": "@tsconfig/bun/tsconfig.json",
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "CommonJS",
-    "moduleResolution": "node",
-    "strict": true,
-    "skipLibCheck": true
+    "lib": ["ESNext", "DOM"],
+    "types": ["bun"]
   },
   "include": ["src/**/*.ts"]
 }

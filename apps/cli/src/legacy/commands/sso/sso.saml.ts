@@ -1,4 +1,4 @@
-import { Effect, FileSystem } from "effect";
+import { Effect, FileSystem, Schema } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
 export type LegacySsoFileErrorReason =
@@ -112,13 +112,15 @@ export const readAttributeMappingFile =
           }),
         ),
       );
-      const parsed = yield* Effect.try({
-        try: () => JSON.parse(content) as unknown,
-        catch: (cause) =>
+      const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
+        content,
+      ).pipe(
+        Effect.mapError((cause) =>
           factory.openError({
             message: `failed to parse attribute mapping: ${String(cause)}`,
             reason: "invalid_content",
           }),
-      });
+        ),
+      );
       return parsed;
     });

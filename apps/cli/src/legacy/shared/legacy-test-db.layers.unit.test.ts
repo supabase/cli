@@ -48,6 +48,7 @@ import { LegacyDbConnection } from "./legacy-db-connection.service.ts";
 import { LegacyIdentityStitch } from "./legacy-identity-stitch.ts";
 
 import { legacyTestDbRuntimeLayer } from "./legacy-test-db.layers.ts";
+import { makeLegacyViperEnvLayer } from "../../shared/legacy/legacy-viper-env.ts";
 
 const tempRoot = useLegacyTempWorkdir("supabase-test-db-layers-");
 
@@ -97,6 +98,7 @@ function ambientStubs() {
     mockLegacyCliConfig({ workdir: "/tmp/test-db-layers-test" }),
     mockLegacyTelemetryStateLayer,
     heavyServiceStubs,
+    makeLegacyViperEnvLayer(),
   );
 }
 
@@ -108,8 +110,9 @@ describe("legacyTestDbRuntimeLayer — LegacyIdentityStitch exposure", () => {
         const stitch = yield* Effect.serviceOption(LegacyIdentityStitch);
         expect(Option.isSome(stitch)).toBe(true);
       }).pipe(
-        Effect.provide(legacyTestDbRuntimeLayer(["test", "db"])),
-        Effect.provide(ambientStubs()),
+        Effect.provide(
+          legacyTestDbRuntimeLayer(["test", "db"]).pipe(Layer.provideMerge(ambientStubs())),
+        ),
       );
     },
   );

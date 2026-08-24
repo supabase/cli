@@ -1,11 +1,37 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { BunFileSystem, BunPath, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Layer, Path } from "effect";
 
+import { useLegacyTempWorkdir } from "../../../tests/helpers/legacy-mocks.ts";
 import { legacySqlFilesGlob } from "./legacy-sql-files-glob.ts";
+
+const tempRoot = useLegacyTempWorkdir("legacy-sql-glob-");
+
+const writeFile = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+  relativePath: string,
+  content: string,
+) => {
+  const fullPath = path.join(workdir, relativePath);
+  return fs
+    .makeDirectory(path.dirname(fullPath), { recursive: true })
+    .pipe(Effect.andThen(fs.writeFileString(fullPath, content)));
+};
+
+const withFixture = <A>(
+  use: (
+    dir: string,
+    fs: FileSystem.FileSystem,
+    path: Path.Path,
+  ) => Effect.Effect<A, Error, FileSystem.FileSystem | Path.Path>,
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    return yield* use(tempRoot.current, fs, path);
+  }).pipe(Effect.provide(BunServices.layer), Effect.orDie);
 
 const run = (patterns: ReadonlyArray<string>, workdir: string) =>
   Effect.gen(function* () {
@@ -21,15 +47,12 @@ describe("legacySqlFilesGlob", () => {
       // `fs.Glob`/`afero.Glob` resolve a no-metacharacter pattern via `Lstat`, which
       // errors on an empty path — an empty `schema_paths`/`sql_paths` entry (e.g.
       // `schema_paths = [""]`) always yields no matches, never the workdir itself.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-empty-"));
-      return run([""], dir).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual([]);
-            expect(result.warnings).toEqual(["no files matched pattern: "]);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+      return withFixture((dir) =>
+        Effect.gen(function* () {
+          const result = yield* run([""], dir);
+          expect(result.files).toEqual([]);
+          expect(result.warnings).toEqual(["no files matched pattern: "]);
+        }),
       );
     },
   );
@@ -41,22 +64,17 @@ describe("legacySqlFilesGlob", () => {
       // each child from its parent's `ReadDir` entry (`os.ReadDir`'s Lstat-based
       // `DirEntry`) and never re-`Stat`s through it — so a symlinked `.sql` file is
       // never included, regardless of what it points to.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-symlink-file-"));
-      const schemasDir = join(dir, "schemas");
-      mkdirSync(schemasDir);
-      writeFileSync(join(schemasDir, "real.sql"), "select 1;");
-      const outsideDir = join(dir, "outside");
-      mkdirSync(outsideDir);
-      writeFileSync(join(outsideDir, "evil.sql"), "select 2;");
-      symlinkSync(join(outsideDir, "evil.sql"), join(schemasDir, "linked.sql"));
-      return run(["schemas"], dir).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual(["schemas/real.sql"]);
-            expect(result.warnings).toEqual([]);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+      return withFixture((dir, fs, path) =>
+        Effect.gen(function* () {
+          const schemasDir = path.join(dir, "schemas");
+          const outsideDir = path.join(dir, "outside");
+          yield* writeFile(fs, path, dir, "schemas/real.sql", "select 1;");
+          yield* writeFile(fs, path, dir, "outside/evil.sql", "select 2;");
+          yield* fs.symlink(path.join(outsideDir, "evil.sql"), path.join(schemasDir, "linked.sql"));
+          const result = yield* run(["schemas"], dir);
+          expect(result.files).toEqual(["schemas/real.sql"]);
+          expect(result.warnings).toEqual([]);
+        }),
       );
     },
   );
@@ -64,22 +82,17 @@ describe("legacySqlFilesGlob", () => {
   it.effect(
     "does not recurse into a symlinked subdirectory below a matched directory (Go WalkDir parity)",
     () => {
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-symlink-dir-"));
-      const schemasDir = join(dir, "schemas");
-      mkdirSync(schemasDir);
-      writeFileSync(join(schemasDir, "real.sql"), "select 1;");
-      const outsideSubdir = join(dir, "outside-subdir");
-      mkdirSync(outsideSubdir);
-      writeFileSync(join(outsideSubdir, "nested.sql"), "select 3;");
-      symlinkSync(outsideSubdir, join(schemasDir, "linked-dir"));
-      return run(["schemas"], dir).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual(["schemas/real.sql"]);
-            expect(result.warnings).toEqual([]);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+      return withFixture((dir, fs, path) =>
+        Effect.gen(function* () {
+          const schemasDir = path.join(dir, "schemas");
+          const outsideSubdir = path.join(dir, "outside-subdir");
+          yield* writeFile(fs, path, dir, "schemas/real.sql", "select 1;");
+          yield* writeFile(fs, path, dir, "outside-subdir/nested.sql", "select 3;");
+          yield* fs.symlink(outsideSubdir, path.join(schemasDir, "linked-dir"));
+          const result = yield* run(["schemas"], dir);
+          expect(result.files).toEqual(["schemas/real.sql"]);
+          expect(result.warnings).toEqual([]);
+        }),
       );
     },
   );
@@ -99,22 +112,21 @@ describe("legacySqlFilesGlob", () => {
       // This module never `process.chdir`s, so the real stat needs an absolute path — but
       // the warning must still report the relative form, not that absolute (temp-dir)
       // path, or it would leak a local filesystem path Go never would.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-stat-fail-"));
-      const schemasDir = join(dir, "schemas");
-      mkdirSync(schemasDir);
-      writeFileSync(join(schemasDir, "good.sql"), "select 1;");
-      symlinkSync(join(schemasDir, "does-not-exist.sql"), join(schemasDir, "broken.sql"));
-      return run(["schemas/*.sql"], dir).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual(["schemas/good.sql"]);
-            expect(result.warnings).toHaveLength(1);
-            expect(result.warnings[0]).toMatch(/^failed to stat matched file: /);
-            expect(result.warnings[0]).toContain("schemas/broken.sql");
-            expect(result.warnings[0]).not.toContain(dir);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+      return withFixture((dir, fs, path) =>
+        Effect.gen(function* () {
+          const schemasDir = path.join(dir, "schemas");
+          yield* writeFile(fs, path, dir, "schemas/good.sql", "select 1;");
+          yield* fs.symlink(
+            path.join(schemasDir, "does-not-exist.sql"),
+            path.join(schemasDir, "broken.sql"),
+          );
+          const result = yield* run(["schemas/*.sql"], dir);
+          expect(result.files).toEqual(["schemas/good.sql"]);
+          expect(result.warnings).toHaveLength(1);
+          expect(result.warnings[0]).toMatch(/^failed to stat matched file: /);
+          expect(result.warnings[0]).toContain("schemas/broken.sql");
+          expect(result.warnings[0]).not.toContain(dir);
+        }),
       );
     },
   );
@@ -131,20 +143,20 @@ describe("legacySqlFilesGlob", () => {
       // (`afero.Glob`/`fs.Stat` scratch probe): a literal broken-symlink
       // pattern always Globs to a match and always fails the follow-up Stat — never
       // "no files matched pattern".
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-literal-symlink-"));
-      const schemasDir = join(dir, "schemas");
-      mkdirSync(schemasDir);
-      symlinkSync(join(schemasDir, "does-not-exist.sql"), join(schemasDir, "broken.sql"));
-      return run(["schemas/broken.sql"], dir).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual([]);
-            expect(result.warnings).toHaveLength(1);
-            expect(result.warnings[0]).toMatch(/^failed to stat matched file: /);
-            expect(result.warnings[0]).toContain("schemas/broken.sql");
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+      return withFixture((dir, fs, path) =>
+        Effect.gen(function* () {
+          const schemasDir = path.join(dir, "schemas");
+          yield* fs.makeDirectory(schemasDir, { recursive: true });
+          yield* fs.symlink(
+            path.join(schemasDir, "does-not-exist.sql"),
+            path.join(schemasDir, "broken.sql"),
+          );
+          const result = yield* run(["schemas/broken.sql"], dir);
+          expect(result.files).toEqual([]);
+          expect(result.warnings).toHaveLength(1);
+          expect(result.warnings[0]).toMatch(/^failed to stat matched file: /);
+          expect(result.warnings[0]).toContain("schemas/broken.sql");
+        }),
       );
     },
   );
@@ -161,18 +173,15 @@ describe("legacySqlFilesGlob", () => {
       // component after the root slash still resolves against the filesystem ROOT, not
       // cwd. A canary file placed in the WORKDIR (never the real "/") proves this native
       // port does not fall back to treating the root component as workdir-relative.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-abs-root-"));
-      writeFileSync(join(dir, "__legacy_sql_glob_canary__.sql"), "select 1;");
-      return run(["/*__legacy_sql_glob_canary__*.sql"], dir).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual([]);
-            expect(result.warnings).toEqual([
-              "no files matched pattern: /*__legacy_sql_glob_canary__*.sql",
-            ]);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+      return withFixture((dir, fs, path) =>
+        Effect.gen(function* () {
+          yield* writeFile(fs, path, dir, "__legacy_sql_glob_canary__.sql", "select 1;");
+          const result = yield* run(["/*__legacy_sql_glob_canary__*.sql"], dir);
+          expect(result.files).toEqual([]);
+          expect(result.warnings).toEqual([
+            "no files matched pattern: /*__legacy_sql_glob_canary__*.sql",
+          ]);
+        }),
       );
     },
   );
@@ -185,20 +194,15 @@ describe("legacySqlFilesGlob", () => {
       // real filesystem root, not "" (which `globOne` maps to the workdir). The workdir
       // here contains a subdirectory that WOULD match "foo*" if (and only if) the
       // recursive call incorrectly fell back to reading the workdir instead of "/".
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-abs-root-nested-"));
-      const canaryDir = join(dir, "__legacy_sql_glob_root_canary_dir__");
-      mkdirSync(canaryDir);
-      writeFileSync(join(canaryDir, "a.sql"), "select 1;");
-      return run(["/__legacy_sql_glob_root_canary_dir__*/*.sql"], dir).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual([]);
-            expect(result.warnings).toEqual([
-              "no files matched pattern: /__legacy_sql_glob_root_canary_dir__*/*.sql",
-            ]);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+      return withFixture((dir, fs, path) =>
+        Effect.gen(function* () {
+          yield* writeFile(fs, path, dir, "__legacy_sql_glob_root_canary_dir__/a.sql", "select 1;");
+          const result = yield* run(["/__legacy_sql_glob_root_canary_dir__*/*.sql"], dir);
+          expect(result.files).toEqual([]);
+          expect(result.warnings).toEqual([
+            "no files matched pattern: /__legacy_sql_glob_root_canary_dir__*/*.sql",
+          ]);
+        }),
       );
     },
   );
@@ -220,35 +224,31 @@ describe("legacySqlFilesGlob", () => {
       // so the test exercises the same branch a real Windows install takes.
       const originalPlatform = process.platform;
       Object.defineProperty(process, "platform", { value: "win32" });
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-drive-root-"));
-      writeFileSync(join(dir, "a.sql"), "select 1;");
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
+        const dir = tempRoot.current;
+        const canaryFile = `${dir}/a.sql`;
+        yield* fs.writeFileString(canaryFile, "select 1;");
         // A "C:/" drive root doesn't exist on this (non-Windows) test host, so
         // fake just the two calls that must resolve against it, reusing a real
         // file's stat info to avoid hand-rolling a `File.Info`.
-        const realFileInfo = yield* fs.stat(join(dir, "a.sql"));
+        const realFileInfo = yield* fs.stat(canaryFile);
         const driveRootFs: FileSystem.FileSystem = {
           ...fs,
           readDirectory: (p: string) =>
             p === "C:/" ? Effect.succeed(["a.sql"]) : fs.readDirectory(p),
           stat: (p: string) => (p === "C:/a.sql" ? Effect.succeed(realFileInfo) : fs.stat(p)),
         };
-        return yield* legacySqlFilesGlob(driveRootFs, path, ["C:/*.sql"], dir);
+        const result = yield* legacySqlFilesGlob(driveRootFs, path, ["C:/*.sql"], dir);
+        expect(result.files).toEqual(["C:/a.sql"]);
+        expect(result.warnings).toEqual([]);
       }).pipe(
         Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layerWin32)),
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual(["C:/a.sql"]);
-            expect(result.warnings).toEqual([]);
-          }),
-        ),
         Effect.ensuring(
-          Effect.sync(() => {
-            Object.defineProperty(process, "platform", { value: originalPlatform });
-            rmSync(dir, { recursive: true, force: true });
-          }),
+          Effect.sync(() =>
+            Object.defineProperty(process, "platform", { value: originalPlatform }),
+          ),
         ),
       );
     },
@@ -267,24 +267,23 @@ describe("legacySqlFilesGlob", () => {
       // the drive-root test above.
       const originalPlatform = process.platform;
       Object.defineProperty(process, "platform", { value: "win32" });
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-win-warn-"));
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        return yield* legacySqlFilesGlob(fs, path, ["C:\\schemas\\*.sql"], dir);
+        const result = yield* legacySqlFilesGlob(
+          fs,
+          path,
+          ["C:\\schemas\\*.sql"],
+          tempRoot.current,
+        );
+        expect(result.files).toEqual([]);
+        expect(result.warnings).toEqual(["no files matched pattern: C:\\schemas\\*.sql"]);
       }).pipe(
         Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layerWin32)),
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual([]);
-            expect(result.warnings).toEqual(["no files matched pattern: C:\\schemas\\*.sql"]);
-          }),
-        ),
         Effect.ensuring(
-          Effect.sync(() => {
-            Object.defineProperty(process, "platform", { value: originalPlatform });
-            rmSync(dir, { recursive: true, force: true });
-          }),
+          Effect.sync(() =>
+            Object.defineProperty(process, "platform", { value: originalPlatform }),
+          ),
         ),
       );
     },
@@ -308,12 +307,12 @@ describe("legacySqlFilesGlob", () => {
       // backslash-joined paths `BunPath.layerWin32`'s `path.join` computes.
       const originalPlatform = process.platform;
       Object.defineProperty(process, "platform", { value: "win32" });
-      const scratchDir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-win-sort-"));
-      const canaryFile = join(scratchDir, "canary.sql");
-      writeFileSync(canaryFile, "select 1;");
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
+        const scratchDir = tempRoot.current;
+        const canaryFile = `${scratchDir}/canary.sql`;
+        yield* fs.writeFileString(canaryFile, "select 1;");
         const fileInfo = yield* fs.stat(canaryFile);
         const workdir = "/workdir";
         const winFs: FileSystem.FileSystem = {
@@ -328,20 +327,15 @@ describe("legacySqlFilesGlob", () => {
               ? Effect.succeed(fileInfo)
               : fs.stat(p),
         };
-        return yield* legacySqlFilesGlob(winFs, path, ["a*/x.sql"], workdir);
+        const result = yield* legacySqlFilesGlob(winFs, path, ["a*/x.sql"], workdir);
+        expect(result.files).toEqual(["a0/x.sql", "a/x.sql"]);
+        expect(result.warnings).toEqual([]);
       }).pipe(
         Effect.provide(Layer.mergeAll(BunFileSystem.layer, BunPath.layerWin32)),
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual(["a0/x.sql", "a/x.sql"]);
-            expect(result.warnings).toEqual([]);
-          }),
-        ),
         Effect.ensuring(
-          Effect.sync(() => {
-            Object.defineProperty(process, "platform", { value: originalPlatform });
-            rmSync(scratchDir, { recursive: true, force: true });
-          }),
+          Effect.sync(() =>
+            Object.defineProperty(process, "platform", { value: originalPlatform }),
+          ),
         ),
       );
     },
@@ -358,18 +352,13 @@ describe("legacySqlFilesGlob", () => {
       // Verified empirically: a scratch probe calling
       // `config.Glob{"<dir>/"}.SQLFiles(...)` on a real trailing-slash directory returns
       // the single-slash path, not a doubled one.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-trailing-slash-"));
-      const schemasDir = join(dir, "schemas");
-      mkdirSync(schemasDir);
-      writeFileSync(join(schemasDir, "a.sql"), "select 1;");
-      return run(["schemas/"], dir).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual(["schemas/a.sql"]);
-            expect(result.warnings).toEqual([]);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+      return withFixture((dir, fs, path) =>
+        Effect.gen(function* () {
+          yield* writeFile(fs, path, dir, "schemas/a.sql", "select 1;");
+          const result = yield* run(["schemas/"], dir);
+          expect(result.files).toEqual(["schemas/a.sql"]);
+          expect(result.warnings).toEqual([]);
+        }),
       );
     },
   );
@@ -388,19 +377,14 @@ describe("legacySqlFilesGlob", () => {
       // `./`-prefixed path would never match an already-recorded Go-CLI key. Verified
       // empirically: `path.Join(".", "foo.sql")` and a real `fs.WalkDir` rooted at `.` both
       // drop the `./` prefix entirely.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-dot-root-"));
-      writeFileSync(join(dir, "a.sql"), "select 1;");
-      const nestedDir = join(dir, "nested");
-      mkdirSync(nestedDir);
-      writeFileSync(join(nestedDir, "b.sql"), "select 2;");
-      return run(["."], dir).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual(["a.sql", "nested/b.sql"]);
-            expect(result.warnings).toEqual([]);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+      return withFixture((dir, fs, path) =>
+        Effect.gen(function* () {
+          yield* writeFile(fs, path, dir, "a.sql", "select 1;");
+          yield* writeFile(fs, path, dir, "nested/b.sql", "select 2;");
+          const result = yield* run(["."], dir);
+          expect(result.files).toEqual(["a.sql", "nested/b.sql"]);
+          expect(result.warnings).toEqual([]);
+        }),
       );
     },
   );
@@ -415,18 +399,13 @@ describe("legacySqlFilesGlob", () => {
       // walk over its children must record `schemas/a.sql`, not `nested/../schemas/a.sql`.
       // Verified empirically: `path.Join("/tmp/x/../schemas", "a.sql")` and Node's
       // `path.join("/tmp/x/../schemas", "a.sql")` both clean to `/tmp/schemas/a.sql`.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-dotdot-segment-"));
-      const schemasDir = join(dir, "schemas");
-      mkdirSync(schemasDir);
-      writeFileSync(join(schemasDir, "a.sql"), "select 1;");
-      return run(["nested/../schemas"], dir).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual(["schemas/a.sql"]);
-            expect(result.warnings).toEqual([]);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+      return withFixture((dir, fs, path) =>
+        Effect.gen(function* () {
+          yield* writeFile(fs, path, dir, "schemas/a.sql", "select 1;");
+          const result = yield* run(["nested/../schemas"], dir);
+          expect(result.files).toEqual(["schemas/a.sql"]);
+          expect(result.warnings).toEqual([]);
+        }),
       );
     },
   );
@@ -443,18 +422,13 @@ describe("legacySqlFilesGlob", () => {
       // `schemas/a.sql`, not a raw `schemas/./a.sql` concatenation. Verified empirically:
       // a scratch `afero.Glob(fs, ".../tmp/./schemas/*.sql")` probe against a real
       // filesystem returns the cleaned path.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-direct-dot-segment-"));
-      const schemasDir = join(dir, "schemas");
-      mkdirSync(schemasDir);
-      writeFileSync(join(schemasDir, "a.sql"), "select 1;");
-      return run(["schemas/./*.sql"], dir).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual(["schemas/a.sql"]);
-            expect(result.warnings).toEqual([]);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+      return withFixture((dir, fs, path) =>
+        Effect.gen(function* () {
+          yield* writeFile(fs, path, dir, "schemas/a.sql", "select 1;");
+          const result = yield* run(["schemas/./*.sql"], dir);
+          expect(result.files).toEqual(["schemas/a.sql"]);
+          expect(result.warnings).toEqual([]);
+        }),
       );
     },
   );
@@ -470,18 +444,13 @@ describe("legacySqlFilesGlob", () => {
       // recorded path is the `supabase_migrations.seed_files.path` hash key, so leaving it
       // uncleaned would make a TS-resolved match fail to line up with an already-recorded
       // Go-CLI key and re-run/re-record the seed.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-direct-dotdot-segment-"));
-      const schemasDir = join(dir, "schemas");
-      mkdirSync(schemasDir);
-      writeFileSync(join(schemasDir, "a.sql"), "select 1;");
-      return run(["nested/../schemas/*.sql"], dir).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual(["schemas/a.sql"]);
-            expect(result.warnings).toEqual([]);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+      return withFixture((dir, fs, path) =>
+        Effect.gen(function* () {
+          yield* writeFile(fs, path, dir, "schemas/a.sql", "select 1;");
+          const result = yield* run(["nested/../schemas/*.sql"], dir);
+          expect(result.files).toEqual(["schemas/a.sql"]);
+          expect(result.warnings).toEqual([]);
+        }),
       );
     },
   );
@@ -495,18 +464,13 @@ describe("legacySqlFilesGlob", () => {
       // (`"schemas//a.sql"`). `filepath.Join`/`path.join` collapse doubled slashes
       // regardless of where they came from, so the recorded match must be the
       // single-slash `schemas/a.sql`.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-direct-doubled-slash-"));
-      const schemasDir = join(dir, "schemas");
-      mkdirSync(schemasDir);
-      writeFileSync(join(schemasDir, "a.sql"), "select 1;");
-      return run(["schemas//*.sql"], dir).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual(["schemas/a.sql"]);
-            expect(result.warnings).toEqual([]);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+      return withFixture((dir, fs, path) =>
+        Effect.gen(function* () {
+          yield* writeFile(fs, path, dir, "schemas/a.sql", "select 1;");
+          const result = yield* run(["schemas//*.sql"], dir);
+          expect(result.files).toEqual(["schemas/a.sql"]);
+          expect(result.warnings).toEqual([]);
+        }),
       );
     },
   );
@@ -523,32 +487,21 @@ describe("legacySqlFilesGlob", () => {
       // enough here (that's the earlier symlink test), so exercise the `fs.stat` failure
       // path itself by removing the file the instant after `readDirectory` returns it, via
       // a `FileSystem` layer that deletes on first `stat` call for that path.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-stat-race-"));
-      const schemasDir = join(dir, "schemas");
-      mkdirSync(schemasDir);
-      const racyFile = join(schemasDir, "racy.sql");
-      writeFileSync(racyFile, "select 1;");
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
+        const dir = tempRoot.current;
+        const racyFile = path.join(dir, "schemas", "racy.sql");
+        yield* writeFile(fs, path, dir, "schemas/racy.sql", "select 1;");
         const racyFs: FileSystem.FileSystem = {
           ...fs,
           stat: (p: string) =>
-            p === racyFile
-              ? Effect.sync(() => rmSync(racyFile)).pipe(Effect.andThen(fs.stat(p)))
-              : fs.stat(p),
+            p === racyFile ? fs.remove(racyFile).pipe(Effect.andThen(fs.stat(p))) : fs.stat(p),
         };
-        return yield* legacySqlFilesGlob(racyFs, path, ["schemas"], dir);
-      }).pipe(
-        Effect.provide(BunServices.layer),
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual(["schemas/racy.sql"]);
-            expect(result.warnings).toEqual([]);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
-      );
+        const result = yield* legacySqlFilesGlob(racyFs, path, ["schemas"], dir);
+        expect(result.files).toEqual(["schemas/racy.sql"]);
+        expect(result.warnings).toEqual([]);
+      }).pipe(Effect.provide(BunServices.layer));
     },
   );
 
@@ -574,61 +527,39 @@ describe("legacySqlFilesGlob", () => {
       // could equally have been the now-missing subdirectory, and must fail the same way an
       // unreadable still-present directory does, not silently vanish along with the files it
       // may have held.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-dir-race-"));
-      const schemasDir = join(dir, "schemas");
-      mkdirSync(schemasDir);
-      writeFileSync(join(schemasDir, "a.sql"), "select 1;");
-      const nestedDir = join(schemasDir, "nested");
-      mkdirSync(nestedDir);
-      writeFileSync(join(nestedDir, "b.sql"), "select 2;");
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
+        const dir = tempRoot.current;
+        const nestedDir = path.join(dir, "schemas", "nested");
+        yield* writeFile(fs, path, dir, "schemas/a.sql", "select 1;");
+        yield* writeFile(fs, path, dir, "schemas/nested/b.sql", "select 2;");
         const racyFs: FileSystem.FileSystem = {
           ...fs,
           stat: (p: string) =>
             p === nestedDir
-              ? Effect.sync(() => rmSync(nestedDir, { recursive: true })).pipe(
-                  Effect.andThen(fs.stat(p)),
-                )
+              ? fs.remove(nestedDir, { recursive: true }).pipe(Effect.andThen(fs.stat(p)))
               : fs.stat(p),
         };
-        return yield* legacySqlFilesGlob(racyFs, path, ["schemas"], dir);
-      }).pipe(
-        Effect.provide(BunServices.layer),
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual([]);
-            expect(result.warnings).toHaveLength(1);
-            expect(result.warnings[0]).toMatch(/^failed to walk matched directory: /);
-            // This `stat` failure stands in for the second `ReadDir` Go's own `fs.WalkDir`
-            // would issue on the vanished directory — whose error, like every other Go
-            // filesystem error here, embeds the workdir-relative path, not this port's
-            // absolute stand-in syscall path.
-            expect(result.warnings[0]).toContain("schemas/nested");
-            expect(result.warnings[0]).not.toContain(dir);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
-      );
+        const result = yield* legacySqlFilesGlob(racyFs, path, ["schemas"], dir);
+        expect(result.files).toEqual([]);
+        expect(result.warnings).toHaveLength(1);
+        expect(result.warnings[0]).toMatch(/^failed to walk matched directory: /);
+        expect(result.warnings[0]).toContain("schemas/nested");
+        expect(result.warnings[0]).not.toContain(dir);
+      }).pipe(Effect.provide(BunServices.layer));
     },
   );
 
   it.effect("still expands a real (non-symlinked) nested directory recursively", () => {
-    const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-nested-"));
-    const schemasDir = join(dir, "schemas");
-    const nestedDir = join(schemasDir, "nested");
-    mkdirSync(nestedDir, { recursive: true });
-    writeFileSync(join(schemasDir, "a.sql"), "select 1;");
-    writeFileSync(join(nestedDir, "b.sql"), "select 2;");
-    return run(["schemas"], dir).pipe(
-      Effect.tap((result) =>
-        Effect.sync(() => {
-          expect(result.files).toEqual(["schemas/a.sql", "schemas/nested/b.sql"]);
-          expect(result.warnings).toEqual([]);
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
+    return withFixture((dir, fs, path) =>
+      Effect.gen(function* () {
+        yield* writeFile(fs, path, dir, "schemas/a.sql", "select 1;");
+        yield* writeFile(fs, path, dir, "schemas/nested/b.sql", "select 2;");
+        const result = yield* run(["schemas"], dir);
+        expect(result.files).toEqual(["schemas/a.sql", "schemas/nested/b.sql"]);
+        expect(result.warnings).toEqual([]);
+      }),
     );
   });
 
@@ -648,27 +579,19 @@ describe("legacySqlFilesGlob", () => {
       // workdir-relative matched directory (`schemas`), never an absolute one. This
       // module never `process.chdir`s, so the real read needs an absolute path, but the
       // warning must still report the relative form.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-walk-fail-"));
-      const schemasDir = join(dir, "schemas");
-      mkdirSync(schemasDir);
-      writeFileSync(join(schemasDir, "a.sql"), "select 1;");
-      chmodSync(schemasDir, 0o000);
-      return run(["schemas"], dir).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual([]);
-            expect(result.warnings).toHaveLength(1);
-            expect(result.warnings[0]).toMatch(/^failed to walk matched directory: /);
-            expect(result.warnings[0]).toContain("schemas");
-            expect(result.warnings[0]).not.toContain(dir);
-          }),
-        ),
-        Effect.ensuring(
-          Effect.sync(() => {
-            chmodSync(schemasDir, 0o755);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+      return withFixture((dir, fs, path) =>
+        Effect.gen(function* () {
+          const schemasDir = path.join(dir, "schemas");
+          yield* writeFile(fs, path, dir, "schemas/a.sql", "select 1;");
+          yield* fs.chmod(schemasDir, 0o000);
+          const result = yield* run(["schemas"], dir);
+          expect(result.files).toEqual([]);
+          expect(result.warnings).toHaveLength(1);
+          expect(result.warnings[0]).toMatch(/^failed to walk matched directory: /);
+          expect(result.warnings[0]).toContain("schemas");
+          expect(result.warnings[0]).not.toContain(dir);
+          yield* fs.chmod(schemasDir, 0o755);
+        }),
       );
     },
   );
@@ -683,29 +606,20 @@ describe("legacySqlFilesGlob", () => {
       // way. The matched root ("schemas") itself is readable; only "schemas/nested" is
       // not, so the warning must report "schemas/nested", never the workdir's absolute
       // temp-dir path.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-walk-fail-nested-"));
-      const schemasDir = join(dir, "schemas");
-      const nestedDir = join(schemasDir, "nested");
-      mkdirSync(nestedDir, { recursive: true });
-      writeFileSync(join(schemasDir, "a.sql"), "select 1;");
-      writeFileSync(join(nestedDir, "b.sql"), "select 2;");
-      chmodSync(nestedDir, 0o000);
-      return run(["schemas"], dir).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual([]);
-            expect(result.warnings).toHaveLength(1);
-            expect(result.warnings[0]).toMatch(/^failed to walk matched directory: /);
-            expect(result.warnings[0]).toContain("schemas/nested");
-            expect(result.warnings[0]).not.toContain(dir);
-          }),
-        ),
-        Effect.ensuring(
-          Effect.sync(() => {
-            chmodSync(nestedDir, 0o755);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+      return withFixture((dir, fs, path) =>
+        Effect.gen(function* () {
+          const nestedDir = path.join(dir, "schemas", "nested");
+          yield* writeFile(fs, path, dir, "schemas/a.sql", "select 1;");
+          yield* writeFile(fs, path, dir, "schemas/nested/b.sql", "select 2;");
+          yield* fs.chmod(nestedDir, 0o000);
+          const result = yield* run(["schemas"], dir);
+          expect(result.files).toEqual([]);
+          expect(result.warnings).toHaveLength(1);
+          expect(result.warnings[0]).toMatch(/^failed to walk matched directory: /);
+          expect(result.warnings[0]).toContain("schemas/nested");
+          expect(result.warnings[0]).not.toContain(dir);
+          yield* fs.chmod(nestedDir, 0o755);
+        }),
       );
     },
   );
@@ -717,28 +631,18 @@ describe("legacySqlFilesGlob", () => {
       // failure on one match doesn't stop the loop over the REST of the matches/patterns;
       // whether it's ultimately fatal is the caller's decision (`legacyApplySchemaFiles`'s
       // `len(declared) == 0` gate), not this function's.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-walk-fail-partial-"));
-      const goodDir = join(dir, "good");
-      const badDir = join(dir, "bad");
-      mkdirSync(goodDir);
-      mkdirSync(badDir);
-      writeFileSync(join(goodDir, "a.sql"), "select 1;");
-      writeFileSync(join(badDir, "b.sql"), "select 2;");
-      chmodSync(badDir, 0o000);
-      return run(["good", "bad"], dir).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual(["good/a.sql"]);
-            expect(result.warnings).toHaveLength(1);
-            expect(result.warnings[0]).toMatch(/^failed to walk matched directory: /);
-          }),
-        ),
-        Effect.ensuring(
-          Effect.sync(() => {
-            chmodSync(badDir, 0o755);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+      return withFixture((dir, fs, path) =>
+        Effect.gen(function* () {
+          const badDir = path.join(dir, "bad");
+          yield* writeFile(fs, path, dir, "good/a.sql", "select 1;");
+          yield* writeFile(fs, path, dir, "bad/b.sql", "select 2;");
+          yield* fs.chmod(badDir, 0o000);
+          const result = yield* run(["good", "bad"], dir);
+          expect(result.files).toEqual(["good/a.sql"]);
+          expect(result.warnings).toHaveLength(1);
+          expect(result.warnings[0]).toMatch(/^failed to walk matched directory: /);
+          yield* fs.chmod(badDir, 0o755);
+        }),
       );
     },
   );
@@ -757,17 +661,17 @@ describe("legacySqlFilesGlob", () => {
       // Go's guaranteed order — to prove the walk sorts them back (`utf8Compare`)
       // before iterating, rather than trusting raw (here: adversarial) enumeration
       // order.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-walk-order-"));
-      const schemasDir = join(dir, "schemas");
-      const aaaDir = join(schemasDir, "aaa");
-      const bbbDir = join(schemasDir, "bbb");
-      mkdirSync(aaaDir, { recursive: true });
-      mkdirSync(bbbDir, { recursive: true });
-      chmodSync(aaaDir, 0o000);
-      chmodSync(bbbDir, 0o000);
       return Effect.gen(function* () {
         const realFs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
+        const dir = tempRoot.current;
+        const schemasDir = path.join(dir, "schemas");
+        const aaaDir = path.join(schemasDir, "aaa");
+        const bbbDir = path.join(schemasDir, "bbb");
+        yield* realFs.makeDirectory(aaaDir, { recursive: true });
+        yield* realFs.makeDirectory(bbbDir, { recursive: true });
+        yield* realFs.chmod(aaaDir, 0o000);
+        yield* realFs.chmod(bbbDir, 0o000);
         const reorderedFs: FileSystem.FileSystem = {
           ...realFs,
           readDirectory: (p, opts) =>
@@ -784,16 +688,9 @@ describe("legacySqlFilesGlob", () => {
         // "bbb" is never even attempted.
         expect(result.warnings[0]).toContain("schemas/aaa");
         expect(result.warnings[0]).not.toContain("schemas/bbb");
-      }).pipe(
-        Effect.provide(BunServices.layer),
-        Effect.ensuring(
-          Effect.sync(() => {
-            chmodSync(aaaDir, 0o755);
-            chmodSync(bbbDir, 0o755);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
-      );
+        yield* realFs.chmod(aaaDir, 0o755);
+        yield* realFs.chmod(bbbDir, 0o755);
+      }).pipe(Effect.provide(BunServices.layer));
     },
   );
 
@@ -809,19 +706,14 @@ describe("legacySqlFilesGlob", () => {
       // exclamation mark's code unit (0xFF01) — the opposite order. Verified empirically
       // against a real Go `sort.Strings` call: it places the fullwidth-exclamation file
       // first.
-      const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-utf8-sort-"));
-      const schemasDir = join(dir, "schemas");
-      mkdirSync(schemasDir);
-      writeFileSync(join(schemasDir, "\u{1F600}.sql"), "select 1;"); // 😀
-      writeFileSync(join(schemasDir, "！.sql"), "select 2;"); // ！
-      return run(["schemas/*.sql"], dir).pipe(
-        Effect.tap((result) =>
-          Effect.sync(() => {
-            expect(result.files).toEqual(["schemas/！.sql", "schemas/\u{1F600}.sql"]);
-            expect(result.warnings).toEqual([]);
-            rmSync(dir, { recursive: true, force: true });
-          }),
-        ),
+      return withFixture((dir, fs, path) =>
+        Effect.gen(function* () {
+          yield* writeFile(fs, path, dir, "schemas/\u{1F600}.sql", "select 1;"); // 😀
+          yield* writeFile(fs, path, dir, "schemas/！.sql", "select 2;"); // ！
+          const result = yield* run(["schemas/*.sql"], dir);
+          expect(result.files).toEqual(["schemas/！.sql", "schemas/\u{1F600}.sql"]);
+          expect(result.warnings).toEqual([]);
+        }),
       );
     },
   );

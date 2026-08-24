@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
 import { Effect, Redacted } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import serviceImagesDockerfile from "../../../../cli-go/pkg/config/templates/Dockerfile" with { type: "text" };
@@ -17,10 +17,24 @@ const PROJECT_REF = "abcdefghijklmnopqrst";
 // `fetchLinkedServiceVersions` reads the ambient HttpClient from context instead
 // of self-provisioning one, so each invocation needs a concrete transport.
 const runLinkedFetch = (input: Parameters<typeof fetchLinkedServiceVersions>[0]) =>
-  Effect.runPromise(fetchLinkedServiceVersions(input).pipe(Effect.provide(FetchHttpClient.layer)));
+  fetchLinkedServiceVersions(input).pipe(Effect.provide(FetchHttpClient.layer));
+
+const withServer = <A>(
+  fetch: (request: Request) => Response | Promise<Response>,
+  use: (origin: string) => Effect.Effect<A>,
+) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => Bun.serve({ port: 0, fetch })),
+    (server) => use(server.url.origin),
+    (server) =>
+      Effect.tryPromise({
+        try: () => server.stop(true),
+        catch: () => undefined,
+      }).pipe(Effect.ignore),
+  );
 
 describe("services shared", () => {
-  test("parses service images from Dockerfile FROM aliases", () => {
+  it("parses service images from Dockerfile FROM aliases", () => {
     expect(
       parseDockerfileServiceImages(`
         # comment
@@ -35,13 +49,13 @@ describe("services shared", () => {
     ]);
   });
 
-  test("fails clearly when the Dockerfile manifest misses a required service alias", () => {
+  it("fails clearly when the Dockerfile manifest misses a required service alias", () => {
     expect(() =>
       localServiceImagesFromDockerfile("FROM supabase/postgres:17.6.1.132 AS pg\n"),
     ).toThrow("Missing service image alias 'gotrue' in Dockerfile manifest.");
   });
 
-  test("derives local service versions from the Go Dockerfile manifest", () => {
+  it("derives local service versions from the Go Dockerfile manifest", () => {
     const rows = listLocalServiceVersions();
     const dockerfileImages = localServiceImagesFromDockerfile(serviceImagesDockerfile);
     const expectedRows = dockerfileImages.map((service) => {
@@ -68,7 +82,7 @@ describe("services shared", () => {
     ]);
   });
 
-  test("can preserve raw local service version overrides", () => {
+  it("can preserve raw local service version overrides", () => {
     expect(
       listLocalServiceVersions({
         normalizeVersionTags: false,
@@ -84,10 +98,9 @@ describe("services shared", () => {
     );
   });
 
-  test("returns postgres only when no service-role key is available", async () => {
-    const server = Bun.serve({
-      port: 0,
-      fetch(request) {
+  it.effect("returns postgres only when no service-role key is available", () =>
+    withServer(
+      (request) => {
         const url = new URL(request.url);
         if (url.pathname === `/v1/projects/${PROJECT_REF}`) {
           return Response.json({
@@ -132,28 +145,25 @@ describe("services shared", () => {
 
         return new Response("not found", { status: 404 });
       },
-    });
+      (origin) =>
+        Effect.gen(function* () {
+          const result = yield* runLinkedFetch({
+            apiUrl: origin,
+            projectHost: "supabase.co",
+            projectRef: PROJECT_REF,
+            accessToken: ACCESS_TOKEN,
+            userAgent: "supabase",
+            tenantBaseUrlOverride: origin,
+          });
 
-    try {
-      const result = await runLinkedFetch({
-        apiUrl: server.url.origin,
-        projectHost: "supabase.co",
-        projectRef: PROJECT_REF,
-        accessToken: ACCESS_TOKEN,
-        userAgent: "supabase",
-        tenantBaseUrlOverride: server.url.origin,
-      });
+          expect(result).toEqual({ postgres: "17.6.1.200" });
+        }),
+    ),
+  );
 
-      expect(result).toEqual({ postgres: "17.6.1.200" });
-    } finally {
-      await server.stop(true);
-    }
-  });
-
-  test("returns no linked versions when project api keys cannot be loaded", async () => {
-    const server = Bun.serve({
-      port: 0,
-      fetch(request) {
+  it.effect("returns no linked versions when project api keys cannot be loaded", () =>
+    withServer(
+      (request) => {
         const url = new URL(request.url);
         if (url.pathname === `/v1/projects/${PROJECT_REF}/api-keys`) {
           return new Response("boom", { status: 500 });
@@ -180,28 +190,25 @@ describe("services shared", () => {
 
         return new Response("not found", { status: 404 });
       },
-    });
+      (origin) =>
+        Effect.gen(function* () {
+          const result = yield* runLinkedFetch({
+            apiUrl: origin,
+            projectHost: "supabase.co",
+            projectRef: PROJECT_REF,
+            accessToken: ACCESS_TOKEN,
+            userAgent: "supabase",
+            tenantBaseUrlOverride: origin,
+          });
 
-    try {
-      const result = await runLinkedFetch({
-        apiUrl: server.url.origin,
-        projectHost: "supabase.co",
-        projectRef: PROJECT_REF,
-        accessToken: ACCESS_TOKEN,
-        userAgent: "supabase",
-        tenantBaseUrlOverride: server.url.origin,
-      });
+          expect(result).toEqual({});
+        }),
+    ),
+  );
 
-      expect(result).toEqual({});
-    } finally {
-      await server.stop(true);
-    }
-  });
-
-  test("still returns tenant service versions when project version lookup fails", async () => {
-    const server = Bun.serve({
-      port: 0,
-      fetch(request) {
+  it.effect("still returns tenant service versions when project version lookup fails", () =>
+    withServer(
+      (request) => {
         const url = new URL(request.url);
         if (url.pathname === `/v1/projects/${PROJECT_REF}`) {
           return new Response("boom", { status: 500 });
@@ -234,45 +241,44 @@ describe("services shared", () => {
 
         return new Response("not found", { status: 404 });
       },
-    });
+      (origin) =>
+        Effect.gen(function* () {
+          const result = yield* runLinkedFetch({
+            apiUrl: origin,
+            projectHost: "supabase.co",
+            projectRef: PROJECT_REF,
+            accessToken: ACCESS_TOKEN,
+            userAgent: "supabase",
+            tenantBaseUrlOverride: origin,
+          });
 
-    try {
-      const result = await runLinkedFetch({
-        apiUrl: server.url.origin,
+          expect(result).toEqual({
+            auth: "v2.190.0",
+            postgrest: "v14.13",
+            storage: "v1.61.0",
+          });
+        }),
+    ),
+  );
+
+  it.effect("falls back to empty linked versions when the linked fetch fails", () =>
+    Effect.gen(function* () {
+      const result = yield* runLinkedFetch({
+        apiUrl: "http://127.0.0.1:1",
         projectHost: "supabase.co",
         projectRef: PROJECT_REF,
         accessToken: ACCESS_TOKEN,
         userAgent: "supabase",
-        tenantBaseUrlOverride: server.url.origin,
       });
 
-      expect(result).toEqual({
-        auth: "v2.190.0",
-        postgrest: "v14.13",
-        storage: "v1.61.0",
-      });
-    } finally {
-      await server.stop(true);
-    }
-  });
+      expect(result).toEqual({});
+    }),
+  );
 
-  test("falls back to empty linked versions when the linked fetch fails", async () => {
-    const result = await runLinkedFetch({
-      apiUrl: "http://127.0.0.1:1",
-      projectHost: "supabase.co",
-      projectRef: PROJECT_REF,
-      accessToken: ACCESS_TOKEN,
-      userAgent: "supabase",
-    });
-
-    expect(result).toEqual({});
-  });
-
-  test("authenticates tenant probes with apikey only for sb_ keys", async () => {
+  it.effect("authenticates tenant probes with apikey only for sb_ keys", () => {
     const authHeaders: Record<string, string | null> = {};
-    const server = Bun.serve({
-      port: 0,
-      fetch(request) {
+    return withServer(
+      (request) => {
         const url = new URL(request.url);
         if (url.pathname === `/v1/projects/${PROJECT_REF}/api-keys`) {
           return Response.json([
@@ -303,50 +309,45 @@ describe("services shared", () => {
 
         return new Response("not found", { status: 404 });
       },
-    });
+      (origin) =>
+        Effect.gen(function* () {
+          const result = yield* runLinkedFetch({
+            apiUrl: origin,
+            projectHost: "supabase.co",
+            projectRef: PROJECT_REF,
+            accessToken: ACCESS_TOKEN,
+            userAgent: "supabase",
+            tenantBaseUrlOverride: origin,
+          });
 
-    try {
-      const result = await runLinkedFetch({
-        apiUrl: server.url.origin,
-        projectHost: "supabase.co",
-        projectRef: PROJECT_REF,
-        accessToken: ACCESS_TOKEN,
-        userAgent: "supabase",
-        tenantBaseUrlOverride: server.url.origin,
-      });
-
-      expect(result).toEqual({ auth: "v2.190.0" });
-      expect(authHeaders.apikey).toBe("sb_secret_servicerolekey");
-      expect(authHeaders.authorization).toBeNull();
-    } finally {
-      await server.stop(true);
-    }
+          expect(result).toEqual({ auth: "v2.190.0" });
+          expect(authHeaders.apikey).toBe("sb_secret_servicerolekey");
+          expect(authHeaders.authorization).toBeNull();
+        }),
+    );
   });
 
-  test("skips remote lookups for a malformed project ref", async () => {
-    const server = Bun.serve({
-      port: 0,
-      fetch() {
+  it.effect("skips remote lookups for a malformed project ref", () =>
+    withServer(
+      () => {
         throw new Error("no request should be made for a malformed project ref");
       },
-    });
+      (origin) =>
+        Effect.gen(function* () {
+          const result = yield* runLinkedFetch({
+            apiUrl: origin,
+            projectHost: "supabase.co",
+            projectRef: "not-a-valid-ref",
+            accessToken: ACCESS_TOKEN,
+            userAgent: "supabase",
+          });
 
-    try {
-      const result = await runLinkedFetch({
-        apiUrl: server.url.origin,
-        projectHost: "supabase.co",
-        projectRef: "not-a-valid-ref",
-        accessToken: ACCESS_TOKEN,
-        userAgent: "supabase",
-      });
+          expect(result).toEqual({});
+        }),
+    ),
+  );
 
-      expect(result).toEqual({});
-    } finally {
-      await server.stop(true);
-    }
-  });
-
-  test("renders the local services table with expected headers and rows", () => {
+  it("renders the local services table with expected headers and rows", () => {
     const rows = listLocalServiceVersions();
     const table = renderServicesTable(rows);
 
@@ -360,7 +361,7 @@ describe("services shared", () => {
     }
   });
 
-  test("renders update warning only for mismatched linked versions", () => {
+  it("renders update warning only for mismatched linked versions", () => {
     expect(
       renderServicesWarning([
         { name: "supabase/postgres", local: "17.6.1.132", remote: "17.6.1.200" },

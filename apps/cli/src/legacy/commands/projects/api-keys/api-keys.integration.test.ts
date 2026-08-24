@@ -1,6 +1,8 @@
 import type { V1GetProjectApiKeysOutput } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Option } from "effect";
+import { Effect, Exit, Option, Schema } from "effect";
+
+const stringifyJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
@@ -142,7 +144,7 @@ describe("legacy projects api-keys integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyProjectNotLinkedError");
+        expect(stringifyJson(exit.cause)).toContain("LegacyProjectNotLinkedError");
       }
     }).pipe(Effect.provide(layer));
   });
@@ -206,7 +208,7 @@ describe("legacy projects api-keys integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = stringifyJson(exit.cause);
         expect(json).toContain("LegacyProjectsApiKeysNetworkError");
         expect(json).toContain("failed to get api keys");
       }
@@ -221,7 +223,7 @@ describe("legacy projects api-keys integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
+        const json = stringifyJson(exit.cause);
         expect(json).toContain("LegacyProjectsApiKeysUnexpectedStatusError");
         expect(json).toContain("unexpected get api keys status 503");
       }

@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Effect, Option, Formatter } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -53,7 +53,8 @@ export const legacyBackupsRestore = Effect.fn("legacy.backups.restore")(function
     // structured payload (Go has no JSON for restore — adding one is non-breaking).
     if (goFmt === "json") {
       yield* output.raw(
-        JSON.stringify({ message: "Started PITR restore", project_ref: ref }, null, 2) + "\n",
+        Formatter.formatJson({ message: "Started PITR restore", project_ref: ref }, { space: 2 }) +
+          "\n",
       );
       return;
     }

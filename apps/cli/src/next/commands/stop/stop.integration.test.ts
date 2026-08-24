@@ -1,7 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, FileSystem, Layer } from "effect";
-import { existsSync } from "node:fs";
 import { stop } from "./stop.handler.ts";
 import { managedStackDocumentPathEffect } from "@supabase/stack/managed";
 import { mockOutput, mockProjectLinkState } from "../../../../tests/helpers/mocks.ts";
@@ -21,15 +20,16 @@ describe("stop handler", () => {
             BunServices.layer,
           );
           return stop({ stack: fixture.stackName, noBackup: false }).pipe(
-            Effect.provide(layer),
             Effect.tap(
-              Effect.sync(() => {
+              Effect.gen(function* () {
+                const fs = yield* FileSystem.FileSystem;
                 expect(out.messages).toContainEqual(
                   expect.objectContaining({ type: "success", message: "Local Supabase stopped" }),
                 );
-                expect(existsSync(fixture.stateRoot)).toBe(true);
+                expect(yield* fs.exists(fixture.stateRoot)).toBe(true);
               }),
             ),
+            Effect.provide(layer),
             Effect.ensuring(Effect.promise(() => fixture.dispose())),
           );
         }),
