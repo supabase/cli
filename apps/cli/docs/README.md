@@ -13,15 +13,24 @@ bun scripts/generate-docs-spec.ts > cli_v1_commands.yaml
 
 ## Release
 
-1. Clone the [supabase/supabase](https://github.com/supabase/supabase) repo
-2. Copy over the CLI reference and reformat
+The `docs` job in `.github/workflows/release.yml` publishes the reference on every stable
+release: it pipes the generator into `scripts/publish-docs-spec.ts`, which formats the spec,
+pushes the `cli/ref-doc` branch in [supabase/supabase](https://github.com/supabase/supabase),
+and opens a PR when none is open. When the spec is already published and a PR is open
+or not needed, the run is a no-op.
+Later releases add commits on top of an open `cli/ref-doc` PR instead of rewriting it, so
+fixes committed onto the branch survive.
+
+New commands also need an entry in
+[common-cli-sections.json](https://github.com/supabase/supabase/blob/master/apps/docs/spec/common-cli-sections.json)
+— the sidebar decides which pages exist, and a command without an entry is silently
+dropped from the docs site.
+
+To publish by hand, run the same pipe the job runs:
 
 ```bash
-mv ../cli/apps/cli/cli_v1_commands.yaml apps/docs/spec/
-npx prettier -w apps/docs/spec/cli_v1_commands.yaml
+bun scripts/generate-docs-spec.ts <version> | bun scripts/publish-docs-spec.ts --version <version> [--dry-run]
 ```
-
-3. If there are new commands added, update [common-cli-sections.json](https://github.com/supabase/supabase/blob/master/apps/docs/spec/common-cli-sections.json) manually
 
 ## Maintenance
 

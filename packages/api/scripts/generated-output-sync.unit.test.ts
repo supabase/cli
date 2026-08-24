@@ -17,8 +17,11 @@ import { extractOperations, loadSpec, renderContracts, renderEffectClient } from
 
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const packageDir = path.join(scriptDir, "..");
+const repoDir = path.join(packageDir, "..", "..");
 const generatedDir = path.join(packageDir, "src", "generated");
-const oxfmtBin = path.join(packageDir, "node_modules", ".bin", "oxfmt");
+// oxfmt is a repo-root devDependency configured by the root .oxfmtrc.json,
+// which is also how the pipeline's root fmt:fix target runs it.
+const oxfmtBin = path.join(repoDir, "node_modules", ".bin", "oxfmt");
 
 function formatWithOxfmt(source: string, fileName: string): string {
   // oxfmt runs in file mode (also what the pipeline's fmt:fix runs) rather
@@ -30,7 +33,7 @@ function formatWithOxfmt(source: string, fileName: string): string {
   try {
     const tempFile = path.join(tempDir, fileName);
     writeFileSync(tempFile, source);
-    execFileSync(oxfmtBin, [tempFile], { cwd: packageDir });
+    execFileSync(oxfmtBin, [tempFile], { cwd: repoDir });
     return readFileSync(tempFile, "utf8");
   } finally {
     rmSync(tempDir, { recursive: true, force: true });

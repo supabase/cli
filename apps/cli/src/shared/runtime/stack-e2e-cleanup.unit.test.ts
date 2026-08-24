@@ -72,45 +72,6 @@ describe("stack e2e cleanup manager", () => {
     expect(calls).toEqual(["stop:/tmp/project:/tmp/home", "cleanup-project", "dispose-home"]);
   });
 
-  it("keeps cleanup best-effort when the associated home cannot be disposed", async () => {
-    const calls: Array<string> = [];
-    const manager = createStackE2eCleanupManager(
-      cleanupEnvironment(calls, {
-        captureSnapshot: () => ({
-          managedStacksRootExists: true,
-          documentFiles: [],
-          stackDirs: [],
-          trackedPids: [],
-        }),
-      }),
-    );
-
-    manager.registerHome({
-      dir: "/tmp/home",
-      dispose: () => {
-        calls.push("dispose-home");
-        throw permissionError("home is not removable");
-      },
-    });
-    manager.registerStackProject({
-      dir: "/tmp/project",
-      cleanup: async () => {
-        calls.push("cleanup-project");
-      },
-    });
-    manager.associateHome("/tmp/project", "/tmp/home");
-
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      await expect(manager.drain()).resolves.toBeUndefined();
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining("/tmp/home"));
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining("home is not removable"));
-    } finally {
-      warn.mockRestore();
-    }
-    expect(calls).toEqual(["stop:/tmp/project:/tmp/home", "cleanup-project", "dispose-home"]);
-  });
-
   it("canonicalizes symlinked project and home paths before matching stack state", async () => {
     const root = mkdtempSync(join(tmpdir(), "stack-e2e-cleanup-"));
     const project = join(root, "project");
@@ -148,6 +109,44 @@ describe("stack e2e cleanup manager", () => {
       ]);
     } finally {
       rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves project and home cleanup receivers", async () => {
+    class ReceiverHome {
+      readonly dir = "/tmp/home";
+      disposed = false;
+
+      dispose() {
+        this.disposed = true;
+      }
+    }
+
+    class ReceiverProject {
+      readonly dir = "/tmp/project";
+      cleaned = false;
+
+      async cleanup() {
+        this.cleaned = true;
+      }
+    }
+
+    const home = new ReceiverHome();
+    const project = new ReceiverProject();
+    const manager = createStackE2eCleanupManager(cleanupEnvironment([]));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      manager.registerHome(home);
+      manager.registerStackProject(project);
+      manager.associateHome(project.dir, home.dir);
+
+      await manager.drain();
+
+      expect(project.cleaned).toBe(true);
+      expect(home.disposed).toBe(true);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
     }
   });
 
@@ -263,6 +262,102 @@ describe("stack e2e cleanup manager", () => {
     await manager.drain();
 
     expect(calls).toEqual(["cleanup-project", "docker-remove"]);
+  });
+
+  it("removes permission-blocked associated homes with the Docker root fallback", async () => {
+    const calls: Array<string> = [];
+    const manager = createStackE2eCleanupManager(
+      cleanupEnvironment(calls, {
+        removeProjectWithDocker: async () => {
+          calls.push("docker-remove");
+          return true;
+        },
+      }),
+    );
+
+    manager.registerHome({
+      dir: "/tmp/home",
+      dispose: () => {
+        calls.push("dispose-home");
+        throw permissionError();
+      },
+    });
+    manager.registerStackProject({
+      dir: "/tmp/project",
+      cleanup: async () => {
+        calls.push("cleanup-project");
+      },
+    });
+    manager.associateHome("/tmp/project", "/tmp/home");
+
+    await expect(manager.drain()).resolves.toBeUndefined();
+
+    expect(calls).toEqual(["cleanup-project", "dispose-home", "docker-remove"]);
+  });
+
+  it("warns when an associated home remains after permission fallback", async () => {
+    const calls: Array<string> = [];
+    const manager = createStackE2eCleanupManager(cleanupEnvironment(calls));
+
+    manager.registerHome({
+      dir: "/tmp/home",
+      dispose: () => {
+        calls.push("dispose-home");
+        throw permissionError();
+      },
+    });
+    manager.registerStackProject({
+      dir: "/tmp/project",
+      cleanup: async () => {
+        calls.push("cleanup-project");
+      },
+    });
+    manager.associateHome("/tmp/project", "/tmp/home");
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      await expect(manager.drain()).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Failed to remove temp home"));
+    } finally {
+      warn.mockRestore();
+    }
+    expect(calls).toEqual([
+      "cleanup-project",
+      "dispose-home",
+      "docker-remove",
+      "chmod",
+      "dispose-home",
+    ]);
+  });
+
+  it("disposes an associated home once after all projects sharing it are cleaned", async () => {
+    const calls: Array<string> = [];
+    const manager = createStackE2eCleanupManager(cleanupEnvironment(calls));
+
+    manager.registerHome({
+      dir: "/tmp/home",
+      dispose: () => {
+        calls.push("dispose-home");
+      },
+    });
+    manager.registerStackProject({
+      dir: "/tmp/project-one",
+      cleanup: async () => {
+        calls.push("cleanup-project-one");
+      },
+    });
+    manager.registerStackProject({
+      dir: "/tmp/project-two",
+      cleanup: async () => {
+        calls.push("cleanup-project-two");
+      },
+    });
+    manager.associateHome("/tmp/project-one", "/tmp/home");
+    manager.associateHome("/tmp/project-two", "/tmp/home");
+
+    await manager.drain();
+
+    expect(calls).toEqual(["cleanup-project-one", "cleanup-project-two", "dispose-home"]);
   });
 
   it("falls back to chmod and retries cleanup when Docker cannot remove the project", async () => {
