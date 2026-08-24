@@ -20,23 +20,8 @@
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@vitest/coverage-istanbul": "catalog:",
-    "knip": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
-  },
-  "knip": {
-    "entry": [
-      "src/**/*.e2e.test.ts",
-      "src/**/*.live.e2e.test.ts",
-      "tests/**/*.ts",
-      "vitest.live.config.ts"
-    ],
-    "ignore": [
-      "fixtures/**"
-    ],
-    "ignoreBinaries": [
-      "nx"
-    ]
   },
   "nx": {
     "targets": {

@@ -71,6 +71,9 @@ importers:
 
   .:
     devDependencies:
+      knip:
+        specifier: 'catalog:'
+        version: 6.32.2
       nx:
         specifier: 'catalog:'
         version: 23.1.1
@@ -186,9 +189,6 @@ importers:
       ink-spinner:
         specifier: ^5.0.0
         version: 5.0.0(ink@7.1.1(@types/react@19.2.18)(react-devtools-core@7.0.1)(react@19.2.8))(react@19.2.8)
-      knip:
-        specifier: 'catalog:'
-        version: 6.32.2
       pg:
         specifier: ^8.23.0
         version: 8.23.0
@@ -263,9 +263,6 @@ importers:
       '@vitest/coverage-istanbul':
         specifier: 'catalog:'
         version: 4.1.10(vitest@4.1.10)
-      knip:
-        specifier: 'catalog:'
-        version: 6.32.2
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -334,9 +331,6 @@ importers:
       '@vitest/coverage-istanbul':
         specifier: 'catalog:'
         version: 4.1.10(vitest@4.1.10)
-      knip:
-        specifier: 'catalog:'
-        version: 6.32.2
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -367,9 +361,6 @@ importers:
       '@vitest/coverage-istanbul':
         specifier: 'catalog:'
         version: 4.1.10(vitest@4.1.10)
-      knip:
-        specifier: 'catalog:'
-        version: 6.32.2
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -408,9 +399,6 @@ importers:
       '@vitest/coverage-istanbul':
         specifier: 'catalog:'
         version: 4.1.10(vitest@4.1.10)
-      knip:
-        specifier: 'catalog:'
-        version: 6.32.2
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -439,9 +427,6 @@ importers:
       '@vitest/coverage-istanbul':
         specifier: 'catalog:'
         version: 4.1.10(vitest@4.1.10)
-      knip:
-        specifier: 'catalog:'
-        version: 6.32.2
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -479,9 +464,6 @@ importers:
       '@vitest/coverage-istanbul':
         specifier: 'catalog:'
         version: 4.1.10(vitest@4.1.10)
-      knip:
-        specifier: 'catalog:'
-        version: 6.32.2
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -1264,13 +1246,6 @@ packages:
 
   '@napi-rs/wasm-runtime@0.2.4':
     resolution: {integrity: sha512-9zESzOO5aDByvhIAsOy9TbpZ0Ur2AJbUI7UT73kcUTS2mxAMHOBaa1st/jAymNoCtvrit99kkzT1FZuXVcgfIQ==}
-
-  '@napi-rs/wasm-runtime@1.2.2':
-    resolution: {integrity: sha512-JfB4kuJQjaoHuCTseIINHtHWeJnvgEcxjwA5t/Y00ZgaOO1Crz3fjT/p8kT28zA/Caz7oiUMn3d6H2yOVCVwuw==}
-    engines: {node: ^20.19.0 || ^22.13.0 || >=23.5.0}
-    peerDependencies:
-      '@emnapi/core': ^1.7.1 || ^2.0.0-alpha.3
-      '@emnapi/runtime': ^1.7.1 || ^2.0.0-alpha.3
 
   '@napi-rs/wasm-runtime@1.2.3':
     resolution: {integrity: sha512-UMduMbqO5s5zF2NkNacMT/yK5Y5QiKvWr2+50bzIIxFDwVJ2h49b+oyjaCGPhJxd2/gC2x39EHv/gHVuu36x2Q==}
@@ -7668,17 +7643,17 @@ snapshots:
       '@emnapi/runtime': 1.4.5
       '@tybys/wasm-util': 0.9.0
 
-  '@napi-rs/wasm-runtime@1.2.2(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)':
-    dependencies:
-      '@emnapi/core': 1.11.2
-      '@emnapi/runtime': 1.11.2
-      '@tybys/wasm-util': 0.10.3
-    optional: true
-
   '@napi-rs/wasm-runtime@1.2.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)':
     dependencies:
       '@emnapi/core': 1.11.1
       '@emnapi/runtime': 1.11.1
+      '@tybys/wasm-util': 0.10.3
+    optional: true
+
+  '@napi-rs/wasm-runtime@1.2.3(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)':
+    dependencies:
+      '@emnapi/core': 1.11.2
+      '@emnapi/runtime': 1.11.2
       '@tybys/wasm-util': 0.10.3
     optional: true
 
@@ -7947,7 +7922,7 @@ snapshots:
     dependencies:
       '@emnapi/core': 1.11.2
       '@emnapi/runtime': 1.11.2
-      '@napi-rs/wasm-runtime': 1.2.2(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)
+      '@napi-rs/wasm-runtime': 1.2.3(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)
     optional: true
 
   '@oxc-resolver/binding-win32-arm64-msvc@11.24.2':
