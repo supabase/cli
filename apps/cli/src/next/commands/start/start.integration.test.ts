@@ -25,7 +25,7 @@ describe("start handler", () => {
       Effect.promise(() => makeRunningStackFixture()).pipe(
         Effect.flatMap((fixture) =>
           connectLayer({
-            buildIdentity: fixture.buildIdentity,
+            cliVersion: fixture.cliVersion,
             cacheRoot: fixture.homeDir,
             cwd: fixture.projectRoot,
             projectDir: fixture.projectRoot,
@@ -55,7 +55,7 @@ describe("start handler", () => {
                   workspacePath: fixture.projectRoot,
                   stackName: fixture.stackName,
                   cwd: fixture.projectRoot,
-                  buildIdentity: fixture.buildIdentity,
+                  cliVersion: fixture.cliVersion,
                 },
                 drift: [
                   {

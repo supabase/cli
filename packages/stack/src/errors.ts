@@ -93,7 +93,7 @@ export class StackRpcTransportError extends Data.TaggedError("StackRpcTransportE
   readonly cause: unknown;
 }> {}
 
-/** A same-build RPC response violated the framed/schema protocol. */
+/** A same-version RPC response violated the framed/schema protocol. */
 export class StackRpcProtocolError extends Data.TaggedError("StackRpcProtocolError")<{
   readonly endpoint: string;
   readonly procedure: string;
@@ -111,13 +111,11 @@ export class StackReadinessError extends Data.TaggedError("StackReadinessError")
   readonly detail: string;
 }> {}
 
-/** The owner is healthy but belongs to another exact CLI build. */
+/** The owner is healthy but belongs to another immutable CLI version. */
 export class DaemonUpgradeRequired extends Data.TaggedError("DaemonUpgradeRequired")<{
   readonly stackId: string;
   readonly oldCliVersion: string;
-  readonly oldBuildId: string;
   readonly newCliVersion: string;
-  readonly newBuildId: string;
 }> {}
 
 export class SupervisorStartError extends Data.TaggedError("SupervisorStartError")<{
@@ -127,14 +125,14 @@ export class SupervisorStartError extends Data.TaggedError("SupervisorStartError
 
 export class UpgradePreflightError extends Data.TaggedError("UpgradePreflightError")<{
   readonly stackId: string;
-  readonly oldBuildId: string;
-  readonly newBuildId: string;
+  readonly oldCliVersion: string;
+  readonly newCliVersion: string;
   readonly detail: string;
 }> {}
 
 export class UpgradeRestartError extends Data.TaggedError("UpgradeRestartError")<{
   readonly stackId: string;
-  readonly newBuildId: string;
+  readonly newCliVersion: string;
   readonly detail: string;
 }> {}
 

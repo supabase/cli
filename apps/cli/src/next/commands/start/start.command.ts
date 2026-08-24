@@ -36,7 +36,7 @@ import { inkLayer } from "../../../shared/runtime/ink.layer.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { withCommandInstrumentation } from "../../../shared/telemetry/command-instrumentation.ts";
 import { start } from "./start.handler.ts";
-import { currentCliBuildIdentity } from "../../../shared/cli/version.ts";
+import { CLI_VERSION } from "../../../shared/cli/version.ts";
 
 /**
  * Deprecation warning shown when `[api].auto_expose_new_tables = true` is loaded from
@@ -101,7 +101,7 @@ interface StartVersionStateShape {
     readonly workspacePath: string;
     readonly stackName: string;
     readonly cwd: string;
-    readonly buildIdentity: import("../../../shared/cli/version.ts").CliBuildIdentity;
+    readonly cliVersion: string;
   };
 }
 
@@ -189,7 +189,6 @@ export const startCommand = Command.make("start", flags).pipe(
 
     const runtimeStateEffect = Effect.gen(function* () {
       const output = yield* Output;
-      const buildIdentity = yield* currentCliBuildIdentity;
       const cliConfig = yield* CliConfig;
       const projectHome = yield* ProjectHome;
       const runtimeInfo = yield* RuntimeInfo;
@@ -249,7 +248,7 @@ export const startCommand = Command.make("start", flags).pipe(
       };
 
       const stackLayer = yield* daemonLayer({
-        buildIdentity,
+        cliVersion: CLI_VERSION,
         incompatibleOwnerPolicy: "replace",
         onReplacing: ({ oldCliVersion, newCliVersion }) =>
           output.warn(
@@ -289,7 +288,7 @@ export const startCommand = Command.make("start", flags).pipe(
             workspacePath: projectHome.projectRoot,
             stackName: flags.stack,
             cwd: runtimeInfo.cwd,
-            buildIdentity,
+            cliVersion: CLI_VERSION,
           },
         }),
       };

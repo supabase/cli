@@ -65,14 +65,9 @@ const mappedError = (
     case "DaemonUpgradeRequired": {
       const oldCliVersion = readString(error, "oldCliVersion") ?? "an older CLI";
       const newCliVersion = readString(error, "newCliVersion") ?? "the current CLI";
-      const oldBuildId = readString(error, "oldBuildId");
-      const newBuildId = readString(error, "newBuildId");
       return {
         code: tag,
         message: `The local Supabase stack is running under ${oldCliVersion}, but this CLI is ${newCliVersion}.`,
-        ...(oldBuildId === undefined || newBuildId === undefined
-          ? {}
-          : { detail: `Daemon build ${oldBuildId} does not match current build ${newBuildId}.` }),
         suggestion: "Run `supabase start` to restart the stack with the current CLI.",
       };
     }

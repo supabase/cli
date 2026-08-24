@@ -19,7 +19,6 @@ export const ControlOwnerDescriptorSchema = Schema.Struct({
   ownershipId: Schema.String,
   ownerSessionId: Schema.String,
   daemonCliVersion: Schema.String,
-  daemonBuildId: Schema.String,
 });
 
 export const ControlOwnerStatusSchema = Schema.Struct({

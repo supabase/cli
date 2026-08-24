@@ -2,7 +2,7 @@ import { connectLayer, daemonLayer, Stack, type EdgeRuntimeConfig } from "@supab
 import { loadProjectConfig } from "@supabase/config";
 import { Context, Duration, Effect, FileSystem, Layer, Option, Stream } from "effect";
 import { join } from "node:path";
-import { currentCliBuildIdentity } from "../../../../shared/cli/version.ts";
+import { CLI_VERSION } from "../../../../shared/cli/version.ts";
 import { CliConfig } from "../../../config/cli-config.service.ts";
 import { ProjectHome } from "../../../config/project-home.service.ts";
 import { projectLocalServiceVersionsLayer } from "../../../config/project-local-service-versions.layer.ts";
@@ -49,7 +49,6 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
   const projectHome = yield* ProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
   const output = yield* Output;
-  const buildIdentity = yield* currentCliBuildIdentity;
 
   yield* output.info("No local stack is running. Starting the local Supabase stack...");
   yield* ensureProjectStateIgnored(projectHome.projectRoot);
@@ -64,7 +63,7 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
     servicePolicies: { "edge-runtime": "eager" as const },
   };
   const stackLayer = yield* daemonLayer({
-    buildIdentity,
+    cliVersion: CLI_VERSION,
     incompatibleOwnerPolicy: "fail",
     cacheRoot: cliConfig.supabaseHome,
     cwd: runtimeInfo.cwd,
@@ -91,10 +90,9 @@ export const connectOrStartFunctionsDevStack = Effect.fnUntraced(function* (
   const cliConfig = yield* CliConfig;
   const projectHome = yield* ProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
-  const buildIdentity = yield* currentCliBuildIdentity;
 
   const existingLayer = yield* connectLayer({
-    buildIdentity,
+    cliVersion: CLI_VERSION,
     cwd: runtimeInfo.cwd,
     cacheRoot: cliConfig.supabaseHome,
     projectDir: projectHome.projectRoot,

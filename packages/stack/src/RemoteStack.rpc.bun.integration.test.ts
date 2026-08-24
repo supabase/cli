@@ -12,7 +12,7 @@ const isBun = typeof Bun !== "undefined";
 const ownerId = "c".repeat(64);
 
 describe("Bun runtime RPC", () => {
-  (isBun ? test : test.skip)("serves a same-build runtime RPC request over Bun TCP", async () => {
+  (isBun ? test : test.skip)("serves a same-version runtime RPC request over Bun TCP", async () => {
     const { controlTransportLayer } = await import("./platform-bun.ts");
     const scope = Scope.makeUnsafe();
     const lifecycle = await Effect.runPromise(
@@ -20,7 +20,6 @@ describe("Bun runtime RPC", () => {
         ownershipId: ownerId,
         ownerSessionId: "bun-rpc-session",
         daemonCliVersion: "test",
-        daemonBuildId: "test-build",
       }).pipe(Effect.provide(Layer.succeed(Scope.Scope, scope))),
     );
     await Effect.runPromise(lifecycle.publishStack(makeTestStack()));
@@ -43,7 +42,6 @@ describe("Bun runtime RPC", () => {
             state: "running" as const,
             ready: true,
             daemonCliVersion: "test",
-            daemonBuildId: "test-build",
           }),
           () => "accepted" as const,
           application,
@@ -62,13 +60,12 @@ describe("Bun runtime RPC", () => {
         url: `http://127.0.0.1:${address.port}`,
       };
       const layer = RemoteStack.layer(endpoint, {
-        buildIdentity: { cliVersion: "test", buildId: "test-build" },
+        cliVersion: "test",
         owner: {
           ownershipId: ownerId,
           ownerSessionId: "bun-rpc-session",
           controlProtocolVersion: 1,
           daemonCliVersion: "test",
-          daemonBuildId: "test-build",
         },
       }).pipe(Layer.provide(httpTransportClientLayer));
       const exit = await Effect.runPromise(

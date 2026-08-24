@@ -30,7 +30,6 @@ import {
   validateManagedStackName,
 } from "./model.ts";
 import { deriveStackId } from "./environment.ts";
-import type { BuildIdentityValue } from "../BuildIdentity.ts";
 
 /** Inputs shared by all managed lifecycle operations. */
 export interface ManagedLifecycleInput {
@@ -38,7 +37,7 @@ export interface ManagedLifecycleInput {
   readonly stackName?: string;
   readonly cwd?: string;
   readonly portDocument?: ManagedPortIntentDocument;
-  readonly buildIdentity?: BuildIdentityValue;
+  readonly cliVersion?: string;
 }
 
 const emptyPortDocument = (): ManagedPortIntentDocument => ({
@@ -85,7 +84,7 @@ class ManagedDeletePending extends Data.TaggedError("ManagedDeletePending")<{}> 
 
 /** Connect to the control endpoint the managed supervisor actually bound. */
 export const connectManagedStack = (
-  input: ManagedLifecycleInput & { readonly buildIdentity: BuildIdentityValue },
+  input: ManagedLifecycleInput & { readonly cliVersion: string },
 ): Effect.Effect<
   Layer.Layer<Stack, DaemonUpgradeRequired | StackRpcProtocolError | StackRpcTransportError>,
   NoRunningStackError | ManagedStackManagerError | DaemonUpgradeRequired,
@@ -106,13 +105,12 @@ export const connectManagedStack = (
     }
     const client = yield* HttpTransportClient;
     return RemoteStack.layer(probe.endpoint, {
-      buildIdentity: input.buildIdentity,
+      cliVersion: input.cliVersion,
       owner: {
         ownershipId: probe.status.ownershipId,
         ownerSessionId: probe.status.ownerSessionId,
         controlProtocolVersion: probe.status.controlProtocolVersion,
         daemonCliVersion: probe.status.daemonCliVersion,
-        daemonBuildId: probe.status.daemonBuildId,
       },
     }).pipe(Layer.provide(Layer.succeed(HttpTransportClient, client)));
   });
@@ -218,7 +216,6 @@ export const deleteManagedStack = (
           ownershipId: stackId,
           ownerSessionId: crypto.randomUUID(),
           daemonCliVersion: "managed",
-          daemonBuildId: "managed",
         });
         const application = {
           app: yield* makeSupervisorControlApplication(lifecycle),
@@ -260,7 +257,7 @@ export const deleteManagedStack = (
 export const updateManagedLaunch = (
   input: ManagedLifecycleInput & {
     readonly launch: ManagedStackLaunchUpdate;
-    readonly buildIdentity: BuildIdentityValue;
+    readonly cliVersion: string;
   },
 ): Effect.Effect<
   ManagedStackDocument,
@@ -286,13 +283,12 @@ export const updateManagedLaunch = (
         yield* updateRemoteLaunch(
           acquisition.endpoint,
           {
-            buildIdentity: input.buildIdentity,
+            cliVersion: input.cliVersion,
             owner: {
               ownershipId: status.ownershipId,
               ownerSessionId: status.ownerSessionId,
               controlProtocolVersion: status.controlProtocolVersion,
               daemonCliVersion: status.daemonCliVersion,
-              daemonBuildId: status.daemonBuildId,
             },
           },
           document.id,

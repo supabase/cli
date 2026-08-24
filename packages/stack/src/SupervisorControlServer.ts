@@ -40,7 +40,6 @@ export const makeSupervisorControlApplication = (
         !matchesStackRpcFence(request.headers, {
           ownershipId: status.ownershipId,
           ownerSessionId: status.ownerSessionId,
-          daemonBuildId: status.daemonBuildId,
         })
       ) {
         // These headers fence a client to the observed owner; they are not an

@@ -26,7 +26,7 @@ import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { printStackConnectionInfo, startStackWithProgress } from "../../../stack/stack.shared.ts";
 import { BranchNotFoundError } from "../errors.ts";
-import { currentCliBuildIdentity } from "../../../../shared/cli/version.ts";
+import { CLI_VERSION } from "../../../../shared/cli/version.ts";
 
 export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
   name: Option.Option<string>;
@@ -37,7 +37,6 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
   const cliConfig = yield* CliConfig;
   const projectHome = yield* ProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
-  const buildIdentity = yield* currentCliBuildIdentity;
 
   yield* output.intro("Switch branch");
 
@@ -142,10 +141,10 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
     const stackName = stackCheck.value.identity.name;
 
     // Branch switching restarts a running stack, but it is not authorized to
-    // replace an incompatible daemon. Probe the same-build RPC boundary before
+    // replace an incompatible daemon. Probe the same-version RPC boundary before
     // stopping the existing owner so a mismatch leaves the old stack intact.
     const existingLayer = yield* connectLayer({
-      buildIdentity,
+      cliVersion: CLI_VERSION,
       cwd: runtimeInfo.cwd,
       cacheRoot: cliConfig.supabaseHome,
       projectDir: projectHome.projectRoot,
@@ -178,7 +177,7 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
     const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
 
     const stackLayer = yield* daemonLayer({
-      buildIdentity,
+      cliVersion: CLI_VERSION,
       incompatibleOwnerPolicy: "fail",
       cacheRoot: cliConfig.supabaseHome,
       cwd: runtimeInfo.cwd,

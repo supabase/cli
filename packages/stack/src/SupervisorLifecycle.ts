@@ -51,7 +51,6 @@ export class SupervisorLifecycle extends Context.Service<
     readonly ownershipId: string;
     readonly ownerSessionId: string;
     readonly daemonCliVersion: string;
-    readonly daemonBuildId: string;
     readonly close?: Effect.Effect<void, unknown>;
   }): Effect.Effect<SupervisorLifecycle["Service"], never, Scope.Scope> {
     return Effect.gen(function* () {
@@ -71,7 +70,6 @@ export class SupervisorLifecycle extends Context.Service<
         state: state.phase === "closed" ? "stopping" : state.phase,
         ready: state.phase === "running",
         daemonCliVersion: input.daemonCliVersion,
-        daemonBuildId: input.daemonBuildId,
       });
       const shutdown = (_reason: string) =>
         Effect.uninterruptible(

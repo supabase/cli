@@ -115,7 +115,6 @@ describe("Node control transport", () => {
             state: "running",
             ready: true,
             daemonCliVersion: "test",
-            daemonBuildId: "test-build",
           }),
         );
         return;

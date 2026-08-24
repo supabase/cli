@@ -59,7 +59,7 @@ describe("managed stack lifecycle journeys", () => {
         const input = {
           workspacePath: workspace,
           stackName: "default",
-          buildIdentity: { cliVersion: "test", buildId: "test-build" },
+          cliVersion: "test",
           launch: {
             versions: { postgres: "17.6.1" },
             excludedServices: [],
@@ -108,7 +108,7 @@ describe("managed stack lifecycle journeys", () => {
         const updated = yield* updateManagedLaunch({
           workspacePath: workspace,
           stackName: "default",
-          buildIdentity: { cliVersion: "test", buildId: "test-build" },
+          cliVersion: "test",
           launch: {
             versions: { postgres: "17.6.1" },
             excludedServices: ["studio"],
@@ -150,7 +150,6 @@ describe("managed stack lifecycle journeys", () => {
           ownershipId: stackId,
           ownerSessionId,
           daemonCliVersion: "test",
-          daemonBuildId: "test-build",
           close: Effect.void,
         });
         const application = {
@@ -166,7 +165,6 @@ describe("managed stack lifecycle journeys", () => {
             state: "starting",
             ready: false,
             daemonCliVersion: "test",
-            daemonBuildId: "test-build",
           },
           application,
         });

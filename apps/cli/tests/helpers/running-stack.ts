@@ -34,7 +34,7 @@ import { ServiceNotFoundError } from "@supabase/process-compose";
 import { CliConfig } from "../../src/next/config/cli-config.service.ts";
 import { ProjectHome } from "../../src/next/config/project-home.service.ts";
 import { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
-import { currentCliBuildIdentity, type CliBuildIdentity } from "../../src/shared/cli/version.ts";
+import { CLI_VERSION } from "../../src/shared/cli/version.ts";
 
 const launch = {
   mode: "docker" as const,
@@ -106,7 +106,7 @@ function projectHome(projectRoot: string): ProjectHome["Service"] {
 }
 
 export async function makeManagedStackFixture(
-  options: { running?: boolean; stackName?: string; buildIdentity?: CliBuildIdentity } = {},
+  options: { running?: boolean; stackName?: string; cliVersion?: string } = {},
 ) {
   const root = mkdtempSync(join(tmpdir(), "supabase-cli-managed-stack-"));
   const projectRoot = join(root, "repo");
@@ -115,7 +115,7 @@ export async function makeManagedStackFixture(
   mkdirSync(projectRoot, { recursive: true });
   const stackName = options.stackName ?? "default";
   const running = options.running ?? true;
-  const buildIdentity = options.buildIdentity ?? (await Effect.runPromise(currentCliBuildIdentity));
+  const cliVersion = options.cliVersion ?? CLI_VERSION;
   const project = projectHome(projectRoot);
   const managerRuntime = ManagedRuntime.make(
     Layer.mergeAll(managedStackManagerLayer({ stateRoot }), controlTransportLayer),
@@ -134,8 +134,7 @@ export async function makeManagedStackFixture(
         const supervisorLifecycle = yield* SupervisorLifecycle.make({
           ownershipId: stackId,
           ownerSessionId: crypto.randomUUID(),
-          daemonCliVersion: buildIdentity.cliVersion,
-          daemonBuildId: buildIdentity.buildId,
+          daemonCliVersion: cliVersion,
           close: Effect.void,
         }).pipe(Effect.provide(Layer.succeed(Scope.Scope, lifecycleScope)));
         let owned: ControlOwnership | undefined;
@@ -273,7 +272,7 @@ export async function makeManagedStackFixture(
         }),
       ),
     launch,
-    buildIdentity,
+    cliVersion,
     async dispose() {
       await managerRuntime.runPromise(Fiber.interrupt(setup).pipe(Effect.exit));
       await Effect.runPromise(Scope.close(lifecycleScope ?? Scope.makeUnsafe(), Exit.void)).catch(
@@ -286,9 +285,9 @@ export async function makeManagedStackFixture(
 }
 
 export const makeRunningStackFixture = (
-  options: { stackName?: string; buildIdentity?: CliBuildIdentity } = {},
+  options: { stackName?: string; cliVersion?: string } = {},
 ) => makeManagedStackFixture({ ...options, running: true });
 
 export const makeStoppedStackFixture = (
-  options: { stackName?: string; buildIdentity?: CliBuildIdentity } = {},
+  options: { stackName?: string; cliVersion?: string } = {},
 ) => makeManagedStackFixture({ ...options, running: false });

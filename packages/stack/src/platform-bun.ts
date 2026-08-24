@@ -9,13 +9,13 @@ import {
   HttpServerResponse,
 } from "effect/unstable/http";
 import type { PlatformFactory } from "./createStack.ts";
+import { readControlOwner } from "./ControlHttpReader.ts";
 import { STACK_RPC_PATH } from "./StackRpc.ts";
 import {
   CONTROL_STATUS_PATH,
   CONTROL_STOP_PATH,
   ControlStopRequestSchema,
   ControlBindError,
-  ControlProtocolError,
   ControlStopConflictError,
   ControlTransport,
   ControlTransportError,
@@ -242,33 +242,7 @@ const controlTransport: ControlTransport["Service"] = {
         };
       }),
     ),
-  read: (endpoint: ControlEndpoint) =>
-    Effect.tryPromise({
-      try: (signal) =>
-        fetch(`http://127.0.0.1:${endpoint.port}${CONTROL_STATUS_PATH}`, {
-          signal: AbortSignal.any([signal, AbortSignal.timeout(500)]),
-          // One-shot connection: a pooled keep-alive connection would let a
-          // closed listener keep answering status probes while the probes
-          // themselves keep the connection alive.
-          headers: { connection: "close" },
-        }).then((response) => {
-          if (!response.ok) throw new Error(`Control status request returned ${response.status}`);
-          return response.json();
-        }),
-      catch: (cause) => {
-        if (
-          cause instanceof SyntaxError ||
-          (cause instanceof Error && cause.message.startsWith("Control status request returned"))
-        ) {
-          return new ControlProtocolError({ endpoint, cause });
-        }
-        return new ControlTransportError({
-          endpoint,
-          reason: isDefinitivelyUnreachable(cause) ? "unreachable" : "transport",
-          cause,
-        });
-      },
-    }),
+  read: readControlOwner,
   requestStop: (endpoint: ControlEndpoint, stopRequest: ControlStopRequest) =>
     Effect.tryPromise({
       try: (signal) =>

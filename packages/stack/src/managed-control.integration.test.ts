@@ -3,6 +3,7 @@ import { Cause, Deferred, Effect, Exit, Fiber, Layer, Predicate, Result, Stream 
 import * as TestClock from "effect/testing/TestClock";
 import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
+import { createServer as createTcpServer, type Server as TcpServer, type Socket } from "node:net";
 import { describe, expect } from "vitest";
 import {
   acquireControl,
@@ -69,7 +70,6 @@ const makeStaticOwner = (stackId: string, stack: Stack["Service"]) =>
       ownershipId: stackId,
       ownerSessionId,
       daemonCliVersion: "test",
-      daemonBuildId: "test-build",
       close: Effect.void,
     });
     const application = {
@@ -85,7 +85,6 @@ const makeStaticOwner = (stackId: string, stack: Stack["Service"]) =>
         state: "starting",
         ready: false,
         daemonCliVersion: "test",
-        daemonBuildId: "test-build",
       },
       application,
     });
@@ -106,6 +105,29 @@ const listenRawResponse = (port: number, body: string): Promise<Server> =>
   });
 
 const listenRaw = (port: number): Promise<Server> => listenRawResponse(port, "not-supabase");
+
+const listenNonHttp = (
+  port: number,
+): Promise<{ readonly server: TcpServer; readonly close: () => Promise<void> }> =>
+  new Promise((resolve, reject) => {
+    const sockets = new Set<Socket>();
+    const server = createTcpServer((socket) => {
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+      socket.end("not-http\r\n");
+    });
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () =>
+      resolve({
+        server,
+        close: () =>
+          new Promise<void>((resolveClose, rejectClose) => {
+            for (const socket of sockets) socket.destroy();
+            server.close((error) => (error === undefined ? resolveClose() : rejectClose(error)));
+          }),
+      }),
+    );
+  });
 
 const closeRaw = (server: Server): Promise<void> =>
   new Promise((resolve, reject) => {
@@ -128,7 +150,6 @@ it.effect("canonical owner reads retain foreign-owner conflict diagnostics", () 
         state: "running",
         ready: true,
         daemonCliVersion: "foreign",
-        daemonBuildId: "foreign",
       }),
     ).pipe(Effect.result);
     expect(Result.isFailure(result)).toBe(true);
@@ -192,7 +213,6 @@ describe("managed control endpoint", () => {
             ownershipId: STACK_ID,
             state: "running",
             ready: true,
-            daemonBuildId: "test-build",
           });
         }),
       ),
@@ -209,7 +229,6 @@ describe("managed control endpoint", () => {
               ownershipId: STACK_ID,
               ownerSessionId: crypto.randomUUID(),
               daemonCliVersion: "test",
-              daemonBuildId: "test-build",
               close: Effect.void,
             });
             const application = {
@@ -351,6 +370,24 @@ describe("managed control endpoint", () => {
     ),
   );
 
+  it.live("starts on the next candidate when another stack service is not HTTP", () =>
+    live(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const candidates = yield* controlEndpointCandidates(STACK_ID);
+          const unrelated = yield* Effect.acquireRelease(
+            Effect.promise(() => listenNonHttp(candidates[0]!.port)),
+            (listener) => Effect.promise(() => listener.close()),
+          );
+          const owner = yield* acquireControl({ stackId: STACK_ID });
+          if (!isControlOwnership(owner)) throw new Error("expected control ownership");
+          expect(owner.endpoint.port).toBe(candidates[1]!.port);
+          expect(unrelated.server.listening).toBe(true);
+        }),
+      ),
+    ),
+  );
+
   it.live("fails once every candidate is occupied by unrelated listeners", () =>
     live(
       Effect.scoped(
@@ -451,7 +488,6 @@ describe("managed control endpoint", () => {
         state: "running",
         ready: true,
         daemonCliVersion: "test",
-        daemonBuildId: "test-build",
       };
       let requestCalls = 0;
       let reads = 0;
@@ -518,7 +554,6 @@ describe("managed control endpoint", () => {
         state: "stopping",
         ready: false,
         daemonCliVersion: "test",
-        daemonBuildId: "test-build",
       };
       const replacementStatus = { ...status, ownerSessionId: "replacement-session" };
       let reads = 0;
@@ -579,7 +614,6 @@ describe("managed control endpoint", () => {
         state: "running",
         ready: true,
         daemonCliVersion: "test",
-        daemonBuildId: "test-build",
       };
       let reads = 0;
       const transport: ControlTransportShape = {
@@ -622,13 +656,11 @@ describe("managed control endpoint", () => {
         state: "running",
         ready: true,
         daemonCliVersion: "old",
-        daemonBuildId: "old-build",
       };
       const replacementStatus: ControlOwnerStatus = {
         ...attachedStatus,
         ownerSessionId: "replacement-session",
         daemonCliVersion: "new",
-        daemonBuildId: "new-build",
       };
       let reads = 0;
       let requestedSession: string | undefined;
@@ -669,7 +701,6 @@ describe("managed control endpoint", () => {
                   state: "running",
                   ready: true,
                   daemonCliVersion: "foreign",
-                  daemonBuildId: "foreign",
                 }),
               ),
             ),

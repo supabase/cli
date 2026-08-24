@@ -58,7 +58,6 @@ const makeLifecycle = async (close: Effect.Effect<void, unknown> = Effect.void) 
       ownershipId: "stack",
       ownerSessionId: "session",
       daemonCliVersion: "test",
-      daemonBuildId: "build",
       close,
     }).pipe(Effect.provideService(Scope.Scope, scope)),
   );

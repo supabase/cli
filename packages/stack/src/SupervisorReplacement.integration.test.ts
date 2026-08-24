@@ -46,7 +46,6 @@ const setup = () => {
     state: "running",
     ready: true,
     daemonCliVersion: "old",
-    daemonBuildId: "release:old",
   };
   const oldOwner: ControlAttached = {
     _tag: "Attached",
@@ -136,7 +135,7 @@ const setup = () => {
   };
   const input: SupervisorStartMessage = {
     type: "start",
-    buildIdentity: { cliVersion: "new", buildId: "release:new" },
+    cliVersion: "new",
     incompatibleOwnerPolicy: "replace",
     stackId,
     workspacePath,
@@ -238,7 +237,7 @@ describe("incompatible supervisor replacement", () => {
           expect(error.value).toBeInstanceOf(UpgradeRestartError);
           expect(error.value).toMatchObject({
             stackId: context.stackId,
-            newBuildId: context.input.buildIdentity.buildId,
+            newCliVersion: context.input.cliVersion,
             detail: "replacement endpoint unavailable",
           });
         }

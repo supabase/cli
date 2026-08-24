@@ -66,7 +66,7 @@ export const updateManagedLaunch = (opts: {
   readonly stackName?: string;
   readonly cwd?: string;
   readonly cacheRoot: string;
-  readonly buildIdentity: import("./BuildIdentity.ts").BuildIdentityValue;
+  readonly cliVersion: string;
   readonly launch: import("./managed/document.ts").ManagedStackLaunchUpdate;
 }) =>
   updateManagedLaunchCore(opts).pipe(

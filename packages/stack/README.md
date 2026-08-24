@@ -60,16 +60,17 @@ facade. No CLI metadata file or PID polling is involved.
 
 Managed ownership is exposed by one deterministic loopback HTTP listener. The
 stable cross-build control protocol is `GET /owner` plus session-fenced
-`POST /stop`; runtime operations use same-build Effect RPC over framed NDJSON
+`POST /stop`; runtime operations use same-version Effect RPC over framed NDJSON
 at `POST /rpc`. The complete application is installed before the listener
 binds, and runtime RPC is available only after the supervisor publishes a
 running lifecycle state.
 
-The CLI build identity must exactly match the daemon build identity before a
-remote runtime client is constructed. An incompatible owner is never spoken to
+The CLI version must exactly match the daemon CLI version before a remote
+runtime client is constructed. Released and preview CLI versions are immutable
+and unique, so the version is the compatibility identity. An incompatible owner is never spoken to
 over RPC: connect-only commands report an actionable upgrade requirement, and
 only an explicit `supabase start` may preflight, stop the exact old owner
-session, and start the current build. Replacement preserves the managed
+session, and start the current version. Replacement preserves the managed
 identity and launch metadata, data roots, runtime mode, pinned service
 versions, exclusions, and sticky port assignments; it never deletes the
 managed stack. Existing connections briefly disconnect during this normal

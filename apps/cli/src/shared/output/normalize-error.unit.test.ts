@@ -32,14 +32,11 @@ describe("normalizeCliError", () => {
       normalizeCliError({
         _tag: "DaemonUpgradeRequired",
         oldCliVersion: "2.60.0",
-        oldBuildId: "release:2.60.0",
         newCliVersion: "2.61.0",
-        newBuildId: "release:2.61.0",
       }),
     ).toEqual({
       code: "DaemonUpgradeRequired",
       message: "The local Supabase stack is running under 2.60.0, but this CLI is 2.61.0.",
-      detail: "Daemon build release:2.60.0 does not match current build release:2.61.0.",
       suggestion: "Run `supabase start` to restart the stack with the current CLI.",
     });
   });

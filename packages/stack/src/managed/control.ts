@@ -367,7 +367,6 @@ const defaultStatus = (
         state: "starting",
         ready: false,
         daemonCliVersion: "unknown",
-        daemonBuildId: "unknown",
       }
     : {
         ...status,

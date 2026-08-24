@@ -12,23 +12,20 @@ import { StackServiceStatusSchema } from "./StackServiceState.ts";
 import { ResolvedFunctionsBundleSchema } from "./functions.ts";
 import { ReadyOptionsSchema } from "./StackConfig.ts";
 
-/** Headers that fence same-build RPC calls to one observed supervisor session. */
+/** Headers that fence same-version RPC calls to one observed supervisor session. */
 const STACK_RPC_FENCE_HEADERS = {
   ownershipId: "x-supabase-stack-ownership-id",
   ownerSessionId: "x-supabase-stack-owner-session-id",
-  daemonBuildId: "x-supabase-stack-daemon-build-id",
 } as const;
 
 export interface StackRpcFence {
   readonly ownershipId: string;
   readonly ownerSessionId: string;
-  readonly daemonBuildId: string;
 }
 
 export const stackRpcFenceHeaders = (fence: StackRpcFence): Readonly<Record<string, string>> => ({
   [STACK_RPC_FENCE_HEADERS.ownershipId]: fence.ownershipId,
   [STACK_RPC_FENCE_HEADERS.ownerSessionId]: fence.ownerSessionId,
-  [STACK_RPC_FENCE_HEADERS.daemonBuildId]: fence.daemonBuildId,
 });
 
 export const matchesStackRpcFence = (
@@ -36,8 +33,7 @@ export const matchesStackRpcFence = (
   expected: StackRpcFence,
 ): boolean =>
   headers[STACK_RPC_FENCE_HEADERS.ownershipId] === expected.ownershipId &&
-  headers[STACK_RPC_FENCE_HEADERS.ownerSessionId] === expected.ownerSessionId &&
-  headers[STACK_RPC_FENCE_HEADERS.daemonBuildId] === expected.daemonBuildId;
+  headers[STACK_RPC_FENCE_HEADERS.ownerSessionId] === expected.ownerSessionId;
 
 const StackUnavailableErrorSchema = Schema.TaggedStruct("StackUnavailableError", {
   phase: Schema.Literals(["starting", "stopping", "failed", "deleting"]),
@@ -184,7 +180,7 @@ const StackLaunchUpdateRpcSchema = Schema.Struct({
 });
 export type StackLaunchUpdateRpc = typeof StackLaunchUpdateRpcSchema.Type;
 
-/** One same-build RPC contract for every runtime operation. */
+/** One same-version RPC contract for every runtime operation. */
 export const StackRpc = RpcGroup.make(
   Rpc.make("GetInfo", { success: StackInfoSchema, error: StackUnavailableErrorSchema }),
   Rpc.make("StartStack", { success: Schema.Void, error: buildReadyErrors }),

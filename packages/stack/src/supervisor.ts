@@ -76,7 +76,6 @@ import { HttpTransportClient } from "./HttpTransportClient.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { terminateChildProcess } from "./terminateChild.ts";
 import { dockerForceRemove } from "./cleanup.ts";
-import type { BuildIdentityValue } from "./BuildIdentity.ts";
 import { CONTROL_PROTOCOL_VERSION } from "./DaemonProtocol.ts";
 import {
   DaemonUpgradeRequired,
@@ -107,7 +106,7 @@ type SupervisorMessage =
   | SupervisorErrorMessage;
 /** Input shape for the public managed launcher. */
 export interface ManagedDaemonStartInput {
-  readonly buildIdentity: BuildIdentityValue;
+  readonly cliVersion: string;
   readonly incompatibleOwnerPolicy: "replace" | "fail";
   readonly workspacePath: string;
   readonly stackName: string;
@@ -135,7 +134,6 @@ const startedOwnerDescriptor = (status: ControlOwnerStatus): SupervisorStartedMe
   ownerSessionId: status.ownerSessionId,
   controlProtocolVersion: status.controlProtocolVersion,
   daemonCliVersion: status.daemonCliVersion,
-  daemonBuildId: status.daemonBuildId,
 });
 
 const decodeSupervisorStartMessage = (
@@ -368,16 +366,12 @@ const decodeSupervisorStartedOrError = (
             event.errorCode === "DAEMON_UPGRADE_REQUIRED" &&
             event.stackId !== undefined &&
             event.oldCliVersion !== undefined &&
-            event.oldBuildId !== undefined &&
-            event.newCliVersion !== undefined &&
-            event.newBuildId !== undefined
+            event.newCliVersion !== undefined
               ? Effect.fail(
                   new DaemonUpgradeRequired({
                     stackId: event.stackId,
                     oldCliVersion: event.oldCliVersion,
-                    oldBuildId: event.oldBuildId,
                     newCliVersion: event.newCliVersion,
-                    newBuildId: event.newBuildId,
                   }),
                 )
               : Effect.fail(new SupervisorStartError({ message: event.message })),
@@ -415,13 +409,11 @@ const supervisorErrorMessage = (cause: Cause.Cause<unknown>): SupervisorErrorMes
   if (error instanceof DaemonUpgradeRequired) {
     return {
       type: "error",
-      message: `Daemon build mismatch for ${error.stackId}: expected ${error.newBuildId}, observed ${error.oldBuildId}`,
+      message: `Daemon CLI version mismatch for ${error.stackId}: expected ${error.newCliVersion}, observed ${error.oldCliVersion}`,
       errorCode: "DAEMON_UPGRADE_REQUIRED",
       stackId: error.stackId,
       oldCliVersion: error.oldCliVersion,
-      oldBuildId: error.oldBuildId,
       newCliVersion: error.newCliVersion,
-      newBuildId: error.newBuildId,
     };
   }
   if (error instanceof UpgradeRestartError) {
@@ -492,8 +484,7 @@ const runManaged = (
     const supervisorLifecycle = yield* SupervisorLifecycle.make({
       ownershipId: input.stackId,
       ownerSessionId: crypto.randomUUID(),
-      daemonCliVersion: input.buildIdentity.cliVersion,
-      daemonBuildId: input.buildIdentity.buildId,
+      daemonCliVersion: input.cliVersion,
     });
     lifecycle = supervisorLifecycle;
     const launchUpdater: StackLaunchUpdater = {
@@ -604,7 +595,7 @@ const runManaged = (
           Effect.flatMap(
             (candidate): Effect.Effect<ControlAcquisition, SupervisorOwnerReacquirePending> => {
               if (isControlOwnership(candidate)) return Effect.succeed(candidate);
-              return candidate.observedStatus.daemonBuildId === input.buildIdentity.buildId
+              return candidate.observedStatus.daemonCliVersion === input.cliVersion
                 ? Effect.succeed(candidate)
                 : Effect.fail(new SupervisorOwnerReacquirePending());
             },
@@ -618,7 +609,7 @@ const runManaged = (
     if (isControlAttached(initialAcquisition)) {
       const attachedStatus = initialAcquisition.observedStatus;
       attachedOwnerWasStopping = attachedStatus.state === "stopping";
-      if (attachedStatus.daemonBuildId !== input.buildIdentity.buildId) {
+      if (attachedStatus.daemonCliVersion !== input.cliVersion) {
         replacingIncompatibleOwner = true;
         const replacement = yield* replaceIncompatibleOwner({
           stackId,
@@ -906,7 +897,7 @@ const runManaged = (
               ? Effect.fail(
                   new UpgradeRestartError({
                     stackId: input.stackId,
-                    newBuildId: input.buildIdentity.buildId,
+                    newCliVersion: input.cliVersion,
                     detail: failureDetail,
                   }),
                 )
@@ -927,7 +918,7 @@ const runManaged = (
                 ? Effect.fail(
                     new UpgradeRestartError({
                       stackId: input.stackId,
-                      newBuildId: input.buildIdentity.buildId,
+                      newCliVersion: input.cliVersion,
                       detail: causeMessage(failure),
                     }),
                   )
@@ -937,7 +928,7 @@ const runManaged = (
                 ? Effect.fail(
                     new UpgradeRestartError({
                       stackId: input.stackId,
-                      newBuildId: input.buildIdentity.buildId,
+                      newCliVersion: input.cliVersion,
                       detail: causeMessage(failure),
                     }),
                   )
@@ -1144,14 +1135,12 @@ export const supervisorLayer = (
       );
       yield* sendStart(child, input);
       const response = yield* Fiber.join(responseFiber);
-      if (response.owner.daemonBuildId !== input.buildIdentity.buildId) {
+      if (response.owner.daemonCliVersion !== input.cliVersion) {
         return yield* Effect.fail(
           new DaemonUpgradeRequired({
             stackId: input.stackId,
             oldCliVersion: response.owner.daemonCliVersion,
-            oldBuildId: response.owner.daemonBuildId,
-            newCliVersion: input.buildIdentity.cliVersion,
-            newBuildId: input.buildIdentity.buildId,
+            newCliVersion: input.cliVersion,
           }),
         );
       }
@@ -1159,7 +1148,7 @@ export const supervisorLayer = (
       detached = true;
       return RemoteStack.layer(response.endpoint, {
         owner: response.owner,
-        buildIdentity: input.buildIdentity,
+        cliVersion: input.cliVersion,
         stackId: input.stackId,
       }).pipe(Layer.provide(Layer.succeed(HttpTransportClient, client)));
     }).pipe(
@@ -1188,7 +1177,7 @@ export const managedDaemonLayer = (
     return yield* supervisorLayer(
       {
         type: "start",
-        buildIdentity: input.buildIdentity,
+        cliVersion: input.cliVersion,
         incompatibleOwnerPolicy: input.incompatibleOwnerPolicy,
         stackId: deriveStackId(discovery.identity, input.stackName),
         workspacePath: input.workspacePath,

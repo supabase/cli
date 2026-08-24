@@ -197,7 +197,6 @@ describe("managed stack projects journeys", () => {
               state: "running",
               ready: true,
               daemonCliVersion: "test",
-              daemonBuildId: "test-build",
             },
           });
           if (!isControlOwnership(owner)) throw new Error("status probe took control ownership");

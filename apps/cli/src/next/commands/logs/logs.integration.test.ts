@@ -13,7 +13,7 @@ describe("logs handler", () => {
   it.live("fails with an actionable upgrade error without restarting an incompatible owner", () =>
     Effect.promise(() =>
       makeRunningStackFixture({
-        buildIdentity: { cliVersion: "2.60.0", buildId: "release:2.60.0" },
+        cliVersion: "2.60.0",
       }),
     ).pipe(
       Effect.flatMap((fixture) => {

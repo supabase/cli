@@ -145,7 +145,7 @@ const messageFor = (
   overrides: Partial<SupervisorStartMessage> = {},
 ): SupervisorStartMessage => ({
   type: "start",
-  buildIdentity: { cliVersion: "test", buildId: "test-build" },
+  cliVersion: "test",
   incompatibleOwnerPolicy: "replace",
   stackId: roots.stackId,
   workspacePath: roots.root,
@@ -316,7 +316,6 @@ const ownerDescriptor = (owner: Record<string, unknown>) => ({
   ownerSessionId: String(owner.ownerSessionId),
   controlProtocolVersion: 1 as const,
   daemonCliVersion: String(owner.daemonCliVersion),
-  daemonBuildId: String(owner.daemonBuildId),
 });
 
 const remoteStop = async (endpoint: ControlEndpoint): Promise<void> => {
@@ -327,7 +326,7 @@ const remoteStop = async (endpoint: ControlEndpoint): Promise<void> => {
         const context = yield* Layer.build(
           RemoteStack.layer(endpoint, {
             owner,
-            buildIdentity: { cliVersion: owner.daemonCliVersion, buildId: owner.daemonBuildId },
+            cliVersion: owner.daemonCliVersion,
           }).pipe(Layer.provide(httpTransportClientLayer)),
         );
         yield* Context.get(context, Stack).stop();
@@ -373,7 +372,7 @@ const remoteInfo = async (endpoint: ControlEndpoint): Promise<{ readonly url: st
         const context = yield* Layer.build(
           RemoteStack.layer(endpoint, {
             owner,
-            buildIdentity: { cliVersion: owner.daemonCliVersion, buildId: owner.daemonBuildId },
+            cliVersion: owner.daemonCliVersion,
           }).pipe(Layer.provide(httpTransportClientLayer)),
         );
         return yield* Context.get(context, Stack).getInfo();
@@ -386,7 +385,7 @@ const updateLaunch = async (
   endpoint: ControlEndpoint,
   stackId: string,
   owner: SupervisorStartedMessage["owner"],
-  buildIdentity: SupervisorStartMessage["buildIdentity"],
+  cliVersion: string,
   launch: {
     readonly versions: Record<string, string>;
   },
@@ -396,7 +395,7 @@ const updateLaunch = async (
       endpoint,
       {
         owner,
-        buildIdentity,
+        cliVersion,
       },
       stackId,
       launch,
@@ -467,7 +466,6 @@ const listenStartingOwner = (
             state: "starting",
             ready: false,
             daemonCliVersion: "test",
-            daemonBuildId: "test-build",
           }),
         );
         return;
@@ -505,7 +503,6 @@ const listenOwnerSequence = (
           state,
           ready: false,
           daemonCliVersion: "test",
-          daemonBuildId: "test-build",
         }),
         () => {
           if (closeAfterSequence && reads >= states.length) server.close();
@@ -746,7 +743,7 @@ describe("detached supervisor child journeys", () => {
             const context = yield* Layer.build(
               RemoteStack.layer(started.endpoint, {
                 owner,
-                buildIdentity: input.buildIdentity,
+                cliVersion: input.cliVersion,
               }).pipe(Layer.provide(httpTransportClientLayer)),
             );
             return yield* Context.get(context, Stack).waitAllReady();
@@ -774,7 +771,7 @@ describe("detached supervisor child journeys", () => {
     const roots = await workspace();
     const oldOwner = spawnChild(
       messageFor(roots, {
-        buildIdentity: { cliVersion: "old", buildId: "release:old" },
+        cliVersion: "old",
         incompatibleOwnerPolicy: "replace",
       }),
     );
@@ -831,7 +828,7 @@ describe("detached supervisor child journeys", () => {
       });
       replacement = spawnChild(
         messageFor(roots, {
-          buildIdentity: { cliVersion: "new", buildId: "release:new" },
+          cliVersion: "new",
           incompatibleOwnerPolicy: "replace",
           config: {
             ...messageFor(roots).config,
@@ -858,7 +855,7 @@ describe("detached supervisor child journeys", () => {
       expect(oldOwner.child.exitCode).toBeNull();
       releaseReplacement();
       const newStarted = await replacement.started;
-      expect(newStarted.owner.daemonBuildId).toBe("release:new");
+      expect(newStarted.owner.daemonCliVersion).toBe("new");
       expect(analyticsPortBlocker?.listening).toBe(true);
       await waitForExit(oldOwner.child);
       const staleStop = await fetch(`${newStarted.endpoint.url}/stop`, {
@@ -898,7 +895,7 @@ describe("detached supervisor child journeys", () => {
     const roots = await workspace();
     const oldOwner = spawnChild(
       messageFor(roots, {
-        buildIdentity: { cliVersion: "old", buildId: "release:old" },
+        cliVersion: "old",
         incompatibleOwnerPolicy: "replace",
       }),
     );
@@ -915,7 +912,7 @@ describe("detached supervisor child journeys", () => {
       await oldOwner.started;
       replacement = spawnChild(
         messageFor(roots, {
-          buildIdentity: { cliVersion: "new", buildId: "release:new" },
+          cliVersion: "new",
           incompatibleOwnerPolicy: "replace",
         }),
         {
@@ -949,7 +946,7 @@ describe("detached supervisor child journeys", () => {
     const roots = await workspace();
     const oldOwner = spawnChild(
       messageFor(roots, {
-        buildIdentity: { cliVersion: "old", buildId: "release:old" },
+        cliVersion: "old",
         incompatibleOwnerPolicy: "replace",
       }),
     );
@@ -958,11 +955,11 @@ describe("detached supervisor child journeys", () => {
       const oldStarted = await oldOwner.started;
       contender = spawnChild(
         messageFor(roots, {
-          buildIdentity: { cliVersion: "new", buildId: "release:new" },
+          cliVersion: "new",
           incompatibleOwnerPolicy: "fail",
         }),
       );
-      await expect(contender.started).rejects.toThrow("Daemon build mismatch");
+      await expect(contender.started).rejects.toThrow("Daemon CLI version mismatch");
       expect(oldOwner.child.exitCode).toBeNull();
       await remoteStop(oldStarted.endpoint);
       await waitForExit(oldOwner.child);
@@ -977,7 +974,7 @@ describe("detached supervisor child journeys", () => {
     const roots = await workspace();
     const oldOwner = spawnChild(
       messageFor(roots, {
-        buildIdentity: { cliVersion: "old", buildId: "release:old" },
+        cliVersion: "old",
         incompatibleOwnerPolicy: "replace",
       }),
     );
@@ -998,7 +995,7 @@ describe("detached supervisor child journeys", () => {
       writeFileSync(sentinel, "retryable");
       replacement = spawnChild(
         messageFor(roots, {
-          buildIdentity: { cliVersion: "new", buildId: "release:new" },
+          cliVersion: "new",
           incompatibleOwnerPolicy: "replace",
         }),
         { testMode: "fail-after-bind" },
@@ -1029,7 +1026,7 @@ describe("detached supervisor child journeys", () => {
     const roots = await workspace();
     const oldOwner = spawnChild(
       messageFor(roots, {
-        buildIdentity: { cliVersion: "old", buildId: "release:old" },
+        cliVersion: "old",
         incompatibleOwnerPolicy: "replace",
       }),
     );
@@ -1039,13 +1036,13 @@ describe("detached supervisor child journeys", () => {
       await oldOwner.started;
       first = spawnChild(
         messageFor(roots, {
-          buildIdentity: { cliVersion: "new", buildId: "release:new" },
+          cliVersion: "new",
           incompatibleOwnerPolicy: "replace",
         }),
       );
       second = spawnChild(
         messageFor(roots, {
-          buildIdentity: { cliVersion: "new", buildId: "release:new" },
+          cliVersion: "new",
           incompatibleOwnerPolicy: "replace",
         }),
       );
@@ -1067,9 +1064,9 @@ describe("detached supervisor child journeys", () => {
       expect(started).toHaveLength(2);
       expect(results.every((result) => result.status === "fulfilled")).toBe(true);
       expect(started[1]!.value.owner.ownerSessionId).toBe(started[0]!.value.owner.ownerSessionId);
-      expect(started[0]!.value.owner.daemonBuildId).toBe("release:new");
+      expect(started[0]!.value.owner.daemonCliVersion).toBe("new");
       expect(await fetchOwner(started[0]!.value.endpoint)).toMatchObject({
-        daemonBuildId: "release:new",
+        daemonCliVersion: "new",
         state: "running",
         ready: true,
       });
@@ -1086,7 +1083,7 @@ describe("detached supervisor child journeys", () => {
     const roots = await workspace();
     const oldOwner = spawnChild(
       messageFor(roots, {
-        buildIdentity: { cliVersion: "old", buildId: "release:old" },
+        cliVersion: "old",
         incompatibleOwnerPolicy: "replace",
       }),
     );
@@ -1095,7 +1092,7 @@ describe("detached supervisor child journeys", () => {
       const oldStarted = await oldOwner.started;
       contender = spawnChild(
         messageFor(roots, {
-          buildIdentity: { cliVersion: "new", buildId: "release:new" },
+          cliVersion: "new",
           incompatibleOwnerPolicy: "replace",
           config: { ...messageFor(roots).config, port: 65_536 },
         }),
@@ -1117,7 +1114,7 @@ describe("detached supervisor child journeys", () => {
     const stopBegan = join(roots.root, "stop-began");
     const oldOwner = spawnChild(
       messageFor(roots, {
-        buildIdentity: { cliVersion: "old", buildId: "release:old" },
+        cliVersion: "old",
         incompatibleOwnerPolicy: "replace",
       }),
       {
@@ -1130,7 +1127,7 @@ describe("detached supervisor child journeys", () => {
       const oldStarted = await oldOwner.started;
       replacement = spawnChild(
         messageFor(roots, {
-          buildIdentity: { cliVersion: "new", buildId: "release:new" },
+          cliVersion: "new",
           incompatibleOwnerPolicy: "replace",
         }),
         { environment: { SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS: "400" } },
@@ -1932,7 +1929,7 @@ describe("detached supervisor child journeys", () => {
       const attached = await later.started;
       expect(attached.attached).toBe(true);
       expect(await remoteInfo(attached.endpoint)).toMatchObject({ url: expect.any(String) });
-      await updateLaunch(attached.endpoint, roots.stackId, attached.owner, input.buildIdentity, {
+      await updateLaunch(attached.endpoint, roots.stackId, attached.owner, input.cliVersion, {
         versions: { postgres: "17.6.1" },
       });
       expect(readStackDocument(roots)?.launch).toEqual({

@@ -384,7 +384,7 @@ describe("branches switch handler", () => {
   it.live("does not stop an incompatible local stack before branch restart", () =>
     Effect.promise(() =>
       makeRunningStackFixture({
-        buildIdentity: { cliVersion: "2.60.0", buildId: "release:2.60.0" },
+        cliVersion: "2.60.0",
       }),
     ).pipe(
       Effect.flatMap((fixture) => {

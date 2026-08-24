@@ -23,7 +23,6 @@ import type { ManagedStackLaunchInput } from "./managed/document.ts";
 import type { ManagedPortIntentDocument } from "./managed/model.ts";
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
-import type { BuildIdentityValue } from "./BuildIdentity.ts";
 import { DaemonUpgradeRequired, StackRpcProtocolError, StackRpcTransportError } from "./errors.ts";
 
 /**
@@ -112,7 +111,7 @@ export class DaemonStartError extends Data.TaggedError("DaemonStartError")<{
 
 /** Managed-only additions kept outside the generic daemon config resolver. */
 export type ManagedDaemonConfigInput = DaemonConfigInput & {
-  readonly buildIdentity: BuildIdentityValue;
+  readonly cliVersion: string;
   readonly incompatibleOwnerPolicy: "replace" | "fail";
   readonly portIntents: ManagedPortIntentDocument;
   readonly launch?: ManagedStackLaunchInput;
@@ -163,7 +162,7 @@ export const daemonLayer = (
     );
     const startMsg: SupervisorStartMessage = {
       type: "start",
-      buildIdentity: input.buildIdentity,
+      cliVersion: input.cliVersion,
       incompatibleOwnerPolicy: input.incompatibleOwnerPolicy,
       stackId: deriveStackId(discovery.identity, name),
       workspacePath: projectDir,

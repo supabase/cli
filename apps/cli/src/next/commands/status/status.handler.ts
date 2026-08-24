@@ -12,7 +12,7 @@ import { ProjectHome } from "../../config/project-home.service.ts";
 import { resolveServiceVersionContext } from "../../config/service-version-resolution.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
-import { currentCliBuildIdentity } from "../../../shared/cli/version.ts";
+import { CLI_VERSION } from "../../../shared/cli/version.ts";
 import type { StatusFlags } from "./status.command.ts";
 import { managedPortIntents } from "../../config/managed-port-intents.ts";
 import { isExcludedStackService, toStartStackConfig } from "../../config/stack-config.ts";
@@ -22,13 +22,11 @@ const renderUpgradeRequiredStatus = Effect.fnUntraced(function* (input: {
   readonly summary: StackSummary;
   readonly error: {
     readonly oldCliVersion: string;
-    readonly oldBuildId: string;
     readonly newCliVersion: string;
-    readonly newBuildId: string;
   };
 }) {
   const output = yield* Output;
-  const message = "Local Supabase stack is running under an older CLI build.";
+  const message = "Local Supabase stack is running under an older CLI version.";
   const data = {
     stack: input.summary.name,
     running: true,
@@ -37,9 +35,7 @@ const renderUpgradeRequiredStatus = Effect.fnUntraced(function* (input: {
     degraded: true,
     reason: "daemon_upgrade_required" as const,
     daemon_cli_version: input.error.oldCliVersion,
-    daemon_build_id: input.error.oldBuildId,
     cli_version: input.error.newCliVersion,
-    cli_build_id: input.error.newBuildId,
     ports: input.summary.ports,
     versions: input.summary.versions,
     launch: input.summary.launch,
@@ -55,7 +51,6 @@ const renderUpgradeRequiredStatus = Effect.fnUntraced(function* (input: {
   yield* output.info(`Stack: ${input.summary.name}`);
   yield* output.info(`Daemon CLI: ${input.error.oldCliVersion}`);
   yield* output.info(`Current CLI: ${input.error.newCliVersion}`);
-  yield* output.info(`Build: ${input.error.oldBuildId}`);
   yield* output.info(formatPortsLine(input.summary.ports));
   yield* output.info(`Runtime mode: ${input.summary.launch.mode}`);
   for (const [name, version] of Object.entries(input.summary.versions).sort(([a], [b]) =>
@@ -131,12 +126,11 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
   const cliConfig = yield* CliConfig;
   const projectHome = yield* ProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
-  const buildIdentity = yield* currentCliBuildIdentity;
 
   yield* output.intro("Show local Supabase stack status");
 
   const layer = yield* connectLayer({
-    buildIdentity,
+    cliVersion: CLI_VERSION,
     cwd: runtimeInfo.cwd,
     cacheRoot: cliConfig.supabaseHome,
     projectDir: projectHome.projectRoot,

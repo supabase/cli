@@ -193,7 +193,6 @@ describe("managed stack recovery journeys", () => {
                 state: "running" as const,
                 ready: true,
                 daemonCliVersion: "test",
-                daemonBuildId: "test-build",
               }),
             ),
           );

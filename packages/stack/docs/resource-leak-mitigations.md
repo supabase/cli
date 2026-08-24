@@ -29,13 +29,13 @@ The application is assembled before the deterministic listener binds and has
 only three routes:
 
 - `GET /owner` projects the lifecycle state, readiness, owner session, and
-  daemon build identity;
+  daemon CLI version;
 - `POST /stop` accepts an ownership id and exact owner session id, returns a
   flushed `202`, and lets the caller wait for that session to end; and
-- `POST /rpc` serves same-build Effect RPC over framed NDJSON when
+- `POST /rpc` serves same-version Effect RPC over framed NDJSON when
   `SupervisorLifecycle.runtimeStack` has published the runtime. Requests carry
-  the expected ownership id, owner session, and daemon build fence; a stale
-  fence is rejected before a handler runs. Before runtime publication, handlers
+  the expected ownership id and owner session; a stale session fence is
+  rejected before a handler runs. Before runtime publication, handlers
   fail fast with typed `StackUnavailableError`.
 
 Graceful remote stop therefore uses the stable session-fenced control route,

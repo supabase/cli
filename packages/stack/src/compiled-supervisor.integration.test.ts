@@ -59,7 +59,7 @@ const messageFor = (
   overrides: Partial<CompiledSupervisorStartMessage> = {},
 ): CompiledSupervisorStartMessage => ({
   type: "start",
-  buildIdentity: { cliVersion: "2.61.0", buildId: "release:2.61.0" },
+  cliVersion: "2.61.0",
   incompatibleOwnerPolicy: "replace",
   stackId: roots.stackId,
   workspacePath: roots.root,
@@ -166,7 +166,6 @@ const owner = async (endpoint: ControlEndpoint) => {
     readonly ownershipId: string;
     readonly ownerSessionId: string;
     readonly daemonCliVersion: string;
-    readonly daemonBuildId: string;
     readonly state: string;
     readonly ready: boolean;
   };
@@ -281,9 +280,9 @@ describe("compiled Bun detached supervisor", () => {
       const firstOwner = await owner(endpoint);
       expect(firstOwner).toMatchObject({
         ownershipId: roots.stackId,
+        daemonCliVersion: "2.61.0",
         state: "running",
         ready: true,
-        daemonBuildId: "release:2.61.0",
       });
       const before = documentFor(roots).value;
       const runtime = before["runtime"] as { readonly pid: number };
@@ -297,7 +296,7 @@ describe("compiled Bun detached supervisor", () => {
       await attached.ready;
       expect(await owner(endpoint)).toMatchObject({
         ownerSessionId: firstOwner.ownerSessionId,
-        daemonBuildId: firstOwner.daemonBuildId,
+        daemonCliVersion: firstOwner.daemonCliVersion,
         state: "running",
       });
       await attached.exited;
@@ -312,7 +311,7 @@ describe("compiled Bun detached supervisor", () => {
 
       first = spawnCompiledParent(
         messageFor(roots, {
-          buildIdentity: { cliVersion: "2.60.0", buildId: "release:2.60.0" },
+          cliVersion: "2.60.0",
           launch: {
             mode: "native",
             versions: { postgres: "old-pinned" },
@@ -331,7 +330,7 @@ describe("compiled Bun detached supervisor", () => {
 
       replacement = spawnCompiledParent(
         messageFor(roots, {
-          buildIdentity: { cliVersion: "2.61.0", buildId: "release:2.61.0" },
+          cliVersion: "2.61.0",
           incompatibleOwnerPolicy: "replace",
           launch: {
             mode: "native",
@@ -345,9 +344,9 @@ describe("compiled Bun detached supervisor", () => {
       await first.exited;
       const currentOwner = await owner(endpoint);
       expect(currentOwner).toMatchObject({
+        daemonCliVersion: "2.61.0",
         state: "running",
         ready: true,
-        daemonBuildId: "release:2.61.0",
       });
       expect(currentOwner.ownerSessionId).not.toBe(oldOwner.ownerSessionId);
       const staleStop = await stop(endpoint, oldOwner.ownershipId, oldOwner.ownerSessionId);
@@ -399,9 +398,9 @@ describe("compiled Bun detached supervisor", () => {
       const current = await owner(endpoint);
       expect(current).toMatchObject({
         ownershipId: roots.stackId,
+        daemonCliVersion: "2.61.0",
         state: "running",
         ready: true,
-        daemonBuildId: "release:2.61.0",
       });
       expect(current.ownerSessionId).not.toBe(stale.ownerSessionId);
       const currentDocument = documentFor(roots).value;

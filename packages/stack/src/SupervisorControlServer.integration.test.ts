@@ -20,7 +20,6 @@ describe("SupervisorControlServer", () => {
               ownershipId: "stack",
               ownerSessionId: "session",
               daemonCliVersion: "test",
-              daemonBuildId: "build",
               close: Effect.void,
             });
             const application = yield* SupervisorControlServer.make(lifecycle);
@@ -38,7 +37,6 @@ describe("SupervisorControlServer", () => {
       expect(result.body).toMatchObject({
         ownershipId: "stack",
         ownerSessionId: "session",
-        daemonBuildId: "build",
         state: "starting",
       });
     } finally {
@@ -57,7 +55,6 @@ describe("SupervisorControlServer", () => {
               ownershipId: "stack",
               ownerSessionId: "session",
               daemonCliVersion: "test",
-              daemonBuildId: "build",
               close: Effect.void,
             });
             const started = Deferred.makeUnsafe<void>();
@@ -112,7 +109,6 @@ describe("SupervisorControlServer", () => {
               ownershipId: "stack",
               ownerSessionId: "session",
               daemonCliVersion: "test",
-              daemonBuildId: "build",
               close: Effect.void,
             });
             const entered = Deferred.makeUnsafe<void>();

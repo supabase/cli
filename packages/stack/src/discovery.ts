@@ -202,7 +202,7 @@ export const connectManagedLayer = (opts: {
   readonly cwd?: string;
   readonly cacheRoot: string;
   readonly projectDir?: string;
-  readonly buildIdentity: import("./BuildIdentity.ts").BuildIdentityValue;
+  readonly cliVersion: string;
 }): Effect.Effect<
   import("effect").Layer.Layer<
     Stack,
@@ -215,5 +215,5 @@ export const connectManagedLayer = (opts: {
     workspacePath: opts.projectDir ?? opts.cwd ?? process.cwd(),
     ...(opts.name === undefined ? {} : { stackName: opts.name }),
     cwd: opts.cwd,
-    buildIdentity: opts.buildIdentity,
+    cliVersion: opts.cliVersion,
   });

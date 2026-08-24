@@ -46,7 +46,7 @@ sequenceDiagram
     Child->>Manager: write running + runtime endpoint
     Child-->>Parent: started(endpoint)
     Parent-->>CLI: RemoteStack layer
-    CLI->>Control: same-build Stack RPC at /rpc
+    CLI->>Control: same-version Stack RPC at /rpc
 ```
 
 `running` in the managed document is recorded only after
@@ -169,7 +169,7 @@ endpoint; mutating operations acquire control ownership.
 ### Update, stop, and delete
 
 - `updateManagedLaunch` is owner-gated. An attached client posts the validated
-  launch payload to the same-build `UpdateLaunch` RPC; the owner invokes
+  launch payload to the same-version `UpdateLaunch` RPC; the owner invokes
   `ManagedStackManager.updateLaunch`, and the caller re-reads the document.
 - `stopManagedStack` asks an attached owner to perform a graceful
   `RemoteStack.stop()`, waits for the document to become `stopped`, and lets
@@ -257,47 +257,54 @@ sequence cannot yield an unambiguous owner or free endpoint. The manager
 reserves every known candidate against service allocation, and the document
 records the endpoint the owner actually bound. An exact service port can still
 equal a future candidate of an identity that has never started, so that
-low-probability conflict is rejected when ownership is acquired rather than
-forbidding every explicit port in the reserved range.
+candidate is skipped when ownership is acquired. Start fails only when the
+sequence cannot distinguish an owner from an ambiguous transport failure or
+find a free endpoint; explicit ports are not forbidden across the whole
+reserved range.
 
 This is deliberately a small single-user localhost mechanism. The stable
 control protocol has no token authentication; ownership, endpoint identity,
 protocol-version checks, and the owner session fence provide the lifecycle
 boundary. The one static application exposes only:
 
-- `GET /owner` for the current owner, lifecycle phase, readiness, and exact
-  daemon build identity;
+- `GET /owner` for the current owner, lifecycle phase, readiness, and daemon
+  CLI version;
 - `POST /stop` for an idempotent shutdown request containing the ownership id
   and exact owner session id; and
-- `POST /rpc` for same-build Effect RPC over framed NDJSON, fenced to the
-  expected ownership id, owner session, and daemon build id before dispatch.
+- `POST /rpc` for same-version Effect RPC over framed NDJSON, fenced to the
+  expected ownership id and owner session before dispatch.
 
 `RemoteStack` is the thin typed RPC adapter. It never maintains a handwritten
 runtime route table or stream parser. Remote stop uses the stable `/stop` route
 and waits for the targeted owner session to end.
 
 The `/owner` payload contains the deterministic ownership id, random
-`ownerSessionId`, control protocol/version, lifecycle state, readiness, daemon
-CLI version, and exact daemon build id. `/stop` requires both ownership id and
+`ownerSessionId`, control protocol/version, lifecycle state, readiness, and
+daemon CLI version. `/stop` requires both ownership id and
 session id, returns `409` for a different owner session, and returns `202` only
 after the supervisor has accepted the one-shot shutdown request. The caller
 then observes the targeted session until it disappears. The protocol is
 session-fenced from its first supported release; there is no
 legacy runtime compatibility window or second-server handoff.
 
-### Build identity and lazy replacement
+### CLI version identity and lazy replacement
 
-The owner response includes a human-readable CLI version and an exact daemon
-build identity. A `RemoteStack` RPC client is constructed only when the client
-build id equals the owner build id. A mismatch is a typed
+The owner response includes the daemon CLI version. Released and preview
+versions are immutable and unique, so that version is the compatibility
+identity. A `RemoteStack` RPC client is constructed only when the client CLI
+version equals the owner CLI version. A mismatch is a typed
 `DaemonUpgradeRequired`; it never becomes an attempted RPC request. Every RPC
-request repeats the same owner/session/build fence so a client that outlives a
+request repeats the same owner/session fence so a client that outlives a
 listener replacement is rejected before a handler runs.
+
+Direct source execution uses the visible `0.0.0-dev` sentinel. It is a
+development mode, not a cross-checkout compatibility promise: after changing
+runtime or RPC code, the developer restarts the managed stack before testing.
 
 Only an explicit `supabase start` may use the `replace-incompatible` policy. It
 preflights the managed document and persisted launch selection while the old
 owner is live, sends the session-fenced `/stop`, waits for that exact session to
-end, then starts or attaches the current build. The replacement preserves the
+end, then starts or attaches the current version. The replacement preserves the
 managed stack identity and creation metadata, data roots, runtime mode, pinned
 service versions, exclusions, and sticky port intents. It never invokes the
 destructive delete path or silently changes launch metadata.
@@ -316,7 +323,7 @@ Connect-only commands use `fail-incompatible`: status renders a degraded
 owner/document summary with an instruction to run `supabase start`, while logs,
 service operations, and other runtime commands return the actionable upgrade
 error. No read-only command restarts a live stack. A stop request always uses
-the stable control protocol, regardless of build identity.
+the stable control protocol, regardless of CLI version.
 
 The replacement is a stop/start transaction rather than a supervisor handoff.
 Preflight failure leaves the old owner running; stop timeout never binds a new
@@ -390,7 +397,7 @@ documents, sibling worktrees and nested projects, detached start/reattach,
 launch updates through RPC, status and logs, graceful session-fenced stop,
 stale-owner recovery, and deletion. They also cover control before runtime
 construction, real HTTP/NDJSON unary and stream calls, stream cancellation,
-build mismatch, upgrade replacement and preservation (including actual
+CLI version mismatch, upgrade replacement and preservation (including actual
 excluded-service behavior and sticky-port reuse), concurrent lifecycle
 requests, cleanup after cancellation or failure, and response flush before
 close. Node and Bun control adapters share conflict classification, and a small

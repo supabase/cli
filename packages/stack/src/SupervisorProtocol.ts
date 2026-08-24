@@ -11,10 +11,7 @@ const portIntentSchema = Schema.Struct({
 
 export const SupervisorStartCommandSchema = Schema.Struct({
   type: Schema.Literal("start"),
-  buildIdentity: Schema.Struct({
-    cliVersion: Schema.String,
-    buildId: Schema.String,
-  }),
+  cliVersion: Schema.String,
   incompatibleOwnerPolicy: Schema.Literals(["replace", "fail"]),
   stackId: Schema.String,
   workspacePath: Schema.String,
@@ -36,7 +33,6 @@ const SupervisorOwnerDescriptorSchema = Schema.Struct({
   ownerSessionId: ControlOwnerDescriptorSchema.fields.ownerSessionId,
   controlProtocolVersion: ControlOwnerDescriptorSchema.fields.controlProtocolVersion,
   daemonCliVersion: ControlOwnerDescriptorSchema.fields.daemonCliVersion,
-  daemonBuildId: ControlOwnerDescriptorSchema.fields.daemonBuildId,
 });
 
 export const SupervisorStartedEventSchema = Schema.Struct({
@@ -55,9 +51,7 @@ export const SupervisorReplacingEventSchema = Schema.Struct({
   type: Schema.Literal("replacing"),
   stackId: Schema.String,
   oldCliVersion: Schema.String,
-  oldBuildId: Schema.String,
   newCliVersion: Schema.String,
-  newBuildId: Schema.String,
 });
 export type SupervisorReplacingMessage = Schema.Schema.Type<typeof SupervisorReplacingEventSchema>;
 
@@ -67,9 +61,7 @@ export const SupervisorErrorEventSchema = Schema.Struct({
   errorCode: Schema.optionalKey(Schema.Literal("DAEMON_UPGRADE_REQUIRED")),
   stackId: Schema.optionalKey(Schema.String),
   oldCliVersion: Schema.optionalKey(Schema.String),
-  oldBuildId: Schema.optionalKey(Schema.String),
   newCliVersion: Schema.optionalKey(Schema.String),
-  newBuildId: Schema.optionalKey(Schema.String),
 });
 export type SupervisorErrorMessage = Schema.Schema.Type<typeof SupervisorErrorEventSchema>;
 

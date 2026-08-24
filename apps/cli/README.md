@@ -123,7 +123,7 @@ Important areas:
 - `src/next/auth/` for login-related services
 
 The local stack commands use `@supabase/stack` for lifecycle, status, logs, and runtime operations.
-Managed ownership uses stable loopback `GET /owner` and session-fenced `POST /stop`; same-build
+Managed ownership uses stable loopback `GET /owner` and session-fenced `POST /stop`; same-version
 runtime calls use Effect RPC over framed NDJSON at `POST /rpc`. That stack layer now has an explicit
 preparation phase, so foreground and detached `start` flows can surface `Downloading` before normal
 runtime states. CLI-managed stacks use lazy service startup: direct listeners and Realtime start

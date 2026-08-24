@@ -107,10 +107,10 @@ describe("status handler", () => {
     ),
   );
 
-  it.live("renders a degraded owner/document summary when the daemon build differs", () =>
+  it.live("renders a degraded owner/document summary when the daemon CLI version differs", () =>
     Effect.promise(() =>
       makeRunningStackFixture({
-        buildIdentity: { cliVersion: "2.60.0", buildId: "release:2.60.0" },
+        cliVersion: "2.60.0",
       }),
     ).pipe(
       Effect.flatMap((fixture) => {
@@ -130,7 +130,7 @@ describe("status handler", () => {
               expect(out.messages).toContainEqual(
                 expect.objectContaining({
                   type: "warn",
-                  message: "Local Supabase stack is running under an older CLI build.",
+                  message: "Local Supabase stack is running under an older CLI version.",
                 }),
               );
               expect(out.messages).toContainEqual(
@@ -155,7 +155,7 @@ describe("status handler", () => {
   it.live("returns only the degraded owner/document fields in structured output", () =>
     Effect.promise(() =>
       makeRunningStackFixture({
-        buildIdentity: { cliVersion: "2.60.0", buildId: "release:2.60.0" },
+        cliVersion: "2.60.0",
       }),
     ).pipe(
       Effect.flatMap((fixture) => {
@@ -179,7 +179,6 @@ describe("status handler", () => {
                     degraded: true,
                     reason: "daemon_upgrade_required",
                     daemon_cli_version: "2.60.0",
-                    daemon_build_id: "release:2.60.0",
                     instruction: "Run `supabase start` to restart the stack with the current CLI.",
                   }),
                 }),

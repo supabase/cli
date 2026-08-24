@@ -51,7 +51,6 @@ const remoteOwner = (ownerSessionId: string) => ({
   state: "running" as const,
   ready: true,
   daemonCliVersion: "test",
-  daemonBuildId: "test-build",
 });
 
 const remoteLayer = (
@@ -60,13 +59,12 @@ const remoteLayer = (
   transport: HttpTransportClient["Service"],
 ) =>
   RemoteStack.layer(endpoint, {
-    buildIdentity: { cliVersion: "test", buildId: "test-build" },
+    cliVersion: "test",
     owner: {
       ownershipId: ownerId,
       ownerSessionId,
       controlProtocolVersion: 1,
       daemonCliVersion: "test",
-      daemonBuildId: "test-build",
     },
   }).pipe(Layer.provide(Layer.succeed(HttpTransportClient, transport)));
 
@@ -98,7 +96,6 @@ const startMalformedServer = (frame: string) =>
               state: "running",
               ready: true,
               daemonCliVersion: "test",
-              daemonBuildId: "test-build",
             }),
           );
           return;
@@ -172,7 +169,6 @@ const startDisconnectServer = (
               state: "running",
               ready: true,
               daemonCliVersion: "test",
-              daemonBuildId: "test-build",
             }),
           );
           return;
@@ -221,7 +217,7 @@ const startDisconnectServer = (
       }),
   );
 
-it.live("executes every Stack operation over the same-build RPC endpoint", () =>
+it.live("executes every Stack operation over the same-version RPC endpoint", () =>
   live(
     Effect.scoped(
       Effect.gen(function* () {
@@ -229,7 +225,6 @@ it.live("executes every Stack operation over the same-build RPC endpoint", () =>
           ownershipId: ownerId,
           ownerSessionId: "rpc-session",
           daemonCliVersion: "test",
-          daemonBuildId: "test-build",
         });
         let calls = 0;
         const logReleased = Deferred.makeUnsafe<void>();
@@ -377,13 +372,12 @@ it.live("executes every Stack operation over the same-build RPC endpoint", () =>
           }),
         ).pipe(Layer.provide(httpTransportClientLayer));
         const mismatchLayer = RemoteStack.layer(owner.endpoint, {
-          buildIdentity: { cliVersion: "test", buildId: "different-build" },
+          cliVersion: "different-version",
           owner: {
             ownershipId: owner.ownershipId,
             ownerSessionId: ownerStatus.ownerSessionId,
             controlProtocolVersion: ownerStatus.controlProtocolVersion,
             daemonCliVersion: ownerStatus.daemonCliVersion,
-            daemonBuildId: ownerStatus.daemonBuildId,
           },
         }).pipe(Layer.provide(recordingTransportLayer));
         const mismatchExit = yield* Effect.exit(
@@ -396,13 +390,12 @@ it.live("executes every Stack operation over the same-build RPC endpoint", () =>
         expect(Exit.isFailure(mismatchExit)).toBe(true);
         expect(rpcPaths).toEqual(["/owner"]);
         const remoteLayer = RemoteStack.layer(owner.endpoint, {
-          buildIdentity: { cliVersion: "test", buildId: "test-build" },
+          cliVersion: "test",
           owner: {
             ownershipId: owner.ownershipId,
             ownerSessionId: ownerStatus.ownerSessionId,
             controlProtocolVersion: ownerStatus.controlProtocolVersion,
             daemonCliVersion: ownerStatus.daemonCliVersion,
-            daemonBuildId: ownerStatus.daemonBuildId,
           },
         }).pipe(Layer.provide(httpTransportClientLayer));
         yield* Effect.gen(function* () {
@@ -511,13 +504,12 @@ it.live("fences stale RPC clients after deterministic endpoint replacement", () 
           serviceEndpoints: {},
         };
         let handlerCalls = 0;
-        const makeOwner = (ownerSessionId: string, daemonBuildId: string) =>
+        const makeOwner = (ownerSessionId: string, daemonCliVersion: string) =>
           Effect.gen(function* () {
             const lifecycle = yield* SupervisorLifecycle.make({
               ownershipId: stackId,
               ownerSessionId,
-              daemonCliVersion: "test",
-              daemonBuildId,
+              daemonCliVersion,
             });
             yield* lifecycle.publishStack({
               ...makeTestStack(),
@@ -537,16 +529,15 @@ it.live("fences stale RPC clients after deterministic endpoint replacement", () 
             return { lifecycle, owner };
           });
 
-        const first = yield* makeOwner(sessionA, "test-build");
+        const first = yield* makeOwner(sessionA, "test");
         const firstStatus = yield* first.owner.ownerStatus;
         const staleLayer = RemoteStack.layer(first.owner.endpoint, {
-          buildIdentity: { cliVersion: "test", buildId: "test-build" },
+          cliVersion: "test",
           owner: {
             ownershipId: stackId,
             ownerSessionId: firstStatus.ownerSessionId,
             controlProtocolVersion: firstStatus.controlProtocolVersion,
             daemonCliVersion: firstStatus.daemonCliVersion,
-            daemonBuildId: firstStatus.daemonBuildId,
           },
         }).pipe(Layer.provide(httpTransportClientLayer));
         const staleContext = yield* Layer.build(staleLayer);
@@ -555,7 +546,7 @@ it.live("fences stale RPC clients after deterministic endpoint replacement", () 
         expect(handlerCalls).toBe(1);
 
         yield* first.owner.close;
-        const replacement = yield* makeOwner(sessionB, "test-build");
+        const replacement = yield* makeOwner(sessionB, "test");
         const staleResult = yield* staleRemote.getInfo().pipe(Effect.result);
         expect(Result.isFailure(staleResult)).toBe(true);
         if (Result.isFailure(staleResult)) {
@@ -565,13 +556,12 @@ it.live("fences stale RPC clients after deterministic endpoint replacement", () 
 
         const replacementStatus = yield* replacement.owner.ownerStatus;
         const replacementLayer = RemoteStack.layer(replacement.owner.endpoint, {
-          buildIdentity: { cliVersion: "test", buildId: "test-build" },
+          cliVersion: "test",
           owner: {
             ownershipId: stackId,
             ownerSessionId: replacementStatus.ownerSessionId,
             controlProtocolVersion: replacementStatus.controlProtocolVersion,
             daemonCliVersion: replacementStatus.daemonCliVersion,
-            daemonBuildId: replacementStatus.daemonBuildId,
           },
         }).pipe(Layer.provide(httpTransportClientLayer));
         const replacementContext = yield* Layer.build(replacementLayer);
@@ -580,14 +570,6 @@ it.live("fences stale RPC clients after deterministic endpoint replacement", () 
         expect(handlerCalls).toBe(2);
 
         yield* replacement.owner.close;
-        const buildReplacement = yield* makeOwner(sessionB, "replacement-build");
-        const staleBuildResult = yield* replacementRemote.getInfo().pipe(Effect.result);
-        expect(Result.isFailure(staleBuildResult)).toBe(true);
-        if (Result.isFailure(staleBuildResult)) {
-          expect(staleBuildResult.failure).toBeInstanceOf(StackRpcProtocolError);
-        }
-        expect(handlerCalls).toBe(2);
-        yield* buildReplacement.owner.close;
       }),
     ),
   ),
@@ -601,13 +583,12 @@ it.live.each([
     Effect.gen(function* () {
       const server = yield* startMalformedServer(frame);
       const layer = RemoteStack.layer(server.endpoint, {
-        buildIdentity: { cliVersion: "test", buildId: "test-build" },
+        cliVersion: "test",
         owner: {
           ownershipId: ownerId,
           ownerSessionId: "malformed-session",
           controlProtocolVersion: 1,
           daemonCliVersion: "test",
-          daemonBuildId: "test-build",
         },
       }).pipe(Layer.provide(httpTransportClientLayer));
       const exit = yield* Effect.exit(
@@ -637,13 +618,12 @@ it.effect("reports the HTTP status when the owner probe is non-successful", () =
   Effect.gen(function* () {
     const endpoint = { hostname: "127.0.0.1", port: 12348, url: "http://127.0.0.1:12348" };
     const layer = RemoteStack.layer(endpoint, {
-      buildIdentity: { cliVersion: "test", buildId: "test-build" },
+      cliVersion: "test",
       owner: {
         ownershipId: ownerId,
         ownerSessionId: "owner-probe-session",
         controlProtocolVersion: 1,
         daemonCliVersion: "test",
-        daemonBuildId: "test-build",
       },
     }).pipe(
       Layer.provide(
@@ -694,13 +674,12 @@ it.live("interrupts an owned server RPC request when the client disconnects", ()
       const requestClosed = Deferred.makeUnsafe<void>();
       const server = yield* startDisconnectServer(requestStarted, requestClosed);
       const layer = RemoteStack.layer(server.endpoint, {
-        buildIdentity: { cliVersion: "test", buildId: "test-build" },
+        cliVersion: "test",
         owner: {
           ownershipId: ownerId,
           ownerSessionId: "disconnect-session",
           controlProtocolVersion: 1,
           daemonCliVersion: "test",
-          daemonBuildId: "test-build",
         },
       }).pipe(Layer.provide(httpTransportClientLayer));
       yield* Effect.scoped(
@@ -733,7 +712,6 @@ it.live("closes an owner while another client still consumes an RPC stream", () 
           ownershipId: ownerId,
           ownerSessionId,
           daemonCliVersion: "test",
-          daemonBuildId: "test-build",
         });
         yield* lifecycle.publishStack({
           ...makeTestStack(),
@@ -755,13 +733,12 @@ it.live("closes an owner while another client still consumes an RPC stream", () 
         if (!isControlOwnership(owner)) throw new Error("expected ownership");
         yield* lifecycle.setClose(owner.close);
         const layer = RemoteStack.layer(owner.endpoint, {
-          buildIdentity: { cliVersion: "test", buildId: "test-build" },
+          cliVersion: "test",
           owner: {
             ownershipId: owner.ownershipId,
             ownerSessionId,
             controlProtocolVersion: 1,
             daemonCliVersion: "test",
-            daemonBuildId: "test-build",
           },
         }).pipe(Layer.provide(httpTransportClientLayer));
         const shutdownExit = yield* Effect.scoped(
@@ -803,7 +780,6 @@ it.effect("times out a hung fast unary RPC with endpoint and procedure context",
                   state: "running",
                   ready: true,
                   daemonCliVersion: "test",
-                  daemonBuildId: "test-build",
                 }),
                 { status: 200, headers: { "content-type": "application/json" } },
               ),
@@ -811,13 +787,12 @@ it.effect("times out a hung fast unary RPC with endpoint and procedure context",
           : Deferred.succeed(rpcStarted, undefined).pipe(Effect.andThen(Effect.never)),
     });
     const layer = RemoteStack.layer(endpoint, {
-      buildIdentity: { cliVersion: "test", buildId: "test-build" },
+      cliVersion: "test",
       owner: {
         ownershipId: ownerId,
         ownerSessionId: "hung-session",
         controlProtocolVersion: 1,
         daemonCliVersion: "test",
-        daemonBuildId: "test-build",
       },
     }).pipe(Layer.provide(transportLayer));
     const request = yield* Effect.forkChild(
@@ -864,7 +839,6 @@ it.effect("does not apply the fast timeout to a long-running StartStack RPC", ()
                   state: "running",
                   ready: true,
                   daemonCliVersion: "test",
-                  daemonBuildId: "test-build",
                 }),
                 { status: 200, headers: { "content-type": "application/json" } },
               ),
@@ -872,13 +846,12 @@ it.effect("does not apply the fast timeout to a long-running StartStack RPC", ()
           : Deferred.succeed(rpcStarted, undefined).pipe(Effect.andThen(Effect.never)),
     });
     const layer = RemoteStack.layer(endpoint, {
-      buildIdentity: { cliVersion: "test", buildId: "test-build" },
+      cliVersion: "test",
       owner: {
         ownershipId: ownerId,
         ownerSessionId: "long-start-session",
         controlProtocolVersion: 1,
         daemonCliVersion: "test",
-        daemonBuildId: "test-build",
       },
     }).pipe(Layer.provide(transportLayer));
     const request = yield* Effect.forkChild(
@@ -914,7 +887,6 @@ it.effect("does not apply the fast timeout to a long-running StopService RPC", (
                   state: "running",
                   ready: true,
                   daemonCliVersion: "test",
-                  daemonBuildId: "test-build",
                 }),
                 { status: 200, headers: { "content-type": "application/json" } },
               ),
@@ -922,13 +894,12 @@ it.effect("does not apply the fast timeout to a long-running StopService RPC", (
           : Deferred.succeed(rpcStarted, undefined).pipe(Effect.andThen(Effect.never)),
     });
     const layer = RemoteStack.layer(endpoint, {
-      buildIdentity: { cliVersion: "test", buildId: "test-build" },
+      cliVersion: "test",
       owner: {
         ownershipId: ownerId,
         ownerSessionId: "long-stop-service-session",
         controlProtocolVersion: 1,
         daemonCliVersion: "test",
-        daemonBuildId: "test-build",
       },
     }).pipe(Layer.provide(transportLayer));
     const request = yield* Effect.forkChild(
@@ -1104,7 +1075,6 @@ it.effect("preserves foreign-owner diagnostics while polling a fenced stop", () 
       state: "running",
       ready: true,
       daemonCliVersion: "test",
-      daemonBuildId: "test-build",
     } as const;
     const transportLayer = Layer.succeed(HttpTransportClient, {
       request: (_requestEndpoint, path) => {
@@ -1121,13 +1091,12 @@ it.effect("preserves foreign-owner diagnostics while polling a fenced stop", () 
       },
     });
     const layer = RemoteStack.layer(endpoint, {
-      buildIdentity: { cliVersion: "test", buildId: "test-build" },
+      cliVersion: "test",
       owner: {
         ownershipId: ownerId,
         ownerSessionId: initialOwner.ownerSessionId,
         controlProtocolVersion: 1,
         daemonCliVersion: "test",
-        daemonBuildId: "test-build",
       },
     }).pipe(Layer.provide(transportLayer));
     const result = yield* Effect.scoped(
@@ -1170,7 +1139,6 @@ it.live("interrupts the real RPC handler fiber when the client request is cancel
           ownershipId: ownerId,
           ownerSessionId: "rpc-cancel-session",
           daemonCliVersion: "test",
-          daemonBuildId: "test-build",
         });
         yield* lifecycle.publishStack(stack);
         const application = {
@@ -1185,13 +1153,12 @@ it.live("interrupts the real RPC handler fiber when the client request is cancel
         yield* lifecycle.setClose(owner.close);
         const ownerStatus = yield* owner.ownerStatus;
         const layer = RemoteStack.layer(owner.endpoint, {
-          buildIdentity: { cliVersion: "test", buildId: "test-build" },
+          cliVersion: "test",
           owner: {
             ownershipId: owner.ownershipId,
             ownerSessionId: ownerStatus.ownerSessionId,
             controlProtocolVersion: ownerStatus.controlProtocolVersion,
             daemonCliVersion: ownerStatus.daemonCliVersion,
-            daemonBuildId: ownerStatus.daemonBuildId,
           },
         }).pipe(Layer.provide(httpTransportClientLayer));
         yield* Effect.gen(function* () {

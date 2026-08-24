@@ -35,7 +35,6 @@ import {
 } from "./StackRpc.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 import { CONTROL_PROTOCOL_VERSION, ControlOwnerStatusSchema } from "./DaemonProtocol.ts";
-import type { BuildIdentityValue } from "./BuildIdentity.ts";
 
 interface RemoteOwnerDescriptor {
   readonly ownershipId: string;
@@ -43,12 +42,11 @@ interface RemoteOwnerDescriptor {
   readonly endpoint: ControlEndpoint;
   readonly controlProtocolVersion: typeof CONTROL_PROTOCOL_VERSION;
   readonly daemonCliVersion: string;
-  readonly daemonBuildId: string;
 }
 
 export interface RemoteStackOptions {
   readonly owner: Omit<RemoteOwnerDescriptor, "endpoint">;
-  readonly buildIdentity: BuildIdentityValue;
+  readonly cliVersion: string;
   readonly stackId?: string;
 }
 
@@ -171,22 +169,19 @@ const makeRemoteRpcClient = (
     const ownerStatus = yield* control
       .readOwner(endpoint, expectedOwner.ownershipId)
       .pipe(Effect.mapError((error) => controlErrorToRpc(endpoint, "owner", error)));
-    if (options.buildIdentity.buildId !== ownerStatus.daemonBuildId)
+    if (options.cliVersion !== ownerStatus.daemonCliVersion)
       return yield* Effect.fail(
         new DaemonUpgradeRequired({
           stackId: options.stackId ?? expectedOwner.ownershipId,
           oldCliVersion: ownerStatus.daemonCliVersion,
-          oldBuildId: ownerStatus.daemonBuildId,
-          newCliVersion: options.buildIdentity.cliVersion,
-          newBuildId: options.buildIdentity.buildId,
+          newCliVersion: options.cliVersion,
         }),
       );
     if (
       ownerStatus.ownershipId !== expectedOwner.ownershipId ||
       ownerStatus.ownerSessionId !== expectedOwner.ownerSessionId ||
       ownerStatus.controlProtocolVersion !== expectedOwner.controlProtocolVersion ||
-      ownerStatus.daemonCliVersion !== expectedOwner.daemonCliVersion ||
-      ownerStatus.daemonBuildId !== expectedOwner.daemonBuildId
+      ownerStatus.daemonCliVersion !== expectedOwner.daemonCliVersion
     )
       return yield* Effect.fail(
         protocolError(
@@ -199,7 +194,6 @@ const makeRemoteRpcClient = (
       makeHttpClient(endpoint, transport, {
         ownershipId: expectedOwner.ownershipId,
         ownerSessionId: expectedOwner.ownerSessionId,
-        daemonBuildId: options.buildIdentity.buildId,
       }),
       HttpClientRequest.prependUrl(`${endpoint.url}${STACK_RPC_PATH}`),
     );

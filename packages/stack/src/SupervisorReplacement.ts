@@ -226,8 +226,8 @@ const preflightError = (
 ): UpgradePreflightError =>
   new UpgradePreflightError({
     stackId: context.stackId,
-    oldBuildId: context.oldOwner.observedStatus.daemonBuildId,
-    newBuildId: context.input.buildIdentity.buildId,
+    oldCliVersion: context.oldOwner.observedStatus.daemonCliVersion,
+    newCliVersion: context.input.cliVersion,
     detail,
   });
 
@@ -344,9 +344,7 @@ export const replaceIncompatibleOwner = (
         new DaemonUpgradeRequired({
           stackId: context.stackId,
           oldCliVersion: context.oldOwner.observedStatus.daemonCliVersion,
-          oldBuildId: context.oldOwner.observedStatus.daemonBuildId,
-          newCliVersion: context.input.buildIdentity.cliVersion,
-          newBuildId: context.input.buildIdentity.buildId,
+          newCliVersion: context.input.cliVersion,
         }),
       );
     }
@@ -364,9 +362,7 @@ export const replaceIncompatibleOwner = (
       type: "replacing",
       stackId: context.stackId,
       oldCliVersion: context.oldOwner.observedStatus.daemonCliVersion,
-      oldBuildId: context.oldOwner.observedStatus.daemonBuildId,
-      newCliVersion: context.input.buildIdentity.cliVersion,
-      newBuildId: context.input.buildIdentity.buildId,
+      newCliVersion: context.input.cliVersion,
     });
     const client = makeControlClient(context.controlTransport);
     yield* client
@@ -419,7 +415,7 @@ export const replaceIncompatibleOwner = (
         (error) =>
           new UpgradeRestartError({
             stackId: context.stackId,
-            newBuildId: context.input.buildIdentity.buildId,
+            newCliVersion: context.input.cliVersion,
             detail: causeMessage(error),
           }),
       ),

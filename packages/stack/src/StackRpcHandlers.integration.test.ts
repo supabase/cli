@@ -94,7 +94,6 @@ it.live("serves handler behavior over the RPC boundary", () =>
         ownershipId: OWNER_ID,
         ownerSessionId: "handler-session",
         daemonCliVersion: "test",
-        daemonBuildId: "test-build",
       });
       const application = {
         app: yield* makeSupervisorControlApplication(lifecycle),
@@ -108,13 +107,12 @@ it.live("serves handler behavior over the RPC boundary", () =>
       yield* lifecycle.setClose(owner.close);
       const status = yield* owner.ownerStatus;
       const layer = RemoteStack.layer(owner.endpoint, {
-        buildIdentity: { cliVersion: "test", buildId: "test-build" },
+        cliVersion: "test",
         owner: {
           ownershipId: OWNER_ID,
           ownerSessionId: status.ownerSessionId,
           controlProtocolVersion: status.controlProtocolVersion,
           daemonCliVersion: status.daemonCliVersion,
-          daemonBuildId: status.daemonBuildId,
         },
       }).pipe(Layer.provide(httpTransportClientLayer));
       const remote = yield* Layer.build(layer).pipe(
@@ -141,7 +139,6 @@ it.live("serves handler behavior over the RPC boundary", () =>
             ...stackRpcFenceHeaders({
               ownershipId: status.ownershipId,
               ownerSessionId: status.ownerSessionId,
-              daemonBuildId: status.daemonBuildId,
             }),
           },
           body: `${JSON.stringify({

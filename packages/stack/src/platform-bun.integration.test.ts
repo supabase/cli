@@ -2,6 +2,7 @@ import { Cause, Deferred, Effect, Exit, Layer, Predicate, Scope } from "effect";
 import { describe, expect, test } from "vitest";
 import {
   ControlStopConflictError,
+  ControlProtocolError,
   ControlTransport,
   ControlTransportError,
   makeControlClient,
@@ -70,7 +71,6 @@ describe("Bun control transport", () => {
               state: "running",
               ready: true,
               daemonCliVersion: "test",
-              daemonBuildId: "test-build",
             });
           stopBodies.push(await request.text());
           return Response.json({ error: "conflict" }, { status: 409 });
@@ -136,6 +136,38 @@ describe("Bun control transport", () => {
     }
   });
 
+  (isBun ? test : test.skip)("classifies a non-HTTP owner response as protocol", async () => {
+    const { controlTransportLayer } = await import("./platform-bun.ts");
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        data(socket) {
+          socket.end("not-http\r\n");
+        },
+      },
+    });
+    try {
+      const endpoint = {
+        hostname: "127.0.0.1",
+        port: server.port,
+        url: `http://127.0.0.1:${server.port}`,
+      };
+      const exit = await Effect.runPromise(
+        Effect.flatMap(ControlTransport, (transport) => transport.read(endpoint)).pipe(
+          Effect.provide(controlTransportLayer),
+          Effect.exit,
+        ),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toBeInstanceOf(ControlProtocolError);
+      }
+    } finally {
+      server.stop(true);
+    }
+  });
+
   (isBun ? test : test.skip)("installs the complete owner app before bind returns", async () => {
     const scope = Scope.makeUnsafe();
     const lifecycle = await Effect.runPromise(
@@ -143,7 +175,6 @@ describe("Bun control transport", () => {
         ownershipId: "a".repeat(64),
         ownerSessionId: "session",
         daemonCliVersion: "test",
-        daemonBuildId: "test-build",
         close: Effect.void,
       }).pipe(Effect.provide(Layer.succeed(Scope.Scope, scope))),
     );
@@ -166,7 +197,6 @@ describe("Bun control transport", () => {
             state: "starting" as const,
             ready: false,
             daemonCliVersion: "test",
-            daemonBuildId: "test-build",
           }),
           () => "accepted" as const,
           application,
@@ -186,7 +216,7 @@ describe("Bun control transport", () => {
       if (!Predicate.isTagged(address, "TcpAddress")) return;
       const response = await fetch(`http://127.0.0.1:${address.port}/owner`);
       expect(response.status).toBe(200);
-      expect(await response.json()).toMatchObject({ daemonBuildId: "test-build" });
+      expect(await response.json()).toMatchObject({ daemonCliVersion: "test" });
     } finally {
       await Effect.runPromise(listener.close);
       await Effect.runPromise(Scope.close(scope, Exit.void));
@@ -208,7 +238,6 @@ describe("Bun control transport", () => {
             state: "running" as const,
             ready: true,
             daemonCliVersion: "test",
-            daemonBuildId: "test-build",
           }),
           () => "accepted" as const,
         ),
@@ -245,7 +274,6 @@ describe("Bun control transport", () => {
         ownershipId: "c".repeat(64),
         ownerSessionId: "session",
         daemonCliVersion: "test",
-        daemonBuildId: "test-build",
         close: Effect.void,
       }).pipe(Effect.provide(Layer.succeed(Scope.Scope, scope))),
     );
@@ -278,7 +306,6 @@ describe("Bun control transport", () => {
             state: "running" as const,
             ready: true,
             daemonCliVersion: "test",
-            daemonBuildId: "test-build",
           }),
           () => "accepted" as const,
           application,
@@ -326,7 +353,6 @@ describe("Bun control transport", () => {
           ownershipId,
           ownerSessionId,
           daemonCliVersion: "test",
-          daemonBuildId: "test-build",
         }).pipe(Effect.provide(Layer.succeed(Scope.Scope, scope))),
       );
       await Effect.runPromise(lifecycle.publishStack(makeTestStack()));
@@ -349,7 +375,6 @@ describe("Bun control transport", () => {
               state: "running" as const,
               ready: true,
               daemonCliVersion: "test",
-              daemonBuildId: "test-build",
             }),
             () => "accepted" as const,
             application,
