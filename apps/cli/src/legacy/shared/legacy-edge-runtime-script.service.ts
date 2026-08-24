@@ -95,16 +95,15 @@ export function legacyBuildEdgeRuntimeStartCmd(opts: {
 
 /**
  * Builds the `sh -c` entrypoint body that writes each file via a here-document
- * (so contents may contain `EOF`) and then runs `cmd`. Byte-for-byte port of
- * `buildEdgeRuntimeEntrypoint` (`apps/cli-go/internal/utils/edgeruntime.go`):
- * all heredoc openers are joined with `&&` before the bodies so the shell stacks
- * them in declaration order; each body ends with a unique sentinel.
+ * (so contents may contain `EOF`) and then `exec`s `cmd` so edge-runtime is
+ * PID 1. Heredoc stacking matches Go's `buildEdgeRuntimeEntrypoint`; `exec`
+ * is a deliberate timing divergence (ADR 0016).
  */
 export function legacyBuildEdgeRuntimeEntrypoint(
   files: ReadonlyArray<LegacyEdgeRuntimeFile>,
   cmd: string,
 ): string {
-  if (files.length === 0) return `${cmd}\n`;
+  if (files.length === 0) return `exec ${cmd}\n`;
   let head = "";
   let bodies = "";
   files.forEach((file, index) => {
@@ -112,5 +111,5 @@ export function legacyBuildEdgeRuntimeEntrypoint(
     head += `cat <<'${sentinel}' > ${file.name} && `;
     bodies += `${file.content}\n${sentinel}\n`;
   });
-  return `${head}${cmd}\n${bodies}`;
+  return `${head}exec ${cmd}\n${bodies}`;
 }

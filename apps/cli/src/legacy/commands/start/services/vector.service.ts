@@ -279,18 +279,18 @@ const LEGACY_VECTOR_HEALTHCHECK = {
 
 /**
  * Builds the Vector entrypoint script: writes the rendered `vector.yaml` via
- * a `cat <<'EOF'` heredoc, then blocks on a `wget`-poll loop against
- * Logflare's own `/health` endpoint (Vector's `docker_logs`/HTTP sinks would
- * otherwise start before Logflare is ready to receive them) before finally
- * exec'ing `vector`.
+ * a `cat <<'EOF'` heredoc, waits on Logflare `/health` (sinks would otherwise
+ * start too early), then `exec`s Vector so it is PID 1. A TERM trap covers
+ * the wait so `docker stop` does not burn 10s if Logflare is still down;
+ * cleared before `exec`. Stop timing is outside Go parity (ADR 0016).
  */
 export function legacyBuildVectorEntrypointScript(vectorYaml: string, logflareId: string): string {
   return (
     "cat <<'EOF' > /etc/vector/vector.yaml\n" +
     vectorYaml +
-    "\nEOF\nuntil wget --no-verbose --tries=1 --spider http://" +
+    "\nEOF\ntrap 'exit 143' TERM\nuntil wget --no-verbose --tries=1 --spider http://" +
     logflareId +
-    ":4000/health 2>/dev/null; do sleep 2; done\nvector --config /etc/vector/vector.yaml\n"
+    ":4000/health 2>/dev/null; do sleep 2; done\ntrap - TERM\nexec vector --config /etc/vector/vector.yaml\n"
   );
 }
 
