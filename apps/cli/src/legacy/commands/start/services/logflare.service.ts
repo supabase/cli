@@ -54,8 +54,7 @@ const LEGACY_LOGFLARE_API_KEY = "api-key";
  * `run.sh` stays PID 1 on purpose: a plain `exec` of `beam.smp` still burned
  * Docker's 10s SIGTERM grace (upstream hang). Forward TERM, wait 3s, then
  * KILL. Interrupted `wait` is >128; a second `wait` recovers the BEAM's
- * status unless it was already reaped (127). Stop timing is outside Go
- * parity (ADR 0016).
+ * status unless it was already reaped (127).
  */
 const LEGACY_LOGFLARE_ENTRYPOINT_SCRIPT =
   "cat <<'EOF' > run.sh && exec sh run.sh\n" +

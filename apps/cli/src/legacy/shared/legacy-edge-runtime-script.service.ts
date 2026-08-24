@@ -96,8 +96,7 @@ export function legacyBuildEdgeRuntimeStartCmd(opts: {
 /**
  * Builds the `sh -c` entrypoint body that writes each file via a here-document
  * (so contents may contain `EOF`) and then `exec`s `cmd` so edge-runtime is
- * PID 1. Heredoc stacking matches Go's `buildEdgeRuntimeEntrypoint`; `exec`
- * is a deliberate timing divergence (ADR 0016).
+ * PID 1 and an early `docker stop` reaches it directly.
  */
 export function legacyBuildEdgeRuntimeEntrypoint(
   files: ReadonlyArray<LegacyEdgeRuntimeFile>,

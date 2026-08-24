@@ -225,7 +225,7 @@ describe("legacyBuildVectorEntrypointScript", () => {
     expect(legacyBuildVectorEntrypointScript("VECTOR_YAML", "supabase_analytics_proj")).toBe(
       "cat <<'EOF' > /etc/vector/vector.yaml\n" +
         "VECTOR_YAML" +
-        "\nEOF\ntrap 'exit 143' TERM\nuntil wget --no-verbose --tries=1 --spider http://" +
+        "\nEOF\ntrap 'exit 143' TERM\nuntil wget --no-verbose --tries=1 -T 2 --spider http://" +
         "supabase_analytics_proj" +
         ":4000/health 2>/dev/null; do sleep 2; done\ntrap - TERM\nexec vector --config /etc/vector/vector.yaml\n",
     );

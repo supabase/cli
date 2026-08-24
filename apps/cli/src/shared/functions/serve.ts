@@ -1482,7 +1482,7 @@ export function buildServeEntrypointCommand(
   command: ReadonlyArray<string>,
   multilineEnvScriptPath?: string,
 ) {
-  // `exec` so edge-runtime is PID 1; sourced env survives. Stop timing is outside Go parity (ADR 0016).
+  // `exec` so edge-runtime is PID 1; sourced env survives into the replacement process.
   return `${multilineEnvScriptPath === undefined ? "" : `. ${multilineEnvScriptPath}\n`}exec ${command.join(" ")}
 `;
 }

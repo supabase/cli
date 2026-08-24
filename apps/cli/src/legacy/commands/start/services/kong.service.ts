@@ -38,7 +38,7 @@
  * see {@link LegacyKongContainerSpecInput.tlsCertContent}'s doc comment.
  * {@link legacyBuildKongEntrypointScript} reproduces the remaining
  * `custom_nginx.template` heredoc; the final command is `exec`'d so Kong
- * is PID 1 (stop timing is outside Go parity, ADR 0016).
+ * is PID 1 and `docker stop` reaches it directly.
  *
  * Kong mints no JWTs of its own: `BearerToken`/`QueryToken` are Kong
  * `request-transformer`/lua expression STRINGS built from the four
@@ -172,7 +172,6 @@ export function legacyBuildKongEmailTemplateBind(
   return `${hostPath}:${dockerPath}:rw`;
 }
 
-// `exec` so Kong is PID 1; stop timing is outside Go parity (ADR 0016).
 const LEGACY_KONG_ENTRYPOINT_HEAD =
   "cat <<'EOF' > /home/kong/custom_nginx.template && \\\n" +
   "exec ./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template\n";
