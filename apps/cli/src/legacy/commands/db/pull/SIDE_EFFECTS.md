@@ -92,7 +92,11 @@ Container lifecycle is identical to the uncached path except a cold run drops `-
 on release). A cache anomaly never fails the command — a warm-path anomaly cold-provisions instead,
 a cold export failure only warns and leaves the run uncached (one exception: a shadow that
 fails to come back up after the snapshot fails the run rather than reporting a false success). See `shared/db-bootstrap/
-shadow-cache.ts`'s doc comment for the mechanics. Each pooler-retry attempt acquires/releases its
+shadow-cache.ts`'s doc comment for the mechanics.
+Session-semantics caveat on the cached paths: migrations run on a session opened after the
+platform baseline, so role-level defaults installed by `supabase/roles.sql`
+(`ALTER ROLE … SET …`) apply to migration execution; with the cache off, the single-session flow
+runs migrations before those defaults take effect. Each pooler-retry attempt acquires/releases its
 own shadow (a warm hit restores the same tar each time); `--declarative`'s bare shadow runs no
 baseline, so it is never cached.
 

@@ -159,6 +159,10 @@ except a cold run drops `--rm` (still removed on release). A cache anomaly never
 command — a warm-path anomaly cold-provisions instead, a cold export failure only warns and
 leaves the run uncached (one exception: a shadow that fails to come back up after the snapshot
 fails the run rather than reporting a false success). See `shared/db-bootstrap/shadow-cache.ts`.
+Session-semantics caveat on the cached paths: migrations run on a session opened after the
+platform baseline, so role-level defaults installed by `supabase/roles.sql`
+(`ALTER ROLE … SET …`) apply to migration execution; with the cache off, the single-session flow
+runs migrations before those defaults take effect.
 
 Under the legacy opt-out, every catalog-miss shadow (migrations, baseline, declarative) goes
 through `exportViaShadowCatalog` (`legacy-pgdelta.cache.ts`), the same

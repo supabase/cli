@@ -23,6 +23,7 @@ import {
   type LegacyShadowCacheOpts,
 } from "../../../shared/db-bootstrap/shadow-cache.ts";
 import {
+  legacyMemoizeSuccess,
   legacyMigrateNextShadowDatabase,
   legacyRemoveShadowDatabase,
   legacyShadowConnConfig,
@@ -176,7 +177,15 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           request.toml.remoteOverrideKeys,
         );
         const image = yield* localInputs.resolvePostgresImage;
-        return { localInputs, image } satisfies NativeShadowBase;
+        // One JWKS memo shared by every input built from this base: `provisionPlan`'s two
+        // shadows must hash identical JWKS bytes or their snapshot keys can never match.
+        return {
+          localInputs: {
+            ...localInputs,
+            setup: { ...localInputs.setup, jwks: legacyMemoizeSuccess(localInputs.setup.jwks) },
+          },
+          image,
+        } satisfies NativeShadowBase;
       }).pipe(Effect.provide(runtime));
 
     const buildNativeInput = (

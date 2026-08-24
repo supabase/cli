@@ -88,32 +88,6 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
 
 ## Behavioral divergences from the Go reference
 
-- `db diff`/`db pull`/`db schema declarative sync`/`db schema declarative generate` shadow
-  baseline cache (#6184): the shadow
-  database's platform baseline is cached as a PGDATA snapshot under
-  `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar` (~90MB; `SUPABASE_HOME` overrides
-  the root; LRU keep-3 + 2-day mtime TTL, shared across worktrees with the same settings) and
-  restored into a
-  fresh container on later runs, cutting shadow provisioning from ~15s to a few seconds. The key
-  includes the effective Webhooks/`pg_net` policy (legacy migrate forces enabled; next migrate
-  follows config; next declarative forces disabled). Covers
-  migra/`db pull` via `legacyWithShadowDatabase`, the bundled pg-delta next sync/diff
-  shadows via `legacyAcquireShadowDatabase`, and `generate`/`sync`/`diff`'s legacy pg-delta
-  opt-out (`SUPABASE_USE_PG_DELTA_NEXT=false`), whose catalog exports provision a shadow through
-  the same acquire on a catalog cache miss (ephemeral host ports are not part of the cache
-  key — they are not baked into PGDATA). TS-only, off unless
-  `SUPABASE_SHADOW_CACHE` is set (ambient env or project dotenv); `sync --no-cache` bypasses it
-  per-invocation. OrioleDB clusters and PG <= 14 are cache-ineligible (external S3 state and mid-session
-  role-default mutation respectively — see `shadow-cache.ts`). Known session-semantics caveat on
-  the cached paths: migrations run on a session opened after the baseline, so role-level defaults
-  a user's `roles.sql` installs (`ALTER ROLE … SET …`) apply to migrations; opting out restores
-  the previous single-session flow, where migrations ran before those defaults took effect.
-- Postgres container entrypoint (`postgres.service.ts`): the init script `exec`s
-  `docker-entrypoint.sh` so Postgres is PID 1. Go leaves `sh` as PID 1, so SIGTERM is never
-  forwarded and every `docker stop` burns the full 10s grace period. Applies to
-  `supabase start`, `db start`, `--from-backup`, and shadow containers (the last is why the
-  shadow baseline cache's cold export can stop/start in ~1s). Timing is not part of the
-  Go-parity surface (ADR 0016).
 - `db schema declarative generate`/`sync` default declarative directory is `supabase/schemas`;
   the old Go CLI reference (pre-`7b469f5b3`) used `supabase/database`. The move aligns the
   default with the product-wide declarative-schemas convention. To keep the upgrade visible,

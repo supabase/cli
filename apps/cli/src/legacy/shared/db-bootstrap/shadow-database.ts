@@ -420,7 +420,7 @@ export interface LegacyShadowSetupInput<E> extends LegacyShadowConnectionInput {
  * function) and not concurrency-guarded: the two consumers of the one field this wraps (`jwks` —
  * see its construction inside that function) evaluate sequentially on the same fiber.
  */
-function legacyMemoizeSuccess<A, E>(effect: Effect.Effect<A, E>): Effect.Effect<A, E> {
+export function legacyMemoizeSuccess<A, E>(effect: Effect.Effect<A, E>): Effect.Effect<A, E> {
   let succeeded: Effect.Effect<A, E> | undefined;
   return Effect.suspend(
     () =>

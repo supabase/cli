@@ -244,7 +244,11 @@ Container lifecycle is identical to the uncached path except a cold run drops `-
 on release). A cache anomaly never fails the command — a warm-path anomaly cold-provisions instead,
 a cold export failure only warns and leaves the run uncached (one exception: a shadow that
 fails to come back up after the snapshot fails the run rather than reporting a false success). See `shared/db-bootstrap/
-shadow-cache.ts`'s doc comment for the mechanics. `--use-pgadmin` is NOT cached — its shadow keeps
+shadow-cache.ts`'s doc comment for the mechanics.
+Session-semantics caveat on the cached paths: migrations run on a session opened after the
+platform baseline, so role-level defaults installed by `supabase/roles.sql`
+(`ALTER ROLE … SET …`) apply to migration execution; with the cache off, the single-session flow
+runs migrations before those defaults take effect. `--use-pgadmin` is NOT cached — its shadow keeps
 the plain create/remove lifecycle.
 
 ### `--use-pgadmin` parity quirks and deliberate divergence (CLI-1968)

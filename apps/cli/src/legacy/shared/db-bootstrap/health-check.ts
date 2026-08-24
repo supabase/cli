@@ -498,28 +498,6 @@ export function legacyWaitForShadowReady(
   opts: LegacyWaitForShadowReadyOptions = {},
 ): Effect.Effect<void, LegacyHealthCheckTimeoutError, LegacyDbConnection> {
   const timeoutSeconds = opts.timeoutSeconds ?? LEGACY_HEALTH_CHECK_TIMEOUT_SECONDS;
-  let lastFailure: LegacyShadowReadyFailure | undefined;
-
-  const probe: Effect.Effect<void, LegacyShadowReadyFailure, LegacyDbConnection> = Effect.gen(
-    function* () {
-      const state = yield* legacyInspectContainerState(spawner, containerId).pipe(
-        Effect.mapError((cause) => legacyShadowNotReady(cause.message)),
-      );
-      if (!state.running) {
-        return yield* Effect.fail({
-          reason: `container is not running: ${state.status}`,
-          fatal: true,
-        });
-      }
-      yield* legacyProbeShadowConnect(connConfig);
-    },
-  ).pipe(
-    Effect.tapError((failure) =>
-      Effect.sync(() => {
-        lastFailure = failure;
-      }),
-    ),
-  );
 
   // Twice the second-counted budget: 500ms spacing would otherwise exhaust
   // `timeoutSeconds` retries in half the wall time of the old 1s poll.
@@ -529,35 +507,62 @@ export function legacyWaitForShadowReady(
   ]);
   const boundSeconds = timeoutSeconds + LEGACY_SHADOW_READY_CONNECT_TIMEOUT_SECONDS;
 
-  return probe.pipe(
-    Effect.retry({ schedule, while: (failure) => !failure.fatal }),
-    Effect.timeoutOrElse({
-      duration: Duration.seconds(boundSeconds),
-      orElse: () =>
-        Effect.fail(
-          lastFailure ??
-            legacyShadowNotReady(`not ready after ${boundSeconds}s: connection attempt hung`),
-        ),
-    }),
-    Effect.catch((failure) =>
-      Effect.gen(function* () {
-        const scan = yield* legacyDumpContainerLogs(spawner, containerId);
-        const suggestion =
-          scan.found && opts.image !== undefined
-            ? legacyExecFormatRecoveryHint(
-                [containerId],
-                new Map([[containerId, opts.image]]),
-                scan.runtime ?? "docker",
-              )
-            : undefined;
-        return yield* Effect.fail(
-          new LegacyHealthCheckTimeoutError({
-            message: `${containerId} ${failure.reason}`,
-            unhealthy: [{ containerId, reason: failure.reason }],
-            ...(suggestion === undefined ? {} : { suggestion }),
-          }),
+  // Per-evaluation state: the retry rounds within one evaluation share the latest failure for
+  // the timeout diagnostic, while re-evaluating the returned Effect starts from a fresh slot.
+  return Effect.suspend(() => {
+    let lastFailure: LegacyShadowReadyFailure | undefined;
+
+    const probe: Effect.Effect<void, LegacyShadowReadyFailure, LegacyDbConnection> = Effect.gen(
+      function* () {
+        const state = yield* legacyInspectContainerState(spawner, containerId).pipe(
+          Effect.mapError((cause) => legacyShadowNotReady(cause.message)),
         );
+        if (!state.running) {
+          return yield* Effect.fail({
+            reason: `container is not running: ${state.status}`,
+            fatal: true,
+          });
+        }
+        yield* legacyProbeShadowConnect(connConfig);
+      },
+    ).pipe(
+      Effect.tapError((failure) =>
+        Effect.sync(() => {
+          lastFailure = failure;
+        }),
+      ),
+    );
+
+    return probe.pipe(
+      Effect.retry({ schedule, while: (failure) => !failure.fatal }),
+      Effect.timeoutOrElse({
+        duration: Duration.seconds(boundSeconds),
+        orElse: () =>
+          Effect.fail(
+            lastFailure ??
+              legacyShadowNotReady(`not ready after ${boundSeconds}s: connection attempt hung`),
+          ),
       }),
-    ),
-  );
+      Effect.catch((failure) =>
+        Effect.gen(function* () {
+          const scan = yield* legacyDumpContainerLogs(spawner, containerId);
+          const suggestion =
+            scan.found && opts.image !== undefined
+              ? legacyExecFormatRecoveryHint(
+                  [containerId],
+                  new Map([[containerId, opts.image]]),
+                  scan.runtime ?? "docker",
+                )
+              : undefined;
+          return yield* Effect.fail(
+            new LegacyHealthCheckTimeoutError({
+              message: `${containerId} ${failure.reason}`,
+              unhealthy: [{ containerId, reason: failure.reason }],
+              ...(suggestion === undefined ? {} : { suggestion }),
+            }),
+          );
+        }),
+      ),
+    );
+  });
 }

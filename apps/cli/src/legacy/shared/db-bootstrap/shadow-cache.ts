@@ -8,7 +8,7 @@
 import { createHash } from "node:crypto";
 
 import type { ProjectConfig } from "@supabase/config";
-import { Clock, Effect, Option, Result, type FileSystem } from "effect";
+import { Clock, Effect, Option, Predicate, Result, type FileSystem } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import { legacyViperEnvBoolWithProjectFallback } from "../../../shared/legacy/legacy-viper-env.ts";
@@ -321,7 +321,9 @@ const legacyResolveShadowCacheKeyInputs = <E>(
       .readFileString(rolesPath)
       .pipe(
         Effect.catchTag("PlatformError", (error) =>
-          error.reason._tag === "NotFound" ? Effect.succeed("") : Effect.succeed(undefined),
+          Predicate.isTagged(error.reason, "NotFound")
+            ? Effect.succeed("")
+            : Effect.succeed(undefined),
         ),
       );
     if (rolesSql === undefined) return Option.none();
@@ -637,10 +639,28 @@ const legacyExportShadowBaseline = <E>(
   key: string,
   tarPath: string,
   containerId: string,
+  keyedRolesSql: string,
 ): Effect.Effect<void, LegacyShadowDbError, Output | LegacyDbConnection> =>
   Effect.gen(function* () {
     const exported = yield* Effect.result(
       Effect.gen(function* () {
+        // The key hashed roles.sql at acquire, but `legacySetupDatabase` rereads the file while
+        // provisioning the baseline. An edit in that window would publish a tar whose key
+        // describes stale bytes — skip publishing instead (run stays uncached).
+        const rolesSqlNow = yield* input.fs
+          .readFileString(input.path.join(input.workdir, "supabase", "roles.sql"))
+          .pipe(
+            Effect.catchTag("PlatformError", (error) =>
+              Predicate.isTagged(error.reason, "NotFound")
+                ? Effect.succeed("")
+                : Effect.succeed(undefined),
+            ),
+          );
+        if (rolesSqlNow !== keyedRolesSql) {
+          return yield* Effect.fail(
+            legacyShadowCacheUnavailable("supabase/roles.sql changed during provisioning"),
+          );
+        }
         yield* legacyShadowContainerVerb(spawner, "stop", containerId);
         yield* legacyStampPgDataBaselineMarker(spawner, containerId, key).pipe(
           Effect.mapError((cause: LegacyPgDataSnapshotUnavailable) =>
@@ -730,6 +750,7 @@ const legacyColdCachedShadow = <E>(
   input: LegacyShadowSetupInput<E>,
   key: string,
   tarPath: string,
+  keyedRolesSql: string,
 ): Effect.Effect<LegacyShadowAcquiredHandle, LegacyShadowDbError> =>
   legacyCreateShadowDatabase(spawner, { ...input, autoRemove: false }).pipe(
     Effect.map(({ containerId }) => ({
@@ -737,7 +758,14 @@ const legacyColdCachedShadow = <E>(
       snapshotKey: key,
       baselinePresent: false,
       snapshotRequired: true,
-      snapshotBaseline: legacyExportShadowBaseline(spawner, input, key, tarPath, containerId),
+      snapshotBaseline: legacyExportShadowBaseline(
+        spawner,
+        input,
+        key,
+        tarPath,
+        containerId,
+        keyedRolesSql,
+      ),
     })),
   );
 
@@ -894,7 +922,8 @@ export const legacyAcquireShadowDatabase = <E>(
     );
 
     const cached = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
-    if (!cached) return yield* legacyColdCachedShadow(spawner, input, key, tarPath);
+    if (!cached)
+      return yield* legacyColdCachedShadow(spawner, input, key, tarPath, keyInputs.value.rolesSql);
 
     // Warm hits refresh mtime and sweep leftovers the cold path would otherwise never see again.
     yield* legacyTouchShadowBaselineTar(input.fs, tarPath);
@@ -916,7 +945,13 @@ export const legacyAcquireShadowDatabase = <E>(
           if (cause.tarSuspect === true) {
             yield* legacyForgetShadowBaselineTar(input.fs, tarPath);
           }
-          return yield* legacyColdCachedShadow(spawner, input, key, tarPath);
+          return yield* legacyColdCachedShadow(
+            spawner,
+            input,
+            key,
+            tarPath,
+            keyInputs.value.rolesSql,
+          );
         }),
       ),
     );
