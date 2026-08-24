@@ -1,3 +1,4 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- The supervisor owns the native Node IPC process boundary.
 import { fork, type ChildProcess } from "node:child_process";
 import {
   Cause,
@@ -485,7 +486,9 @@ const startDaemon = (input: {
     const appLayer =
       input.platform.runtimeLayer === undefined
         ? foregroundLayer(input.config, input.platform.platformFactory, input.lease)
-        : yield* input.platform.runtimeLayer({ config: input.config, lease: input.lease });
+        : // Platform-owned runtime layers preserve their native startup failures.
+          // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- Runtime implementations are foreign platform boundaries.
+          yield* input.platform.runtimeLayer({ config: input.config, lease: input.lease });
     const appServices = yield* Layer.buildWithScope(appLayer, input.scope);
     const localStack = Context.get(appServices, Stack);
     const localLifecycle = Context.get(appServices, LocalStackLifecycle);
@@ -516,12 +519,12 @@ const runManaged = (
     yield* validateManagedStackName(input.stackName);
     const configInput = toDaemonConfig(input.config);
     if (configInput === undefined) {
-      return yield* Effect.fail(
-        new SupervisorStartError({ message: "Supervisor config is missing cwd" }),
-      );
+      return yield* new SupervisorStartError({ message: "Supervisor config is missing cwd" });
     }
     const supervisorLifecycle = yield* SupervisorLifecycle.make({
       ownershipId: input.stackId,
+      // Native session ids fence ownership across detached supervisor processes.
+      // oxlint-disable-next-line effecttsgo/crypto-random-uuid-in-effect -- This is a process-boundary identifier, not domain randomness.
       ownerSessionId: crypto.randomUUID(),
       daemonCliVersion: input.cliVersion,
     });
@@ -535,7 +538,7 @@ const runManaged = (
             new StackBuildError({ detail: "Managed launch updates require an owned supervisor" }),
           );
         }
-        return Schema.decodeUnknownEffect(managedStackLaunchUpdateSchema)(launch).pipe(
+        return Schema.decodeEffect(managedStackLaunchUpdateSchema)(launch).pipe(
           Effect.mapError((cause) => new StackBuildError({ detail: causeMessage(cause) })),
           Effect.flatMap((decoded) =>
             currentManager.updateLaunch(currentOwner, { stackId, launch: decoded }),
@@ -590,6 +593,7 @@ const runManaged = (
     const discoveryResult = yield* isControlOwnership(initialAcquisition)
       ? Effect.raceFirst(
           discovered,
+          // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- Awaiting lifecycle shutdown preserves teardown Causes.
           supervisorLifecycle.awaitShutdown.pipe(Effect.as({ _tag: "stopped" as const })),
         )
       : discovered;
@@ -599,9 +603,9 @@ const runManaged = (
     }
     const stackId = deriveStackId(discoveryResult.discovery.identity, input.stackName);
     if (stackId !== input.stackId) {
-      return yield* Effect.fail(
-        new SupervisorStartError({ message: "Workspace identity changed before supervisor start" }),
-      );
+      return yield* new SupervisorStartError({
+        message: "Workspace identity changed before supervisor start",
+      });
     }
     const requestedMode = configInput.mode ?? input.launch?.mode;
     let effectiveConfigInput = configInput;
@@ -614,11 +618,9 @@ const runManaged = (
       requestedMode !== undefined &&
       persistedRuntime.mode !== requestedMode
     ) {
-      return yield* Effect.fail(
-        new SupervisorStartError({
-          message: `Stack runtime is already ${persistedRuntime.mode}; requested ${requestedMode}. Delete and recreate the stack (removing its managed data) before changing execution mode.`,
-        }),
-      );
+      return yield* new SupervisorStartError({
+        message: `Stack runtime is already ${persistedRuntime.mode}; requested ${requestedMode}. Delete and recreate the stack (removing its managed data) before changing execution mode.`,
+      });
     }
     let attachedOwnerWasStopping = false;
     const initiallyAttached = isControlAttached(initialAcquisition);
@@ -679,15 +681,13 @@ const runManaged = (
       attachedOwnerWasStopping = attachedStatus.state === "stopping";
       if (attachedStatus.daemonCliVersion !== input.cliVersion) {
         if (input.type !== "upgrade-restart") {
-          return yield* Effect.fail(
-            new DaemonUpgradeRequired({
-              stackId,
-              oldCliVersion: attachedStatus.daemonCliVersion,
-              newCliVersion: input.cliVersion,
-              state: attachedStatus.state,
-              ready: attachedStatus.ready,
-            }),
-          );
+          return yield* new DaemonUpgradeRequired({
+            stackId,
+            oldCliVersion: attachedStatus.daemonCliVersion,
+            newCliVersion: input.cliVersion,
+            state: attachedStatus.state,
+            ready: attachedStatus.ready,
+          });
         }
         upgradeRestarting = true;
         const restart = yield* restartIncompatibleOwner({
@@ -698,10 +698,9 @@ const runManaged = (
           manager,
           controlTransport,
           resolutionTimeout: platform.resolutionTimeout ?? SUPERVISOR_STARTUP_TIMEOUT,
-          reacquire: () =>
-            reacquireAfterDeath().pipe(
-              Effect.catchTag("SupervisorOwnerReacquirePending", () => Effect.never),
-            ),
+          reacquire: reacquireAfterDeath().pipe(
+            Effect.catchTag("SupervisorOwnerReacquirePending", () => Effect.never),
+          ),
         });
         oldSessionEnded = restart.oldSessionEnded;
         attachedOwnerWasStopping = restart.attachedOwnerWasStopping;
@@ -729,11 +728,9 @@ const runManaged = (
       const revalidated = yield* manager.ensureWorkspace(input.workspacePath);
       const revalidatedStackId = deriveStackId(revalidated.identity, input.stackName);
       if (revalidatedStackId !== stackId) {
-        return yield* Effect.fail(
-          new SupervisorStartError({
-            message: "Workspace identity changed before supervisor attach",
-          }),
-        );
+        return yield* new SupervisorStartError({
+          message: "Workspace identity changed before supervisor attach",
+        });
       }
     }
     if (isControlAttached(acquisition)) {
@@ -750,11 +747,9 @@ const runManaged = (
         (attachedPersistedRuntime === undefined || attachedPersistedRuntime.mode !== requestedMode)
       ) {
         const observedMode = attachedPersistedRuntime?.mode ?? "unknown";
-        return yield* Effect.fail(
-          new SupervisorStartError({
-            message: `Stack runtime is already ${observedMode}; requested ${requestedMode}. Delete and recreate the stack (removing its managed data) before changing execution mode.`,
-          }),
-        );
+        return yield* new SupervisorStartError({
+          message: `Stack runtime is already ${observedMode}; requested ${requestedMode}. Delete and recreate the stack (removing its managed data) before changing execution mode.`,
+        });
       }
       const attachedStatus = yield* acquisition.ownerStatus;
       yield* sendMessage({
@@ -776,12 +771,10 @@ const runManaged = (
     if (initiallyAttached && !attachedOwnerWasStopping) {
       if (ownedExisting?.lifecycle === "stopped" && ownedExisting.stopIntent === "explicit") {
         yield* ownership.close;
-        return yield* Effect.fail(
-          new SupervisorStartError({
-            message: OWNER_STOPPED_AFTER_TAKEOVER,
-            reason: "owner-stopped",
-          }),
-        );
+        return yield* new SupervisorStartError({
+          message: OWNER_STOPPED_AFTER_TAKEOVER,
+          reason: "owner-stopped",
+        });
       }
     }
     const ownedPersistedRuntime =
@@ -791,11 +784,9 @@ const runManaged = (
       requestedMode !== undefined &&
       ownedPersistedRuntime.mode !== requestedMode
     ) {
-      return yield* Effect.fail(
-        new SupervisorStartError({
-          message: `Stack runtime is already ${ownedPersistedRuntime.mode}; requested ${requestedMode}. Delete and recreate the stack (removing its managed data) before changing execution mode.`,
-        }),
-      );
+      return yield* new SupervisorStartError({
+        message: `Stack runtime is already ${ownedPersistedRuntime.mode}; requested ${requestedMode}. Delete and recreate the stack (removing its managed data) before changing execution mode.`,
+      });
     }
     const runtime =
       ownedPersistedRuntime === undefined
@@ -825,6 +816,8 @@ const runManaged = (
       runtime.mode === "native"
         ? { ...launchInput, mode: "native" }
         : { ...launchInput, mode: "docker", containerRuntime: runtime.containerRuntime };
+    // The startup transaction includes the platform runtime layer and preserves its Cause.
+    // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- Runtime startup failures cross a platform-owned boundary.
     const startup = Effect.gen(function* () {
       if (
         ownedExisting !== undefined &&
@@ -870,6 +863,7 @@ const runManaged = (
         stackId: started.stack.id,
         lifecycle: "starting",
       });
+      // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- The platform runtime layer preserves its native startup Cause.
       const built = yield* startDaemon({
         config,
         lease: started.lease,
@@ -886,8 +880,9 @@ const runManaged = (
         yield* Effect.forkIn(
           built.localLifecycle.awaitDisposed.pipe(
             Effect.andThen(lifecycle.fail("Local stack disposed unexpectedly")),
+            // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- Lifecycle shutdown preserves the runtime's exact Cause.
             Effect.andThen(lifecycle.requestShutdown("dispose")),
-            Effect.catchCause(() => Effect.void),
+            Effect.ignoreCause,
           ),
           scope,
         );
@@ -911,8 +906,11 @@ const runManaged = (
       process.disconnect?.();
       return { started, built };
     });
+    // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- The startup transaction preserves platform and lifecycle Causes.
     const startupResult = yield* Effect.raceFirst(
+      // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- The startup transaction preserves platform and lifecycle Causes.
       startup.pipe(Effect.map((result) => ({ _tag: "started" as const, ...result }))),
+      // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- Awaiting lifecycle shutdown preserves teardown Causes.
       (lifecycle?.awaitShutdown ?? Effect.never).pipe(Effect.as({ _tag: "stopped" as const })),
     );
     if (Predicate.isTagged(startupResult, "stopped")) {
@@ -921,9 +919,11 @@ const runManaged = (
     }
     const shutdown = yield* Effect.raceFirst(
       waitForSignal().pipe(Effect.as("signal" as const)),
+      // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- Awaiting lifecycle shutdown preserves teardown Causes.
       (lifecycle?.awaitShutdown ?? Effect.never).pipe(Effect.as("shutdown" as const)),
     );
     if (lifecycle !== undefined && shutdown === "signal") {
+      // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- Lifecycle shutdown preserves the runtime's exact Cause.
       yield* lifecycle.requestShutdown("signal");
     }
   }).pipe(
@@ -931,6 +931,7 @@ const runManaged = (
       const typed = Cause.findError(cause);
       const failure = Result.isSuccess(typed) ? typed.success : undefined;
       if (failure instanceof SupervisorStartError && failure.reason === "owner-stopped") {
+        // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- Preserve the original startup Cause unchanged.
         return Effect.failCause(cause);
       }
       const canMapRestart =
@@ -940,16 +941,17 @@ const runManaged = (
         !Cause.hasDies(cause) &&
         !Cause.hasInterrupts(cause);
       const failureDetail = failure === undefined ? causeMessage(cause) : causeMessage(failure);
+      // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- Lifecycle finalization preserves exact teardown Causes.
       const finalizeFailure =
         lifecycle === undefined
           ? Effect.void
-          : lifecycle
-              .setClose(owner?.close ?? Effect.void)
-              .pipe(
-                Effect.andThen(lifecycle.fail(failureDetail)),
-                Effect.andThen(lifecycle.requestShutdown("startup-failure")),
-              );
+          : lifecycle.setClose(owner?.close ?? Effect.void).pipe(
+              Effect.andThen(lifecycle.fail(failureDetail)),
+              // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- Lifecycle shutdown preserves the runtime's exact Cause.
+              Effect.andThen(lifecycle.requestShutdown("startup-failure")),
+            );
       if (!claimedStack || owner === undefined || managerService === undefined) {
+        // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- Preserve the original startup Cause after finalization.
         return finalizeFailure.pipe(
           Effect.andThen(
             canMapRestart
@@ -960,7 +962,8 @@ const runManaged = (
                     detail: failureDetail,
                   }),
                 )
-              : Effect.failCause(cause),
+              : // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- Preserve the original startup Cause after finalization.
+                Effect.failCause(cause),
           ),
         );
       }
@@ -969,8 +972,9 @@ const runManaged = (
           stackId: owner.ownershipId,
           lifecycle: "failed",
         })
-        .pipe(Effect.andThen(finalizeFailure))
         .pipe(
+          // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- Finalization preserves lifecycle teardown Causes.
+          Effect.andThen(finalizeFailure),
           Effect.matchCauseEffect({
             onFailure: () =>
               canMapRestart
@@ -981,7 +985,8 @@ const runManaged = (
                       detail: causeMessage(failure),
                     }),
                   )
-                : Effect.failCause(cause),
+                : // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- Preserve the original startup Cause after finalization.
+                  Effect.failCause(cause),
             onSuccess: () =>
               canMapRestart
                 ? Effect.fail(
@@ -991,7 +996,8 @@ const runManaged = (
                       detail: causeMessage(failure),
                     }),
                   )
-                : Effect.failCause(cause),
+                : // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- Preserve the original startup Cause after finalization.
+                  Effect.failCause(cause),
           }),
         );
     }),
@@ -1003,7 +1009,7 @@ export const runSupervisor = (
   platform: SupervisorPlatform,
 ): Effect.Effect<
   void,
-  SupervisorStartError | unknown,
+  unknown,
   | ControlTransport
   | import("effect").FileSystem.FileSystem
   | import("effect").Path.Path
@@ -1013,8 +1019,10 @@ export const runSupervisor = (
     Effect.gen(function* () {
       const scope = yield* Effect.scope;
       const input = yield* receiveStartMessage();
+      // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- The child process boundary forwards the supervisor's exact Cause.
       yield* Effect.matchCauseEffect(runManaged(input, platform, scope), {
         onFailure: (cause) =>
+          // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- The child process boundary forwards the exact supervisor Cause.
           sendMessage(supervisorErrorMessage(cause)).pipe(Effect.andThen(Effect.failCause(cause))),
         onSuccess: Effect.succeed,
       });
@@ -1177,15 +1185,13 @@ export const supervisorLayer = (
       yield* sendStart(child, input);
       const response = yield* Fiber.join(responseFiber);
       if (response.owner.daemonCliVersion !== input.cliVersion) {
-        return yield* Effect.fail(
-          new DaemonUpgradeRequired({
-            stackId: input.stackId,
-            oldCliVersion: response.owner.daemonCliVersion,
-            newCliVersion: input.cliVersion,
-            state: response.owner.state,
-            ready: response.owner.ready,
-          }),
-        );
+        return yield* new DaemonUpgradeRequired({
+          stackId: input.stackId,
+          oldCliVersion: response.owner.daemonCliVersion,
+          newCliVersion: input.cliVersion,
+          state: response.owner.state,
+          ready: response.owner.ready,
+        });
       }
       child.unref();
       detached = true;

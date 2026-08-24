@@ -2,7 +2,9 @@ import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
 import { BunFileSystem, BunServices } from "@effect/platform-bun";
 import { Deferred, Effect, Layer, Stream, Duration } from "effect";
 import { createServer, type Server } from "node:net";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- The subprocess fixture owns native filesystem assertions at its test boundary.
 import { existsSync, writeFileSync } from "node:fs";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- The subprocess fixture needs native path normalization for its file watcher.
 import { dirname } from "node:path";
 import {
   runSupervisor,
@@ -12,7 +14,7 @@ import {
 import { LocalStackLifecycle } from "../../src/LocalStack.ts";
 import { Stack } from "../../src/Stack.ts";
 import { validateResolvedConfig } from "../../src/StackBuilder.ts";
-import { StackReadinessError } from "../../src/errors.ts";
+import { StackBuildError, StackReadinessError } from "../../src/errors.ts";
 import { ControlTransport } from "../../src/managed/control.ts";
 import { gitConfigStoreLayer } from "../../src/managed/git.ts";
 import { ManagedStackManager, managedStackManagerLayer } from "../../src/managed/manager.ts";
@@ -28,6 +30,10 @@ import { PORT_FIELDS } from "../../src/PortCatalog.ts";
 import type { PortLease } from "../../src/PortAllocator.ts";
 import type { ResolvedDaemonConfig } from "../../src/StackConfig.ts";
 import { watchDirectoryWithRetry } from "./file-watch.ts";
+
+// The child process receives its test configuration through its inherited environment.
+// oxlint-disable-next-line effecttsgo/process-env -- Native subprocess test configuration boundary.
+const testEnvironment = process.env;
 
 type TestMode =
   | "bind-all"
@@ -72,7 +78,7 @@ const waitForFile = (path: string): Effect.Effect<void> =>
   );
 
 const testMode = (): TestMode => {
-  const value = process.env["SUPABASE_STACK_TEST_RUNTIME_MODE"];
+  const value = testEnvironment["SUPABASE_STACK_TEST_RUNTIME_MODE"];
   if (value === "fail-after-bind") return value;
   if (value === "hold-reservations") return value;
   if (value === "hold-start") return value;
@@ -123,7 +129,7 @@ const testStackLayer = (
     serviceEndpoints: {},
   };
   const waitForStopRelease = (): Effect.Effect<void> => {
-    const path = process.env["SUPABASE_STACK_TEST_STOP_RELEASE_FILE"];
+    const path = testEnvironment["SUPABASE_STACK_TEST_STOP_RELEASE_FILE"];
     if (path === undefined) return Effect.never;
     return waitForFile(path);
   };
@@ -133,7 +139,7 @@ const testStackLayer = (
     stop: () =>
       mode === "hold-stop"
         ? Effect.gen(function* () {
-            const stageFile = process.env["SUPABASE_STACK_TEST_STOP_BEGAN_FILE"];
+            const stageFile = testEnvironment["SUPABASE_STACK_TEST_STOP_BEGAN_FILE"];
             if (stageFile !== undefined) {
               yield* Effect.sync(() => writeFileSync(stageFile, "began"));
             }
@@ -180,7 +186,7 @@ const testRuntime = ({
   readonly lease: PortLease;
 }): Effect.Effect<
   Layer.Layer<Stack | LocalStackLifecycle>,
-  unknown,
+  StackBuildError | SupervisorStartError,
   import("effect").Scope.Scope
 > => {
   const mode = testMode();
@@ -188,7 +194,7 @@ const testRuntime = ({
     const disposed = Deferred.makeUnsafe<void>();
     yield* validateResolvedConfig(config);
     if (mode === "hold-start") {
-      const releaseFile = process.env["SUPABASE_STACK_TEST_START_RELEASE_FILE"];
+      const releaseFile = testEnvironment["SUPABASE_STACK_TEST_START_RELEASE_FILE"];
       yield* releaseFile === undefined ? Effect.never : waitForFile(releaseFile);
     }
     const servers: Array<Server> = [];
@@ -202,9 +208,9 @@ const testRuntime = ({
     }
     yield* Effect.addFinalizer(() => closeTestPorts(servers));
     if (mode === "fail-after-bind") {
-      return yield* Effect.fail(
-        new SupervisorStartError({ message: "Supervisor test runtime failed after binding" }),
-      );
+      return yield* new SupervisorStartError({
+        message: "Supervisor test runtime failed after binding",
+      });
     }
     return Layer.mergeAll(
       testStackLayer(config, mode, disposed),
@@ -227,8 +233,8 @@ const observeAttachedBeforeReady = (value: unknown): Effect.Effect<void> => {
   ) {
     return Effect.void;
   }
-  const readyFile = process.env["SUPABASE_STACK_TEST_ATTACHED_READY_FILE"];
-  const releaseFile = process.env["SUPABASE_STACK_TEST_ATTACHED_RELEASE_FILE"];
+  const readyFile = testEnvironment["SUPABASE_STACK_TEST_ATTACHED_READY_FILE"];
+  const releaseFile = testEnvironment["SUPABASE_STACK_TEST_ATTACHED_RELEASE_FILE"];
   if (readyFile === undefined || existsSync(readyFile)) return Effect.void;
   return Effect.sync(() => writeFileSync(readyFile, "ready")).pipe(
     Effect.andThen(releaseFile === undefined ? Effect.void : waitForFile(releaseFile)),
@@ -236,14 +242,14 @@ const observeAttachedBeforeReady = (value: unknown): Effect.Effect<void> => {
 };
 
 const resolutionTimeout = (): Duration.Input => {
-  const milliseconds = Number(process.env["SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS"]);
+  const milliseconds = Number(testEnvironment["SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS"]);
   return Number.isFinite(milliseconds) && milliseconds > 0
     ? `${milliseconds} millis`
     : "30 seconds";
 };
 
 const testPlatform = (): "node" | "bun" =>
-  process.env["SUPABASE_STACK_TEST_PLATFORM"] === "bun" ? "bun" : "node";
+  testEnvironment["SUPABASE_STACK_TEST_PLATFORM"] === "bun" ? "bun" : "node";
 
 const managerLayer = (stateRoot: string, platform: "node" | "bun") =>
   managedStackManagerLayer({ stateRoot, preferCatalogDefaults: false }).pipe(
@@ -258,8 +264,8 @@ const managerLayer = (stateRoot: string, platform: "node" | "bun") =>
           ),
     ),
     (base) => {
-      const readyFile = process.env["SUPABASE_STACK_TEST_ENSURE_READY_FILE"];
-      const releaseFile = process.env["SUPABASE_STACK_TEST_ENSURE_RELEASE_FILE"];
+      const readyFile = testEnvironment["SUPABASE_STACK_TEST_ENSURE_READY_FILE"];
+      const releaseFile = testEnvironment["SUPABASE_STACK_TEST_ENSURE_RELEASE_FILE"];
       return Layer.effect(
         ManagedStackManager,
         ManagedStackManager.pipe(
@@ -268,9 +274,9 @@ const managerLayer = (stateRoot: string, platform: "node" | "bun") =>
             startStack: (input: Parameters<typeof manager.startStack>[0]) =>
               manager.startStack(input).pipe(
                 Effect.tap(() => {
-                  const markerFile = process.env["SUPABASE_STACK_TEST_MANAGED_STARTED_FILE"];
+                  const markerFile = testEnvironment["SUPABASE_STACK_TEST_MANAGED_STARTED_FILE"];
                   const releaseFile =
-                    process.env["SUPABASE_STACK_TEST_MANAGED_STARTED_RELEASE_FILE"];
+                    testEnvironment["SUPABASE_STACK_TEST_MANAGED_STARTED_RELEASE_FILE"];
                   return Effect.sync(() => {
                     if (markerFile !== undefined) writeFileSync(markerFile, "started");
                   }).pipe(
@@ -317,19 +323,16 @@ export const runTestSupervisor = (): void => {
     runtimeLayer: testRuntime,
     resolutionTimeout: resolutionTimeout(),
   };
+  // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- The child process entrypoint preserves the supervisor's exact Cause.
   const program = runSupervisor(supervisorPlatform).pipe(
-    Effect.provide(gitConfigStoreLayer),
-    Effect.provide(testControlTransportLayer),
+    Effect.provide(Layer.mergeAll(gitConfigStoreLayer, testControlTransportLayer)),
   );
-  void Effect.runPromise(
+  const platformLayer =
     platformKind === "bun"
-      ? program.pipe(Effect.provide(BunServices.layer), Effect.provide(BunFileSystem.layer))
-      : program.pipe(
-          Effect.provide(NodeServices.layer),
-          Effect.provide(NodeFileSystem.layer),
-          Effect.provide(NodePath.layer),
-        ),
-  );
+      ? Layer.mergeAll(BunServices.layer, BunFileSystem.layer)
+      : Layer.mergeAll(NodeServices.layer, NodeFileSystem.layer, NodePath.layer);
+  // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- The child process entrypoint forwards the supervisor's exact Cause.
+  void Effect.runPromise(program.pipe(Effect.provide(platformLayer)));
 };
 
 if (import.meta.main) runTestSupervisor();
