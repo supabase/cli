@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
@@ -129,6 +129,33 @@ function pickFreePort(): Promise<number> {
     });
     server.on("error", reject);
   });
+}
+
+/**
+ * Rewrites every active port assignment in an `init`-generated
+ * `supabase/config.toml` with a freshly allocated free port, so stacks started
+ * from default configs cannot collide on host ports with other e2e stacks on
+ * the same runner. Commented-out port lines are left untouched.
+ */
+export async function overrideStackPorts(projectDir: string) {
+  const configPath = path.join(projectDir, "supabase", "config.toml");
+  const config = await readFile(configPath, "utf8");
+  const assigned = new Set<number>();
+  const lines: string[] = [];
+  for (const line of config.split("\n")) {
+    const match = /^(\s*(?:port|smtp_port|pop3_port|inspector_port|shadow_port) = )\d+$/.exec(line);
+    if (match === null) {
+      lines.push(line);
+      continue;
+    }
+    let port = await pickFreePort();
+    while (assigned.has(port)) {
+      port = await pickFreePort();
+    }
+    assigned.add(port);
+    lines.push(`${match[1]}${port}`);
+  }
+  await writeFile(configPath, lines.join("\n"));
 }
 
 async function makeTempProject(prefix = "supabase-project-e2e-") {

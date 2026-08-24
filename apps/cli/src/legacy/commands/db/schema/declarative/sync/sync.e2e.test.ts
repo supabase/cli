@@ -5,6 +5,7 @@ import { afterAll, beforeAll, expect, test } from "vitest";
 import { describe } from "vitest";
 import {
   makeTempLegacyStackProject,
+  overrideStackPorts,
   requireCliSuccess,
   runSupabase,
 } from "../../../../../../../tests/helpers/cli.ts";
@@ -57,6 +58,7 @@ describe("db schema declarative sync (e2e)", () => {
       exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
     });
     requireCliSuccess(init, "init setup");
+    await overrideStackPorts(projectDir);
 
     const configPath = path.join(projectDir, "supabase", "config.toml");
     const config = readFileSync(configPath, "utf8");
