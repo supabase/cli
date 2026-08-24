@@ -1644,6 +1644,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     const functionsDir = join(input.projectRoot, functionsDirName);
     const functionBinds = new Set<string>();
     const watchableBinds = new Set<string>();
+    const emittedScopeWarnings = new Set<string>();
     const functionsConfig: Record<string, ServeFunctionContainerConfig> = {};
 
     for (const config of functionConfigs) {
@@ -1678,6 +1679,15 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         return yield* Effect.fail(
           new Error(missingSourceWarning.trimStart().replace(/^WARN:\s*/, "")),
         );
+      }
+      for (const warning of bindWarnings) {
+        if (
+          warning.startsWith("WARN: Mounting import map scope target") &&
+          !emittedScopeWarnings.has(warning)
+        ) {
+          emittedScopeWarnings.add(warning);
+          yield* output.raw(warning, "stderr");
+        }
       }
       const functionEnv =
         input.discoverFunctionEnvFiles && Option.isNone(input.envFile)

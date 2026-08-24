@@ -336,7 +336,7 @@ prose, not structured data.
   (nothing under its own directory anymore); it still matters for a removed Edge Runtime
   container, whose own env-file/multiline-env-script staging is
   unaffected by that change.
-- Existing local values declared under a Function import map's `scopes` are mounted read-only into Edge Runtime, and into the Studio container that shares the same resolved Function bind mounts, even when they resolve outside the nearest Git root. The mounted target itself is bound as declared; imports reached from inside an out-of-root target are not additionally bound. Bring-up emits no warning for these mounts — bind warnings raised here are inspected only for a missing source file — so the mount is not visible in `start` output. Missing targets retain Edge Runtime startup's existing skip behavior.
+- Existing local values declared under a Function import map's `scopes` are mounted read-only into Edge Runtime, and into the Studio container that shares the same resolved Function bind mounts, even when they resolve outside the nearest Git root. The mounted target itself is bound as declared; imports reached from inside an out-of-root target are not additionally bound. Edge Runtime bring-up prints a `WARN` naming each distinct out-of-root host path once; Studio's bind resolution stays silent, so with Edge Runtime excluded (`-x edge-runtime`) the mounts still reach Studio and no warning is printed. Missing targets retain Edge Runtime startup's existing skip behavior.
 - Docker status `created` is not considered a recoverable stopped stack: the container and
   named volume are preserved because the volume may not have completed its first database
   initialization, and `start` reports the existing not-running status instead.

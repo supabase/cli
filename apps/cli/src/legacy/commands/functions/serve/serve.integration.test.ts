@@ -1394,26 +1394,31 @@ describe("legacy functions serve integration", () => {
           'import { thing } from "@acme/thing"\nDeno.serve(() => new Response(String(thing)))\n',
         ),
       );
+      const sharedDenoJson = JSON.stringify({
+        imports: { "@std/assert": "jsr:@std/assert@1" },
+        scopes: {
+          __local: {
+            __workspace: "../../../../../deno.json",
+            __libs: "../../../../../libs",
+          },
+        },
+      });
+      yield* Effect.promise(() => writeFile(join(functionDir, "deno.json"), sharedDenoJson));
+      const worldDir = join(projectRoot, "supabase", "functions", "world");
+      yield* Effect.promise(() => mkdir(worldDir, { recursive: true }));
       yield* Effect.promise(() =>
         writeFile(
-          join(functionDir, "deno.json"),
-          JSON.stringify({
-            imports: { "@std/assert": "jsr:@std/assert@1" },
-            scopes: {
-              __local: {
-                __workspace: "../../../../../deno.json",
-                __libs: "../../../../../libs",
-              },
-            },
-          }),
+          join(worldDir, "index.ts"),
+          'import { thing } from "@acme/thing"\nDeno.serve(() => new Response(String(thing)))\n',
         ),
       );
+      yield* Effect.promise(() => writeFile(join(worldDir, "deno.json"), sharedDenoJson));
 
       const resolvedWorkspaceRoot = realpathSync(workspaceRoot);
       const resolvedLibsDir = realpathSync(libsDir);
       const watchedFunctionsDir = join(projectRoot, "supabase", "functions");
       const fileWatcher = mockFileWatcher([watchedFunctionsDir]);
-      const { layer } = setupServe({
+      const { layer, out } = setupServe({
         childSpawner,
         fileWatcher,
         processControl,
@@ -1437,6 +1442,14 @@ describe("legacy functions serve integration", () => {
       const resolvedRootDenoJson = realpathSync(rootDenoJson);
       expect(bindValues).toContain(`${resolvedRootDenoJson}:${toDockerPath(rootDenoJson)}:ro`);
       expect(bindValues).toContain(`${resolvedLibsDir}:${toDockerPath(libsDir)}:ro`);
+      const rootDenoJsonWarn = `WARN: Mounting import map scope target outside the project root: ${resolvedRootDenoJson}\n`;
+      const libsWarn = `WARN: Mounting import map scope target outside the project root: ${resolvedLibsDir}\n`;
+      expect(out.rawChunks.filter((chunk) => chunk.text === rootDenoJsonWarn)).toEqual([
+        { text: rootDenoJsonWarn, stream: "stderr" },
+      ]);
+      expect(out.rawChunks.filter((chunk) => chunk.text === libsWarn)).toEqual([
+        { text: libsWarn, stream: "stderr" },
+      ]);
       const watchedPaths = fileWatcher.watchCalls.map((call) => call.path);
       expect(watchedPaths).toContain(watchedFunctionsDir);
       expect(watchedPaths).not.toContain(resolvedWorkspaceRoot);
