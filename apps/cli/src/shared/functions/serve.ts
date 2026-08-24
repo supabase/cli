@@ -199,6 +199,7 @@ interface ServeFunctionContainerConfig {
 
 interface WatchSpec {
   readonly root: string;
+  readonly recursive: boolean;
   readonly matchPaths?: ReadonlySet<string>;
 }
 
@@ -1174,7 +1175,7 @@ async function buildWatchSpecs(binds: ReadonlyArray<string>): Promise<ReadonlyAr
     try {
       const info = await stat(hostPath);
       if (info.isDirectory()) {
-        specs.set(hostPath, { root: hostPath });
+        specs.set(hostPath, { root: hostPath, recursive: true });
       } else {
         const root = dirname(hostPath);
         const existing = specs.get(root);
@@ -1183,7 +1184,7 @@ async function buildWatchSpecs(binds: ReadonlyArray<string>): Promise<ReadonlyAr
         }
         const matchPaths = new Set(existing?.matchPaths ?? []);
         matchPaths.add(hostPath);
-        specs.set(root, { root, matchPaths });
+        specs.set(root, { root, recursive: false, matchPaths });
       }
     } catch {
       continue;
@@ -1241,7 +1242,7 @@ const waitForRestartSignal = Effect.fnUntraced(function* (watchSpecs: ReadonlyAr
       fileWatcher
         .watch(spec.root, {
           ignore: watchIgnoreGlobs,
-          recursive: spec.matchPaths === undefined,
+          recursive: spec.recursive,
         })
         .pipe(
           Stream.map((events) => events.filter((event) => eventMatchesSpec(spec, event))),
