@@ -22,13 +22,14 @@ export class HttpTransportClient extends Context.Service<
 export const httpTransportClientLayer = Layer.succeed(HttpTransportClient, {
   request: (endpoint, path, init) =>
     Effect.tryPromise({
-      try: () =>
+      try: (signal) =>
         fetch(`${endpoint.url}${path}`, {
           ...init,
-          signal:
-            init?.signal == null
-              ? AbortSignal.timeout(30_000)
-              : AbortSignal.any([init.signal, AbortSignal.timeout(30_000)]),
+          signal: AbortSignal.any(
+            init?.signal === undefined || init.signal === null
+              ? [signal, AbortSignal.timeout(30_000)]
+              : [signal, init.signal],
+          ),
         }),
       catch: (cause) =>
         new HttpTransportClientError({ endpoint, path, cause, reason: "transport" }),

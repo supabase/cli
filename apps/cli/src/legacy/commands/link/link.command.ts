@@ -28,6 +28,7 @@ const config = {
   ),
   skipPooler: Flag.boolean("skip-pooler").pipe(
     Flag.withDescription("Use direct connection instead of pooler."),
+    Flag.withDefault(false),
   ),
 } as const;
 

@@ -30,6 +30,7 @@ const flags = {
   ),
   noFollow: Flag.boolean("no-follow").pipe(
     Flag.withDescription("Print buffered history only and exit without following live logs."),
+    Flag.withDefault(false),
   ),
 } as const;
 

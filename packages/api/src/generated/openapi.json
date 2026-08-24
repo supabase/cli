@@ -24029,6 +24029,12 @@
                   "database": {
                     "type": "object",
                     "properties": {
+                      "major_version": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991,
+                        "description": "The major Postgres version the database runs. `17` covers both Postgres 17 and Oriole on 17, since Oriole is a storage engine rather than a version."
+                      },
                       "ssl_enforced": {
                         "type": "boolean",
                         "description": "Whether the database rejects plaintext connections"
@@ -24222,7 +24228,12 @@
                         "description": "Postgres parameter overrides. Empty when the project runs entirely on defaults."
                       }
                     },
-                    "required": ["ssl_enforced", "network_restrictions", "postgres_settings"]
+                    "required": [
+                      "major_version",
+                      "ssl_enforced",
+                      "network_restrictions",
+                      "postgres_settings"
+                    ]
                   },
                   "pooler": {
                     "type": "object",

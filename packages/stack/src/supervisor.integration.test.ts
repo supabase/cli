@@ -1,4 +1,4 @@
-import { Cause, Context, Effect, Layer } from "effect";
+import { Cause, Context, Effect, Exit, Layer } from "effect";
 import { NodeFileSystem } from "@effect/platform-node";
 import { fork, type ChildProcess } from "node:child_process";
 import { createServer as createHttpServer } from "node:http";
@@ -7,13 +7,11 @@ import {
   cpSync,
   chmodSync,
   existsSync,
-  type FSWatcher,
   mkdtempSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   rmSync,
-  watch,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -25,12 +23,13 @@ import { Stack } from "./Stack.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
 import { managedDaemonLayer } from "./supervisor.ts";
-import { managedStackDocumentPath, managedStackPaths } from "./managed/paths.ts";
-import { resolveConfig } from "./StackConfigResolver.ts";
+import { managedStackDocumentPathEffect, managedStackPathsEffect } from "./managed/paths.ts";
+import { resolveConfig as resolveConfigEffect } from "./StackConfigResolver.ts";
 import { controlEndpoint, type ControlEndpoint } from "./managed/control.ts";
 import { deriveStackId, type EnvironmentIdentity } from "./managed/environment.ts";
 import type { SupervisorStartMessage, SupervisorStartedMessage } from "./supervisor.ts";
 import { git } from "../tests/helpers/git-workspace.ts";
+import { watchDirectoryWithRetry } from "../tests/helpers/file-watch.ts";
 
 const childEntryPoint = fileURLToPath(
   new URL("../tests/helpers/supervisor-child.ts", import.meta.url),
@@ -41,12 +40,16 @@ const errorChildEntryPoint = fileURLToPath(
 const bunExecutable = process.env["BUN_EXECUTABLE"] ?? "bun";
 const FILE_WAIT_TIMEOUT_MS = 30_000;
 
+const resolveConfig = (...args: Parameters<typeof resolveConfigEffect>) =>
+  Effect.runPromise(resolveConfigEffect(...args).pipe(Effect.provide(NodeFileSystem.layer)));
+
 type TestMode = "bind-all" | "fail-after-bind" | "hold-reservations" | "hold-start" | "hold-stop";
 
 interface ChildHandle {
   readonly child: ChildProcess;
   readonly started: Promise<SupervisorStartedMessage>;
   readonly attachedBeforeReady: Promise<void>;
+  readonly managedStarted: Promise<void>;
 }
 
 const workspace = async (): Promise<{
@@ -87,43 +90,6 @@ const workspace = async (): Promise<{
     return { root, stateRoot, stackId };
   }
   throw new Error("Unable to allocate a free supervisor control endpoint after 32 attempts");
-};
-
-/**
- * Watches a directory, re-arming on ENOENT watcher errors: the runtime's
- * directory watcher can report ENOENT when a watched entry (for example an
- * atomic-write temp file) vanishes mid-scan. Callers keep their own timeout
- * as the guard. Returns a close function.
- */
-const watchDirectoryWithRetry = (
-  directory: string,
-  onEvent: () => void,
-  onError: (cause: unknown) => void,
-): (() => void) => {
-  let watcher: FSWatcher | undefined;
-  let closed = false;
-  const arm = () => {
-    if (closed) return;
-    try {
-      watcher = watch(directory, () => onEvent());
-      watcher.once("error", (cause) => {
-        watcher?.close();
-        if (cause instanceof Error && "code" in cause && cause.code === "ENOENT") {
-          arm();
-          onEvent();
-          return;
-        }
-        onError(cause);
-      });
-    } catch (cause) {
-      onError(cause);
-    }
-  };
-  arm();
-  return () => {
-    closed = true;
-    watcher?.close();
-  };
 };
 
 const waitForFile = (path: string): Promise<void> =>
@@ -253,41 +219,45 @@ const spawnChild = (
     child.once("error", onError);
     child.once("exit", onExit);
   });
-  const attachedBeforeReady = new Promise<void>((resolve, reject) => {
-    const onMessage = (value: unknown) => {
-      if (
-        typeof value === "object" &&
-        value !== null &&
-        "type" in value &&
-        value.type === "test-stage" &&
-        "stage" in value &&
-        value.stage === "attached-before-ready"
-      ) {
+  const waitForStage = (stage: "attached-before-ready" | "managed-started") =>
+    new Promise<void>((resolve, reject) => {
+      const onMessage = (value: unknown) => {
+        if (
+          typeof value === "object" &&
+          value !== null &&
+          "type" in value &&
+          value.type === "test-stage" &&
+          "stage" in value &&
+          value.stage === stage
+        ) {
+          cleanup();
+          resolve();
+        }
+      };
+      const cleanup = () => {
+        child.off("message", onMessage);
+        child.off("error", onError);
+        child.off("exit", onExit);
+      };
+      const onError = (cause: Error) => {
         cleanup();
-        resolve();
-      }
-    };
-    const cleanup = () => {
-      child.off("message", onMessage);
-      child.off("error", onError);
-      child.off("exit", onExit);
-    };
-    const onError = (cause: Error) => {
-      cleanup();
-      reject(cause);
-    };
-    const onExit = (code: number | null) => {
-      cleanup();
-      reject(new Error(`supervisor exited before attach wait stage (${String(code)})`));
-    };
-    child.on("message", onMessage);
-    child.once("error", onError);
-    child.once("exit", onExit);
-  });
+        reject(cause);
+      };
+      const onExit = (code: number | null) => {
+        cleanup();
+        reject(new Error(`supervisor exited before ${stage} stage (${String(code)})\n${stderr}`));
+      };
+      child.on("message", onMessage);
+      child.once("error", onError);
+      child.once("exit", onExit);
+    });
+  const attachedBeforeReady = waitForStage("attached-before-ready");
+  const managedStarted = waitForStage("managed-started");
   void started.catch(() => undefined);
   void attachedBeforeReady.catch(() => undefined);
+  void managedStarted.catch(() => undefined);
   child.send(input);
-  return { child, started, attachedBeforeReady };
+  return { child, started, attachedBeforeReady, managedStarted };
 };
 
 const kill = (child: ChildProcess): Promise<void> =>
@@ -342,7 +312,6 @@ const remoteInfo = (endpoint: ControlEndpoint): Promise<{ readonly url: string }
 const updateLaunch = async (
   endpoint: ControlEndpoint,
   launch: {
-    readonly mode: "native" | "auto" | "docker";
     readonly versions: Record<string, string>;
   },
 ): Promise<void> => {
@@ -384,24 +353,21 @@ const bindFakeOwner = async (
   endpoint: ControlEndpoint,
   makeServer: () => ReturnType<typeof createHttpServer>,
 ): Promise<ReturnType<typeof createHttpServer>> => {
-  const deadline = Date.now() + 10_000;
-  do {
-    const server = makeServer();
-    try {
-      await new Promise<void>((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(endpoint.port, endpoint.hostname, () => {
-          server.off("error", reject);
-          resolve();
-        });
-      });
-      return server;
-    } catch {
-      server.close();
-      await new Promise((resolve) => setTimeout(resolve, 10));
-    }
-  } while (Date.now() < deadline);
-  throw new Error(`timed out binding fake owner at ${endpoint.url}`);
+  const server = makeServer();
+  await new Promise<void>((resolve, reject) => {
+    const onError = (cause: Error) => {
+      server.off("listening", onListening);
+      reject(new Error(`unable to bind fake owner at ${endpoint.url}: ${cause.message}`));
+    };
+    const onListening = () => {
+      server.off("error", onError);
+      resolve();
+    };
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(endpoint.port, endpoint.hostname);
+  });
+  return server;
 };
 
 const listenStartingOwner = (
@@ -497,19 +463,23 @@ const readStackDocument = (roots: {
   | {
       readonly id: string;
       readonly lifecycle: string;
-      readonly ports: ReadonlyArray<{ port: number }>;
-      readonly launch?: { readonly mode: string; readonly versions: Record<string, string> };
+      readonly ports: ReadonlyArray<{ key: string; port: number }>;
+      readonly launch?: {
+        readonly mode: string;
+        readonly containerRuntime?: string;
+        readonly versions: Record<string, string>;
+      };
     }
   | undefined => {
   const stacksRoot = join(roots.stateRoot, "stacks");
   if (!existsSync(stacksRoot)) return undefined;
   for (const id of readdirSync(stacksRoot)) {
-    const path = managedStackDocumentPath(roots.stateRoot, id);
+    const path = Effect.runSync(managedStackDocumentPathEffect(roots.stateRoot, id));
     if (!existsSync(path)) continue;
     return JSON.parse(readFileSync(path, "utf8")) as {
       readonly id: string;
       readonly lifecycle: string;
-      readonly ports: ReadonlyArray<{ port: number }>;
+      readonly ports: ReadonlyArray<{ key: string; port: number }>;
     };
   }
   return undefined;
@@ -526,7 +496,9 @@ const waitForStackDocument = async (
   roots: { readonly stateRoot: string; readonly stackId: string },
   lifecycle: string,
 ): Promise<StackDocument> => {
-  const documentPath = managedStackDocumentPath(roots.stateRoot, roots.stackId);
+  const documentPath = Effect.runSync(
+    managedStackDocumentPathEffect(roots.stateRoot, roots.stackId),
+  );
   const stackDirectory = dirname(documentPath);
   await waitForFile(dirname(stackDirectory));
   await waitForFile(stackDirectory);
@@ -579,8 +551,8 @@ describe("detached supervisor child journeys", () => {
           Effect.provide(NodeFileSystem.layer),
         ),
       );
-      expect(exit._tag).toBe("Failure");
-      if (exit._tag === "Failure") {
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
         expect(Cause.squash(exit.cause)).toMatchObject({
           _tag: "InvalidManagedStackNameError",
         });
@@ -599,8 +571,8 @@ describe("detached supervisor child journeys", () => {
           Effect.provide(NodeFileSystem.layer),
         ),
       );
-      expect(exit._tag).toBe("Failure");
-      if (exit._tag === "Failure") {
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
         expect(Cause.squash(exit.cause)).toMatchObject({
           _tag: "SupervisorStartError",
           message: "Supervisor test runtime failed after binding",
@@ -614,7 +586,7 @@ describe("detached supervisor child journeys", () => {
   test("keeps managed documents, runtime metadata, and persistent data roots separate", async () => {
     const roots = await workspace();
     const stackId = "e".repeat(64);
-    const paths = managedStackPaths(roots.stateRoot, stackId);
+    const paths = Effect.runSync(managedStackPathsEffect(roots.stateRoot, stackId));
     try {
       const resolved = await resolveConfig(
         {
@@ -634,10 +606,10 @@ describe("detached supervisor child journeys", () => {
         {
           stackRoot: paths.root,
           runtimeRoot: paths.runtime,
-          portAllocator: () => Effect.succeed({ apiPort: 55001, dbPort: 55002 }),
+          ports: { apiPort: 55001, dbPort: 55002 },
         },
       );
-      expect(managedStackDocumentPath(roots.stateRoot, stackId)).toBe(
+      expect(Effect.runSync(managedStackDocumentPathEffect(roots.stateRoot, stackId))).toBe(
         join(paths.root, "stack.json"),
       );
       expect(resolved.postgres.dataDir.startsWith(join(paths.root, "data"))).toBe(true);
@@ -673,23 +645,284 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
+  test("starts an omitted-mode stack from one detected runtime selection", async () => {
+    const roots = await workspace();
+    const binDir = mkdtempSync(join(tmpdir(), "sup-stack-runtime-"));
+    const docker = join(binDir, "docker");
+    writeFileSync(docker, "#!/bin/sh\nexit 0\n");
+    chmodSync(docker, 0o755);
+    const base = messageFor(roots);
+    const { mode: _mode, ...config } = base.config;
+    const child = spawnChild(
+      messageFor(roots, {
+        config: { ...config, edgeRuntime: { inspectorPort: 8_123 } },
+      }),
+      { environment: { PATH: `${binDir}:${process.env["PATH"] ?? ""}` } },
+    );
+    try {
+      const started = await child.started;
+      const document = readStackDocument(roots);
+      expect(document?.launch).toMatchObject({
+        mode: "docker",
+        containerRuntime: "docker",
+      });
+      expect(document?.ports).toContainEqual(
+        expect.objectContaining({ key: "edge_runtime.inspector_port", intent: "automatic" }),
+      );
+      await remoteStop(started.endpoint);
+      await waitForExit(child.child);
+
+      const explicit = spawnChild(
+        messageFor(roots, {
+          config: { ...config, edgeRuntime: { inspectorPort: 8_123 } },
+          portIntents: {
+            ...base.portIntents,
+            document: { edge_runtime: { inspector_port: 8_123 } },
+          },
+        }),
+        { environment: { PATH: `${binDir}:${process.env["PATH"] ?? ""}` } },
+      );
+      try {
+        const explicitStarted = await explicit.started;
+        const explicitDocument = readStackDocument(roots);
+        expect(explicitDocument?.ports).toContainEqual({
+          key: "edge_runtime.inspector_port",
+          port: 8_123,
+          intent: "exact",
+        });
+        await remoteStop(explicitStarted.endpoint);
+        await waitForExit(explicit.child);
+      } finally {
+        if (explicit.child.exitCode === null) await kill(explicit.child);
+      }
+    } finally {
+      if (child.child.exitCode === null) await kill(child.child);
+      cleanupRoots(roots);
+      rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
+  test("falls back to the native service set when no container runtime is usable", async () => {
+    const roots = await workspace();
+    const binDir = mkdtempSync(join(tmpdir(), "sup-stack-native-fallback-"));
+    for (const runtime of ["docker", "podman"]) {
+      const executable = join(binDir, runtime);
+      writeFileSync(executable, "#!/bin/sh\nexit 1\n");
+      chmodSync(executable, 0o755);
+    }
+    const base = messageFor(roots);
+    const { mode: _mode, ...config } = base.config;
+    const child = spawnChild(
+      messageFor(roots, {
+        config: {
+          ...config,
+          auth: {},
+          postgrest: {},
+          realtime: {},
+          storage: {},
+          imgproxy: {},
+          mailpit: {},
+          pgmeta: {},
+          studio: {},
+          analytics: {},
+          vector: {},
+          pooler: {},
+        },
+      }),
+      { environment: { PATH: `${binDir}:${process.env["PATH"] ?? ""}` } },
+    );
+    try {
+      const started = await child.started;
+      expect(readStackDocument(roots)?.launch).toMatchObject({ mode: "native" });
+      await remoteStop(started.endpoint);
+      await waitForExit(child.child);
+    } finally {
+      if (child.child.exitCode === null) await kill(child.child);
+      cleanupRoots(roots);
+      rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not discard an explicit Edge Runtime request during native fallback", async () => {
+    const roots = await workspace();
+    const binDir = mkdtempSync(join(tmpdir(), "sup-stack-native-edge-runtime-"));
+    for (const runtime of ["docker", "podman"]) {
+      const executable = join(binDir, runtime);
+      writeFileSync(executable, "#!/bin/sh\nexit 1\n");
+      chmodSync(executable, 0o755);
+    }
+    const base = messageFor(roots);
+    const { mode: _mode, ...config } = base.config;
+    const child = spawnChild(
+      messageFor(roots, { config: { ...config, edgeRuntime: { inspectorPort: 8_123 } } }),
+      { environment: { PATH: `${binDir}:${process.env["PATH"] ?? ""}` } },
+    );
+    try {
+      await expect(child.started).rejects.toThrow("Native mode supports only");
+      await waitForExit(child.child);
+    } finally {
+      if (child.child.exitCode === null) await kill(child.child);
+      cleanupRoots(roots);
+      rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
+  test("does not discard an explicit Docker-only service request during native fallback", async () => {
+    const roots = await workspace();
+    const binDir = mkdtempSync(join(tmpdir(), "sup-stack-native-storage-"));
+    for (const runtime of ["docker", "podman"]) {
+      const executable = join(binDir, runtime);
+      writeFileSync(executable, "#!/bin/sh\nexit 1\n");
+      chmodSync(executable, 0o755);
+    }
+    const base = messageFor(roots);
+    const { mode: _mode, ...config } = base.config;
+    const child = spawnChild(
+      messageFor(roots, {
+        config: { ...config, storage: { dataDir: join(roots.root, "storage") } },
+      }),
+      { environment: { PATH: `${binDir}:${process.env["PATH"] ?? ""}` } },
+    );
+    try {
+      await expect(child.started).rejects.toThrow("Native mode supports only");
+      await waitForExit(child.child);
+    } finally {
+      if (child.child.exitCode === null) await kill(child.child);
+      cleanupRoots(roots);
+      rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects an explicit mode change before attaching to a running owner", async () => {
+    const roots = await workspace();
+    const binDir = mkdtempSync(join(tmpdir(), "sup-stack-mode-attach-"));
+    const docker = join(binDir, "docker");
+    writeFileSync(docker, "#!/bin/sh\nexit 0\n");
+    chmodSync(docker, 0o755);
+    const nativeInput = messageFor(roots);
+    const dockerInput = messageFor(roots, {
+      config: { ...nativeInput.config, mode: "docker" },
+    });
+    const environment = { PATH: `${binDir}:${process.env["PATH"] ?? ""}` };
+    const owner = spawnChild(dockerInput, { environment });
+    let contender: ChildHandle | undefined;
+    let sameMode: ChildHandle | undefined;
+    try {
+      const started = await owner.started;
+      contender = spawnChild(nativeInput, { environment });
+      await expect(contender.started).rejects.toThrow(
+        "Stack runtime is already docker; requested native",
+      );
+      await waitForExit(contender.child);
+
+      sameMode = spawnChild(dockerInput, { environment });
+      const attached = await sameMode.started;
+      expect(attached.attached).toBe(true);
+      await remoteStop(started.endpoint);
+      await Promise.all([waitForExit(owner.child), waitForExit(sameMode.child)]);
+    } finally {
+      if (owner.child.exitCode === null) await kill(owner.child);
+      if (contender?.child.exitCode === null) await kill(contender.child);
+      if (sameMode?.child.exitCode === null) await kill(sameMode.child);
+      cleanupRoots(roots);
+      rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
+  test("rechecks the winner's mode when attach starts before its first document", async () => {
+    const roots = await workspace();
+    const ensureReady = join(roots.root, "ensure-ready");
+    const ensureRelease = join(roots.root, "ensure-release");
+    const binDir = mkdtempSync(join(tmpdir(), "sup-stack-mode-first-launch-"));
+    const docker = join(binDir, "docker");
+    writeFileSync(docker, "#!/bin/sh\nexit 0\n");
+    chmodSync(docker, 0o755);
+    const nativeInput = messageFor(roots);
+    const dockerInput = messageFor(roots, {
+      config: { ...nativeInput.config, mode: "docker" },
+    });
+    const environment = { PATH: `${binDir}:${process.env.PATH ?? ""}` };
+    const owner = spawnChild(dockerInput, {
+      environment: {
+        ...environment,
+        SUPABASE_STACK_TEST_ENSURE_READY_FILE: ensureReady,
+        SUPABASE_STACK_TEST_ENSURE_RELEASE_FILE: ensureRelease,
+      },
+    });
+    let contender: ChildHandle | undefined;
+    try {
+      await waitForFile(ensureReady);
+      contender = spawnChild(nativeInput, { environment });
+      await contender.attachedBeforeReady;
+
+      writeFileSync(ensureRelease, "release");
+      await owner.started;
+      await expect(contender.started).rejects.toThrow(
+        "Stack runtime is already docker; requested native",
+      );
+      await waitForExit(contender.child);
+      await remoteStop((await owner.started).endpoint);
+      await waitForExit(owner.child);
+    } finally {
+      if (owner.child.exitCode === null) await kill(owner.child);
+      if (contender?.child.exitCode === null) await kill(contender.child);
+      cleanupRoots(roots);
+      rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
+  test("reuses the persisted runtime instead of selecting a different one on restart", async () => {
+    const roots = await workspace();
+    const binDir = mkdtempSync(join(tmpdir(), "sup-stack-sticky-runtime-"));
+    const docker = join(binDir, "docker");
+    const podman = join(binDir, "podman");
+    writeFileSync(docker, "#!/bin/sh\nexit 0\n");
+    writeFileSync(podman, "#!/bin/sh\nexit 1\n");
+    chmodSync(docker, 0o755);
+    chmodSync(podman, 0o755);
+    const base = messageFor(roots);
+    const { mode: _mode, ...config } = base.config;
+    const input = messageFor(roots, { config });
+    const environment = { PATH: `${binDir}:${process.env["PATH"] ?? ""}` };
+    const initial = spawnChild(input, { environment });
+    let restarted: ChildHandle | undefined;
+    try {
+      const started = await initial.started;
+      await remoteStop(started.endpoint);
+      await waitForExit(initial.child);
+
+      writeFileSync(docker, "#!/bin/sh\nexit 1\n");
+      writeFileSync(podman, "#!/bin/sh\nexit 0\n");
+      restarted = spawnChild(input, { environment });
+
+      await expect(restarted.started).rejects.toThrow(
+        "Docker mode requires a usable docker runtime",
+      );
+      expect(readStackDocument(roots)?.launch).toMatchObject({
+        mode: "docker",
+        containerRuntime: "docker",
+      });
+    } finally {
+      if (initial.child.exitCode === null) await kill(initial.child);
+      if (restarted?.child.exitCode === null) await kill(restarted.child);
+      cleanupRoots(roots);
+      rmSync(binDir, { recursive: true, force: true });
+    }
+  });
+
   test("publishes stopping before a slow owner shutdown can finish", async () => {
     const roots = await workspace();
-    const child = spawnChild(messageFor(roots), { testMode: "hold-stop" });
+    const stopBegan = join(roots.root, "stop-began");
+    const child = spawnChild(messageFor(roots), {
+      testMode: "hold-stop",
+      environment: { SUPABASE_STACK_TEST_STOP_BEGAN_FILE: stopBegan },
+    });
     try {
       const started = await child.started;
       expect(await fetchOwner(started.endpoint)).toMatchObject({ state: "running", ready: true });
       void fetch(`${started.endpoint.url}/stop`, { method: "POST" }).catch(() => undefined);
-      const deadline = Date.now() + 2_000;
-      let stopping = false;
-      while (Date.now() < deadline) {
-        if ((await fetchOwner(started.endpoint).catch(() => undefined))?.state === "stopping") {
-          stopping = true;
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
-      expect(stopping).toBe(true);
+      await waitForFile(stopBegan);
+      expect(await fetchOwner(started.endpoint)).toMatchObject({ state: "stopping" });
     } finally {
       if (child.child.exitCode === null) await kill(child.child);
       cleanupRoots(roots);
@@ -698,7 +931,12 @@ describe("detached supervisor child journeys", () => {
 
   test("Bun routes a ready-owner stop through the daemon shutdown transaction", async () => {
     const roots = await workspace();
-    const child = spawnChild(messageFor(roots), { testMode: "hold-stop", platform: "bun" });
+    const stopBegan = join(roots.root, "stop-began");
+    const child = spawnChild(messageFor(roots), {
+      testMode: "hold-stop",
+      platform: "bun",
+      environment: { SUPABASE_STACK_TEST_STOP_BEGAN_FILE: stopBegan },
+    });
     try {
       const started = await child.started;
       let responseSettled = false;
@@ -711,13 +949,7 @@ describe("detached supervisor child journeys", () => {
           responseSettled = true;
           return undefined;
         });
-      const deadline = Date.now() + 2_000;
-      while (Date.now() < deadline) {
-        if ((await fetchOwner(started.endpoint).catch(() => undefined))?.state === "stopping") {
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
+      await waitForFile(stopBegan);
       expect(await fetchOwner(started.endpoint)).toMatchObject({ state: "stopping" });
       expect(responseSettled).toBe(false);
       await kill(child.child);
@@ -731,22 +963,20 @@ describe("detached supervisor child journeys", () => {
   test("starts after an owner finishes stopping", async () => {
     const roots = await workspace();
     const releaseFile = join(roots.root, "release-stop");
+    const stopBegan = join(roots.root, "stop-began");
     const input = messageFor(roots);
     const owner = spawnChild(input, {
       testMode: "hold-stop",
-      environment: { SUPABASE_STACK_TEST_STOP_RELEASE_FILE: releaseFile },
+      environment: {
+        SUPABASE_STACK_TEST_STOP_RELEASE_FILE: releaseFile,
+        SUPABASE_STACK_TEST_STOP_BEGAN_FILE: stopBegan,
+      },
     });
     let contender: ChildHandle | undefined;
     try {
       const started = await owner.started;
       const stop = fetch(`${started.endpoint.url}/stop`, { method: "POST" }).catch(() => undefined);
-      const deadline = Date.now() + 2_000;
-      while (Date.now() < deadline) {
-        if ((await fetchOwner(started.endpoint).catch(() => undefined))?.state === "stopping") {
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 10));
-      }
+      await waitForFile(stopBegan);
       expect(await fetchOwner(started.endpoint)).toMatchObject({ state: "stopping" });
 
       contender = spawnChild(input);
@@ -863,7 +1093,9 @@ describe("detached supervisor child journeys", () => {
       await contender.attachedBeforeReady;
 
       rmSync(originalGit, { recursive: true, force: true });
-      const documentPath = managedStackDocumentPath(roots.stateRoot, starting.id);
+      const documentPath = Effect.runSync(
+        managedStackDocumentPathEffect(roots.stateRoot, starting.id),
+      );
       const document = JSON.parse(readFileSync(documentPath, "utf8")) as Record<string, unknown>;
       writeFileSync(documentPath, JSON.stringify({ ...document, lifecycle: "running" }));
       releaseFakeOwner?.();
@@ -920,7 +1152,10 @@ describe("detached supervisor child journeys", () => {
       await Promise.race([
         waitForExit(child.child),
         new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("owner did not stop")), 2_000),
+          setTimeout(
+            () => reject(new Error(`owner did not stop within ${FILE_WAIT_TIMEOUT_MS}ms`)),
+            FILE_WAIT_TIMEOUT_MS,
+          ),
         ),
       ]);
       const stopped = await waitForStackDocument(roots, "stopped");
@@ -1015,16 +1250,55 @@ describe("detached supervisor child journeys", () => {
 
       await kill(owner.child);
       await expect(owner.started).rejects.toThrow();
-      const deadline = Date.now() + 3_000;
-      let restarted = false;
-      while (Date.now() < deadline) {
-        if ((await fetchOwner(restartedEndpoint).catch(() => undefined))?.state === "starting") {
-          restarted = true;
-          break;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 20));
-      }
-      expect(restarted).toBe(true);
+      await contender.managedStarted;
+      expect(await fetchOwner(restartedEndpoint)).toMatchObject({ state: "starting" });
+    } finally {
+      if (owner.child.exitCode === null) await kill(owner.child);
+      if (contender?.child.exitCode === null) await kill(contender.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("re-reads persisted Docker state after taking over an owner that published during attach", async () => {
+    const roots = await workspace();
+    const ensureReady = join(roots.root, "ensure-ready");
+    const ensureRelease = join(roots.root, "ensure-release");
+    const dockerBin = join(roots.root, "fake-docker-bin");
+    const dockerCleanup = join(roots.root, "docker-cleanup");
+    mkdirSync(dockerBin);
+    const docker = join(dockerBin, "docker");
+    writeFileSync(
+      docker,
+      `#!/bin/sh\nif [ "$1" = "rm" ]; then printf cleaned > "${dockerCleanup}"; fi\nexit 0\n`,
+    );
+    chmodSync(docker, 0o755);
+    const nativeInput = messageFor(roots);
+    const input = messageFor(roots, {
+      config: { ...nativeInput.config, mode: "docker" },
+    });
+    const environment = { PATH: `${dockerBin}:${process.env.PATH ?? ""}` };
+    const owner = spawnChild(input, {
+      testMode: "hold-start",
+      environment: {
+        ...environment,
+        SUPABASE_STACK_TEST_ENSURE_READY_FILE: ensureReady,
+        SUPABASE_STACK_TEST_ENSURE_RELEASE_FILE: ensureRelease,
+      },
+    });
+    void owner.started.catch(() => undefined);
+    let contender: ChildHandle | undefined;
+    try {
+      await waitForFile(ensureReady);
+      contender = spawnChild(input, { testMode: "hold-start", environment });
+      void contender.started.catch(() => undefined);
+      await contender.attachedBeforeReady;
+
+      writeFileSync(ensureRelease, "release");
+      await owner.managedStarted;
+      await kill(owner.child);
+      await contender.managedStarted;
+
+      expect(readFileSync(dockerCleanup, "utf8")).toBe("cleaned");
     } finally {
       if (owner.child.exitCode === null) await kill(owner.child);
       if (contender?.child.exitCode === null) await kill(contender.child);
@@ -1150,9 +1424,9 @@ describe("detached supervisor child journeys", () => {
       const attached = await later.started;
       expect(attached.attached).toBe(true);
       expect(await remoteInfo(attached.endpoint)).toMatchObject({ url: expect.any(String) });
-      await updateLaunch(attached.endpoint, { mode: "auto", versions: { postgres: "17.6.1" } });
+      await updateLaunch(attached.endpoint, { versions: { postgres: "17.6.1" } });
       expect(readStackDocument(roots)?.launch).toEqual({
-        mode: "auto",
+        mode: "native",
         versions: { postgres: "17.6.1" },
       });
       await remoteStop(attached.endpoint);

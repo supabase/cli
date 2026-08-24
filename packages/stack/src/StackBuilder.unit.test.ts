@@ -1,18 +1,25 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Layer, Sink, Stream } from "effect";
+import { NodeFileSystem } from "@effect/platform-node";
+import { Deferred, Effect, FileSystem, Layer, Predicate, Scope, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
 import { candidateCleanupTargets } from "./cleanup.ts";
+import { activationTargetsForService } from "./ServiceActivation.ts";
+import { SERVICE_NAMES } from "./ServiceCatalog.ts";
+import type { ServiceName } from "./ServiceName.ts";
 import { StackBuilder, validateResolvedConfig } from "./StackBuilder.ts";
 import type { BuildResult } from "./StackBuilder.ts";
 import { DEFAULT_STACK_READINESS_POLICY, type ResolvedStackConfig } from "./StackConfig.ts";
 import { STACK_ID_LABEL } from "./StackIdentity.ts";
 import { enabledServicesForConfig, versionsForConfig } from "./StackBuilder.ts";
-import { nativePostgresNeedsDockerAccess } from "./StackBuilder.ts";
 import type { AllocatedPorts } from "./PortCatalog.ts";
-import { StackPreparation } from "./StackPreparation.ts";
+import { preparationClosure, StackPreparation } from "./StackPreparation.ts";
 import type { StackPreparationInput } from "./StackPreparation.ts";
+import { resolveConfig } from "./StackConfigResolver.ts";
 import {
   dependencyTimeoutSecondsForServices,
   POSTGRES_INIT_COMPLETION_BUDGET_SECONDS,
@@ -47,8 +54,22 @@ const baseConfig: ResolvedStackConfig = {
   stackRoot: "/tmp/supabase-stack",
   runtimeRoot: "/tmp/supabase-runtime",
   projectDir: "/tmp/supabase-project",
-  mode: "auto",
-  startupMode: "eager",
+  runtime: { mode: "native", containerRuntime: null },
+  servicePolicies: {
+    postgres: "eager",
+    postgrest: "eager",
+    auth: "eager",
+    "edge-runtime": "off",
+    realtime: "off",
+    storage: "off",
+    imgproxy: "off",
+    mailpit: "off",
+    pgmeta: "off",
+    studio: "off",
+    analytics: "off",
+    vector: "off",
+    pooler: "off",
+  },
   readiness: DEFAULT_STACK_READINESS_POLICY,
   readinessSource: "default",
   jwtSecret: testJwtSecret,
@@ -96,7 +117,7 @@ const baseConfig: ResolvedStackConfig = {
 
 const dockerConfig: ResolvedStackConfig = {
   ...baseConfig,
-  mode: "docker",
+  runtime: { mode: "docker", containerRuntime: "docker" },
 };
 
 /**
@@ -119,7 +140,8 @@ const siblingManagedConfig: ResolvedStackConfig = {
 
 const edgeRuntimeConfig: ResolvedStackConfig = {
   ...baseConfig,
-  mode: "auto",
+  runtime: { mode: "docker", containerRuntime: "docker" },
+  servicePolicies: { ...baseConfig.servicePolicies, "edge-runtime": "eager" },
   edgeRuntime: {
     enabled: true,
     port: basePorts.edgeRuntimePort,
@@ -171,6 +193,7 @@ function builderLayer(
 ) {
   return Layer.mergeAll(
     StackBuilder.layer,
+    NodeFileSystem.layer,
     StackPreparation.layer.pipe(Layer.provide(resolver.layer), Layer.provide(spawnerLayer)),
   );
 }
@@ -179,30 +202,28 @@ const prepareAndBuild = (
   builder: typeof StackBuilder.Service,
   preparation: typeof StackPreparation.Service,
   config: ResolvedStackConfig,
-): Effect.Effect<BuildResult, unknown> =>
+): Effect.Effect<BuildResult, unknown, FileSystem.FileSystem | Scope.Scope> =>
   Effect.gen(function* () {
-    const input: StackPreparationInput = {
-      mode: config.mode,
+    const shared = {
       services: enabledServicesForConfig(config),
       versions: versionsForConfig(config),
     };
+    const input: StackPreparationInput =
+      config.runtime.mode === "native"
+        ? { ...shared, mode: "native" }
+        : { ...shared, mode: "docker", containerRuntime: config.runtime.containerRuntime };
     const prepared = yield* preparation.prepare(input);
-    return yield* builder.build(config, prepared);
+    const fs = yield* FileSystem.FileSystem;
+    const scope = yield* Effect.scope;
+    return yield* builder
+      .build(config, prepared)
+      .pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Scope.Scope, scope),
+      );
   });
 
 describe("StackBuilder", () => {
-  it("makes native postgres reachable by docker services on every platform", () => {
-    expect(nativePostgresNeedsDockerAccess({ type: "binary", path: "/cache/postgres" }, true)).toBe(
-      true,
-    );
-    expect(
-      nativePostgresNeedsDockerAccess({ type: "binary", path: "/cache/postgres" }, false),
-    ).toBe(false);
-    expect(
-      nativePostgresNeedsDockerAccess({ type: "docker", image: "supabase/postgres" }, true),
-    ).toBe(false);
-  });
-
   it.effect("builds graph with all native binaries", () => {
     const resolver = mockBinaryResolver();
     const layer = builderLayer(resolver);
@@ -255,70 +276,6 @@ describe("StackBuilder", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("uses docker fallback when auth binary not found", () => {
-    const resolver = mockBinaryResolver({ failServices: ["auth"] });
-    const layer = builderLayer(resolver);
-
-    return Effect.gen(function* () {
-      const builder = yield* StackBuilder;
-      const preparation = yield* StackPreparation;
-      const { graph } = yield* prepareAndBuild(builder, preparation, baseConfig);
-
-      expect(graph.startOrder.length).toBe(4);
-
-      const authDef = graph.startOrder.find((s) => s.name === "auth");
-      expect(authDef).toBeDefined();
-      expect(authDef?.command).toBe("docker");
-      expect(authDef?.dependencies).toEqual([{ service: "postgres-init", condition: "completed" }]);
-      expect(authDef?.supervision).toBeDefined();
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("uses docker fallback when postgres binary not found", () => {
-    const resolver = mockBinaryResolver({ failServices: ["postgres"] });
-    const layer = builderLayer(resolver);
-
-    return Effect.gen(function* () {
-      const builder = yield* StackBuilder;
-      const preparation = yield* StackPreparation;
-      const { graph } = yield* prepareAndBuild(builder, preparation, baseConfig);
-
-      // No postgres-init when postgres falls back to Docker.
-      expect(graph.startOrder.length).toBe(3);
-
-      const postgresDef = graph.startOrder.find((s) => s.name === "postgres");
-      expect(postgresDef).toBeDefined();
-      expect(postgresDef?.command).toBe("docker");
-      expect(postgresDef?.supervision).toBeDefined();
-
-      // postgrest falls back to postgres(healthy) dependency
-      const postgrestDef = graph.startOrder.find((s) => s.name === "postgrest");
-      expect(postgrestDef?.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
-
-      const names = graph.startOrder.map((s) => s.name);
-      expect(names).not.toContain("postgres-init");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("uses docker fallback when postgrest binary not found", () => {
-    const resolver = mockBinaryResolver({ failServices: ["postgrest"] });
-    const layer = builderLayer(resolver);
-
-    return Effect.gen(function* () {
-      const builder = yield* StackBuilder;
-      const preparation = yield* StackPreparation;
-      const { graph } = yield* prepareAndBuild(builder, preparation, baseConfig);
-
-      // All 4 services still present (postgrest falls back to Docker, not removed)
-      expect(graph.startOrder.length).toBe(4);
-
-      const postgrestDef = graph.startOrder.find((s) => s.name === "postgrest");
-      expect(postgrestDef).toBeDefined();
-      expect(postgrestDef?.command).toBe("docker");
-      expect(postgrestDef?.supervision).toBeDefined();
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("excludes disabled services", () => {
     const resolver = mockBinaryResolver();
     const layer = builderLayer(resolver);
@@ -341,20 +298,24 @@ describe("StackBuilder", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("docker mode produces Docker service defs for all services", () => {
+  it.effect("Docker mode consistently uses the selected container runtime", () => {
     const resolver = mockBinaryResolver();
     const layer = builderLayer(resolver);
 
     return Effect.gen(function* () {
       const builder = yield* StackBuilder;
       const preparation = yield* StackPreparation;
-      const { graph, cleanupTargets } = yield* prepareAndBuild(builder, preparation, dockerConfig);
+      const config = {
+        ...dockerConfig,
+        runtime: { mode: "docker", containerRuntime: "podman" },
+      } satisfies ResolvedStackConfig;
+      const { graph, cleanupTargets } = yield* prepareAndBuild(builder, preparation, config);
 
-      expect(graph.startOrder.length).toBe(3);
+      expect(graph.startOrder.length).toBe(4);
 
       const names = graph.startOrder.map((s) => s.name);
       expect(names).toContain("postgres");
-      expect(names).not.toContain("postgres-init");
+      expect(names).toContain("postgres-init");
       expect(names).toContain("postgrest");
       expect(names).toContain("auth");
 
@@ -363,16 +324,90 @@ describe("StackBuilder", () => {
       for (const name of ["postgres", "postgrest", "auth"]) {
         const def = graph.startOrder.find((s) => s.name === name);
         expect(def).toBeDefined();
-        expect(def?.command).toBe("docker");
+        expect(def?.command).toBe("podman");
         expect(def?.supervision).toBeDefined();
+        expect(def?.supervision?.orphanCleanup).toContainEqual(
+          expect.objectContaining({ executable: "podman" }),
+        );
       }
 
       // Docker container names are collected for cleanup
       expect(cleanupTargets.dockerContainerNames).toEqual([
-        `supabase-postgres-${dockerConfig.apiPort}`,
-        `supabase-postgrest-${dockerConfig.apiPort}`,
-        `supabase-auth-${dockerConfig.apiPort}`,
+        `supabase-postgres-${config.apiPort}`,
+        `supabase-postgrest-${config.apiPort}`,
+        `supabase-auth-${config.apiPort}`,
       ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("prepares nested PostgreSQL bind-mount parents before Docker launch", () => {
+    const resolver = mockBinaryResolver();
+    const root = mkdtempSync(join(tmpdir(), "sup-stack-postgres-data-"));
+    const dataDir = join(root, "data", "postgres");
+    const layer = builderLayer(resolver);
+
+    return Effect.gen(function* () {
+      const builder = yield* StackBuilder;
+      const preparation = yield* StackPreparation;
+      yield* prepareAndBuild(builder, preparation, {
+        ...dockerConfig,
+        postgres: { ...dockerConfig.postgres, dataDir },
+      });
+      expect(existsSync(dataDir)).toBe(true);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => rmSync(root, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("prepares every public service in each startable graph closure", () => {
+    const resolver = mockBinaryResolver();
+    const layer = builderLayer(resolver);
+
+    return Effect.gen(function* () {
+      const config = yield* resolveConfig(
+        {
+          realtime: {},
+          storage: {},
+          imgproxy: {},
+          mailpit: {},
+          pgmeta: {},
+          studio: {},
+          analytics: {},
+          vector: {},
+          pooler: {},
+        },
+        {
+          ports: basePorts,
+          stackRoot: "/tmp/supabase-stack",
+          runtimeRoot: "/tmp/supabase-runtime",
+          runtime: { mode: "docker", containerRuntime: "docker" },
+        },
+      );
+      const builder = yield* StackBuilder;
+      const preparation = yield* StackPreparation;
+      const { graph } = yield* prepareAndBuild(builder, preparation, config);
+
+      for (const service of SERVICE_NAMES) {
+        const prepared = new Set(
+          preparationClosure(activationTargetsForService(SERVICE_NAMES, service), SERVICE_NAMES),
+        );
+        const publicGraphServices = graph
+          .startOrderFor(service)
+          .map((definition) => definition.name)
+          .filter((name): name is ServiceName =>
+            SERVICE_NAMES.some((candidate) => candidate === name),
+          );
+        expect(
+          publicGraphServices.length,
+          `${service} must exercise a non-empty public graph closure`,
+        ).toBeGreaterThan(0);
+        const missing = publicGraphServices.filter((name) => !prepared.has(name));
+        expect(
+          missing,
+          `${service} starts public services outside its preparation closure`,
+        ).toEqual([]);
+      }
     }).pipe(Effect.provide(layer));
   });
 
@@ -399,7 +434,7 @@ describe("StackBuilder", () => {
         expect(name).not.toContain(String(managedConfig.apiPort));
       }
 
-      for (const def of graph.startOrder) {
+      for (const def of graph.startOrder.filter((service) => service.args?.[0] === "run")) {
         expect(def.args).toContain(`supabase-${def.name}-id-${firstManagedId}`);
         // The label carries the whole identity, so the containers stay findable
         // by it even if the names are ever built differently.
@@ -415,7 +450,7 @@ describe("StackBuilder", () => {
         instanceId: "../bad:id",
       }).pipe(Effect.flip);
 
-      expect(error._tag).toBe("StackBuildError");
+      expect(Predicate.isTagged(error, "StackBuildError")).toBe(true);
       expect(error.reason).toBe("invalid_config");
     });
   });
@@ -457,14 +492,14 @@ describe("StackBuilder", () => {
         `supabase-postgrest-${dockerConfig.apiPort}`,
         `supabase-auth-${dockerConfig.apiPort}`,
       ]);
-      for (const def of graph.startOrder) {
+      for (const def of graph.startOrder.filter((service) => service.args?.[0] === "run")) {
         expect(def.args).toContain(`supabase-${def.name}-${dockerConfig.apiPort}`);
         expect(def.args?.join(" ")).not.toContain(STACK_ID_LABEL);
       }
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("docker mode wires auth directly to postgres readiness", () => {
+  it.effect("docker consumers wait for database initialization", () => {
     const resolver = mockBinaryResolver();
     const layer = builderLayer(resolver);
 
@@ -474,24 +509,10 @@ describe("StackBuilder", () => {
       const { graph } = yield* prepareAndBuild(builder, preparation, dockerConfig);
 
       const authDef = graph.startOrder.find((s) => s.name === "auth");
-      expect(authDef?.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
+      expect(authDef?.dependencies).toEqual([{ service: "postgres-init", condition: "completed" }]);
       expect(authDef?.dependencyTimeoutSeconds).toBe(
-        dependencyTimeoutSecondsForServices(["postgres"]),
+        dependencyTimeoutSecondsForServices(["postgres"]) + POSTGRES_INIT_COMPLETION_BUDGET_SECONDS,
       );
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("docker mode has no postgres-init service for Docker postgres", () => {
-    const resolver = mockBinaryResolver();
-    const layer = builderLayer(resolver);
-
-    return Effect.gen(function* () {
-      const builder = yield* StackBuilder;
-      const preparation = yield* StackPreparation;
-      const { graph } = yield* prepareAndBuild(builder, preparation, dockerConfig);
-
-      const names = graph.startOrder.map((s) => s.name);
-      expect(names).not.toContain("postgres-init");
     }).pipe(Effect.provide(layer));
   });
 
@@ -505,15 +526,16 @@ describe("StackBuilder", () => {
       const { graph } = yield* prepareAndBuild(builder, preparation, dockerConfig);
 
       const authDef = graph.startOrder.find((s) => s.name === "auth");
-      expect(authDef?.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
+      expect(authDef?.dependencies).toEqual([{ service: "postgres-init", condition: "completed" }]);
 
-      // postgrest depends on postgres(healthy) — no postgres-init in Docker mode
       const postgrestDef = graph.startOrder.find((s) => s.name === "postgrest");
-      expect(postgrestDef?.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
+      expect(postgrestDef?.dependencies).toEqual([
+        { service: "postgres-init", condition: "completed" },
+      ]);
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("uses docker-backed edge-runtime even when a native binary is available", () => {
+  it.effect("uses Docker for edge-runtime and its dependencies in Docker mode", () => {
     const resolver = mockBinaryResolver();
     const layer = builderLayer(resolver);
 
@@ -534,65 +556,6 @@ describe("StackBuilder", () => {
       ]);
       expect(cleanupTargets.dockerContainerNames).toContain(
         `supabase-edge-runtime-${edgeRuntimeConfig.apiPort}`,
-      );
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("uses docker-backed edge-runtime when the binary is unavailable", () => {
-    const resolver = mockBinaryResolver({ failServices: ["edge-runtime"] });
-    const layer = builderLayer(resolver);
-
-    return Effect.gen(function* () {
-      const builder = yield* StackBuilder;
-      const preparation = yield* StackPreparation;
-      const { graph, cleanupTargets } = yield* prepareAndBuild(
-        builder,
-        preparation,
-        edgeRuntimeConfig,
-      );
-
-      const edgeRuntimeDef = graph.startOrder.find((service) => service.name === "edge-runtime");
-      expect(edgeRuntimeDef).toBeDefined();
-      expect(edgeRuntimeDef?.command).toBe("docker");
-      expect(edgeRuntimeDef?.dependencies).toEqual([
-        { service: "postgres-init", condition: "completed" },
-      ]);
-      expect(cleanupTargets.dockerContainerNames).toContain(
-        `supabase-edge-runtime-${edgeRuntimeConfig.apiPort}`,
-      );
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("falls back to the next registry for docker-only services", () => {
-    const resolver = mockBinaryResolver();
-    const spawnerLayer = mockSequenceSpawner([
-      { exitCode: 0 },
-      { exitCode: 0 },
-      { exitCode: 0 },
-      { exitCode: 1, stderr: ["manifest unknown"] },
-      { exitCode: 0 },
-    ]);
-    const layer = builderLayer(resolver, spawnerLayer);
-
-    return Effect.gen(function* () {
-      const builder = yield* StackBuilder;
-      const preparation = yield* StackPreparation;
-      const { graph } = yield* prepareAndBuild(builder, preparation, {
-        ...dockerConfig,
-        realtime: {
-          port: 3010,
-          version: DEFAULT_VERSIONS.realtime,
-          tenantId: "realtime-dev",
-          encryptionKey: "supabaserealtime",
-          secretKeyBase: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
-          maxHeaderLength: 4096,
-        },
-      });
-
-      const realtimeDef = graph.startOrder.find((service) => service.name === "realtime");
-      expect(realtimeDef?.args).toContain(`supabase/realtime:v${DEFAULT_VERSIONS.realtime}`);
-      expect(realtimeDef?.args).not.toContain(
-        `public.ecr.aws/supabase/realtime:v${DEFAULT_VERSIONS.realtime}`,
       );
     }).pipe(Effect.provide(layer));
   });

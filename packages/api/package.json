@@ -29,12 +29,12 @@
   "devDependencies": {
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
-    "@typescript/native-preview": "catalog:",
     "@vitest/coverage-istanbul": "catalog:",
     "knip": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:",
+    "typescript": "catalog:",
     "vitest": "catalog:"
   },
   "knip": {
@@ -51,7 +51,6 @@
     ],
     "ignoreDependencies": [
       "undici",
-      "@typescript/native-preview",
       "oxfmt",
       "oxlint",
       "oxlint-tsgolint"

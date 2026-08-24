@@ -1,13 +1,17 @@
+import { Effect } from "effect";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { assertManagedUuid } from "./managed/ids.ts";
+import { validateManagedUuid } from "./managed/ids.ts";
 import { InvalidManagedIdentityError, UnsafeManagedStackPathError } from "./managed/model.ts";
 import * as managedPathsModule from "./managed/paths.ts";
 import {
-  assertManagedStackRoot,
-  managedStackPaths,
-  resolveManagedStateRoot,
+  assertManagedStackRootEffect,
+  managedStackPathsEffect,
+  resolveManagedStateRootEffect,
 } from "./managed/paths.ts";
+
+const run = <A, E>(effect: Effect.Effect<A, E>): A => Effect.runSync(effect);
+const failureOf = <A, E>(effect: Effect.Effect<A, E>): E => Effect.runSync(Effect.flip(effect));
 
 describe("managed paths", () => {
   it("does not expose the removed SQLite registry path", () => {
@@ -21,129 +25,159 @@ describe("managed paths", () => {
     ["unsupported version", "018f8b4e-8e5c-0e32-a956-6f297fd05a2d"],
     ["invalid variant", "018f8b4e-8e5c-7e32-7956-6f297fd05a2d"],
   ])("rejects %s managed UUIDs", (_case, value) => {
-    expect(() => assertManagedUuid(value, "test id")).toThrow(InvalidManagedIdentityError);
+    expect(failureOf(validateManagedUuid(value, "test id"))).toBeInstanceOf(
+      InvalidManagedIdentityError,
+    );
   });
 
   it("isolates managed records beneath SUPABASE_HOME", () => {
     expect(
-      resolveManagedStateRoot({
-        env: { SUPABASE_HOME: "/configured/supabase" },
-        homeDir: "/home/user",
-        platform: "linux",
-      }),
+      run(
+        resolveManagedStateRootEffect({
+          env: { SUPABASE_HOME: "/configured/supabase" },
+          homeDir: "/home/user",
+          platform: "linux",
+        }),
+      ),
     ).toBe("/configured/supabase/managed");
   });
 
   it("trims surrounding whitespace from a configured SUPABASE_HOME", () => {
     expect(
-      resolveManagedStateRoot({
-        env: { SUPABASE_HOME: "  /configured/supabase  " },
-        homeDir: "/home/user",
-        platform: "linux",
-      }),
+      run(
+        resolveManagedStateRootEffect({
+          env: { SUPABASE_HOME: "  /configured/supabase  " },
+          homeDir: "/home/user",
+          platform: "linux",
+        }),
+      ),
     ).toBe("/configured/supabase/managed");
   });
 
   it("treats whitespace-only state-root environment values as unset", () => {
     expect(
-      resolveManagedStateRoot({
-        env: { SUPABASE_HOME: "   " },
-        homeDir: "/home/user",
-        platform: "linux",
-      }),
+      run(
+        resolveManagedStateRootEffect({
+          env: { SUPABASE_HOME: "   " },
+          homeDir: "/home/user",
+          platform: "linux",
+        }),
+      ),
     ).toBe("/home/user/.local/state/supabase/managed");
     expect(
-      resolveManagedStateRoot({
-        env: { XDG_STATE_HOME: "\t" },
-        homeDir: "/home/user",
-        platform: "linux",
-      }),
+      run(
+        resolveManagedStateRootEffect({
+          env: { XDG_STATE_HOME: "\t" },
+          homeDir: "/home/user",
+          platform: "linux",
+        }),
+      ),
     ).toBe("/home/user/.local/state/supabase/managed");
     expect(
-      resolveManagedStateRoot({
-        env: { LOCALAPPDATA: " " },
-        homeDir: "C:\\Users\\user",
-        platform: "win32",
-      }),
+      run(
+        resolveManagedStateRootEffect({
+          env: { LOCALAPPDATA: " " },
+          homeDir: "C:\\Users\\user",
+          platform: "win32",
+        }),
+      ),
     ).toBe("C:\\Users\\user/AppData/Local/Supabase/managed");
   });
 
   it("uses platform application-state directories by default", () => {
-    expect(resolveManagedStateRoot({ env: {}, homeDir: "/home/user", platform: "linux" })).toBe(
-      "/home/user/.local/state/supabase/managed",
-    );
-    expect(resolveManagedStateRoot({ env: {}, homeDir: "/Users/user", platform: "darwin" })).toBe(
-      "/Users/user/Library/Application Support/supabase/managed",
-    );
     expect(
-      resolveManagedStateRoot({
-        env: { XDG_STATE_HOME: "" },
-        homeDir: "/home/user",
-        platform: "linux",
-      }),
+      run(resolveManagedStateRootEffect({ env: {}, homeDir: "/home/user", platform: "linux" })),
     ).toBe("/home/user/.local/state/supabase/managed");
     expect(
-      resolveManagedStateRoot({
-        env: { LOCALAPPDATA: "" },
-        homeDir: "C:\\Users\\user",
-        platform: "win32",
-      }),
+      run(resolveManagedStateRootEffect({ env: {}, homeDir: "/Users/user", platform: "darwin" })),
+    ).toBe("/Users/user/Library/Application Support/supabase/managed");
+    expect(
+      run(
+        resolveManagedStateRootEffect({
+          env: { XDG_STATE_HOME: "" },
+          homeDir: "/home/user",
+          platform: "linux",
+        }),
+      ),
+    ).toBe("/home/user/.local/state/supabase/managed");
+    expect(
+      run(
+        resolveManagedStateRootEffect({
+          env: { LOCALAPPDATA: "" },
+          homeDir: "C:\\Users\\user",
+          platform: "win32",
+        }),
+      ),
     ).toBe("C:\\Users\\user/AppData/Local/Supabase/managed");
   });
 
   it("anchors caller- and environment-supplied state roots to an absolute path", () => {
-    expect(resolveManagedStateRoot({ stateRoot: "relative/managed" })).toBe(
+    expect(run(resolveManagedStateRootEffect({ stateRoot: "relative/managed" }))).toBe(
       resolve("relative/managed"),
     );
-    expect(resolveManagedStateRoot({ stateRoot: "/absolute/managed" })).toBe("/absolute/managed");
+    expect(run(resolveManagedStateRootEffect({ stateRoot: "/absolute/managed" }))).toBe(
+      "/absolute/managed",
+    );
     expect(
-      resolveManagedStateRoot({
-        env: { SUPABASE_HOME: "relative/supabase" },
-        homeDir: "/home/user",
-        platform: "linux",
-      }),
+      run(
+        resolveManagedStateRootEffect({
+          env: { SUPABASE_HOME: "relative/supabase" },
+          homeDir: "/home/user",
+          platform: "linux",
+        }),
+      ),
     ).toBe(join(resolve("relative/supabase"), "managed"));
     expect(
-      resolveManagedStateRoot({
-        env: { XDG_STATE_HOME: "relative/state" },
-        homeDir: "/home/user",
-        platform: "linux",
-      }),
+      run(
+        resolveManagedStateRootEffect({
+          env: { XDG_STATE_HOME: "relative/state" },
+          homeDir: "/home/user",
+          platform: "linux",
+        }),
+      ),
     ).toBe(join(resolve("relative/state"), "supabase", "managed"));
   });
 
   it("refuses a blank explicit state root instead of falling back", () => {
-    // `resolve("")` silently yields the process' cwd, which would scatter
-    // managed state across whatever directory the caller happened to run in.
-    // An explicit root is a decision, so a blank one is a caller bug rather
-    // than a request for the default — the same policy the service applies.
     for (const stateRoot of ["", "   ", "\t"]) {
-      expect(() =>
-        resolveManagedStateRoot({ stateRoot, env: {}, homeDir: "/home/user", platform: "linux" }),
-      ).toThrow(UnsafeManagedStackPathError);
+      expect(
+        failureOf(
+          resolveManagedStateRootEffect({
+            stateRoot,
+            env: {},
+            homeDir: "/home/user",
+            platform: "linux",
+          }),
+        ),
+      ).toBeInstanceOf(UnsafeManagedStackPathError);
     }
-    expect(() =>
-      resolveManagedStateRoot({
-        stateRoot: "",
-        env: { SUPABASE_HOME: "/configured/supabase" },
-        homeDir: "/home/user",
-        platform: "linux",
-      }),
-    ).toThrow(UnsafeManagedStackPathError);
+    expect(
+      failureOf(
+        resolveManagedStateRootEffect({
+          stateRoot: "",
+          env: { SUPABASE_HOME: "/configured/supabase" },
+          homeDir: "/home/user",
+          platform: "linux",
+        }),
+      ),
+    ).toBeInstanceOf(UnsafeManagedStackPathError);
   });
 
   it("names the blank root it refused instead of an empty message tail", () => {
-    expect(() => resolveManagedStateRoot({ stateRoot: "\t" })).toThrow(/"\\t"/);
+    expect(failureOf(resolveManagedStateRootEffect({ stateRoot: "\t" }))).toMatchObject({
+      path: "\t",
+      message: 'Refusing a blank managed state root: "\\t"',
+    });
   });
 
   it("trims surrounding whitespace from an explicit state root", () => {
-    expect(resolveManagedStateRoot({ stateRoot: "  /absolute/managed  " })).toBe(
+    expect(run(resolveManagedStateRootEffect({ stateRoot: "  /absolute/managed  " }))).toBe(
       "/absolute/managed",
     );
   });
 
   it("keys every mutable stack path by opaque stack ID", () => {
-    expect(managedStackPaths("/state", "018f8b4e-8e5c-7e32-a956-6f297fd05a2d")).toEqual({
+    expect(run(managedStackPathsEffect("/state", "018f8b4e-8e5c-7e32-a956-6f297fd05a2d"))).toEqual({
       root: "/state/stacks/018f8b4e-8e5c-7e32-a956-6f297fd05a2d",
       data: "/state/stacks/018f8b4e-8e5c-7e32-a956-6f297fd05a2d/data",
       logs: "/state/stacks/018f8b4e-8e5c-7e32-a956-6f297fd05a2d/logs",
@@ -152,11 +186,17 @@ describe("managed paths", () => {
   });
 
   it("rejects non-UUID IDs and stack paths that do not match the derived root", () => {
-    expect(() => managedStackPaths("/state", "../../tmp/escaped")).toThrow(
+    expect(failureOf(managedStackPathsEffect("/state", "../../tmp/escaped"))).toBeInstanceOf(
       InvalidManagedIdentityError,
     );
-    expect(() =>
-      assertManagedStackRoot("/state", "018f8b4e-8e5c-7e32-a956-6f297fd05a2d", "/tmp/escaped"),
-    ).toThrow(UnsafeManagedStackPathError);
+    expect(
+      failureOf(
+        assertManagedStackRootEffect(
+          "/state",
+          "018f8b4e-8e5c-7e32-a956-6f297fd05a2d",
+          "/tmp/escaped",
+        ),
+      ),
+    ).toBeInstanceOf(UnsafeManagedStackPathError);
   });
 });

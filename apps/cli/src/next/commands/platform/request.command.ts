@@ -53,12 +53,15 @@ const config = {
     Flag.withDescription(
       "Show the request and response schema for this route instead of executing it",
     ),
+    Flag.withDefault(false),
   ),
   dryRun: Flag.boolean("dry-run").pipe(
     Flag.withDescription("Validate and preview the outgoing request without executing it"),
+    Flag.withDefault(false),
   ),
   yes: Flag.boolean("yes").pipe(
     Flag.withDescription("Skip the confirmation prompt for this mutating request"),
+    Flag.withDefault(false),
   ),
 } as const;
 

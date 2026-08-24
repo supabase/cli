@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { Match } from "effect";
 import { applyEvent, type ServiceEvent } from "./ServiceTransition.ts";
 import { ServiceState, initial, type ServiceStatus } from "./ServiceState.ts";
 
@@ -75,12 +76,29 @@ describe("ServiceTransition", () => {
       BackoffElapsed: ["Restarting"],
       HookFailed: ["Starting", "Running", "Healthy", "Unhealthy"],
     };
+    const legalStatusesFor = Match.type<ServiceEvent>().pipe(
+      Match.tagsExhaustive({
+        DependenciesSatisfied: () => legalStatuses.DependenciesSatisfied,
+        DependencyFailed: () => legalStatuses.DependencyFailed,
+        SpawnFailed: () => legalStatuses.SpawnFailed,
+        ProcessSpawned: () => legalStatuses.ProcessSpawned,
+        HealthCheckPassed: () => legalStatuses.HealthCheckPassed,
+        HealthCheckFailed: () => legalStatuses.HealthCheckFailed,
+        ProcessTerminated: () => legalStatuses.ProcessTerminated,
+        UnhealthyRestartExhausted: () => legalStatuses.UnhealthyRestartExhausted,
+        ProcessExited: () => legalStatuses.ProcessExited,
+        StopRequested: () => legalStatuses.StopRequested,
+        RestartTriggered: () => legalStatuses.RestartTriggered,
+        BackoffElapsed: () => legalStatuses.BackoffElapsed,
+        HookFailed: () => legalStatuses.HookFailed,
+      }),
+    );
 
     for (const event of Object.values(events)) {
       for (const status of statuses) {
         const state = make("service", { status, pid: 1234 });
-        expect(applyEvent(state, event) !== null, `${status} + ${event._tag}`).toBe(
-          legalStatuses[event._tag].includes(status),
+        expect(applyEvent(state, event) !== null, `${status}`).toBe(
+          legalStatusesFor(event).includes(status),
         );
       }
     }

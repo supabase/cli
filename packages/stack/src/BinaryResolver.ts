@@ -1,14 +1,30 @@
 import { createHash } from "node:crypto";
-import { Context, Effect, FileSystem, Layer, Option, Path, Result } from "effect";
+import { zstdDecompress } from "node:zlib";
+import {
+  Context,
+  Duration,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Predicate,
+  PlatformError,
+  Result,
+  Schedule,
+} from "effect";
 import { HttpClient } from "effect/unstable/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { BinaryNotFoundError, ChecksumMismatchError, DownloadError } from "./errors.ts";
-import { detectPlatform } from "./Platform.ts";
 import {
-  nativeReleaseForService,
-  type ArchiveFormat,
-  type NativeReleaseArtifact,
-} from "./ServiceCatalog.ts";
+  BinaryHostCompatibilityError,
+  BinaryManifestError,
+  BinaryNotFoundError,
+  BinaryRuntimeError,
+  ChecksumMismatchError,
+  DownloadError,
+} from "./errors.ts";
+import { detectPlatform, type NativeTarget } from "./Platform.ts";
+import { nativeReleaseForService, type NativeReleaseArtifact } from "./ServiceCatalog.ts";
 import type { ServiceName } from "./ServiceName.ts";
 
 export interface BinarySpec {
@@ -22,89 +38,80 @@ interface ResolveBinaryResult {
   readonly downloaded: boolean;
 }
 
+interface SlimServiceManifest {
+  readonly service: string;
+  readonly version: string;
+  readonly target: string;
+  readonly entrypoint: ReadonlyArray<string>;
+  readonly cmd: ReadonlyArray<string>;
+  readonly runtime_requires?: null | "glibc";
+  readonly libc: null | "glibc";
+  readonly os_floor: null | {
+    readonly kind: string;
+    readonly floor: string | null;
+    readonly offender?: string | null;
+    readonly scanned: number;
+    readonly bundled_glibc?: boolean;
+  };
+}
+
 export interface ResolveBinaryOptions {
   readonly onDownloadStart?: Effect.Effect<void>;
 }
 
 interface AssetInfo {
   readonly service: ServiceName;
-  readonly provider: string;
+  readonly releaseSet: "slim-services";
   readonly version: string;
-  readonly assetName: string;
+  readonly runtime: "native";
+  readonly target: NativeTarget;
+}
+
+interface HostCompatibilityRequirement {
+  readonly runtimeRequires: null | "glibc";
+  readonly libc: null | "glibc";
+  readonly osFloor: null | {
+    readonly kind: "glibc" | "macos";
+    readonly floor: string | null;
+  };
+}
+
+interface CacheCompleteMarker {
+  readonly provider: string;
+  readonly service: string;
+  readonly version: string;
+  readonly asset: string;
+  readonly url: string;
+  readonly target: NativeTarget;
+  readonly releaseSet: "slim-services";
+  readonly runtime: "native";
+  readonly hostCompatibility: HostCompatibilityRequirement;
 }
 
 const cachePath = (baseDir: string, info: AssetInfo): string =>
-  `${baseDir}/${info.service}/${info.provider.replaceAll("/", "_")}/${info.version}/${info.assetName}`;
-
-const LEGACY_NATIVE_PROVIDERS: Partial<Record<ServiceName, string>> = {
-  postgres: "github.com/supabase/postgres",
-  postgrest: "github.com/PostgREST/postgrest",
-  auth: "github.com/supabase/auth",
-  "edge-runtime": "github.com/supabase/edge-runtime",
-};
-
-const legacyCachePath = (baseDir: string, info: AssetInfo): string | undefined =>
-  LEGACY_NATIVE_PROVIDERS[info.service] === info.provider
-    ? `${baseDir}/${info.service}/${info.version}/${info.assetName}`
-    : undefined;
-
-const legacyExecutablePath = (
-  directory: string,
-  service: ServiceName,
-  platformOs: string,
-): string | undefined => {
-  const executableSuffix = platformOs === "win32" ? ".exe" : "";
-  switch (service) {
-    case "postgres":
-      return `${directory}/bin/postgres${executableSuffix}`;
-    case "postgrest":
-      return `${directory}/postgrest${executableSuffix}`;
-    case "auth":
-      return `${directory}/auth${executableSuffix}`;
-    case "edge-runtime":
-      return `${directory}/bin/edge-runtime${executableSuffix}`;
-    default:
-      return undefined;
-  }
-};
-
-const legacyCacheRequiredPaths = (
-  directory: string,
-  service: ServiceName,
-  platformOs: string,
-): ReadonlyArray<string> => {
-  const executable = legacyExecutablePath(directory, service, platformOs);
-  if (executable === undefined) return [];
-  return service === "postgres"
-    ? [
-        executable,
-        `${directory}/bin/pg_isready${platformOs === "win32" ? ".exe" : ""}`,
-        `${directory}/bin/psql${platformOs === "win32" ? ".exe" : ""}`,
-        `${directory}/share/supabase-cli/bin/supabase-postgres-init.sh`,
-        `${directory}/lib`,
-      ]
-    : [executable];
-};
+  `${baseDir}/${info.releaseSet}/${info.service}/${info.version}/${info.runtime}/${info.target}`;
 
 const CACHE_COMPLETE_MARKER = ".complete";
-const STALE_STAGING_AGE_MS = 24 * 60 * 60 * 1_000;
+const STALE_PREPARATION_ENTRY_AGE_MS = 24 * 60 * 60 * 1_000;
 
-const extractCommand = (
-  archive: ArchiveFormat,
-  archivePath: string,
-  destDir: string,
-  os: string,
-  stripComponents: boolean,
-): string[] => {
-  if (archive === "zip") {
-    return os === "win32"
-      ? ["tar", "xf", archivePath, "-C", destDir]
-      : ["unzip", "-o", archivePath, "-d", destDir];
+const hasTraversalSegment = (value: string): boolean =>
+  value.split(/[\\/]/).some((segment) => segment === "..");
+
+const isUnsafeArchiveMember = (member: string): boolean => {
+  const normalized = member.trim();
+  if (normalized.length === 0) return false;
+  if (normalized.startsWith("/") || /^[A-Za-z]:[\\/]/.test(normalized)) return true;
+  let depth = 0;
+  for (const segment of normalized.split(/[\\/]/)) {
+    if (segment.length === 0 || segment === ".") continue;
+    if (segment === "..") {
+      if (depth === 0) return true;
+      depth -= 1;
+    } else {
+      depth += 1;
+    }
   }
-  const flag = archive === "tar.gz" ? "xzf" : "xf";
-  const args = ["tar", flag, archivePath, "-C", destDir];
-  if (stripComponents) args.push("--strip-components=1");
-  return args;
+  return false;
 };
 
 const verifyChecksum = (
@@ -115,7 +122,7 @@ const verifyChecksum = (
   Effect.sync(() => {
     const actual = createHash("sha256").update(new Uint8Array(data)).digest("hex");
     // The .sha256 file typically contains "hex  filename" or just "hex"
-    const expectedHex = expected.trim().split(/\s+/)[0] ?? "";
+    const expectedHex = (expected.trim().split(/\s+/)[0] ?? "").toLowerCase();
     return { actual, expectedHex };
   }).pipe(
     Effect.flatMap(({ actual, expectedHex }) => {
@@ -126,25 +133,328 @@ const verifyChecksum = (
     }),
   );
 
+const decompressArchive = (
+  data: ArrayBuffer,
+  url: string,
+): Effect.Effect<Uint8Array, DownloadError> =>
+  Effect.callback<Uint8Array, DownloadError>((resume) => {
+    let completed = false;
+    const complete = (effect: Effect.Effect<Uint8Array, DownloadError>) => {
+      if (completed) return;
+      completed = true;
+      resume(effect);
+    };
+    try {
+      zstdDecompress(new Uint8Array(data), (cause, archive) =>
+        complete(
+          cause === null ? Effect.succeed(archive) : Effect.fail(new DownloadError({ url, cause })),
+        ),
+      );
+    } catch (cause) {
+      complete(Effect.fail(new DownloadError({ url, cause })));
+    }
+    return Effect.void;
+  });
+
+const checksumForArchive = (contents: string, archiveName: string): string | undefined => {
+  for (const line of contents.split(/\r?\n/)) {
+    const match = line.trim().match(/^([a-f0-9]{64})\s+[* ]?(.+)$/i);
+    if (match?.[2] === archiveName || match?.[2]?.endsWith(`/${archiveName}`)) {
+      return match[1]?.toLowerCase();
+    }
+  }
+  return undefined;
+};
+
+const manifestError = (url: string, detail: string): BinaryManifestError =>
+  new BinaryManifestError({ url, detail });
+
+const isSlimServiceManifest = (value: unknown): value is SlimServiceManifest => {
+  if (typeof value !== "object" || value === null) return false;
+  if (!("service" in value) || typeof value.service !== "string") return false;
+  if (!("version" in value) || typeof value.version !== "string") return false;
+  if (!("target" in value) || typeof value.target !== "string") return false;
+  if (!("entrypoint" in value) || !Array.isArray(value.entrypoint)) return false;
+  if (!("cmd" in value) || !Array.isArray(value.cmd)) return false;
+  if (
+    "runtime_requires" in value &&
+    value.runtime_requires !== null &&
+    value.runtime_requires !== "glibc"
+  )
+    return false;
+  if (!("libc" in value) || (value.libc !== null && value.libc !== "glibc")) return false;
+  if (!("os_floor" in value)) return false;
+  if (value.os_floor !== null) {
+    if (typeof value.os_floor !== "object") return false;
+    if (!("kind" in value.os_floor) || typeof value.os_floor.kind !== "string") return false;
+    if (!("floor" in value.os_floor)) return false;
+    if (value.os_floor.floor !== null && typeof value.os_floor.floor !== "string") return false;
+    if (!("scanned" in value.os_floor) || typeof value.os_floor.scanned !== "number") return false;
+    if (
+      "offender" in value.os_floor &&
+      value.os_floor.offender !== null &&
+      typeof value.os_floor.offender !== "string"
+    )
+      return false;
+    if ("bundled_glibc" in value.os_floor && typeof value.os_floor.bundled_glibc !== "boolean")
+      return false;
+  }
+  return true;
+};
+
+const validateManifest = (
+  release: NativeReleaseArtifact,
+  raw: unknown,
+  platform: { readonly os: string; readonly arch: string },
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+): Effect.Effect<
+  HostCompatibilityRequirement,
+  BinaryManifestError | BinaryHostCompatibilityError
+> =>
+  Effect.gen(function* () {
+    if (typeof raw !== "object" || raw === null) {
+      return yield* Effect.fail(manifestError(release.manifestUrl, "Manifest must be an object"));
+    }
+    if (!isSlimServiceManifest(raw)) {
+      return yield* Effect.fail(manifestError(release.manifestUrl, "Manifest schema is invalid"));
+    }
+    const manifest = raw;
+    if (
+      manifest.service !== release.service ||
+      manifest.version !== release.version ||
+      manifest.target !== release.target
+    ) {
+      return yield* Effect.fail(
+        manifestError(
+          release.manifestUrl,
+          "Manifest service/version/target does not match release",
+        ),
+      );
+    }
+    if (
+      !Array.isArray(manifest.entrypoint) ||
+      !manifest.entrypoint.every((value) => typeof value === "string") ||
+      !Array.isArray(manifest.cmd) ||
+      !manifest.cmd.every((value) => typeof value === "string")
+    ) {
+      return yield* Effect.fail(
+        manifestError(release.manifestUrl, "Manifest entrypoint/cmd must be string arrays"),
+      );
+    }
+    if (manifest.entrypoint.length === 0 && manifest.cmd.length === 0) {
+      return yield* Effect.fail(manifestError(release.manifestUrl, "Manifest has no command"));
+    }
+    const runtimeRequires = manifest.runtime_requires ?? null;
+    const commandPaths = [...manifest.entrypoint, ...manifest.cmd].filter(
+      (entry) =>
+        entry.startsWith("/") ||
+        entry.includes("/") ||
+        entry.includes("\\") ||
+        entry === "." ||
+        entry === "..",
+    );
+    if (commandPaths.some((entry) => hasTraversalSegment(entry))) {
+      return yield* Effect.fail(
+        manifestError(release.manifestUrl, "Manifest command path is unsafe"),
+      );
+    }
+    const osFloor = manifest.os_floor;
+    if (osFloor !== null && typeof osFloor !== "object") {
+      return yield* Effect.fail(manifestError(release.manifestUrl, "Manifest os_floor is invalid"));
+    }
+    if (osFloor !== null && osFloor.kind !== "macos" && osFloor.kind !== "glibc") {
+      return yield* Effect.fail(
+        new BinaryHostCompatibilityError({
+          target: release.target,
+          detail: `Unsupported manifest host kind ${osFloor.kind}`,
+        }),
+      );
+    }
+    const hostCompatibility: HostCompatibilityRequirement = {
+      runtimeRequires,
+      libc: manifest.libc,
+      osFloor:
+        osFloor === null
+          ? null
+          : osFloor.kind === "macos"
+            ? { kind: "macos", floor: osFloor.floor }
+            : { kind: "glibc", floor: osFloor.floor },
+    };
+    yield* validateHostCompatibility(release.target, hostCompatibility, platform, spawner);
+    return hostCompatibility;
+  });
+
+const validateHostCompatibility = (
+  target: NativeTarget,
+  requirement: HostCompatibilityRequirement,
+  platform: { readonly os: string; readonly arch: string },
+  spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
+): Effect.Effect<void, BinaryHostCompatibilityError> =>
+  Effect.gen(function* () {
+    const requiresGlibc =
+      requirement.libc === "glibc" ||
+      requirement.runtimeRequires === "glibc" ||
+      requirement.osFloor?.kind === "glibc";
+    if (requirement.osFloor?.kind === "macos" && platform.os !== "darwin") {
+      return yield* Effect.fail(
+        new BinaryHostCompatibilityError({
+          target,
+          detail: "Manifest requires macOS",
+        }),
+      );
+    }
+    if (requiresGlibc && platform.os !== "linux") {
+      return yield* Effect.fail(
+        new BinaryHostCompatibilityError({
+          target,
+          detail: "Manifest requires Linux/glibc",
+        }),
+      );
+    }
+    const floor = requirement.osFloor?.floor;
+    if (requiresGlibc) {
+      const host = yield* Effect.sync(() => {
+        try {
+          const report = process.report?.getReport?.();
+          if (typeof report !== "object" || report === null || !("header" in report)) {
+            return undefined;
+          }
+          const header = report.header;
+          if (
+            typeof header !== "object" ||
+            header === null ||
+            !("glibcVersionRuntime" in header) ||
+            typeof header.glibcVersionRuntime !== "string"
+          ) {
+            return undefined;
+          }
+          return header.glibcVersionRuntime;
+        } catch {
+          return undefined;
+        }
+      });
+      if (typeof host !== "string" || host.trim().length === 0) {
+        return yield* Effect.fail(
+          new BinaryHostCompatibilityError({
+            target,
+            detail: "Unable to determine host glibc version",
+          }),
+        );
+      }
+      if (floor !== null && floor !== undefined) {
+        const comparison = compareVersions(host, floor);
+        if (comparison === undefined) {
+          return yield* Effect.fail(
+            new BinaryHostCompatibilityError({
+              target,
+              detail: `Host glibc ${host} or manifest floor ${floor} is not a dotted numeric version`,
+            }),
+          );
+        }
+        if (comparison < 0) {
+          return yield* Effect.fail(
+            new BinaryHostCompatibilityError({
+              target,
+              detail: `Host glibc ${host} is below manifest floor ${floor}`,
+            }),
+          );
+        }
+      }
+    }
+    if (
+      platform.os === "darwin" &&
+      requirement.osFloor?.kind === "macos" &&
+      floor !== null &&
+      floor !== undefined
+    ) {
+      const host = yield* spawner.string(ChildProcess.make("sw_vers", ["-productVersion"])).pipe(
+        Effect.mapError(
+          (cause) =>
+            new BinaryHostCompatibilityError({
+              target,
+              detail: `Unable to determine macOS version: ${String(cause)}`,
+            }),
+        ),
+      );
+      const hostVersion = host.trim().split(/\s+/)[0] ?? "";
+      if (hostVersion.length === 0) {
+        return yield* Effect.fail(
+          new BinaryHostCompatibilityError({
+            target,
+            detail: "Unable to determine macOS version",
+          }),
+        );
+      }
+      const comparison = compareVersions(hostVersion, floor);
+      if (comparison === undefined) {
+        return yield* Effect.fail(
+          new BinaryHostCompatibilityError({
+            target,
+            detail: `Host macOS ${hostVersion} or manifest floor ${floor} is not a dotted numeric version`,
+          }),
+        );
+      }
+      if (comparison < 0) {
+        return yield* Effect.fail(
+          new BinaryHostCompatibilityError({
+            target,
+            detail: `Host macOS ${hostVersion} is below manifest floor ${floor}`,
+          }),
+        );
+      }
+    }
+  });
+
+const parseVersion = (value: string): ReadonlyArray<number> | undefined => {
+  const parts = value.split(".");
+  if (parts.length === 0 || parts.some((part) => !/^\d+$/.test(part))) return undefined;
+  const parsed = parts.map(Number);
+  return parsed.every(Number.isSafeInteger) ? parsed : undefined;
+};
+
+const compareVersions = (left: string, right: string): number | undefined => {
+  const a = parseVersion(left);
+  const b = parseVersion(right);
+  if (a === undefined || b === undefined) return undefined;
+  for (let index = 0; index < Math.max(a.length, b.length); index += 1) {
+    const diff = (a[index] ?? 0) - (b[index] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+};
+
 export class BinaryResolver extends Context.Service<
   BinaryResolver,
   {
+    /** Computes the immutable cache identity without inspecting or changing the filesystem. */
+    readonly plan: (spec: BinarySpec) => Effect.Effect<string, BinaryNotFoundError>;
     readonly resolveWithMetadata: (
       spec: BinarySpec,
       options?: ResolveBinaryOptions,
     ) => Effect.Effect<
       ResolveBinaryResult,
-      BinaryNotFoundError | DownloadError | ChecksumMismatchError
+      | BinaryNotFoundError
+      | DownloadError
+      | ChecksumMismatchError
+      | BinaryManifestError
+      | BinaryRuntimeError
+      | BinaryHostCompatibilityError
     >;
     readonly resolve: (
       spec: BinarySpec,
-    ) => Effect.Effect<string, BinaryNotFoundError | DownloadError | ChecksumMismatchError>;
+    ) => Effect.Effect<
+      string,
+      | BinaryNotFoundError
+      | DownloadError
+      | ChecksumMismatchError
+      | BinaryManifestError
+      | BinaryRuntimeError
+      | BinaryHostCompatibilityError
+    >;
   }
 >()("local/BinaryResolver") {
   // Static pure functions — tested in unit tests
   static cachePath = cachePath;
-  static legacyExecutablePath = legacyExecutablePath;
-  static legacyCacheRequiredPaths = legacyCacheRequiredPaths;
 
   static make(
     cacheRoot: string,
@@ -165,29 +475,123 @@ export class BinaryResolver extends Context.Service<
         const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-        const isCompleteCache = (directory: string) =>
-          Effect.gen(function* () {
-            if (!(yield* fs.exists(path.join(directory, CACHE_COMPLETE_MARKER)))) {
+        const isCacheCompleteMarker = (value: unknown): value is CacheCompleteMarker => {
+          if (typeof value !== "object" || value === null) return false;
+          if (!("provider" in value) || typeof value.provider !== "string") return false;
+          if (!("service" in value) || typeof value.service !== "string") return false;
+          if (!("version" in value) || typeof value.version !== "string") return false;
+          if (!("asset" in value) || typeof value.asset !== "string") return false;
+          if (!("url" in value) || typeof value.url !== "string") return false;
+          if (
+            !("target" in value) ||
+            (value.target !== "darwin-arm64" &&
+              value.target !== "linux-amd64" &&
+              value.target !== "linux-arm64")
+          )
+            return false;
+          if (!("releaseSet" in value) || value.releaseSet !== "slim-services") return false;
+          if (!("runtime" in value) || value.runtime !== "native") return false;
+          if (!("hostCompatibility" in value)) return false;
+          const host = value.hostCompatibility;
+          if (typeof host !== "object" || host === null) return false;
+          if (
+            !("runtimeRequires" in host) ||
+            (host.runtimeRequires !== null && host.runtimeRequires !== "glibc")
+          )
+            return false;
+          if (!("libc" in host) || (host.libc !== null && host.libc !== "glibc")) return false;
+          if (!("osFloor" in host)) return false;
+          if (host.osFloor !== null) {
+            if (typeof host.osFloor !== "object") return false;
+            if (
+              !("kind" in host.osFloor) ||
+              (host.osFloor.kind !== "glibc" && host.osFloor.kind !== "macos")
+            )
               return false;
-            }
-            const entries = yield* fs.readDirectory(directory);
-            return entries.some((entry) => entry !== CACHE_COMPLETE_MARKER);
-          });
-
-        const isReusableLegacyCache = (
-          directory: string,
-          service: ServiceName,
-          platformOs: string,
-        ) => {
-          const requiredPaths = legacyCacheRequiredPaths(directory, service, platformOs);
-          return requiredPaths.length === 0
-            ? Effect.succeed(false)
-            : Effect.forEach(requiredPaths, fs.exists).pipe(
-                Effect.map((results) => results.every(Boolean)),
-              );
+            if (
+              !("floor" in host.osFloor) ||
+              (host.osFloor.floor !== null && typeof host.osFloor.floor !== "string")
+            )
+              return false;
+          }
+          return true;
         };
 
-        const cleanupStaleStaging = (directory: string, prefix: string) =>
+        const isCompleteCache = (
+          directory: string,
+          release: NativeReleaseArtifact,
+          info: AssetInfo,
+          platform: { readonly os: string; readonly arch: string },
+        ) =>
+          Effect.gen(function* () {
+            const marker = yield* fs
+              .readFileString(path.join(directory, CACHE_COMPLETE_MARKER))
+              .pipe(Effect.option);
+            if (Option.isNone(marker)) return false;
+            const parsed = yield* Effect.sync(() => {
+              try {
+                const value: unknown = JSON.parse(marker.value);
+                return value;
+              } catch {
+                return undefined;
+              }
+            });
+            if (!isCacheCompleteMarker(parsed)) return false;
+            if (
+              parsed.provider !== release.provider ||
+              parsed.service !== info.service ||
+              parsed.version !== info.version ||
+              parsed.asset !== release.assetName ||
+              parsed.url !== release.downloadUrl ||
+              parsed.target !== info.target ||
+              parsed.releaseSet !== info.releaseSet ||
+              parsed.runtime !== info.runtime
+            ) {
+              return false;
+            }
+            const requiredPaths = [...new Set(release.requiredRuntimePaths)];
+            const present = yield* Effect.forEach(requiredPaths, (entry) =>
+              fs.exists(path.join(directory, entry)),
+            );
+            if (!present.every(Boolean)) return false;
+            yield* validateHostCompatibility(
+              release.target,
+              parsed.hostCompatibility,
+              platform,
+              spawner,
+            );
+            return true;
+          }).pipe(Effect.catchTag("PlatformError", () => Effect.succeed(false)));
+
+        const resolveRelease = (spec: BinarySpec) =>
+          Effect.gen(function* () {
+            const platform = yield* detectPlatform;
+            const release = nativeReleaseForService(spec.service, spec.version, platform);
+            if (release === undefined) {
+              return yield* Effect.fail(
+                new BinaryNotFoundError({
+                  service: spec.service,
+                  platform: `${platform.os}-${platform.arch}`,
+                }),
+              );
+            }
+            const info: AssetInfo = {
+              service: spec.service,
+              releaseSet: "slim-services",
+              version: spec.version,
+              runtime: "native",
+              target: release.target,
+            };
+            return { platform, release, info };
+          });
+
+        const plan = (spec: BinarySpec): Effect.Effect<string, BinaryNotFoundError> =>
+          Effect.gen(function* () {
+            const { info } = yield* resolveRelease(spec);
+            return cachePath(spec.cacheDir ?? binDir, info);
+          });
+
+        const cleanupStaleEntries = (directory: string, prefix: string) =>
           fs.readDirectory(directory).pipe(
             Effect.flatMap((entries) =>
               Effect.forEach(
@@ -199,7 +603,7 @@ export class BinaryResolver extends Context.Service<
                       Option.match(info.mtime, {
                         onNone: () => Effect.void,
                         onSome: (modifiedAt) =>
-                          Date.now() - modifiedAt.getTime() >= STALE_STAGING_AGE_MS
+                          Date.now() - modifiedAt.getTime() >= STALE_PREPARATION_ENTRY_AGE_MS
                             ? fs.remove(stagingPath, { recursive: true, force: true })
                             : Effect.void,
                       }),
@@ -207,18 +611,70 @@ export class BinaryResolver extends Context.Service<
                     Effect.ignore,
                   );
                 },
-                { concurrency: "unbounded" },
+                { concurrency: 4 },
               ),
             ),
             Effect.ignore,
           );
 
+        const validateExtractedTree = (directory: string) =>
+          Effect.gen(function* () {
+            const root = yield* fs.realPath(directory);
+            const entries = yield* fs.readDirectory(directory, { recursive: true });
+            for (const entry of entries) {
+              const candidate = path.join(directory, entry);
+              const resolved = yield* fs.realPath(candidate).pipe(
+                Effect.mapError(
+                  () =>
+                    new BinaryRuntimeError({
+                      path: candidate,
+                      detail: "Extracted path cannot be resolved inside private staging",
+                    }),
+                ),
+              );
+              const relative = path.relative(root, resolved);
+              if (
+                path.isAbsolute(relative) ||
+                relative === ".." ||
+                relative.startsWith(`..${path.sep}`)
+              ) {
+                return yield* Effect.fail(
+                  new BinaryRuntimeError({
+                    path: candidate,
+                    detail: `Extracted path resolves outside private staging: ${entry}`,
+                  }),
+                );
+              }
+            }
+          });
+
         const extractRelease = (
           release: NativeReleaseArtifact,
           destination: string,
-          platformOs: string,
+          platform: { readonly os: string; readonly arch: string },
         ) =>
           Effect.gen(function* () {
+            const manifestResponse = yield* httpClient
+              .get(release.manifestUrl)
+              .pipe(
+                Effect.catchTag("HttpClientError", (cause) =>
+                  Effect.fail(new DownloadError({ url: release.manifestUrl, cause })),
+                ),
+              );
+            const manifestText = yield* manifestResponse.text.pipe(
+              Effect.catchTag("HttpClientError", (cause) =>
+                Effect.fail(new DownloadError({ url: release.manifestUrl, cause })),
+              ),
+            );
+            const hostCompatibility = yield* Effect.try({
+              try: () => {
+                const parsed: unknown = JSON.parse(manifestText);
+                return parsed;
+              },
+              catch: (cause) =>
+                manifestError(release.manifestUrl, `Invalid JSON: ${String(cause)}`),
+            }).pipe(Effect.flatMap((value) => validateManifest(release, value, platform, spawner)));
+
             const tarballResponse = yield* httpClient
               .get(release.downloadUrl)
               .pipe(
@@ -232,43 +688,57 @@ export class BinaryResolver extends Context.Service<
               ),
             );
 
-            const checksumUrl = release.checksumUrl;
-            if (checksumUrl !== null) {
-              const checksumResponse = yield* httpClient
-                .get(checksumUrl)
-                .pipe(
-                  Effect.catchTag("HttpClientError", (cause) =>
-                    Effect.fail(new DownloadError({ url: checksumUrl, cause })),
-                  ),
-                );
-              const checksumText = yield* checksumResponse.text.pipe(
+            const checksumResponse = yield* httpClient
+              .get(release.checksumUrl)
+              .pipe(
                 Effect.catchTag("HttpClientError", (cause) =>
-                  Effect.fail(new DownloadError({ url: checksumUrl, cause })),
+                  Effect.fail(new DownloadError({ url: release.checksumUrl, cause })),
                 ),
               );
-              yield* verifyChecksum(tarball, checksumText, checksumUrl);
-            }
-
-            const archivePath = path.join(destination, `_download.${release.archive}`);
-            yield* fs.writeFile(archivePath, new Uint8Array(tarball));
-
-            const [command, ...args] = extractCommand(
-              release.archive,
-              archivePath,
-              destination,
-              platformOs,
-              release.stripComponents,
+            const checksumText = yield* checksumResponse.text.pipe(
+              Effect.catchTag("HttpClientError", (cause) =>
+                Effect.fail(new DownloadError({ url: release.checksumUrl, cause })),
+              ),
             );
-            if (command === undefined) {
+            const expected = checksumForArchive(checksumText, `${release.assetName}.tar.zst`);
+            if (expected === undefined) {
+              return yield* Effect.fail(
+                manifestError(release.checksumUrl, "SHA256SUMS has no entry for the archive"),
+              );
+            }
+            yield* verifyChecksum(tarball, expected, release.checksumUrl);
+
+            const archivePath = path.join(destination, "_download.tar");
+            const archive = yield* decompressArchive(tarball, release.downloadUrl);
+            yield* fs.writeFile(archivePath, archive);
+
+            const members = yield* spawner
+              .string(ChildProcess.make("tar", ["-tf", archivePath]))
+              .pipe(
+                Effect.catch((cause) =>
+                  Effect.fail(
+                    new DownloadError({
+                      url: release.downloadUrl,
+                      cause,
+                    }),
+                  ),
+                ),
+              );
+            const unsafeMember = members
+              .split(/\r?\n/)
+              .map((member) => member.trim())
+              .find(isUnsafeArchiveMember);
+            if (unsafeMember !== undefined) {
               return yield* Effect.fail(
                 new DownloadError({
                   url: release.downloadUrl,
-                  cause: new Error("No extraction command was configured"),
+                  cause: new Error(`archive member is unsafe: ${unsafeMember}`),
                 }),
               );
             }
+
             const exitCode = yield* spawner
-              .exitCode(ChildProcess.make(command, args))
+              .exitCode(ChildProcess.make("tar", ["-xf", archivePath, "-C", destination]))
               .pipe(
                 Effect.catchTag("PlatformError", (cause) =>
                   Effect.fail(new DownloadError({ url: release.downloadUrl, cause })),
@@ -283,82 +753,94 @@ export class BinaryResolver extends Context.Service<
               );
             }
 
+            yield* validateExtractedTree(destination);
+
             yield* fs.remove(archivePath).pipe(Effect.ignore);
 
-            if (platformOs !== "win32") {
-              yield* spawner
-                .exitCode(ChildProcess.make("chmod", ["-R", "u+x", destination]))
-                .pipe(Effect.ignore);
+            const requirePostProcess = (name: string, command: ChildProcess.Command) =>
+              Effect.gen(function* () {
+                const exitCode = yield* spawner.exitCode(command).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new BinaryRuntimeError({
+                        path: destination,
+                        detail: `${name} could not run: ${String(cause)}`,
+                      }),
+                  ),
+                );
+                if (exitCode !== 0) {
+                  return yield* Effect.fail(
+                    new BinaryRuntimeError({
+                      path: destination,
+                      detail: `${name} exited with code ${exitCode}`,
+                    }),
+                  );
+                }
+              });
+
+            if (platform.os !== "win32") {
+              yield* requirePostProcess(
+                "chmod",
+                ChildProcess.make("chmod", ["-R", "u+x", destination]),
+              );
             }
 
-            if (platformOs === "darwin") {
-              yield* spawner
-                .exitCode(
-                  ChildProcess.make("find", [
-                    destination,
-                    "-type",
-                    "f",
-                    "(",
-                    "-perm",
-                    "+111",
-                    "-o",
-                    "-name",
-                    "*.dylib",
-                    ")",
-                    "-exec",
-                    "codesign",
-                    "-f",
-                    "-s",
-                    "-",
-                    "{}",
-                    "+",
-                  ]),
-                )
-                .pipe(Effect.ignore);
+            if (platform.os === "darwin") {
+              yield* requirePostProcess(
+                "codesign",
+                ChildProcess.make("find", [
+                  destination,
+                  "-type",
+                  "f",
+                  "(",
+                  "-perm",
+                  "+111",
+                  "-o",
+                  "-name",
+                  "*.dylib",
+                  ")",
+                  "-exec",
+                  "codesign",
+                  "-f",
+                  "-s",
+                  "-",
+                  "{}",
+                  "+",
+                ]),
+              );
             }
+
+            const requiredPaths = [...new Set(release.requiredRuntimePaths)];
+            const missing = yield* Effect.forEach(requiredPaths, (entry) =>
+              fs.exists(path.join(destination, entry)),
+            ).pipe(Effect.map((exists) => requiredPaths.filter((_entry, index) => !exists[index])));
+            if (missing.length > 0) {
+              return yield* Effect.fail(
+                new BinaryRuntimeError({
+                  path: destination,
+                  detail: `Manifest runtime paths are missing: ${missing.join(", ")}`,
+                }),
+              );
+            }
+            return hostCompatibility;
           });
 
         const resolveWithMetadata = (spec: BinarySpec, options?: ResolveBinaryOptions) => {
           const core = Effect.gen(function* () {
-            const platform = yield* detectPlatform;
-            const release = nativeReleaseForService(spec.service, spec.version, platform);
-            if (release === undefined) {
-              return yield* Effect.fail(
-                new BinaryNotFoundError({
-                  service: spec.service,
-                  platform: `${platform.os}-${platform.arch}`,
-                }),
-              );
-            }
-
-            const info: AssetInfo = {
-              service: spec.service,
-              provider: release.provider,
-              version: spec.version,
-              assetName: release.assetName,
-            };
+            const { platform, release, info } = yield* resolveRelease(spec);
             const baseDir = spec.cacheDir ?? binDir;
             const cacheDir = cachePath(baseDir, info);
-            const legacyDir = legacyCachePath(baseDir, info);
             const parentDir = path.dirname(cacheDir);
             const stagingPrefix = `.${release.assetName}.partial-`;
-            yield* cleanupStaleStaging(parentDir, stagingPrefix);
-            if (yield* isCompleteCache(cacheDir)) {
+            const publicationLock = path.join(parentDir, `.${release.assetName}.publication-lock`);
+            yield* cleanupStaleEntries(parentDir, stagingPrefix);
+            yield* cleanupStaleEntries(parentDir, path.basename(publicationLock));
+            if (yield* isCompleteCache(cacheDir, release, info, platform)) {
               return {
                 path: cacheDir,
                 downloaded: false,
               } satisfies ResolveBinaryResult;
             }
-            if (
-              legacyDir !== undefined &&
-              (yield* isReusableLegacyCache(legacyDir, spec.service, platform.os))
-            ) {
-              return {
-                path: legacyDir,
-                downloaded: false,
-              } satisfies ResolveBinaryResult;
-            }
-
             yield* fs.makeDirectory(parentDir, { recursive: true });
             yield* options?.onDownloadStart ?? Effect.void;
 
@@ -367,7 +849,7 @@ export class BinaryResolver extends Context.Service<
               prefix: stagingPrefix,
             });
             return yield* Effect.gen(function* () {
-              yield* extractRelease(release, stagingDir, platform.os);
+              const hostCompatibility = yield* extractRelease(release, stagingDir, platform);
               yield* fs.writeFile(
                 path.join(stagingDir, CACHE_COMPLETE_MARKER),
                 new TextEncoder().encode(
@@ -377,6 +859,10 @@ export class BinaryResolver extends Context.Service<
                     version: spec.version,
                     asset: release.assetName,
                     url: release.downloadUrl,
+                    target: info.target,
+                    releaseSet: info.releaseSet,
+                    runtime: info.runtime,
+                    hostCompatibility,
                   }),
                 ),
               );
@@ -388,23 +874,46 @@ export class BinaryResolver extends Context.Service<
               if (Result.isSuccess(publication)) {
                 return { path: cacheDir, downloaded: true } satisfies ResolveBinaryResult;
               }
-              if (yield* isCompleteCache(cacheDir)) {
+              if (yield* isCompleteCache(cacheDir, release, info, platform)) {
                 return { path: cacheDir, downloaded: false } satisfies ResolveBinaryResult;
               }
 
-              // A fully staged replacement is now available, so an incomplete
-              // destination can be reclaimed without risking the last usable
-              // cache entry. Retry publication once; persistent filesystem
-              // failures still surface instead of looping forever.
-              yield* fs.remove(cacheDir, { recursive: true, force: true });
-              const retry = yield* fs.rename(stagingDir, cacheDir).pipe(Effect.result);
-              if (Result.isSuccess(retry)) {
-                return { path: cacheDir, downloaded: true } satisfies ResolveBinaryResult;
-              }
-              if (yield* isCompleteCache(cacheDir)) {
-                return { path: cacheDir, downloaded: false } satisfies ResolveBinaryResult;
-              }
-              return yield* Effect.fail(retry.failure);
+              return yield* Effect.scoped(
+                Effect.gen(function* () {
+                  const acquirePublicationLock: Effect.Effect<void, PlatformError.PlatformError> =
+                    fs.makeDirectory(publicationLock).pipe(
+                      Effect.retry({
+                        while: (error) => Predicate.isTagged(error.reason, "AlreadyExists"),
+                        schedule: Schedule.recurs(1_200).pipe(
+                          Schedule.addDelay(() => Effect.succeed(Duration.millis(25))),
+                        ),
+                      }),
+                    );
+                  yield* Effect.acquireRelease(acquirePublicationLock, () =>
+                    fs
+                      .remove(publicationLock, { recursive: true, force: true })
+                      .pipe(Effect.ignore),
+                  );
+
+                  // The destination may have changed while this resolver was
+                  // waiting to repair it. Revalidate under the publication
+                  // claim before removing anything shared.
+                  if (yield* isCompleteCache(cacheDir, release, info, platform)) {
+                    return { path: cacheDir, downloaded: false } satisfies ResolveBinaryResult;
+                  }
+
+                  yield* fs.remove(cacheDir, { recursive: true, force: true });
+                  const retry = yield* fs.rename(stagingDir, cacheDir).pipe(Effect.result);
+                  if (Result.isSuccess(retry)) {
+                    return { path: cacheDir, downloaded: true } satisfies ResolveBinaryResult;
+                  }
+                  const retryFailure = retry.failure;
+                  if (yield* isCompleteCache(cacheDir, release, info, platform)) {
+                    return { path: cacheDir, downloaded: false } satisfies ResolveBinaryResult;
+                  }
+                  return yield* Effect.fail(retryFailure);
+                }),
+              );
             }).pipe(
               Effect.ensuring(
                 fs.remove(stagingDir, { recursive: true, force: true }).pipe(Effect.ignore),
@@ -423,6 +932,7 @@ export class BinaryResolver extends Context.Service<
         };
 
         return {
+          plan,
           resolveWithMetadata,
           resolve: (spec: BinarySpec) => {
             return Effect.map(resolveWithMetadata(spec), ({ path }) => path);

@@ -39,6 +39,7 @@ const config = {
     Flag.withDescription(
       "Fail when bundled pg-delta finds schema objects it cannot manage instead of leaving them unmanaged.",
     ),
+    Flag.withDefault(false),
   ),
   from: Flag.string("from").pipe(
     Flag.withDescription("Diff from local, linked, migrations, or a Postgres URL."),

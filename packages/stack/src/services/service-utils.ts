@@ -1,5 +1,6 @@
 import type { ExternalCleanupAction, ServiceDef } from "@supabase/process-compose";
 import type { ServiceName } from "../ServiceName.ts";
+import type { ContainerRuntime } from "../ContainerRuntime.ts";
 import { dockerContainerName, STACK_ID_LABEL, type StackIdentity } from "../StackIdentity.ts";
 import { dockerServiceCleanup, dockerServiceOrphanCleanup } from "./docker-cleanup.ts";
 
@@ -8,7 +9,11 @@ export interface ServiceDependency {
   readonly condition: "healthy" | "completed";
 }
 
-interface DockerRunServiceOptions {
+export interface ContainerRuntimeOptions {
+  readonly runtime: ContainerRuntime;
+}
+
+interface DockerRunServiceOptions extends ContainerRuntimeOptions {
   readonly name: ServiceName;
   readonly identity: StackIdentity;
   readonly image: string;
@@ -18,6 +23,8 @@ interface DockerRunServiceOptions {
   readonly cmd?: ReadonlyArray<string>;
   readonly entrypoint?: string;
   readonly volumes?: ReadonlyArray<string>;
+  readonly securityOptions?: ReadonlyArray<string>;
+  readonly user?: string;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
   readonly healthCheck?: ServiceDef["healthCheck"];
   readonly restart?: ServiceDef["restart"];
@@ -25,8 +32,20 @@ interface DockerRunServiceOptions {
   readonly orphanCleanup?: ReadonlyArray<ExternalCleanupAction>;
 }
 
+export const hostUserForLinuxDocker = (
+  runtime: ContainerRuntime,
+  platformOs: string,
+): string | undefined => {
+  // Linux bind mounts preserve numeric ownership. Matching the caller keeps
+  // private runtime files readable and persistent data removable by the host.
+  if (runtime !== "docker" || platformOs !== "linux") return undefined;
+  const uid = process.getuid?.();
+  const gid = process.getgid?.();
+  return uid === undefined || gid === undefined ? undefined : `${uid}:${gid}`;
+};
+
 const envArgs = (env: Record<string, string>): ReadonlyArray<string> =>
-  Object.entries(env).flatMap(([key, value]) => ["-e", `${key}=${value}`]);
+  Object.keys(env).flatMap((key) => ["-e", key]);
 
 export const hostHttpHealthCheck = (
   port: number,
@@ -44,6 +63,7 @@ export const hostHttpHealthCheck = (
 });
 
 export const dockerExecHealthCheck = (
+  runtime: ContainerRuntime,
   containerName: string,
   command: string,
   args: ReadonlyArray<string>,
@@ -51,7 +71,7 @@ export const dockerExecHealthCheck = (
 ): ServiceDef["healthCheck"] => ({
   probe: {
     _tag: "Exec",
-    command: "docker",
+    command: runtime,
     args: ["exec", containerName, command, ...args],
   },
   ...opts,
@@ -71,6 +91,8 @@ export const dockerRunService = (opts: DockerRunServiceOptions): ServiceDef => {
       : ["--label", `${STACK_ID_LABEL}=${opts.identity.stackId}`]),
     ...(opts.networkArgs ?? []),
     ...(opts.volumes ?? []).flatMap((volume) => ["-v", volume]),
+    ...(opts.securityOptions ?? []).flatMap((option) => ["--security-opt", option]),
+    ...(opts.user === undefined ? [] : ["--user", opts.user]),
     ...(opts.entrypoint === undefined ? [] : ["--entrypoint", opts.entrypoint]),
     ...(opts.args ?? []),
     ...envArgs(opts.env ?? {}),
@@ -80,14 +102,18 @@ export const dockerRunService = (opts: DockerRunServiceOptions): ServiceDef => {
 
   return {
     name: opts.name,
-    command: "docker",
+    command: opts.runtime,
     args: dockerArgs,
+    env: opts.env,
     dependencies: opts.dependencies,
     healthCheck: opts.healthCheck,
     shutdown: opts.shutdown,
-    cleanup: dockerServiceCleanup(containerName),
+    cleanup: dockerServiceCleanup(opts.runtime, containerName),
     supervision: {
-      orphanCleanup: [...dockerServiceOrphanCleanup(containerName), ...(opts.orphanCleanup ?? [])],
+      orphanCleanup: [
+        ...dockerServiceOrphanCleanup(opts.runtime, containerName),
+        ...(opts.orphanCleanup ?? []),
+      ],
     },
     restart: opts.restart ?? "unless-stopped",
   };

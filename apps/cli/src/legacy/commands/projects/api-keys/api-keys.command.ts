@@ -12,6 +12,7 @@ const config = {
   ),
   reveal: Flag.boolean("reveal").pipe(
     Flag.withDescription("Reveal the secret API keys in full (e.g. sb_secret_...)."),
+    Flag.withDefault(false),
   ),
 };
 export type LegacyProjectsApiKeysFlags = CliCommand.Command.Config.Infer<typeof config>;

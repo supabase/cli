@@ -37,6 +37,7 @@ const config = {
   ignoreHealthCheck: Flag.boolean("ignore-health-check").pipe(
     Flag.withDescription("Ignore unhealthy services and exit 0"),
     Flag.withHidden,
+    Flag.withDefault(false),
   ),
 } as const;
 

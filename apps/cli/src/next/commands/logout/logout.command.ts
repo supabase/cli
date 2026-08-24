@@ -6,7 +6,10 @@ import { withCommandInstrumentation } from "../../../shared/telemetry/command-in
 import { logout } from "./logout.handler.ts";
 
 export const logoutCommand = Command.make("logout", {
-  yes: Flag.boolean("yes").pipe(Flag.withDescription("Skip the confirmation prompt")),
+  yes: Flag.boolean("yes").pipe(
+    Flag.withDescription("Skip the confirmation prompt"),
+    Flag.withDefault(false),
+  ),
 }).pipe(
   Command.withDescription("Log out of Supabase and remove the stored access token."),
   Command.withShortDescription("Log out of Supabase"),

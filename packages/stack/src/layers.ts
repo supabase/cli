@@ -15,7 +15,7 @@ import type { ResolvedStackConfig } from "./StackConfig.ts";
 import { sanitizeDaemonConfigInput, type DaemonConfigInput } from "./StackConfigResolver.ts";
 import { HttpTransportClient } from "./HttpTransportClient.ts";
 import { DEFAULT_MANAGED_STACK_NAME, defaultCacheRoot } from "./paths.ts";
-import type { ManagedStackDocument } from "./managed/document.ts";
+import type { ManagedStackLaunchInput } from "./managed/document.ts";
 import type { ManagedPortIntentDocument } from "./managed/model.ts";
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
@@ -107,7 +107,7 @@ export class DaemonStartError extends Data.TaggedError("DaemonStartError")<{
 /** Managed-only additions kept outside the generic daemon config resolver. */
 export type ManagedDaemonConfigInput = DaemonConfigInput & {
   readonly portIntents: ManagedPortIntentDocument;
-  readonly launch?: ManagedStackDocument["launch"];
+  readonly launch?: ManagedStackLaunchInput;
 };
 
 // ---------------------------------------------------------------------------
