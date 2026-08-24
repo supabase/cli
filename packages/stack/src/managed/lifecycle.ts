@@ -56,7 +56,7 @@ const stackIdForInput = (
     const stackName = yield* validateManagedStackName(input.stackName ?? "default");
     const discovery = yield* manager.discoverWorkspace(input.workspacePath);
     if (discovery.state === "needsRepair") {
-      return yield* Effect.fail(workspaceRepairConflict(discovery.reason));
+      return yield* workspaceRepairConflict(discovery.reason);
     }
     return deriveStackId(discovery.identity, stackName);
   });
@@ -76,7 +76,7 @@ export const resolveManagedDocument = (
       ...(input.stackName === undefined ? {} : { stackName: input.stackName }),
       portDocument: input.portDocument ?? emptyPortDocument(),
     });
-    return document === undefined ? yield* Effect.fail(noRunningStack(input)) : document;
+    return document === undefined ? yield* noRunningStack(input) : document;
   });
 
 class ManagedStopPending extends Data.TaggedError("ManagedStopPending")<{}> {}
@@ -96,26 +96,24 @@ export const connectManagedStack = (
       (document.lifecycle !== "running" && document.lifecycle !== "starting") ||
       (document.lifecycle === "running" && document.runtime?.controlEndpoint === undefined)
     ) {
-      return yield* Effect.fail(noRunningStack(input));
+      return yield* noRunningStack(input);
     }
     const manager = yield* ManagedStackManager;
     const probe = yield* manager.probeControl(document.id);
     if (probe === undefined) {
-      return yield* Effect.fail(noRunningStack(input));
+      return yield* noRunningStack(input);
     }
     if (probe.status.daemonCliVersion !== input.cliVersion) {
-      return yield* Effect.fail(
-        new DaemonUpgradeRequired({
-          stackId: document.id,
-          oldCliVersion: probe.status.daemonCliVersion,
-          newCliVersion: input.cliVersion,
-          state: probe.status.state,
-          ready: probe.status.ready,
-        }),
-      );
+      return yield* new DaemonUpgradeRequired({
+        stackId: document.id,
+        oldCliVersion: probe.status.daemonCliVersion,
+        newCliVersion: input.cliVersion,
+        state: probe.status.state,
+        ready: probe.status.ready,
+      });
     }
     if (probe.status.state !== "running" || !probe.status.ready) {
-      return yield* Effect.fail(noRunningStack(input));
+      return yield* noRunningStack(input);
     }
     const client = yield* HttpTransportClient;
     return RemoteStack.layer(probe.endpoint, {
@@ -144,11 +142,9 @@ export const stopManagedStack = (
       const stackId = document.id;
       const revalidatedStackId = yield* stackIdForInput(manager, input);
       if (revalidatedStackId !== stackId) {
-        return yield* Effect.fail(
-          new ManagedWorkspaceRepairConflictError({
-            reason: "Workspace identity changed before stop",
-          }),
-        );
+        return yield* new ManagedWorkspaceRepairConflictError({
+          reason: "Workspace identity changed before stop",
+        });
       }
       const cleanupOwned = (owned: import("./control.ts").ControlOwnership) =>
         Effect.ensuring(
@@ -188,18 +184,16 @@ export const stopManagedStack = (
         const acquisition = yield* manager.acquireControl(stackId);
         const currentStackId = yield* stackIdForInput(manager, input);
         if (currentStackId !== stackId) {
-          return yield* Effect.fail(
-            new ManagedWorkspaceRepairConflictError({
-              reason: "Workspace identity changed while stopping",
-            }),
-          );
+          return yield* new ManagedWorkspaceRepairConflictError({
+            reason: "Workspace identity changed while stopping",
+          });
         }
         if (isControlOwnership(acquisition)) {
           yield* cleanupOwned(acquisition);
           return;
         }
         yield* acquisition.requestStop;
-        return yield* Effect.fail(new ManagedStopPending());
+        return yield* new ManagedStopPending();
       }).pipe(
         Effect.retry({
           schedule: Schedule.spaced("25 millis").pipe(Schedule.upTo({ duration: "30 seconds" })),
@@ -228,6 +222,7 @@ export const deleteManagedStack = (
       Effect.gen(function* () {
         const lifecycle = yield* SupervisorLifecycle.make({
           ownershipId: stackId,
+          // oxlint-disable-next-line effecttsgo/crypto-random-uuid-in-effect -- Native UUID generation is the managed control-session ownership boundary.
           ownerSessionId: crypto.randomUUID(),
           daemonCliVersion: "managed",
         });
@@ -259,18 +254,20 @@ export const deleteManagedStack = (
         const result = yield* Effect.gen(function* () {
           const revalidatedStackId = yield* stackIdForInput(manager, input);
           if (revalidatedStackId !== stackId) {
-            return yield* Effect.fail(
-              new ManagedWorkspaceRepairConflictError({
-                reason: "Workspace identity changed before delete",
-              }),
-            );
+            return yield* new ManagedWorkspaceRepairConflictError({
+              reason: "Workspace identity changed before delete",
+            });
           }
           yield* lifecycle.beginDeleting;
           return yield* manager.deleteStack(stackId, acquisition);
         })
-          .pipe(Effect.ensuring(acquisition.close))
-          .pipe(Effect.ensuring(lifecycle.requestShutdown("dispose").pipe(Effect.ignore)));
-        if (result.outcome === "already-absent") return yield* Effect.fail(noRunningStack(input));
+          // SupervisorLifecycle intentionally preserves arbitrary teardown causes at this boundary.
+          .pipe(
+            Effect.ensuring(acquisition.close),
+            // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- Teardown is best-effort and SupervisorLifecycle exposes its foreign cause unchanged.
+            Effect.ensuring(lifecycle.requestShutdown("dispose").pipe(Effect.ignore)),
+          );
+        if (result.outcome === "already-absent") return yield* noRunningStack(input);
       }),
     );
   });
@@ -299,7 +296,7 @@ export const updateManagedLaunch = (
       const acquisition = yield* manager.acquireControl(document.id);
       if (!isControlOwnership(acquisition)) {
         if (document.lifecycle !== "running" || document.runtime?.controlEndpoint === undefined) {
-          return yield* Effect.fail(new ManagedStackAttachedError({ stackId: document.id }));
+          return yield* new ManagedStackAttachedError({ stackId: document.id });
         }
         const status = yield* acquisition.ownerStatus;
         yield* updateRemoteLaunch(
@@ -317,7 +314,7 @@ export const updateManagedLaunch = (
           input.launch,
         );
         const next = yield* manager.inspectStack(document.id);
-        if (next === undefined) return yield* Effect.fail(noRunningStack(input));
+        if (next === undefined) return yield* noRunningStack(input);
         return next;
       }
       const update: ManagedStackLaunchUpdateRequest = {

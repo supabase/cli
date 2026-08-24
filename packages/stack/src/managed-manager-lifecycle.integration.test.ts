@@ -475,9 +475,11 @@ describe("managed stack lifecycle journeys", () => {
         const probe = yield* manager.probeControl(stackId);
         if (probe === undefined) throw new Error("expected deleting owner");
         const response = yield* Effect.tryPromise(() =>
+          // oxlint-disable-next-line effecttsgo/global-fetch-in-effect -- Integration test exercises the native control HTTP endpoint.
           fetch(`${probe.endpoint.url}/stop`, {
             method: "POST",
             headers: { "content-type": "application/json" },
+            // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Integration test exercises the raw control-protocol JSON boundary.
             body: JSON.stringify({
               ownershipId: stackId,
               ownerSessionId: probe.status.ownerSessionId,
