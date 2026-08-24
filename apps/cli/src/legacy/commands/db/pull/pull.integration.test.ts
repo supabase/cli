@@ -392,9 +392,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       return Effect.succeed({
         conn: {
           // A direct `db.<ref>.<projectHost>` host so the pooler-fallback gate
-          // matches on the linked path.
+          // matches on the linked path. `TARGET_PORT` is the same constant the
+          // session dispatch above keys on — explicit wiring, no sniffed port.
           host: connType === "local" ? "127.0.0.1" : "db.abcdefghijklmnopqrst.supabase.co",
-          port: 5432,
+          port: TARGET_PORT,
           user: "postgres",
           password: "x",
           database: "postgres",

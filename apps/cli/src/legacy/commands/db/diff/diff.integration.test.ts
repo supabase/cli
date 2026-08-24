@@ -145,17 +145,26 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
   ),
 );
 
-/** Records every `LegacyDbConnection.connect` target's database name, and every `exec`/`query` SQL run against it. */
-function fakeShadowDbConnection(opts: SetupOpts = {}) {
+// The port the resolver mock's own target connection dials (local and linked
+// alike). The native shadow dials its own schema-default shadow port instead, so
+// wiring this one constant into both the resolver mock and the connection fake is
+// what keeps the two apart.
+const RESOLVED_TARGET_PORT = 54322;
+
+/**
+ * Records every `LegacyDbConnection.connect` target's database name, and every
+ * `exec`/`query` SQL run against it. `resolvedTargetPort` is the port the
+ * resolver mock's own target connection dials — passed explicitly (from the same
+ * constant the resolver mock uses) so telling the drift probe's connection apart
+ * from the native shadow's own connections never relies on a sniffed magic port.
+ */
+function fakeShadowDbConnection(opts: SetupOpts, resolvedTargetPort: number) {
   const connectedDatabases: Array<string> = [];
   const execCalls: Array<string> = [];
   let autoExposeProbeCalls = 0;
   const layer = Layer.succeed(LegacyDbConnection, {
     connect: (cfg: LegacyPgConnInput) => {
-      // The resolver mock's remote target always dials 54322; the native shadow
-      // dials its own schema-default port — so failing 54322 fails exactly the
-      // auto-expose drift probe's short-lived connection and nothing else.
-      if (cfg.port === 54322 && opts.remoteTargetConnectFails === true) {
+      if (cfg.port === resolvedTargetPort && opts.remoteTargetConnectFails === true) {
         return Effect.fail(new LegacyDbConnectError({ message: "connection refused" }));
       }
       return Effect.sync(() => {
@@ -208,7 +217,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     dbNotRunning: opts.dbNotRunning ?? false,
     dbInspectFailsWith: opts.dbInspectFailsWith,
   });
-  const shadowDbConnection = fakeShadowDbConnection(opts);
+  const shadowDbConnection = fakeShadowDbConnection(opts, RESOLVED_TARGET_PORT);
 
   const explicitDiffCalls: LegacyPgDeltaExplicitDiffInput[] = [];
   const databaseDiffCalls: LegacyPgDeltaDatabaseDiffInput[] = [];
@@ -386,7 +395,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       return Effect.succeed({
         conn: {
           host: "127.0.0.1",
-          port: 54322,
+          port: RESOLVED_TARGET_PORT,
           user: "postgres",
           password: "postgres",
           database: "postgres",
