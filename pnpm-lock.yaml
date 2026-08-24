@@ -189,15 +189,6 @@ importers:
       knip:
         specifier: 'catalog:'
         version: 6.32.2
-      oxfmt:
-        specifier: 'catalog:'
-        version: 0.63.0
-      oxlint:
-        specifier: 'catalog:'
-        version: 1.78.0(oxlint-tsgolint@7.0.2001)
-      oxlint-tsgolint:
-        specifier: 'catalog:'
-        version: 7.0.2001
       pg:
         specifier: ^8.23.0
         version: 8.23.0
@@ -275,15 +266,6 @@ importers:
       knip:
         specifier: 'catalog:'
         version: 6.32.2
-      oxfmt:
-        specifier: 'catalog:'
-        version: 0.63.0
-      oxlint:
-        specifier: 'catalog:'
-        version: 1.78.0(oxlint-tsgolint@7.0.2001)
-      oxlint-tsgolint:
-        specifier: 'catalog:'
-        version: 7.0.2001
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -355,15 +337,6 @@ importers:
       knip:
         specifier: 'catalog:'
         version: 6.32.2
-      oxfmt:
-        specifier: 'catalog:'
-        version: 0.63.0
-      oxlint:
-        specifier: 'catalog:'
-        version: 1.78.0(oxlint-tsgolint@7.0.2001)
-      oxlint-tsgolint:
-        specifier: 'catalog:'
-        version: 7.0.2001
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -397,15 +370,6 @@ importers:
       knip:
         specifier: 'catalog:'
         version: 6.32.2
-      oxfmt:
-        specifier: 'catalog:'
-        version: 0.63.0
-      oxlint:
-        specifier: 'catalog:'
-        version: 1.78.0(oxlint-tsgolint@7.0.2001)
-      oxlint-tsgolint:
-        specifier: 'catalog:'
-        version: 7.0.2001
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -447,15 +411,6 @@ importers:
       knip:
         specifier: 'catalog:'
         version: 6.32.2
-      oxfmt:
-        specifier: 'catalog:'
-        version: 0.63.0
-      oxlint:
-        specifier: 'catalog:'
-        version: 1.78.0(oxlint-tsgolint@7.0.2001)
-      oxlint-tsgolint:
-        specifier: 'catalog:'
-        version: 7.0.2001
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -487,15 +442,6 @@ importers:
       knip:
         specifier: 'catalog:'
         version: 6.32.2
-      oxfmt:
-        specifier: 'catalog:'
-        version: 0.63.0
-      oxlint:
-        specifier: 'catalog:'
-        version: 1.78.0(oxlint-tsgolint@7.0.2001)
-      oxlint-tsgolint:
-        specifier: 'catalog:'
-        version: 7.0.2001
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -536,15 +482,6 @@ importers:
       knip:
         specifier: 'catalog:'
         version: 6.32.2
-      oxfmt:
-        specifier: 'catalog:'
-        version: 0.63.0
-      oxlint:
-        specifier: 'catalog:'
-        version: 1.78.0(oxlint-tsgolint@7.0.2001)
-      oxlint-tsgolint:
-        specifier: 'catalog:'
-        version: 7.0.2001
       typescript:
         specifier: 'catalog:'
         version: 7.0.2

@@ -27,5 +27,22 @@
       "version": "24"
     }
   },
-  "packageManager": "pnpm@11.4.0"
+  "packageManager": "pnpm@11.4.0",
+  "nx": {
+    "includedScripts": [],
+    "targets": {
+      "lint:check": {
+        "command": "oxlint"
+      },
+      "lint:fix": {
+        "command": "oxlint --fix"
+      },
+      "fmt:check": {
+        "command": "oxfmt --check"
+      },
+      "fmt:fix": {
+        "command": "oxfmt"
+      }
+    }
+  }
 }

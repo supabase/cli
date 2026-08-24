@@ -153,14 +153,17 @@ All standard TypeScript workspaces (`apps/cli`, `packages/api`, `packages/config
 | `check:all`        | Run all check targets for this project                                         |
 | `fix:all`          | Run all fix targets for this project                                           |
 | `types:check`      | Type-check with `tsc --noEmit` _(inferred by Nx plugin)_                       |
-| `lint:check`       | Check for lint errors with `oxlint` _(inferred by Nx plugin)_                  |
-| `lint:fix`         | Auto-fix lint errors _(inferred by Nx plugin)_                                 |
-| `fmt:check`        | Check formatting with `oxfmt --check` _(inferred by Nx plugin)_                |
-| `fmt:fix`          | Auto-fix formatting _(inferred by Nx plugin)_                                  |
 | `knip:check`       | Find unused exports and dependencies with `knip-bun` _(inferred by Nx plugin)_ |
 | `knip:fix`         | Auto-remove unused exports and dependencies _(inferred by Nx plugin)_          |
 
-The inferred scripts (`test:unit`, `test:integration`, `test:e2e`, `types:check`, `lint:*`, `fmt:*`, `knip:*`) are not declared in `package.json` — they are injected by local Nx plugins in `tools/nx-plugins/`. They are fully cached and can be discovered via `nx show project <name>`.
+The inferred scripts (`test:unit`, `test:integration`, `test:e2e`, `types:check`, `knip:*`) are not declared in `package.json` — they are injected by local Nx plugins in `tools/nx-plugins/`. They are fully cached and can be discovered via `nx show project <name>`.
+
+Linting and formatting are repo-wide rather than per-package: `oxlint` and `oxfmt` read `.oxlintrc.json` and `.oxfmtrc.json` at the repo root and run as `lint:check`/`lint:fix`/`fmt:check`/`fmt:fix` targets on the `@supabase/root` project (declared in the root `package.json`). Each package's `check:all`/`fix:all` includes them, and running the tools directly also just works:
+
+```sh
+pnpm exec oxlint
+pnpm exec oxfmt
+```
 
 Quality checks are run from the workspace you are changing:
 
@@ -333,8 +336,10 @@ nx run-many -t lint:check fmt:check types:check knip:check
 
 ```sh
 nx affected -t test
-nx affected -t lint:check fmt:check types:check knip:check
+nx affected -t types:check knip:check
 ```
+
+Lint and format targets live on the root project and always cover the whole repo (they take ~1s), so run them with `nx run-many` (or the tools directly) rather than `nx affected`.
 
 **Inspect a project's full task configuration** (including inferred targets):
 

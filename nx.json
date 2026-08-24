@@ -4,8 +4,6 @@
   "parallel": 6,
   "plugins": [
     "./tools/nx-plugins/src/knip.plugin.ts",
-    "./tools/nx-plugins/src/oxfmt.plugin.ts",
-    "./tools/nx-plugins/src/oxlint.plugin.ts",
     "./tools/nx-plugins/src/typescript.plugin.ts",
     "./tools/nx-plugins/src/test.plugin.ts",
     "./tools/nx-plugins/src/go.plugin.ts"

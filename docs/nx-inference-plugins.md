@@ -27,42 +27,6 @@ Infers `knip:check` and `knip:fix` targets for any workspace package that has a 
 
 **Input resolution:** If `knip.entry` lists explicit file patterns (e.g. `["src/index.ts", "src/**/*.test.ts"]`), those patterns are used as the cache inputs instead of the broad `default` named input. This means the cache is only invalidated when those specific files change, rather than on any file change in the project. If no `entry` is defined, it falls back to `["default", "sharedGlobals"]`. In both cases, the `knip` package version is included so a version bump triggers a re-check.
 
-### `oxfmt.plugin.ts`
-
-**Source:** `tools/nx-plugins/src/oxfmt.plugin.ts`
-
-Infers `fmt:check` and `fmt:fix` targets for any workspace package that has `oxfmt` in its `devDependencies`.
-
-**Detection signal:** `package.json` must have `"oxfmt"` under `devDependencies`.
-
-**Inferred targets:**
-
-| Target      | Command         | Cached | Inputs                             |
-| ----------- | --------------- | ------ | ---------------------------------- |
-| `fmt:check` | `oxfmt --check` | Yes    | `default`, `oxfmt` package version |
-| `fmt:fix`   | `oxfmt`         | No     | —                                  |
-
-oxfmt has no per-project configuration, so there is no fine-grained input narrowing — the cache invalidates on any file change in the project plus a version bump of `oxfmt`.
-
-### `oxlint.plugin.ts`
-
-**Source:** `tools/nx-plugins/src/oxlint.plugin.ts`
-
-Infers `lint:check` and `lint:fix` targets for any workspace package that has `oxlint` in its `devDependencies`.
-
-**Detection signal:** `package.json` must have `"oxlint"` under `devDependencies`.
-
-**Per-project config:** an optional `"oxlint": { "typeAware": true }` key in `package.json` enables `--type-aware` linting for that project. Projects without this key get plain `--deny-warnings` linting.
-
-**Inferred targets:**
-
-| Target       | Command                                       | Cached | Inputs                              |
-| ------------ | --------------------------------------------- | ------ | ----------------------------------- |
-| `lint:check` | `oxlint [--type-aware] --deny-warnings`       | Yes    | `default`, `oxlint` package version |
-| `lint:fix`   | `oxlint [--type-aware] --deny-warnings --fix` | No     | —                                   |
-
-Currently `packages/api` is the only project with `"oxlint": { "typeAware": true }`.
-
 ### `typescript.plugin.ts`
 
 **Source:** `tools/nx-plugins/src/typescript.plugin.ts`
@@ -87,15 +51,16 @@ To see all targets for a project, including inferred ones:
 nx show project @supabase/api
 ```
 
-The inferred targets (`types:check`, `lint:check`, `lint:fix`, `fmt:check`, `fmt:fix`, `knip:check`, `knip:fix`) will appear in the output under the **Checks** target group even though they are not declared anywhere in `packages/api/package.json`.
+The inferred targets (`types:check`, `knip:check`, `knip:fix`) will appear in the output under the **Checks** target group even though they are not declared anywhere in `packages/api/package.json`.
 
 To run inferred targets the same way you would any other:
 
 ```sh
 nx run @supabase/api:knip:check
-nx run-many -t lint:check
-nx run-many -t fmt:check knip:check
+nx run-many -t types:check knip:check
 ```
+
+Linting (`oxlint`) and formatting (`oxfmt`) are not inferred per package: they run repo-wide as `lint:check`/`lint:fix`/`fmt:check`/`fmt:fix` targets declared on the `@supabase/root` project in the root `package.json`, configured by `.oxlintrc.json` and `.oxfmtrc.json` at the repo root.
 
 ## Adding a new inference plugin
 
