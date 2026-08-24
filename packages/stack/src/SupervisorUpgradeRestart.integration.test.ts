@@ -167,7 +167,7 @@ describe("incompatible supervisor upgrade restart", () => {
         manager: { ...context.manager, inspectStack: () => Effect.never },
         controlTransport: context.transport,
         resolutionTimeout: "30 seconds",
-        reacquire: () => Effect.succeed(context.oldOwner),
+        reacquire: Effect.succeed(context.oldOwner),
       }).pipe(
         Effect.provide(NodeServices.layer),
         Effect.scoped,
@@ -198,7 +198,7 @@ describe("incompatible supervisor upgrade restart", () => {
       ...context,
       configInput: context.configInput,
       controlTransport: context.transport,
-      reacquire: () => Effect.succeed(context.oldOwner),
+      reacquire: Effect.succeed(context.oldOwner),
     }).pipe(
       Effect.provide(NodeServices.layer),
       Effect.scoped,
@@ -225,7 +225,7 @@ describe("incompatible supervisor upgrade restart", () => {
       input,
       configInput,
       controlTransport: context.transport,
-      reacquire: () => Effect.succeed(context.oldOwner),
+      reacquire: Effect.succeed(context.oldOwner),
     }).pipe(
       Effect.provide(NodeServices.layer),
       Effect.scoped,
@@ -250,7 +250,7 @@ describe("incompatible supervisor upgrade restart", () => {
       input,
       configInput: context.configInput,
       controlTransport: context.transport,
-      reacquire: () => Effect.succeed(context.oldOwner),
+      reacquire: Effect.succeed(context.oldOwner),
     }).pipe(
       Effect.provide(NodeServices.layer),
       Effect.scoped,
@@ -277,14 +277,13 @@ describe("incompatible supervisor upgrade restart", () => {
         ...context,
         configInput: context.configInput,
         controlTransport: context.transport,
-        reacquire: () =>
-          Effect.fail(
-            new ControlBindError({
-              endpoint: context.endpoint,
-              reason: "failed",
-              cause: new Error("restart endpoint unavailable"),
-            }),
-          ),
+        reacquire: Effect.fail(
+          new ControlBindError({
+            endpoint: context.endpoint,
+            reason: "failed",
+            cause: new Error("restart endpoint unavailable"),
+          }),
+        ),
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {

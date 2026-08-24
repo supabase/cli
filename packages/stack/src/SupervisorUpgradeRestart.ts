@@ -43,7 +43,7 @@ export interface UpgradeRestartContext {
   readonly controlTransport: ControlTransportShape;
   readonly resolutionTimeout?: Duration.Input;
   /** Reclaims the deterministic endpoint after the captured owner disappears. */
-  readonly reacquire: () => Effect.Effect<
+  readonly reacquire: Effect.Effect<
     ControlAcquisition,
     | InvalidControlOwnershipIdError
     | ControlBindError
@@ -273,7 +273,7 @@ const preflight = (
       .inspectStack(context.stackId)
       .pipe(Effect.mapError((cause) => preflightError(context, causeMessage(cause))));
     if (existing === undefined)
-      return yield* Effect.fail(preflightError(context, "Managed stack document is missing"));
+      return yield* preflightError(context, "Managed stack document is missing");
 
     const persistedRuntime = runtimeSelectionForLaunch(existing.launch);
     yield* validateStackRuntime(persistedRuntime).pipe(
@@ -380,19 +380,18 @@ export const restartIncompatibleOwner = (
                     }),
                   ),
                 ),
-                Effect.catch(() =>
-                  Effect.fail(
+                Effect.mapError(
+                  () =>
                     new StopTimeout({
                       endpoint: context.oldOwner.endpoint.url,
                       ownerSessionId: context.oldOwner.observedStatus.ownerSessionId,
                       lastState: context.oldOwner.observedStatus.state,
                     }),
-                  ),
                 ),
               ),
         }),
       );
-    const acquisition = yield* context.reacquire().pipe(
+    const acquisition = yield* context.reacquire.pipe(
       Effect.timeout(phaseTimeout),
       Effect.catchTag("TimeoutError", () =>
         Effect.fail(

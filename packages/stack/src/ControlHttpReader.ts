@@ -1,3 +1,4 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Node IncomingMessage exposes the listener lifecycle required by this control-plane boundary.
 import * as Http from "node:http";
 import { Effect } from "effect";
 import {
@@ -40,7 +41,7 @@ const readError = (
 
 /** Protocol-aware owner reader shared by the Node and Bun control transports. */
 export const readControlOwner: ControlOwnerReader = (endpoint) =>
-  Effect.callback<unknown, unknown>((resume) => {
+  Effect.callback<unknown, ControlTransportError | ControlProtocolError>((resume) => {
     let response: Http.IncomingMessage | undefined;
     let onData: ((chunk: string) => void) | undefined;
     let onEnd: (() => void) | undefined;
@@ -50,14 +51,17 @@ export const readControlOwner: ControlOwnerReader = (endpoint) =>
     let settled = false;
     let cleanup = () => {};
     let dispose = () => {};
-    const finish = (effect: Effect.Effect<unknown, unknown>, shouldDispose = false) => {
+    const finish = (
+      effect: Effect.Effect<unknown, ControlTransportError | ControlProtocolError>,
+      shouldDispose = false,
+    ) => {
       if (settled) return;
       settled = true;
       cleanup();
       if (shouldDispose) dispose();
       resume(effect);
     };
-    const onRequestError = (cause: Error) => finish(Effect.fail(cause), true);
+    const onRequestError = (cause: Error) => finish(Effect.fail(readError(endpoint, cause)), true);
     const request = Http.request(
       {
         host: endpoint.hostname,
@@ -80,7 +84,10 @@ export const readControlOwner: ControlOwnerReader = (endpoint) =>
           if (bodyBytes > MAX_CONTROL_RESPONSE_BYTES) {
             finish(
               Effect.fail(
-                new Error(`Control status response exceeded ${MAX_CONTROL_RESPONSE_BYTES} bytes`),
+                readError(
+                  endpoint,
+                  new Error(`Control status response exceeded ${MAX_CONTROL_RESPONSE_BYTES} bytes`),
+                ),
               ),
               true,
             );
@@ -93,7 +100,10 @@ export const readControlOwner: ControlOwnerReader = (endpoint) =>
           if ((incoming.statusCode ?? 500) < 200 || (incoming.statusCode ?? 500) >= 300) {
             finish(
               Effect.fail(
-                new Error(`Control status request returned ${incoming.statusCode ?? 500}`),
+                readError(
+                  endpoint,
+                  new Error(`Control status request returned ${incoming.statusCode ?? 500}`),
+                ),
               ),
               true,
             );
@@ -102,16 +112,21 @@ export const readControlOwner: ControlOwnerReader = (endpoint) =>
           try {
             finish(Effect.succeed(JSON.parse(body)));
           } catch (cause) {
-            finish(Effect.fail(cause), true);
+            finish(Effect.fail(readError(endpoint, cause)), true);
           }
         };
-        onResponseError = (cause) => finish(Effect.fail(cause), true);
+        onResponseError = (cause) => finish(Effect.fail(readError(endpoint, cause)), true);
         onResponseAborted = () => {
           responseAborted = true;
         };
         onResponseClose = () => {
           if (responseAborted || !ended) {
-            finish(Effect.fail(new Error("Control status response closed before end")), true);
+            finish(
+              Effect.fail(
+                readError(endpoint, new Error("Control status response closed before end")),
+              ),
+              true,
+            );
           }
         };
         incoming.setEncoding("utf8");
@@ -154,7 +169,6 @@ export const readControlOwner: ControlOwnerReader = (endpoint) =>
   }).pipe(
     Effect.timeoutOrElse({
       duration: 500,
-      orElse: () => Effect.fail(new Error("Control status request timed out")),
+      orElse: () => Effect.fail(readError(endpoint, new Error("Control status request timed out"))),
     }),
-    Effect.mapError((cause) => readError(endpoint, cause)),
   );
