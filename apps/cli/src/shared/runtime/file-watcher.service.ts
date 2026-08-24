@@ -16,6 +16,7 @@ export interface FileWatchEvent {
 
 export interface FileWatchOptions {
   readonly ignore?: ReadonlyArray<string>;
+  readonly recursive?: boolean;
 }
 
 export class FileWatcherError extends Data.TaggedError("FileWatcherError")<{
