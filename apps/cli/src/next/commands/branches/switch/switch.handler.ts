@@ -149,8 +149,15 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
       cacheRoot: cliConfig.supabaseHome,
       projectDir: projectHome.projectRoot,
       name: stackName,
-    });
-    yield* Effect.scoped(Effect.provide(Stack, existingLayer).pipe(Effect.asVoid));
+    }).pipe(
+      Effect.map(Option.some),
+      // A running document without a live owner is stale. Continue into the
+      // normal stop path, which acquires ownership and records it stopped.
+      Effect.catchTag("NoRunningStackError", () => Effect.succeed(Option.none())),
+    );
+    if (Option.isSome(existingLayer)) {
+      yield* Effect.scoped(Effect.provide(Stack, existingLayer.value).pipe(Effect.asVoid));
+    }
 
     const stopping = yield* output.task("Stopping local stack...");
     yield* stopDaemon({

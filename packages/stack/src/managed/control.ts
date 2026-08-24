@@ -267,6 +267,9 @@ const waitForControlSessionEnd = (
               ),
             ),
       ),
+      // A valid owner for another identity can claim this candidate after the
+      // captured session releases it. That proves the captured session ended.
+      Effect.catchTag("ControlAddressConflictError", () => Effect.void),
     );
     return yield* observe.pipe(
       Effect.retry({

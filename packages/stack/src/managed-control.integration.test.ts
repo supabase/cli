@@ -603,6 +603,36 @@ describe("managed control endpoint", () => {
     }),
   );
 
+  it.effect("completes when another stack rebinds the stopped owner's endpoint", () =>
+    Effect.gen(function* () {
+      const endpoint = yield* controlEndpoint(STACK_ID);
+      const ownerSessionId = "owner-session";
+      const foreignStatus: ControlOwnerStatus = {
+        controlProtocol: "supabase-stack-control",
+        controlProtocolVersion: 1,
+        ownershipId: "f".repeat(64),
+        ownerSessionId: "foreign-session",
+        state: "running",
+        ready: true,
+        daemonCliVersion: "test",
+      };
+      const transport: ControlTransportShape = {
+        bind: () => Effect.die("unused"),
+        read: () => Effect.succeed(foreignStatus),
+        requestStop: () => Effect.void,
+      };
+
+      const result = yield* requestControlStopForSession(
+        endpoint,
+        STACK_ID,
+        ownerSessionId,
+        transport,
+      ).pipe(Effect.result);
+
+      expect(Result.isSuccess(result)).toBe(true);
+    }),
+  );
+
   it.effect("retains the verified attach status when a later live read is unreachable", () =>
     Effect.gen(function* () {
       const endpoint = yield* controlEndpoint(STACK_ID);

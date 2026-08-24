@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { makeApiClient } from "@supabase/api/effect";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Predicate } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -13,6 +13,8 @@ import { ProjectLinkState } from "../../../config/project-link-state.service.ts"
 import { switchBranch } from "./switch.handler.ts";
 import { makeRunningStackFixture } from "../../../../../tests/helpers/running-stack.ts";
 import { controlTransportLayer } from "@supabase/stack/managed";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -411,6 +413,39 @@ describe("branches switch handler", () => {
           ),
           Effect.ensuring(Effect.promise(() => fixture.dispose())),
         );
+      }),
+    ),
+  );
+
+  it.live("recovers a stale running document before restarting for the selected branch", () =>
+    Effect.promise(() => makeRunningStackFixture()).pipe(
+      Effect.flatMap((fixture) => {
+        const out = mockOutput();
+        const api = mockPlatformApi([MAIN_BRANCH, DEV_BRANCH]);
+        const layer = Layer.mergeAll(
+          fixture.baseLayer,
+          out.layer,
+          mockProjectLinkState(DEFAULT_LINK_STATE),
+          api.layer,
+        );
+        return Effect.gen(function* () {
+          yield* Effect.promise(() => fixture.closeControlOwner());
+          expect((yield* Effect.promise(() => fixture.readDocument()))?.lifecycle).toBe("running");
+
+          // Stop before launching a real replacement daemon: malformed config
+          // makes the command fail immediately after stale-owner cleanup.
+          const configDir = join(fixture.projectRoot, "supabase");
+          mkdirSync(configDir, { recursive: true });
+          writeFileSync(join(configDir, "config.toml"), "[invalid\n");
+
+          const exit = yield* switchBranch({ name: Option.some("dev") }).pipe(Effect.exit);
+
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Predicate.isTagged(Cause.squash(exit.cause), "NoRunningStackError")).toBe(false);
+          }
+          expect((yield* Effect.promise(() => fixture.readDocument()))?.lifecycle).toBe("stopped");
+        }).pipe(Effect.provide(layer), Effect.ensuring(Effect.promise(() => fixture.dispose())));
       }),
     ),
   );

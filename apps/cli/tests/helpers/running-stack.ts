@@ -124,6 +124,7 @@ export async function makeManagedStackFixture(
   const daemonReady = await managerRuntime.runPromise(Deferred.make<void>());
   let stackId = "";
   let lifecycleScope: Scope.Scope | undefined;
+  let ownedControl: ControlOwnership | undefined;
   const setup = managerRuntime.runFork(
     Effect.scoped(
       Effect.gen(function* () {
@@ -152,6 +153,7 @@ export async function makeManagedStackFixture(
         const ownership = yield* acquireControl({ stackId, application });
         if (ownership._tag !== "Owned") throw new Error("fixture failed to acquire control");
         owned = ownership;
+        ownedControl = ownership;
         yield* supervisorLifecycle.setClose(ownership.close);
         const started = yield* manager.startStack({
           workspacePath: projectRoot,
@@ -271,6 +273,7 @@ export async function makeManagedStackFixture(
           return yield* manager.inspectStack(stackId);
         }),
       ),
+    closeControlOwner: () => managerRuntime.runPromise(ownedControl?.close ?? Effect.void),
     launch,
     cliVersion,
     async dispose() {

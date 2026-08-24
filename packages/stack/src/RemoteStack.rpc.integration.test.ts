@@ -1058,7 +1058,7 @@ it.effect("finishes the captured stop when a replacement session answers with co
   }),
 );
 
-it.effect("preserves foreign-owner diagnostics while polling a fenced stop", () =>
+it.effect("finishes a fenced stop when another stack rebinds the endpoint", () =>
   Effect.gen(function* () {
     const endpoint = { hostname: "127.0.0.1", port: 12346, url: "http://127.0.0.1:12346" };
     let ownerReads = 0;
@@ -1105,9 +1105,8 @@ it.effect("preserves foreign-owner diagnostics while polling a fenced stop", () 
         return yield* remote.stop().pipe(Effect.result);
       }).pipe(Effect.provide(layer)),
     );
-    expect(Result.isFailure(result)).toBe(true);
-    if (Result.isFailure(result))
-      expect(Predicate.isTagged(result.failure, "ControlAddressConflictError")).toBe(true);
+    expect(Result.isSuccess(result)).toBe(true);
+    expect(ownerReads).toBe(2);
   }),
 );
 

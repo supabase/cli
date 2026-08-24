@@ -41,9 +41,9 @@ export class StartDashboardState extends Context.Service<
             updateServiceStates(current, state),
           ),
         ),
-        Effect.catchCause((cause) =>
+        Effect.catch((error) =>
           Effect.all([
-            SubscriptionRef.set(errorRef, Cause.pretty(cause)),
+            SubscriptionRef.set(errorRef, Cause.pretty(Cause.fail(error))),
             SubscriptionRef.set(phaseRef, "failed"),
           ]).pipe(Effect.asVoid),
         ),
