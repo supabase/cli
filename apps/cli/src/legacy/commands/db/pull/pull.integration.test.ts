@@ -2093,6 +2093,29 @@ describe("legacy db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("db pull --local on a linked workdir warns when the auto-expose state drifts", () => {
+    // This harness's cliConfig projectId ("test") never matches the ref pattern,
+    // so linked-ness comes from the workdir's own `.temp/project-ref` file. The
+    // remote revoked auto-expose while the local config is untouched — the same
+    // drift poisons the locally provisioned shadow, so a local pull warns too.
+    seedMigration(tmp.current, "20240101000000");
+    mkdirSync(join(tmp.current, "supabase", ".temp"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", ".temp", "project-ref"), "abcdefghijklmnopqrst");
+    const s = setup(tmp.current, {
+      remoteVersions: ["20240101000000"],
+      edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table remote ();" }]),
+      yes: true,
+      remoteAutoExpose: false,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags({ local: Option.some(true), diffEngine: Option.some("pg-delta") }));
+      expect(s.autoExposeProbeCalls).toBe(1);
+      expect(streamText(s.out, "stderr")).toContain(
+        "WARNING: auto_expose_new_tables is disabled on the linked project but unset (treated as enabled) in your local config.",
+      );
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("db pull --local with pg-delta-next diffs against the live local database", () => {
     seedMigration(tmp.current, "20240101000000");
     mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });

@@ -126,6 +126,13 @@ the whole reset** (not just "skip buckets").
 | ------ | ---- | ---- | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | —      | —    | —    | —            | Connects to Postgres directly. The `--linked` resolver may call the Management API to mint a temporary login role; local bucket seeding calls the Storage gateway. |
 
+A LOCAL reset on a linked workdir additionally runs the best-effort auto-expose drift
+check before recreating the database: it dials the linked project's Postgres (same
+resolver, so the temp-role mint / pooler-config fetch may fire) and runs one
+`SELECT EXISTS … pg_default_acl` probe, printing a `WARNING: auto_expose_new_tables …`
+block on stderr on a mismatch with the local `api.auto_expose_new_tables` tri-state.
+Every failure is swallowed and the reset proceeds; unlinked workdirs skip it.
+
 ## Environment Variables
 
 | Variable                                                                                                   | Purpose                                                                                                                                                                                                                                                                    | Required?                                               |

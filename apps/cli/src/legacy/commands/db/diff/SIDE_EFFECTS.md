@@ -84,9 +84,13 @@ of this command's own target resolve, ahead of the differ container.
 
 On a linked remote target (every engine, including `--use-pgadmin`), the handler also
 dials one short-lived Postgres connection to the resolved target and runs a single
-`SELECT EXISTS … pg_default_acl` probe — the auto-expose drift check. It is
-best-effort: a connect or query failure is swallowed and the diff proceeds without
-the warning.
+`SELECT EXISTS … pg_default_acl` probe — the auto-expose drift check. A LOCAL target
+on a linked workdir (`SUPABASE_PROJECT_ID` or `supabase/.temp/project-ref`) runs the
+same check against the linked project (resolved via the standard linked resolver, so
+the temp-role mint / pooler-config fetch may fire), since the drift poisons the
+locally provisioned shadow baseline too. It is best-effort: a connect or query
+failure is swallowed and the diff proceeds without the warning; unlinked workdirs
+skip it.
 
 ## Environment Variables
 

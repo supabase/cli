@@ -62,8 +62,12 @@ export type LegacyLinkedState =
  * to `Not linked.` / `linked_project: null` instead. Also reports WHICH
  * candidate won, since an env override sitting on top of an unrelated
  * workdir's cache needs different trust rules than the workdir's own file.
+ *
+ * Exported for the auto-expose drift check (`legacy-auto-expose-drift.ts`),
+ * which needs exactly this never-prompting, never-failing ref lookup before
+ * dialing the linked project from commands that provision a local database.
  */
-const legacyResolveSoftLinkedRef = Effect.fnUntraced(function* () {
+export const legacyResolveSoftLinkedRef = Effect.fnUntraced(function* () {
   const cliConfig = yield* LegacyCliConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;

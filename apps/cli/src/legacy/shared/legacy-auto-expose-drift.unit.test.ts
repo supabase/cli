@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { Option } from "effect";
 
-import { LEGACY_START_REVOKE_API_PRIVILEGES_SQL } from "../../../shared/db-bootstrap/db-setup.ts";
+import { LEGACY_START_REVOKE_API_PRIVILEGES_SQL } from "./db-bootstrap/db-setup.ts";
 import {
   LEGACY_GRANT_DEFAULT_API_PRIVILEGES_SQL,
   legacyAutoExposeDriftWarning,

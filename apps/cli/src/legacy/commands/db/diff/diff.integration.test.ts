@@ -130,12 +130,16 @@ interface SetupOpts {
   // baseline); pass `"darwin"`/`"win32"` to exercise the no-add-host branch.
   readonly platform?: NodeJS.Platform;
   // The remote target's answer to the linked auto-expose drift probe
-  // (`pg_default_acl`, only dialed when `isLocal: false`): a boolean serves one
-  // probe row, `undefined` serves no rows (the check skips), and
-  // `remoteTargetConnectFails` fails the probe's own connect instead — the check
-  // must swallow that and let the diff proceed.
+  // (`pg_default_acl`): a boolean serves one probe row, `undefined` serves no
+  // rows (the check skips), and `remoteTargetConnectFails` fails the probe's own
+  // connect instead — the check must swallow that and let the diff proceed.
   readonly remoteAutoExpose?: boolean;
   readonly remoteTargetConnectFails?: boolean;
+  // Makes the resolver mock answer a `connType: "linked"` resolve with a REMOTE
+  // connection (`isLocal: false`) while the command's own local resolve stays
+  // local — the shape a local-target diff on a linked workdir sees when its
+  // drift check dials the linked project.
+  readonly linkedResolvesRemote?: boolean;
 }
 
 const alwaysReadyHttpClientLayer = Layer.succeed(
@@ -400,7 +404,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           password: "postgres",
           database: "postgres",
         },
-        isLocal: opts.isLocal ?? true,
+        isLocal:
+          resolveFlags.connType === "linked" && opts.linkedResolvesRemote === true
+            ? false
+            : (opts.isLocal ?? true),
         ref: ref !== undefined ? Option.some(ref) : Option.none(),
       });
     },
@@ -658,7 +665,47 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("a local diff never dials the auto-expose drift probe", () => {
+  it.effect("a local diff on a linked workdir warns when the auto-expose state drifts", () => {
+    // This harness's cliConfig projectId ("test") never matches the ref pattern,
+    // so linked-ness comes from the workdir's own `.temp/project-ref` file.
+    mkdirSync(join(tmp.current, "supabase", ".temp"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", ".temp", "project-ref"), LEGACY_VALID_REF);
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      "[api]\nauto_expose_new_tables = false\n",
+    );
+    const s = setup(tmp.current, {
+      diffSql: "create table players ();\n",
+      remoteAutoExpose: true,
+      linkedResolvesRemote: true,
+    });
+    return Effect.gen(function* () {
+      // Default target: local. The drift still poisons the locally provisioned
+      // shadow baseline, so the check dials the linked project on its own.
+      yield* legacyDbDiff(flags());
+      expect(s.autoExposeProbeCalls).toBe(1);
+      expect(stderr(s.out)).toContain(
+        "WARNING: auto_expose_new_tables is enabled on the linked project but disabled in your local config.",
+      );
+      expect(stdout(s.out)).toBe("create table players ();\n\n");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("a local diff never probes auto-expose drift on an unlinked workdir", () => {
+    const s = setup(tmp.current, { diffSql: "", remoteAutoExpose: true });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags());
+      expect(s.autoExposeProbeCalls).toBe(0);
+      expect(stderr(s.out)).not.toContain("WARNING: auto_expose_new_tables");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("a local diff skips the drift probe when the linked resolve stays local", () => {
+    // Linked workdir, but the resolver answers the linked resolve with a LOCAL
+    // connection — the check's own paranoid gate skips rather than probing a
+    // database that is the local one anyway.
+    mkdirSync(join(tmp.current, "supabase", ".temp"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", ".temp", "project-ref"), LEGACY_VALID_REF);
     const s = setup(tmp.current, { diffSql: "", remoteAutoExpose: true });
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags());

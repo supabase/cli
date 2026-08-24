@@ -6,8 +6,10 @@ import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.lay
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { legacyHttpClientLayer } from "../../auth/legacy-http-debug.layer.ts";
 import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
+import { legacyDbConfigLayer } from "../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
+import { legacyIdentityStitchLayer } from "../../shared/legacy-identity-stitch.ts";
 import { legacyDockerRunLayer } from "../../shared/legacy-docker-run.layer.ts";
 import { legacyEdgeRuntimeScriptLayer } from "../../shared/legacy-edge-runtime-script.layer.ts";
 import { legacyPgDeltaSslProbeLayer } from "../../shared/legacy-pgdelta-ssl-probe.layer.ts";
@@ -69,7 +71,20 @@ const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
   Layer.provide(cliConfig),
 );
 
+// Backs the best-effort auto-expose drift check (`legacy-auto-expose-drift.ts`'s
+// `legacyWarnAutoExposeDriftAgainstLinkedProject`) — the one exception to the
+// "no Management API" note above, and only nominally: the resolver's Management-API
+// runtime is lazy, so an unlinked workdir never resolves an access token or touches
+// the network — same composition `db reset` uses (`reset.layers.ts`).
+const dbConfig = legacyDbConfigLayer.pipe(
+  Layer.provide(cliConfig),
+  Layer.provide(legacyDbConnectionLayer),
+  Layer.provide(legacyDebugLoggerLayer),
+  Layer.provide(legacyIdentityStitchLayer),
+);
+
 const legacyStartRuntimeLayer = Layer.mergeAll(
+  dbConfig,
   cliConfig,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["start"]),

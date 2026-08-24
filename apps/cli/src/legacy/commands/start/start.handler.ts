@@ -17,6 +17,7 @@ import {
 } from "../../../shared/functions/serve.ts";
 import {
   LegacyDebugFlag,
+  LegacyDnsResolverFlag,
   LegacyNetworkIdFlag,
   legacyResolveExperimentalWithProjectEnv,
 } from "../../../shared/legacy/global-flags.ts";
@@ -27,6 +28,7 @@ import { EventStackStarted } from "../../../shared/telemetry/event-catalog.ts";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyResolveStudioApiUrl } from "../../shared/legacy-api-url.ts";
+import { legacyWarnAutoExposeDriftAgainstLinkedProject } from "../../shared/legacy-auto-expose-drift.ts";
 import { legacyIsBitbucketPipeline } from "../../shared/legacy-bitbucket-pipeline.ts";
 import { legacyAqua, legacyYellow } from "../../shared/legacy-colors.ts";
 import {
@@ -399,6 +401,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
   // Threaded into every `legacyDockerRemoveAll` teardown below — `--debug`
   // gates that function's `Pruned …:` stderr reports.
   const debug = yield* LegacyDebugFlag;
+  const dnsResolver = yield* LegacyDnsResolverFlag;
 
   yield* Effect.gen(function* () {
     // 0. Change into the resolved workdir — unconditional, before `start`'s
@@ -609,6 +612,11 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // resolution — see `../../shared/db-bootstrap/db-setup.ts`'s header) still resolves fresh-setup
     // values for its own use when it runs.
     const dbTomlValues = yield* legacyCheckDbToml(fs, path, cliConfig.workdir);
+
+    // Best-effort auto-expose drift check against the linked project (quietly
+    // skipped when the workdir isn't linked): the stack bring-up provisions the
+    // local baseline the drift poisons — see `legacy-auto-expose-drift.ts`.
+    yield* legacyWarnAutoExposeDriftAgainstLinkedProject(dnsResolver);
 
     const dbContainerId = localDbContainerId(projectId);
     const filterValue = legacyCliProjectFilterValue(projectId);

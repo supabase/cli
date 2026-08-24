@@ -104,6 +104,15 @@ native container command in this codebase — never `supabase-go`.
 | ------ | ---- | ---- | ------------ | ---------------------- |
 | —      | —    | —    | —            | —                      |
 
+On a linked workdir (`SUPABASE_PROJECT_ID` or `supabase/.temp/project-ref`), the
+best-effort auto-expose drift check dials the linked project's Postgres before the
+bring-up (via the standard linked resolver — which may `POST /v1/projects/{ref}/roles`
+to mint a temporary login role and fetch the IPv4 pooler config) and runs one
+`SELECT EXISTS … pg_default_acl` probe. On a mismatch with the local
+`api.auto_expose_new_tables` tri-state it prints a `WARNING: auto_expose_new_tables …`
+block on stderr; every failure (no token, unreachable host, IPv6-only network) is
+swallowed and the start proceeds. Unlinked workdirs skip it entirely.
+
 ## Environment Variables
 
 | Variable                                                                                                             | Purpose                                                                                                                                                                                                       | Required? |

@@ -83,9 +83,12 @@ disables formatting without disabling safe compaction.
 | SQL    | `INSERT … ON CONFLICT … schema_migrations` (UPSERT) | —      | history update (on confirmation) |
 | SQL    | `SELECT EXISTS … pg_default_acl` (probe)            | —      | auto-expose drift check (linked) |
 
-The auto-expose probe runs only on the linked native path (never `--local`,
-`--db-url`, or the delegated `--experimental` pull), over the same session the
-pull already opened. It is best-effort: a probe failure is swallowed and the
+The auto-expose probe runs on the linked native path (over the same session the
+pull already opened) and on a `--local` pull whose workdir is linked
+(`SUPABASE_PROJECT_ID` or `supabase/.temp/project-ref`) — there it dials the
+linked project via the standard linked resolver, so the temp-role mint /
+pooler-config fetch may fire. Never on `--db-url` or the delegated
+`--experimental` pull. It is best-effort: a probe failure is swallowed and the
 pull proceeds without the warning.
 
 ## Environment Variables

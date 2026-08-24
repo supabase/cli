@@ -12,6 +12,7 @@ import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
+import { legacyWarnAutoExposeDriftAgainstLinkedProject } from "../../../shared/legacy-auto-expose-drift.ts";
 import { legacyResolveResetSeedConfig } from "../../../shared/db-bootstrap/db-setup.ts";
 import { legacyResetLocalDatabase } from "../../../shared/db-bootstrap/reset-local-database.ts";
 import { legacyParseBoolEnv } from "../../../shared/legacy-diff-engine.ts";
@@ -264,6 +265,10 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     // seed-flags plumbing and the JSON envelope, which belong to this
     // top-level command alone (see that function's own header for why).
     if (cfg.isLocal) {
+      // Best-effort auto-expose drift check against the linked project (quietly
+      // skipped when the workdir isn't linked): the reset re-provisions the local
+      // baseline, which the drift poisons — see `legacy-auto-expose-drift.ts`.
+      yield* legacyWarnAutoExposeDriftAgainstLinkedProject(dnsResolver);
       yield* legacyResetLocalDatabase({
         version: resolvedVersion,
         seedFlags: { noSeed: flags.noSeed, sqlPaths: flags.sqlPaths },

@@ -3,7 +3,9 @@ import { Layer } from "effect";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
 import { legacyHttpClientLayer } from "../../../auth/legacy-http-debug.layer.ts";
+import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
+import { legacyIdentityStitchLayer } from "../../../shared/legacy-identity-stitch.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
 import { legacyDockerRunLayer } from "../../../shared/legacy-docker-run.layer.ts";
 import { legacyEdgeRuntimeScriptLayer } from "../../../shared/legacy-edge-runtime-script.layer.ts";
@@ -41,7 +43,19 @@ const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
   Layer.provide(cliConfig),
 );
 
+// Backs the best-effort auto-expose drift check (`legacy-auto-expose-drift.ts`'s
+// `legacyWarnAutoExposeDriftAgainstLinkedProject`): the resolver's Management-API
+// runtime is lazy, so an unlinked workdir never resolves an access token — same
+// composition `db reset` uses (`reset.layers.ts`).
+const dbConfig = legacyDbConfigLayer.pipe(
+  Layer.provide(cliConfig),
+  Layer.provide(legacyDbConnectionLayer),
+  Layer.provide(legacyDebugLoggerLayer),
+  Layer.provide(legacyIdentityStitchLayer),
+);
+
 export const legacyDbStartRuntimeLayer = Layer.mergeAll(
+  dbConfig,
   cliConfig,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["db", "start"]),

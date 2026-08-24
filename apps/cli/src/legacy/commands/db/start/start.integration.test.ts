@@ -15,6 +15,7 @@ import {
   mockRuntimeInfo,
 } from "../../../../../tests/helpers/mocks.ts";
 import {
+  LEGACY_VALID_REF,
   mockLegacyCliConfig,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
@@ -23,10 +24,13 @@ import {
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import {
   LegacyDebugFlag,
+  LegacyDnsResolverFlag,
   LegacyExperimentalFlag,
   LegacyNetworkIdFlag,
 } from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
+import { LegacyDbConfigIpv6Error } from "../../../shared/legacy-db-config.errors.ts";
+import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConnectError } from "../../../shared/legacy-db-connection.errors.ts";
 import {
   LegacyDbConnection,
@@ -236,9 +240,10 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
   ),
 );
 
-/** Mirrors `start.integration.test.ts`'s own `fakeDbSession` — PG15+ (this suite's default) never calls `exec`/`query` (its schema init is three one-shot `LegacyDockerRun` jobs instead). */
-function fakeDbSession() {
+/** Mirrors `start.integration.test.ts`'s own `fakeDbSession` — PG15+ (this suite's default) never calls `exec`/`query` (its schema init is three one-shot `LegacyDockerRun` jobs instead), except the auto-expose drift probe, answered from `remoteAutoExpose`. */
+function fakeDbSession(opts: { readonly remoteAutoExpose?: boolean } = {}) {
   const calls: Array<{ kind: "exec" | "query"; sql: string }> = [];
+  let autoExposeProbeCalls = 0;
   const session: LegacyDbSession = {
     exec: (sql) =>
       Effect.sync(() => {
@@ -247,6 +252,12 @@ function fakeDbSession() {
     query: (sql) =>
       Effect.sync(() => {
         calls.push({ kind: "query", sql });
+        if (/pg_default_acl/u.test(sql)) {
+          autoExposeProbeCalls += 1;
+          return opts.remoteAutoExpose === undefined
+            ? []
+            : [{ auto_expose: opts.remoteAutoExpose }];
+        }
         return [];
       }),
     execBatch: (statements) => legacySequentialExecBatch(session)(statements),
@@ -254,7 +265,13 @@ function fakeDbSession() {
     copyToCsv: () => Effect.succeed(new Uint8Array()),
     queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
   };
-  return { session, calls };
+  return {
+    session,
+    calls,
+    get autoExposeProbeCalls() {
+      return autoExposeProbeCalls;
+    },
+  };
 }
 
 const tempRoot = useLegacyTempWorkdir("supabase-db-start-int-");
@@ -288,7 +305,22 @@ interface SetupOpts {
   readonly connectFailures?: number;
   /** Whether the mocked connect failures are dial-level (`retryable`). Defaults to `true`. */
   readonly connectFailuresRetryable?: boolean;
+  /** The linked project's answer to the auto-expose drift probe; `undefined` serves no rows (the check skips). */
+  readonly remoteAutoExpose?: boolean;
+  /** Fails the drift check's own linked resolve — the check must swallow it and let the start proceed. */
+  readonly linkedResolveFails?: boolean;
+  /**
+   * `LegacyCliConfig.projectId` (the `SUPABASE_PROJECT_ID` env reader). The mock
+   * default is a valid ref, which counts as soft-linked for the drift check —
+   * pass `Option.none()` to model a genuinely unlinked workdir.
+   */
+  readonly cliProjectId?: Option.Option<string>;
 }
+
+// The host the drift-check resolver mock answers with — passed explicitly to the
+// connection mock so the probe's own connect is told apart from the local
+// bootstrap connect without sniffing anything else.
+const LINKED_PROBE_HOST = "db.abcdefghijklmnopqrst.supabase.co";
 
 function setup(opts: SetupOpts = {}) {
   const workdir = opts.workdir ?? tempRoot.current;
@@ -300,7 +332,7 @@ function setup(opts: SetupOpts = {}) {
   }
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockLegacyTelemetryStateTracked();
-  const cliConfig = mockLegacyCliConfig({ workdir });
+  const cliConfig = mockLegacyCliConfig({ workdir, projectId: opts.cliProjectId });
   const baseRoute = opts.route ?? defaultRoute();
   const route =
     opts.running === true
@@ -309,7 +341,39 @@ function setup(opts: SetupOpts = {}) {
         ? runningCheckFailsRoute(baseRoute)
         : baseRoute;
   const child = mockContainerCliSpawner(route);
-  const dbSession = fakeDbSession();
+  const dbSession = fakeDbSession(opts);
+
+  // Backs the auto-expose drift check's linked resolve. Only ever called with
+  // `connType: "linked"` here (the bring-up itself never resolves a target), so
+  // it always answers with a remote linked connection — the shared
+  // `dbConnection` mock below serves the probe's session too, with the
+  // `pg_default_acl` query answered from `opts.remoteAutoExpose`.
+  const resolverCalls: Array<unknown> = [];
+  const resolver = Layer.succeed(LegacyDbConfigResolver, {
+    resolve: (resolveFlags) => {
+      resolverCalls.push(resolveFlags);
+      if (opts.linkedResolveFails === true) {
+        return Effect.fail(
+          new LegacyDbConfigIpv6Error({
+            message: "IPv6 is not supported on your current network",
+            suggestion: "",
+          }),
+        );
+      }
+      return Effect.succeed({
+        conn: {
+          host: LINKED_PROBE_HOST,
+          port: 5432,
+          user: "postgres",
+          password: "x",
+          database: "postgres",
+        },
+        isLocal: false,
+        ref: Option.some(LEGACY_VALID_REF),
+      });
+    },
+    resolvePoolerFallback: () => Effect.succeed(Option.none()),
+  });
   const edgeRunCalls: Array<LegacyEdgeRuntimeRunOpts> = [];
   const edgeRuntime = Layer.succeed(LegacyEdgeRuntimeScript, {
     run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
@@ -330,8 +394,12 @@ function setup(opts: SetupOpts = {}) {
   let connectAttempts = 0;
   const connectFailures = opts.connectFailures ?? 0;
   const dbConnection = Layer.succeed(LegacyDbConnection, {
-    connect: () =>
+    connect: (cfg) =>
       Effect.suspend(() => {
+        // The drift probe's own linked connect (`LINKED_PROBE_HOST`, from the
+        // resolver mock above) is never counted against `connectFailures`, which
+        // models the LOCAL bootstrap connect alone.
+        if (cfg.host === LINKED_PROBE_HOST) return Effect.succeed(dbSession.session);
         connectAttempts += 1;
         if (connectAttempts <= connectFailures) {
           return Effect.fail(
@@ -367,6 +435,8 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(CliArgs, { args: ["db", "start"] }),
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
     Layer.succeed(LegacyDebugFlag, opts.debug ?? false),
+    Layer.succeed(LegacyDnsResolverFlag, "native"),
+    resolver,
     edgeRuntime,
     sslProbe,
   );
@@ -377,6 +447,7 @@ function setup(opts: SetupOpts = {}) {
     child,
     dbSession,
     edgeRunCalls,
+    resolverCalls,
     get connectAttempts() {
       return connectAttempts;
     },
@@ -1644,6 +1715,50 @@ describe("legacy db start", () => {
       yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("WARN: api.auto_expose_new_tables is deprecated");
       expect(out.stderrText).toContain("Postgres database is already running.");
+    });
+  });
+
+  it.live("warns when the linked project's auto-expose state drifts from the local config", () => {
+    // The cliConfig mock's default projectId is a valid ref, which counts as
+    // soft-linked (`SUPABASE_PROJECT_ID`) — no `.temp/project-ref` file needed.
+    const s = setup({
+      configContents: 'project_id = "test"\n[api]\nauto_expose_new_tables = false\n',
+      route: freshVolumeRoute(defaultRoute()),
+      remoteAutoExpose: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(s.layer));
+      expect(s.dbSession.autoExposeProbeCalls).toBe(1);
+      expect(s.out.stderrText).toContain(
+        "WARNING: auto_expose_new_tables is enabled on the linked project but disabled in your local config.",
+      );
+    });
+  });
+
+  it.live("never probes auto-expose drift on an unlinked workdir", () => {
+    const s = setup({
+      route: freshVolumeRoute(defaultRoute()),
+      remoteAutoExpose: true,
+      cliProjectId: Option.none(),
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(s.layer));
+      expect(s.dbSession.autoExposeProbeCalls).toBe(0);
+      expect(s.resolverCalls).toHaveLength(0);
+      expect(s.out.stderrText).not.toContain("WARNING: auto_expose_new_tables");
+    });
+  });
+
+  it.live("a failed linked resolve never fails db start", () => {
+    const s = setup({
+      route: freshVolumeRoute(defaultRoute()),
+      linkedResolveFails: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(s.layer));
+      expect(s.dbSession.autoExposeProbeCalls).toBe(0);
+      expect(s.out.stderrText).not.toContain("WARNING: auto_expose_new_tables");
+      expect(createArgs(s.child.spawned)).not.toBeUndefined();
     });
   });
 

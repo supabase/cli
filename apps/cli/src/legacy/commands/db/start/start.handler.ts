@@ -1,7 +1,9 @@
 import { Effect, Option } from "effect";
 
+import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
+import { legacyWarnAutoExposeDriftAgainstLinkedProject } from "../../../shared/legacy-auto-expose-drift.ts";
 import { legacyStartLocalDatabase } from "../../../shared/db-bootstrap/start-local-database.ts";
 import type { LegacyDbStartFlags } from "./start.command.ts";
 
@@ -29,8 +31,16 @@ import type { LegacyDbStartFlags } from "./start.command.ts";
 export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: LegacyDbStartFlags) {
   const output = yield* Output;
   const telemetryState = yield* LegacyTelemetryState;
+  const dnsResolver = yield* LegacyDnsResolverFlag;
 
   const body = Effect.gen(function* () {
+    // Best-effort auto-expose drift check against the linked project (quietly
+    // skipped when the workdir isn't linked): the bring-up provisions the local
+    // baseline the drift poisons — see `legacy-auto-expose-drift.ts`. Placed in
+    // this handler, not the shared `legacyStartLocalDatabase` core, so the
+    // declarative seam's internal recovery bring-up (whose owning commands
+    // already run the check themselves) doesn't warn twice.
+    yield* legacyWarnAutoExposeDriftAgainstLinkedProject(dnsResolver);
     const result = yield* legacyStartLocalDatabase(Option.getOrUndefined(flags.fromBackup));
 
     if (result.status === "already-running") {

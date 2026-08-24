@@ -60,7 +60,10 @@ import {
   legacySchemaPathsTransitionWarning,
   legacyShouldUsePgDelta,
 } from "../../../shared/legacy-diff-engine.ts";
-import { legacyWarnAutoExposeDrift } from "../shared/legacy-auto-expose-drift.ts";
+import {
+  legacyWarnAutoExposeDrift,
+  legacyWarnAutoExposeDriftAgainstLinkedProject,
+} from "../../../shared/legacy-auto-expose-drift.ts";
 import { legacyDiffMigra } from "../shared/legacy-migra.ts";
 import { legacyWritePgDeltaMigrations } from "../shared/legacy-pgdelta-migrations.write.ts";
 import {
@@ -500,10 +503,17 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
 
         // Best-effort auto-expose drift check against the linked project, over the
         // session just opened — see `legacy-auto-expose-drift.ts` for the probe and
-        // the warning contract. Skipped on the delegated `--experimental` path,
-        // where the Go child owns all user-facing output.
-        if (connType === "linked" && !resolved.isLocal && !delegatesExperimentalPull) {
-          yield* legacyWarnAutoExposeDrift(session, toml.baseline.apiAutoExposeNewTables);
+        // the warning contract. A local target pulls from a locally provisioned
+        // database whose baseline the same drift poisons, so it probes the linked
+        // project too (quietly skipped when the workdir isn't linked). Skipped on
+        // the delegated `--experimental` path, where the Go child owns all
+        // user-facing output.
+        if (!delegatesExperimentalPull) {
+          if (connType === "linked" && !resolved.isLocal) {
+            yield* legacyWarnAutoExposeDrift(session, toml.baseline.apiAutoExposeNewTables);
+          } else if (resolved.isLocal) {
+            yield* legacyWarnAutoExposeDriftAgainstLinkedProject(dnsResolver);
+          }
         }
 
         // Declarative export path.

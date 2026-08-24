@@ -97,11 +97,22 @@ function mockResolver(opts: {
   ref?: string;
   omitRef?: boolean;
   resolveFails?: boolean;
+  /**
+   * `isLocal` answered to a `connType: "linked"` resolve specifically — the
+   * auto-expose drift check's own resolve on a local reset. Defaults to
+   * `isLocal`, which keeps the check silent (it skips a local-resolving linked
+   * target); pass `false` to model a genuinely remote linked project.
+   */
+  linkedIsLocal?: boolean;
 }) {
   let calls = 0;
   const layer = Layer.succeed(LegacyDbConfigResolver, {
     resolve: (flags: LegacyDbConfigFlags) => {
       calls++;
+      const isLocal =
+        flags.connType === "linked" && opts.linkedIsLocal !== undefined
+          ? opts.linkedIsLocal
+          : opts.isLocal;
       // A threaded `--project-ref` flag takes the same top precedence a real
       // resolver would give it, so a test can prove the flag (not just the
       // fixed `opts.ref`) drives the resolved (and later cached) ref.
@@ -118,10 +129,10 @@ function mockResolver(opts: {
           )
         : Effect.succeed(
             (opts.omitRef === true
-              ? { conn: CONN, isLocal: opts.isLocal }
+              ? { conn: CONN, isLocal }
               : {
                   conn: CONN,
-                  isLocal: opts.isLocal,
+                  isLocal,
                   ref: resolvedRef !== undefined ? Option.some(resolvedRef) : Option.none(),
                 }) satisfies LegacyResolvedDbConfig,
           );
@@ -159,11 +170,14 @@ function mockConnection(
     /** When set, an `exec` whose SQL contains this substring fails instead of succeeding. */
     execFailsOn?: string;
     execFailsMessage?: string;
+    /** The linked project's answer to the auto-expose drift probe; `undefined` serves no rows (the check skips). */
+    remoteAutoExpose?: boolean;
   } = {},
 ) {
   const execs: Array<string> = [];
   const queries: Array<{ sql: string; params?: ReadonlyArray<unknown> }> = [];
   let replicationCallIndex = 0;
+  let autoExposeProbeCalls = 0;
   const layer = Layer.succeed(LegacyDbConnection, {
     connect: () => {
       const session: LegacyDbSession = {
@@ -195,6 +209,14 @@ function mockConnection(
           Effect.suspend(
             (): Effect.Effect<ReadonlyArray<Record<string, unknown>>, LegacyDbExecError> => {
               queries.push({ sql, params });
+              if (/pg_default_acl/u.test(sql)) {
+                autoExposeProbeCalls += 1;
+                return Effect.succeed(
+                  opts.remoteAutoExpose === undefined
+                    ? []
+                    : [{ auto_expose: opts.remoteAutoExpose }],
+                );
+              }
               if (sql === SELECT_SEEDS) {
                 return Effect.succeed(
                   Object.entries(opts.remoteSeeds ?? {}).map(([path, hash]) => ({ path, hash })),
@@ -227,6 +249,9 @@ function mockConnection(
     },
     get queries() {
       return queries;
+    },
+    get autoExposeProbeCalls() {
+      return autoExposeProbeCalls;
     },
   };
 }
@@ -446,6 +471,13 @@ function setup(
     // `LegacyProjectNotLinkedError` absent an explicit `--project-ref` flag,
     // instead of silently falling back to `opts.ref ?? LEGACY_VALID_REF`.
     linkedFails?: boolean;
+    // Auto-expose drift-check knobs — see `mockResolver`/`mockConnection`.
+    linkedIsLocal?: boolean;
+    remoteAutoExpose?: boolean;
+    // `LegacyCliConfig.projectId` (`SUPABASE_PROJECT_ID`) — the mock default is a
+    // valid ref, which counts as soft-linked for the drift check; pass
+    // `Option.none()` to model a genuinely unlinked workdir.
+    cliProjectId?: Option.Option<string>;
   },
 ) {
   if (opts.toml !== undefined) {
@@ -470,6 +502,7 @@ function setup(
     ref: opts.ref ?? LEGACY_VALID_REF,
     omitRef: opts.omitRef,
     resolveFails: opts.resolveFails,
+    linkedIsLocal: opts.linkedIsLocal,
   });
   const route = opts.route ?? defaultLocalResetRoute(opts.routeOpts);
   const child = mockContainerCliSpawner(route);
@@ -501,7 +534,7 @@ function setup(
     out.layer,
     conn.layer,
     resolver.layer,
-    mockLegacyCliConfig({ workdir }),
+    mockLegacyCliConfig({ workdir, projectId: opts.cliProjectId }),
     BunServices.layer,
     child.layer,
     mockRuntimeInfo({ platform: "linux" }),
@@ -603,6 +636,38 @@ describe("legacy db reset", () => {
         // `legacyResetLocalDatabase` (CLI-2062) — confirm this handler's own
         // single `Effect.ensuring` finalizer still fires exactly once through it.
         expect(telemetry.flushCount).toBe(1);
+      });
+    });
+
+    it.live("a local reset warns when the linked project's auto-expose state drifts", () => {
+      const { layer, out, conn } = setup(tmp.current, {
+        toml: 'project_id = "test"\n[api]\nauto_expose_new_tables = false\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        linkedIsLocal: false,
+        remoteAutoExpose: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(conn.autoExposeProbeCalls).toBe(1);
+        expect(out.stderrText).toContain(
+          "WARNING: auto_expose_new_tables is enabled on the linked project but disabled in your local config.",
+        );
+      });
+    });
+
+    it.live("a local reset never probes auto-expose drift on an unlinked workdir", () => {
+      const { layer, out, conn } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+        remoteAutoExpose: true,
+        cliProjectId: Option.none(),
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(conn.autoExposeProbeCalls).toBe(0);
+        expect(out.stderrText).not.toContain("WARNING: auto_expose_new_tables");
       });
     });
 

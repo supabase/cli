@@ -1,4 +1,7 @@
-// Auto-expose drift check shared by `db diff --linked` and linked `db pull`.
+// Auto-expose drift check shared by every command that provisions or diffs a
+// local database against a linked project: `db diff`/`db pull` (linked and local
+// targets), and the local provisioning flows (`start`, `db start`,
+// `db reset --local`).
 //
 // The CLI's implicit `api.auto_expose_new_tables` default deliberately tracks what
 // the platform provisions for new projects today (grants kept — see
@@ -17,16 +20,20 @@
 // resolver) silently skips the warning rather than failing a diff/pull that would
 // otherwise succeed.
 
-import { Effect, Option } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 
-import { Output } from "../../../../shared/output/output.service.ts";
-import { LEGACY_START_REVOKE_API_PRIVILEGES_SQL } from "../../../shared/db-bootstrap/db-setup.ts";
+import { Output } from "../../shared/output/output.service.ts";
+import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LEGACY_START_REVOKE_API_PRIVILEGES_SQL } from "./db-bootstrap/db-setup.ts";
+import { LegacyDbConfigResolver } from "./legacy-db-config.service.ts";
+import { legacyReadDbToml } from "./legacy-db-config.toml-read.ts";
 import {
   LegacyDbConnection,
   type LegacyDbConnectOptions,
   type LegacyDbSession,
   type LegacyPgConnInput,
-} from "../../../shared/legacy-db-connection.service.ts";
+} from "./legacy-db-connection.service.ts";
+import { legacyResolveSoftLinkedRef } from "./legacy-linked-state.ts";
 
 /**
  * The exact inverse of {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL} — the
@@ -160,4 +167,57 @@ export const legacyWarnAutoExposeDriftOverConnection = Effect.fnUntraced(functio
       yield* legacyWarnAutoExposeDrift(session, localAutoExpose);
     }),
   ).pipe(Effect.catchTag("LegacyDbConnectError", () => Effect.void));
+});
+
+/**
+ * The drift check for commands whose own target is LOCAL (`start`, `db start`,
+ * `db reset --local`, local-target `db diff`/`db pull`): the drift poisons every
+ * locally provisioned baseline, not just linked diffs, so warn whenever the
+ * linked project is quietly reachable. Fully self-contained and never
+ * interactive:
+ *
+ * 1. `legacyResolveSoftLinkedRef` — env/`.temp/project-ref`, never a prompt,
+ *    never a failure. Unlinked workdirs skip immediately, paying nothing.
+ * 2. `legacyReadDbToml(..., ref)` — the tolerant config read, so a matching
+ *    `[remotes.<ref>]` override of `api.auto_expose_new_tables` is honored.
+ * 3. `LegacyDbConfigResolver.resolve({ connType: "linked", linkedProjectRef })` —
+ *    non-interactive by construction (the explicit ref skips any project-ref
+ *    prompt; the password comes from flag/env/saved credentials or a temp login
+ *    role minted over the Management API, exactly like every other linked dial).
+ * 4. The probe itself, over a short-lived scoped connection.
+ *
+ * Best-effort end to end: every expected failure (unreadable config, no access
+ * token, unreachable host, IPv6-only network) is swallowed on the typed channel —
+ * a local command must never fail because its drift warning could not be
+ * computed.
+ */
+export const legacyWarnAutoExposeDriftAgainstLinkedProject = Effect.fnUntraced(function* (
+  dnsResolver: "native" | "https",
+) {
+  const cliConfig = yield* LegacyCliConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const resolver = yield* LegacyDbConfigResolver;
+  const { ref } = yield* legacyResolveSoftLinkedRef();
+  if (Option.isNone(ref)) return;
+  yield* Effect.gen(function* () {
+    const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref.value);
+    const resolved = yield* resolver.resolve({
+      dbUrl: Option.none(),
+      connType: "linked",
+      dnsResolver,
+      password: Option.none(),
+      linkedProjectRef: Option.some(ref.value),
+    });
+    if (resolved.isLocal) return;
+    yield* legacyWarnAutoExposeDriftOverConnection(
+      resolved.conn,
+      { isLocal: false, dnsResolver },
+      toml.baseline.apiAutoExposeNewTables,
+    );
+  }).pipe(
+    // Deliberately the whole typed channel: everything that can fail here is an
+    // expected, recoverable probe failure, and the warning is best-effort.
+    Effect.catch(() => Effect.void),
+  );
 });
