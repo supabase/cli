@@ -15,7 +15,7 @@ import {
 } from "./managed/control.ts";
 import type { ManagedStack, ManagedStackManagerShape } from "./managed/manager.ts";
 import type { SupervisorStartMessage } from "./SupervisorProtocol.ts";
-import { replaceIncompatibleOwner } from "./SupervisorReplacement.ts";
+import { restartIncompatibleOwner } from "./SupervisorUpgradeRestart.ts";
 import { UpgradePreflightError, UpgradeRestartError } from "./errors.ts";
 import type { DaemonConfigInput } from "./StackConfigResolver.ts";
 
@@ -26,7 +26,7 @@ afterEach(() => {
 });
 
 const setup = () => {
-  const root = mkdtempSync(join(tmpdir(), "supervisor-replacement-"));
+  const root = mkdtempSync(join(tmpdir(), "supervisor-upgrade-restart-"));
   roots.push(root);
   const workspacePath = join(root, "workspace");
   const stateRoot = join(root, "state");
@@ -136,7 +136,6 @@ const setup = () => {
   const input: SupervisorStartMessage = {
     type: "start",
     cliVersion: "new",
-    incompatibleOwnerPolicy: "replace",
     stackId,
     workspacePath,
     stackName: "default",
@@ -152,18 +151,16 @@ const setup = () => {
   return { configInput, endpoint, input, manager, oldOwner, stackId, transport };
 };
 
-describe("incompatible supervisor replacement", () => {
+describe("incompatible supervisor upgrade restart", () => {
   it.effect("bounds preflight before stopping the old owner", () => {
     const context = setup();
     return Effect.gen(function* () {
-      const pending = yield* replaceIncompatibleOwner({
+      const pending = yield* restartIncompatibleOwner({
         ...context,
-        oldOwner: context.oldOwner,
         configInput: context.configInput,
         manager: { ...context.manager, inspectStack: () => Effect.never },
         controlTransport: context.transport,
         resolutionTimeout: "30 seconds",
-        authorize: () => Effect.void,
         reacquire: () => Effect.succeed(context.oldOwner),
       }).pipe(
         Effect.provide(NodeServices.layer),
@@ -182,21 +179,19 @@ describe("incompatible supervisor replacement", () => {
         if (Option.isSome(error)) {
           expect(error.value).toBeInstanceOf(UpgradePreflightError);
           expect(error.value).toMatchObject({
-            detail: "Timed out preflighting incompatible daemon replacement",
+            detail: "Timed out preflighting upgrade restart",
           });
         }
       }
     });
   });
 
-  it.live("uses the persisted launch instead of the replacing invocation", () => {
+  it.live("uses the persisted launch instead of the restart invocation", () => {
     const context = setup();
-    return replaceIncompatibleOwner({
+    return restartIncompatibleOwner({
       ...context,
-      oldOwner: context.oldOwner,
       configInput: context.configInput,
       controlTransport: context.transport,
-      authorize: () => Effect.void,
       reacquire: () => Effect.succeed(context.oldOwner),
     }).pipe(
       Effect.provide(NodeServices.layer),
@@ -211,21 +206,45 @@ describe("incompatible supervisor replacement", () => {
     );
   });
 
+  it.live("pins enabled services to persisted launch versions", () => {
+    const context = setup();
+    const configInput = { ...context.configInput, auth: { version: "v-new" } };
+    const launch = context.input.launch ?? { versions: {} };
+    const input = {
+      ...context.input,
+      launch: { ...launch, excludedServices: [] },
+    };
+    return restartIncompatibleOwner({
+      ...context,
+      input,
+      configInput,
+      controlTransport: context.transport,
+      reacquire: () => Effect.succeed(context.oldOwner),
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.scoped,
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          expect(result.effectiveConfigInput.auth).toEqual({ version: "v-old" });
+        }),
+      ),
+      Effect.asVoid,
+    );
+  });
+
   it.live("reports an upgrade restart failure after the old session ends", () => {
     const context = setup();
     return Effect.gen(function* () {
-      const exit = yield* replaceIncompatibleOwner({
+      const exit = yield* restartIncompatibleOwner({
         ...context,
-        oldOwner: context.oldOwner,
         configInput: context.configInput,
         controlTransport: context.transport,
-        authorize: () => Effect.void,
         reacquire: () =>
           Effect.fail(
             new ControlBindError({
               endpoint: context.endpoint,
               reason: "failed",
-              cause: new Error("replacement endpoint unavailable"),
+              cause: new Error("restart endpoint unavailable"),
             }),
           ),
       }).pipe(Effect.exit);
@@ -238,7 +257,7 @@ describe("incompatible supervisor replacement", () => {
           expect(error.value).toMatchObject({
             stackId: context.stackId,
             newCliVersion: context.input.cliVersion,
-            detail: "replacement endpoint unavailable",
+            detail: "restart endpoint unavailable",
           });
         }
       }

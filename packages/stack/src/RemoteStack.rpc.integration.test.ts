@@ -965,6 +965,43 @@ it.effect("observes the captured session after the stop was accepted and its res
   ).pipe(Effect.asVoid),
 );
 
+it.effect("observes the captured session after an ambiguous HTTP stop status", () =>
+  Effect.gen(function* () {
+    const endpoint = { hostname: "127.0.0.1", port: 12353, url: "http://127.0.0.1:12353" };
+    const ownerSessionId = "accepted-http-status-session";
+    let ownerReads = 0;
+    const transport: HttpTransportClient["Service"] = {
+      request: (requestEndpoint, path) => {
+        if (path === "/owner") {
+          ownerReads += 1;
+          return ownerReads === 1
+            ? Effect.succeed(Response.json(remoteOwner(ownerSessionId)))
+            : Effect.fail(
+                new HttpTransportClientError({
+                  endpoint: requestEndpoint,
+                  path,
+                  reason: "transport",
+                  cause: { code: "ECONNREFUSED" },
+                }),
+              );
+        }
+        if (path === "/stop") return Effect.succeed(new Response(null, { status: 503 }));
+        return Effect.die(`unexpected request ${path}`);
+      },
+    };
+
+    const result = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const remote = yield* Stack;
+        return yield* remote.stop().pipe(Effect.result);
+      }).pipe(Effect.provide(remoteLayer(endpoint, ownerSessionId, transport))),
+    );
+
+    expect(Result.isSuccess(result)).toBe(true);
+    expect(ownerReads).toBe(2);
+  }),
+);
+
 it.effect(
   "keeps observing when a transient owner read fails while the target session is alive",
   () =>

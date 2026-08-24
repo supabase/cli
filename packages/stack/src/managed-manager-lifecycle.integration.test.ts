@@ -14,7 +14,13 @@ import { managedStackDocumentPathEffect, managedStackPathsEffect } from "./manag
 import { Stack } from "./Stack.ts";
 import { SupervisorControlServer } from "./SupervisorControlServer.ts";
 import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
-import { deleteManagedStack, stopManagedStack, updateManagedLaunch } from "./managed/lifecycle.ts";
+import {
+  connectManagedStack,
+  deleteManagedStack,
+  stopManagedStack,
+  updateManagedLaunch,
+} from "./managed/lifecycle.ts";
+import { DaemonUpgradeRequired } from "./errors.ts";
 import {
   automaticDocument,
   cleanupRoots,
@@ -198,6 +204,53 @@ describe("managed stack lifecycle journeys", () => {
     );
   });
 
+  it.live("reports a CLI mismatch before rejecting an incompatible starting owner", () => {
+    const { layer, workspace } = setup();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const manager = yield* ManagedStackManager;
+        const environment = yield* ensureEnvironment(workspace);
+        const stackId = deriveStackId(environment.identity, "default");
+        const lifecycle = yield* SupervisorLifecycle.make({
+          ownershipId: stackId,
+          ownerSessionId: crypto.randomUUID(),
+          daemonCliVersion: "old-cli",
+        });
+        const owner = yield* acquireControl({
+          stackId,
+          initialStatus: yield* lifecycle.currentStatus,
+          application: { app: yield* SupervisorControlServer.make(lifecycle) },
+        });
+        if (!isControlOwnership(owner)) throw new Error("expected static owner");
+        const started = yield* startManagedStack(manager, {
+          workspacePath: workspace,
+          portDocument: automaticDocument(),
+          ownership: owner,
+          lifecycle: "starting",
+        });
+        yield* releaseLease(started);
+        yield* lifecycle.setClose(owner.close);
+
+        const result = yield* connectManagedStack({
+          workspacePath: workspace,
+          cliVersion: "new-cli",
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          expect(Cause.squash(result.cause)).toBeInstanceOf(DaemonUpgradeRequired);
+        }
+        yield* lifecycle.requestShutdown("dispose").pipe(Effect.ignore);
+      }),
+    ).pipe(
+      Effect.provide(layer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+      Effect.provide(httpTransportClientLayer),
+    );
+  });
+
   it.live("preserves launch metadata when lifecycle stop races its document update", () => {
     const { stateRoot, workspace } = setup();
     const gate = { enabled: false, reads: 0 };
@@ -356,6 +409,87 @@ describe("managed stack lifecycle journeys", () => {
       }),
     ).pipe(
       Effect.provide(layer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+    );
+  });
+
+  it.live("keeps delete ownership bound until destructive cleanup finishes", () => {
+    const { layer, stateRoot, workspace } = setup();
+    let armed = false;
+    let documentPath: string | undefined;
+    let entered!: Deferred.Deferred<void>;
+    let release!: Deferred.Deferred<void>;
+    const gatedFileSystemLayer = Layer.effect(
+      FileSystem.FileSystem,
+      Effect.gen(function* () {
+        const base = yield* FileSystem.FileSystem;
+        return {
+          ...base,
+          remove: (path: string, options?: Parameters<typeof base.remove>[1]) => {
+            if (armed && documentPath === path) {
+              armed = false;
+              return Effect.gen(function* () {
+                yield* Deferred.succeed(entered, void 0);
+                yield* Deferred.await(release);
+                return yield* base.remove(path, options);
+              });
+            }
+            return base.remove(path, options);
+          },
+        } satisfies FileSystem.FileSystem;
+      }),
+    ).pipe(Layer.provide(NodeFileSystem.layer));
+    const managerLayer = layer.pipe(Layer.provide(gatedFileSystemLayer));
+    return Effect.scoped(
+      Effect.gen(function* () {
+        entered = yield* Deferred.make<void>();
+        release = yield* Deferred.make<void>();
+        const manager = yield* ManagedStackManager;
+        const environment = yield* ensureEnvironment(workspace);
+        const stackId = deriveStackId(environment.identity, "default");
+        documentPath = yield* managedStackDocumentPathEffect(stateRoot, stackId);
+        const owner = yield* acquireControl({ stackId });
+        if (!isControlOwnership(owner)) throw new Error("expected ownership");
+        const started = yield* startManagedStack(manager, {
+          workspacePath: workspace,
+          portDocument: automaticDocument(),
+          ownership: owner,
+          lifecycle: "stopped",
+        });
+        yield* releaseLease(started);
+        yield* owner.close;
+
+        armed = true;
+        const deleting = yield* Effect.forkScoped(deleteManagedStack({ workspacePath: workspace }));
+        yield* Deferred.await(entered);
+
+        const probe = yield* manager.probeControl(stackId);
+        if (probe === undefined) throw new Error("expected deleting owner");
+        const response = yield* Effect.tryPromise(() =>
+          fetch(`${probe.endpoint.url}/stop`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              ownershipId: stackId,
+              ownerSessionId: probe.status.ownerSessionId,
+            }),
+          }),
+        );
+        expect(response.status).toBe(202);
+        yield* Effect.promise(() => response.arrayBuffer());
+
+        const replacement = yield* manager.acquireControl(stackId);
+        expect(isControlOwnership(replacement)).toBe(false);
+
+        yield* Deferred.succeed(release, void 0);
+        yield* Fiber.join(deleting);
+        expect(yield* manager.inspectStack(stackId)).toBeUndefined();
+      }),
+    ).pipe(
+      Effect.provide(managerLayer),
       Effect.provide(NodeFileSystem.layer),
       Effect.provide(NodePath.layer),
       Effect.provide(gitConfigStoreLayer),

@@ -112,11 +112,30 @@ const makeHttpControlTransport = (
         consumeControlResponse(endpoint, response).pipe(Effect.as(response)),
       ),
       Effect.flatMap(
-        (response): Effect.Effect<void, ControlProtocolError | ControlStopConflictError> => {
+        (
+          response,
+        ): Effect.Effect<
+          void,
+          ControlTransportError | ControlProtocolError | ControlStopConflictError
+        > => {
           if (response.ok) return Effect.void;
           if (response.status === 409)
             return Effect.fail(new ControlStopConflictError({ endpoint }));
-          return Effect.fail(new ControlProtocolError({ endpoint, cause: response.status }));
+          // A stop response can be lost after the daemon accepts the request
+          // (for example while it closes its listener). Treat every non-409
+          // HTTP status as ambiguous transport, matching the platform
+          // transports so callers can observe the fenced owner session.
+          return Effect.fail(
+            controlTransportError(
+              endpoint,
+              new HttpTransportClientError({
+                endpoint,
+                path: CONTROL_STOP_PATH,
+                cause: response.status,
+                reason: "status",
+              }),
+            ),
+          );
         },
       ),
     ),

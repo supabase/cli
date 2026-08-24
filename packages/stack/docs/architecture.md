@@ -287,49 +287,53 @@ then observes the targeted session until it disappears. The protocol is
 session-fenced from its first supported release; there is no
 legacy runtime compatibility window or second-server handoff.
 
-### CLI version identity and lazy replacement
+### CLI version identity and upgrade restart
 
 The owner response includes the daemon CLI version. Released and preview
 versions are immutable and unique, so that version is the compatibility
 identity. A `RemoteStack` RPC client is constructed only when the client CLI
 version equals the owner CLI version. A mismatch is a typed
 `DaemonUpgradeRequired`; it never becomes an attempted RPC request. Every RPC
-request repeats the same owner/session fence so a client that outlives a
-listener replacement is rejected before a handler runs.
+request repeats the same owner/session fence so a client that outlives its
+captured listener session is rejected before a handler runs.
 
 Direct source execution uses the visible `0.0.0-dev` sentinel. It is a
 development mode, not a cross-checkout compatibility promise: after changing
 runtime or RPC code, the developer restarts the managed stack before testing.
 
-Only an explicit `supabase start` may use the `replace-incompatible` policy. It
+Only an explicit `supabase start` may authorize an upgrade restart. It
 preflights the managed document and persisted launch selection while the old
 owner is live, sends the session-fenced `/stop`, waits for that exact session to
-end, then starts or attaches the current version. The replacement preserves the
+end, then starts the current version. The upgrade restart preserves the
 managed stack identity and creation metadata, data roots, runtime mode, pinned
 service versions, exclusions, and sticky port intents. It never invokes the
 destructive delete path or silently changes launch metadata.
 
-Replacement is one supervisor-owned transaction. After preflight, the current
-child sends a replacement notice and waits for the parent ACK that authorizes
-the stop. It then uses the shared stable `ControlClient` with the captured
-ownership and session ids, re-observes that exact session until it has ended,
-and reacquires the deterministic endpoint within a bounded timeout. Persisted
+The public `@supabase/stack/effect` entry exposes this authorization as
+`restartManagedStackForUpgrade`. Ordinary `daemonLayer` calls cannot authorize a
+restart: an incompatible owner fails with `DaemonUpgradeRequired` and remains running.
+
+An upgrade restart is one supervisor-owned transaction. After preflight, the
+CLI emits its restart notice, then the supervisor uses the shared stable
+`ControlClient` with the captured ownership and session ids, re-observes that
+exact session until it has ended, and reacquires the deterministic endpoint
+within a bounded timeout. Persisted
 exclusions are applied to effective runtime service policies before preflight,
 active-port calculation, allocation, configuration resolution, and startup;
 copying them only into `stack.json` is insufficient. Once the new runtime is
 up, its managed summary is authoritative for subsequent launch updates.
 
-Connect-only commands use `fail-incompatible`: status renders a degraded
+Connect-only commands fail with `DaemonUpgradeRequired`: status renders a degraded
 owner/document summary with an instruction to run `supabase start`, while logs,
 service operations, and other runtime commands return the actionable upgrade
 error. No read-only command restarts a live stack. A stop request always uses
 the stable control protocol, regardless of CLI version.
 
-The replacement is a stop/start transaction rather than a supervisor handoff.
+The upgrade restart is a stop/start transaction rather than a supervisor handoff.
 Preflight failure leaves the old owner running; stop timeout never binds a new
 owner; startup failure preserves the document and data for retry. Concurrent
-starts elect one current owner after the old session ends, and a delayed stop
-containing the old session id receives `409` from a replacement owner.
+ordinary starts never restart an incompatible stack, and a delayed stop
+containing the old session id receives `409` from the new owner.
 
 ### Static application and lifecycle ownership
 
@@ -383,7 +387,7 @@ self-dispatch path; the daemon branch does not run normal CLI command dispatch.
 | Document paths, schema, and atomic persistence    | `managed/paths.ts`, `managed/document.ts`, `managed/store.ts`                           |
 | Managed reads, writes, ports, and lifecycle state | `managed/manager.ts`, `managed/lifecycle.ts`, `discovery.ts`                            |
 | Ownership and deterministic endpoint              | `managed/control.ts`                                                                    |
-| Detached child protocol and startup               | `supervisor.ts`, `SupervisorReplacement.ts`, `daemon-node.ts`, `daemon-bun.ts`          |
+| Detached child protocol and startup               | `supervisor.ts`, `SupervisorUpgradeRestart.ts`, `daemon-node.ts`, `daemon-bun.ts`       |
 | Runtime control RPC and client                    | `SupervisorControlServer.ts`, `StackRpc.ts`, `RemoteStack.ts`, `HttpTransportClient.ts` |
 | Direct runtime construction and service lifecycle | `createStack.ts`, `layers.ts`, `LocalStack.ts`, `Stack.ts`                              |
 | Asset resolution and native/Docker graph          | `StackPreparation.ts`, `StackBuilder.ts`, `ServiceCatalog.ts`                           |
@@ -397,7 +401,7 @@ documents, sibling worktrees and nested projects, detached start/reattach,
 launch updates through RPC, status and logs, graceful session-fenced stop,
 stale-owner recovery, and deletion. They also cover control before runtime
 construction, real HTTP/NDJSON unary and stream calls, stream cancellation,
-CLI version mismatch, upgrade replacement and preservation (including actual
+CLI version mismatch, upgrade restart and preservation (including actual
 excluded-service behavior and sticky-port reuse), concurrent lifecycle
 requests, cleanup after cancellation or failure, and response flush before
 close. Node and Bun control adapters share conflict classification, and a small

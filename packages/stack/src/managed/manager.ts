@@ -96,7 +96,7 @@ export interface AllocateManagedPortsRequest {
   readonly stackId: string;
   readonly portDocument: ManagedPortIntentDocument;
   readonly persisted?: ReadonlyArray<ManagedPortAssignment>;
-  /** During an incompatible replacement, keep the target's sticky assignments. */
+  /** During an upgrade restart, keep the target's sticky assignments. */
   readonly preservePersisted?: boolean;
 }
 

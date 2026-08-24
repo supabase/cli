@@ -114,6 +114,8 @@ describe("status handler", () => {
       }),
     ).pipe(
       Effect.flatMap((fixture) => {
+        mkdirSync(join(fixture.projectRoot, "supabase"), { recursive: true });
+        writeFileSync(join(fixture.projectRoot, "supabase", "config.toml"), "[invalid\n");
         const out = mockOutput();
         const layer = Layer.mergeAll(
           fixture.baseLayer,
@@ -130,7 +132,7 @@ describe("status handler", () => {
               expect(out.messages).toContainEqual(
                 expect.objectContaining({
                   type: "warn",
-                  message: "Local Supabase stack is running under an older CLI version.",
+                  message: "Local Supabase stack is running under a different CLI version.",
                 }),
               );
               expect(out.messages).toContainEqual(
@@ -159,6 +161,8 @@ describe("status handler", () => {
       }),
     ).pipe(
       Effect.flatMap((fixture) => {
+        mkdirSync(join(fixture.projectRoot, "supabase"), { recursive: true });
+        writeFileSync(join(fixture.projectRoot, "supabase", "config.toml"), "[invalid\n");
         const out = mockOutput({ format: "json", interactive: false });
         const layer = Layer.mergeAll(
           fixture.baseLayer,

@@ -5,11 +5,7 @@ import { FetchHttpClient } from "effect/unstable/http";
 import { ApiProxy, type ProxyConfig } from "./ApiProxy.ts";
 import { BinaryResolver } from "./BinaryResolver.ts";
 import type { PlatformFactory } from "./createStack.ts";
-import {
-  supervisorLayer,
-  type SupervisorReplacingMessage,
-  type SupervisorStartMessage,
-} from "./supervisor.ts";
+import { supervisorLayer, type SupervisorStartMessage } from "./supervisor.ts";
 import type { PortLease } from "./PortAllocator.ts";
 import { Stack } from "./Stack.ts";
 import { LocalStackLifecycle, localStackLayer } from "./LocalStack.ts";
@@ -23,7 +19,14 @@ import type { ManagedStackLaunchInput } from "./managed/document.ts";
 import type { ManagedPortIntentDocument } from "./managed/model.ts";
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
-import { DaemonUpgradeRequired, StackRpcProtocolError, StackRpcTransportError } from "./errors.ts";
+import {
+  DaemonUpgradeRequired,
+  StackRpcProtocolError,
+  StackRpcTransportError,
+  StopTimeout,
+  UpgradePreflightError,
+  UpgradeRestartError,
+} from "./errors.ts";
 
 /**
  * Inputs owned by the process that will boot the runtime. The lease is passed
@@ -112,29 +115,30 @@ export class DaemonStartError extends Data.TaggedError("DaemonStartError")<{
 /** Managed-only additions kept outside the generic daemon config resolver. */
 export type ManagedDaemonConfigInput = DaemonConfigInput & {
   readonly cliVersion: string;
-  readonly incompatibleOwnerPolicy: "replace" | "fail";
   readonly portIntents: ManagedPortIntentDocument;
   readonly launch?: ManagedStackLaunchInput;
-  /** Parent-only notification before an incompatible owner is fenced. */
-  readonly onReplacing?: (event: SupervisorReplacingMessage) => Effect.Effect<void>;
 };
 
 // ---------------------------------------------------------------------------
 // Daemon-backed mode
 // ---------------------------------------------------------------------------
 
-/** Fork the unified supervisor and return a RemoteStack layer connected to it. */
-export const daemonLayer = (
+const managedSupervisorLayer = (
   input: ManagedDaemonConfigInput,
   daemonEntryPoint: string,
+  type: SupervisorStartMessage["type"],
 ): Effect.Effect<
   Layer.Layer<Stack, DaemonUpgradeRequired | StackRpcProtocolError | StackRpcTransportError>,
-  DaemonStartError | DaemonUpgradeRequired,
+  | DaemonStartError
+  | DaemonUpgradeRequired
+  | UpgradePreflightError
+  | UpgradeRestartError
+  | StopTimeout,
   FileSystem.FileSystem | Path.Path | HttpTransportClient
 > =>
   Effect.gen(function* () {
     // Keep managed coordination metadata out of the generic daemon config.
-    const { portIntents, launch, onReplacing, ...daemonConfigInput } = input;
+    const { portIntents, launch, ...daemonConfigInput } = input;
     const daemonInput = sanitizeDaemonConfigInput(daemonConfigInput);
     if (daemonInput.stackRoot !== undefined || daemonInput.runtimeRoot !== undefined) {
       return yield* new DaemonStartError({
@@ -161,9 +165,8 @@ export const daemonLayer = (
       ),
     );
     const startMsg: SupervisorStartMessage = {
-      type: "start",
+      type,
       cliVersion: input.cliVersion,
-      incompatibleOwnerPolicy: input.incompatibleOwnerPolicy,
       stackId: deriveStackId(discovery.identity, name),
       workspacePath: projectDir,
       stackName: name,
@@ -172,12 +175,33 @@ export const daemonLayer = (
       portIntents,
       ...(launch === undefined ? {} : { launch }),
     };
-    return yield* supervisorLayer(startMsg, daemonEntryPoint, onReplacing).pipe(
+    return yield* supervisorLayer(startMsg, daemonEntryPoint).pipe(
       Effect.provideService(HttpTransportClient, httpTransportClient),
       Effect.mapError((error) =>
-        error instanceof DaemonUpgradeRequired
+        error instanceof DaemonUpgradeRequired ||
+        error instanceof UpgradePreflightError ||
+        error instanceof UpgradeRestartError ||
+        error instanceof StopTimeout
           ? error
           : new DaemonStartError({ message: error.message }),
       ),
     );
   });
+
+/** Fork the unified supervisor and return a RemoteStack layer connected to it. */
+export const daemonLayer = (input: ManagedDaemonConfigInput, daemonEntryPoint: string) =>
+  managedSupervisorLayer(input, daemonEntryPoint, "start");
+
+/** Explicitly authorize a full stop/start when the current owner is incompatible. */
+export const restartManagedStackForUpgrade = (
+  input: ManagedDaemonConfigInput,
+  daemonEntryPoint: string,
+): Effect.Effect<
+  Layer.Layer<Stack, DaemonUpgradeRequired | StackRpcProtocolError | StackRpcTransportError>,
+  | DaemonStartError
+  | DaemonUpgradeRequired
+  | UpgradePreflightError
+  | UpgradeRestartError
+  | StopTimeout,
+  FileSystem.FileSystem | Path.Path | HttpTransportClient
+> => managedSupervisorLayer(input, daemonEntryPoint, "upgrade-restart");

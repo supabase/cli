@@ -26,7 +26,7 @@ const renderUpgradeRequiredStatus = Effect.fnUntraced(function* (input: {
   };
 }) {
   const output = yield* Output;
-  const message = "Local Supabase stack is running under an older CLI version.";
+  const message = "Local Supabase stack is running under a different CLI version.";
   const data = {
     stack: input.summary.name,
     running: true,
@@ -129,24 +129,37 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
 
   yield* output.intro("Show local Supabase stack status");
 
-  const layer = yield* connectLayer({
+  const summaryInput = {
+    cacheRoot: cliConfig.supabaseHome,
+    projectDir: projectHome.projectRoot,
+    cwd: runtimeInfo.cwd,
+    name: _flags.stack,
+  };
+  const layerResult = yield* connectLayer({
     cliVersion: CLI_VERSION,
     cwd: runtimeInfo.cwd,
     cacheRoot: cliConfig.supabaseHome,
     projectDir: projectHome.projectRoot,
     name: _flags.stack,
   }).pipe(
-    Effect.map(Option.some),
-    Effect.catchTag("NoRunningStackError", () => Effect.succeed(Option.none())),
+    Effect.map((layer) => ({ _tag: "live" as const, layer })),
+    Effect.catchTag("DaemonUpgradeRequired", (error) =>
+      Effect.succeed({ _tag: "upgrade" as const, error }),
+    ),
+    Effect.catchTag("NoRunningStackError", () => Effect.succeed({ _tag: "none" as const })),
   );
 
-  if (Option.isNone(layer)) {
-    const summary = yield* resolveConfiguredSummary({
-      cacheRoot: cliConfig.supabaseHome,
-      projectDir: projectHome.projectRoot,
-      cwd: runtimeInfo.cwd,
-      name: _flags.stack,
-    }).pipe(
+  if (Predicate.isTagged(layerResult, "upgrade")) {
+    // An incompatible daemon is authoritative for its own managed summary.
+    // Do not parse the current checkout's config before rendering this status:
+    // a newer CLI may have introduced config that this CLI cannot decode.
+    const summary = yield* resolveStackSummary(summaryInput);
+    yield* renderUpgradeRequiredStatus({ summary, error: layerResult.error });
+    return;
+  }
+
+  if (Predicate.isTagged(layerResult, "none")) {
+    const summary = yield* resolveConfiguredSummary(summaryInput).pipe(
       Effect.map(Option.some),
       Effect.catchTag("NoRunningStackError", () => Effect.succeed(Option.none())),
     );
@@ -198,16 +211,11 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
     return;
   }
 
-  const summary = yield* resolveConfiguredSummary({
-    cacheRoot: cliConfig.supabaseHome,
-    projectDir: projectHome.projectRoot,
-    cwd: runtimeInfo.cwd,
-    name: _flags.stack,
-  });
+  const summary = yield* resolveConfiguredSummary(summaryInput);
 
   const stackResult = yield* Effect.scoped(
     Effect.gen(function* () {
-      const context = yield* Layer.build(layer.value);
+      const context = yield* Layer.build(layerResult.layer);
       const stack = Context.get(context, Stack);
       const [info, services] = yield* Effect.all([stack.getInfo(), stack.getAllStates()]);
       return { _tag: "live" as const, info, services };

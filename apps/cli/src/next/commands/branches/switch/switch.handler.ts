@@ -123,7 +123,7 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
     const stackName = stackCheck.value.identity.name;
 
     // Branch switching restarts a running stack, but it is not authorized to
-    // replace an incompatible daemon. Capture the same-version RPC owner/session
+    // restart an incompatible daemon. Capture the same-version RPC owner/session
     // before stopping it so a mismatch leaves the old stack intact.
     const existingLayer = yield* connectLayer({
       cliVersion: CLI_VERSION,
@@ -175,7 +175,6 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
 
     const stackLayer = yield* daemonLayer({
       cliVersion: CLI_VERSION,
-      incompatibleOwnerPolicy: "fail",
       cacheRoot: cliConfig.supabaseHome,
       cwd: runtimeInfo.cwd,
       projectDir: projectHome.projectRoot,

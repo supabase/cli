@@ -41,7 +41,7 @@ only three routes:
 Graceful remote stop therefore uses the stable session-fenced control route,
 waits for the targeted owner session and document transition, then lets the
 owner dispose the runtime before releasing control. A stale delayed stop gets
-`409` from a replacement owner and cannot tear down the replacement.
+`409` from the new owner and cannot tear it down.
 
 Every shutdown source joins one cached lifecycle transaction. Once accepted,
 the transaction always attempts runtime stop, runtime disposal,
@@ -84,7 +84,7 @@ waits for disposal to begin before interrupting the main Effect. Direct
 
 Integration tests cover manager port/document cleanup, detached supervisor
 startup/reattach/launch-update over RPC, stop during every startup phase,
-session-fenced stop, stale-owner recovery, upgrade replacement with actual
+session-fenced stop, upgrade restart with actual
 excluded-service and sticky-port preservation, cancellation, failed-step
 cleanup, and delete. The process-compose and stack suites cover supervised
 child trees, Docker cleanup hooks, one-shot exit observation, and

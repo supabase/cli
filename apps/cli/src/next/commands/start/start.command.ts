@@ -3,6 +3,7 @@ import { loadProjectConfig } from "@supabase/config";
 import {
   DEFAULT_MANAGED_STACK_NAME,
   daemonLayer,
+  restartManagedStackForUpgrade,
   fillServiceVersionManifest,
   resolveStackSummary,
   type StackSummary,
@@ -21,7 +22,6 @@ import {
 } from "../../config/service-version-resolution.ts";
 import {
   excludedStackServices,
-  isExcludedStackService,
   type ExcludedStackService,
   startModes,
   type StartMode,
@@ -91,7 +91,12 @@ interface StartVersionStateShape {
   readonly launch: {
     readonly mode?: StartMode;
     readonly versions: Readonly<Record<string, string>>;
-    readonly excludedServices: ReadonlyArray<ExcludedStackService>;
+    /**
+     * Preserve the managed document's raw exclusions. The document may contain
+     * service names introduced by a newer CLI; narrowing is only appropriate
+     * when deriving the current runtime configuration.
+     */
+    readonly excludedServices: ReadonlyArray<string>;
   };
   readonly previousUpdateFingerprint?: string;
   readonly drift?: NonNullable<StackSummary["drift"]>;
@@ -112,7 +117,7 @@ export class StartVersionState extends Context.Service<StartVersionState, StartV
 /**
  * Project the managed launch metadata observed after daemon startup into the
  * state consumed by the start handler. The post-start summary is authoritative:
- * an incompatible-owner replacement may preserve selections from the existing
+ * an incompatible-owner upgrade restart may preserve selections from the existing
  * daemon even when this invocation supplied different flags or version defaults.
  * @internal
  */
@@ -121,7 +126,7 @@ export const startVersionStateLaunch = (
 ): StartVersionStateShape["launch"] => ({
   mode: summary.launch.mode,
   versions: summary.launch.versions,
-  excludedServices: summary.launch.excludedServices?.filter(isExcludedStackService) ?? [],
+  excludedServices: summary.launch.excludedServices ?? [],
 });
 
 const flags = {
@@ -247,17 +252,8 @@ export const startCommand = Command.make("start", flags).pipe(
           : { lastNotifiedUpdateFingerprint: existingSummary.lastNotifiedUpdateFingerprint }),
       };
 
-      const stackLayer = yield* daemonLayer({
+      const managedInput = {
         cliVersion: CLI_VERSION,
-        incompatibleOwnerPolicy: "replace",
-        onReplacing: ({ oldCliVersion, newCliVersion }) =>
-          output.warn(
-            [
-              `Restarting local stack from CLI v${oldCliVersion} with CLI v${newCliVersion}.`,
-              "Database and storage data, pinned service versions, and sticky ports will be preserved.",
-              "Existing connections will briefly disconnect.",
-            ].join("\n"),
-          ),
         cacheRoot: cliConfig.supabaseHome,
         cwd: runtimeInfo.cwd,
         projectDir: projectHome.projectRoot,
@@ -265,7 +261,20 @@ export const startCommand = Command.make("start", flags).pipe(
         portIntents,
         launch,
         ...stackConfig,
-      });
+      };
+      const stackLayer = yield* daemonLayer(managedInput).pipe(
+        Effect.catchTag("DaemonUpgradeRequired", (error) =>
+          output
+            .warn(
+              [
+                `Local stack was started with CLI v${error.oldCliVersion}. Restarting it with CLI v${error.newCliVersion}.`,
+                "Database and storage data, pinned service versions, and sticky ports will be preserved.",
+                "Existing connections will briefly disconnect.",
+              ].join("\n"),
+            )
+            .pipe(Effect.andThen(restartManagedStackForUpgrade(managedInput))),
+        ),
+      );
       const summary = yield* resolveStackSummary({
         cacheRoot: cliConfig.supabaseHome,
         projectDir: projectHome.projectRoot,

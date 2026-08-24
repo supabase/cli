@@ -7,7 +7,6 @@ import {
   Effect,
   Fiber,
   Layer,
-  Option,
   Predicate,
   Queue,
   Result,
@@ -31,8 +30,6 @@ import type { StackLaunchUpdateRpc } from "./StackRpc.ts";
 import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
 import {
   SupervisorErrorEventSchema,
-  SupervisorReplacingEventSchema,
-  SupervisorReplacementAckCommandSchema,
   SupervisorStartCommandSchema,
   SupervisorStartedEventSchema,
 } from "./SupervisorProtocol.ts";
@@ -87,46 +84,37 @@ import {
   StackBuildError,
   StackRpcProtocolError,
   StackRpcTransportError,
+  StopTimeout,
   UpgradePreflightError,
   UpgradeRestartError,
   SupervisorStartError,
 } from "./errors.ts";
 import {
-  replaceIncompatibleOwner,
+  restartIncompatibleOwner,
   runtimeSelectionForLaunch,
   applyNativeDefaults,
-  SUPERVISOR_REPLACEMENT_PHASE_TIMEOUT,
-} from "./SupervisorReplacement.ts";
+  UPGRADE_RESTART_PHASE_TIMEOUT,
+} from "./SupervisorUpgradeRestart.ts";
 import type {
   SupervisorErrorMessage,
-  SupervisorReplacingMessage,
   SupervisorStartMessage,
   SupervisorStartedMessage,
 } from "./SupervisorProtocol.ts";
-export type { SupervisorReplacingMessage, SupervisorStartMessage, SupervisorStartedMessage };
+export type { SupervisorStartMessage, SupervisorStartedMessage };
 export { SupervisorStartError } from "./errors.ts";
-type SupervisorMessage =
-  | SupervisorStartedMessage
-  | SupervisorReplacingMessage
-  | SupervisorErrorMessage;
+type SupervisorMessage = SupervisorStartedMessage | SupervisorErrorMessage;
 /** Input shape for the public managed launcher. */
 export interface ManagedDaemonStartInput {
   readonly cliVersion: string;
-  readonly incompatibleOwnerPolicy: "replace" | "fail";
   readonly workspacePath: string;
   readonly stackName: string;
   readonly stateRoot: string;
   readonly config: Readonly<Record<string, unknown>>;
   readonly portIntents: ManagedPortIntentDocument;
   readonly launch?: ManagedStackLaunchInput;
-  /** Parent-only callback invoked before an incompatible owner is fenced. */
-  readonly onReplacing?: (event: SupervisorReplacingMessage) => Effect.Effect<void>;
 }
 
 const supervisorStartMessageSchema = SupervisorStartCommandSchema;
-
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
-  typeof value === "object" && value !== null;
 
 const isControlOwnership = (value: ControlAcquisition): value is ControlOwnership =>
   Predicate.isTagged(value, "Owned");
@@ -187,14 +175,13 @@ const SUPERVISOR_HANDSHAKE_TIMEOUT = Duration.sum(
 );
 // Preflight, old-session stop, and endpoint reacquisition each have one phase
 // budget before the normal child startup budget begins.
-const SUPERVISOR_REPLACEMENT_HANDSHAKE_TIMEOUT = Duration.sum(
-  Duration.times(SUPERVISOR_REPLACEMENT_PHASE_TIMEOUT, 3),
+const UPGRADE_RESTART_HANDSHAKE_TIMEOUT = Duration.sum(
+  Duration.times(UPGRADE_RESTART_PHASE_TIMEOUT, 3),
   SUPERVISOR_HANDSHAKE_TIMEOUT,
 );
 
 const awaitOwnerReady = (
   acquisition: ControlAttached,
-  onWaiting: Effect.Effect<void, SupervisorStartError> = Effect.void,
 ): Effect.Effect<
   import("./managed/control.ts").ControlOwnerStatus,
   | SupervisorStartError
@@ -214,9 +201,7 @@ const awaitOwnerReady = (
       );
     }),
     Effect.retry({
-      schedule: Schedule.spaced("25 millis").pipe(
-        Schedule.tap(({ attempt }) => (attempt === 1 ? onWaiting : Effect.void)),
-      ),
+      schedule: Schedule.spaced("25 millis"),
       while: (error) =>
         (Predicate.isTagged(error, "SupervisorOwnerUnavailableError") && error.retry) ||
         (Predicate.isTagged(error, "ControlTransportError") && error.reason === "transport"),
@@ -233,8 +218,6 @@ export interface SupervisorPlatform {
     readonly config: ResolvedDaemonConfig;
     readonly lease: PortLease;
   }) => Effect.Effect<Layer.Layer<Stack | LocalStackLifecycle>, unknown, Scope.Scope>;
-  /** Optional notification hook for an attached owner that is not ready yet. */
-  readonly onAttachedBeforeReady?: () => Effect.Effect<void, SupervisorStartError>;
   readonly resolutionTimeout?: Duration.Input;
   readonly managerLayer: (
     stateRoot: string,
@@ -266,59 +249,10 @@ const receiveStartMessage = (): Effect.Effect<SupervisorStartMessage, Supervisor
     return Effect.sync(cleanup);
   });
 
-/**
- * Wait for the parent to acknowledge a replacement notification. The child
- * installs this listener before publishing `replacing`, so the acknowledgement
- * cannot race the listener handoff while the parent callback is running.
- */
-const receiveReplacementAck = (): Effect.Effect<void, SupervisorStartError> =>
-  Effect.callback((resume) => {
-    let settled = false;
-    const cleanup = () => {
-      process.off("message", onMessage);
-      process.off("disconnect", onDisconnect);
-    };
-    const finish = (effect: Effect.Effect<void, SupervisorStartError>) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resume(effect);
-    };
-    const onMessage = (value: unknown) => {
-      if (isRecord(value) && value.type === "test-stage") return;
-      const decoded = Schema.decodeUnknownOption(SupervisorReplacementAckCommandSchema)(value);
-      if (Option.isSome(decoded)) {
-        finish(Effect.void);
-        return;
-      }
-      finish(
-        Schema.decodeUnknownEffect(SupervisorReplacementAckCommandSchema)(value).pipe(
-          Effect.asVoid,
-          Effect.mapError((cause) => new SupervisorStartError({ message: causeMessage(cause) })),
-        ),
-      );
-    };
-    const onDisconnect = () =>
-      finish(
-        Effect.fail(
-          new SupervisorStartError({
-            message: "Supervisor parent disconnected during replacement",
-          }),
-        ),
-      );
-    process.on("message", onMessage);
-    process.once("disconnect", onDisconnect);
-    return Effect.sync(cleanup);
-  });
-
 const sendMessage = (message: SupervisorMessage): Effect.Effect<void, SupervisorStartError> =>
   Effect.gen(function* () {
     const schema =
-      message.type === "error"
-        ? SupervisorErrorEventSchema
-        : message.type === "replacing"
-          ? SupervisorReplacingEventSchema
-          : SupervisorStartedEventSchema;
+      message.type === "error" ? SupervisorErrorEventSchema : SupervisorStartedEventSchema;
     const encoded = yield* Schema.encodeEffect(schema)(message).pipe(
       Effect.mapError((cause) => new SupervisorStartError({ message: causeMessage(cause) })),
     );
@@ -345,17 +279,24 @@ const sendMessage = (message: SupervisorMessage): Effect.Effect<void, Supervisor
 const decodeSupervisorEvent = (
   value: unknown,
 ): Effect.Effect<
-  SupervisorStartedMessage | SupervisorReplacingMessage,
-  SupervisorStartError | DaemonUpgradeRequired
-> =>
-  Schema.decodeUnknownEffect(SupervisorReplacingEventSchema)(value).pipe(
-    Effect.map((event): SupervisorReplacingMessage => event),
-    Effect.catch(() => decodeSupervisorStartedOrError(value)),
-  );
+  SupervisorStartedMessage,
+  | SupervisorStartError
+  | DaemonUpgradeRequired
+  | UpgradePreflightError
+  | UpgradeRestartError
+  | StopTimeout
+> => decodeSupervisorStartedOrError(value);
 
 const decodeSupervisorStartedOrError = (
   value: unknown,
-): Effect.Effect<SupervisorStartedMessage, SupervisorStartError | DaemonUpgradeRequired> =>
+): Effect.Effect<
+  SupervisorStartedMessage,
+  | SupervisorStartError
+  | DaemonUpgradeRequired
+  | UpgradePreflightError
+  | UpgradeRestartError
+  | StopTimeout
+> =>
   Schema.decodeUnknownEffect(SupervisorStartedEventSchema)(value).pipe(
     Effect.map((event): SupervisorStartedMessage => ({
       type: "started",
@@ -367,22 +308,82 @@ const decodeSupervisorStartedOrError = (
     Effect.catch(() =>
       Schema.decodeUnknownEffect(SupervisorErrorEventSchema)(value).pipe(
         Effect.flatMap(
-          (event): Effect.Effect<never, DaemonUpgradeRequired | SupervisorStartError> =>
-            event.errorCode === "DAEMON_UPGRADE_REQUIRED" &&
-            event.stackId !== undefined &&
-            event.oldCliVersion !== undefined &&
-            event.newCliVersion !== undefined
-              ? Effect.fail(
-                  new DaemonUpgradeRequired({
-                    stackId: event.stackId,
-                    oldCliVersion: event.oldCliVersion,
-                    newCliVersion: event.newCliVersion,
-                  }),
-                )
-              : Effect.fail(new SupervisorStartError({ message: event.message })),
+          (
+            event,
+          ): Effect.Effect<
+            never,
+            | DaemonUpgradeRequired
+            | UpgradePreflightError
+            | UpgradeRestartError
+            | StopTimeout
+            | SupervisorStartError
+          > => {
+            if (
+              event.errorCode === "DAEMON_UPGRADE_REQUIRED" &&
+              event.stackId !== undefined &&
+              event.oldCliVersion !== undefined &&
+              event.newCliVersion !== undefined
+            ) {
+              return Effect.fail(
+                new DaemonUpgradeRequired({
+                  stackId: event.stackId,
+                  oldCliVersion: event.oldCliVersion,
+                  newCliVersion: event.newCliVersion,
+                }),
+              );
+            }
+            if (
+              event.errorCode === "UPGRADE_PREFLIGHT" &&
+              event.stackId !== undefined &&
+              event.oldCliVersion !== undefined &&
+              event.newCliVersion !== undefined &&
+              event.detail !== undefined
+            ) {
+              return Effect.fail(
+                new UpgradePreflightError({
+                  stackId: event.stackId,
+                  oldCliVersion: event.oldCliVersion,
+                  newCliVersion: event.newCliVersion,
+                  detail: event.detail,
+                }),
+              );
+            }
+            if (
+              event.errorCode === "UPGRADE_RESTART" &&
+              event.stackId !== undefined &&
+              event.newCliVersion !== undefined &&
+              event.detail !== undefined
+            ) {
+              return Effect.fail(
+                new UpgradeRestartError({
+                  stackId: event.stackId,
+                  newCliVersion: event.newCliVersion,
+                  detail: event.detail,
+                }),
+              );
+            }
+            if (
+              event.errorCode === "STOP_TIMEOUT" &&
+              event.endpoint !== undefined &&
+              event.ownerSessionId !== undefined
+            ) {
+              return Effect.fail(
+                new StopTimeout({
+                  endpoint: event.endpoint,
+                  ownerSessionId: event.ownerSessionId,
+                  ...(event.detail === undefined ? {} : { lastState: event.detail }),
+                }),
+              );
+            }
+            return Effect.fail(new SupervisorStartError({ message: event.message }));
+          },
         ),
         Effect.mapError((cause) =>
-          cause instanceof DaemonUpgradeRequired || cause instanceof SupervisorStartError
+          cause instanceof DaemonUpgradeRequired ||
+          cause instanceof UpgradePreflightError ||
+          cause instanceof UpgradeRestartError ||
+          cause instanceof StopTimeout ||
+          cause instanceof SupervisorStartError
             ? cause
             : new SupervisorStartError({ message: causeMessage(cause) }),
         ),
@@ -422,10 +423,35 @@ const supervisorErrorMessage = (cause: Cause.Cause<unknown>): SupervisorErrorMes
     };
   }
   if (error instanceof UpgradeRestartError) {
-    return { type: "error", message: `UpgradeRestartError: ${error.detail}` };
+    return {
+      type: "error",
+      message: `UpgradeRestartError: ${error.detail}`,
+      errorCode: "UPGRADE_RESTART",
+      stackId: error.stackId,
+      newCliVersion: error.newCliVersion,
+      detail: error.detail,
+    };
   }
   if (error instanceof UpgradePreflightError) {
-    return { type: "error", message: `UpgradePreflightError: ${error.detail}` };
+    return {
+      type: "error",
+      message: `UpgradePreflightError: ${error.detail}`,
+      errorCode: "UPGRADE_PREFLIGHT",
+      stackId: error.stackId,
+      oldCliVersion: error.oldCliVersion,
+      newCliVersion: error.newCliVersion,
+      detail: error.detail,
+    };
+  }
+  if (error instanceof StopTimeout) {
+    return {
+      type: "error",
+      message: `StopTimeout: ${error.endpoint}`,
+      errorCode: "STOP_TIMEOUT",
+      detail: error.lastState,
+      endpoint: error.endpoint,
+      ownerSessionId: error.ownerSessionId,
+    };
   }
   return { type: "error", message: causeMessage(error) };
 };
@@ -475,7 +501,7 @@ const runManaged = (
   let managerService: ManagedStackManager["Service"] | undefined;
   let claimedStack = false;
   let lifecycle: SupervisorLifecycle["Service"] | undefined;
-  let replacingIncompatibleOwner = false;
+  let upgradeRestarting = false;
   let oldSessionEnded = false;
   return Effect.gen(function* () {
     const controlTransport = yield* ControlTransport;
@@ -570,7 +596,7 @@ const runManaged = (
       );
     }
     const requestedMode = configInput.mode ?? input.launch?.mode;
-    let replacementConfigInput = configInput;
+    let effectiveConfigInput = configInput;
     const existing = yield* manager.inspectStack(stackId);
     const persistedRuntime: StackRuntimeSelection | undefined =
       existing === undefined ? undefined : runtimeSelectionForLaunch(existing.launch);
@@ -589,7 +615,7 @@ const runManaged = (
     let attachedOwnerWasStopping = false;
     const initiallyAttached = isControlAttached(initialAcquisition);
     const awaitAttachedOwnerReady = (acquisition: ControlAttached) =>
-      awaitOwnerReady(acquisition, platform.onAttachedBeforeReady?.() ?? Effect.void).pipe(
+      awaitOwnerReady(acquisition).pipe(
         Effect.timeout(platform.resolutionTimeout ?? SUPERVISOR_STARTUP_TIMEOUT),
         Effect.catchTag("TimeoutError", () =>
           Effect.fail(
@@ -644,8 +670,17 @@ const runManaged = (
       const attachedStatus = initialAcquisition.observedStatus;
       attachedOwnerWasStopping = attachedStatus.state === "stopping";
       if (attachedStatus.daemonCliVersion !== input.cliVersion) {
-        replacingIncompatibleOwner = true;
-        const replacement = yield* replaceIncompatibleOwner({
+        if (input.type !== "upgrade-restart") {
+          return yield* Effect.fail(
+            new DaemonUpgradeRequired({
+              stackId,
+              oldCliVersion: attachedStatus.daemonCliVersion,
+              newCliVersion: input.cliVersion,
+            }),
+          );
+        }
+        upgradeRestarting = true;
+        const restart = yield* restartIncompatibleOwner({
           stackId,
           oldOwner: initialAcquisition,
           input,
@@ -653,23 +688,15 @@ const runManaged = (
           manager,
           controlTransport,
           resolutionTimeout: platform.resolutionTimeout ?? SUPERVISOR_STARTUP_TIMEOUT,
-          authorize: (event) =>
-            Effect.gen(function* () {
-              const replacementAckFiber = yield* receiveReplacementAck().pipe(
-                Effect.forkChild({ startImmediately: true }),
-              );
-              yield* sendMessage(event);
-              yield* Fiber.join(replacementAckFiber);
-            }),
           reacquire: () =>
             reacquireAfterDeath().pipe(
               Effect.catchTag("SupervisorOwnerReacquirePending", () => Effect.never),
             ),
         });
-        oldSessionEnded = replacement.oldSessionEnded;
-        attachedOwnerWasStopping = replacement.attachedOwnerWasStopping;
-        replacementConfigInput = replacement.effectiveConfigInput;
-        initialAcquisition = replacement.acquisition;
+        oldSessionEnded = restart.oldSessionEnded;
+        attachedOwnerWasStopping = restart.attachedOwnerWasStopping;
+        effectiveConfigInput = restart.effectiveConfigInput;
+        initialAcquisition = restart.acquisition;
       } else {
         yield* awaitAttachedOwnerReady(initialAcquisition).pipe(
           Effect.catchTag("ControlTransportError", (error) =>
@@ -731,7 +758,7 @@ const runManaged = (
     }
     const ownership = acquisition;
     owner = ownership;
-    // A mismatch replacement starts attached and only acquires this new
+    // An upgrade restart starts attached and only acquires this new
     // owner after the old session has ended. Register the close capability
     // at that handoff before startup can publish or accept /stop.
     yield* registerOwnerClose(ownership);
@@ -766,8 +793,8 @@ const runManaged = (
         : yield* validateStackRuntime(ownedPersistedRuntime);
     const runtimeConfigInput =
       runtime.mode === "native" && requestedMode === undefined
-        ? applyNativeDefaults(replacementConfigInput)
-        : replacementConfigInput;
+        ? applyNativeDefaults(effectiveConfigInput)
+        : effectiveConfigInput;
     const activeFields = portFieldsForConfigInput({ ...runtimeConfigInput, mode: runtime.mode });
     const activeFieldSet = new Set(activeFields);
     const portIntents: ManagedPortIntentDocument = {
@@ -781,7 +808,7 @@ const runManaged = (
     // `starting` or acquires the managed lease.
     yield* portRequestsForConfig(runtimeConfigInput, { runtime });
     const launchInput =
-      replacingIncompatibleOwner && ownedExisting !== undefined
+      upgradeRestarting && ownedExisting !== undefined
         ? ownedExisting.launch
         : (input.launch ?? { versions: {} });
     const launch: ManagedStackLaunch =
@@ -810,7 +837,7 @@ const runManaged = (
         ownership,
         lifecycle: "starting",
         launch,
-        preservePersistedPorts: replacingIncompatibleOwner,
+        preservePersistedPorts: upgradeRestarting,
       });
       claimedStack = true;
       const managedPaths = yield* managedStackPathsEffect(input.stateRoot, started.stack.id);
@@ -897,7 +924,7 @@ const runManaged = (
         return Effect.failCause(cause);
       }
       const canMapRestart =
-        replacingIncompatibleOwner &&
+        upgradeRestarting &&
         oldSessionEnded &&
         failure !== undefined &&
         !Cause.hasDies(cause) &&
@@ -1046,31 +1073,16 @@ const sendStart = (
     });
   });
 
-const sendReplacementAck = (child: ChildProcess): Effect.Effect<void, SupervisorStartError> =>
-  Effect.gen(function* () {
-    const encoded = yield* Schema.encodeEffect(SupervisorReplacementAckCommandSchema)({
-      type: "replacement-ack",
-    }).pipe(Effect.mapError((cause) => new SupervisorStartError({ message: causeMessage(cause) })));
-    yield* Effect.callback<void, SupervisorStartError>((resume) => {
-      try {
-        child.send(encoded, (error) =>
-          resume(
-            error === null
-              ? Effect.void
-              : Effect.fail(new SupervisorStartError({ message: error.message })),
-          ),
-        );
-      } catch (cause) {
-        resume(Effect.fail(new SupervisorStartError({ message: causeMessage(cause) })));
-      }
-      return Effect.void;
-    });
-  });
-
 const waitForStarted = (
   child: ChildProcess,
-  onReplacing?: (event: SupervisorReplacingMessage) => Effect.Effect<void>,
-): Effect.Effect<SupervisorStartedMessage, SupervisorStartError | DaemonUpgradeRequired> =>
+): Effect.Effect<
+  SupervisorStartedMessage,
+  | SupervisorStartError
+  | DaemonUpgradeRequired
+  | UpgradePreflightError
+  | UpgradeRestartError
+  | StopTimeout
+> =>
   Effect.scoped(
     Effect.gen(function* () {
       const events = Stream.callback<unknown, SupervisorStartError>((queue) =>
@@ -1110,13 +1122,8 @@ const waitForStarted = (
               : new SupervisorStartError({ message: "Supervisor event stream ended" }),
           ),
         );
-        // Test/runtime stage notifications share the child IPC channel but
-        // are intentionally outside the supervisor control protocol.
-        if (isRecord(chunk[0]) && chunk[0].type === "test-stage") continue;
         const event = yield* decodeSupervisorEvent(chunk[0]);
-        if (event.type === "started") return event;
-        if (onReplacing !== undefined) yield* onReplacing(event);
-        yield* sendReplacementAck(child);
+        return event;
       }
     }),
   );
@@ -1125,7 +1132,6 @@ const waitForStarted = (
 export const supervisorLayer = (
   input: SupervisorStartMessage,
   entryPoint: string,
-  onReplacing?: (event: SupervisorReplacingMessage) => Effect.Effect<void>,
 ): Effect.Effect<
   Layer.Layer<
     import("./Stack.ts").Stack,
@@ -1133,6 +1139,9 @@ export const supervisorLayer = (
   >,
   | SupervisorStartError
   | DaemonUpgradeRequired
+  | UpgradePreflightError
+  | UpgradeRestartError
+  | StopTimeout
   | import("./managed/model.ts").InvalidManagedStackNameError,
   HttpTransportClient
 > =>
@@ -1142,10 +1151,10 @@ export const supervisorLayer = (
     const child = yield* forkSupervisor(entryPoint);
     let detached = false;
     return yield* Effect.gen(function* () {
-      const responseFiber = yield* waitForStarted(child, onReplacing).pipe(
+      const responseFiber = yield* waitForStarted(child).pipe(
         Effect.timeout(
-          input.incompatibleOwnerPolicy === "replace"
-            ? SUPERVISOR_REPLACEMENT_HANDSHAKE_TIMEOUT
+          input.type === "upgrade-restart"
+            ? UPGRADE_RESTART_HANDSHAKE_TIMEOUT
             : SUPERVISOR_HANDSHAKE_TIMEOUT,
         ),
         Effect.catchTag("TimeoutError", () =>
@@ -1187,6 +1196,9 @@ export const managedDaemonLayer = (
   Layer.Layer<Stack, DaemonUpgradeRequired | StackRpcProtocolError | StackRpcTransportError>,
   | SupervisorStartError
   | DaemonUpgradeRequired
+  | UpgradePreflightError
+  | UpgradeRestartError
+  | StopTimeout
   | import("./managed/model.ts").InvalidManagedStackNameError,
   HttpTransportClient | import("effect").FileSystem.FileSystem
 > =>
@@ -1200,7 +1212,6 @@ export const managedDaemonLayer = (
       {
         type: "start",
         cliVersion: input.cliVersion,
-        incompatibleOwnerPolicy: input.incompatibleOwnerPolicy,
         stackId: deriveStackId(discovery.identity, input.stackName),
         workspacePath: input.workspacePath,
         stackName: input.stackName,
@@ -1213,6 +1224,5 @@ export const managedDaemonLayer = (
         ...(input.launch === undefined ? {} : { launch: input.launch }),
       },
       entryPoint,
-      input.onReplacing,
     );
   });

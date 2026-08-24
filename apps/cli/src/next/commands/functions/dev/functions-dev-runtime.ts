@@ -64,7 +64,6 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
   };
   const stackLayer = yield* daemonLayer({
     cliVersion: CLI_VERSION,
-    incompatibleOwnerPolicy: "fail",
     cacheRoot: cliConfig.supabaseHome,
     cwd: runtimeInfo.cwd,
     projectDir: projectHome.projectRoot,

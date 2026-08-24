@@ -42,7 +42,7 @@ describe("start handler", () => {
               const postStartLaunch = {
                 ...fixture.launch,
                 versions: { postgres: "17.7.0" },
-                excludedServices: ["analytics"],
+                excludedServices: ["analytics", "future-service"],
               } as const;
               const state = StartVersionState.of({
                 launch: startVersionStateLaunch({ launch: postStartLaunch }),
@@ -98,7 +98,7 @@ describe("start handler", () => {
                     const document = await fixture.readDocument();
                     expect(document?.launch).toMatchObject({
                       versions: { postgres: "17.7.0" },
-                      excludedServices: ["analytics"],
+                      excludedServices: ["analytics", "future-service"],
                       lastNotifiedUpdateFingerprint: "new-fingerprint",
                     });
                   }),

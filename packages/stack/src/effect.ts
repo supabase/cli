@@ -10,6 +10,7 @@ export {
   BinaryNotFoundError,
   BinaryRuntimeError,
   ChecksumMismatchError,
+  DaemonUpgradeRequired,
   DockerPullError,
   DownloadError,
   isDockerDaemonDownMessage,
@@ -19,6 +20,9 @@ export {
   StackNotRunningError,
   StackReadinessError,
   StackUnavailableError,
+  StopTimeout,
+  UpgradePreflightError,
+  UpgradeRestartError,
   toStackError,
 } from "./errors.ts";
 

@@ -10,9 +10,8 @@ const portIntentSchema = Schema.Struct({
 });
 
 export const SupervisorStartCommandSchema = Schema.Struct({
-  type: Schema.Literal("start"),
+  type: Schema.Literals(["start", "upgrade-restart"]),
   cliVersion: Schema.String,
-  incompatibleOwnerPolicy: Schema.Literals(["replace", "fail"]),
   stackId: Schema.String,
   workspacePath: Schema.String,
   stackName: Schema.String,
@@ -22,11 +21,6 @@ export const SupervisorStartCommandSchema = Schema.Struct({
   launch: Schema.optionalKey(managedStackLaunchInputSchema),
 });
 export type SupervisorStartMessage = Schema.Schema.Type<typeof SupervisorStartCommandSchema>;
-
-/** Parent acknowledgement required before an incompatible owner is fenced. */
-export const SupervisorReplacementAckCommandSchema = Schema.Struct({
-  type: Schema.Literal("replacement-ack"),
-});
 
 const SupervisorOwnerDescriptorSchema = Schema.Struct({
   ownershipId: ControlOwnerDescriptorSchema.fields.ownershipId,
@@ -47,26 +41,27 @@ export const SupervisorStartedEventSchema = Schema.Struct({
 });
 export type SupervisorStartedMessage = Schema.Schema.Type<typeof SupervisorStartedEventSchema>;
 
-export const SupervisorReplacingEventSchema = Schema.Struct({
-  type: Schema.Literal("replacing"),
-  stackId: Schema.String,
-  oldCliVersion: Schema.String,
-  newCliVersion: Schema.String,
-});
-export type SupervisorReplacingMessage = Schema.Schema.Type<typeof SupervisorReplacingEventSchema>;
-
 export const SupervisorErrorEventSchema = Schema.Struct({
   type: Schema.Literal("error"),
   message: Schema.String,
-  errorCode: Schema.optionalKey(Schema.Literal("DAEMON_UPGRADE_REQUIRED")),
+  errorCode: Schema.optionalKey(
+    Schema.Literals([
+      "DAEMON_UPGRADE_REQUIRED",
+      "UPGRADE_PREFLIGHT",
+      "UPGRADE_RESTART",
+      "STOP_TIMEOUT",
+    ]),
+  ),
   stackId: Schema.optionalKey(Schema.String),
   oldCliVersion: Schema.optionalKey(Schema.String),
   newCliVersion: Schema.optionalKey(Schema.String),
+  detail: Schema.optionalKey(Schema.String),
+  endpoint: Schema.optionalKey(Schema.String),
+  ownerSessionId: Schema.optionalKey(Schema.String),
 });
 export type SupervisorErrorMessage = Schema.Schema.Type<typeof SupervisorErrorEventSchema>;
 
 export const SupervisorEventSchema = Schema.Union([
   SupervisorStartedEventSchema,
-  SupervisorReplacingEventSchema,
   SupervisorErrorEventSchema,
 ]);

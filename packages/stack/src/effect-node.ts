@@ -10,6 +10,7 @@ import type { ResolvedStackConfig } from "./StackConfig.ts";
 import type { ManagedDaemonConfigInput } from "./layers.ts";
 import {
   daemonLayer as daemonLayerForPlatform,
+  restartManagedStackForUpgrade as restartManagedStackForUpgradeForPlatform,
   foregroundLayer as foregroundLayerForPlatform,
 } from "./layers.ts";
 import { daemonEntryPoint, platformFactory } from "./platform-node.ts";
@@ -37,6 +38,9 @@ export const foregroundLayer = (
 
 export const daemonLayer = (input: ManagedDaemonConfigInput) =>
   daemonLayerForPlatform(input, daemonEntryPoint);
+
+export const restartManagedStackForUpgrade = (input: ManagedDaemonConfigInput) =>
+  restartManagedStackForUpgradeForPlatform(input, daemonEntryPoint);
 
 const managedLayer = (cacheRoot: string) =>
   managedStackManagerLayer({ stateRoot: join(cacheRoot, "managed") });

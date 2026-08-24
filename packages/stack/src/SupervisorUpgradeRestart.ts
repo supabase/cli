@@ -1,7 +1,7 @@
 import { Duration, Effect, FileSystem, Path, Scope } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { validateStackRuntime, type StackRuntimeSelection } from "./ContainerRuntime.ts";
-import type { SupervisorReplacingMessage, SupervisorStartMessage } from "./SupervisorProtocol.ts";
+import type { SupervisorStartMessage } from "./SupervisorProtocol.ts";
 import {
   makeControlClient,
   type ControlAcquisition,
@@ -27,14 +27,13 @@ import {
   type DaemonConfigInput,
 } from "./StackConfigResolver.ts";
 import {
-  DaemonUpgradeRequired,
   StopTimeout,
   SupervisorStartError,
   UpgradePreflightError,
   UpgradeRestartError,
 } from "./errors.ts";
 
-export interface SupervisorReplacementContext {
+export interface UpgradeRestartContext {
   readonly stackId: string;
   readonly oldOwner: ControlAttached;
   readonly input: SupervisorStartMessage;
@@ -42,10 +41,6 @@ export interface SupervisorReplacementContext {
   readonly manager: ManagedStackManagerShape;
   readonly controlTransport: ControlTransportShape;
   readonly resolutionTimeout?: Duration.Input;
-  /** Sends the replacement notice and waits for the parent authorization. */
-  readonly authorize: (
-    event: SupervisorReplacingMessage,
-  ) => Effect.Effect<void, SupervisorStartError>;
   /** Reclaims the deterministic endpoint after the captured owner disappears. */
   readonly reacquire: () => Effect.Effect<
     ControlAcquisition,
@@ -59,14 +54,14 @@ export interface SupervisorReplacementContext {
   >;
 }
 
-export interface SupervisorReplacementResult {
+export interface UpgradeRestartResult {
   readonly acquisition: ControlAcquisition;
   readonly effectiveConfigInput: DaemonConfigInput;
   readonly oldSessionEnded: true;
   readonly attachedOwnerWasStopping: boolean;
 }
 
-export const SUPERVISOR_REPLACEMENT_PHASE_TIMEOUT = Duration.seconds(30);
+export const UPGRADE_RESTART_PHASE_TIMEOUT = Duration.seconds(30);
 
 const runtimeSelectionForLaunch = (launch: ManagedStackLaunch): StackRuntimeSelection =>
   launch.mode === "native"
@@ -203,13 +198,19 @@ const applyPersistedLaunch = (
   let effective = config;
   const requestedExclusions = expandExcludedServices(requested?.excludedServices ?? []);
   const persistedExclusions = expandExcludedServices(persisted.excludedServices ?? []);
-  for (const service of requestedExclusions) {
+  const servicesToEnable = new Set<(typeof SERVICE_NAMES)[number]>(requestedExclusions);
+  for (const service of SERVICE_NAMES) {
+    if (!persistedExclusions.has(service) && persisted.versions[service] !== undefined) {
+      servicesToEnable.add(service);
+    }
+  }
+  for (const service of servicesToEnable) {
     if (!persistedExclusions.has(service)) {
       effective = enableService(effective, service, persisted.versions[service]);
     }
   }
   const servicePolicies = { ...effective.servicePolicies };
-  for (const service of requestedExclusions) {
+  for (const service of servicesToEnable) {
     if (!persistedExclusions.has(service) && servicePolicies[service] === "off") {
       delete servicePolicies[service];
     }
@@ -220,10 +221,7 @@ const applyPersistedLaunch = (
   return { ...effective, servicePolicies };
 };
 
-const preflightError = (
-  context: SupervisorReplacementContext,
-  detail: string,
-): UpgradePreflightError =>
+const preflightError = (context: UpgradeRestartContext, detail: string): UpgradePreflightError =>
   new UpgradePreflightError({
     stackId: context.stackId,
     oldCliVersion: context.oldOwner.observedStatus.daemonCliVersion,
@@ -254,7 +252,7 @@ const causeMessage = (cause: unknown): string => {
 };
 
 const preflight = (
-  context: SupervisorReplacementContext,
+  context: UpgradeRestartContext,
 ): Effect.Effect<
   DaemonConfigInput,
   UpgradePreflightError,
@@ -318,13 +316,13 @@ const preflight = (
   });
 
 /**
- * Performs the complete incompatible-owner transaction. The outer supervisor
+ * Performs the complete incompatible-owner upgrade restart transaction. The outer supervisor
  * retains only IPC/listener ownership and startup composition concerns.
  */
-export const replaceIncompatibleOwner = (
-  context: SupervisorReplacementContext,
+export const restartIncompatibleOwner = (
+  context: UpgradeRestartContext,
 ): Effect.Effect<
-  SupervisorReplacementResult,
+  UpgradeRestartResult,
   | UpgradePreflightError
   | SupervisorStartError
   | StopTimeout
@@ -334,36 +332,18 @@ export const replaceIncompatibleOwner = (
   | ControlAddressConflictError
   | InvalidControlOwnershipIdError
   | ControlBindError
-  | DaemonUpgradeRequired
   | UpgradeRestartError,
   FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
 > =>
   Effect.gen(function* () {
-    if (context.input.incompatibleOwnerPolicy === "fail") {
-      return yield* Effect.fail(
-        new DaemonUpgradeRequired({
-          stackId: context.stackId,
-          oldCliVersion: context.oldOwner.observedStatus.daemonCliVersion,
-          newCliVersion: context.input.cliVersion,
-        }),
-      );
-    }
-    const phaseTimeout = context.resolutionTimeout ?? SUPERVISOR_REPLACEMENT_PHASE_TIMEOUT;
+    const phaseTimeout = context.resolutionTimeout ?? UPGRADE_RESTART_PHASE_TIMEOUT;
     const effectiveConfigInput = yield* preflight(context).pipe(
       Effect.timeout(phaseTimeout),
       Effect.catchTag("TimeoutError", () =>
-        Effect.fail(
-          preflightError(context, "Timed out preflighting incompatible daemon replacement"),
-        ),
+        Effect.fail(preflightError(context, "Timed out preflighting upgrade restart")),
       ),
     );
     const attachedOwnerWasStopping = context.oldOwner.observedStatus.state === "stopping";
-    yield* context.authorize({
-      type: "replacing",
-      stackId: context.stackId,
-      oldCliVersion: context.oldOwner.observedStatus.daemonCliVersion,
-      newCliVersion: context.input.cliVersion,
-    });
     const client = makeControlClient(context.controlTransport);
     yield* client
       .stopSession(
@@ -407,7 +387,7 @@ export const replaceIncompatibleOwner = (
       Effect.catchTag("TimeoutError", () =>
         Effect.fail(
           new SupervisorStartError({
-            message: "Timed out waiting for incompatible daemon replacement",
+            message: "Timed out waiting for upgrade restart",
           }),
         ),
       ),

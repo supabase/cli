@@ -137,15 +137,15 @@ Values in `.supabase/local-versions.json` override the candidate baseline for th
 
 New stacks can adopt newer catalog defaults immediately. Existing stacks remain pinned until update
 changes their managed launch metadata. When `supabase start` encounters an incompatible live owner,
-it performs a lazy stop/start replacement after preflight. The replacement is authorized only by that
-explicit start: it preflights while the old owner is live, obtains the parent replacement ACK, stops
-the exact captured session through the stable `ControlClient`, re-observes it to completion, and
-reacquires ownership within bounded time. Persisted exclusions are reapplied to effective runtime
+it performs an explicit stop/start upgrade restart after preflight. The restart is authorized only by that
+explicit operation: it preflights while the old owner is live, stops the exact captured session through
+the stable `ControlClient`, re-observes it to completion, and reacquires ownership within bounded time.
+Persisted exclusions are reapplied to effective runtime
 service policies before preflight, active-port calculation, allocation, configuration resolution, and
-startup—not merely copied into `stack.json`. The replacement preserves durable stack identity and
+startup—not merely copied into `stack.json`. The upgrade restart preserves durable stack identity and
 creation metadata, data roots, runtime mode and container runtime, pinned service versions,
 exclusions, and sticky port assignments. It never invokes destructive deletion. Connect-only commands
-never replace the owner; they report the upgrade requirement instead.
+never restart the stack; they report the upgrade requirement instead.
 
 ### Team collaboration
 

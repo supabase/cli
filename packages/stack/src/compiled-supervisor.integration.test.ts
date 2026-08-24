@@ -60,7 +60,6 @@ const messageFor = (
 ): CompiledSupervisorStartMessage => ({
   type: "start",
   cliVersion: "2.61.0",
-  incompatibleOwnerPolicy: "replace",
   stackId: roots.stackId,
   workspacePath: roots.root,
   stackName: "default",
@@ -267,11 +266,11 @@ describe("compiled Bun detached supervisor", () => {
     rmSync(artifactRoot, { recursive: true, force: true });
   });
 
-  test("starts, attaches, session-stops, and replaces through compiled child re-entry", async () => {
+  test("starts, attaches, session-stops, and upgrade-restarts through compiled child re-entry", async () => {
     const roots = makeWorkspace();
     let first: CompiledParent | undefined;
     let attached: CompiledParent | undefined;
-    let replacement: CompiledParent | undefined;
+    let upgradeRestart: CompiledParent | undefined;
     const runtimePids = new Set<number>();
     try {
       const endpoint = await endpointFor(roots);
@@ -326,12 +325,12 @@ describe("compiled Bun detached supervisor", () => {
       runtimePids.add(oldRuntime.pid);
       const oldLaunch = oldDocument["launch"];
       const oldPorts = oldDocument["ports"];
-      writeFileSync(sentinel, "replace-preserve");
+      writeFileSync(sentinel, "upgrade-restart-preserve");
 
-      replacement = spawnCompiledParent(
+      upgradeRestart = spawnCompiledParent(
         messageFor(roots, {
+          type: "upgrade-restart",
           cliVersion: "2.61.0",
-          incompatibleOwnerPolicy: "replace",
           launch: {
             mode: "native",
             versions: { postgres: "new-default" },
@@ -339,7 +338,7 @@ describe("compiled Bun detached supervisor", () => {
           },
         }),
       );
-      await replacement.ready;
+      await upgradeRestart.ready;
       await waitForProcessExit(oldRuntime.pid);
       await first.exited;
       const currentOwner = await owner(endpoint);
@@ -356,20 +355,20 @@ describe("compiled Bun detached supervisor", () => {
       expect(after["createdAt"]).toBe(oldDocument["createdAt"]);
       expect(after["launch"]).toEqual(oldLaunch);
       expect(after["ports"]).toEqual(oldPorts);
-      expect(readFileSync(sentinel, "utf8")).toBe("replace-preserve");
+      expect(readFileSync(sentinel, "utf8")).toBe("upgrade-restart-preserve");
 
-      const replacementRuntime = after["runtime"] as { readonly pid: number };
-      runtimePids.add(replacementRuntime.pid);
+      const restartedRuntime = after["runtime"] as { readonly pid: number };
+      runtimePids.add(restartedRuntime.pid);
       expect(
         await stop(endpoint, currentOwner.ownershipId, currentOwner.ownerSessionId),
       ).toMatchObject({
         status: 202,
       });
-      await waitForProcessExit(replacementRuntime.pid);
-      await replacement.exited;
+      await waitForProcessExit(restartedRuntime.pid);
+      await upgradeRestart.exited;
     } finally {
       for (const pid of runtimePids) killPid(pid);
-      for (const handle of [first, attached, replacement]) {
+      for (const handle of [first, attached, upgradeRestart]) {
         if (handle?.child.exitCode === null) handle.child.kill("SIGKILL");
       }
       cleanup(roots);
@@ -393,7 +392,7 @@ describe("compiled Bun detached supervisor", () => {
       await waitForProcessExit(staleRuntime.pid);
       await ownerParent.exited;
 
-      recovery = spawnCompiledParent(messageFor(roots, { incompatibleOwnerPolicy: "fail" }));
+      recovery = spawnCompiledParent(messageFor(roots));
       await recovery.ready;
       const current = await owner(endpoint);
       expect(current).toMatchObject({

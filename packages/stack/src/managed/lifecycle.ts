@@ -100,7 +100,19 @@ export const connectManagedStack = (
     }
     const manager = yield* ManagedStackManager;
     const probe = yield* manager.probeControl(document.id);
-    if (probe === undefined || probe.status.state !== "running" || !probe.status.ready) {
+    if (probe === undefined) {
+      return yield* Effect.fail(noRunningStack(input));
+    }
+    if (probe.status.daemonCliVersion !== input.cliVersion) {
+      return yield* Effect.fail(
+        new DaemonUpgradeRequired({
+          stackId: document.id,
+          oldCliVersion: probe.status.daemonCliVersion,
+          newCliVersion: input.cliVersion,
+        }),
+      );
+    }
+    if (probe.status.state !== "running" || !probe.status.ready) {
       return yield* Effect.fail(noRunningStack(input));
     }
     const client = yield* HttpTransportClient;
@@ -165,7 +177,7 @@ export const stopManagedStack = (
       /**
        * Stop the exact session currently observed, then probe again. A new
        * supervisor can bind immediately after the old session disappears; a
-       * public identity-scoped stop must follow and fence that replacement
+       * public identity-scoped stop must follow and fence that successor
        * rather than returning with a running document.
        */
       const stopCurrentOwner = Effect.gen(function* () {
@@ -235,18 +247,26 @@ export const deleteManagedStack = (
           ),
           Effect.mapError(() => new ManagedStackAttachedError({ stackId })),
         );
-        const revalidatedStackId = yield* stackIdForInput(manager, input);
-        if (revalidatedStackId !== stackId) {
-          return yield* Effect.fail(
-            new ManagedWorkspaceRepairConflictError({
-              reason: "Workspace identity changed before delete",
-            }),
-          );
-        }
-        yield* lifecycle.setClose(acquisition.close);
-        yield* lifecycle.beginDeleting;
-        const result = yield* manager
-          .deleteStack(stackId, acquisition)
+        // Keep the control listener bound until the destructive delete has
+        // completed. A concurrent fenced /stop may transition this lifecycle
+        // to closed, but must not release the endpoint while the document and
+        // backing data are still being removed. Install the no-op close before
+        // revalidating identity as well, so every path after acquisition has
+        // the same ownership fence and cleanup guarantee.
+        yield* lifecycle.setClose(Effect.void);
+        const result = yield* Effect.gen(function* () {
+          const revalidatedStackId = yield* stackIdForInput(manager, input);
+          if (revalidatedStackId !== stackId) {
+            return yield* Effect.fail(
+              new ManagedWorkspaceRepairConflictError({
+                reason: "Workspace identity changed before delete",
+              }),
+            );
+          }
+          yield* lifecycle.beginDeleting;
+          return yield* manager.deleteStack(stackId, acquisition);
+        })
+          .pipe(Effect.ensuring(acquisition.close))
           .pipe(Effect.ensuring(lifecycle.requestShutdown("dispose").pipe(Effect.ignore)));
         if (result.outcome === "already-absent") return yield* Effect.fail(noRunningStack(input));
       }),

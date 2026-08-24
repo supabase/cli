@@ -273,8 +273,18 @@ export const RemoteStack = {
           );
         const requestStop = () => {
           const owner = options.owner;
-          return closeRpcScope.pipe(
-            Effect.andThen(control.stopSession(endpoint, owner.ownershipId, owner.ownerSessionId)),
+          // Closing the RPC scope is best-effort cleanup. The control-plane
+          // stop is fenced to the session captured during the owner handshake
+          // and must still be sent when a stream/client finalizer fails. Keep
+          // the handoff uninterruptible so an interrupted scope close cannot
+          // skip the stop; the fenced stop remains the observable operation
+          // and its typed failure is preserved for callers.
+          return Effect.uninterruptibleMask((restore) =>
+            Effect.exit(restore(closeRpcScope)).pipe(
+              Effect.andThen(
+                control.stopSession(endpoint, owner.ownershipId, owner.ownerSessionId),
+              ),
+            ),
           );
         };
         return {
