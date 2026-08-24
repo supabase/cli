@@ -9,8 +9,8 @@ const formatter = Bun.spawn(["bun", "x", "oxfmt", "--stdin-filepath=./dist/schem
   stdout: "pipe",
   stderr: "pipe",
 });
-formatter.stdin.write(schema);
-formatter.stdin.end();
+await formatter.stdin.write(schema);
+await formatter.stdin.end();
 
 const [exitCode, formatted, stderr] = await Promise.all([
   formatter.exited,

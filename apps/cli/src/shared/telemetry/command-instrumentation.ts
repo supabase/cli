@@ -42,7 +42,7 @@ function extractFlagsUsed(args: ReadonlyArray<string>): ReadonlyArray<string> {
   return [...used].sort((left, right) => left.localeCompare(right));
 }
 
-function normalizeFlagValue(value: unknown): unknown | undefined {
+function normalizeFlagValue(value: unknown): unknown {
   if (value === undefined) return undefined;
   if (!Option.isOption(value)) return value;
   if (Option.isNone(value)) return undefined;

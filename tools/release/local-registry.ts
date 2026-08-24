@@ -110,7 +110,7 @@ async function main() {
 	});
 
 	// Handle unexpected Verdaccio crash.
-	proc.exited.then((code) => {
+	void proc.exited.then((code) => {
 		if (code !== 0 && code !== null) {
 			console.error(
 				`\nVerdaccio exited unexpectedly (code ${code}). Check logs: ${logPath}\n`,
