@@ -760,7 +760,7 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
-  test("upgrade restart preserves persisted runtime exclusions and sticky ports", async () => {
+  test("upgrade restart ignores invocation exclusions while preserving persisted launch", async () => {
     const roots = await workspace();
     const oldOwner = spawnChild(
       messageFor(roots, {
@@ -822,7 +822,7 @@ describe("detached supervisor child journeys", () => {
           launch: {
             mode: "native",
             versions: { postgres: "pinned-postgres" },
-            excludedServices: [],
+            excludedServices: ["studio"],
           },
         }),
       );

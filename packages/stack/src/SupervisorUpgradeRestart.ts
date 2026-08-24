@@ -197,9 +197,14 @@ const applyPersistedLaunch = (
   requested: SupervisorStartMessage["launch"],
 ): DaemonConfigInput => {
   let effective = config;
-  const requestedExclusions = expandExcludedServices(requested?.excludedServices ?? []);
+  const restartRequestExclusions = expandExcludedServices(requested?.excludedServices ?? []);
   const persistedExclusions = expandExcludedServices(persisted.excludedServices ?? []);
-  const servicesToEnable = new Set<(typeof SERVICE_NAMES)[number]>(requestedExclusions);
+  const servicesToEnable = new Set<(typeof SERVICE_NAMES)[number]>();
+  for (const service of restartRequestExclusions) {
+    if (persisted.mode !== "native" || SERVICE_CATALOG[service].runtimeSupport !== "docker-only") {
+      servicesToEnable.add(service);
+    }
+  }
   for (const service of SERVICE_NAMES) {
     if (
       !persistedExclusions.has(service) &&

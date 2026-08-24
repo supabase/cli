@@ -237,10 +237,16 @@ describe("incompatible supervisor upgrade restart", () => {
     );
   });
 
-  it.live("keeps native Docker-only services disabled with a complete persisted manifest", () => {
+  it.live("keeps restart-request exclusions from enabling native Docker-only services", () => {
     const context = setup(allPersistedVersions);
+    const launch = context.input.launch ?? { versions: {} };
+    const input = {
+      ...context.input,
+      launch: { ...launch, excludedServices: ["studio", "analytics"] },
+    };
     return restartIncompatibleOwner({
       ...context,
+      input,
       configInput: context.configInput,
       controlTransport: context.transport,
       reacquire: () => Effect.succeed(context.oldOwner),
