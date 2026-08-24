@@ -8,7 +8,7 @@
 The CLI has no true end-to-end tests. `apps/cli-e2e` is a replay/record harness:
 in **replay** mode it serves recorded HTTP fixtures (fast, deterministic, no
 network); in **record** mode it proxies the CLI's Management API and Docker
-traffic to staging only to *capture* those fixtures. Tests always assert against
+traffic to staging only to _capture_ those fixtures. Tests always assert against
 replayed fixtures, never live responses. Behaviour that cannot be mocked — real
 Management API calls and the real Docker bundler (e.g. `functions deploy`) — is
 therefore untested.
@@ -18,7 +18,7 @@ adds a structured Vitest **live** suite that runs the real CLI against a real
 backend (staging today, the dockerized `supabox` stack later) as a non-blocking
 smoke test before a stable deploy.
 
-The open architectural question was *how* live mode should reach the backend.
+The open architectural question was _how_ live mode should reach the backend.
 The first instinct was to add a third runtime mode inside `replay-server.ts`
 alongside `replay` and `record` — taking record mode's passthrough path
 (CLI → replay server → real API) but skipping fixture I/O. That keeps the
@@ -38,8 +38,8 @@ mode, not a `replay-server.ts` branch.
   1. run the real CLI (`run([...])`) and assert `exitCode` / `stdout`;
   2. **invoke the deployed function over HTTP directly** and assert HTTP status +
      the JSON body the function itself returns (e.g. `{case, ok:true}`).
-  The invoke is a direct HTTP call to `https://{ref}.{CLI_E2E_PROJECT_HOST}/functions/v1`,
-  not a proxied call — the replay server is nowhere in the assertion path.
+     The invoke is a direct HTTP call to `https://{ref}.{CLI_E2E_PROJECT_HOST}/functions/v1`,
+     not a proxied call — the replay server is nowhere in the assertion path.
 - Because the assertion target is the function's own deterministic response (plus
   exit codes / stdout substrings), the suite is **ID-agnostic** — no response
   normalization or snapshot machinery by default. The function invoke URL and
@@ -72,7 +72,7 @@ nothing.
 The storage proxy (the other "free" proxy) is not exercised by the
 `functions deploy` pilot, so it is not a reason to keep the server in front. If a
 later live command genuinely needs host rewriting (e.g. storage on a different
-host than the Management API), a scoped passthrough can be introduced *then* for
+host than the Management API), a scoped passthrough can be introduced _then_ for
 that command — YAGNI until a concrete need exists.
 
 The per-target matrix exists because `go` and `ts-legacy` are different code

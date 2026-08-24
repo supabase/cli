@@ -4,7 +4,7 @@ Some tasks are repetitive to configure: every package that uses `knip` needs the
 
 ## What inference plugins do
 
-An inference plugin is a TypeScript file under `tools/nx-plugins/src/` that exports a `createNodesV2` function. Nx calls this function during project graph construction and merges the returned targets into each matching project's configuration. Targets that come from a plugin are called *inferred targets* — they don't live in any project file, but they show up in `nx show project` output and work exactly like explicitly declared targets.
+An inference plugin is a TypeScript file under `tools/nx-plugins/src/` that exports a `createNodesV2` function. Nx calls this function during project graph construction and merges the returned targets into each matching project's configuration. Targets that come from a plugin are called _inferred targets_ — they don't live in any project file, but they show up in `nx show project` output and work exactly like explicitly declared targets.
 
 The plugin decides which projects get which targets by reading each project's `package.json` and checking for a signal — in the case of knip, the presence of a `knip` configuration object. Projects that don't match the signal are simply skipped.
 
@@ -20,10 +20,10 @@ Infers `knip:check` and `knip:fix` targets for any workspace package that has a 
 
 **Inferred targets:**
 
-| Target | Command | Cached | Inputs |
-|--------|---------|--------|--------|
-| `knip:check` | `knip-bun --exclude catalogReferences` | Yes | Entry files from `knip.entry` (or `default` if none defined), `sharedGlobals`, `knip` package version |
-| `knip:fix` | `knip-bun --fix --exclude catalogReferences` | No | — |
+| Target       | Command                                      | Cached | Inputs                                                                                                |
+| ------------ | -------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------- |
+| `knip:check` | `knip-bun --exclude catalogReferences`       | Yes    | Entry files from `knip.entry` (or `default` if none defined), `sharedGlobals`, `knip` package version |
+| `knip:fix`   | `knip-bun --fix --exclude catalogReferences` | No     | —                                                                                                     |
 
 **Input resolution:** If `knip.entry` lists explicit file patterns (e.g. `["src/index.ts", "src/**/*.test.ts"]`), those patterns are used as the cache inputs instead of the broad `default` named input. This means the cache is only invalidated when those specific files change, rather than on any file change in the project. If no `entry` is defined, it falls back to `["default", "sharedGlobals"]`. In both cases, the `knip` package version is included so a version bump triggers a re-check.
 
@@ -37,10 +37,10 @@ Infers `fmt:check` and `fmt:fix` targets for any workspace package that has `oxf
 
 **Inferred targets:**
 
-| Target | Command | Cached | Inputs |
-|--------|---------|--------|--------|
-| `fmt:check` | `oxfmt --check` | Yes | `default`, `oxfmt` package version |
-| `fmt:fix` | `oxfmt` | No | — |
+| Target      | Command         | Cached | Inputs                             |
+| ----------- | --------------- | ------ | ---------------------------------- |
+| `fmt:check` | `oxfmt --check` | Yes    | `default`, `oxfmt` package version |
+| `fmt:fix`   | `oxfmt`         | No     | —                                  |
 
 oxfmt has no per-project configuration, so there is no fine-grained input narrowing — the cache invalidates on any file change in the project plus a version bump of `oxfmt`.
 
@@ -56,10 +56,10 @@ Infers `lint:check` and `lint:fix` targets for any workspace package that has `o
 
 **Inferred targets:**
 
-| Target | Command | Cached | Inputs |
-|--------|---------|--------|--------|
-| `lint:check` | `oxlint [--type-aware] --deny-warnings` | Yes | `default`, `oxlint` package version |
-| `lint:fix` | `oxlint [--type-aware] --deny-warnings --fix` | No | — |
+| Target       | Command                                       | Cached | Inputs                              |
+| ------------ | --------------------------------------------- | ------ | ----------------------------------- |
+| `lint:check` | `oxlint [--type-aware] --deny-warnings`       | Yes    | `default`, `oxlint` package version |
+| `lint:fix`   | `oxlint [--type-aware] --deny-warnings --fix` | No     | —                                   |
 
 Currently `packages/api` is the only project with `"oxlint": { "typeAware": true }`.
 
@@ -75,9 +75,9 @@ Infers a `types:check` target for any workspace package that has `typescript` in
 
 **Inferred targets:**
 
-| Target | Command | Cached | Inputs |
-|--------|---------|--------|--------|
-| `types:check` | `tsc --noEmit` | Yes | `default`, `typescript` package version |
+| Target        | Command        | Cached | Inputs                                  |
+| ------------- | -------------- | ------ | --------------------------------------- |
+| `types:check` | `tsc --noEmit` | Yes    | `default`, `typescript` package version |
 
 ## How to discover inferred targets
 
@@ -106,12 +106,12 @@ nx run-many -t fmt:check knip:check
 5. Register the plugin in `nx.json` under the `"plugins"` array
 
 ```typescript
-import type { CreateNodesV2 } from '@nx/devkit';
-import { dirname } from 'node:path';
-import { readPkgJson } from './parse-pkg-json';
+import type { CreateNodesV2 } from "@nx/devkit";
+import { dirname } from "node:path";
+import { readPkgJson } from "./parse-pkg-json";
 
 export const createNodesV2: CreateNodesV2 = [
-  '{apps,packages}/*/package.json',
+  "{apps,packages}/*/package.json",
   (packageJsonFiles, _options, context) => {
     return packageJsonFiles.flatMap((packageJsonPath) => {
       const pkgJson = readPkgJson(context.workspaceRoot, packageJsonPath);
@@ -128,11 +128,11 @@ export const createNodesV2: CreateNodesV2 = [
             projects: {
               [projectRoot]: {
                 targets: {
-                  'my-tool:check': {
-                    command: 'my-tool-binary',
-                    options: { cwd: '{projectRoot}' },
+                  "my-tool:check": {
+                    command: "my-tool-binary",
+                    options: { cwd: "{projectRoot}" },
                     cache: true,
-                    inputs: ['default', 'sharedGlobals', { externalDependencies: ['my-tool'] }],
+                    inputs: ["default", "sharedGlobals", { externalDependencies: ["my-tool"] }],
                   },
                 },
               },
@@ -148,10 +148,7 @@ export const createNodesV2: CreateNodesV2 = [
 ```json
 // nx.json
 {
-  "plugins": [
-    "./tools/nx-plugins/src/knip.plugin.ts",
-    "./tools/nx-plugins/src/my-tool.plugin.ts"
-  ]
+  "plugins": ["./tools/nx-plugins/src/knip.plugin.ts", "./tools/nx-plugins/src/my-tool.plugin.ts"]
 }
 ```
 

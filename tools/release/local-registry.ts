@@ -28,106 +28,100 @@ const tokenPath = path.join(root, "tmp", "verdaccio-token");
 const logPath = path.join(root, "tmp", "verdaccio.log");
 
 async function isPortInUse(): Promise<boolean> {
-	try {
-		const res = await fetch(`${REGISTRY}/-/ping`, {
-			signal: AbortSignal.timeout(1000),
-		});
-		return res.ok;
-	} catch {
-		return false;
-	}
+  try {
+    const res = await fetch(`${REGISTRY}/-/ping`, {
+      signal: AbortSignal.timeout(1000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
 }
 
 async function waitForRegistry(maxAttempts = 30, intervalMs = 500): Promise<void> {
-	for (let i = 0; i < maxAttempts; i++) {
-		try {
-			const res = await fetch(`${REGISTRY}/-/ping`, {
-				signal: AbortSignal.timeout(1000),
-			});
-			if (res.ok) return;
-		} catch {
-			// not ready yet
-		}
-		await Bun.sleep(intervalMs);
-	}
-	const totalSeconds = (maxAttempts * intervalMs) / 1000;
-	throw new Error(
-		`Verdaccio did not become ready within ${totalSeconds}s. Check logs: ${logPath}`,
-	);
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const res = await fetch(`${REGISTRY}/-/ping`, {
+        signal: AbortSignal.timeout(1000),
+      });
+      if (res.ok) return;
+    } catch {
+      // not ready yet
+    }
+    await Bun.sleep(intervalMs);
+  }
+  const totalSeconds = (maxAttempts * intervalMs) / 1000;
+  throw new Error(`Verdaccio did not become ready within ${totalSeconds}s. Check logs: ${logPath}`);
 }
 
 async function createUser(): Promise<string> {
-	const res = await fetch(`${REGISTRY}/-/user/org.couchdb.user:${LOCAL_USER}`, {
-		method: "PUT",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({
-			name: LOCAL_USER,
-			password: LOCAL_PASS,
-			email: "local@local.dev",
-			_id: `org.couchdb.user:${LOCAL_USER}`,
-			type: "user",
-			roles: [],
-		}),
-	});
+  const res = await fetch(`${REGISTRY}/-/user/org.couchdb.user:${LOCAL_USER}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: LOCAL_USER,
+      password: LOCAL_PASS,
+      email: "local@local.dev",
+      _id: `org.couchdb.user:${LOCAL_USER}`,
+      type: "user",
+      roles: [],
+    }),
+  });
 
-	if (!res.ok) {
-		const body = await res.text();
-		throw new Error(`Failed to create Verdaccio user (HTTP ${res.status}): ${body}`);
-	}
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Failed to create Verdaccio user (HTTP ${res.status}): ${body}`);
+  }
 
-	const body = (await res.json()) as { token?: string };
-	if (!body.token) {
-		throw new Error("Verdaccio did not return an auth token after user creation.");
-	}
-	return body.token;
+  const body = (await res.json()) as { token?: string };
+  if (!body.token) {
+    throw new Error("Verdaccio did not return an auth token after user creation.");
+  }
+  return body.token;
 }
 
 async function main() {
-	if (await isPortInUse()) {
-		console.error(`\nError: Something is already running on port ${PORT}.`);
-		console.error(
-			"If it's a leftover Verdaccio process, kill it first and retry.\n",
-		);
-		process.exit(1);
-	}
+  if (await isPortInUse()) {
+    console.error(`\nError: Something is already running on port ${PORT}.`);
+    console.error("If it's a leftover Verdaccio process, kill it first and retry.\n");
+    process.exit(1);
+  }
 
-	// Fresh storage each run to avoid stale auth or package conflicts.
-	await rm(tmpDir, { recursive: true, force: true });
-	await mkdir(tmpDir, { recursive: true });
+  // Fresh storage each run to avoid stale auth or package conflicts.
+  await rm(tmpDir, { recursive: true, force: true });
+  await mkdir(tmpDir, { recursive: true });
 
-	// Resolve {root} placeholder in the config template.
-	const template = await Bun.file(path.join(root, "verdaccio.yaml")).text();
-	const resolved = template.replaceAll("{root}", root);
-	await writeFile(configPath, resolved, "utf-8");
+  // Resolve {root} placeholder in the config template.
+  const template = await Bun.file(path.join(root, "verdaccio.yaml")).text();
+  const resolved = template.replaceAll("{root}", root);
+  await writeFile(configPath, resolved, "utf-8");
 
-	// Start Verdaccio, piping output to a log file.
-	const logFd = openSync(logPath, "w");
-	const verdaccioBin = path.join(root, "node_modules", ".bin", "verdaccio");
-	const proc = Bun.spawn([verdaccioBin, "--config", configPath], {
-		cwd: root,
-		stdout: logFd,
-		stderr: logFd,
-	});
+  // Start Verdaccio, piping output to a log file.
+  const logFd = openSync(logPath, "w");
+  const verdaccioBin = path.join(root, "node_modules", ".bin", "verdaccio");
+  const proc = Bun.spawn([verdaccioBin, "--config", configPath], {
+    cwd: root,
+    stdout: logFd,
+    stderr: logFd,
+  });
 
-	// Handle unexpected Verdaccio crash.
-	void proc.exited.then((code) => {
-		if (code !== 0 && code !== null) {
-			console.error(
-				`\nVerdaccio exited unexpectedly (code ${code}). Check logs: ${logPath}\n`,
-			);
-			process.exit(1);
-		}
-	});
+  // Handle unexpected Verdaccio crash.
+  void proc.exited.then((code) => {
+    if (code !== 0 && code !== null) {
+      console.error(`\nVerdaccio exited unexpectedly (code ${code}). Check logs: ${logPath}\n`);
+      process.exit(1);
+    }
+  });
 
-	process.stdout.write(`Starting local registry at ${REGISTRY}...`);
-	await waitForRegistry();
-	process.stdout.write(" ready.\n");
+  process.stdout.write(`Starting local registry at ${REGISTRY}...`);
+  await waitForRegistry();
+  process.stdout.write(" ready.\n");
 
-	// Create a publish user and persist the token so local-release.ts can use it.
-	const token = await createUser();
-	await writeFile(tokenPath, token, "utf-8");
+  // Create a publish user and persist the token so local-release.ts can use it.
+  const token = await createUser();
+  await writeFile(tokenPath, token, "utf-8");
 
-	console.log(`
+  console.log(`
   Registry : ${REGISTRY}
   Token    : ${tokenPath}
   Logs     : ${logPath}
@@ -142,18 +136,18 @@ async function main() {
   Press Ctrl+C to stop.
 `);
 
-	const cleanup = () => {
-		process.stdout.write("\nShutting down local registry...\n");
-		proc.kill();
-		process.exit(0);
-	};
+  const cleanup = () => {
+    process.stdout.write("\nShutting down local registry...\n");
+    proc.kill();
+    process.exit(0);
+  };
 
-	process.on("SIGINT", cleanup);
-	process.on("SIGTERM", cleanup);
-	process.on("SIGHUP", cleanup);
+  process.on("SIGINT", cleanup);
+  process.on("SIGTERM", cleanup);
+  process.on("SIGHUP", cleanup);
 
-	// Block until a signal is received.
-	await new Promise<never>(() => {});
+  // Block until a signal is received.
+  await new Promise<never>(() => {});
 }
 
 await main();

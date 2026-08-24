@@ -76,7 +76,7 @@ surface from a parity check it never needed.
   source of truth for which commands are still `wrapped`, and CI's `testParity` /
   `*.e2e.test.ts` suites catch output/behavior drift on the already-ported commands and code paths
   they cover — but that coverage is deliberately partial (e.g. `db pull --local` and `db lint
-  --local` skip `testParity` today, see `apps/cli-e2e/src/tests/database-core.e2e.test.ts`), so a
+--local` skip `testParity` today, see `apps/cli-e2e/src/tests/database-core.e2e.test.ts`), so a
   misclassified change on an uncovered path can still land without a human or agent ever consulting
   Go.
 
