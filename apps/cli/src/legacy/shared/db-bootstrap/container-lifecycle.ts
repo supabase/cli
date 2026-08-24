@@ -876,11 +876,11 @@ export function legacyCreateContainer(
     //
     // A failed extraction removes the just-created container (best-effort, `-v` so an anonymous
     // volume goes with it) before failing. The secret-file/`docker start` steps deliberately do
-    // NOT do this (Go-parity leak window — see `legacyCreateShadowDatabase`'s doc comment,
-    // `shadow-database.ts`), but `preStartArchives` is TS-only with no Go counterpart, and its one
-    // producer (the shadow baseline cache's warm restore) recovers from this exact failure by
-    // provisioning a replacement — which must not accumulate an orphaned created container per
-    // recovery.
+    // NOT do this — their established post-create failure window leaves cleanup to the caller's
+    // finalizer (see `legacyCreateShadowDatabase`'s doc comment, `shadow-database.ts`) — but
+    // `preStartArchives`' one producer (the shadow baseline cache's warm restore) recovers from
+    // this exact failure by provisioning a replacement, which must not accumulate an orphaned
+    // created container per recovery.
     yield* Effect.forEach(
       finalSpec.preStartArchives ?? [],
       (archive) => legacyExtractPreStartArchiveIntoContainer(spawner, containerId, archive),
