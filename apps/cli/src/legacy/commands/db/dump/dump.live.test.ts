@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import -- this live test drives the real CLI and inspects host files.
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { expect } from "vitest";

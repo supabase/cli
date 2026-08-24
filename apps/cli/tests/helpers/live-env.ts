@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/process-env -- this module is the explicit outer boundary for live-suite environment configuration.
 /** Environment-only live-suite configuration. */
 
 export const LIVE_EXIT_TIMEOUT_MS = 240_000;

@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/prefer-schema-over-json -- this integration assertion decodes the exact user-visible JSON output boundary.
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Exit, Layer } from "effect";

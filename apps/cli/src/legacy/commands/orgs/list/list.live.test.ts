@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function -- this live test uses Vitest's Promise surface to drive the real CLI.
 import { expect } from "vitest";
 import { test } from "../../../../../tests/helpers/live.ts";
 

@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/process-env -- this test verifies the process-environment compatibility boundary.
 import { afterEach, describe, expect, it } from "vitest";
 
 import { deriveLiveProjectHost, liveApiUrl, validateLiveConfig } from "./live-env.ts";

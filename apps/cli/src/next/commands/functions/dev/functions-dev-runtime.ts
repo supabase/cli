@@ -1,10 +1,20 @@
 import { connectLayer, daemonLayer, Stack, type EdgeRuntimeConfig } from "@supabase/stack/effect";
 import { loadProjectConfig } from "@supabase/config";
-import { Context, Duration, Effect, FileSystem, Layer, Option, Stream } from "effect";
-import { join } from "node:path";
+import {
+  Context,
+  DateTime,
+  Duration,
+  Effect,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Stream,
+} from "effect";
 import { CLI_VERSION } from "../../../../shared/cli/version.ts";
 import { CliConfig } from "../../../config/cli-config.service.ts";
 import { ProjectHome } from "../../../config/project-home.service.ts";
+import { ProjectContext } from "../../../config/project-context.service.ts";
 import { projectLocalServiceVersionsLayer } from "../../../config/project-local-service-versions.layer.ts";
 import { projectLinkStateLayer } from "../../../config/project-link-state.layer.ts";
 import { resolveServiceVersionContext } from "../../../config/service-version-resolution.ts";
@@ -47,6 +57,7 @@ type StackService = typeof Stack.Service;
 const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptions) {
   const cliConfig = yield* CliConfig;
   const projectHome = yield* ProjectHome;
+  const projectContext = yield* ProjectContext;
   const runtimeInfo = yield* RuntimeInfo;
   const output = yield* Output;
 
@@ -54,7 +65,9 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
   yield* ensureProjectStateIgnored(projectHome.projectRoot);
 
   const serviceVersionContext = yield* resolveServiceVersionContext([], undefined);
-  const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
+  const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot, {
+    projectEnv: Option.getOrUndefined(projectContext.projectEnv),
+  });
   const stackConfig = {
     ...withServiceVersions(toStartStackConfig([], "docker"), serviceVersionContext.runtimeVersions),
     // Functions dev explicitly requires Edge Runtime even when the project
@@ -114,7 +127,7 @@ function logEntryStream(stack: StackService) {
   return stack.subscribeLogs("edge-runtime").pipe(
     Stream.map((entry) => ({
       type: "log-entry" as const,
-      timestamp: new Date(entry.timestamp).toISOString(),
+      timestamp: DateTime.formatIso(DateTime.makeUnsafe(entry.timestamp)),
       service: entry.service,
       stream: entry.stream,
       line: entry.line,
@@ -125,8 +138,9 @@ function logEntryStream(stack: StackService) {
 
 const ensureFunctionsDirectory = Effect.fnUntraced(function* () {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const projectHome = yield* ProjectHome;
-  yield* fs.makeDirectory(join(projectHome.supabaseDir, "functions"), { recursive: true });
+  yield* fs.makeDirectory(path.join(projectHome.supabaseDir, "functions"), { recursive: true });
 });
 
 function watchEventMatches(spec: FunctionsDevWatchPath, event: FileWatchEvent): boolean {

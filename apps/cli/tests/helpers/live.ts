@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch, effecttsgo/node-builtin-import -- live-suite setup is a foreign filesystem/network boundary.
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -123,10 +124,7 @@ export function requireLiveSuccess(
 }
 
 /** Rethrow a target failure without discarding failures from exact cleanup. */
-export function throwWithCleanup(
-  primary: unknown | undefined,
-  cleanup: ReadonlyArray<unknown>,
-): void {
+export function throwWithCleanup(primary: unknown, cleanup: ReadonlyArray<unknown>): void {
   if (primary !== undefined) {
     if (cleanup.length > 0) {
       throw new AggregateError([primary, ...cleanup], "Live e2e target and cleanup failed");

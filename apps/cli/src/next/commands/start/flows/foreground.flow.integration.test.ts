@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/new-promise -- this test injects a deliberately gated foreign Promise to verify shutdown coordination.
 import { describe, expect, it } from "@effect/vitest";
 import { StackUnavailableError } from "@supabase/stack/effect";
 import { makeTestStack } from "@supabase/stack/testing";

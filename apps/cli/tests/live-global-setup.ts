@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function -- Vitest requires Promise-based global setup hooks.
 import type { ProvidedContext } from "vitest";
 
 import { makeApiClient } from "@supabase/api/effect";

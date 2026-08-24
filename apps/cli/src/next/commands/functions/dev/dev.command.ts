@@ -1,5 +1,5 @@
 import { DEFAULT_MANAGED_STACK_NAME, httpTransportClientLayer } from "@supabase/stack/effect";
-import { Layer } from "effect";
+import { Effect, Layer } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { provideProjectCommandRuntime } from "../../../config/project-runtime.layer.ts";
@@ -44,7 +44,7 @@ export const functionsDevCommand = Command.make("dev", flags).pipe(
     },
   ]),
   Command.withHandler((flags) =>
-    functionsDev(flags).pipe(withCommandInstrumentation(), withJsonErrorHandling),
+    Effect.scoped(functionsDev(flags)).pipe(withCommandInstrumentation(), withJsonErrorHandling),
   ),
   Command.provide(
     provideProjectCommandRuntime(

@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/node-builtin-import -- this integration test asserts exact persisted host files.
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer } from "effect";
@@ -5,6 +6,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { status } from "./status.handler.ts";
 import {
+  mockProjectContext,
   mockOutput,
   mockProjectLinkState,
   mockProjectLocalServiceVersions,
@@ -29,6 +31,7 @@ describe("status handler", () => {
         const out = mockOutput();
         const layer = Layer.mergeAll(
           fixture.baseLayer,
+          mockProjectContext(),
           out.layer,
           mockProjectLinkState(),
           mockProjectLocalServiceVersions(),
@@ -84,6 +87,7 @@ describe("status handler", () => {
         const out = mockOutput();
         const layer = Layer.mergeAll(
           fixture.baseLayer,
+          mockProjectContext(),
           out.layer,
           mockProjectLinkState(),
           mockProjectLocalServiceVersions(),
@@ -119,6 +123,7 @@ describe("status handler", () => {
         const out = mockOutput();
         const layer = Layer.mergeAll(
           fixture.baseLayer,
+          mockProjectContext(),
           out.layer,
           mockProjectLinkState(),
           mockProjectLocalServiceVersions(),
@@ -172,6 +177,7 @@ describe("status handler", () => {
         const out = mockOutput({ format: "json", interactive: false });
         const layer = Layer.mergeAll(
           fixture.baseLayer,
+          mockProjectContext(),
           out.layer,
           mockProjectLinkState(),
           mockProjectLocalServiceVersions(),
@@ -215,6 +221,7 @@ describe("status handler", () => {
         const out = mockOutput({ format: "json", interactive: false });
         const layer = Layer.mergeAll(
           fixture.baseLayer,
+          mockProjectContext(),
           out.layer,
           mockProjectLinkState(),
           mockProjectLocalServiceVersions(),
@@ -255,6 +262,7 @@ describe("status handler", () => {
         const out = mockOutput();
         const layer = Layer.mergeAll(
           fixture.baseLayer,
+          mockProjectContext(),
           out.layer,
           mockProjectLinkState(),
           mockProjectLocalServiceVersions(),

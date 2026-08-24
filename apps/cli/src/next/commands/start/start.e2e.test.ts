@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch, effecttsgo/node-builtin-import -- this e2e test drives a compiled CLI and real HTTP endpoint.
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";

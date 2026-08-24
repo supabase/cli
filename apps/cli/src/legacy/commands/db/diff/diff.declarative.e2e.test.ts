@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import -- this e2e test drives the real CLI and inspects host files.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { afterEach, expect, test } from "vitest";

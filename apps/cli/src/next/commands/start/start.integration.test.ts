@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function -- this integration test injects a Promise-based foreign stack factory.
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import {

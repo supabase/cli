@@ -1,9 +1,11 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-console, effecttsgo/node-builtin-import, effecttsgo/process-env -- this executable build script is an imperative host-tool boundary.
 import { $ } from "bun";
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { parseArgs } from "node:util";
+import { Effect } from "effect";
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
 import { darwinBinariesForShell, MACOS_IDENTIFIERS } from "./macos-signing.ts";
 
@@ -95,7 +97,7 @@ const entrypoint = path.join(root, "apps/cli/src", shell, "main.ts");
 const distDir = path.join(root, "dist");
 const goSource = path.resolve(root, "apps/cli-go");
 const serveMainTemplateDefine = `--define=SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE=${JSON.stringify(
-  await bundleServeMainTemplate(),
+  await Effect.runPromise(bundleServeMainTemplate()),
 )}`;
 const posthogBuildDefines = [
   `--define=process.env.SUPABASE_CLI_POSTHOG_KEY=${JSON.stringify(process.env.POSTHOG_API_KEY ?? "")}`,

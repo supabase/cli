@@ -13,6 +13,7 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { projectLocalServiceVersionsLayer } from "../../config/project-local-service-versions.layer.ts";
 import { ensureProjectStateIgnored } from "../../config/project-gitignore.ts";
 import { CliConfig } from "../../config/cli-config.service.ts";
+import { ProjectContext } from "../../config/project-context.service.ts";
 import { ProjectHome } from "../../config/project-home.service.ts";
 import { projectLinkStateLayer } from "../../config/project-link-state.layer.ts";
 import { provideProjectCommandRuntime } from "../../config/project-runtime.layer.ts";
@@ -195,6 +196,7 @@ export const startCommand = Command.make("start", flags).pipe(
     const runtimeStateEffect = Effect.gen(function* () {
       const output = yield* Output;
       const cliConfig = yield* CliConfig;
+      const projectContext = yield* ProjectContext;
       const projectHome = yield* ProjectHome;
       const runtimeInfo = yield* RuntimeInfo;
       const existingSummary = yield* resolveStackSummary({
@@ -202,7 +204,7 @@ export const startCommand = Command.make("start", flags).pipe(
         projectDir: projectHome.projectRoot,
         cwd: runtimeInfo.cwd,
         name: flags.stack,
-      }).pipe(Effect.catchTag("NoRunningStackError", () => Effect.succeed(undefined)));
+      }).pipe(Effect.catchTag("NoRunningStackError", () => Effect.void));
       const serviceVersionContext = yield* resolveServiceVersionContext(
         flags.serviceVersion,
         existingSummary === undefined
@@ -213,7 +215,9 @@ export const startCommand = Command.make("start", flags).pipe(
       // unset behaves as false (revoke the default Data API GRANTs) to match the new cloud
       // default. Explicit true preserves the legacy auto-expose behaviour but is deprecated and
       // emits a warning; the field is removed entirely on 2026-10-30.
-      const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
+      const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot, {
+        projectEnv: Option.getOrUndefined(projectContext.projectEnv),
+      });
       const { autoExposeNewTables, deprecationWarning } = resolveAutoExposeNewTables(
         loadedProjectConfig?.config.api.auto_expose_new_tables,
       );

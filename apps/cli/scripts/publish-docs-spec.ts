@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/global-console, effecttsgo/node-builtin-import -- this publishing script is an imperative host-tool boundary.
 /**
  * Publishes the generated CLI reference to the docs site by opening a PR
  * against supabase/supabase, replacing the Go `tools/bumpdoc` that was deleted
@@ -60,7 +61,7 @@ let parsed: { clispec?: unknown; info?: { version?: unknown }; commands?: unknow
 try {
   parsed = parse(spec);
 } catch (error) {
-  console.error(`Refusing to publish: stdin is not valid YAML (${error}).`);
+  console.error(`Refusing to publish: stdin is not valid YAML (${String(error)}).`);
   process.exit(1);
 }
 if (parsed?.clispec !== "001") {

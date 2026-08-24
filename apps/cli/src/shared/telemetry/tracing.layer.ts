@@ -98,61 +98,69 @@ class ExportableSpan implements Tracer.Span {
   addLinks(_links: ReadonlyArray<Tracer.SpanLink>): void {}
 }
 
-export const tracingLayer = Layer.effect(
-  Tracing,
+export const tracingLayer = Layer.unwrap(
   Effect.gen(function* () {
-    const stdio = yield* Stdio.Stdio;
-    const telemetryRuntime = yield* TelemetryRuntime;
-    const crypto = yield* Crypto.Crypto;
-    const exportFibers = yield* FiberSet.make<void, never>();
-    const runExport = yield* FiberSet.runtime(exportFibers)<FileSystem.FileSystem | Path.Path>();
     const scope = yield* Scope.Scope;
-    yield* Scope.addFinalizer(scope, FiberSet.awaitEmpty(exportFibers));
-    const context = yield* Effect.context<
-      Stdio.Stdio | FileSystem.FileSystem | Path.Path | Crypto.Crypto
-    >();
-    const exportSpanToDebugConsole = makeDebugConsoleExporter((line) => {
-      Effect.runForkWith(context)(
-        Stream.make(line).pipe(Stream.run(stdio.stderr()), Effect.ignore),
-      );
-    });
+    return Layer.effect(
+      Tracing,
+      Effect.gen(function* () {
+        const stdio = yield* Stdio.Stdio;
+        const telemetryRuntime = yield* TelemetryRuntime;
+        const crypto = yield* Crypto.Crypto;
+        const exportFibers = yield* FiberSet.make<void, never>().pipe(
+          Effect.provideService(Scope.Scope, scope),
+        );
+        const runExport = yield* FiberSet.runtime(exportFibers)<
+          FileSystem.FileSystem | Path.Path
+        >();
+        yield* Scope.addFinalizer(scope, FiberSet.awaitEmpty(exportFibers));
+        const context = yield* Effect.context<
+          Stdio.Stdio | FileSystem.FileSystem | Path.Path | Crypto.Crypto
+        >();
+        const exportSpanToDebugConsole = makeDebugConsoleExporter((line) => {
+          Effect.runForkWith(context)(
+            Stream.make(line).pipe(Stream.run(stdio.stderr()), Effect.ignore),
+          );
+        });
 
-    // Exporters are gated by consent/debug flags before spans start flowing.
-    if (telemetryRuntime.consent === "granted") {
-      yield* initNdjsonExporter(telemetryRuntime.tracesDir);
-    }
-
-    function onSpanEnd(span: ExportableSpan): void {
-      if (!span.sampled) return;
-      if (telemetryRuntime.consent === "granted") {
-        runExport(exportSpanToNdjson(span, telemetryRuntime.tracesDir));
-      }
-      if (telemetryRuntime.showDebug) {
-        exportSpanToDebugConsole(span);
-      }
-    }
-
-    // Global attributes are attached once here so individual commands stay lean.
-    const globalAttrs: Record<string, unknown> = {
-      schema_version: 1,
-      device_id: telemetryRuntime.deviceId,
-      session_id: telemetryRuntime.sessionId,
-      is_first_run: telemetryRuntime.isFirstRun,
-      is_tty: telemetryRuntime.isTty,
-      is_ci: telemetryRuntime.isCi,
-      os: telemetryRuntime.os,
-      arch: telemetryRuntime.arch,
-      cli_version: telemetryRuntime.cliVersion,
-    };
-
-    return Tracer.make({
-      span(options) {
-        const span = new ExportableSpan(options, onSpanEnd, () => crypto.nextIntUnsafe());
-        for (const [key, value] of Object.entries(globalAttrs)) {
-          span.attribute(key, value);
+        // Exporters are gated by consent/debug flags before spans start flowing.
+        if (telemetryRuntime.consent === "granted") {
+          yield* initNdjsonExporter(telemetryRuntime.tracesDir);
         }
-        return span;
-      },
-    });
+
+        function onSpanEnd(span: ExportableSpan): void {
+          if (!span.sampled) return;
+          if (telemetryRuntime.consent === "granted") {
+            runExport(exportSpanToNdjson(span, telemetryRuntime.tracesDir));
+          }
+          if (telemetryRuntime.showDebug) {
+            exportSpanToDebugConsole(span);
+          }
+        }
+
+        // Global attributes are attached once here so individual commands stay lean.
+        const globalAttrs: Record<string, unknown> = {
+          schema_version: 1,
+          device_id: telemetryRuntime.deviceId,
+          session_id: telemetryRuntime.sessionId,
+          is_first_run: telemetryRuntime.isFirstRun,
+          is_tty: telemetryRuntime.isTty,
+          is_ci: telemetryRuntime.isCi,
+          os: telemetryRuntime.os,
+          arch: telemetryRuntime.arch,
+          cli_version: telemetryRuntime.cliVersion,
+        };
+
+        return Tracer.make({
+          span(options) {
+            const span = new ExportableSpan(options, onSpanEnd, () => crypto.nextIntUnsafe());
+            for (const [key, value] of Object.entries(globalAttrs)) {
+              span.attribute(key, value);
+            }
+            return span;
+          },
+        });
+      }),
+    ).pipe(Layer.provide(telemetryRuntimeLayer));
   }),
-).pipe(Layer.provide(telemetryRuntimeLayer));
+);

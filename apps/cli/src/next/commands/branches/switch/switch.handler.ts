@@ -10,6 +10,7 @@ import { Effect, Option } from "effect";
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
 import { CliConfig } from "../../../config/cli-config.service.ts";
 import { ProjectHome } from "../../../config/project-home.service.ts";
+import { ProjectContext } from "../../../config/project-context.service.ts";
 import { managedPortIntents } from "../../../config/managed-port-intents.ts";
 import {
   ProjectLinkState,
@@ -36,18 +37,17 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
   const api = yield* PlatformApi;
   const cliConfig = yield* CliConfig;
   const projectHome = yield* ProjectHome;
+  const projectContext = yield* ProjectContext;
   const runtimeInfo = yield* RuntimeInfo;
 
   yield* output.intro("Switch branch");
 
   const maybeLinkState = yield* projectLinkState.load;
   if (Option.isNone(maybeLinkState)) {
-    return yield* Effect.fail(
-      new ProjectNotLinkedError({
-        detail: "No project is linked in this directory.",
-        suggestion: "Run `supabase link` first.",
-      }),
-    );
+    return yield* new ProjectNotLinkedError({
+      detail: "No project is linked in this directory.",
+      suggestion: "Run `supabase link` first.",
+    });
   }
 
   const { project, active_branch } = maybeLinkState.value;
@@ -63,12 +63,10 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
     const query = opts.name.value;
     const found = branches.find((b) => b.name === query || b.project_ref === query);
     if (found === undefined) {
-      return yield* Effect.fail(
-        new BranchNotFoundError({
-          detail: `Branch '${query}' not found.`,
-          suggestion: "Run `supabase branches list` to see available branches.",
-        }),
-      );
+      return yield* new BranchNotFoundError({
+        detail: `Branch '${query}' not found.`,
+        suggestion: "Run `supabase branches list` to see available branches.",
+      });
     }
     target = found;
   } else if (output.interactive) {
@@ -82,21 +80,17 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
     );
     const found = branches.find((b) => b.project_ref === selected);
     if (found === undefined) {
-      return yield* Effect.fail(
-        new BranchNotFoundError({
-          detail: `Selected branch could not be resolved.`,
-          suggestion: "Run `supabase branches list` to see available branches.",
-        }),
-      );
+      return yield* new BranchNotFoundError({
+        detail: `Selected branch could not be resolved.`,
+        suggestion: "Run `supabase branches list` to see available branches.",
+      });
     }
     target = found;
   } else {
-    return yield* Effect.fail(
-      new NonInteractiveError({
-        detail: "No branch name provided.",
-        suggestion: "Run `supabase branches switch <name>` or use an interactive terminal.",
-      }),
-    );
+    return yield* new NonInteractiveError({
+      detail: "No branch name provided.",
+      suggestion: "Run `supabase branches switch <name>` or use an interactive terminal.",
+    });
   }
 
   if (target.project_ref === active_branch.ref) {
@@ -111,12 +105,14 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
     projectDir: projectHome.projectRoot,
   }).pipe(
     Effect.map(Option.some),
-    Effect.catchTag("NoRunningStackError", () => Effect.succeed(Option.none())),
-    // Branch switching is also valid outside a local project checkout. In
-    // that case managed discovery cannot canonicalize the synthetic/nonexistent
-    // project root supplied by the command context, which is equivalent to no
-    // local stack being present for this lifecycle check.
-    Effect.catchTag("InvalidManagedIdentityError", () => Effect.succeed(Option.none())),
+    Effect.catchTags({
+      NoRunningStackError: () => Effect.succeed(Option.none()),
+      // Branch switching is also valid outside a local project checkout. In
+      // that case managed discovery cannot canonicalize the synthetic/nonexistent
+      // project root supplied by the command context, which is equivalent to no
+      // local stack being present for this lifecycle check.
+      InvalidManagedIdentityError: () => Effect.succeed(Option.none()),
+    }),
   );
 
   if (Option.isSome(stackCheck) && stackCheck.value.lifecycle === "running") {
@@ -171,7 +167,9 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
       ),
       launch.versions,
     );
-    const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
+    const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot, {
+      projectEnv: Option.getOrUndefined(projectContext.projectEnv),
+    });
 
     const stackLayer = yield* daemonLayer({
       cliVersion: CLI_VERSION,

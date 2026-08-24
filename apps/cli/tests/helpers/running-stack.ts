@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/crypto-random-uuid-in-effect, effecttsgo/global-date, effecttsgo/node-builtin-import -- the e2e stack harness owns foreign Docker/subprocess resources and unique host identities.
 import { BunServices } from "@effect/platform-bun";
 import {
   Stack,
@@ -190,10 +191,9 @@ export async function makeManagedStackFixture(
         if (running && ownerState === undefined) {
           const runtimeStack = stackService(
             info,
-            manager.recordLifecycle(ownership, { stackId, lifecycle: "stopped" }).pipe(
-              Effect.asVoid,
-              Effect.catch(() => Effect.void),
-            ),
+            manager
+              .recordLifecycle(ownership, { stackId, lifecycle: "stopped" })
+              .pipe(Effect.asVoid, Effect.ignore),
           );
           yield* supervisorLifecycle.publishStack(runtimeStack);
           yield* Deferred.await(daemonReady);
@@ -202,7 +202,7 @@ export async function makeManagedStackFixture(
         }
         yield* Deferred.succeed(ready, void 0);
         yield* Effect.succeed(started);
-        yield* Effect.never;
+        return yield* Effect.never;
       }),
     ),
   );

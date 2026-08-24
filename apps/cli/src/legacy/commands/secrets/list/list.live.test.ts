@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function -- this live test uses Vitest's Promise surface to drive the real CLI.
 import { randomUUID } from "node:crypto";
 import { expect } from "vitest";
 

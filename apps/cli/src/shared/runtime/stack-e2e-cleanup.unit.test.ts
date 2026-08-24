@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import -- these tests inject Promise-based OS cleanup fakes at the foreign boundary.
 import { describe, expect, it, vi } from "@effect/vitest";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";

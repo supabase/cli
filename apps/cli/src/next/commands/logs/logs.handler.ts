@@ -1,5 +1,5 @@
 import { connectLayer, Stack } from "@supabase/stack/effect";
-import { Context, Effect, Layer, Stream } from "effect";
+import { Context, DateTime, Effect, Layer, Stream } from "effect";
 import { CliConfig } from "../../config/cli-config.service.ts";
 import { ProjectHome } from "../../config/project-home.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -37,7 +37,7 @@ function emitLogEntry(
   if (output.format === "stream-json") {
     return output.event({
       type: "log-entry",
-      timestamp: new Date(entry.timestamp).toISOString(),
+      timestamp: DateTime.formatIso(DateTime.makeUnsafe(entry.timestamp)),
       service: entry.service,
       stream: entry.stream,
       line: entry.line,

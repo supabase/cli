@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function -- pg-delta exposes Promise-only APIs at this foreign library boundary.
 import { Effect, Layer } from "effect";
 import type { Pool } from "pg";
 import {

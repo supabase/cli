@@ -1,5 +1,6 @@
 import { $ } from "bun";
 import process from "node:process";
+import { Effect } from "effect";
 
 import { bundleServeMainTemplate } from "../src/shared/functions/serve-main-bundler.ts";
 
@@ -27,7 +28,7 @@ if (packageJson.version === undefined || packageJson.version.length === 0) {
 }
 const versionDefine = `--define=SUPABASE_CLI_VERSION=${JSON.stringify(packageJson.version)}`;
 const defineArg = `--define=SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE=${JSON.stringify(
-  await bundleServeMainTemplate(),
+  await Effect.runPromise(bundleServeMainTemplate()),
 )}`;
 
 await $`bun build ${entrypoint} --compile ${versionDefine} ${defineArg} --outfile ${outfile}`;

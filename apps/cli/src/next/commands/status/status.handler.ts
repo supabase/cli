@@ -8,6 +8,7 @@ import {
   type StackSummary,
 } from "@supabase/stack/effect";
 import { CliConfig } from "../../config/cli-config.service.ts";
+import { ProjectContext } from "../../config/project-context.service.ts";
 import { ProjectHome } from "../../config/project-home.service.ts";
 import { resolveServiceVersionContext } from "../../config/service-version-resolution.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -87,7 +88,10 @@ const resolveConfiguredSummary = Effect.fnUntraced(function* (input: {
   readonly name: string;
 }) {
   const current = yield* resolveStackSummary(input);
-  const loaded = yield* loadProjectConfig(input.projectDir);
+  const projectContext = yield* ProjectContext;
+  const loaded = yield* loadProjectConfig(input.projectDir, {
+    projectEnv: Option.getOrUndefined(projectContext.projectEnv),
+  });
   const excluded = (current.launch.excludedServices ?? []).filter(isExcludedStackService);
   const mode = current.launch.mode;
   return yield* resolveStackSummary({
@@ -148,10 +152,10 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
     name: _flags.stack,
   }).pipe(
     Effect.map((layer) => ({ _tag: "live" as const, layer })),
-    Effect.catchTag("DaemonUpgradeRequired", (error) =>
-      Effect.succeed({ _tag: "upgrade" as const, error }),
-    ),
-    Effect.catchTag("NoRunningStackError", () => Effect.succeed({ _tag: "none" as const })),
+    Effect.catchTags({
+      DaemonUpgradeRequired: (error) => Effect.succeed({ _tag: "upgrade" as const, error }),
+      NoRunningStackError: () => Effect.succeed({ _tag: "none" as const }),
+    }),
   );
 
   if (Predicate.isTagged(layerResult, "upgrade")) {

@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-console, effecttsgo/global-date, effecttsgo/global-timers, effecttsgo/new-promise, effecttsgo/node-builtin-import -- e2e cleanup must inspect and terminate foreign OS processes after crashes.
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import path from "node:path";
@@ -212,10 +213,14 @@ async function removeProjectWithDocker(projectDir: string): Promise<boolean> {
       { stdio: ["ignore", "ignore", "pipe"], timeout: 30_000 },
     );
   } catch (error) {
+    const stderrValue =
+      error != null && typeof error === "object" && "stderr" in error ? error.stderr : undefined;
     const stderr =
-      error != null && typeof error === "object" && "stderr" in error
-        ? String((error as { stderr: unknown }).stderr ?? "").trim()
-        : "";
+      typeof stderrValue === "string"
+        ? stderrValue.trim()
+        : stderrValue instanceof Uint8Array
+          ? new TextDecoder().decode(stderrValue).trim()
+          : "";
     dockerErr = stderr || (error instanceof Error ? error.message : String(error));
   }
 

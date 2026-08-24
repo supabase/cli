@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/node-builtin-import, effecttsgo/prefer-schema-over-json -- this integration test reads and asserts exact persisted JSON fixtures through the host filesystem.
 import { describe, expect, it } from "@effect/vitest";
 import { makeApiClient } from "@supabase/api/effect";
 import { Cause, Effect, Exit, Layer, Option, Predicate } from "effect";
@@ -8,7 +9,12 @@ import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
 import type { BranchResponse } from "@supabase/api/effect";
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
-import { emptyEnv, mockOutput, mockProjectLinkState } from "../../../../../tests/helpers/mocks.ts";
+import {
+  emptyEnv,
+  mockOutput,
+  mockProjectContext,
+  mockProjectLinkState,
+} from "../../../../../tests/helpers/mocks.ts";
 import { ProjectLinkState } from "../../../config/project-link-state.service.ts";
 import { switchBranch } from "./switch.handler.ts";
 import { makeRunningStackFixture } from "../../../../../tests/helpers/running-stack.ts";
@@ -155,7 +161,14 @@ function setup(
   const api = mockPlatformApi(opts.branches ?? [MAIN_BRANCH, DEV_BRANCH], {
     status: opts.status,
   });
-  const layer = Layer.mergeAll(emptyEnv(), out.layer, state, api.layer, controlTransportLayer);
+  const layer = Layer.mergeAll(
+    emptyEnv(),
+    mockProjectContext(),
+    out.layer,
+    state,
+    api.layer,
+    controlTransportLayer,
+  );
   return { out, layer, api };
 }
 
@@ -341,6 +354,7 @@ describe("branches switch handler", () => {
       const api = mockPlatformApi([MAIN_BRANCH, DEV_BRANCH], { status: 503 });
       const layer = Layer.mergeAll(
         emptyEnv(),
+        mockProjectContext(),
         out.layer,
         linkState,
         api.layer,
@@ -406,7 +420,13 @@ describe("branches switch handler", () => {
               }),
           }),
         );
-        const layer = Layer.mergeAll(fixture.baseLayer, out.layer, linkStateLayer, api.layer);
+        const layer = Layer.mergeAll(
+          fixture.baseLayer,
+          mockProjectContext(),
+          out.layer,
+          linkStateLayer,
+          api.layer,
+        );
         return switchBranch({ name: Option.some("dev") }).pipe(
           Effect.provide(layer),
           Effect.exit,
@@ -443,6 +463,7 @@ describe("branches switch handler", () => {
         const api = mockPlatformApi([MAIN_BRANCH, DEV_BRANCH]);
         const layer = Layer.mergeAll(
           fixture.baseLayer,
+          mockProjectContext(),
           out.layer,
           mockProjectLinkState(DEFAULT_LINK_STATE),
           api.layer,

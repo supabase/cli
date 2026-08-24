@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-console-in-effect, effecttsgo/global-date, effecttsgo/global-error-in-effect-catch, effecttsgo/global-error-in-effect-failure, effecttsgo/global-fetch-in-effect, effecttsgo/node-builtin-import, effecttsgo/prefer-schema-over-json, effecttsgo/process-env -- live-project orchestration is a foreign subprocess/network test boundary.
 import { randomBytes, randomUUID } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

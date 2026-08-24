@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import -- this e2e test owns real subprocess lifecycle callbacks.
 import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";

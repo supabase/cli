@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/node-builtin-import -- this e2e script assertion exercises the host path boundary.
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { stringify } from "yaml";

@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Crypto, Effect, FileSystem, Layer, Option, Path } from "effect";
 import * as Net from "node:net";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import {
@@ -9,6 +9,7 @@ import {
 } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
+import { LegacyViperEnv } from "../../../../shared/legacy/legacy-viper-env.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
@@ -102,6 +103,8 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const crypto = yield* Crypto.Crypto;
+    const viperEnv = yield* LegacyViperEnv;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const runtimeInfo = yield* RuntimeInfo;
     const networkIdFlag = yield* LegacyNetworkIdFlag;
@@ -116,6 +119,8 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
     const runtime = Layer.mergeAll(
       Layer.succeed(FileSystem.FileSystem, fs),
       Layer.succeed(Path.Path, path),
+      Layer.succeed(Crypto.Crypto, crypto),
+      Layer.succeed(LegacyViperEnv, viperEnv),
       Layer.succeed(LegacyDebugFlag, debugFlag),
       Layer.succeed(LegacyExperimentalFlag, experimentalFlag),
       Layer.succeed(LegacyNetworkIdFlag, networkIdFlag),
@@ -133,6 +138,7 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           const candidate = yield* allocateFreeHostPort;
           if (Option.isSome(candidate) && candidate.value !== excluded) return candidate.value;
         }
+        // oxlint-disable-next-line effecttsgo/unnecessary-fail-yieldable-error -- keep this explicit failure to preserve the shadow layer's generator requirements.
         return yield* Effect.fail(
           new LegacyDeclarativeShadowDbError({
             message:

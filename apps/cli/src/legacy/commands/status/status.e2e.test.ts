@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function -- this e2e test uses Vitest's Promise surface to drive the real CLI.
 import { afterEach, expect, test } from "vitest";
 
 import { describe } from "vitest";

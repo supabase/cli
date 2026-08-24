@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/new-promise, effecttsgo/node-builtin-import -- this e2e test owns real subprocess lifecycle callbacks.
 import { execFile } from "node:child_process";
 import { once } from "node:events";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -280,7 +281,7 @@ describe("supabase start (e2e)", () => {
       const mailpitContainer = legacyServiceContainerName("inbucket", projectId);
       // The exact tag `start` resolves for Mailpit, so its already-cached check
       // finds this deliberately broken build and never reaches a registry.
-      const mailpitImage = legacyGetRegistryImageUrl(dockerfileServiceImage("mailpit"));
+      const mailpitImage = legacyGetRegistryImageUrl(dockerfileServiceImage("mailpit"), {});
 
       const init = await runSupabase(["init"], {
         entrypoint: "legacy",
