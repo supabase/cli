@@ -6,6 +6,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { afterEach, vi } from "vitest";
 
 import {
   mockLegacyCliConfig,
@@ -115,12 +116,17 @@ const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
 
 function setup(
   workdir: string,
-  opts: { readonly failCreate?: boolean; readonly dbInspectFailsWith?: string } = {},
+  opts: {
+    readonly failCreate?: boolean;
+    readonly dbInspectFailsWith?: string;
+    readonly dbInspectImage?: string;
+  } = {},
 ) {
   const out = mockOutput();
   const shadowSpawner = mockLegacyShadowContainerCliSpawner({
     failCreate: opts.failCreate,
     dbInspectFailsWith: opts.dbInspectFailsWith,
+    dbInspectImage: opts.dbInspectImage,
   });
   const dbConnection = fakeShadowDbConnection();
   const docker = fakeShadowSetupDocker();
@@ -271,4 +277,41 @@ describe("legacyDeclarativeSeamLayer.ensureLocalDatabaseStarted", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+});
+
+describe("legacyDeclarativeSeamLayer.ensureLocalPostgresImageCurrent", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it.effect(
+    "flags a running docker.io container as stale against a slim-flagged expectation, even on a matching tag",
+    () => {
+      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+      const dir = mkdtempSync(join(tmpdir(), "legacy-pgdelta-seam-"));
+      const { layer } = setup(dir, { dbInspectImage: "supabase/postgres:17.6.1.165" });
+      return Effect.gen(function* () {
+        const seam = yield* LegacyDeclarativeSeam;
+        const exit = yield* seam.ensureLocalPostgresImageCurrent().pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const error = failError(exit);
+        expect(error).toBeInstanceOf(LegacyDeclarativeShadowDbError);
+        expect((error as LegacyDeclarativeShadowDbError).message).toContain(
+          "local Postgres container image is stale",
+        );
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("passes when the running container matches the expected image's family and tag", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-pgdelta-seam-"));
+    const { layer } = setup(dir, { dbInspectImage: "supabase/postgres:17.6.1.165" });
+    return Effect.gen(function* () {
+      const seam = yield* LegacyDeclarativeSeam;
+      const exit = yield* seam.ensureLocalPostgresImageCurrent().pipe(Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      rmSync(dir, { recursive: true, force: true });
+    }).pipe(Effect.provide(layer));
+  });
 });

@@ -7,6 +7,7 @@ import { legacyResolveDbImage } from "../../../shared/legacy-db-image.ts";
 import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
 import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
 import { legacyIsDockerDaemonUnreachable } from "../../../shared/legacy-docker-suggest.ts";
+import { isSlimImageRef } from "../../../../shared/services/slim-images.ts";
 import { legacyIsLocalDbRunning } from "../../../shared/db-bootstrap/local-db-running.ts";
 import { legacyStartLocalDatabase } from "../../../shared/db-bootstrap/start-local-database.ts";
 import {
@@ -256,7 +257,14 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
             const expected = legacyGetRegistryImageUrl(image).trim();
             const actualTag = dockerImageTag(actual);
             const expectedTag = dockerImageTag(expected);
-            if (actualTag.length === 0 || expectedTag.length === 0 || actualTag === expectedTag) {
+            // Slim refs never go through a registry mirror, so a family mismatch
+            // (e.g. a docker.io container satisfying a ghcr.io/supabase/cli
+            // expectation) is stale even when the tags happen to match.
+            const familyMismatch = isSlimImageRef(expected) !== isSlimImageRef(actual);
+            if (
+              !familyMismatch &&
+              (actualTag.length === 0 || expectedTag.length === 0 || actualTag === expectedTag)
+            ) {
               return;
             }
             return yield* Effect.fail(

@@ -11,7 +11,10 @@ import { dockerfileServiceImage } from "../../shared/services/dockerfile-images.
  * into `config.Images`, so the TS port tracks Dependabot bumps in that source.
  */
 
-const LEGACY_PG_IMAGE = dockerfileServiceImage("pg");
+// Read per call, not captured at import time, so `SUPABASE_USE_SLIM_IMAGES` is
+// observed by the resolver (and by tests that stub the env).
+const legacyPgImage = () => dockerfileServiceImage("pg");
+// Major-version fallbacks and the OrioleDB tags below have no slim build.
 const LEGACY_PG14 = "supabase/postgres:14.1.0.89";
 const LEGACY_PG15 = "supabase/postgres:15.8.1.085";
 
@@ -77,7 +80,7 @@ export const legacyResolveDbImage = Effect.fnUntraced(function* (
       ? `supabase/postgres:${orioledbVersion}-orioledb`
       : `supabase/postgres:orioledb-${orioledbVersion}`;
   }
-  let image = LEGACY_PG_IMAGE;
+  let image = legacyPgImage();
   switch (majorVersion) {
     case 13:
       image = LEGACY_PG15;
@@ -101,7 +104,7 @@ export const legacyResolveDbImage = Effect.fnUntraced(function* (
       const colon = image.indexOf(":");
       const currentTag = colon >= 0 ? image.slice(colon + 1) : image;
       if (versionCompare(currentTag, "15.1.0.55") >= 0) {
-        image = replaceImageTag(LEGACY_PG_IMAGE, pinned);
+        image = replaceImageTag(image, pinned);
       }
     }
   }

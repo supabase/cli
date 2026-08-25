@@ -1,6 +1,6 @@
 import type { ProjectConfig } from "@supabase/config";
 
-import { dockerfileServiceImage } from "../../shared/services/dockerfile-images.ts";
+import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
 import { legacyServiceContainerIds } from "./legacy-docker-ids.ts";
 import {
   legacyEnvOverrideBool,
@@ -188,19 +188,22 @@ export function legacyShortContainerImageName(imageName: string): string {
 
 // Default image short names `--exclude` also matches against,
 // one per gated service. Sourced from the same
-// embedded Dockerfile manifest Go parses (`dockerfileServiceImage`), so a version bump
+// embedded Dockerfile manifest Go parses (`dockerfileServiceImageRaw`), so a version bump
 // there is picked up automatically. Pinned-version substitution
 // (`legacy-db-image.ts`'s `replaceImageTag`) only ever rewrites the portion after the
 // first `:`, which `legacyShortContainerImageName` discards — so these are invariant to
 // version pinning and no `.temp/<service>-version` file needs to be read here.
-const KONG_IMAGE_NAME = legacyShortContainerImageName(dockerfileServiceImage("kong"));
-const POSTGREST_IMAGE_NAME = legacyShortContainerImageName(dockerfileServiceImage("postgrest"));
-const STUDIO_IMAGE_NAME = legacyShortContainerImageName(dockerfileServiceImage("studio"));
-const GOTRUE_IMAGE_NAME = legacyShortContainerImageName(dockerfileServiceImage("gotrue"));
-const MAILPIT_IMAGE_NAME = legacyShortContainerImageName(dockerfileServiceImage("mailpit"));
-const STORAGE_IMAGE_NAME = legacyShortContainerImageName(dockerfileServiceImage("storage"));
+// They read the RAW manifest so `SUPABASE_USE_SLIM_IMAGES` cannot shift them:
+// these names are the established `--exclude`/status-key contract (`gotrue`,
+// `storage-api`), while slim refs would report `supabase/cli/auth` etc.
+const KONG_IMAGE_NAME = legacyShortContainerImageName(dockerfileServiceImageRaw("kong"));
+const POSTGREST_IMAGE_NAME = legacyShortContainerImageName(dockerfileServiceImageRaw("postgrest"));
+const STUDIO_IMAGE_NAME = legacyShortContainerImageName(dockerfileServiceImageRaw("studio"));
+const GOTRUE_IMAGE_NAME = legacyShortContainerImageName(dockerfileServiceImageRaw("gotrue"));
+const MAILPIT_IMAGE_NAME = legacyShortContainerImageName(dockerfileServiceImageRaw("mailpit"));
+const STORAGE_IMAGE_NAME = legacyShortContainerImageName(dockerfileServiceImageRaw("storage"));
 const EDGE_RUNTIME_IMAGE_NAME = legacyShortContainerImageName(
-  dockerfileServiceImage("edgeruntime"),
+  dockerfileServiceImageRaw("edgeruntime"),
 );
 
 export interface LegacyStatusValuesResult {

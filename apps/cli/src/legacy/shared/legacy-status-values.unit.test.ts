@@ -1,6 +1,6 @@
 import { ProjectConfigSchema, type ProjectConfig } from "@supabase/config";
 import { Schema } from "effect";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   legacyShortContainerImageName,
@@ -763,6 +763,43 @@ describe("legacyStatusValues", () => {
     expect(values.STORAGE_S3_URL).toBeUndefined();
     expect(values.STUDIO_URL).toBeUndefined();
     expect(values.API_URL).toBeDefined();
+  });
+});
+
+// `--exclude` short names are the established contract, so they must stay on the
+// docker.io repo names even when the stack itself runs slim `ghcr.io/supabase/cli`
+// images. Re-imports the module so the flag is in effect while its
+// image-name constants are built.
+describe("--exclude image short names under SUPABASE_USE_SLIM_IMAGES", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.resetModules();
+  });
+
+  it("keeps matching the docker.io short names", async () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    vi.resetModules();
+    const slimModule = await import("./legacy-status-values.ts");
+
+    for (const [excluded, omitted] of [
+      ["gotrue", "ANON_KEY"],
+      ["storage-api", "STORAGE_S3_URL"],
+      ["kong", "API_URL"],
+      ["mailpit", "MAILPIT_URL"],
+      ["postgrest", "REST_URL"],
+      ["studio", "STUDIO_URL"],
+      ["edge-runtime", "FUNCTIONS_URL"],
+    ] as const) {
+      const { values } = slimModule.legacyStatusValues(
+        baseConfig(),
+        CONTAINER_IDS,
+        HOSTNAME,
+        [excluded],
+        NO_OVERRIDES,
+        WORKDIR,
+      );
+      expect(values[omitted], `--exclude ${excluded}`).toBeUndefined();
+    }
   });
 });
 

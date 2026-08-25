@@ -1,4 +1,6 @@
+import { dockerImageForService } from "@supabase/stack/versions";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
+import { slimImagesEnabled } from "../../../shared/services/slim-images.ts";
 import {
   replaceImageTag,
   type LocalServiceVersionName,
@@ -26,5 +28,13 @@ export function legacyResolvePinnedImage(
 ): string {
   const baseImage = dockerfileServiceImage(alias);
   const pinnedVersion = serviceVersions[localServiceName];
-  return pinnedVersion === undefined ? baseImage : replaceImageTag(baseImage, pinnedVersion);
+  if (pinnedVersion === undefined) {
+    return baseImage;
+  }
+  // A verbatim tag swap would be wrong on slim refs whose tag scheme differs
+  // from docker.io's (`pooler`/`analytics` pins are unprefixed on docker.io but
+  // `v`-prefixed under `ghcr.io/supabase/cli`), so let the catalog normalize.
+  return slimImagesEnabled()
+    ? dockerImageForService(localServiceName, pinnedVersion)
+    : replaceImageTag(baseImage, pinnedVersion);
 }

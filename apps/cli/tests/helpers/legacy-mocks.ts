@@ -916,6 +916,10 @@ const LEGACY_SHADOW_STARTING_STATE =
  * exclusive with `dbInspectFailsWith`, which instead reports a daemon-unreachable failure
  * (`legacyIsDockerDaemonUnreachable`) with the given stderr text — enforced below (a test
  * that sets both throws immediately, rather than one option silently winning).
+ *
+ * `dbInspectImage` makes the same `supabase_db_`-prefixed inspect report a `Config.Image`
+ * value instead — for `ensureLocalPostgresImageCurrent`'s stale-image guard, which reads
+ * that field from the same call `legacyIsLocalDbRunning` only checks the exit code of.
  */
 export function mockLegacyShadowContainerCliSpawner(
   opts: {
@@ -924,6 +928,7 @@ export function mockLegacyShadowContainerCliSpawner(
     readonly failRemove?: boolean;
     readonly dbNotRunning?: boolean;
     readonly dbInspectFailsWith?: string;
+    readonly dbInspectImage?: string;
   } = {},
 ): {
   readonly layer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
@@ -974,6 +979,22 @@ export function mockLegacyShadowContainerCliSpawner(
             stderr: Stream.fromIterable([encoder.encode(stderrText)]),
             all: Stream.empty,
             exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+            isRunning: Effect.succeed(false),
+            stdin: Sink.drain,
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }
+        if (isLocalDbInspect && opts.dbInspectImage !== undefined) {
+          const inspectJson = JSON.stringify([{ Config: { Image: opts.dbInspectImage } }]);
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(7000 + spawned.length),
+            stdout: Stream.fromIterable([encoder.encode(inspectJson)]),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
             isRunning: Effect.succeed(false),
             stdin: Sink.drain,
             kill: () => Effect.void,

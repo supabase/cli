@@ -1,10 +1,15 @@
 import { ProjectConfigSchema, type ProjectConfig } from "@supabase/config";
 import { Schema } from "effect";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { LocalServiceVersionOverrides } from "../../../shared/services/services.shared.ts";
 import { legacyServiceContainerIds, localDbContainerId } from "../../shared/legacy-docker-ids.ts";
 import { LEGACY_SERVICE_CATALOG } from "../../shared/legacy-service-catalog.ts";
-import { legacyResolveStartGates, type LegacyStartGates } from "./start.gates.ts";
+import {
+  legacyResolveStartGates,
+  legacyResolveStartImagePlan,
+  type LegacyStartGates,
+} from "./start.gates.ts";
 import { LEGACY_START_SERVICES, legacyStartServiceMeta } from "./start.services.ts";
 
 describe("LEGACY_START_SERVICES", () => {
@@ -210,5 +215,48 @@ describe("LEGACY_START_SERVICES enabledGate cross-check against start.gates.ts",
     const gatedServices = new Set(Object.keys(realGates));
     const ungated = LEGACY_START_SERVICES.filter((entry) => !gatedServices.has(entry.service));
     expect(ungated.map((entry) => entry.service).toSorted()).toEqual(["postgres"]);
+  });
+});
+
+describe("legacyResolveStartImagePlan under SUPABASE_USE_SLIM_IMAGES", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const allGatesOpen: LegacyStartGates = {
+    kong: true,
+    gotrue: true,
+    mailpit: true,
+    realtime: true,
+    postgrest: true,
+    storage: true,
+    imgproxy: true,
+    logflare: true,
+    vector: true,
+    pgMeta: true,
+    studio: true,
+    supavisor: true,
+    edgeRuntime: true,
+  };
+
+  const imageFor = (service: string, serviceVersions: LocalServiceVersionOverrides = {}) =>
+    legacyResolveStartImagePlan(allGatesOpen, serviceVersions).find(
+      (entry) => entry.service === service,
+    )?.image;
+
+  it("plans docker.io images while the flag is off", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
+    expect(imageFor("gotrue")).toBe("supabase/gotrue:v2.196.0");
+    expect(imageFor("vector")).toBe("timberio/vector:0.53.0-alpine");
+    expect(imageFor("supavisor", { pooler: "2.0.0" })).toBe("supabase/supavisor:2.0.0");
+  });
+
+  it("plans slim images when the flag is on, keeping unmapped services on docker.io", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    expect(imageFor("gotrue")).toBe("ghcr.io/supabase/cli/auth:v2.196.0");
+    expect(imageFor("logflare")).toBe("ghcr.io/supabase/cli/analytics:v1.50.4");
+    expect(imageFor("vector")).toBe("ghcr.io/supabase/cli/vector:0.53.0");
+    expect(imageFor("supavisor", { pooler: "2.0.0" })).toBe("ghcr.io/supabase/cli/pooler:v2.0.0");
+    expect(imageFor("kong")).toBe("library/kong:2.8.1");
   });
 });
