@@ -20,7 +20,7 @@
     "oxlint-tsgolint": "catalog:",
     "pkg-pr-new": "0.0.88",
     "typescript": "catalog:",
-    "verdaccio": "^6.9.3"
+    "verdaccio": "^6.10.0"
   },
   "devEngines": {
     "runtime": {
