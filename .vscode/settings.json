@@ -3,6 +3,12 @@
   "editor.formatOnSave": true,
   "editor.formatOnSaveMode": "file",
 
+  // Explicit config paths disable nested config discovery: `ignorePatterns`
+  // doesn't prevent oxlint/oxfmt from loading the `.repos` submodules' own
+  // configs (see oxc-project/oxc#21959, oxc-project/oxc#23182).
+  "oxc.configPath": ".oxlintrc.json",
+  "oxc.fmt.configPath": ".oxfmtrc.json",
+
   // Using the guidance this blog post to ignore the `.repos` submodules:
   // https://www.effect.website/blog/the-one-weird-git-trick-that-makes-coding-agents-more-effect-ive#configuring-your-editor
   "js/ts.preferences.autoImportFileExcludePatterns": [".repos/**"],
