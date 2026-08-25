@@ -52,15 +52,16 @@ disabling safe compaction.
 
 ## Environment Variables
 
-| Variable                     | Purpose                                                                                                                                                            | Required? |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
-| `SUPABASE_USE_PG_DELTA_NEXT` | set to `false` for legacy edge-runtime pg-delta                                                                                                                    | no        |
-| `PGDELTA_NPM_REGISTRY`       | legacy opt-out's private npm registry                                                                                                                              | no        |
-| `SUPABASE_HOME`              | overrides the `~/.supabase` root used for the shadow baseline cache (and other CLI state)                                                                          | no        |
-| `SUPABASE_SHADOW_CACHE`      | shadow baseline cache; opt-in (`1`/`true`); the shadow's post-baseline PGDATA is snapshotted to a tar and restored into the next run's fresh container (see Notes) | no        |
-| `PGDELTA_DEBUG`              | bundled-engine debug artifacts                                                                                                                                     | no        |
-| `SUPABASE_SERVICES_HOSTNAME` | local DB host for the bootstrap generate                                                                                                                           | no        |
-| `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback                                                                                                                 | no        |
+| Variable                     | Purpose                                                                                                                                                                                                                               | Required? |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_USE_PG_DELTA_NEXT` | set to `false` for legacy edge-runtime pg-delta                                                                                                                                                                                       | no        |
+| `PGDELTA_NPM_REGISTRY`       | legacy opt-out's private npm registry                                                                                                                                                                                                 | no        |
+| `SUPABASE_HOME`              | overrides the `~/.supabase` root used for the shadow baseline cache (and other CLI state)                                                                                                                                             | no        |
+| `SUPABASE_SHADOW_CACHE`      | shadow baseline cache; opt-in (`1`/`true`); the shadow's post-baseline PGDATA is snapshotted to a tar and restored into the next run's fresh container (see Notes)                                                                    | no        |
+| `PGDELTA_DEBUG`              | bundled-engine debug artifacts                                                                                                                                                                                                        | no        |
+| `SUPABASE_SERVICES_HOSTNAME` | local DB host for the bootstrap generate                                                                                                                                                                                              | no        |
+| `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback                                                                                                                                                                                    | no        |
+| `SUPABASE_USE_SLIM_IMAGES`   | resolves both scoped shadow Postgres containers (bundled engine) / the shadow's platform-baseline container (legacy opt-out) from the slim `ghcr.io/supabase/cli` builds instead of the docker.io Dockerfile pins (`true`/`1` enable) | no        |
 
 ## Exit Codes
 
@@ -137,6 +138,13 @@ existing SQL or creates an export manifest.
   shadows. Under the legacy opt-out, both catalog shadows are provisioned
   in-process using the same primitives as `db diff`; catalog export,
   declarative apply, and diff run through the edge-runtime pg-delta scripts.
+- **Stale local-container guard.** Before diffing against the running local `db`
+  target, the running container's actual image is inspected and compared
+  against the currently-configured/resolved one; a family mismatch (a docker.io
+  container when a slim `ghcr.io/supabase/cli` image is now expected, or vice
+  versa, e.g. after toggling `SUPABASE_USE_SLIM_IMAGES` between runs without
+  restarting) is treated as stale even when the tags otherwise match, and fails
+  with a suggestion to `supabase stop --all --no-backup` then `supabase start`.
 
 ### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default OFF)
 

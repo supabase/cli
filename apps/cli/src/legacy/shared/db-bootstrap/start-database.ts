@@ -8,13 +8,20 @@
  * Go's `StartDatabase` now only has one TS home to update.
  *
  * Exact Go call order: pre-create volume-existence probe (+ the `fromBackup`-on-an-existing-volume
- * guard) -> image resolve + network ensure (Go's `DockerStart` resolves the image, THEN creates
- * the network, both strictly ahead of container create — `docker.go:363-386` — so NEITHER one
- * ever runs on a request the volume guard above already rejected) -> Postgres container
- * create+start -> health wait (swallowed ONLY when `fromBackup` is set — "restoring a large
- * backup may take longer than 2 minutes") -> the fresh-volume `SetupLocalDatabase`-equivalent
- * pipeline (skipped IN FULL when `fromBackup` is set) -> `initCurrentBranch`, unconditionally (the
- * LAST line of `StartDatabase`, reached on every path that doesn't already return/fail above).
+ * guard) -> image resolve (+ a TS-only slim-image reused-volume readability guard, see below) +
+ * network ensure (Go's `DockerStart` resolves the image, THEN creates the network, both strictly
+ * ahead of container create — `docker.go:363-386` — so NEITHER one ever runs on a request the
+ * volume guard above already rejected) -> Postgres container create+start -> health wait
+ * (swallowed ONLY when `fromBackup` is set — "restoring a large backup may take longer than 2
+ * minutes") -> the fresh-volume `SetupLocalDatabase`-equivalent pipeline (skipped IN FULL when
+ * `fromBackup` is set) -> `initCurrentBranch`, unconditionally (the LAST line of `StartDatabase`,
+ * reached on every path that doesn't already return/fail above).
+ *
+ * The slim-image readability guard has no Go equivalent (`SUPABASE_USE_SLIM_IMAGES` is a TS-only
+ * feature): on an existing volume, once the image is resolved, a cheap `docker run` probe checks
+ * whether a slim (non-root `65532`) image can actually read PGDATA before any container is
+ * created — a docker.io-initialized volume's `700`-mode dirs otherwise crash-loop the slim
+ * process until the health check times out with no useful message.
  *
  * Deliberately has ZERO knowledge of `--ignore-health-check` — matching Go exactly: that flag is
  * `internal/start/start.go`'s `Run()`'s own concern, entirely OUTSIDE `StartDatabase` (Go's
@@ -66,6 +73,7 @@ import type { LegacyDockerRun } from "../legacy-docker-run.service.ts";
 import {
   legacyEnsureNetwork,
   legacyCreateContainer,
+  legacyIsVolumeReadableByImage,
   legacyVolumeExists,
   LEGACY_COMPOSE_PROJECT_LABEL,
   type LegacyContainerCreateError,
@@ -145,12 +153,35 @@ export class LegacySlimImagesBackupUnsupportedError extends Data.TaggedError(
   }
 }
 
+/**
+ * An existing db volume was initialized by a docker.io Postgres image (PGDATA owned by that
+ * image's `postgres` uid, `700`-mode dirs) and is being reused under the slim image, whose
+ * `65532` runtime user cannot read it — the slim process would otherwise crash-loop until the
+ * health check times out with no useful message. Detected by a pre-create readability probe
+ * (`legacyIsVolumeReadableByImage`), reached only when the resolved image is slim AND the volume
+ * already existed. Exported only so the exhaustive actionability guard can inspect its
+ * declaration.
+ */
+export class LegacySlimImageVolumeUnreadableError extends Data.TaggedError(
+  "LegacySlimImageVolumeUnreadableError",
+)<{
+  readonly message: string;
+  readonly suggestion?: string;
+}> {
+  // Same shape as `LegacySlimImagesBackupUnsupportedError`: the fix is to change what the
+  // caller passed in — reset the volume or unset the env flag — not a suggestion-free default.
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
 /** Every failure {@link legacyStartDatabase} itself can produce, independent of the caller's own `E`. */
 export type LegacyStartDatabaseError =
   | LegacyNetworkCreateError
   | LegacyVolumeInspectError
   | LegacyStartBackupVolumeExistsError
   | LegacySlimImagesBackupUnsupportedError
+  | LegacySlimImageVolumeUnreadableError
   | LegacyVolumeCreateError
   | LegacyContainerCreateError
   | LegacyContainerStartError
@@ -263,6 +294,27 @@ export const legacyStartDatabase = <E>(
           suggestion: "Unset SUPABASE_USE_SLIM_IMAGES to restore from a backup.",
         }),
       );
+    }
+
+    // A reused volume's PGDATA ownership is a property of whichever image initialized it, not
+    // of the image resolved for THIS run — a docker.io-initialized volume's `700`-mode dirs
+    // block the slim image's non-root user. Only reachable on an existing volume; a fresh one
+    // has no pre-existing ownership to conflict with.
+    if (!isFreshVolume && legacyIsSlimPostgresImage(resolvedPostgresImage)) {
+      const readable = yield* legacyIsVolumeReadableByImage(
+        spawner,
+        resolvedPostgresImage,
+        input.dbContainerId,
+      );
+      if (!readable) {
+        return yield* Effect.fail(
+          new LegacySlimImageVolumeUnreadableError({
+            message:
+              "the existing database volume was initialized by a non-slim postgres image and is unreadable by the slim image's user",
+            suggestion: `Run ${legacyAqua("supabase stop --no-backup")} to reset the local database, or unset SUPABASE_USE_SLIM_IMAGES.`,
+          }),
+        );
+      }
     }
 
     // Go's `DockerStart` (`docker.go:363-386`): image resolve, THEN network create, both

@@ -229,6 +229,26 @@ function runningCheckFailsRoute(
   };
 }
 
+/** Overrides the default route's answer to the slim-image reused-volume readability probe
+ * (`docker run --rm --entrypoint /usr/bin/sh -v <vol>:/probe <image> -c "test -r
+ * /probe/PG_VERSION"`) so a test can force it readable/unreadable without a real container. */
+function slimVolumeProbeRoute(
+  base: (args: ReadonlyArray<string>) => RouteResult,
+  readable: boolean,
+): (args: ReadonlyArray<string>) => RouteResult {
+  return (args) => {
+    if (args[0] === "run" && args.includes("--entrypoint")) {
+      return { exitCode: readable ? 0 : 1 };
+    }
+    return base(args);
+  };
+}
+
+/** Whether the slim-image reused-volume readability probe (see {@link slimVolumeProbeRoute}) ran. */
+function slimVolumeProbeWasRun(spawned: ReadonlyArray<SpawnRecord>): boolean {
+  return spawned.some((s) => s.args[0] === "run" && s.args.includes("--entrypoint"));
+}
+
 const alwaysReadyHttpClientLayer = Layer.succeed(
   HttpClient.HttpClient,
   HttpClient.make((request) =>
@@ -677,6 +697,57 @@ describe("legacy db start", () => {
           );
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  // A reused volume's PGDATA ownership is a property of whichever image initialized it: a
+  // docker.io-initialized volume's `700`-mode dirs (owned by that image's `postgres` uid) block
+  // the slim image's non-root `65532` user, crash-looping until the health check times out with
+  // no useful message. `legacyIsVolumeReadableByImage` probes for this before any container is
+  // created.
+  it.live(
+    "SUPABASE_USE_SLIM_IMAGES against an existing volume unreadable by the slim image fails before any container is created",
+    () => {
+      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+      const { layer, child } = setup({ route: slimVolumeProbeRoute(defaultRoute(), false) });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const error = Cause.squash(exit.cause);
+          expect(error).toMatchObject({ _tag: "LegacySlimImageVolumeUnreadableError" });
+          expect((error as { message: string }).message).toContain("unreadable");
+          const suggestion = (error as { suggestion?: string }).suggestion ?? "";
+          expect(suggestion).toContain("supabase stop --no-backup");
+          expect(suggestion).toContain("SUPABASE_USE_SLIM_IMAGES");
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+      });
+    },
+  );
+
+  it.live(
+    "SUPABASE_USE_SLIM_IMAGES against an existing volume readable by the slim image proceeds to create the container",
+    () => {
+      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+      const { layer, child, out } = setup({ route: slimVolumeProbeRoute(defaultRoute(), true) });
+      return Effect.gen(function* () {
+        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(slimVolumeProbeWasRun(child.spawned)).toBe(true);
+        expect(createArgs(child.spawned)).not.toBeUndefined();
+        expect(out.stderrText).toContain("Starting database from backup...\n");
+      });
+    },
+  );
+
+  it.live(
+    "no SUPABASE_USE_SLIM_IMAGES: an existing volume never runs the slim-image readability probe",
+    () => {
+      const { layer, child } = setup();
+      return Effect.gen(function* () {
+        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(slimVolumeProbeWasRun(child.spawned)).toBe(false);
       });
     },
   );

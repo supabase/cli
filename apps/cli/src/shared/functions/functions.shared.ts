@@ -55,7 +55,11 @@ export const DENO1_EDGE_RUNTIME_VERSION = "v1.68.4";
  * this tag-shaped API, so it bypasses the (possibly slim-rewritten) default
  * base entirely and returns the full docker.io ref. Flag-off this is
  * byte-identical to the general path, since the default base is already
- * docker.io then.
+ * docker.io then. The tag check deliberately also catches an explicit
+ * `.temp/edge-runtime-version` pin of this exact tag under the slim flag:
+ * no slim build of it exists either, so docker.io is the only resolvable
+ * image for that tag regardless of WHY it was selected — a separate
+ * deno_version signal would change nothing observable.
  */
 export function edgeRuntimeImage(tag: string): string {
   if (tag === DENO1_EDGE_RUNTIME_VERSION) {

@@ -489,6 +489,64 @@ export function legacyVolumeExists(
   );
 }
 
+/**
+ * Whether an EXISTING database volume is readable by the given (slim) Postgres image, via
+ * `docker run --rm --entrypoint /usr/bin/sh -v <name>:/probe <image> -c "test -r
+ * /probe/PG_VERSION"` — cheaper than a real bring-up attempt, and runs before any db container
+ * is created. `test -r` exits `0` when readable, `1` when not (e.g. a docker.io-initialized
+ * volume's `700`-mode PGDATA dirs, owned by that image's postgres uid, blocking the slim image's
+ * non-root `65532`). Any OTHER exit (spawn failure, or Docker's own `docker run` convention of
+ * `125`/`126`/`127` for a daemon/exec-level problem rather than the probed command's own exit)
+ * propagates as a genuine docker-run failure instead of being folded into the `1` case.
+ */
+export function legacyIsVolumeReadableByImage(
+  spawner: Spawner,
+  image: string,
+  name: string,
+): Effect.Effect<boolean, LegacyContainerCreateError> {
+  const fail = (message: string): LegacyContainerCreateError =>
+    new LegacyContainerCreateError({ message, reason: "runtime" });
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const child = yield* spawnContainerCli(
+        spawner,
+        [
+          "run",
+          "--rm",
+          "--entrypoint",
+          "/usr/bin/sh",
+          "-v",
+          `${name}:/probe`,
+          image,
+          "-c",
+          "test -r /probe/PG_VERSION",
+        ],
+        { stdin: "ignore", stdout: "ignore", stderr: "pipe" },
+      ).pipe(
+        Effect.mapError((cause) =>
+          fail(
+            `failed to probe database volume readability: ${legacyDescribeContainerCliFailure(cause)}`,
+          ),
+        ),
+      );
+      const [exitCode, stderr] = yield* Effect.all(
+        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.mapError(() => fail("failed to probe database volume readability")));
+      if (exitCode === 0) return true;
+      if (exitCode === 1) return false;
+      const message = stderr.trim();
+      return yield* Effect.fail(
+        fail(
+          message.length > 0
+            ? `failed to probe database volume readability: ${message}`
+            : `failed to probe database volume readability: exit ${exitCode}`,
+        ),
+      );
+    }),
+  );
+}
+
 /** `docker container rm -f <id>` (or `docker rm -f`) failed. */
 export class LegacyContainerRemoveError extends Data.TaggedError("LegacyContainerRemoveError")<{
   readonly message: string;
