@@ -1331,6 +1331,49 @@ describe("legacy functions serve integration", () => {
     });
   });
 
+  it.live("leaves the existing container alone when create loses a name conflict", () => {
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && (args[1] === "inspect" || args[1] === "rm")) {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "create") {
+        return {
+          exitCode: 1,
+          stdout: "",
+          stderr:
+            'Conflict. The container name "/supabase_edge_runtime_test-project" is already in use',
+        };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() => writeProjectConfig('project_id = "test-project"\n'));
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+
+      const { layer } = setupServe();
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      const steps = deployMockState.runCalls.map((call) => call.args.slice(0, 2));
+      const createIndex = steps.findIndex(([first]) => first === "create");
+      expect(createIndex).toBeGreaterThan(-1);
+      expect(
+        steps
+          .slice(createIndex + 1)
+          .some(([first, second]) => first === "container" && second === "rm"),
+      ).toBe(false);
+    });
+  });
+
   it.live("removes the created container when the bootstrap copy fails", () => {
     deployMockState.runHandler = (command, args) => {
       if (command !== "docker") {
@@ -3244,7 +3287,6 @@ describe("legacy functions serve integration", () => {
       expect(out.stderrText).toContain("Setting up Edge Functions runtime...\n");
       expect(deployMockState.runCalls.map((call) => call.args.slice(0, 2))).toEqual([
         ["container", "inspect"],
-        ["container", "rm"],
         ["container", "rm"],
       ]);
       expect(

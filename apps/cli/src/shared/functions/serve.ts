@@ -272,6 +272,7 @@ export interface ServeEdgeRuntimeContainerConfig {
  * {@link dbUrl} specifically must be caller-supplied rather than hardcoded).
  */
 export interface StartEdgeRuntimeContainerInput {
+  readonly onContainerCreated?: () => void;
   readonly config: ServeEdgeRuntimeContainerConfig;
   readonly authArtifacts: ServeAuthArtifacts;
   /**
@@ -1825,6 +1826,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       // The container must exist for `docker cp` to have a target, and must not be running
       // yet so edge-runtime never races the copy.
       yield* runEdgeRuntimeDockerStep(command);
+      input.onContainerCreated?.();
       yield* runEdgeRuntimeDockerStep(["cp", "-", `${containerId}:/`], {
         messagePrefix: "failed to copy edge runtime main service into container",
         stdin: Stream.make(serveMainArchive),
@@ -1917,7 +1919,6 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
 
     yield* assertLocalDbRunning(projectId);
     yield* bestEffortRemoveContainer(containerId);
-    ownsRuntime = true;
 
     // Go's `restartEdgeRuntime` prints this right before calling `ServeFunctions`
     // (`serve.go:124-125`) — `ServeFunctions` itself (this file's `startEdgeRuntimeContainer`,
@@ -1961,6 +1962,9 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
     );
 
     startedRuntime = yield* startEdgeRuntimeContainer({
+      onContainerCreated: () => {
+        ownsRuntime = true;
+      },
       config: {
         projectId,
         apiPort: resolved.apiPort,
