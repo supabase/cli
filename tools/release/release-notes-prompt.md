@@ -38,10 +38,10 @@ PR-title summaries. Answer: **Should I upgrade?** **What's new for me?** **Any g
 
 ### Two shells — only `legacy/` counts
 
-| Path | Status |
-|------|--------|
+| Path                   | Status                                                            |
+| ---------------------- | ----------------------------------------------------------------- |
 | `apps/cli/src/legacy/` | What users run as `supabase` today — **all user-facing behavior** |
-| `apps/cli/src/next/` | v3 / alpha — **not user-facing** |
+| `apps/cli/src/next/`   | v3 / alpha — **not user-facing**                                  |
 
 - **Drop** PRs that only touch `next/` (commands, flags, tests, alpha plumbing): no bullet, **no tail count**, never mention `next/` or v3.
 - PRs touching both `legacy/`/`shared/` and `next/`: write **only** the legacy/shared impact.
@@ -73,14 +73,14 @@ Do not skip investigation — titles alone are insufficient.
 
 2. **Prefix triage** (fast pass)
 
-| Prefix | Action |
-|--------|--------|
-| `chore:`, `ci:`, `test:` | Tail (open only if title hints user impact) |
-| `docs:` | Tail unless user-read docs / in-CLI help |
-| `refactor:`, `style:` | Judge |
-| `perf:` | Usually investigate |
-| `fix:`, `feat:` (+ product scopes `cli`, `db`, `auth`, …) | Investigate |
-| `feat!:`, `fix!:`, `BREAKING CHANGE` | Investigate + breaking section |
+| Prefix                                                    | Action                                      |
+| --------------------------------------------------------- | ------------------------------------------- |
+| `chore:`, `ci:`, `test:`                                  | Tail (open only if title hints user impact) |
+| `docs:`                                                   | Tail unless user-read docs / in-CLI help    |
+| `refactor:`, `style:`                                     | Judge                                       |
+| `perf:`                                                   | Usually investigate                         |
+| `fix:`, `feat:` (+ product scopes `cli`, `db`, `auth`, …) | Investigate                                 |
+| `feat!:`, `fix!:`, `BREAKING CHANGE`                      | Investigate + breaking section              |
 
 Tail PRs count toward "Plus N internal…". **`next/`-only PRs do not.**
 
@@ -114,22 +114,28 @@ From the header line extract `VERSION`, `COMPARE_URL`, `DATE`.
 <1–3 sentence intro>
 
 ### ⚠️ Breaking changes
+
 <omit if none>
 - **<what>** — <who's affected; what to do>. (#1234)
 
 ### Highlights
+
 - **<headline>** — <why it matters>. (#1234)
 
 ### New features
+
 - **<feature>** — <how to use; example if useful>. (#1234)
 
 ### Improvements
+
 - <user benefit>. (#1234)
 
 ### Bug fixes
+
 - <symptom resolved>. (#1234)
 
 ### TypeScript port progress
+
 <omit if none>
 - **Now served by the TypeScript shell:** `<cmd a>`, `<cmd b>`. Behavior matches the Go CLI. (#1234)
 
@@ -146,15 +152,15 @@ Omit empty sections.
 
 ## Quick examples
 
-| Case | ❌ | ✅ |
-|------|----|----|
-| Feature `feat(db): --linked on db diff` | Added `--linked` flag (#4567) | **`db diff` against your linked project, no Docker** — pass `--linked` to diff remote without a local stack; handy in CI (#4567) |
-| Bug + issue | Fixed nil pointer in config parser (#5012) | `supabase start` no longer crashes when optional sections like `[db.pooler]` are missing (#5012) |
-| 3 PRs, one feature | Three `db lint --json` bullets | **`db lint` machine-readable output** — `--json` for CI; empty array when clean (#4801, #4815, #4823) |
-| Port only | New native `db diff` implementation | Under **TypeScript port progress** only — `db diff`; behavior unchanged (#5314) |
-| Port + real bug | (same bullet as port) | **Bug fixes:** `orgs list` returns all orgs, not first 100 (#5318); **Port:** `orgs list` (#5318) |
-| `fix(cli):` build inject credentials | (bullet) | Tail only — scope `cli` ≠ user impact |
-| `feat(next):` only | Any mention | Silent drop |
+| Case                                    | ❌                                         | ✅                                                                                                                               |
+| --------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------- |
+| Feature `feat(db): --linked on db diff` | Added `--linked` flag (#4567)              | **`db diff` against your linked project, no Docker** — pass `--linked` to diff remote without a local stack; handy in CI (#4567) |
+| Bug + issue                             | Fixed nil pointer in config parser (#5012) | `supabase start` no longer crashes when optional sections like `[db.pooler]` are missing (#5012)                                 |
+| 3 PRs, one feature                      | Three `db lint --json` bullets             | **`db lint` machine-readable output** — `--json` for CI; empty array when clean (#4801, #4815, #4823)                            |
+| Port only                               | New native `db diff` implementation        | Under **TypeScript port progress** only — `db diff`; behavior unchanged (#5314)                                                  |
+| Port + real bug                         | (same bullet as port)                      | **Bug fixes:** `orgs list` returns all orgs, not first 100 (#5318); **Port:** `orgs list` (#5318)                                |
+| `fix(cli):` build inject credentials    | (bullet)                                   | Tail only — scope `cli` ≠ user impact                                                                                            |
+| `feat(next):` only                      | Any mention                                | Silent drop                                                                                                                      |
 
 ---
 

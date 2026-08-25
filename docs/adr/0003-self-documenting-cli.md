@@ -21,11 +21,11 @@ We need a documentation strategy that eliminates this drift.
 
 ### Three Documentation Sources (from code)
 
-| Source | What it generates |
-|--------|------------------|
-| Stricli command definitions (`docs.brief`, flags, args, examples) | Command reference pages |
-| Config schema (descriptions, tags, links, examples) | Configuration reference |
-| Error code types (code + message + suggestion) | Error reference with troubleshooting |
+| Source                                                            | What it generates                    |
+| ----------------------------------------------------------------- | ------------------------------------ |
+| Stricli command definitions (`docs.brief`, flags, args, examples) | Command reference pages              |
+| Config schema (descriptions, tags, links, examples)               | Configuration reference              |
+| Error code types (code + message + suggestion)                    | Error reference with troubleshooting |
 
 A build step introspects these sources and outputs structured content (markdown or JSON) that a static site generator consumes.
 
@@ -69,14 +69,14 @@ The generation step runs at build time (not runtime). The specific static site g
 
 ### What's Generated vs What's Hand-Written
 
-| Content type | Source | Why |
-|-------------|--------|-----|
-| Command reference (flags, args, usage) | Generated from Stricli definitions | Changes every time a flag is added/removed |
-| Config reference (fields, types, defaults) | Generated from config schema | Changes every time a config field changes |
-| Error reference (codes, messages, suggestions) | Generated from error types | Changes every time an error is added/modified |
-| Guides and tutorials | Hand-written markdown | Narrative, opinionated, requires human judgment |
-| Examples and recipes | Hand-written markdown | Context-dependent, curated |
-| ADRs | Hand-written markdown | Architectural decisions require human reasoning |
+| Content type                                   | Source                             | Why                                             |
+| ---------------------------------------------- | ---------------------------------- | ----------------------------------------------- |
+| Command reference (flags, args, usage)         | Generated from Stricli definitions | Changes every time a flag is added/removed      |
+| Config reference (fields, types, defaults)     | Generated from config schema       | Changes every time a config field changes       |
+| Error reference (codes, messages, suggestions) | Generated from error types         | Changes every time an error is added/modified   |
+| Guides and tutorials                           | Hand-written markdown              | Narrative, opinionated, requires human judgment |
+| Examples and recipes                           | Hand-written markdown              | Context-dependent, curated                      |
+| ADRs                                           | Hand-written markdown              | Architectural decisions require human reasoning |
 
 The boundary is clear: **reference = generated, narrative = manual**.
 
@@ -84,7 +84,7 @@ The boundary is clear: **reference = generated, narrative = manual**.
 
 ### Why code-as-source-of-truth
 
-- **Eliminates drift** — generated docs are always in sync with the code because they *are* the code
+- **Eliminates drift** — generated docs are always in sync with the code because they _are_ the code
 - **Single maintenance point** — update a flag description once (in the Stricli definition), both `--help` and the docs website reflect it
 - **Enforces quality** — if a command has no description, it's visible in both `--help` and the docs, creating pressure to fix it
 - **Reviewable in PRs** — doc changes are code changes, reviewed by the same people who review the code

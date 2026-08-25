@@ -50,9 +50,23 @@ const LEGACY_LOGFLARE_API_KEY = "api-key";
  * the `unless-stopped` restart policy retries until the db is ready —
  * running Logflare against an unmigrated database lets Oban die on the
  * missing `public.oban_jobs` table instead.
+ *
+ * `run.sh` stays PID 1 on purpose: a plain `exec` of `beam.smp` still burned
+ * Docker's 10s SIGTERM grace (upstream hang). Forward TERM, wait 3s, then
+ * KILL. Interrupted `wait` is >128; a second `wait` recovers the BEAM's
+ * status unless it was already reaped (127).
  */
 const LEGACY_LOGFLARE_ENTRYPOINT_SCRIPT =
-  "cat <<'EOF' > run.sh && sh run.sh\n./logflare eval Logflare.Release.migrate &&\n./logflare start --sname logflare\nEOF\n";
+  "cat <<'EOF' > run.sh && exec sh run.sh\n" +
+  "./logflare eval Logflare.Release.migrate || exit $?\n" +
+  "./logflare start --sname logflare &\n" +
+  "BEAM_PID=$!\n" +
+  'trap \'kill -TERM "$BEAM_PID" 2>/dev/null; n=0; while [ "$n" -lt 3 ] && kill -0 "$BEAM_PID" 2>/dev/null; do n=$((n+1)); sleep 1; done; kill -KILL "$BEAM_PID" 2>/dev/null\' TERM\n' +
+  'wait "$BEAM_PID"\n' +
+  "code=$?\n" +
+  'if [ "$code" -gt 128 ]; then wait "$BEAM_PID" 2>/dev/null; code2=$?; [ "$code2" -ne 127 ] && code=$code2; fi\n' +
+  'exit "$code"\n' +
+  "EOF\n";
 
 export interface LegacyLogflareContainerSpecInput {
   /**

@@ -32,7 +32,16 @@ describe("legacyBuildLogflareContainerSpec", () => {
     expect(spec.entrypoint).toBe("sh");
     expect(spec.cmd).toEqual([
       "-c",
-      "cat <<'EOF' > run.sh && sh run.sh\n./logflare eval Logflare.Release.migrate &&\n./logflare start --sname logflare\nEOF\n",
+      "cat <<'EOF' > run.sh && exec sh run.sh\n" +
+        "./logflare eval Logflare.Release.migrate || exit $?\n" +
+        "./logflare start --sname logflare &\n" +
+        "BEAM_PID=$!\n" +
+        'trap \'kill -TERM "$BEAM_PID" 2>/dev/null; n=0; while [ "$n" -lt 3 ] && kill -0 "$BEAM_PID" 2>/dev/null; do n=$((n+1)); sleep 1; done; kill -KILL "$BEAM_PID" 2>/dev/null\' TERM\n' +
+        'wait "$BEAM_PID"\n' +
+        "code=$?\n" +
+        'if [ "$code" -gt 128 ]; then wait "$BEAM_PID" 2>/dev/null; code2=$?; [ "$code2" -ne 127 ] && code=$code2; fi\n' +
+        'exit "$code"\n' +
+        "EOF\n",
     ]);
     expect(spec.exposedPorts).toEqual([{ containerPort: "4000" }]);
     expect(spec.ports).toEqual([{ hostPort: "54327", containerPort: "4000" }]);

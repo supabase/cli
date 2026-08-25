@@ -65,8 +65,8 @@ import { ProcessControl } from "../runtime/process-control.service.ts";
 import {
   buildDockerBinds,
   discoverFunctionSlugs,
-  dockerBindContainerPath,
-  dockerBindHostPath,
+  type DockerBind,
+  formatDockerBind,
   dockerWorkdirLabel,
   rawFunctionConfigRecord,
   resolveFunctionConfigs,
@@ -1164,21 +1164,25 @@ const loadServeProjectEnvironment = Effect.fnUntraced(function* (projectRoot: st
  * but Podman rejects the container outright (supabase/cli#6035), so the flag can
  * only be set for a path a bind actually materializes.
  */
-function hasBindUnder(binds: Iterable<string>, containerPath: string): boolean {
+function hasBindUnder(binds: Iterable<DockerBind>, containerPath: string): boolean {
   for (const bind of binds) {
-    const target = dockerBindContainerPath(bind);
-    if (target === containerPath || target.startsWith(`${containerPath}/`)) {
+    if (
+      bind.containerPath === containerPath ||
+      bind.containerPath.startsWith(`${containerPath}/`)
+    ) {
       return true;
     }
   }
   return false;
 }
 
-async function buildWatchSpecs(binds: ReadonlyArray<string>): Promise<ReadonlyArray<WatchSpec>> {
+async function buildWatchSpecs(
+  binds: ReadonlyArray<DockerBind>,
+): Promise<ReadonlyArray<WatchSpec>> {
   const specs = new Map<string, WatchSpec>();
 
   for (const bind of binds) {
-    const hostPath = dockerBindHostPath(bind);
+    const hostPath = bind.hostPath;
     if (!isAbsolute(hostPath)) {
       continue;
     }
@@ -1489,7 +1493,8 @@ export function buildServeEntrypointCommand(
   command: ReadonlyArray<string>,
   multilineEnvScriptPath?: string,
 ) {
-  return `${multilineEnvScriptPath === undefined ? "" : `. ${multilineEnvScriptPath}\n`}${command.join(" ")}
+  // `exec` so edge-runtime is PID 1; sourced env survives into the replacement process.
+  return `${multilineEnvScriptPath === undefined ? "" : `. ${multilineEnvScriptPath}\n`}exec ${command.join(" ")}
 `;
 }
 
@@ -1576,7 +1581,7 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
           },
         }),
       )) {
-        binds.add(bind);
+        binds.add(formatDockerBind(bind));
       }
       const missingSourceWarning = bindWarnings.find((warning) =>
         warning.includes("failed to read file:"),
@@ -1654,8 +1659,8 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     );
 
     const functionsDir = join(input.projectRoot, functionsDirName);
-    const functionBinds = new Set<string>();
-    const watchableBinds = new Set<string>();
+    const functionBinds = new Map<string, DockerBind>();
+    const watchableBinds = new Map<string, DockerBind>();
     const emittedScopeWarnings = new Set<string>();
     const functionsConfig: Record<string, ServeFunctionContainerConfig> = {};
 
@@ -1666,7 +1671,6 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       }
 
       const bindWarnings: string[] = [];
-      const scopeBinds = new Set<string>();
       for (const bind of yield* Effect.promise(() =>
         buildDockerBinds(projectId, functionsDir, functionsDir, config, {
           additionalModuleRoots: [input.flagCwd],
@@ -1674,14 +1678,12 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
           onWarning: async (message) => {
             bindWarnings.push(message);
           },
-          onScopeBindOutsideRoots: (bind) => {
-            scopeBinds.add(bind);
-          },
         }),
       )) {
-        functionBinds.add(bind);
-        if (!scopeBinds.has(bind)) {
-          watchableBinds.add(bind);
+        const key = formatDockerBind(bind);
+        functionBinds.set(key, bind);
+        if (!bind.externalScope) {
+          watchableBinds.set(key, bind);
         }
       }
       const missingSourceWarning = bindWarnings.find((warning) =>
@@ -1712,7 +1714,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       );
     }
 
-    const binds = new Set(functionBinds);
+    const binds = [...functionBinds.values()];
 
     yield* ensureDockerNamedVolume(localDockerId("edge_runtime", projectId), projectId);
     yield* ensureDockerNetwork(networkMode, projectId);
@@ -1806,7 +1808,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         `com.docker.compose.project=${labels["com.docker.compose.project"]}`,
         "--label",
         `${dockerWorkdirLabel}=${input.projectRoot}`,
-        ...([...binds] as ReadonlyArray<string>).flatMap((bind) => ["-v", bind]),
+        ...binds.flatMap((bind) => ["-v", formatDockerBind(bind)]),
         ...(dockerMultilineEnvScript === undefined ? [] : ["-v", dockerMultilineEnvScript.bind]),
         ...(dockerEnvFile === undefined ? [] : ["--env-file", dockerEnvFile.path]),
         ...(input.platform === "linux" ? ["--add-host", "host.docker.internal:host-gateway"] : []),
@@ -1832,7 +1834,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       return {
         containerId,
         cleanup: removeRuntimeArtifacts.pipe(Effect.orDie),
-        watchSpecs: yield* Effect.promise(() => buildWatchSpecs([...watchableBinds])),
+        watchSpecs: yield* Effect.promise(() => buildWatchSpecs([...watchableBinds.values()])),
       } satisfies StartedRuntime;
     }).pipe(Effect.onError(() => bestEffortCleanupRuntimeArtifacts));
   },

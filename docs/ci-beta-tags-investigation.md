@@ -4,13 +4,13 @@
 
 The plan job in `.github/workflows/release.yml` runs `semantic-release --dry-run` with branch config `{ name: "develop", prerelease: "beta" }`. semantic-release internally normalizes that branch's `channel` to **the branch name** (`"develop"`), not to `"beta"`. The existing beta tags on origin (`v2.99.0-beta.1`, `v2.99.0-beta.2`) have no channel git-notes (the `success` step that writes them is skipped under dry-run + minimal plugin set), so they have `channels: [null]`. Neither `[null]` nor `["beta"]` matches the branch's `"develop"` channel, so `getLastRelease` filters them out and falls through to the highest stable tag (`v2.98.2`). Then `getNextVersion` for a `fix:`/`feat:` workload on a prerelease branch bumps `2.98.2 → 2.99.0` and re-applies `-beta.1` → the same `2.99.0-beta.1` is emitted on every push.
 
-This is **not** the same root cause described in PR #5209's body. The "tag missing on origin" theory is wrong: the tag *is* on origin (created by `softprops/action-gh-release` in the GH-release step on the original publish run), and `getLastRelease` ignores it for a different reason.
+This is **not** the same root cause described in PR #5209's body. The "tag missing on origin" theory is wrong: the tag _is_ on origin (created by `softprops/action-gh-release` in the GH-release step on the original publish run), and `getLastRelease` ignores it for a different reason.
 
 ## Reproducing the failure
 
 Branch state (`develop @ ef1b13a7`, 2026-05-07):
 
-- `v2.98.2`  → channels: `["latest"]` (note written by an older release run)
+- `v2.98.2` → channels: `["latest"]` (note written by an older release run)
 - `v2.99.0-beta.1` (sha `62509de5`) → channels: `[null]` (no note ever written)
 - `v2.99.0-beta.2` (sha `ef1b13a7`) → channels: `[null]` (no note ever written)
 
@@ -57,7 +57,7 @@ export function prerelease({ prerelease }) {
     const preid = prerelease === true ? name : prerelease;
     return {
       ...rest,
-      channel: isNil(channel) ? name : channel,   // ← defaults to branch NAME, not preid
+      channel: isNil(channel) ? name : channel, // ← defaults to branch NAME, not preid
       type: "prerelease",
       name,
       prerelease: preid,

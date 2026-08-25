@@ -26,8 +26,10 @@ These workspaces should generally follow this structure:
 
 - `name`: `@supabase/<package-name>`
 - `type`: `"module"`
-- Standard scripts: `test`, `types:check`, `lint:check`, `lint:fix`, `fmt:check`, `fmt:fix`, `knip:check`, `knip:fix`
-- Standard devDependencies: `@tsconfig/bun`, `@types/bun`, `typescript`, `knip`, `oxfmt`, `oxlint`, `oxlint-tsgolint`
+- Standard scripts: `test`, `check:all`, `fix:all` (per-package targets: `types:check`, `knip:check`, `knip:fix`)
+- Standard devDependencies: `@tsconfig/bun`, `@types/bun`, `typescript`, `knip`
+
+Linting and formatting are repo-wide, not per-package: `oxlint` and `oxfmt` are root devDependencies configured by `.oxlintrc.json` and `.oxfmtrc.json` at the repo root, and run as `lint:check`/`lint:fix`/`fmt:check`/`fmt:fix` targets on the `@supabase/root` project. `pnpm exec oxlint` and `pnpm exec oxfmt` from the repo root work directly, and each package's `check:all`/`fix:all` includes the root targets.
 
 Expected exceptions:
 
@@ -192,14 +194,14 @@ Inside Effect code, compose schemas through their Effect APIs:
 
 Run quality checks from the workspace directory you changed. Do not consider a task complete until all relevant scripts pass.
 Do not waive or defer failing checks in a changed workspace as "pre-existing". If a required check fails, fix it before closing the task. Only treat a failure as an external blocker when it cannot be resolved within the workspace, and in that case call it out explicitly.
-If you run a workspace check command such as `pnpm types:check && pnpm lint:check && pnpm fmt:check`, you own all failing checks in that workspace for the duration of the task, even if the failing files look unrelated. Do not leave the workspace with unresolved failing checks after running the command.
+If you run a workspace check command such as `pnpm check:all`, you own all failing checks in that workspace for the duration of the task, even if the failing files look unrelated. Do not leave the workspace with unresolved failing checks after running the command.
 Do not use TypeScript `as` casts to silence type errors in production code. If a type does not line up, fix the typing or restructure the code until it type-checks cleanly.
 
 For the standard Bun/TypeScript workspaces:
 
 ```sh
 pnpm check:all
-pnpm lint:fix && pnpm fmt:fix
+pnpm fix:all
 pnpm test
 ```
 
