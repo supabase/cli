@@ -30,28 +30,8 @@
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@vitest/coverage-istanbul": "catalog:",
-    "knip": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
-  },
-  "knip": {
-    "entry": [
-      "src/effect.ts",
-      "src/bun.ts",
-      "src/node.ts",
-      "src/**/*.test.ts",
-      "scripts/download-openapi.ts",
-      "scripts/download-openapi.unit.test.ts",
-      "scripts/generate.ts",
-      "scripts/generate.unit.test.ts",
-      "scripts/generated-output-sync.unit.test.ts"
-    ],
-    "ignoreDependencies": [
-      "undici"
-    ],
-    "ignoreBinaries": [
-      "nx"
-    ]
   },
   "nx": {
     "targets": {

@@ -13,6 +13,7 @@
     "cli-release": "bun tools/release/local-release.ts"
   },
   "devDependencies": {
+    "knip": "catalog:",
     "nx": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
@@ -42,6 +43,12 @@
       },
       "fmt:fix": {
         "command": "oxfmt"
+      },
+      "knip:check": {
+        "command": "knip-bun"
+      },
+      "knip:fix": {
+        "command": "knip-bun --fix"
       }
     }
   }

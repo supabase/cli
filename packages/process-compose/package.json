@@ -21,18 +21,7 @@
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@vitest/coverage-istanbul": "catalog:",
-    "knip": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
-  },
-  "knip": {
-    "entry": [
-      "src/**/*.test.ts",
-      "tests/**/*.ts"
-    ],
-    "ignoreBinaries": [
-      "nx",
-      "taskkill"
-    ]
   }
 }

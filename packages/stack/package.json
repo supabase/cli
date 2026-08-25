@@ -40,19 +40,7 @@
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@vitest/coverage-istanbul": "catalog:",
-    "knip": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
-  },
-  "knip": {
-    "entry": [
-      "scripts/**/*.ts",
-      "src/**/*.test.ts",
-      "src/daemon-node.ts",
-      "tests/**/*.ts"
-    ],
-    "ignoreBinaries": [
-      "nx"
-    ]
   }
 }

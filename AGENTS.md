@@ -26,10 +26,10 @@ These workspaces should generally follow this structure:
 
 - `name`: `@supabase/<package-name>`
 - `type`: `"module"`
-- Standard scripts: `test`, `check:all`, `fix:all` (per-package targets: `types:check`, `knip:check`, `knip:fix`)
-- Standard devDependencies: `@tsconfig/bun`, `@types/bun`, `typescript`, `knip`
+- Standard scripts: `test`, `check:all`, `fix:all` (per-package target: `types:check`)
+- Standard devDependencies: `@tsconfig/bun`, `@types/bun`, `typescript`
 
-Linting and formatting are repo-wide, not per-package: `oxlint` and `oxfmt` are root devDependencies configured by `.oxlintrc.json` and `.oxfmtrc.json` at the repo root, and run as `lint:check`/`lint:fix`/`fmt:check`/`fmt:fix` targets on the `@supabase/root` project. `pnpm exec oxlint` and `pnpm exec oxfmt` from the repo root work directly, and each package's `check:all`/`fix:all` includes the root targets.
+Linting (`oxlint`), formatting (`oxfmt`), and unused-code analysis (`knip`) are repo-wide, not per-package: the tools are root devDependencies configured by `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key), and run as `lint:*`/`fmt:*`/`knip:*` targets on the `@supabase/root` project. `pnpm exec oxlint`, `pnpm exec oxfmt`, and `pnpm exec knip-bun` from the repo root work directly, and each package's `check:all`/`fix:all` includes the root targets.
 
 Expected exceptions:
 
