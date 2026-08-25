@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
   readWorkersSection,
   WorkerAlreadyConfiguredError,
+  WorkerConfigWriteUnsafeError,
   commitWorkerEntry,
   planWorkerEntry,
 } from "./worker-config.ts";
@@ -146,6 +147,53 @@ describe("planWorkerEntry + commitWorkerEntry", () => {
     );
 
     expect(error).toBeInstanceOf(WorkerAlreadyConfiguredError);
+    expect(readFileSync(configPath, "utf8")).toBe(before);
+  });
+
+  // An inline `[workers]` is sealed: TOML forbids extending it, so appending
+  // `[workers.api]` renders a file nothing can parse. The name is absent from
+  // the decoded section, so the already-configured check cannot catch this —
+  // reading the rendered plan back is what does.
+  test.each([
+    ["an empty inline workers table", "workers = {}\n"],
+    [
+      "an inline workers table holding another worker",
+      'workers = { web = { runtime = "node" } }\n',
+    ],
+  ])("refuses to append to %s, leaving the file alone", async (_label, before) => {
+    writeFileSync(configPath, before);
+
+    const error = await run(
+      writeWorkerEntry({
+        configPath,
+        name: "api",
+        existingWorkers: {},
+        patch: { runtime: "node" },
+      }).pipe(Effect.provide(BunServices.layer), Effect.flip),
+    );
+
+    expect(error).toBeInstanceOf(WorkerConfigWriteUnsafeError);
+    expect(readFileSync(configPath, "utf8")).toBe(before);
+  });
+
+  // The backstop is not limited to the inline case: a config.toml that does not
+  // parse to begin with cannot be appended to safely either, and finding that
+  // out after the scaffold is written is exactly what the plan/commit split
+  // exists to avoid.
+  test("refuses a config.toml that does not parse, leaving the file alone", async () => {
+    const before = "this is not = = toml\n";
+    writeFileSync(configPath, before);
+
+    const error = await run(
+      writeWorkerEntry({
+        configPath,
+        name: "api",
+        existingWorkers: {},
+        patch: { runtime: "node" },
+      }).pipe(Effect.provide(BunServices.layer), Effect.flip),
+    );
+
+    expect(error).toBeInstanceOf(WorkerConfigWriteUnsafeError);
     expect(readFileSync(configPath, "utf8")).toBe(before);
   });
 
