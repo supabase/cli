@@ -9,7 +9,7 @@
   "oxc.configPath": ".oxlintrc.json",
   "oxc.fmt.configPath": ".oxfmtrc.json",
 
-  // Using the guidance this blog post to ignore the `.repos` submodules:
+  // Ignore the `.repos` submodules (see this blog post):
   // https://www.effect.website/blog/the-one-weird-git-trick-that-makes-coding-agents-more-effect-ive#configuring-your-editor
   "js/ts.preferences.autoImportFileExcludePatterns": [".repos/**"],
   "files.exclude": { ".repos/**": true },
