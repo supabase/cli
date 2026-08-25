@@ -17,7 +17,7 @@ import {
 import type { ManagedStackManagerShape } from "./managed/manager.ts";
 import { managedStackPathsEffect } from "./managed/paths.ts";
 import type { ManagedStackLaunch } from "./managed/document.ts";
-import { PORT_CATALOG, type PortField } from "./PortCatalog.ts";
+import { PORT_CATALOG, PORT_FIELDS, type PortField } from "./PortCatalog.ts";
 import { portFieldsForConfigInput } from "./ServicePorts.ts";
 import { SERVICE_CATALOG, SERVICE_NAMES } from "./ServiceCatalog.ts";
 import { expandExcludedServices } from "./ServiceExclusions.ts";
@@ -292,6 +292,25 @@ const preflight = (
     yield* portRequestsForConfig(effectiveConfigInput, { runtime: persistedRuntime }).pipe(
       Effect.mapError((cause) => preflightError(context, causeMessage(cause))),
     );
+    const activeFields = portFieldsForConfigInput({
+      ...effectiveConfigInput,
+      mode: persistedRuntime.mode,
+    });
+    const activeFieldSet = new Set(activeFields);
+    yield* context.manager
+      .validateManagedPortReservations({
+        stackId: context.stackId,
+        portDocument: {
+          ...context.input.portIntents,
+          activeFields,
+          disabledFields: PORT_FIELDS.filter(
+            (field) => PORT_CATALOG[field].persistence === "sticky" && !activeFieldSet.has(field),
+          ),
+        },
+        persisted: existing.ports,
+        preservePersisted: true,
+      })
+      .pipe(Effect.mapError((cause) => preflightError(context, causeMessage(cause))));
 
     const paths = yield* managedStackPathsEffect(context.input.stateRoot, existing.id).pipe(
       Effect.mapError((cause) => preflightError(context, causeMessage(cause))),
@@ -301,10 +320,6 @@ const preflight = (
       const field = persistedPortField(assignment.key);
       if (field !== undefined) syntheticPorts[field] = assignment.port;
     }
-    const activeFields = portFieldsForConfigInput({
-      ...effectiveConfigInput,
-      mode: persistedRuntime.mode,
-    });
     for (const [index, field] of activeFields.entries()) {
       if (syntheticPorts[field] === undefined)
         syntheticPorts[field] = PORT_CATALOG[field].preferred ?? 60_000 + index;

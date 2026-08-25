@@ -1009,6 +1009,9 @@ describe("detached supervisor child journeys", () => {
 
   test("concurrent ordinary starts fail without restarting the owner", async () => {
     const roots = await workspace();
+    const firstObservedOwner = join(roots.root, "first-observed-owner");
+    const secondObservedOwner = join(roots.root, "second-observed-owner");
+    const releaseOwnerReads = join(roots.root, "release-owner-reads");
     const oldOwner = spawnChild(
       messageFor(roots, {
         cliVersion: "old",
@@ -1022,12 +1025,32 @@ describe("detached supervisor child journeys", () => {
         messageFor(roots, {
           cliVersion: "new",
         }),
+        {
+          environment: {
+            SUPABASE_STACK_TEST_CONTROL_READ_READY_FILE: firstObservedOwner,
+            SUPABASE_STACK_TEST_CONTROL_READ_RELEASE_FILE: releaseOwnerReads,
+          },
+        },
       );
+      await waitForFile(firstObservedOwner);
       second = spawnChild(
         messageFor(roots, {
           cliVersion: "new",
         }),
+        {
+          environment: {
+            SUPABASE_STACK_TEST_CONTROL_READ_READY_FILE: secondObservedOwner,
+            SUPABASE_STACK_TEST_CONTROL_READ_RELEASE_FILE: releaseOwnerReads,
+          },
+        },
       );
+      await waitForFile(secondObservedOwner);
+      expect(await fetchOwner((await oldOwner.started).endpoint)).toMatchObject({
+        daemonCliVersion: "old",
+        state: "running",
+        ready: true,
+      });
+      writeFileSync(releaseOwnerReads, "release");
       const results = await Promise.allSettled([first.started, second.started]);
       const started = results.filter(
         (result): result is PromiseFulfilledResult<SupervisorStartedMessage> =>
@@ -1048,11 +1071,6 @@ describe("detached supervisor child journeys", () => {
       ).toBe(true);
       expect(results).toHaveLength(2);
       expect(started).toHaveLength(0);
-      expect(await fetchOwner((await oldOwner.started).endpoint)).toMatchObject({
-        daemonCliVersion: "old",
-        state: "running",
-        ready: true,
-      });
       await remoteStop((await oldOwner.started).endpoint);
     } finally {
       if (oldOwner.child.exitCode === null) await kill(oldOwner.child);
@@ -1205,6 +1223,110 @@ describe("detached supervisor child journeys", () => {
       if (oldOwner.child.exitCode === null) await kill(oldOwner.child);
       if (contender?.child.exitCode === null) await kill(contender.child);
       cleanupRoots(roots);
+    }
+  });
+
+  test("upgrade preflight rejects a newly active sticky port reserved by a sibling", async () => {
+    const roots = await workspace();
+    const binDir = mkdtempSync(join(tmpdir(), "sup-stack-upgrade-port-preflight-"));
+    const docker = join(binDir, "docker");
+    writeFileSync(docker, "#!/bin/sh\nexit 0\n");
+    chmodSync(docker, 0o755);
+    const environment = { PATH: `${binDir}:${process.env["PATH"] ?? ""}` };
+    const oldOwner = spawnChild(
+      messageFor(roots, {
+        cliVersion: "old",
+        config: { ...messageFor(roots).config, mode: "docker" },
+      }),
+      { environment },
+    );
+    let contender: ChildHandle | undefined;
+    try {
+      const oldStarted = await oldOwner.started;
+      const targetPath = Effect.runSync(
+        managedStackDocumentPathEffect(roots.stateRoot, roots.stackId),
+      );
+      const target = JSON.parse(readFileSync(targetPath, "utf8")) as {
+        readonly identity: Readonly<Record<string, unknown>>;
+        readonly ports: ReadonlyArray<{ key: string; port: number; intent: string }>;
+        readonly launch: {
+          readonly excludedServices?: ReadonlyArray<string>;
+        };
+      };
+      const requestedPort = 65_000;
+      writeFileSync(
+        targetPath,
+        `${JSON.stringify(
+          {
+            ...target,
+            launch: {
+              ...target.launch,
+              excludedServices: target.launch.excludedServices?.filter(
+                (service) => service !== "mailpit",
+              ),
+            },
+          },
+          null,
+          2,
+        )}\n`,
+      );
+      const siblingId = "b".repeat(64);
+      const siblingPath = Effect.runSync(
+        managedStackDocumentPathEffect(roots.stateRoot, siblingId),
+      );
+      mkdirSync(dirname(siblingPath), { recursive: true });
+      writeFileSync(
+        siblingPath,
+        `${JSON.stringify(
+          {
+            ...target,
+            id: siblingId,
+            identity: { ...target.identity, workspaceId: "sibling-workspace" },
+            ports: [
+              { key: "api.port", port: 64_000, intent: "exact" },
+              { key: "db.port", port: 64_001, intent: "exact" },
+              { key: "local_smtp.port", port: requestedPort, intent: "automatic" },
+            ],
+            lifecycle: "stopped",
+          },
+          null,
+          2,
+        )}\n`,
+      );
+
+      contender = spawnChild(
+        messageFor(roots, {
+          type: "upgrade-restart",
+          cliVersion: "new",
+          config: {
+            ...messageFor(roots).config,
+            mode: "docker",
+            mailpit: { port: requestedPort, smtpPort: 65_001, pop3Port: 65_002 },
+          },
+          portIntents: {
+            ...messageFor(roots).portIntents,
+            document: {
+              local_smtp: { port: requestedPort, smtp_port: 65_001, pop3_port: 65_002 },
+            },
+          },
+        }),
+        { environment },
+      );
+
+      await expect(contender.started).rejects.toThrow("UpgradePreflightError");
+      expect(oldOwner.child.exitCode).toBeNull();
+      expect(await fetchOwner(oldStarted.endpoint)).toMatchObject({
+        daemonCliVersion: "old",
+        state: "running",
+        ready: true,
+      });
+      await remoteStop(oldStarted.endpoint);
+      await waitForExit(oldOwner.child);
+    } finally {
+      if (oldOwner.child.exitCode === null) await kill(oldOwner.child);
+      if (contender?.child.exitCode === null) await kill(contender.child);
+      cleanupRoots(roots);
+      rmSync(binDir, { recursive: true, force: true });
     }
   });
 

@@ -235,6 +235,15 @@ const observeAttachedBeforeReady = (value: unknown): Effect.Effect<void> => {
   );
 };
 
+const observeControlRead = (): Effect.Effect<void> => {
+  const readyFile = process.env["SUPABASE_STACK_TEST_CONTROL_READ_READY_FILE"];
+  const releaseFile = process.env["SUPABASE_STACK_TEST_CONTROL_READ_RELEASE_FILE"];
+  if (readyFile === undefined || releaseFile === undefined) return Effect.void;
+  return Effect.sync(() => writeFileSync(readyFile, "ready")).pipe(
+    Effect.andThen(waitForFile(releaseFile)),
+  );
+};
+
 const resolutionTimeout = (): Duration.Input => {
   const milliseconds = Number(process.env["SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS"]);
   return Number.isFinite(milliseconds) && milliseconds > 0
@@ -307,7 +316,9 @@ export const runTestSupervisor = (): void => {
       return {
         ...transport,
         read: (endpoint: Parameters<typeof transport.read>[0]) =>
-          transport.read(endpoint).pipe(Effect.tap(observeAttachedBeforeReady)),
+          transport
+            .read(endpoint)
+            .pipe(Effect.tap(observeAttachedBeforeReady), Effect.tap(observeControlRead)),
       };
     }),
   ).pipe(Layer.provide(baseControlTransportLayer));

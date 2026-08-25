@@ -1,6 +1,6 @@
 import { ServiceNotFoundError } from "@supabase/process-compose";
 import { it } from "@effect/vitest";
-import { Context, Deferred, Effect, Layer, Stream } from "effect";
+import { Context, Deferred, Effect, Layer, Predicate, Stream } from "effect";
 import { expect } from "vitest";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
 import { RemoteStack, updateRemoteLaunch } from "./RemoteStack.ts";
@@ -120,7 +120,10 @@ it.live("serves handler behavior over the RPC boundary", () =>
       );
 
       const unavailable = yield* Effect.flip(remote.getInfo());
-      expect(unavailable).toMatchObject({ _tag: "StackUnavailableError", phase: "starting" });
+      expect(Predicate.isTagged(unavailable, "StackUnavailableError")).toBe(true);
+      if (Predicate.isTagged(unavailable, "StackUnavailableError")) {
+        expect(unavailable.phase).toBe("starting");
+      }
       yield* lifecycle.publishStack(stack);
       expect((yield* remote.getInfo()).url).toBe("http://127.0.0.1:54321");
 
@@ -230,7 +233,10 @@ it.live("rejects launch updates after supervisor shutdown begins", () =>
             { versions: { postgres: "17.6.1.076" } },
           ),
         );
-        expect(unavailable).toMatchObject({ _tag: "StackUnavailableError", phase: "stopping" });
+        expect(Predicate.isTagged(unavailable, "StackUnavailableError")).toBe(true);
+        if (Predicate.isTagged(unavailable, "StackUnavailableError")) {
+          expect(unavailable.phase).toBe("stopping");
+        }
         expect(updates).toEqual([]);
       }).pipe(Effect.ensuring(Deferred.succeed(releaseStop, undefined).pipe(Effect.asVoid)));
       yield* lifecycle.awaitShutdown;

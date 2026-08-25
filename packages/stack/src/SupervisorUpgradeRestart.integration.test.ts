@@ -99,6 +99,7 @@ const setup = (persistedVersions: Partial<Record<ServiceName, string>> = { auth:
     inspectStack: () => Effect.succeed(document),
     listStacks: unused,
     allocateManagedPorts: unused,
+    validateManagedPortReservations: () => Effect.void,
     recordLifecycle: unused,
     updateLaunch: unused,
     repairWorkspace: unused,
