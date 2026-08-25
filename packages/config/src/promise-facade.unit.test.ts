@@ -213,10 +213,9 @@ const expectedFacadeFunctionNames = [
 ];
 
 describe("promise-facade parity between bun.ts, node.ts, and io-browser.ts", () => {
-  // A prior two-way check here (bun.ts vs node.ts only) exempted io-browser.ts
-  // from parity, which is exactly why it was allowed to ship as a bare
-  // top-level `throw` exporting nothing — this three-way check closes that
-  // gap.
+  // io-browser.ts must export the same facade names as bun.ts/node.ts: a
+  // bundler resolving the "browser" condition needs every named import to
+  // exist at build time.
   test("io-browser.ts exports the same seven facade function names as bun.ts and node.ts", () => {
     for (const facade of [bunFacade, nodeFacade, ioBrowserFacade]) {
       for (const name of expectedFacadeFunctionNames) {
@@ -354,8 +353,6 @@ describe("promise-facade rejection shapes", () => {
   });
 });
 
-// The stdin-leak regression guard (CLI-2231) previously lived here, but an
-// ordering-dependent assertion (listener count before/after a facade call)
-// is meaningless once earlier tests in this file have already made the
-// facade's first call — see `promise-facade.stdin.unit.test.ts`, which is
-// the ONLY file allowed to make that first call.
+// The stdin-leak guard lives in `promise-facade.stdin.unit.test.ts`: it must
+// observe the facade's FIRST call, which only a dedicated vitest-isolated
+// file can guarantee.

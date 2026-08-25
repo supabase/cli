@@ -40,7 +40,7 @@ function collectTsFiles(dir: string, into: string[]): void {
         continue;
       }
       collectTsFiles(fullPath, into);
-    } else if (entry.isFile() && entry.name.endsWith(".ts")) {
+    } else if (entry.isFile() && (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx"))) {
       into.push(fullPath);
     }
   }
