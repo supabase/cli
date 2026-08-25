@@ -113,7 +113,7 @@ const resolveSize = Effect.fnUntraced(function* (options: {
 const destinationIsFree = Effect.fnUntraced(function* (target: string) {
   const fs = yield* FileSystem.FileSystem;
   const info = yield* fs.stat(target).pipe(Effect.option);
-  if (info._tag === "None") {
+  if (Option.isNone(info)) {
     return true;
   }
   if (info.value.type !== "Directory") {

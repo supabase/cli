@@ -1,5 +1,5 @@
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { Effect, FileSystem } from "effect";
+import { Effect, FileSystem, Option } from "effect";
 import { InvalidWorkerSourceError } from "./workers.errors.ts";
 
 /**
@@ -64,7 +64,7 @@ const canonicalize = Effect.fnUntraced(function* (target: string) {
 
   for (;;) {
     const real = yield* fs.realPath(cursor).pipe(Effect.option);
-    if (real._tag === "Some") {
+    if (Option.isSome(real)) {
       return pending.length === 0 ? real.value : join(real.value, ...pending);
     }
     const parent = dirname(cursor);

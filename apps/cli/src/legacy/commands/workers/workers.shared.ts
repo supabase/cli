@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { loadProjectConfig } from "@supabase/config/effect";
-import { Effect, FileSystem } from "effect";
+import { Effect, FileSystem, Option } from "effect";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import {
   readWorkersSection,
@@ -115,7 +115,7 @@ export const legacyDiscoverWorkerNames = Effect.fnUntraced(function* (
   const scaffolded: Array<string> = [];
   for (const entry of entries) {
     const info = yield* fs.stat(join(project.workersDir, entry)).pipe(Effect.option);
-    if (info._tag === "Some" && info.value.type === "Directory") {
+    if (Option.isSome(info) && info.value.type === "Directory") {
       scaffolded.push(entry);
     }
   }
