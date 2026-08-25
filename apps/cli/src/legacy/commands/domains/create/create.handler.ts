@@ -2,7 +2,7 @@ import { Effect } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
@@ -21,7 +21,7 @@ export const legacyDomainsCreate = Effect.fn("legacy.domains.create")(function* 
   const output = yield* Output;
   const httpClient = yield* HttpClient.HttpClient;
   const api = yield* LegacyPlatformApi;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
@@ -34,7 +34,7 @@ export const legacyDomainsCreate = Effect.fn("legacy.domains.create")(function* 
     // 1. Verify the CNAME first — short-circuits before any POST.
     yield* verifyLegacyCname({
       httpClient,
-      projectHost: cliConfig.projectHost,
+      projectHost: cliSettings.projectHost,
       ref,
       customHostname: flags.customHostname,
     });

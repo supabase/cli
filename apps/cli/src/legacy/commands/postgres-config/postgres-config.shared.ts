@@ -3,7 +3,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
 import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { renderGlamourTable } from "../../output/legacy-glamour-table.ts";
@@ -147,13 +147,13 @@ function parseJsonObject<E>(
 export const fetchCurrentPostgresConfig = Effect.fn("legacy.postgres-config.fetch-current")(
   function* (ref: string) {
     const httpClient = yield* HttpClient.HttpClient;
-    const cliConfig = yield* LegacyCliConfig;
+    const cliSettings = yield* LegacyCliSettings;
     const tokenOpt = yield* resolveLegacyAccessToken;
 
     const request = requestWithAuth(
-      HttpClientRequest.get(`${cliConfig.apiUrl}/v1/projects/${ref}/config/database/postgres`),
+      HttpClientRequest.get(`${cliSettings.apiUrl}/v1/projects/${ref}/config/database/postgres`),
       tokenOpt,
-      cliConfig.userAgent,
+      cliSettings.userAgent,
     );
 
     const response = yield* httpClient.execute(request).pipe(
@@ -215,7 +215,7 @@ export const putPostgresConfig = <SerErr, NetErr, StatErr, UnmErr>(
 ) =>
   Effect.gen(function* () {
     const httpClient = yield* HttpClient.HttpClient;
-    const cliConfig = yield* LegacyCliConfig;
+    const cliSettings = yield* LegacyCliSettings;
     const tokenOpt = yield* resolveLegacyAccessToken;
 
     // Use raw HTTP instead of the generated input schema: Go accepts arbitrary
@@ -230,11 +230,11 @@ export const putPostgresConfig = <SerErr, NetErr, StatErr, UnmErr>(
     });
 
     const request = requestWithAuth(
-      HttpClientRequest.put(`${cliConfig.apiUrl}/v1/projects/${ref}/config/database/postgres`).pipe(
+      HttpClientRequest.put(`${cliSettings.apiUrl}/v1/projects/${ref}/config/database/postgres`).pipe(
         HttpClientRequest.bodyText(encodedBody, "application/json"),
       ),
       tokenOpt,
-      cliConfig.userAgent,
+      cliSettings.userAgent,
     );
 
     const response = yield* httpClient

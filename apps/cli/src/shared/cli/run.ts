@@ -13,7 +13,7 @@ import type { OutputFormat } from "../output/types.ts";
 import { Output } from "../output/output.service.ts";
 import { LegacyGoChildExitError } from "../legacy/legacy-go-child-exit.error.ts";
 import { GoProxyInvocation, goProxyInvocationLayer } from "../legacy/go-proxy-invocation.ts";
-import { cliConfigLayer } from "../../next/config/cli-config.layer.ts";
+import { cliSettingsLayer } from "../../next/config/cli-settings.layer.ts";
 import { projectHomeLayer } from "../../next/config/project-home.layer.ts";
 import { ProjectLocalServiceVersions } from "../../next/config/project-local-service-versions.service.ts";
 import { projectContextLayer } from "../../next/config/project-context.layer.ts";
@@ -645,8 +645,8 @@ function projectContextLayerFor(runtimeLayer: Layer.Layer<never>) {
   return projectContextLayer.pipe(Layer.provide(runtimeLayer), Layer.provide(BunServices.layer));
 }
 
-function cliConfigLayerFor(runtimeLayer: Layer.Layer<never>) {
-  return cliConfigLayer.pipe(
+function cliSettingsLayerFor(runtimeLayer: Layer.Layer<never>) {
+  return cliSettingsLayer.pipe(
     Layer.provide(projectContextLayerFor(runtimeLayer)),
     Layer.provide(runtimeLayer),
   );
@@ -654,7 +654,7 @@ function cliConfigLayerFor(runtimeLayer: Layer.Layer<never>) {
 
 function projectHomeLayerFor(runtimeLayer: Layer.Layer<never>) {
   return projectHomeLayer.pipe(
-    Layer.provide(cliConfigLayerFor(runtimeLayer)),
+    Layer.provide(cliSettingsLayerFor(runtimeLayer)),
     Layer.provide(projectContextLayerFor(runtimeLayer)),
     Layer.provide(runtimeLayer),
     Layer.provide(BunServices.layer),
@@ -729,7 +729,7 @@ function cliProgramFor(
     Effect.provide(options.analyticsLayer),
     Effect.provide(tracingLayer),
     Effect.provide(telemetryRuntimeLayer),
-    Effect.provide(cliConfigLayerFor(runtimeLayer)),
+    Effect.provide(cliSettingsLayerFor(runtimeLayer)),
     Effect.provide(projectHomeLayerFor(runtimeLayer)),
     Effect.provide(projectContextLayerFor(runtimeLayer)),
     Effect.provide(projectLinkStateLayer),
@@ -871,7 +871,7 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
       Effect.provide(outputLayerFor(outputFormat)),
       Effect.provide(telemetryRuntimeLayer),
       Effect.provide(projectHomeLayerFor(handledRuntimeLayer)),
-      Effect.provide(cliConfigLayerFor(handledRuntimeLayer)),
+      Effect.provide(cliSettingsLayerFor(handledRuntimeLayer)),
       Effect.provide(projectContextLayerFor(handledRuntimeLayer)),
       Effect.provide(processControlLayer),
       Effect.provide(runtimeInfoLayer),

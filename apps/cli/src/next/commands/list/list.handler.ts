@@ -1,18 +1,18 @@
 import { Effect } from "effect";
 import { listStacks } from "@supabase/stack/effect";
-import { CliConfig } from "../../config/cli-config.service.ts";
+import { CliSettings } from "../../config/cli-settings.service.ts";
 import { ProjectHome } from "../../config/project-home.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 
 export const list = Effect.fnUntraced(function* () {
   const output = yield* Output;
-  const cliConfig = yield* CliConfig;
+  const cliSettings = yield* CliSettings;
   const projectHome = yield* ProjectHome;
 
   yield* output.intro("List local Supabase stacks");
 
   const stacks = yield* listStacks({
-    cacheRoot: cliConfig.supabaseHome,
+    cacheRoot: cliSettings.supabaseHome,
     projectDir: projectHome.projectRoot,
   });
 

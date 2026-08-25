@@ -4,7 +4,7 @@ import type { ProjectConfig } from "@supabase/config";
 import { Effect, FileSystem, Option, Path, Stream } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -59,7 +59,7 @@ export const legacyStorageCp = Effect.fn("legacy.storage.cp")(function* (
   flags: LegacyStorageCpFlags,
 ) {
   const output = yield* Output;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const telemetryState = yield* LegacyTelemetryState;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const resolver = yield* LegacyProjectRefResolver;
@@ -96,7 +96,7 @@ export const legacyStorageCp = Effect.fn("legacy.storage.cp")(function* (
 
     const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
     linkedRef = projectRef;
-    const loaded = yield* legacyLoadStorageConfig(cliConfig.workdir, projectRef);
+    const loaded = yield* legacyLoadStorageConfig(cliSettings.workdir, projectRef);
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }
@@ -111,7 +111,7 @@ export const legacyStorageCp = Effect.fn("legacy.storage.cp")(function* (
     const summary: CpSummary = { uploaded: [], downloaded: [] };
 
     yield* legacyConnectStorageGateway(
-      { projectRef, config: loaded.config, userAgent: cliConfig.userAgent },
+      { projectRef, config: loaded.config, userAgent: cliSettings.userAgent },
       (gateway) =>
         Effect.gen(function* () {
           if (srcIsStorage && dstUrl.scheme === "") {

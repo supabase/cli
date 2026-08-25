@@ -8,7 +8,7 @@ import { projectLinkRemoteLayer } from "../../config/project-link-remote.layer.t
 import { projectLinkStateLayer } from "../../config/project-link-state.layer.ts";
 import { projectLocalServiceVersionsLayer } from "../../config/project-local-service-versions.layer.ts";
 import {
-  discoveredCliConfigLayer,
+  discoveredCliSettingsLayer,
   provideProjectCommandRuntime,
 } from "../../config/project-runtime.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
@@ -28,7 +28,7 @@ export type UpdateFlags = CliCommand.Command.Config.Infer<typeof flags>;
 const updatePlatformApiLayer = platformApiLayer.pipe(Layer.provide(credentialsLayer));
 const updateProjectLinkRemoteLayer = projectLinkRemoteLayer.pipe(
   Layer.provide(updatePlatformApiLayer),
-  Layer.provide(discoveredCliConfigLayer),
+  Layer.provide(discoveredCliSettingsLayer),
 );
 
 const updateRuntimeLayer = provideProjectCommandRuntime(

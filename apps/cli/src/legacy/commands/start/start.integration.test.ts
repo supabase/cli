@@ -19,7 +19,7 @@ import {
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
 import {
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
   legacySequentialExecBatch,
@@ -430,7 +430,7 @@ function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockLegacyTelemetryStateTracked();
   const analytics = mockAnalytics();
-  const cliConfig = mockLegacyCliConfig({ workdir });
+  const cliSettings = mockLegacyCliSettings({ workdir });
   const child = mockStartContainerCliSpawner(opts.route ?? defaultRoute(), {
     failSpawn: opts.failSpawn,
     onSecretCopy: opts.onSecretCopy,
@@ -456,7 +456,7 @@ function setup(opts: SetupOpts = {}) {
   const layer = Layer.mergeAll(
     BunServices.layer,
     out.layer,
-    cliConfig,
+    cliSettings,
     telemetry.layer,
     analytics.layer,
     child.layer,

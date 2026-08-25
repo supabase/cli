@@ -1,5 +1,5 @@
 import { Effect, Stdio } from "effect";
-import { CliConfig } from "../../../config/cli-config.service.ts";
+import { CliSettings } from "../../../config/cli-settings.service.ts";
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
 import { ProjectHome } from "../../../config/project-home.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
@@ -12,7 +12,7 @@ export const functionsDeploy = Effect.fn("functions.deploy")(function* (
   flags: FunctionsDeployFlags,
 ) {
   const api = yield* PlatformApi;
-  const cliConfig = yield* CliConfig;
+  const cliSettings = yield* CliSettings;
   const projectHome = yield* ProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
   const stdio = yield* Stdio.Stdio;
@@ -25,7 +25,7 @@ export const functionsDeploy = Effect.fn("functions.deploy")(function* (
     flagCwd: runtimeInfo.cwd,
     projectRoot: projectHome.projectRoot,
     supabaseDir: projectHome.supabaseDir,
-    dashboardUrl: cliConfig.dashboardUrl,
+    dashboardUrl: cliSettings.dashboardUrl,
     goConfigCompat: undefined,
     yes: flags.yes,
     rawArgs,

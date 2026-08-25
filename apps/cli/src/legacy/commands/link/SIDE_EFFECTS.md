@@ -13,7 +13,7 @@ counterpart exists for this behavior.
 
 | Path                                 | Format              | When                                                                                                                                                                     |
 | ------------------------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `supabase/config.toml`               | TOML (`project_id`) | NOT read for ref resolution itself — read by `LegacyCliConfig` for workdir/project-id discovery generally (`--workdir` resolution, `SUPABASE_PROJECT_ID` passthrough)    |
+| `supabase/config.toml`               | TOML (`project_id`) | NOT read for ref resolution itself — read by `LegacyCliSettings` for workdir/project-id discovery generally (`--workdir` resolution, `SUPABASE_PROJECT_ID` passthrough)    |
 | `supabase/.temp/linked-project.json` | JSON (`ref` field)  | only when the given `[ref-or-branch]`/`--project-ref` value is not ref-shaped, as the 2nd parent-project candidate for branch-name resolution (CLI-2167, TS-only)        |
 | `supabase/.temp/project-ref`         | plain text          | only when the given `[ref-or-branch]`/`--project-ref` value is not ref-shaped, as the 3rd (last) parent-project candidate for branch-name resolution (CLI-2167, TS-only) |
 | `~/.supabase/access-token`           | plain text          | when `SUPABASE_ACCESS_TOKEN` is unset and the keyring is unavailable                                                                                                     |
@@ -77,7 +77,7 @@ All under `<workdir>/supabase/.temp/` (plain text, created with parent dirs as n
 
 ## API Routes
 
-Management API (base `LegacyCliConfig.apiUrl`, `Authorization: Bearer <access-token>`):
+Management API (base `LegacyCliSettings.apiUrl`, `Authorization: Bearer <access-token>`):
 
 | Method | Path                                        | When                                                                                                                                                                       |
 | ------ | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

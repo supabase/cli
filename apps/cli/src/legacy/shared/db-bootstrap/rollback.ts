@@ -89,7 +89,7 @@ export function legacyIsUnhealthyStartError(
  * ps` listing, never a second, separately listed call, which would cost an
  * extra real Docker Engine API request Go never makes (see that function's
  * doc comment for the parity rationale). `workdir` (this run's own
- * `LegacyCliConfig.workdir`) is passed through only as
+ * `LegacyCliSettings.workdir`) is passed through only as
  * {@link legacyCleanupStartSecrets}'s fallback — every container this same
  * `start` run just created carries its own matching `LEGACY_CLI_WORKDIR_LABEL`
  * (see `container-lifecycle.ts`), so the fallback path is only ever exercised

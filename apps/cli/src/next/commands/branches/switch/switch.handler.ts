@@ -2,7 +2,7 @@ import { daemonLayer, resolveManagedStack, stopDaemon } from "@supabase/stack/ef
 import { loadProjectConfig } from "@supabase/config/effect";
 import { Effect, Option } from "effect";
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
-import { CliConfig } from "../../../config/cli-config.service.ts";
+import { CliSettings } from "../../../config/cli-settings.service.ts";
 import { ProjectHome } from "../../../config/project-home.service.ts";
 import { managedPortIntents } from "../../../config/managed-port-intents.ts";
 import {
@@ -27,7 +27,7 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
   const output = yield* Output;
   const projectLinkState = yield* ProjectLinkState;
   const api = yield* PlatformApi;
-  const cliConfig = yield* CliConfig;
+  const cliSettings = yield* CliSettings;
   const projectHome = yield* ProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
 
@@ -117,7 +117,7 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
 
   // If a local stack is running, stop and restart it against the new branch.
   const stackCheck = yield* resolveManagedStack({
-    cacheRoot: cliConfig.supabaseHome,
+    cacheRoot: cliSettings.supabaseHome,
     cwd: runtimeInfo.cwd,
     projectDir: projectHome.projectRoot,
   }).pipe(
@@ -136,7 +136,7 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
     const stopping = yield* output.task("Stopping local stack...");
     yield* stopDaemon({
       cwd: runtimeInfo.cwd,
-      cacheRoot: cliConfig.supabaseHome,
+      cacheRoot: cliSettings.supabaseHome,
       projectDir: projectHome.projectRoot,
       name: stackName,
     }).pipe(Effect.tapError(() => stopping.fail()));
@@ -158,7 +158,7 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
     const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
 
     const stackLayer = yield* daemonLayer({
-      cacheRoot: cliConfig.supabaseHome,
+      cacheRoot: cliSettings.supabaseHome,
       cwd: runtimeInfo.cwd,
       projectDir: projectHome.projectRoot,
       name: stackName,

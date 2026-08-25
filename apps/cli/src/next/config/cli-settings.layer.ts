@@ -2,7 +2,7 @@ import { Effect, Layer, Option, Redacted } from "effect";
 import { resolveSupabaseHome } from "../../shared/config/supabase-home.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { resolvePosthogConfig } from "../../shared/telemetry/posthog-config.ts";
-import { CliConfig } from "./cli-config.service.ts";
+import { CliSettings } from "./cli-settings.service.ts";
 import { ProjectContext } from "./project-context.service.ts";
 
 const SUPABASE_API_URL = "https://api.supabase.com";
@@ -17,7 +17,7 @@ function readEnv(
   return value === undefined ? Option.none() : Option.some(value);
 }
 
-const makeCliConfig = Effect.gen(function* () {
+const makeCliSettings = Effect.gen(function* () {
   const runtimeInfo = yield* RuntimeInfo;
   const projectContext = yield* ProjectContext;
   const effectiveEnv = Option.match(projectContext.projectEnv, {
@@ -26,7 +26,7 @@ const makeCliConfig = Effect.gen(function* () {
   });
   const posthogConfig = resolvePosthogConfig(effectiveEnv);
 
-  return CliConfig.of({
+  return CliSettings.of({
     apiUrl: Option.getOrElse(readEnv(effectiveEnv, "SUPABASE_API_URL"), () => SUPABASE_API_URL),
     dashboardUrl: Option.getOrElse(
       readEnv(effectiveEnv, "SUPABASE_DASHBOARD_URL"),
@@ -50,4 +50,4 @@ const makeCliConfig = Effect.gen(function* () {
   });
 });
 
-export const cliConfigLayer = Layer.effect(CliConfig, makeCliConfig);
+export const cliSettingsLayer = Layer.effect(CliSettings, makeCliSettings);

@@ -7,7 +7,7 @@ import {
   Stack,
   type StackSummary,
 } from "@supabase/stack/effect";
-import { CliConfig } from "../../config/cli-config.service.ts";
+import { CliSettings } from "../../config/cli-settings.service.ts";
 import { ProjectHome } from "../../config/project-home.service.ts";
 import { resolveServiceVersionContext } from "../../config/service-version-resolution.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -79,7 +79,7 @@ const renderUpdateStatus = Effect.fnUntraced(function* (
 
 export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
   const output = yield* Output;
-  const cliConfig = yield* CliConfig;
+  const cliSettings = yield* CliSettings;
   const projectHome = yield* ProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
 
@@ -87,7 +87,7 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
 
   const layer = yield* connectLayer({
     cwd: runtimeInfo.cwd,
-    cacheRoot: cliConfig.supabaseHome,
+    cacheRoot: cliSettings.supabaseHome,
     projectDir: projectHome.projectRoot,
     name: _flags.stack,
   }).pipe(
@@ -97,7 +97,7 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
 
   if (Option.isNone(layer)) {
     const summary = yield* resolveConfiguredSummary({
-      cacheRoot: cliConfig.supabaseHome,
+      cacheRoot: cliSettings.supabaseHome,
       projectDir: projectHome.projectRoot,
       cwd: runtimeInfo.cwd,
       name: _flags.stack,
@@ -154,7 +154,7 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
   }
 
   const summary = yield* resolveConfiguredSummary({
-    cacheRoot: cliConfig.supabaseHome,
+    cacheRoot: cliSettings.supabaseHome,
     projectDir: projectHome.projectRoot,
     cwd: runtimeInfo.cwd,
     name: _flags.stack,

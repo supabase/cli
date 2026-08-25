@@ -13,7 +13,7 @@ import {
   mockRuntimeInfo,
   processEnvLayer,
 } from "../../../../tests/helpers/mocks.ts";
-import { cliConfigLayer } from "../../config/cli-config.layer.ts";
+import { cliSettingsLayer } from "../../config/cli-settings.layer.ts";
 import { projectContextLayer } from "../../config/project-context.layer.ts";
 import { projectHomeLayer } from "../../config/project-home.layer.ts";
 import { projectLinkStateLayer } from "../../config/project-link-state.layer.ts";
@@ -63,7 +63,7 @@ function buildLayer(opts: {
     Layer.provide(runtimeInfoLayer),
     Layer.provide(envLayer),
   );
-  const discoveredCliConfigLayer = cliConfigLayer.pipe(
+  const discoveredCliSettingsLayer = cliSettingsLayer.pipe(
     Layer.provide(runtimeInfoLayer),
     Layer.provide(discoveredProjectContextLayer),
   );
@@ -71,7 +71,7 @@ function buildLayer(opts: {
     Layer.provide(BunServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(discoveredProjectContextLayer),
-    Layer.provide(discoveredCliConfigLayer),
+    Layer.provide(discoveredCliSettingsLayer),
   );
   const discoveredProjectLinkStateLayer = projectLinkStateLayer.pipe(
     Layer.provide(BunServices.layer),
@@ -109,7 +109,7 @@ function buildLayer(opts: {
       runtimeInfoLayer,
       envLayer,
       discoveredProjectContextLayer,
-      discoveredCliConfigLayer,
+      discoveredCliSettingsLayer,
       discoveredProjectHomeLayer,
       discoveredProjectLinkStateLayer,
       out.layer,

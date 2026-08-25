@@ -6,7 +6,7 @@ import {
   updateManagedLaunch,
 } from "@supabase/stack/effect";
 import { ensureProjectStateIgnored } from "../../config/project-gitignore.ts";
-import { CliConfig } from "../../config/cli-config.service.ts";
+import { CliSettings } from "../../config/cli-settings.service.ts";
 import { ProjectHome } from "../../config/project-home.service.ts";
 import { refreshLinkedProjectSnapshot } from "../../config/project-link-refresh.ts";
 import {
@@ -41,7 +41,7 @@ function diffCachedLinkedVersions(
 
 export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
   const output = yield* Output;
-  const cliConfig = yield* CliConfig;
+  const cliSettings = yield* CliSettings;
   const projectHome = yield* ProjectHome;
   const projectLinkState = yield* ProjectLinkState;
   const runtimeInfo = yield* RuntimeInfo;
@@ -54,7 +54,7 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
     const refreshed = yield* refreshLinkedProjectSnapshot(
       linkedState.value.project.ref,
       (yield* listStacks({
-        cacheRoot: cliConfig.supabaseHome,
+        cacheRoot: cliSettings.supabaseHome,
         projectDir: projectHome.projectRoot,
       })).map((stack) => ({
         stackName: stack.name,
@@ -86,7 +86,7 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
   }
 
   const existingSummary = yield* resolveStackSummary({
-    cacheRoot: cliConfig.supabaseHome,
+    cacheRoot: cliSettings.supabaseHome,
     projectDir: projectHome.projectRoot,
     cwd: runtimeInfo.cwd,
     name: flags.stack,
@@ -104,7 +104,7 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
 
   if (Option.isSome(existingSummary)) {
     yield* updateManagedLaunch({
-      cacheRoot: cliConfig.supabaseHome,
+      cacheRoot: cliSettings.supabaseHome,
       cwd: runtimeInfo.cwd,
       workspacePath: projectHome.projectRoot,
       stackName: flags.stack,

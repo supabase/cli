@@ -5,7 +5,7 @@ import {
 } from "@supabase/stack/effect";
 import { Effect, Exit, Option } from "effect";
 import { Credentials } from "../../auth/credentials.service.ts";
-import { CliConfig } from "../../config/cli-config.service.ts";
+import { CliSettings } from "../../config/cli-settings.service.ts";
 import { ProjectHome } from "../../config/project-home.service.ts";
 import { ProjectLocalServiceVersions } from "../../config/project-local-service-versions.service.ts";
 import { ProjectLinkState } from "../../config/project-link-state.service.ts";
@@ -25,7 +25,7 @@ import {
 
 export const services = Effect.fnUntraced(function* () {
   const output = yield* Output;
-  const cliConfig = yield* CliConfig;
+  const cliSettings = yield* CliSettings;
   const credentials = yield* Credentials;
   const projectLocalServiceVersions = yield* ProjectLocalServiceVersions;
   const projectLinkState = yield* ProjectLinkState;
@@ -37,7 +37,7 @@ export const services = Effect.fnUntraced(function* () {
   const accessToken = yield* credentials.getAccessToken;
   const localServiceVersions = yield* projectLocalServiceVersions.load;
   const existingSummary = yield* resolveStackSummary({
-    cacheRoot: cliConfig.supabaseHome,
+    cacheRoot: cliSettings.supabaseHome,
     projectDir: projectHome.projectRoot,
     name: "default",
   }).pipe(
@@ -60,8 +60,8 @@ export const services = Effect.fnUntraced(function* () {
   let rows = listLocalServiceVersions(localImageOptions);
   if (Option.isSome(linkedState) && Option.isSome(accessToken)) {
     const remote = yield* fetchLinkedServiceVersions({
-      apiUrl: cliConfig.apiUrl,
-      projectHost: cliConfig.projectHost,
+      apiUrl: cliSettings.apiUrl,
+      projectHost: cliSettings.projectHost,
       projectRef: linkedState.value.project.ref,
       accessToken: accessToken.value,
       userAgent: "@supabase/cli",

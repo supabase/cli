@@ -12,7 +12,7 @@ import type { LoginSessionResponse, ProfileResponse } from "../../src/next/auth/
 import { Credentials } from "../../src/next/auth/credentials.service.ts";
 import { Crypto } from "../../src/next/auth/crypto.service.ts";
 import { ApiError } from "../../src/next/auth/errors.ts";
-import { cliConfigLayer } from "../../src/next/config/cli-config.layer.ts";
+import { cliSettingsLayer } from "../../src/next/config/cli-settings.layer.ts";
 import { ProjectHome } from "../../src/next/config/project-home.service.ts";
 import {
   ProjectLocalServiceVersions,
@@ -1008,7 +1008,7 @@ export function emptyEnv() {
     envLayer,
     mockTty(),
     mockProcessControl().layer,
-    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
+    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
     Layer.succeed(HttpTransportClient, {
       request: () => Effect.die("unexpected HttpTransportClient access in tests"),
     }),
@@ -1031,6 +1031,6 @@ export function withEnv(env: Record<string, string>) {
     envLayer,
     mockTty(),
     mockProcessControl().layer,
-    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
+    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
   );
 }

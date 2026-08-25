@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Effect, Layer } from "effect";
-import { cliConfigLayer } from "../../next/config/cli-config.layer.ts";
+import { cliSettingsLayer } from "../../next/config/cli-settings.layer.ts";
 import { TelemetryRuntime } from "./runtime.service.ts";
 import { telemetryRuntimeLayer } from "./runtime.layer.ts";
 import {
@@ -30,7 +30,7 @@ function buildLayer(opts: {
     ...opts.env,
   });
   const ttyLayer = mockTty({ stdoutIsTty: opts.stdoutIsTty ?? false });
-  const configLayer = cliConfigLayer.pipe(
+  const configLayer = cliSettingsLayer.pipe(
     Layer.provide(runtimeInfoLayer),
     Layer.provide(projectContextLayer),
   );

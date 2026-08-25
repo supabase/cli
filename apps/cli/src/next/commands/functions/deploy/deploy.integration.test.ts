@@ -14,7 +14,7 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as UrlParams from "effect/unstable/http/UrlParams";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { CliConfig } from "../../../config/cli-config.service.ts";
+import { CliSettings } from "../../../config/cli-settings.service.ts";
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
 import { ProjectHome } from "../../../config/project-home.service.ts";
 import type { ProjectLinkStateValue } from "../../../config/project-link-state.service.ts";
@@ -118,10 +118,10 @@ async function writeLocalFunction(
   await writeFile(join(functionDir, "deno.json"), '{"imports":{}}\n');
 }
 
-function cliConfigLayer() {
+function cliSettingsLayer() {
   return Layer.succeed(
-    CliConfig,
-    CliConfig.of({
+    CliSettings,
+    CliSettings.of({
       apiUrl: "https://api.supabase.com",
       dashboardUrl: "https://supabase.com/dashboard",
       projectHost: "supabase.co",
@@ -458,7 +458,7 @@ function setup(
     BunServices.layer,
     out.layer,
     api.layer,
-    cliConfigLayer(),
+    cliSettingsLayer(),
     mockRuntimeInfo({ cwd }),
     mockProjectHome(opts.projectRoot ?? cwd),
     mockProjectLinkState(opts.linked === false ? undefined : LINK_STATE),

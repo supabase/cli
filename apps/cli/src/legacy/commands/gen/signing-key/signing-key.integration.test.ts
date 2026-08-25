@@ -16,7 +16,7 @@ import {
 } from "../../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
@@ -81,14 +81,14 @@ function setup(options: SetupOptions = {}) {
     promptConfirmResponses: options.promptConfirmResponses,
   });
   const api = mockLegacyPlatformApi();
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current, projectId: Option.none() });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current, projectId: Option.none() });
   const tty = mockTty({
     stdinIsTty: options.stdinIsTty ?? false,
     stdoutIsTty: options.stdinIsTty ?? false,
   });
   const telemetry = options.trackTelemetry ? mockLegacyTelemetryStateTracked() : undefined;
   const layer = Layer.mergeAll(
-    buildLegacyTestRuntime({ out, api, cliConfig, tty, telemetry: telemetry?.layer }),
+    buildLegacyTestRuntime({ out, api, cliSettings, tty, telemetry: telemetry?.layer }),
     Layer.succeed(LegacyYesFlag, options.yes ?? false),
     Layer.succeed(CliArgs, { args: options.cliArgs ?? [] }),
     mockStdin(options.stdinIsTty ?? false, options.pipedAnswer),

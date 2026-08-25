@@ -8,7 +8,7 @@ import {
 import { legacyPromptYesNo } from "../../../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { Output } from "../../../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../../../shared/runtime/tty.service.ts";
-import { LegacyCliConfig } from "../../../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../../../config/legacy-cli-settings.service.ts";
 import { legacyResetLocalDatabase } from "../../../../../shared/db-bootstrap/reset-local-database.ts";
 import { legacyBold, legacyRed, legacyYellow } from "../../../../../shared/legacy-colors.ts";
 import { LegacyDbConnection } from "../../../../../shared/legacy-db-connection.service.ts";
@@ -97,7 +97,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
     const tty = yield* Tty;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const cliConfig = yield* LegacyCliConfig;
+    const cliSettings = yield* LegacyCliSettings;
     const telemetryState = yield* LegacyTelemetryState;
     // Go's `dbDeclarativeCmd.PersistentPreRunE` calls `flags.LoadConfig` — which runs
     // `loadNestedEnv` and `os.Setenv`s each project-.env key — BEFORE reading
@@ -105,7 +105,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
     // db_schema_declarative.go:73-78`, `pkg/config/config.go:789`). Load the project env
     // first and resolve against it, as `db reset` does for its own experimental gate, so a
     // `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` opens the gate too.
-    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir);
     const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnv);
     // `--yes` OR `SUPABASE_YES` (shell env or project `.env`): Go's prompts here
     // read `viper.GetBool("YES")` after `loadNestedEnv`, so the env var must
@@ -126,7 +126,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
     let linkedProjectRef: string | undefined;
 
     yield* Effect.gen(function* () {
-      const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+      const toml = yield* legacyReadDbToml(fs, path, cliSettings.workdir);
       // Gate before the mutex check below — order matters; see
       // legacyRequirePgDelta's doc comment for why.
       yield* legacyRequirePgDelta({
@@ -161,22 +161,22 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       // `path.resolve` (not `path.join`) so an absolute `declarative_schema_path` is
       // used as-is, matching Go's `config.resolve` (which only prefixes the workdir onto
       // a relative path). `path.join(workdir, abs)` would mangle the absolute path.
-      const declarativeDir = path.resolve(cliConfig.workdir, declarativeDirRel);
+      const declarativeDir = path.resolve(cliSettings.workdir, declarativeDirRel);
       const stagedDirRel = legacyResolveStagedDeclarativeDir(declarativeDirRel);
       // Repair prompts name the file they would edit by its full configured path —
       // a bare `extension.sql` is ambiguous in a tree with nested schema folders.
       const extensionSqlRel = path.join(declarativeDirRel, "extension.sql");
-      const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
-      const tempDir = legacyPgDeltaTempPath(path, cliConfig.workdir);
+      const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
+      const tempDir = legacyPgDeltaTempPath(path, cliSettings.workdir);
       const run: LegacyDeclarativeRunContext = {
         pgDelta: {
           // `legacyResolvePgDeltaProjectId` mirrors Go's `Config.ProjectId` singleton
           // (`SUPABASE_PROJECT_ID` env → config.toml's `project_id` → sanitized workdir
-          // basename) — NOT `cliConfig.projectId` alone, which is env-only and resolves to
+          // basename) — NOT `cliSettings.projectId` alone, which is env-only and resolves to
           // `""` for a project relying on config.toml's `project_id` or the workdir-basename
           // default, mounting the WRONG `supabase_edge_runtime_` Deno-cache volume.
-          projectId: legacyResolvePgDeltaProjectId(cliConfig.projectId, toml, cliConfig.workdir),
-          cwd: cliConfig.workdir,
+          projectId: legacyResolvePgDeltaProjectId(cliSettings.projectId, toml, cliSettings.workdir),
+          cwd: cliSettings.workdir,
           npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
           denoVersion: toml.denoVersion,
           projectEnv: toml.projectEnv,
@@ -191,7 +191,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         dnsResolver,
       };
       const ensureLocalPostgresImageCurrent = seam.ensureLocalPostgresImageCurrent();
-      yield* legacyWarnFormerDeclarativeDefault(fs, path, cliConfig.workdir, toml.pgDelta);
+      yield* legacyWarnFormerDeclarativeDefault(fs, path, cliSettings.workdir, toml.pgDelta);
       const declarativeFilesExist = yield* declarativeDirHasFiles(fs, declarativeDir);
 
       // Go's `saveApplyDebugBundle`: warn (rather than masking the apply error) and
@@ -200,7 +200,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       // (`apps/cli-go/cmd/db_schema_declarative.go:447-461`, deleted in
       // CLI-1970; last present at commit 7b469f5b3).
       const saveApplyDebugBundle = (bundle: LegacyDebugBundle) =>
-        legacySaveDebugBundle(fs, path, cliConfig.workdir, tempDir, migrationsDir, bundle).pipe(
+        legacySaveDebugBundle(fs, path, cliSettings.workdir, tempDir, migrationsDir, bundle).pipe(
           Effect.matchEffect({
             onFailure: (error) =>
               output
@@ -253,9 +253,9 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           // ignoring read errors and continuing with local/custom. Swallow a broken
           // `.temp/project-ref` here; `linkedProjectRef` then stays unset so the post-run
           // cache correctly does not fire (Go leaves `flags.ProjectRef` empty on error).
-          linkedRef = Option.isSome(cliConfig.projectId)
-            ? cliConfig.projectId
-            : yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir).pipe(
+          linkedRef = Option.isSome(cliSettings.projectId)
+            ? cliSettings.projectId
+            : yield* legacyReadProjectRefFile(fs, path, cliSettings.workdir).pipe(
                 Effect.orElseSucceed(() => Option.none<string>()),
               );
           if (Option.isSome(linkedRef)) {
@@ -270,7 +270,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           hasMigrations,
           fs,
           path,
-          cliConfig.workdir,
+          cliSettings.workdir,
           linkedRef,
           ensureLocalPostgresImageCurrent,
         );
@@ -312,13 +312,13 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       const setupInputs = yield* legacyResolveSetupInputs(
         fs,
         path,
-        cliConfig.workdir,
+        cliSettings.workdir,
         toml.majorVersion,
         Option.getOrUndefined(toml.orioledbVersion),
         toml.baseline,
       );
       const stageNextExport = Effect.fnUntraced(function* () {
-        const stagedDir = path.resolve(cliConfig.workdir, stagedDirRel);
+        const stagedDir = path.resolve(cliSettings.workdir, stagedDirRel);
         // Reject the active directory itself AND anything nested under it: a
         // staged export inside the declarative tree would be loaded recursively
         // by the next sync, and the printed `rm -rf && mv` adoption command
@@ -408,7 +408,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
                   yield* legacySaveDebugBundle(
                     fs,
                     path,
-                    cliConfig.workdir,
+                    cliSettings.workdir,
                     tempDir,
                     migrationsDir,
                     {
@@ -615,7 +615,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       let migrationPaths: ReadonlyArray<string>;
       if (engine.implementation === "next" && result.files.length > 1) {
         const written = yield* legacyWritePgDeltaMigrations(fs, path, {
-          workdir: cliConfig.workdir,
+          workdir: cliSettings.workdir,
           baseMillis: nowMillis,
           name: migrationName,
           files: result.files,

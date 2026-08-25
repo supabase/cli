@@ -15,7 +15,7 @@ import {
   mockRuntimeInfo,
 } from "../../../../../tests/helpers/mocks.ts";
 import {
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
   legacySequentialExecBatch,
@@ -300,7 +300,7 @@ function setup(opts: SetupOpts = {}) {
   }
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockLegacyTelemetryStateTracked();
-  const cliConfig = mockLegacyCliConfig({ workdir });
+  const cliSettings = mockLegacyCliSettings({ workdir });
   const baseRoute = opts.route ?? defaultRoute();
   const route =
     opts.running === true
@@ -349,7 +349,7 @@ function setup(opts: SetupOpts = {}) {
   const layer = Layer.mergeAll(
     BunServices.layer,
     out.layer,
-    cliConfig,
+    cliSettings,
     telemetry.layer,
     child.layer,
     alwaysReadyHttpClientLayer,

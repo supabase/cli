@@ -2,7 +2,7 @@ import type { ApiClient } from "@supabase/api/effect";
 import { Effect, FileSystem, Option, Path } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
-import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
 import { legacyTempPaths } from "./legacy-temp-paths.ts";
 import {
@@ -22,7 +22,7 @@ export interface LegacyLinkServicesInput {
   readonly skipPooler: boolean;
   /**
    * Absolute project directory whose `supabase/.temp/*` files receive the linked
-   * service metadata. Passed explicitly (never read from `LegacyCliConfig.workdir`)
+   * service metadata. Passed explicitly (never read from `LegacyCliSettings.workdir`)
    * because `bootstrap` links a freshly created project directory that differs
    * from the cwd-walked config workdir.
    */
@@ -42,7 +42,7 @@ type WriteTempFile = (filePath: string, content: string) => Effect.Effect<void, 
  */
 export const legacyLinkServicesCore = Effect.fnUntraced(function* (input: LegacyLinkServicesInput) {
   const api = yield* LegacyPlatformApi;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const paths = legacyTempPaths(path, input.workdir);
@@ -64,9 +64,9 @@ export const legacyLinkServicesCore = Effect.fnUntraced(function* (input: Legacy
 
   const tenantOpts = {
     ref: input.ref,
-    projectHost: cliConfig.projectHost,
+    projectHost: cliSettings.projectHost,
     serviceKey: input.serviceKey,
-    userAgent: cliConfig.userAgent,
+    userAgent: cliSettings.userAgent,
   };
   yield* legacyFetchPostgrestVersion(tenantOpts).pipe(
     Effect.flatMap((v) =>

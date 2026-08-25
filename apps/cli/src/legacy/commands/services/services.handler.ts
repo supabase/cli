@@ -1,5 +1,5 @@
 import { Effect, Exit, FileSystem, Option, Path } from "effect";
-import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
 import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
 import {
   INVALID_PROJECT_REF_MESSAGE,
@@ -55,17 +55,17 @@ const LEGACY_GO_SERVICES_TOML_WRAPPER = legacyGoTomlListWrapper(
 export const legacyServices = Effect.fn("legacy.services")(function* (_flags: LegacyServicesFlags) {
   const output = yield* Output;
   const legacyOutput = yield* LegacyOutputFlag;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const credentials = yield* LegacyCredentials;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const projectRefPath = path.join(cliConfig.workdir, "supabase", ".temp", "project-ref");
+  const projectRefPath = path.join(cliSettings.workdir, "supabase", ".temp", "project-ref");
   const linkedProjectRef = yield* Effect.gen(function* () {
-    if (Option.isSome(cliConfig.projectId)) {
-      return cliConfig.projectId;
+    if (Option.isSome(cliSettings.projectId)) {
+      return cliSettings.projectId;
     }
 
     const exists = yield* fs.exists(projectRefPath).pipe(Effect.orElseSucceed(() => false));
@@ -125,7 +125,7 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
     const tomlValues = yield* legacyReadDbToml(
       fs,
       path,
-      cliConfig.workdir,
+      cliSettings.workdir,
       Option.getOrUndefined(linkedProjectRef),
     ).pipe(
       Effect.catch((error) =>
@@ -138,7 +138,7 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
         : yield* legacyReadServiceVersionOverrides(
             fs,
             path,
-            cliConfig.workdir,
+            cliSettings.workdir,
             tomlValues.majorVersion,
           );
     const postgresImage =
@@ -147,14 +147,14 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
         : yield* legacyResolveDbImage(
             fs,
             path,
-            cliConfig.workdir,
+            cliSettings.workdir,
             tomlValues.majorVersion,
             Option.getOrUndefined(tomlValues.orioledbVersion),
           );
     const edgeRuntimeImage =
       tomlValues === null
         ? undefined
-        : yield* legacyResolveEdgeRuntimeImage(fs, path, cliConfig.workdir, tomlValues.denoVersion);
+        : yield* legacyResolveEdgeRuntimeImage(fs, path, cliSettings.workdir, tomlValues.denoVersion);
     const imageOverrides: LocalServiceImageOverrides = {};
     if (postgresImage !== undefined) {
       imageOverrides.postgres = postgresImage;
@@ -171,11 +171,11 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
     let rows = listLocalServiceVersions(localImageOptions);
     if (Option.isSome(validLinkedRef) && Option.isSome(accessToken)) {
       const remote = yield* fetchLinkedServiceVersions({
-        apiUrl: cliConfig.apiUrl,
-        projectHost: cliConfig.projectHost,
+        apiUrl: cliSettings.apiUrl,
+        projectHost: cliSettings.projectHost,
         projectRef: validLinkedRef.value,
         accessToken: accessToken.value,
-        userAgent: cliConfig.userAgent,
+        userAgent: cliSettings.userAgent,
       });
       rows = mergeRemoteServiceVersions(remote, localImageOptions);
     }

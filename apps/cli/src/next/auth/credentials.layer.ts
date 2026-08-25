@@ -1,7 +1,7 @@
 import { Effect, FileSystem, Layer, Option, Path, Redacted } from "effect";
 
 import { normalizeKeyringToken } from "../../shared/auth/keyring-token.ts";
-import { CliConfig } from "../config/cli-config.service.ts";
+import { CliSettings } from "../config/cli-settings.service.ts";
 import { Credentials } from "./credentials.service.ts";
 
 const SERVICE = "Supabase CLI";
@@ -17,12 +17,12 @@ const LEGACY_ACCOUNT = "supabase";
 const makeCredentials = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const cliConfig = yield* CliConfig;
-  const fallbackDir = cliConfig.supabaseHome;
+  const cliSettings = yield* CliSettings;
+  const fallbackDir = cliSettings.supabaseHome;
   const fallbackPath = path.join(fallbackDir, "access-token");
 
   const keyringModule =
-    Option.isSome(cliConfig.noKeyring) && cliConfig.noKeyring.value === "1"
+    Option.isSome(cliSettings.noKeyring) && cliSettings.noKeyring.value === "1"
       ? Option.none<typeof import("@napi-rs/keyring")>()
       : yield* Effect.tryPromise(() => import("@napi-rs/keyring")).pipe(Effect.option);
 

@@ -3,7 +3,7 @@ import { defaultJwtSecret, generateJwt } from "@supabase/stack/effect";
 import { Effect, FileSystem, Path } from "effect";
 
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
-import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { legacyResolveApiExternalUrl } from "./legacy-api-url.ts";
 import { legacyMapTenantApiKeysError } from "./legacy-get-tenant-api-keys.ts";
 import { legacyGetHostname } from "./legacy-hostname.ts";
@@ -26,7 +26,7 @@ import {
  * - remote: base URL `https://<ref>.<projectHost>`; key from
  * `SUPABASE_AUTH_SERVICE_ROLE_KEY` else `tenant.GetApiKeys`.
  *
- * Requires `LegacyCliConfig` (workdir, projectHost) and — only on the remote
+ * Requires `LegacyCliSettings` (workdir, projectHost) and — only on the remote
  * branch — `LegacyPlatformApiFactory` (lazy, so the local path never touches the
  * Management API).
  */
@@ -60,10 +60,10 @@ export const legacyResolveStorageCredentials = Effect.fnUntraced(function* (opts
   readonly projectRef: string;
   readonly config: LegacyStorageConfigView;
 }) {
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
 
   if (opts.projectRef !== "") {
-    const baseUrl = `https://${opts.projectRef}.${cliConfig.projectHost}`;
+    const baseUrl = `https://${opts.projectRef}.${cliSettings.projectHost}`;
     // Go: `viper.IsSet("AUTH_SERVICE_ROLE_KEY")` → use the env-provided key and
     // skip the tenant lookup.
     const envKey = process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
@@ -111,7 +111,7 @@ export const legacyResolveStorageCredentials = Effect.fnUntraced(function* (opts
       ? yield* validateLocalKongTls(
           fs,
           path,
-          cliConfig.workdir,
+          cliSettings.workdir,
           opts.config.api.tls.cert_path,
           opts.config.api.tls.key_path,
         )

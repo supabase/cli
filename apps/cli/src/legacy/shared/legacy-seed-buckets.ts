@@ -10,7 +10,7 @@ import type { PlatformError } from "effect/PlatformError";
 
 import { Output } from "../../shared/output/output.service.ts";
 import { legacyResolveYesWithProjectEnv } from "../../shared/legacy/global-flags.ts";
-import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { legacyBold, legacyYellow } from "./legacy-colors.ts";
 import { legacyLoadProjectEnv } from "./legacy-db-config.toml-read.ts";
 import { legacyPromptYesNo } from "../../shared/legacy/legacy-prompt-yes-no.ts";
@@ -168,14 +168,14 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
   };
 }) {
   const output = yield* Output;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   // `--yes` OR `SUPABASE_YES`.
   const yes =
     opts.yes ??
     (yield* legacyResolveYesWithProjectEnv(
-      yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir),
+      yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir),
     ));
   const { projectRef, emitSummary } = opts;
   const interactive = opts.interactive ?? true;
@@ -189,7 +189,7 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
   const loaded =
     opts.resolvedConfig !== undefined
       ? null
-      : yield* loadProjectConfig(cliConfig.workdir, loadOptions).pipe(
+      : yield* loadProjectConfig(cliSettings.workdir, loadOptions).pipe(
           Effect.catchTag(
             "ProjectConfigParseError",
             (cause) =>
@@ -260,7 +260,7 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
     const gateway = yield* legacyMakeStorageGateway({
       baseUrl: credentials.baseUrl,
       apiKey: credentials.apiKey,
-      userAgent: cliConfig.userAgent,
+      userAgent: cliSettings.userAgent,
     });
 
     const summary = emptySummary();
@@ -294,7 +294,7 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
     }
 
     // Upload objects for each bucket with a configured objects_path.
-    yield* uploadObjects(fs, path, output, gateway, cliConfig.workdir, bucketsConfig, summary);
+    yield* uploadObjects(fs, path, output, gateway, cliSettings.workdir, bucketsConfig, summary);
 
     // Machine-readable summary (Go has none; text mode emits nothing extra).
     if (emitSummary && output.format !== "text") {

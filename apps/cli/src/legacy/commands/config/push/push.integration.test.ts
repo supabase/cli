@@ -10,7 +10,7 @@ import {
   buildLegacyTestRuntime,
   legacyJsonResponse,
   legacyTransportFailure,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyPlatformApiService,
@@ -141,7 +141,7 @@ function setup(opts: {
     buildLegacyTestRuntime({
       out,
       api,
-      cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+      cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       runtimeInfo: mockRuntimeInfo({ cwd: opts.runtimeCwd ?? tempRoot.current }),
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,
@@ -524,7 +524,7 @@ file_size_limit = "50MiB"
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
       mockStdin(true),
@@ -592,7 +592,7 @@ function setupService(opts: {
     buildLegacyTestRuntime({
       out,
       api: { layer: apiMock.layer, httpClientLayer: addonsHttpLayer() },
-      cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+      cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       runtimeInfo: mockRuntimeInfo({ cwd: opts.runtimeCwd ?? tempRoot.current }),
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,

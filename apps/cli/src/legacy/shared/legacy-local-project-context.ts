@@ -64,7 +64,7 @@ export const legacyLoadLocalProjectContext = <E>(
   projectRef?: string,
 ): Effect.Effect<LegacyLocalProjectContext, E, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
-    // `search: false`: `workdir` already IS the fully-resolved chdir target (`legacy-cli-config.
+    // `search: false`: `workdir` already IS the fully-resolved chdir target (`legacy-cli-settings.
     // layer.ts`'s `resolveWorkdir` mirrors `ChangeWorkDir`'s explicit-exact-vs-default-searched
     // resolution), so letting `@supabase/config`'s
     // `findProjectPaths` climb ancestors again on top of that would let an unrelated ancestor

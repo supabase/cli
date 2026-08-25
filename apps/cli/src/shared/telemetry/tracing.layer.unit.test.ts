@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { Effect, Exit, Layer, Option, Context, Tracer } from "effect";
-import { cliConfigLayer } from "../../next/config/cli-config.layer.ts";
+import { cliSettingsLayer } from "../../next/config/cli-settings.layer.ts";
 import type { TelemetryConfig } from "./types.ts";
 import {
   mockProjectContext,
@@ -59,7 +59,7 @@ function buildLayer(opts: { home: string; env?: Record<string, string>; stdoutIs
     runtimeInfoLayer,
     projectContextLayer,
     processEnvLayer(env),
-    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
+    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
     mockTty({
       stdoutIsTty: opts.stdoutIsTty ?? false,
       stdinIsTty: false,

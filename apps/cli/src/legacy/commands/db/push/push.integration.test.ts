@@ -9,7 +9,7 @@ import { Effect, Exit, Layer, Option } from "effect";
 import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
@@ -260,7 +260,7 @@ function setup(
     out.layer,
     conn.layer,
     resolver.layer,
-    mockLegacyCliConfig({
+    mockLegacyCliSettings({
       workdir,
       ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
     }),

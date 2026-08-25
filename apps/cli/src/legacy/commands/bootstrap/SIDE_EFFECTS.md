@@ -38,7 +38,7 @@ path uses the runtime pg-delta package/edge-runtime settings and catalog cache.
 | `<workdir>/.env`                                                                                      | dotenv     | best-effort (write failure prints a warning and continues)                                                                                                        |
 | `<workdir>/supabase/.temp/pgdelta/catalog-<prefix>-migrations-<hash>-<ts>.json`                       | JSON       | legacy pg-delta opt-out, best-effort after migration apply (write failure only warns)                                                                             |
 | `<workdir>/supabase/.temp/pgdelta/pgdelta-target-ca.crt`                                              | PEM        | legacy pg-delta opt-out, when the target requires SSL                                                                                                             |
-| `<workdir>/supabase/.temp/linked-project.json`                                                        | JSON       | PersistentPostRun linked-project cache (`Effect.ensuring`); resolves against the bootstrap workdir (the prompted/`--workdir`/env target), not `cliConfig.workdir` |
+| `<workdir>/supabase/.temp/linked-project.json`                                                        | JSON       | PersistentPostRun linked-project cache (`Effect.ensuring`); resolves against the bootstrap workdir (the prompted/`--workdir`/env target), not `cliSettings.workdir` |
 | `~/.supabase/telemetry.json`                                                                          | JSON       | PersistentPostRun telemetry flush (`Effect.ensuring`)                                                                                                             |
 
 **Process side effect:** `process.chdir(<workdir>)` prints
@@ -139,15 +139,15 @@ suppressed; a single structured result is emitted for the whole command:
   — directly with `{ includeAll: false, includeRoles: true, includeSeed: true, dryRun: false }`.
   Bootstrap never re-resolves the project ref for push: the earlier `create` step already
   resolved it, and it's reused as-is (passed as a plain value, never re-derived via
-  `LegacyProjectRefResolver`, which keys off `LegacyCliConfig.workdir`, stale after this handler's
+  `LegacyProjectRefResolver`, which keys off `LegacyCliSettings.workdir`, stale after this handler's
   own `process.chdir` — see the workdir comments in `bootstrap.handler.ts`). The **connection**
   itself, however, is resolved via its own `legacyResolveLinkedConn` call — dial-direct/
   pooler-fallback logic — not reused from the naive `deriveDbConfig(...)` connection already
   written to `.env` above: an IPv6-only direct host would otherwise burn all 9 push retries before
   falling back (see the connection-resolution bullet below). `LegacyDbConfigResolver` is still
-  skipped (it keys off the same stale `LegacyCliConfig.workdir`). This is proven under test in
+  skipped (it keys off the same stale `LegacyCliSettings.workdir`). This is proven under test in
   `bootstrap.workdir-cache.integration.test.ts`, which seeds a migration file at the _prompted_
-  bootstrap workdir (divergent from `cliConfig.workdir`'s cwd-walk result) and asserts the push
+  bootstrap workdir (divergent from `cliSettings.workdir`'s cwd-walk result) and asserts the push
   step still finds and applies it.
 - **Connection resolution**: the native push step's connection comes from `legacyResolveLinkedConn`
   (shared with `db push`/`db pull`'s own `--linked` resolution), which dials the direct

@@ -11,7 +11,7 @@ import {
   mockRuntimeInfo,
   processEnvLayer,
 } from "../../../tests/helpers/mocks.ts";
-import { cliConfigLayer } from "../config/cli-config.layer.ts";
+import { cliSettingsLayer } from "../config/cli-settings.layer.ts";
 import { Credentials } from "./credentials.service.ts";
 import { credentialsLayer } from "./credentials.layer.ts";
 
@@ -72,7 +72,7 @@ function makeLayer(home: string, env: Record<string, string> = {}) {
     runtimeInfoLayer,
     projectContextLayer,
     processEnvLayer({ HOME: home, ...env }),
-    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
+    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
   );
   return credentialsLayer.pipe(Layer.provide(baseLayer));
 }
@@ -229,7 +229,7 @@ describe("Credentials", () => {
               runtimeInfoLayer,
               projectContextLayer,
               processEnvLayer({ HOME: tempHome }),
-              cliConfigLayer.pipe(
+              cliSettingsLayer.pipe(
                 Layer.provide(runtimeInfoLayer),
                 Layer.provide(projectContextLayer),
               ),

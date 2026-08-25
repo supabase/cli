@@ -14,7 +14,7 @@ import {
   LEGACY_VALID_REF,
   buildLegacyTestRuntime,
   legacyJsonResponse,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -119,12 +119,12 @@ function setup(opts: SetupOpts = {}) {
   });
   const analytics = mockAnalytics();
   const api = buildApiLayer(opts);
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const layer = Layer.mergeAll(
     buildLegacyTestRuntime({
       out,
       api,
-      cliConfig,
+      cliSettings,
       analytics,
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
       stdin: mockStdin(opts.stdinIsTty ?? false, opts.stdinInput),
@@ -139,14 +139,14 @@ function setupTracked(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const analytics = mockAnalytics();
   const api = buildApiLayer(opts);
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
   const layer = Layer.mergeAll(
     buildLegacyTestRuntime({
       out,
       api,
-      cliConfig,
+      cliSettings,
       analytics,
       telemetry: telemetry.layer,
       linkedProjectCache: cache.layer,

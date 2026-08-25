@@ -12,7 +12,7 @@ import {
   PERSISTENT_VALUE_FLAG_SHORTHANDS,
   pflagArgvScan,
 } from "../../../../shared/cli/cobra-flag-groups.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
 import {
   LegacyProjectRefResolver,
@@ -221,7 +221,7 @@ function findLegacyPositionalLanguage(rawArgs: ReadonlyArray<string>): Option.Op
 
 export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: LegacyGenTypesFlags) {
   const output = yield* Output;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const telemetryState = yield* LegacyTelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -258,9 +258,9 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   const lang = flags.lang;
   const swiftAccessControl = flags.swiftAccessControl;
 
-  const loadConfig = () => loadProjectConfig(cliConfig.workdir, { goViperCompat: true });
+  const loadConfig = () => loadProjectConfig(cliSettings.workdir, { goViperCompat: true });
   const loadConfigForRef = (projectRef: string) =>
-    loadProjectConfig(cliConfig.workdir, { projectRef, goViperCompat: true });
+    loadProjectConfig(cliSettings.workdir, { projectRef, goViperCompat: true });
 
   const schemasFromConfig = (apiSchemas: ReadonlyArray<string> | undefined) =>
     defaultSchemas(apiSchemas);
@@ -309,7 +309,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
           postgrestV9Compat: flags.postgrestV9Compat,
           poolerFallback: {
             directHost: conn.host,
-            eligible: !resolved.isLocal && legacyIsDirectDbHost(conn.host, cliConfig.projectHost),
+            eligible: !resolved.isLocal && legacyIsDirectDbHost(conn.host, cliSettings.projectHost),
             resolve: dbConfig.resolvePoolerFallback(resolveFlags),
           },
         });
@@ -346,7 +346,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
           const parsed = legacyPoolerConfigFromConnectionString(
             branch.ref,
             primary.connection_string,
-            cliConfig.poolerHost,
+            cliSettings.poolerHost,
           );
           return parsed._tag === "ok"
             ? Option.some({ ...parsed.conn, password: branchPassword })
@@ -372,7 +372,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         postgrestV9Compat: flags.postgrestV9Compat,
         poolerFallback: {
           directHost: branch.db_host,
-          eligible: legacyIsDirectDbHost(branch.db_host, cliConfig.projectHost),
+          eligible: legacyIsDirectDbHost(branch.db_host, cliSettings.projectHost),
           resolve: poolerFallback,
         },
       });
@@ -582,14 +582,14 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     }
 
     if (flags.local) {
-      const config = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+      const config = yield* legacyReadDbToml(fs, path, cliSettings.workdir);
       yield* legacyApplyProjectEnv(
         config.projectEnv,
         Object.keys(config.projectEnv).filter((key) => key !== "SUPABASE_DB_PASSWORD"),
       );
-      const projectId = Option.getOrElse(config.projectId, () => path.basename(cliConfig.workdir));
+      const projectId = Option.getOrElse(config.projectId, () => path.basename(cliSettings.workdir));
 
-      const paths = legacyTempPaths(path, cliConfig.workdir);
+      const paths = legacyTempPaths(path, cliSettings.workdir);
       // Go resolves Config.Api.Image from the rest-version file only when
       // Db.MajorVersion > 14, then forces v9 compat when that image tag contains "v9"
       // (pkg/config/config.go:657-666, internal/gen/types/types.go:69). Gate and trim

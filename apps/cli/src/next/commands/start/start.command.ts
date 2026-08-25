@@ -11,7 +11,7 @@ import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { projectLocalServiceVersionsLayer } from "../../config/project-local-service-versions.layer.ts";
 import { ensureProjectStateIgnored } from "../../config/project-gitignore.ts";
-import { CliConfig } from "../../config/cli-config.service.ts";
+import { CliSettings } from "../../config/cli-settings.service.ts";
 import { ProjectHome } from "../../config/project-home.service.ts";
 import { projectLinkStateLayer } from "../../config/project-link-state.layer.ts";
 import { provideProjectCommandRuntime } from "../../config/project-runtime.layer.ts";
@@ -171,11 +171,11 @@ export const startCommand = Command.make("start", flags).pipe(
 
     const runtimeStateEffect = Effect.gen(function* () {
       const output = yield* Output;
-      const cliConfig = yield* CliConfig;
+      const cliSettings = yield* CliSettings;
       const projectHome = yield* ProjectHome;
       const runtimeInfo = yield* RuntimeInfo;
       const existingSummary = yield* resolveStackSummary({
-        cacheRoot: cliConfig.supabaseHome,
+        cacheRoot: cliSettings.supabaseHome,
         projectDir: projectHome.projectRoot,
         cwd: runtimeInfo.cwd,
         name: flags.stack,
@@ -214,7 +214,7 @@ export const startCommand = Command.make("start", flags).pipe(
         existingSummary === undefined
           ? undefined
           : yield* resolveStackSummary({
-              cacheRoot: cliConfig.supabaseHome,
+              cacheRoot: cliSettings.supabaseHome,
               projectDir: projectHome.projectRoot,
               cwd: runtimeInfo.cwd,
               name: flags.stack,
@@ -230,7 +230,7 @@ export const startCommand = Command.make("start", flags).pipe(
       };
 
       const stackLayer = yield* daemonLayer({
-        cacheRoot: cliConfig.supabaseHome,
+        cacheRoot: cliSettings.supabaseHome,
         cwd: runtimeInfo.cwd,
         projectDir: projectHome.projectRoot,
         name: flags.stack,
@@ -239,7 +239,7 @@ export const startCommand = Command.make("start", flags).pipe(
         ...stackConfig,
       });
       const summary = yield* resolveStackSummary({
-        cacheRoot: cliConfig.supabaseHome,
+        cacheRoot: cliSettings.supabaseHome,
         projectDir: projectHome.projectRoot,
         cwd: runtimeInfo.cwd,
         name: flags.stack,
@@ -260,7 +260,7 @@ export const startCommand = Command.make("start", flags).pipe(
             : { drift: configuredSummary.drift }),
           serviceVersionContext,
           lifecycleInput: {
-            cacheRoot: cliConfig.supabaseHome,
+            cacheRoot: cliSettings.supabaseHome,
             workspacePath: projectHome.projectRoot,
             stackName: flags.stack,
             cwd: runtimeInfo.cwd,

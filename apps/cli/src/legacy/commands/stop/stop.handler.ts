@@ -3,7 +3,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { emitSuccessTrailer } from "../../../shared/cli/success-trailer.ts";
 import { Output } from "../../../shared/output/output.service.ts";
-import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyAqua } from "../../shared/legacy-colors.ts";
 import { LegacyDebugFlag } from "../../../shared/legacy/global-flags.ts";
@@ -68,7 +68,7 @@ import {
  * here with a non-empty check rather than `Option.isSome` alone.
  */
 const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProjectIdFilter")(
-  function* (flags: LegacyStopFlags, cliConfig: LegacyCliConfig["Service"]) {
+  function* (flags: LegacyStopFlags, cliSettings: LegacyCliSettings["Service"]) {
     // The `!all` check reads the resolved value (not
     // presence), so this branch stays value-based — `Option.getOrElse` mirrors
     // the boolean flag's default of `false` when `--all` was never passed.
@@ -82,7 +82,7 @@ const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProject
     // rationale (including why workdir validation stays out of it
     // and is instead handled by `legacyStop`'s own unconditional call above).
     const context = yield* legacyLoadLocalProjectContext(
-      cliConfig.workdir,
+      cliSettings.workdir,
       (message) => new LegacyStopConfigLoadError({ message }),
     );
 
@@ -99,7 +99,7 @@ const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProject
         legacyResolveLocalConfigValues(
           context.config,
           context.hostname,
-          cliConfig.workdir,
+          cliSettings.workdir,
           context.projectEnvValues,
           context.loaded?.document,
         ),
@@ -115,7 +115,7 @@ const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProject
 
 export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopFlags) {
   const output = yield* Output;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const telemetryState = yield* LegacyTelemetryState;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fs = yield* FileSystem.FileSystem;
@@ -129,7 +129,7 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
     // own flag validation or handler body. A missing or non-directory path fails
     // immediately, so this must win over every later error, including the
     // `--project-id`/`--all` mutual-exclusivity check below.
-    yield* legacyValidateWorkdirIsDirectory(cliConfig.workdir, fs).pipe(
+    yield* legacyValidateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
       Effect.mapError((error) => new LegacyStopWorkdirError({ message: error.message })),
     );
 
@@ -147,7 +147,7 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
       );
     }
 
-    const searchProjectIdFilter = yield* resolveSearchProjectIdFilter(flags, cliConfig);
+    const searchProjectIdFilter = yield* resolveSearchProjectIdFilter(flags, cliSettings);
     // The hidden `--backup` flag's return value is discarded — never bound to a
     // variable, so the handler always uses `!noBackup` regardless of
     // `--backup`'s value. `--backup=false` is a no-op;
@@ -180,10 +180,10 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
     // parent directory (see that function's doc comment for why that'd be unsafe) — and without a
     // second, separately `docker ps`'d listing call, which would cost an extra real Docker Engine
     // API request (see `legacyDockerRemoveAll`'s doc comment). Each container's own
-    // `LEGACY_CLI_WORKDIR_LABEL` value is used to locate its directory — NOT `cliConfig.workdir`
+    // `LEGACY_CLI_WORKDIR_LABEL` value is used to locate its directory — NOT `cliSettings.workdir`
     // unconditionally — since `stop --all`/`stop --project-id <other>` may be tearing down a
     // DIFFERENT project's containers than the one this invocation's own cwd/`--workdir` points at;
-    // `cliConfig.workdir` is passed through only as the fallback for a container with no such label
+    // `cliSettings.workdir` is passed through only as the fallback for a container with no such label
     // (created before this label existed).
     //
     // Run via `Effect.ensuring` rather than a plain statement after this pipe: `legacyDockerRemoveAll`'s
@@ -220,7 +220,7 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
           Effect.fail(new LegacyStopNetworkPruneError({ message: error.message })),
       }),
       Effect.ensuring(
-        Effect.suspend(() => legacyCleanupStartSecrets(removedContainers, cliConfig.workdir)),
+        Effect.suspend(() => legacyCleanupStartSecrets(removedContainers, cliSettings.workdir)),
       ),
     );
 

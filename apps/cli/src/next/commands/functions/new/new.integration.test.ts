@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Cause, Effect, Exit, Layer, Option, Stdio } from "effect";
 import { Command } from "effect/unstable/cli";
-import { CliConfig } from "../../../config/cli-config.service.ts";
+import { CliSettings } from "../../../config/cli-settings.service.ts";
 import { ProjectHome } from "../../../config/project-home.service.ts";
 import {
   mockAnalytics,
@@ -40,8 +40,8 @@ function commandTreeSupportLayer(cwd: string) {
   return Layer.mergeAll(
     httpTransportClientLayer,
     Layer.succeed(
-      CliConfig,
-      CliConfig.of({
+      CliSettings,
+      CliSettings.of({
         apiUrl: "https://api.supabase.com",
         dashboardUrl: "https://supabase.com/dashboard",
         projectHost: "supabase.co",

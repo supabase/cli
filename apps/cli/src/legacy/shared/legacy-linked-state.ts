@@ -3,7 +3,7 @@ import { Duration, Effect, FileSystem, Option, Path } from "effect";
 
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
-import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { PROJECT_REF_PATTERN } from "../config/legacy-project-ref.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import {
@@ -64,14 +64,14 @@ export type LegacyLinkedState =
  * workdir's cache needs different trust rules than the workdir's own file.
  */
 const legacyResolveSoftLinkedRef = Effect.fnUntraced(function* () {
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  if (Option.isSome(cliConfig.projectId) && PROJECT_REF_PATTERN.test(cliConfig.projectId.value)) {
-    return { ref: cliConfig.projectId, source: "env" as const };
+  if (Option.isSome(cliSettings.projectId) && PROJECT_REF_PATTERN.test(cliSettings.projectId.value)) {
+    return { ref: cliSettings.projectId, source: "env" as const };
   }
-  const fileRef = yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir).pipe(
+  const fileRef = yield* legacyReadProjectRefFile(fs, path, cliSettings.workdir).pipe(
     Effect.orElseSucceed(() => Option.none<string>()),
   );
   return {
@@ -207,7 +207,7 @@ const legacyFindLinkedBranchName = Effect.fnUntraced(function* (
  *     a branch — there is no positive-confirmation case left to attempt.
  */
 export const legacyResolveLinkedState = Effect.fnUntraced(function* () {
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
@@ -217,7 +217,7 @@ export const legacyResolveLinkedState = Effect.fnUntraced(function* () {
     return { linked: false } as const;
   }
 
-  const paths = legacyTempPaths(path, cliConfig.workdir);
+  const paths = legacyTempPaths(path, cliSettings.workdir);
   const cached = yield* fs.readFileString(paths.linkedProjectCache).pipe(
     Effect.map(legacyParseCachedLinkedProject),
     Effect.orElseSucceed(() => Option.none<LegacyCachedLinkedProject>()),

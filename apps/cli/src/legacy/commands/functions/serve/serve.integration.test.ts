@@ -22,7 +22,7 @@ import { beforeEach, vi } from "vitest";
 
 import {
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyPlatformApiService,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
@@ -378,7 +378,7 @@ function setupServe(options: SetupOptions = {}) {
   const workdir = options.workdir ?? tempRoot.current;
   const out = mockOutput({ format: "text", interactive: false });
   const telemetry = mockLegacyTelemetryStateTracked();
-  const cliConfig = mockLegacyCliConfig({
+  const cliSettings = mockLegacyCliSettings({
     workdir,
     projectId: options.projectId ?? Option.none(),
   });
@@ -391,7 +391,7 @@ function setupServe(options: SetupOptions = {}) {
     buildLegacyTestRuntime({
       out,
       api,
-      cliConfig,
+      cliSettings,
       telemetry: telemetry.layer,
       runtimeInfo: mockRuntimeInfo({
         cwd: workdir,

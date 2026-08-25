@@ -17,7 +17,7 @@ import {
   buildLegacyTestRuntime,
   legacyStatusCodeFailure,
   legacyTransportFailure,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApiService,
   mockLegacyTelemetryStateTracked,
@@ -233,14 +233,14 @@ function setup(opts: SetupOpts = {}) {
       listAllBranches: stub(opts.branches, []),
     },
   });
-  const cliConfig = mockLegacyCliConfig({
+  const cliSettings = mockLegacyCliSettings({
     workdir: tempRoot.current,
     projectId: opts.projectId ?? Option.none(),
   });
   const layer = buildLegacyTestRuntime({
     out,
     api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer(opts) },
-    cliConfig,
+    cliSettings,
     analytics,
     telemetry: telemetry.layer,
     linkedProjectCache: linkedCache.layer,
@@ -629,14 +629,14 @@ describe("legacy link integration", () => {
           getPoolerConfig: () => Effect.succeed(POOLER_PRIMARY),
         },
       });
-      const cliConfig = mockLegacyCliConfig({
+      const cliSettings = mockLegacyCliSettings({
         workdir: tempRoot.current,
         projectId: Option.none(),
       });
       const layer = buildLegacyTestRuntime({
         out,
         api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({ tenant: "fail" }) },
-        cliConfig,
+        cliSettings,
       });
       writeFileSync(join(tempRoot.current, "supabase"), "not-a-dir");
       return Effect.gen(function* () {
@@ -1542,7 +1542,7 @@ describe("legacy link integration", () => {
             getPoolerConfig: () => Effect.succeed(POOLER_PRIMARY),
           },
         });
-        const cliConfig = mockLegacyCliConfig({
+        const cliSettings = mockLegacyCliSettings({
           workdir: tempRoot.current,
           projectId: Option.none(),
         });
@@ -1550,7 +1550,7 @@ describe("legacy link integration", () => {
           buildLegacyTestRuntime({
             out,
             api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({}) },
-            cliConfig,
+            cliSettings,
             analytics,
           }),
           commandRuntimeLayer(["link"]),
@@ -1572,7 +1572,7 @@ describe("legacy link integration", () => {
         const out = mockOutput({ format: "text" });
         const analytics = mockContextualAnalytics();
         const apiMock = mockLegacyPlatformApiService({ v1: {} });
-        const cliConfig = mockLegacyCliConfig({
+        const cliSettings = mockLegacyCliSettings({
           workdir: tempRoot.current,
           projectId: Option.none(),
         });
@@ -1580,7 +1580,7 @@ describe("legacy link integration", () => {
           buildLegacyTestRuntime({
             out,
             api: { layer: apiMock.layer, httpClientLayer: tenantHttpLayer({}) },
-            cliConfig,
+            cliSettings,
             analytics,
           }),
           commandRuntimeLayer(["link"]),

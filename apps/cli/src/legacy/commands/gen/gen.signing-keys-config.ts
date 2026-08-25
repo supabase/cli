@@ -504,9 +504,9 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
   const loaded = yield* loadProjectConfig(cwd, {
     projectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
     goViperCompat: true,
-    // `cwd` here is the ALREADY-resolved `LegacyCliConfig.workdir` (the
+    // `cwd` here is the ALREADY-resolved `LegacyCliSettings.workdir` (the
     // ancestor climb already ran once to produce it — see
-    // `legacy-cli-config.layer.ts`'s `resolveWorkdir`). Without `search: false`, this
+    // `legacy-cli-settings.layer.ts`'s `resolveWorkdir`). Without `search: false`, this
     // call would climb AGAIN from `cwd`, which diverges from the established
     // behavior whenever an explicit `--workdir` points at a subdirectory
     // below another project's root: the established behavior changes

@@ -16,7 +16,7 @@ import {
 } from "../../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
@@ -63,7 +63,7 @@ interface SetupOptions {
   readonly pipedAnswer?: string;
   readonly promptSelectResponses?: ReadonlyArray<string>;
   readonly trackTelemetry?: boolean;
-  /** Overrides `cliConfig.workdir` — defaults to `tempRoot.current`. */
+  /** Overrides `cliSettings.workdir` — defaults to `tempRoot.current`. */
   readonly workdir?: string;
 }
 
@@ -74,7 +74,7 @@ function setup(options: SetupOptions = {}) {
     promptSelectResponses: options.promptSelectResponses,
   });
   const api = mockLegacyPlatformApi();
-  const cliConfig = mockLegacyCliConfig({
+  const cliSettings = mockLegacyCliSettings({
     workdir: options.workdir ?? tempRoot.current,
     projectId: Option.none(),
   });
@@ -84,7 +84,7 @@ function setup(options: SetupOptions = {}) {
   });
   const telemetry = options.trackTelemetry ? mockLegacyTelemetryStateTracked() : undefined;
   const layer = Layer.mergeAll(
-    buildLegacyTestRuntime({ out, api, cliConfig, tty, telemetry: telemetry?.layer }),
+    buildLegacyTestRuntime({ out, api, cliSettings, tty, telemetry: telemetry?.layer }),
     Layer.succeed(CliArgs, { args: [] }),
     mockStdin(options.stdinIsTty ?? false, options.pipedAnswer),
     Layer.succeed(LegacyDebugLogger, { debug: () => Effect.void, http: () => Effect.void }),
@@ -289,7 +289,7 @@ describe("legacy gen bearer-jwt integration", () => {
     "ignores an ancestor project's signing_keys_path when the resolved workdir has no config.toml of its own (CLI-1961)",
     () => {
       // Config resolution must resolve ONLY `<workdir>/supabase/config.toml`
-      // — no ancestor climb (once `cliConfig.workdir` is already resolved,
+      // — no ancestor climb (once `cliSettings.workdir` is already resolved,
       // matching an explicit `--workdir` pointing at a subdirectory below
       // another project's root — the workdir change does not climb when
       // `--workdir`/`SUPABASE_WORKDIR` is explicit either). Without

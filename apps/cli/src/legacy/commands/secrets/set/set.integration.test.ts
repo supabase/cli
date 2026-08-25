@@ -13,7 +13,7 @@ import {
 import {
   LEGACY_VALID_REF,
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyPlatformApi,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -74,13 +74,13 @@ function setup(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 201, body: null },
     network: opts.network,
   });
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const debugLogger = mockLegacyDebugLoggerTracked();
   const layer = Layer.mergeAll(
     buildLegacyTestRuntime({
       out,
       api,
-      cliConfig,
+      cliSettings,
       goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
     }),
     mockRuntimeInfo({ cwd: tempRoot.current }),
@@ -703,7 +703,7 @@ secrets = ["actual-secret"]
     () => {
       // `analytics.port` is an unrelated schema-decode error that triggers the
       // recovery path. `remotes.staging.project_id` matches the ref the
-      // resolver defaults to (`mockLegacyCliConfig`'s `LEGACY_VALID_REF`), so
+      // resolver defaults to (`mockLegacyCliSettings`'s `LEGACY_VALID_REF`), so
       // Go seeds `Config.ProjectId` before `Load()`
       // (`internal/utils/flags/config_path.go:11-12`) and merges the remote
       // override in `loadFromFile` (`pkg/config/config.go:604-609`) before the
@@ -750,7 +750,7 @@ FROM_CONFIG = "remote-value"
       // No decode error here — the plain success path. `loadFromFile`
       // prints `Loading config override: [remotes.<name>]` to stderr
       // unconditionally whenever a `[remotes.*]` block's `project_id` matches
-      // `Config.ProjectId`, before `mapstructure` ever runs. `mockLegacyCliConfig`
+      // `Config.ProjectId`, before `mapstructure` ever runs. `mockLegacyCliSettings`
       // defaults the resolved ref to `LEGACY_VALID_REF`.
       writeConfig(
         `[edge_runtime.secrets]

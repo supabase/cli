@@ -11,7 +11,7 @@
  * profile NAME, which for a YAML profile is its `name:` field, not a table key.
  */
 
-import type { LegacyProfileName } from "../config/legacy-cli-config.service.ts";
+import type { LegacyProfileName } from "../config/legacy-cli-settings.service.ts";
 
 interface LegacyProfileEndpoints {
   /** Management API base URL (`Profile.APIURL`). */

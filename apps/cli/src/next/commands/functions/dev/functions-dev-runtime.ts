@@ -2,7 +2,7 @@ import { connectLayer, daemonLayer, Stack, type EdgeRuntimeConfig } from "@supab
 import { loadProjectConfig } from "@supabase/config/effect";
 import { Duration, Effect, FileSystem, Layer, Option, Stream } from "effect";
 import { join } from "node:path";
-import { CliConfig } from "../../../config/cli-config.service.ts";
+import { CliSettings } from "../../../config/cli-settings.service.ts";
 import { ProjectHome } from "../../../config/project-home.service.ts";
 import { projectLocalServiceVersionsLayer } from "../../../config/project-local-service-versions.layer.ts";
 import { projectLinkStateLayer } from "../../../config/project-link-state.layer.ts";
@@ -44,7 +44,7 @@ interface FunctionsDevWatchChange {
 type StackService = typeof Stack.Service;
 
 const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptions) {
-  const cliConfig = yield* CliConfig;
+  const cliSettings = yield* CliSettings;
   const projectHome = yield* ProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
   const output = yield* Output;
@@ -62,7 +62,7 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
     servicePolicies: { "edge-runtime": "eager" as const },
   };
   const stackLayer = yield* daemonLayer({
-    cacheRoot: cliConfig.supabaseHome,
+    cacheRoot: cliSettings.supabaseHome,
     cwd: runtimeInfo.cwd,
     projectDir: projectHome.projectRoot,
     name: opts.stack,
@@ -83,13 +83,13 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
 export const connectOrStartFunctionsDevStack = Effect.fnUntraced(function* (
   opts: FunctionsDevStackOptions,
 ) {
-  const cliConfig = yield* CliConfig;
+  const cliSettings = yield* CliSettings;
   const projectHome = yield* ProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
 
   const existingLayer = yield* connectLayer({
     cwd: runtimeInfo.cwd,
-    cacheRoot: cliConfig.supabaseHome,
+    cacheRoot: cliSettings.supabaseHome,
     projectDir: projectHome.projectRoot,
     name: opts.stack,
   }).pipe(

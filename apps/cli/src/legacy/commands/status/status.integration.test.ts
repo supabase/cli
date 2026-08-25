@@ -14,7 +14,7 @@ import { mockOutput, mockProcessControl } from "../../../../tests/helpers/mocks.
 import {
   legacyStatusCodeFailure,
   legacyTransportFailure,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyPlatformApiService,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
@@ -336,7 +336,7 @@ function setup(opts: SetupOpts = {}) {
     interactive: (opts.format ?? "text") === "text",
   });
   const telemetry = mockLegacyTelemetryStateTracked();
-  const cliConfig = mockLegacyCliConfig({ workdir, projectId: opts.projectId ?? Option.none() });
+  const cliSettings = mockLegacyCliSettings({ workdir, projectId: opts.projectId ?? Option.none() });
   const child = mockRoutedContainerCliSpawner(opts.route ?? defaultRoute(), {
     dockerMissing: opts.dockerMissing,
     failSpawnFor: opts.failSpawnFor,
@@ -358,7 +358,7 @@ function setup(opts: SetupOpts = {}) {
   const layer = Layer.mergeAll(
     BunServices.layer,
     out.layer,
-    cliConfig,
+    cliSettings,
     telemetry.layer,
     child.layer,
     Layer.succeed(LegacyOutputFlag, opts.goOutput ?? Option.none()),
@@ -429,7 +429,7 @@ function setupFailureEnvelope(opts: FailureEnvelopeOpts) {
   writeConfig(workdir);
   const stdio = mockCapturingStdio();
   const telemetry = mockLegacyTelemetryStateTracked();
-  const cliConfig = mockLegacyCliConfig({ workdir, projectId: Option.none() });
+  const cliSettings = mockLegacyCliSettings({ workdir, projectId: Option.none() });
   const child = mockRoutedContainerCliSpawner(defaultRoute(), { failSpawnFor: () => true });
   const processControl = mockProcessControl();
   const apiMock =
@@ -448,7 +448,7 @@ function setupFailureEnvelope(opts: FailureEnvelopeOpts) {
   const layer = Layer.mergeAll(
     BunServices.layer,
     outputLayer.pipe(Layer.provide(stdio.layer)),
-    cliConfig,
+    cliSettings,
     telemetry.layer,
     child.layer,
     processControl.layer,
@@ -864,7 +864,7 @@ content_path = "./supabase/templates/password_changed_notification.html"
       // ancestor search — mirrored
       // here by `search: false`. A workdir with no supabase/config.toml of its
       // own must fall back to defaults (workdir-basename project id), not an
-      // ancestor project's config.toml, even though `cliConfig.workdir` sits
+      // ancestor project's config.toml, even though `cliSettings.workdir` sits
       // right inside one.
       const nestedWorkdir = join(tempRoot.current, "nested");
       mkdirSync(nestedWorkdir, { recursive: true });

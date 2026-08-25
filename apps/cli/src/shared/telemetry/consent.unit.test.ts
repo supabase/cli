@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Effect, Layer, Option } from "effect";
-import { cliConfigLayer } from "../../next/config/cli-config.layer.ts";
+import { cliSettingsLayer } from "../../next/config/cli-settings.layer.ts";
 import {
   mockProjectContext,
   mockRuntimeInfo,
@@ -29,7 +29,7 @@ function withEnv(env: Record<string, string>) {
     runtimeInfoLayer,
     projectContextLayer,
     processEnvLayer(env),
-    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
+    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
   );
 }
 
@@ -40,7 +40,7 @@ function emptyEnv() {
     runtimeInfoLayer,
     projectContextLayer,
     processEnvLayer(),
-    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
+    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
   );
 }
 

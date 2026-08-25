@@ -20,7 +20,7 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ServiceNotFoundError } from "@supabase/process-compose";
-import { CliConfig } from "../../src/next/config/cli-config.service.ts";
+import { CliSettings } from "../../src/next/config/cli-settings.service.ts";
 import { ProjectHome } from "../../src/next/config/project-home.service.ts";
 import { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
 
@@ -201,8 +201,8 @@ export async function makeManagedStackFixture(
     httpTransportClientLayer,
     Layer.succeed(ProjectHome, project),
     Layer.succeed(
-      CliConfig,
-      CliConfig.of({
+      CliSettings,
+      CliSettings.of({
         apiUrl: "https://api.supabase.com",
         dashboardUrl: "https://supabase.com/dashboard",
         projectHost: "supabase.co",

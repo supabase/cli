@@ -8,7 +8,7 @@ import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import {
   buildLegacyTestRuntime,
   legacyJsonResponse,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -132,7 +132,7 @@ describe("legacy functions deploy", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         linkedProjectCache: linkedProjectCache.layer,
         telemetry: telemetry.layer,
@@ -204,7 +204,7 @@ describe("legacy functions deploy", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
       Layer.succeed(LegacyYesFlag, false),
@@ -266,7 +266,7 @@ describe("legacy functions deploy", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({
+        cliSettings: mockLegacyCliSettings({
           workdir: tempRoot.current,
           projectId: Option.none(),
         }),
@@ -335,7 +335,7 @@ describe("legacy functions deploy", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: callerDir }),
       }),
       Layer.succeed(LegacyYesFlag, false),
@@ -401,7 +401,7 @@ describe("legacy functions deploy", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: callerDir }),
       }),
       Layer.succeed(LegacyYesFlag, false),
@@ -487,7 +487,7 @@ describe("legacy functions deploy", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir }),
+        cliSettings: mockLegacyCliSettings({ workdir }),
         runtimeInfo: mockRuntimeInfo({ cwd: workdir }),
       }),
       Layer.succeed(LegacyYesFlag, false),
@@ -569,7 +569,7 @@ describe("legacy functions deploy", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
       Layer.succeed(LegacyYesFlag, false),
@@ -674,7 +674,7 @@ describe("legacy functions deploy", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
       Layer.succeed(LegacyYesFlag, true),
@@ -772,7 +772,7 @@ describe("legacy functions deploy", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
         Layer.succeed(LegacyYesFlag, false),
@@ -888,7 +888,7 @@ describe("legacy functions deploy", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
       Layer.succeed(LegacyYesFlag, false),
@@ -923,7 +923,7 @@ describe("legacy functions deploy", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
         Layer.succeed(LegacyYesFlag, false),
@@ -1002,7 +1002,7 @@ describe("legacy functions deploy", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
         Layer.succeed(LegacyYesFlag, false),
@@ -1060,7 +1060,7 @@ describe("legacy functions deploy", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
         Layer.succeed(LegacyYesFlag, false),
@@ -1126,7 +1126,7 @@ describe("legacy functions deploy", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
         Layer.succeed(LegacyYesFlag, false),
@@ -1184,7 +1184,7 @@ describe("legacy functions deploy", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
         Layer.succeed(LegacyYesFlag, false),
@@ -1265,7 +1265,7 @@ describe("legacy functions deploy", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
           Layer.succeed(LegacyYesFlag, false),
@@ -1304,7 +1304,7 @@ describe("legacy functions deploy", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
           Layer.succeed(LegacyYesFlag, false),
@@ -1347,7 +1347,7 @@ describe("legacy functions deploy", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
           Layer.succeed(LegacyYesFlag, false),
@@ -1383,7 +1383,7 @@ describe("legacy functions deploy", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
         Layer.succeed(LegacyYesFlag, false),
@@ -1446,7 +1446,7 @@ describe("legacy functions deploy", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
           Layer.succeed(LegacyYesFlag, false),
@@ -1499,7 +1499,7 @@ describe("legacy functions deploy", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
           Layer.succeed(LegacyYesFlag, false),
@@ -1552,7 +1552,7 @@ describe("legacy functions deploy", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
           Layer.succeed(LegacyYesFlag, false),
@@ -1613,7 +1613,7 @@ describe("legacy functions deploy", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
           Layer.succeed(LegacyYesFlag, false),
@@ -1652,7 +1652,7 @@ describe("legacy functions deploy", () => {
           ]);
           // `-w <toDockerPath(projectRoot)>` — the bundler sets WorkingDir to
           // the post-ChangeWorkDir cwd, which `deploy.ts`/`deploy.handler.ts`
-          // resolve to `cliConfig.workdir`, i.e. `tempRoot.current` in this test.
+          // resolve to `cliSettings.workdir`, i.e. `tempRoot.current` in this test.
           const workingDirIndex = runCommand?.args.indexOf("-w") ?? -1;
           expect(runCommand?.args.slice(workingDirIndex, workingDirIndex + 2)).toEqual([
             "-w",
@@ -1683,7 +1683,7 @@ describe("legacy functions deploy", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: nestedWorkdir }),
+            cliSettings: mockLegacyCliSettings({ workdir: nestedWorkdir }),
             runtimeInfo: mockRuntimeInfo({ cwd: nestedWorkdir }),
           }),
           Layer.succeed(LegacyYesFlag, false),
@@ -1752,7 +1752,7 @@ describe("legacy functions deploy", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
         Layer.succeed(LegacyYesFlag, false),

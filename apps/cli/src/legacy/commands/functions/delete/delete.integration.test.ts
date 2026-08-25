@@ -6,7 +6,7 @@ import { CurrentAnalyticsContext } from "../../../../shared/telemetry/analytics-
 import { Analytics } from "../../../../shared/telemetry/analytics.service.ts";
 import {
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -55,7 +55,7 @@ describe("legacy functions delete", () => {
     const layer = buildLegacyTestRuntime({
       out,
       api,
-      cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+      cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       linkedProjectCache: linkedProjectCache.layer,
       telemetry: telemetry.layer,
     });
@@ -87,7 +87,7 @@ describe("legacy functions delete", () => {
     const layer = buildLegacyTestRuntime({
       out,
       api,
-      cliConfig: mockLegacyCliConfig({
+      cliSettings: mockLegacyCliSettings({
         workdir: tempRoot.current,
         projectId: Option.none(),
       }),
@@ -113,7 +113,7 @@ describe("legacy functions delete", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           analytics,
         }),
         commandRuntimeLayer(["functions", "delete"]),

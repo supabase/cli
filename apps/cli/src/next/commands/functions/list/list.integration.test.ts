@@ -11,7 +11,7 @@ import { Command } from "effect/unstable/cli";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
-import { CliConfig } from "../../../config/cli-config.service.ts";
+import { CliSettings } from "../../../config/cli-settings.service.ts";
 import { ProjectHome } from "../../../config/project-home.service.ts";
 import {
   InvalidProjectLinkStateError,
@@ -72,10 +72,10 @@ function makeFunction(
   };
 }
 
-function cliConfigLayer() {
+function cliSettingsLayer() {
   return Layer.succeed(
-    CliConfig,
-    CliConfig.of({
+    CliSettings,
+    CliSettings.of({
       apiUrl: "https://api.supabase.com",
       dashboardUrl: "https://supabase.com/dashboard",
       projectHost: "supabase.co",
@@ -96,7 +96,7 @@ function commandTreeSupportLayer(cwd: string) {
   const projectHomeDir = join(cwd, ".supabase");
   return Layer.mergeAll(
     httpTransportClientLayer,
-    cliConfigLayer(),
+    cliSettingsLayer(),
     Layer.succeed(
       ProjectHome,
       ProjectHome.of({
@@ -202,7 +202,7 @@ function setup(opts: {
     BunServices.layer,
     out.layer,
     mockRuntimeInfo({ cwd: opts.cwd }),
-    cliConfigLayer(),
+    cliSettingsLayer(),
     mockProjectLinkState(opts.linked ? LINK_STATE : undefined),
     credentials.layer,
     commandRuntimeLayer(["functions", "list"]),
@@ -371,7 +371,7 @@ describe("functions list", () => {
         BunServices.layer,
         out.layer,
         mockRuntimeInfo({ cwd: tempDir }),
-        cliConfigLayer(),
+        cliSettingsLayer(),
         mockInvalidProjectLinkState(),
         mockCredentials({ existingToken: "test-token" }).layer,
         commandRuntimeLayer(["functions", "list"]),

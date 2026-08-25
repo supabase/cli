@@ -1,7 +1,7 @@
 import { Effect, Layer, Option } from "effect";
 import type { ProjectLinkStateValue } from "../../next/config/project-link-state.service.ts";
 import { ProjectLinkState } from "../../next/config/project-link-state.service.ts";
-import { CliConfig } from "../../next/config/cli-config.service.ts";
+import { CliSettings } from "../../next/config/cli-settings.service.ts";
 import { aiToolLayer } from "./ai-tool.layer.ts";
 import { CurrentAnalyticsContext, type AnalyticsContext } from "./analytics-context.ts";
 import { Analytics } from "./analytics.service.ts";
@@ -47,10 +47,10 @@ export const analyticsLayer = Layer.effect(
   Analytics,
   Effect.gen(function* () {
     const runtime = yield* TelemetryRuntime;
-    const cliConfig = yield* CliConfig;
+    const cliSettings = yield* CliSettings;
     const aiTool = yield* AiTool;
 
-    if (runtime.consent !== "granted" || Option.isNone(cliConfig.telemetryPosthogKey)) {
+    if (runtime.consent !== "granted" || Option.isNone(cliSettings.telemetryPosthogKey)) {
       return Analytics.of({
         capture: () => Effect.void,
         identify: () => Effect.void,
@@ -60,8 +60,8 @@ export const analyticsLayer = Layer.effect(
     }
 
     const client = yield* scopedPosthogClient(
-      cliConfig.telemetryPosthogKey.value,
-      cliConfig.telemetryPosthogHost,
+      cliSettings.telemetryPosthogKey.value,
+      cliSettings.telemetryPosthogHost,
     );
 
     const baseProperties = stripUndefined({

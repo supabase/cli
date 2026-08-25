@@ -793,7 +793,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   // derivation — a known gap, narrow to trigger but NOT cosmetic when hit:
   // unlike `deploy`/`download` (which use `context.projectId` outright),
   // `rawProjectId` below only ever sees `SUPABASE_PROJECT_ID` from the
-  // *ambient* shell (`projectIdOverride`, from `LegacyCliConfig`), not from
+  // *ambient* shell (`projectIdOverride`, from `LegacyCliSettings`), not from
   // project dotenv. A project that sets it only in `supabase/.env` therefore
   // gets a different `supabase_edge_runtime_<id>`/`supabase_network_<id>`
   // here than `deploy`/`download`/`start` resolve for the SAME project — so

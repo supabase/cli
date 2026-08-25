@@ -11,7 +11,7 @@ import {
  *
  * `login` writes this file (on success, when a profile was explicitly set) so a
  * later command run without `--profile` / `SUPABASE_PROFILE` resolves the same
- * profile; `LegacyCliConfig` reads it as the lowest-precedence profile source.
+ * profile; `LegacyCliSettings` reads it as the lowest-precedence profile source.
  */
 
 /**
