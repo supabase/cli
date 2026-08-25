@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { loadProjectConfig } from "@supabase/config";
+import { loadProjectConfig } from "@supabase/config/effect";
 import { Effect, FileSystem } from "effect";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import {
