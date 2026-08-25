@@ -1,4 +1,4 @@
-import { loadProjectEnvironment } from "@supabase/config";
+import { loadProjectEnvironment } from "@supabase/config/effect";
 import { Effect, Layer, Option } from "effect";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { ProjectContext } from "./project-context.service.ts";

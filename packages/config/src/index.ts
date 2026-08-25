@@ -1,3 +1,11 @@
+/**
+ * Pure, browser/edge-safe entrypoint. Must never export an Effect-returning
+ * function, nor pull `@effect/platform-*` or `node:`/`bun:` modules into its
+ * transitive graph. Effect-core `FileSystem`/`Path` TAG references reachable
+ * from this graph are fine — they're inert without a platform layer provided.
+ * File IO and Effect-native services live at `@supabase/config/io` and
+ * `@supabase/config/effect`.
+ */
 export {
   ProjectConfigSchema,
   toProjectConfigJsonSchema,
@@ -11,43 +19,31 @@ export {
   ProjectConfigParseError,
   ProjectEnvParseError,
 } from "./errors.ts";
+export type { ConfigFormat } from "./config-format.ts";
 export {
-  type ConfigFormat,
   type LoadedProjectConfig,
   type LoadProjectConfigOptions,
   type ProjectConfigValueOrigin,
   type ProjectConfigValueSource,
   type SaveProjectConfigOptions,
-  configJsonPath,
-  configTomlPath,
   encodeProjectConfigToJson,
   encodeProjectConfigToToml,
-  loadProjectConfig,
-  loadProjectConfigFile,
   projectConfigValueSourceAt,
-  saveProjectConfig,
-} from "./io.ts";
+} from "./config-document.ts";
 export {
   edgeFunctionDenoConfigFileName,
   edgeFunctionEntrypointFileName,
   edgeFunctionsDirectoryName,
   type FunctionsManifest,
   type ResolvedFunctionConfig,
-  inferFunctionsManifest,
-} from "./functions-manifest.ts";
-export {
-  type LoadProjectEnvironmentOptions,
-  type ProjectEnvironment,
-  type ResolvedProjectValue,
-  type ResolveProjectOptions,
-  loadDotEnvFile,
-  loadProjectEnvironment,
-  resolveProjectSubtree,
-  resolveProjectValue,
+} from "./functions-manifest-model.ts";
+export type {
+  LoadProjectEnvironmentOptions,
+  ProjectEnvironment,
+  ResolvedProjectValue,
+  ResolveProjectOptions,
 } from "./project.ts";
-export { type ProjectPaths, findProjectPaths, findProjectRoot } from "./paths.ts";
-export { projectConfigStoreLayer } from "./project-config.layer.ts";
-export { ProjectConfigStore } from "./project-config.service.ts";
+export type { ProjectPaths } from "./paths.ts";
 export { PROJECT_CONFIG_SCHEMA_URL } from "./schema-metadata.ts";
 export {
   type BaseProjectConfig,

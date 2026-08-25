@@ -205,13 +205,19 @@ async function hasVerdaccioTarball(storageDir: string, pkg: string): Promise<boo
   }
 }
 
+function outputText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value instanceof Uint8Array) return new TextDecoder().decode(value);
+  return JSON.stringify(value) ?? "";
+}
+
 export function describeError(e: unknown): string {
   if (e instanceof Error) {
     const parts = [e.stack ?? `${e.name}: ${e.message}`];
     const stdout = (e as { stdout?: unknown }).stdout;
     const stderr = (e as { stderr?: unknown }).stderr;
-    if (stdout != null) parts.push(`stdout: ${String(stdout).trim()}`);
-    if (stderr != null) parts.push(`stderr: ${String(stderr).trim()}`);
+    if (stdout != null) parts.push(`stdout: ${outputText(stdout).trim()}`);
+    if (stderr != null) parts.push(`stderr: ${outputText(stderr).trim()}`);
     return parts.join("\n");
   }
   return String(e);

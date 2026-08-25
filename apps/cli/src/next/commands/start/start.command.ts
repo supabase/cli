@@ -1,5 +1,5 @@
 import { Effect, Layer, Context, Option } from "effect";
-import { loadProjectConfig } from "@supabase/config";
+import { loadProjectConfig } from "@supabase/config/effect";
 import {
   DEFAULT_MANAGED_STACK_NAME,
   daemonLayer,

@@ -19,16 +19,16 @@ The Management API for environments is already designed. This ADR focuses on CLI
 
 We adopt the environment management model described in the [Environments Management design document](../environments-management.md). The key architectural decisions are:
 
-| # | Decision | Summary |
-|---|----------|---------|
-| 1 | Flat, independent environments | Three non-deletable defaults (`development`, `preview`, `production`) plus user-created custom environments. No inheritance — values are explicitly copied via seeding. |
-| 2 | `supabase env` command group | CRUD subcommands auto-generated per ADR 0005. Workflow subcommands (`pull`, `push`, `seed`) hand-written. |
-| 3 | Pull/push sync model | `pull` = full replacement of `.env` from platform (secrets excluded). `push` = diff-based upsert (secrets on remote skipped, optional `--prune`). Both default to `development`. |
-| 4 | Secrets as a flag, not a separate system | All variables encrypted at rest. `secret` flag makes a variable write-only. Auto-classified from `"x-secret": true` in config schema. Set on platform directly, never pushed from `.env`. |
-| 5 | Resolution order for local dev | OS env → `.env.local` → `.env`. No variable expansion in `.env` files. |
-| 6 | Two variable binding modes | Platform variables: implicit binding (canonical names from config paths). User variables: explicit `env()` in `config.json`. Both share the same environment and CLI commands. |
-| 7 | Branch-to-environment mapping | Configured in `config.json`. First explicit match wins; wildcard last. `development` excluded (local-only). |
-| 8 | Single `.env` file | One `.env` (from `development` or manual) + `.env.local` (personal overrides). All `.env*` gitignored. No per-environment `.env` files. |
+| #   | Decision                                 | Summary                                                                                                                                                                                   |
+| --- | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Flat, independent environments           | Three non-deletable defaults (`development`, `preview`, `production`) plus user-created custom environments. No inheritance — values are explicitly copied via seeding.                   |
+| 2   | `supabase env` command group             | CRUD subcommands auto-generated per ADR 0005. Workflow subcommands (`pull`, `push`, `seed`) hand-written.                                                                                 |
+| 3   | Pull/push sync model                     | `pull` = full replacement of `.env` from platform (secrets excluded). `push` = diff-based upsert (secrets on remote skipped, optional `--prune`). Both default to `development`.          |
+| 4   | Secrets as a flag, not a separate system | All variables encrypted at rest. `secret` flag makes a variable write-only. Auto-classified from `"x-secret": true` in config schema. Set on platform directly, never pushed from `.env`. |
+| 5   | Resolution order for local dev           | OS env → `.env.local` → `.env`. No variable expansion in `.env` files.                                                                                                                    |
+| 6   | Two variable binding modes               | Platform variables: implicit binding (canonical names from config paths). User variables: explicit `env()` in `config.json`. Both share the same environment and CLI commands.            |
+| 7   | Branch-to-environment mapping            | Configured in `config.json`. First explicit match wins; wildcard last. `development` excluded (local-only).                                                                               |
+| 8   | Single `.env` file                       | One `.env` (from `development` or manual) + `.env.local` (personal overrides). All `.env*` gitignored. No per-environment `.env` files.                                                   |
 
 For full operational details — CLI command reference, workflows, branch-specific overrides, Edge Functions integration, platform API requirements, and dashboard behavior — see the [design document](../environments-management.md).
 
