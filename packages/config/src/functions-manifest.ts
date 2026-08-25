@@ -1,21 +1,21 @@
 import { Effect, FileSystem, Path, Schema } from "effect";
-import { ProjectConfigSchema, type ProjectConfig } from "./base.ts";
+import { CliConfigSchema, type CliConfig } from "./base.ts";
 import {
   edgeFunctionDenoConfigFileName,
   edgeFunctionEntrypointFileName,
   edgeFunctionsDirectoryName,
   type ResolvedFunctionConfig,
 } from "./functions-manifest-model.ts";
-import { loadProjectConfig } from "./io.ts";
+import { loadCliConfig } from "./io.ts";
 import { findProjectPaths } from "./paths.ts";
 
 const functionSlugPattern = /^[a-zA-Z0-9_-]+$/;
-const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
-const emptyConfig = decodeProjectConfig({});
+const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
+const emptyConfig = decodeCliConfig({});
 
 interface InferFunctionsManifestOptions {
   readonly cwd: string;
-  readonly config?: ProjectConfig;
+  readonly config?: CliConfig;
   /** Forwarded to {@link findProjectPaths}'s own `search` option — see its doc comment. */
   readonly search?: boolean;
 }
@@ -75,7 +75,7 @@ export const inferFunctionsManifest = Effect.fnUntraced(function* (
   const projectRoot = projectPaths?.projectRoot ?? options.cwd;
   const config =
     options.config ??
-    (yield* loadProjectConfig(options.cwd).pipe(
+    (yield* loadCliConfig(options.cwd).pipe(
       Effect.map((loaded) => loaded?.config ?? emptyConfig),
     ));
   const functionsDir = path.join(projectRoot, "supabase", edgeFunctionsDirectoryName);

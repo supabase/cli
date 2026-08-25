@@ -1,4 +1,4 @@
-import { loadProjectConfig } from "@supabase/config/effect";
+import { loadCliConfig } from "@supabase/config/effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
 import {
@@ -258,9 +258,9 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   const lang = flags.lang;
   const swiftAccessControl = flags.swiftAccessControl;
 
-  const loadConfig = () => loadProjectConfig(cliSettings.workdir, { goViperCompat: true });
+  const loadConfig = () => loadCliConfig(cliSettings.workdir, { goViperCompat: true });
   const loadConfigForRef = (projectRef: string) =>
-    loadProjectConfig(cliSettings.workdir, { projectRef, goViperCompat: true });
+    loadCliConfig(cliSettings.workdir, { projectRef, goViperCompat: true });
 
   const schemasFromConfig = (apiSchemas: ReadonlyArray<string> | undefined) =>
     defaultSchemas(apiSchemas);

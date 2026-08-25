@@ -1,6 +1,6 @@
 import * as nodePath from "node:path";
 
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 import { Effect, FileSystem, Option, Path, Stream } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
@@ -313,7 +313,7 @@ interface UploadCtx {
   readonly path: Path.Path;
   readonly contentTypeFlag: string;
   readonly cacheControl: string;
-  readonly config: ProjectConfig;
+  readonly config: CliConfig;
   readonly document: Record<string, unknown> | undefined;
   readonly summary: CpSummary;
 }

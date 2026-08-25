@@ -1,4 +1,4 @@
-import { loadProjectConfig } from "@supabase/config/effect";
+import { loadCliConfig } from "@supabase/config/effect";
 import { defaultPublishableKey } from "@supabase/stack/effect";
 import { Effect, FileSystem, Option, Path } from "effect";
 
@@ -91,7 +91,7 @@ const listExistingFunctionSlugs = Effect.fnUntraced(function* (workdir: string) 
 });
 
 const resolveTemplateInputs = Effect.fnUntraced(function* (workdir: string, slug: string) {
-  const loaded = yield* loadProjectConfig(workdir, { goViperCompat: true }).pipe(
+  const loaded = yield* loadCliConfig(workdir, { goViperCompat: true }).pipe(
     Effect.orElseSucceed(() => null),
   );
   const port = loaded?.config.api.port ?? DEFAULT_LOCAL_API_PORT;

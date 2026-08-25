@@ -102,7 +102,7 @@ function compressedBundleHash(contents: string): string {
   return createHash("sha256").update(compressed).digest("hex");
 }
 
-async function writeProjectConfig(cwd: string, content = 'project_id = "test-project"\n') {
+async function writeCliConfig(cwd: string, content = 'project_id = "test-project"\n') {
   await mkdir(join(cwd, "supabase"), { recursive: true });
   await writeFile(join(cwd, "supabase", "config.toml"), content);
 }
@@ -479,7 +479,7 @@ describe("functions deploy", () => {
     const child = mockChildProcessSpawner({ exitCode: 0 });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
       yield* Effect.promise(() => writeLocalFunction(tempDir, "bye-world"));
 
@@ -523,7 +523,7 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
 
       const { out, layer } = setup(tempDir);
@@ -541,7 +541,7 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
 
       const { api, layer } = setup(tempDir, {
@@ -563,7 +563,7 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
 
       const { api, layer } = setup(tempDir, {
@@ -585,7 +585,7 @@ describe("functions deploy", () => {
 
     return Effect.gen(function* () {
       yield* Effect.promise(() =>
-        writeProjectConfig(
+        writeCliConfig(
           tempDir,
           [
             'project_id = "test-project"',
@@ -614,7 +614,7 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
 
       const { api, layer } = setup(tempDir, {
@@ -635,7 +635,7 @@ describe("functions deploy", () => {
 
     return Effect.gen(function* () {
       yield* Effect.promise(() =>
-        writeProjectConfig(
+        writeCliConfig(
           tempDir,
           [
             'project_id = "test-project"',
@@ -681,7 +681,7 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
       yield* Effect.promise(() => writeLocalFunction(tempDir, "bye-world"));
 
@@ -723,7 +723,7 @@ describe("functions deploy", () => {
       const tempDir = makeTempDir();
 
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* Effect.promise(() => writeCliConfig(tempDir));
         yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
         yield* Effect.promise(() => writeLocalFunction(tempDir, "bye-world"));
 
@@ -758,7 +758,7 @@ describe("functions deploy", () => {
       const tempDir = makeTempDir();
 
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* Effect.promise(() => writeCliConfig(tempDir));
         yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
         yield* Effect.promise(() => writeLocalFunction(tempDir, "bye-world"));
 
@@ -790,7 +790,7 @@ describe("functions deploy", () => {
       const tempDir = makeTempDir();
 
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* Effect.promise(() => writeCliConfig(tempDir));
         yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
         yield* Effect.promise(() => writeLocalFunction(tempDir, "bye-world"));
 
@@ -822,7 +822,7 @@ describe("functions deploy", () => {
 
     return Effect.gen(function* () {
       yield* Effect.promise(() =>
-        writeProjectConfig(
+        writeCliConfig(
           tempDir,
           [
             'project_id = "test-project"',
@@ -864,7 +864,7 @@ describe("functions deploy", () => {
     const sharedDir = join(tempDir, "shared");
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(projectDir));
+      yield* Effect.promise(() => writeCliConfig(projectDir));
       yield* Effect.promise(() => writeLocalFunction(projectDir, "hello-world"));
       yield* Effect.promise(() => mkdir(sharedDir, { recursive: true }));
       yield* Effect.promise(() =>
@@ -907,7 +907,7 @@ describe("functions deploy", () => {
       const sharedDir = join(tempDir, "shared");
 
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(projectDir));
+        yield* Effect.promise(() => writeCliConfig(projectDir));
         yield* Effect.promise(() =>
           writeLocalFunction(
             projectDir,
@@ -962,7 +962,7 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       yield* Effect.promise(() =>
         mkdir(join(tempDir, "supabase", "functions", "hello-world"), { recursive: true }),
       );
@@ -994,7 +994,7 @@ describe("functions deploy", () => {
 
     return Effect.gen(function* () {
       yield* Effect.promise(() =>
-        writeProjectConfig(
+        writeCliConfig(
           tempDir,
           [
             'project_id = "test-project"',
@@ -1047,7 +1047,7 @@ describe("functions deploy", () => {
 
     return Effect.gen(function* () {
       yield* Effect.promise(() =>
-        writeProjectConfig(
+        writeCliConfig(
           tempDir,
           [
             'project_id = "test-project"',
@@ -1101,7 +1101,7 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       yield* Effect.promise(() =>
         writeLocalFunction(
           tempDir,
@@ -1139,7 +1139,7 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
       yield* Effect.promise(() =>
         writeFile(
@@ -1169,7 +1169,7 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       yield* Effect.promise(() =>
         writeLocalFunction(
           tempDir,
@@ -1208,7 +1208,7 @@ describe("functions deploy", () => {
     const nestedDir = join(tempDir, "nested");
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
       yield* Effect.promise(() => mkdir(nestedDir));
 
@@ -1233,7 +1233,7 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
 
       const { out, layer } = setup(tempDir);
 
@@ -1254,7 +1254,7 @@ describe("functions deploy", () => {
 
     return Effect.gen(function* () {
       yield* Effect.promise(() =>
-        writeProjectConfig(
+        writeCliConfig(
           tempDir,
           [
             'project_id = "test-project"',
@@ -1287,7 +1287,7 @@ describe("functions deploy", () => {
 
     return Effect.gen(function* () {
       yield* Effect.promise(() =>
-        writeProjectConfig(
+        writeCliConfig(
           tempDir,
           [
             'project_id = "test-project"',
@@ -1338,7 +1338,7 @@ describe("functions deploy", () => {
       const tempDir = makeTempDir();
 
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* Effect.promise(() => writeCliConfig(tempDir));
         yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
         yield* Effect.promise(() =>
           writeFile(
@@ -1387,7 +1387,7 @@ describe("functions deploy", () => {
 
       return Effect.gen(function* () {
         yield* Effect.promise(() => mkdir(join(repoRoot, ".git"), { recursive: true }));
-        yield* Effect.promise(() => writeProjectConfig(projectRoot));
+        yield* Effect.promise(() => writeCliConfig(projectRoot));
         yield* Effect.promise(() =>
           writeLocalFunction(
             projectRoot,
@@ -1443,7 +1443,7 @@ describe("functions deploy", () => {
       yield* Effect.promise(() =>
         writeFile(join(repoRoot, ".git"), "gitdir: /tmp/worktree/.git\n"),
       );
-      yield* Effect.promise(() => writeProjectConfig(projectRoot));
+      yield* Effect.promise(() => writeCliConfig(projectRoot));
       yield* Effect.promise(() =>
         writeLocalFunction(
           projectRoot,
@@ -1493,7 +1493,7 @@ describe("functions deploy", () => {
     const child = mockChildProcessSpawner({ exitCode: 1 });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
 
       const { out, api, layer } = setup(tempDir, {
@@ -1542,7 +1542,7 @@ describe("functions deploy", () => {
 
     return Effect.gen(function* () {
       yield* Effect.promise(() => mkdir(join(repoRoot, ".git"), { recursive: true }));
-      yield* Effect.promise(() => writeProjectConfig(projectRoot));
+      yield* Effect.promise(() => writeCliConfig(projectRoot));
       yield* Effect.promise(() =>
         writeLocalFunction(
           projectRoot,
@@ -1592,7 +1592,7 @@ describe("functions deploy", () => {
     return Effect.gen(function* () {
       yield* Effect.promise(() => mkdir(repoRoot, { recursive: true }));
       yield* Effect.promise(() => mkdir(join(repoRoot, ".git"), { recursive: true }));
-      yield* Effect.promise(() => writeProjectConfig(projectRoot));
+      yield* Effect.promise(() => writeCliConfig(projectRoot));
       yield* Effect.promise(() =>
         writeLocalFunction(
           projectRoot,
@@ -1635,7 +1635,7 @@ describe("functions deploy", () => {
     const child = mockChildProcessSpawner({ exitCode: 1 });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
 
       const { out, layer } = setup(tempDir, {
@@ -1679,7 +1679,7 @@ describe("functions deploy", () => {
 
     return Effect.gen(function* () {
       yield* Effect.promise(() =>
-        writeProjectConfig(
+        writeCliConfig(
           tempDir,
           [
             'project_id = "test-project"',
@@ -1780,7 +1780,7 @@ describe("functions deploy", () => {
     });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
 
       const { layer } = setup(tempDir, {
@@ -1828,7 +1828,7 @@ describe("functions deploy", () => {
     });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
       yield* Effect.sync(() => {
         process.env["NPM_CONFIG_REGISTRY"] = "https://npm.pkg.github.com";
@@ -1866,7 +1866,7 @@ describe("functions deploy", () => {
 
     return Effect.gen(function* () {
       yield* Effect.promise(() =>
-        writeProjectConfig(
+        writeCliConfig(
           tempDir,
           ['project_id = "test-project"', "[edge_runtime]", "deno_version = 3", ""].join("\n"),
         ),
@@ -1906,7 +1906,7 @@ describe("functions deploy", () => {
     });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
 
       const { out, layer } = setup(tempDir, {
@@ -1931,7 +1931,7 @@ describe("functions deploy", () => {
     const child = mockChildProcessSpawner({ exitCode: 0 });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
 
       const { out, layer } = setup(tempDir, {
@@ -1971,7 +1971,7 @@ describe("functions deploy", () => {
       });
 
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* Effect.promise(() => writeCliConfig(tempDir));
         yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
 
         const { api, layer } = setup(tempDir, {
@@ -2023,7 +2023,7 @@ describe("functions deploy", () => {
     });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
       const expectedHash = compressedBundleHash("eszip-test-output");
 
@@ -2068,7 +2068,7 @@ describe("functions deploy", () => {
     });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
       yield* Effect.promise(() =>
         rm(join(tempDir, "supabase", "functions", "hello-world", "deno.json")),
@@ -2123,7 +2123,7 @@ describe("functions deploy", () => {
     });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
 
       const { layer } = setup(tempDir, {
@@ -2156,7 +2156,7 @@ describe("functions deploy", () => {
     });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
       yield* Effect.promise(() => mkdir(join(tempDir, "supabase", ".temp"), { recursive: true }));
       yield* Effect.promise(() =>
@@ -2198,7 +2198,7 @@ describe("functions deploy", () => {
 
     return Effect.gen(function* () {
       yield* Effect.promise(() =>
-        writeProjectConfig(
+        writeCliConfig(
           tempDir,
           [
             'project_id = "test-project"',
@@ -2236,7 +2236,7 @@ describe("functions deploy", () => {
 
     return Effect.gen(function* () {
       yield* Effect.promise(() =>
-        writeProjectConfig(
+        writeCliConfig(
           tempDir,
           ['project_id = "test-project"', '[functions."disabled-fn"]', "enabled = false", ""].join(
             "\n",
@@ -2266,7 +2266,7 @@ describe("functions deploy", () => {
 
     return Effect.gen(function* () {
       yield* Effect.promise(() =>
-        writeProjectConfig(
+        writeCliConfig(
           tempDir,
           ['project_id = "test-project"', '[functions."disabled-fn"]', "enabled = false", ""].join(
             "\n",
@@ -2303,7 +2303,7 @@ describe("functions deploy", () => {
 
     return Effect.gen(function* () {
       yield* Effect.promise(() =>
-        writeProjectConfig(
+        writeCliConfig(
           tempDir,
           [
             'project_id = "base-project"',
@@ -2351,7 +2351,7 @@ describe("functions deploy", () => {
 
     return Effect.gen(function* () {
       yield* Effect.promise(() =>
-        writeProjectConfig(
+        writeCliConfig(
           tempDir,
           [
             'project_id = "base-project"',
@@ -2388,7 +2388,7 @@ describe("functions deploy", () => {
     const child = mockChildProcessSpawner({ exitCode: 0 });
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       const { api, layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "hello.world"],
         childLayer: child.layer,
@@ -2409,7 +2409,7 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       const { layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "--use-api", "--use-docker"],
       });
@@ -2436,7 +2436,7 @@ describe("functions deploy", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig(tempDir));
+      yield* Effect.promise(() => writeCliConfig(tempDir));
       const { layer } = setup(tempDir, {
         rawArgs: ["functions", "deploy", "--use-api", "--use-docker=false"],
       });
@@ -2464,7 +2464,7 @@ describe("functions deploy", () => {
       const tempDir = makeTempDir();
 
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* Effect.promise(() => writeCliConfig(tempDir));
         const { layer } = setup(tempDir, {
           rawArgs: ["functions", "deploy", "--jobs", "2"],
         });
@@ -2484,7 +2484,7 @@ describe("functions deploy", () => {
       const tempDir = makeTempDir();
 
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* Effect.promise(() => writeCliConfig(tempDir));
         yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
 
         const { out, layer } = setup(tempDir, {
@@ -2526,7 +2526,7 @@ describe("functions deploy", () => {
     it.live("--yes auto-confirms with the Go prompt echo and deletes the orphan", () => {
       const tempDir = makeTempDir();
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* Effect.promise(() => writeCliConfig(tempDir));
         yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
         const { out, api, layer } = pruneSetup(tempDir);
 
@@ -2553,7 +2553,7 @@ describe("functions deploy", () => {
     it.live("piped `n` declines the prune and cancels like Go", () => {
       const tempDir = makeTempDir();
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* Effect.promise(() => writeCliConfig(tempDir));
         yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
         const { out, api, layer } = pruneSetup(tempDir, "n\n");
 
@@ -2579,7 +2579,7 @@ describe("functions deploy", () => {
     it.live("piped `y` confirms the prune like Go", () => {
       const tempDir = makeTempDir();
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* Effect.promise(() => writeCliConfig(tempDir));
         yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
         const { out, api, layer } = pruneSetup(tempDir, "y\n");
 
@@ -2598,7 +2598,7 @@ describe("functions deploy", () => {
     it.live("empty stdin takes the No default and cancels", () => {
       const tempDir = makeTempDir();
       return Effect.gen(function* () {
-        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* Effect.promise(() => writeCliConfig(tempDir));
         yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
         const { out, api, layer } = pruneSetup(tempDir);
 
@@ -2626,7 +2626,7 @@ describe("functions deploy", () => {
         const tempDir = makeTempDir();
 
         return Effect.gen(function* () {
-          yield* Effect.promise(() => writeProjectConfig(tempDir, 'project_id = ""\n'));
+          yield* Effect.promise(() => writeCliConfig(tempDir, 'project_id = ""\n'));
           yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
 
           const { out, layer } = setup(tempDir, {
@@ -2652,7 +2652,7 @@ describe("functions deploy", () => {
 
         return Effect.gen(function* () {
           yield* Effect.promise(() =>
-            writeProjectConfig(
+            writeCliConfig(
               tempDir,
               ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
             ),
@@ -2695,7 +2695,7 @@ describe("functions deploy", () => {
         process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
 
         return Effect.gen(function* () {
-          yield* Effect.promise(() => writeProjectConfig(tempDir));
+          yield* Effect.promise(() => writeCliConfig(tempDir));
           yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
 
           const { layer } = setup(tempDir, {

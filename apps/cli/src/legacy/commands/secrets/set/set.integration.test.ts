@@ -571,10 +571,10 @@ FROM_CONFIG = "config-value"
   it.live(
     "tolerates a malformed supabase/.env, logs it to the debug logger, and still sets CLI-arg secrets (CLI-1867 Go parity)",
     () => {
-      // `loadProjectConfig` resolves `env(VAR)` references against
+      // `loadCliConfig` resolves `env(VAR)` references against
       // `supabase/.env`/`.env.local` *before* schema decode, so a malformed
       // dotenv line fails with `ProjectEnvParseError` rather than
-      // `ProjectConfigParseError`. `Load()` (`pkg/config/config.go:788-791`)
+      // `CliConfigParseError`. `Load()` (`pkg/config/config.go:788-791`)
       // calls `loadNestedEnv` first too and swallows any error the same
       // non-fatal way — so this must not abort the command either. `.env`
       // is only read once a `supabase/config.toml`/`.json` is found

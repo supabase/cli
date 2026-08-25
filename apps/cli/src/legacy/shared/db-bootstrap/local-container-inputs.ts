@@ -102,7 +102,7 @@ export interface LegacyLocalDbContainerInputs {
  * Loads its own {@link LegacyLocalProjectContext} via {@link legacyLoadLocalProjectContext}
  * UNLESS the caller passes {@link preloadedContext} — see that parameter's own doc comment for
  * why `db start`'s handler must pass one (a double-print bug: `@supabase/config`'s
- * `loadProjectConfig` unconditionally prints deprecated-config-section WARN lines to stderr,
+ * `loadCliConfig` unconditionally prints deprecated-config-section WARN lines to stderr,
  * and `db start` already loads a context of its own, eagerly, ahead of this function, matching
  * Go's single `flags.LoadConfig` call in `start.Run` (`apps/cli-go/internal/db/start/
  * start.go:45`)).
@@ -123,7 +123,7 @@ export const legacyBuildLocalDbContainerInputs = (
   projectRef?: string,
   // The `remoteOverrideKeys` the caller's OWN, separate `legacyReadDbToml(..., ref)` read
   // already computed for the SAME matched `[remotes.<ref>]` block (`@supabase/config`'s
-  // `loadProjectConfig`, used by `legacyLoadLocalProjectContext` just above, merges the
+  // `loadCliConfig`, used by `legacyLoadLocalProjectContext` just above, merges the
   // remote block's VALUES but tracks none of which keys it set) — threaded into
   // `legacyResolveDbBootstrapConfig`/`legacyResolveDbSettingsEnvOverrides` AND
   // `legacyResolveLocalConfigValues` below so a remote-set field (e.g. `db.major_version`,
@@ -141,7 +141,7 @@ export const legacyBuildLocalDbContainerInputs = (
   // it AS-IS instead of calling `legacyLoadLocalProjectContext(workdir, mapError, projectRef)`
   // again — the call is skipped entirely, not just its result discarded, because that reload is
   // the one genuinely observable side effect this function would otherwise repeat:
-  // `@supabase/config`'s `loadProjectConfig` unconditionally prints deprecated-`[inbucket]`/
+  // `@supabase/config`'s `loadCliConfig` unconditionally prints deprecated-`[inbucket]`/
   // deprecated-`auth.external.{linkedin,slack}` WARN lines to stderr (`packages/config/src/
   // io.ts:705-710,792-797`), so reloading would print each warning TWICE for one `db start`
   // invocation where Postgres isn't already running, instead of once like Go — whose entire

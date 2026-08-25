@@ -1,7 +1,7 @@
 import {
   inferFunctionsManifest,
   loadDotEnvFile,
-  loadProjectConfig,
+  loadCliConfig,
   loadProjectEnvironment,
   resolveProjectSubtree,
 } from "@supabase/config/effect";
@@ -39,8 +39,8 @@ export const resolveFunctionsBundle = Effect.fnUntraced(function* (
     cwd: projectHome.projectRoot,
     baseEnv: process.env,
   });
-  const loadedConfig = yield* loadProjectConfig(projectHome.projectRoot);
-  const projectConfig =
+  const loadedConfig = yield* loadCliConfig(projectHome.projectRoot);
+  const cliConfig =
     projectEnvironment === null || loadedConfig === null
       ? undefined
       : {
@@ -68,7 +68,7 @@ export const resolveFunctionsBundle = Effect.fnUntraced(function* (
         };
   const manifest = yield* inferFunctionsManifest({
     cwd: projectHome.projectRoot,
-    ...(projectConfig === undefined ? {} : { config: projectConfig }),
+    ...(cliConfig === undefined ? {} : { config: cliConfig }),
   });
   const envFilePath = Option.match(opts.envFile, {
     onNone: () => join(projectHome.supabaseDir, "functions", ".env"),

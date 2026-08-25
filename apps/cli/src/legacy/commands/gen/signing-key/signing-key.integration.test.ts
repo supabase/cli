@@ -210,7 +210,7 @@ describe("legacy gen signing-key integration", () => {
         // Config loading has no concept of a JSON project config file — a
         // stray `supabase/config.json` with no `config.toml` present must be
         // treated exactly like no config at all, never as a substitute config source
-        // (`gen.signing-keys-config.ts`'s `loadProjectConfig(..., { tomlOnly: true })`).
+        // (`gen.signing-keys-config.ts`'s `loadCliConfig(..., { tomlOnly: true })`).
         // The CWD-relative `supabase/config.toml` is printed in this
         // "absent config" case; the hint must stay relative and must never leak the absolute
         // temp-dir path either.

@@ -1241,7 +1241,7 @@ describe("legacy db push", () => {
       confirm: [true],
     });
     return Effect.gen(function* () {
-      // No config.toml written → loadProjectConfig returns null → default config
+      // No config.toml written → loadCliConfig returns null → default config
       // (migrations enabled), and the vault document is absent.
       yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
@@ -1278,7 +1278,7 @@ describe("legacy db push", () => {
     });
   });
 
-  it.live("loads a Go-style env() boolean in config (no ProjectConfigParseError)", () => {
+  it.live("loads a Go-style env() boolean in config (no CliConfigParseError)", () => {
     // Regression for the strict @supabase/config loader rejecting `enabled = "env(VAR)"`:
     // env-expansion + boolean parsing must resolve it, so the config loads and the
     // migration proceeds. Previously native push aborted before that parse ran.

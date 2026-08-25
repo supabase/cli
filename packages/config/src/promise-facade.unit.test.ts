@@ -5,25 +5,25 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Layer, Schema } from "effect";
-import { ProjectConfigSchema } from "./base.ts";
-import { ProjectConfigParseError } from "./errors.ts";
+import { CliConfigSchema } from "./base.ts";
+import { CliConfigParseError } from "./errors.ts";
 import * as bunFacade from "./bun.ts";
 import * as defaultEntrypoint from "./index.ts";
 import * as ioBrowserFacade from "./io-browser.ts";
 import * as nodeFacade from "./node.ts";
-import { makeProjectConfigIo } from "./promise-facade.ts";
+import { makeCliConfigIo } from "./promise-facade.ts";
 
 const {
   findProjectPathsFor,
   findProjectRootFor,
   loadFunctionsManifest,
-  loadProjectConfig,
-  loadProjectConfigFile,
+  loadCliConfig,
+  loadCliConfigFile,
   loadProjectEnvironmentFor,
-  saveProjectConfig,
+  saveCliConfig,
 } = bunFacade;
 
-const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
+const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
 // mkdtemp against the OS temp dir (never a path under the repo) — a real
 // project's ancestor-search would otherwise be able to walk up into this
@@ -34,24 +34,24 @@ function makeTempProject(): string {
 }
 
 describe("promise-facade via the Bun entrypoint", () => {
-  test("loadProjectConfig resolves null when no Supabase project exists in the tree", async () => {
+  test("loadCliConfig resolves null when no Supabase project exists in the tree", async () => {
     const cwd = makeTempProject();
 
     try {
-      await expect(loadProjectConfig(cwd)).resolves.toBeNull();
+      await expect(loadCliConfig(cwd)).resolves.toBeNull();
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
   });
 
-  test("loadProjectConfig loads and decodes a real supabase/config.toml", async () => {
+  test("loadCliConfig loads and decodes a real supabase/config.toml", async () => {
     const cwd = makeTempProject();
 
     try {
       await mkdir(join(cwd, "supabase"), { recursive: true });
       await writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "facade-loaded-ref"\n');
 
-      const loaded = await loadProjectConfig(cwd);
+      const loaded = await loadCliConfig(cwd);
 
       expect(loaded?.config.project_id).toBe("facade-loaded-ref");
       // `db.major_version` is never set in the fixture above — asserting it
@@ -65,19 +65,19 @@ describe("promise-facade via the Bun entrypoint", () => {
     }
   });
 
-  test("saveProjectConfig then loadProjectConfigFile roundtrips the same effective config", async () => {
+  test("saveCliConfig then loadCliConfigFile roundtrips the same effective config", async () => {
     const cwd = makeTempProject();
 
     try {
-      const original = decodeProjectConfig({
+      const original = decodeCliConfig({
         project_id: "facade-roundtrip-ref",
         db: { pooler: { enabled: true } },
       });
 
-      const saved = await saveProjectConfig({ cwd, config: original });
+      const saved = await saveCliConfig({ cwd, config: original });
       expect(saved.format).toBe("json");
 
-      const loaded = await loadProjectConfigFile(saved.path);
+      const loaded = await loadCliConfigFile(saved.path);
 
       expect(loaded.config).toEqual(original);
       expect(loaded.path).toBe(saved.path);
@@ -190,8 +190,8 @@ describe("promise-facade via the Bun entrypoint", () => {
       // reuse — a second, independent call on the same module-level facade
       // must still resolve correctly rather than reusing stale state from
       // the first.
-      const first = await loadProjectConfig(cwdA);
-      const second = await loadProjectConfig(cwdB);
+      const first = await loadCliConfig(cwdA);
+      const second = await loadCliConfig(cwdB);
 
       expect(first?.config.project_id).toBe("first-ref");
       expect(second?.config.project_id).toBe("second-ref");
@@ -206,10 +206,10 @@ const expectedFacadeFunctionNames = [
   "findProjectPathsFor",
   "findProjectRootFor",
   "loadFunctionsManifest",
-  "loadProjectConfig",
-  "loadProjectConfigFile",
+  "loadCliConfig",
+  "loadCliConfigFile",
   "loadProjectEnvironmentFor",
-  "saveProjectConfig",
+  "saveCliConfig",
 ];
 
 describe("promise-facade parity between bun.ts, node.ts, and io-browser.ts", () => {
@@ -271,8 +271,8 @@ describe("io-browser.ts stays side-effect-free", () => {
     await expect(import("./io-browser.ts")).resolves.toBeDefined();
   });
 
-  test("calling loadProjectConfig rejects with the curated browser-unavailable message", async () => {
-    await expect(ioBrowserFacade.loadProjectConfig("/irrelevant")).rejects.toThrow(
+  test("calling loadCliConfig rejects with the curated browser-unavailable message", async () => {
+    await expect(ioBrowserFacade.loadCliConfig("/irrelevant")).rejects.toThrow(
       '@supabase/config/io is not available in browser bundles; import the pure surface from "@supabase/config" instead.',
     );
   });
@@ -293,7 +293,7 @@ describe("promise-facade singleton runtime", () => {
           }),
         ),
       );
-      const io = makeProjectConfigIo(countingLayer);
+      const io = makeCliConfigIo(countingLayer);
 
       await io.findProjectRootFor(cwd);
       await io.findProjectRootFor(cwd);
@@ -308,14 +308,14 @@ describe("promise-facade singleton runtime", () => {
 describe("promise-facade via the Node entrypoint", () => {
   // The "default"-condition path (`@supabase/config/io` resolving to
   // `./node.ts` outside Bun) otherwise has zero execution coverage.
-  test("loadProjectConfig loads and decodes a real supabase/config.toml", async () => {
+  test("loadCliConfig loads and decodes a real supabase/config.toml", async () => {
     const cwd = makeTempProject();
 
     try {
       await mkdir(join(cwd, "supabase"), { recursive: true });
       await writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "node-facade-ref"\n');
 
-      const loaded = await nodeFacade.loadProjectConfig(cwd);
+      const loaded = await nodeFacade.loadCliConfig(cwd);
 
       expect(loaded?.config.project_id).toBe("node-facade-ref");
     } finally {
@@ -325,7 +325,7 @@ describe("promise-facade via the Node entrypoint", () => {
 });
 
 describe("promise-facade rejection shapes", () => {
-  test("loadProjectConfigFile rejects with a ProjectConfigParseError for a malformed config.toml", async () => {
+  test("loadCliConfigFile rejects with a CliConfigParseError for a malformed config.toml", async () => {
     const cwd = makeTempProject();
     const configPath = join(cwd, "supabase", "config.toml");
 
@@ -333,20 +333,20 @@ describe("promise-facade rejection shapes", () => {
       await mkdir(join(cwd, "supabase"), { recursive: true });
       await writeFile(configPath, "this is not === valid toml\n");
 
-      await expect(loadProjectConfigFile(configPath)).rejects.toBeInstanceOf(
-        ProjectConfigParseError,
+      await expect(loadCliConfigFile(configPath)).rejects.toBeInstanceOf(
+        CliConfigParseError,
       );
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
   });
 
-  test("loadProjectConfigFile rejects for a nonexistent path", async () => {
+  test("loadCliConfigFile rejects for a nonexistent path", async () => {
     const cwd = makeTempProject();
     const configPath = join(cwd, "supabase", "config.toml");
 
     try {
-      await expect(loadProjectConfigFile(configPath)).rejects.toThrow();
+      await expect(loadCliConfigFile(configPath)).rejects.toThrow();
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

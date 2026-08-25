@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { ProjectConfigStore } from "@supabase/config/effect";
+import { CliConfigStore } from "@supabase/config/effect";
 import { httpTransportClientLayer } from "@supabase/stack/effect";
 import { Cause, Console, Effect, Exit, Fiber, Layer, Runtime, Stdio } from "effect";
 import { CliError, CliOutput, Command } from "effect/unstable/cli";
@@ -591,9 +591,9 @@ export function classifyParseErrorConsoleOutput(
  * handler, not just the parse phase that can actually raise `ShowHelp`: no
  * command handler in this codebase writes through `effect`'s `Console`
  * service directly (they go through the `Output` service instead). One
- * indirect exception is known — `@supabase/config`'s `loadProjectConfigFile`
+ * indirect exception is known — `@supabase/config`'s `loadCliConfigFile`
  * emits its deprecated-config-section warnings via `Console.error`, and is
- * reachable from handlers through `ProjectConfigStore`/`loadProjectConfig` —
+ * reachable from handlers through `CliConfigStore`/`loadCliConfig` —
  * so it pins itself to the real console (`Effect.provideService(Console.Console,
  * globalThis.console)`) rather than relying on whatever `Console.Console` is
  * ambient here; see CLI-1901 and that package's `io.ts` for why (a
@@ -708,7 +708,7 @@ function cliProgramFor(
     Layer.succeed(ProjectLocalServiceVersions, {
       load: Effect.die("unexpected root project local service versions access"),
     }),
-    Layer.succeed(ProjectConfigStore, {
+    Layer.succeed(CliConfigStore, {
       load: () => Effect.die("unexpected root project config access"),
       loadFile: () => Effect.die("unexpected root project config file access"),
       save: () => Effect.die("unexpected root project config write"),

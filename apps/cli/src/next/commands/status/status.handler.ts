@@ -1,5 +1,5 @@
 import { Effect, Option } from "effect";
-import { loadProjectConfig } from "@supabase/config/effect";
+import { loadCliConfig } from "@supabase/config/effect";
 import {
   connectLayer,
   fillServiceVersionManifest,
@@ -38,7 +38,7 @@ const resolveConfiguredSummary = Effect.fnUntraced(function* (input: {
   readonly name: string;
 }) {
   const current = yield* resolveStackSummary(input);
-  const loaded = yield* loadProjectConfig(input.projectDir);
+  const loaded = yield* loadCliConfig(input.projectDir);
   const excluded = (current.launch.excludedServices ?? []).filter(isExcludedStackService);
   const mode = current.launch.mode;
   return yield* resolveStackSummary({

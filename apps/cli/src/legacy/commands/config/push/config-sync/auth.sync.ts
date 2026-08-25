@@ -9,7 +9,7 @@
  * stored as `string` nodes, and all Secret fields are serialised via `secretHash`.
  */
 
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 
 import { diff } from "./config-sync.diff.ts";
 import { type TomlField, type TomlValue, encodeToml } from "./config-sync.toml.ts";
@@ -892,7 +892,7 @@ export interface AuthPresence {
  *   throw is a defensive backstop, not the primary abort path.
  */
 export function authSubsetFromConfig(
-  config: ProjectConfig,
+  config: CliConfig,
   projectId: string,
   presence: AuthPresence,
   emailContent: AuthEmailContent = { template: {}, notification: {} },
@@ -1222,7 +1222,7 @@ export function authSubsetFromConfig(
 }
 
 /** Returns `config.auth.enabled`. */
-export function authEnabled(config: ProjectConfig): boolean {
+export function authEnabled(config: CliConfig): boolean {
   return config.auth.enabled;
 }
 

@@ -1,5 +1,5 @@
 import { Effect, Layer, Context, Option } from "effect";
-import { loadProjectConfig } from "@supabase/config/effect";
+import { loadCliConfig } from "@supabase/config/effect";
 import {
   DEFAULT_MANAGED_STACK_NAME,
   daemonLayer,
@@ -190,9 +190,9 @@ export const startCommand = Command.make("start", flags).pipe(
       // unset behaves as false (revoke the default Data API GRANTs) to match the new cloud
       // default. Explicit true preserves the legacy auto-expose behaviour but is deprecated and
       // emits a warning; the field is removed entirely on 2026-10-30.
-      const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
+      const loadedCliConfig = yield* loadCliConfig(projectHome.projectRoot);
       const { autoExposeNewTables, deprecationWarning } = resolveAutoExposeNewTables(
-        loadedProjectConfig?.config.api.auto_expose_new_tables,
+        loadedCliConfig?.config.api.auto_expose_new_tables,
       );
       if (deprecationWarning !== undefined) {
         yield* output.warn(deprecationWarning);
@@ -209,7 +209,7 @@ export const startCommand = Command.make("start", flags).pipe(
       yield* output.intro("Start local Supabase stack");
       yield* ensureProjectStateIgnored(projectHome.projectRoot);
 
-      const portIntents = managedPortIntents(stackConfig, loadedProjectConfig ?? undefined);
+      const portIntents = managedPortIntents(stackConfig, loadedCliConfig ?? undefined);
       const configuredSummary =
         existingSummary === undefined
           ? undefined

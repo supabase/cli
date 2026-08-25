@@ -216,7 +216,7 @@ export const legacyResetLocalDatabase = Effect.fnUntraced(function* (
     // `.env.<SUPABASE_ENV>.local`, `.env.local`, `.env.<SUPABASE_ENV>`, `.env`, across
     // both `supabase/` and the project root, `pkg/config/config.go:1220-1257`) — so
     // `legacySeedBucketsRun` never independently reloads config.toml through
-    // `@supabase/config`'s narrower `loadProjectConfig` → `loadProjectEnvironment`
+    // `@supabase/config`'s narrower `loadCliConfig` → `loadProjectEnvironment`
     // (`supabase/.env`/`.env.local` plus ambient env only,
     // `packages/config/src/project.ts:209-245`), which used to reject a config whose
     // `env(VAR)` reference is backed by e.g. `supabase/.env.development` — genuinely

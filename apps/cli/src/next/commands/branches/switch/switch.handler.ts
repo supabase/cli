@@ -1,5 +1,5 @@
 import { daemonLayer, resolveManagedStack, stopDaemon } from "@supabase/stack/effect";
-import { loadProjectConfig } from "@supabase/config/effect";
+import { loadCliConfig } from "@supabase/config/effect";
 import { Effect, Option } from "effect";
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
 import { CliSettings } from "../../../config/cli-settings.service.ts";
@@ -155,14 +155,14 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
       ),
       launch.versions,
     );
-    const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
+    const loadedCliConfig = yield* loadCliConfig(projectHome.projectRoot);
 
     const stackLayer = yield* daemonLayer({
       cacheRoot: cliSettings.supabaseHome,
       cwd: runtimeInfo.cwd,
       projectDir: projectHome.projectRoot,
       name: stackName,
-      portIntents: managedPortIntents(launchConfig, loadedProjectConfig ?? undefined),
+      portIntents: managedPortIntents(launchConfig, loadedCliConfig ?? undefined),
       launch,
       ...launchConfig,
     });

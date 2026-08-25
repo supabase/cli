@@ -1,5 +1,5 @@
 import { Effect, FileSystem, Redacted } from "effect";
-import { ProjectConfigSchema } from "./base.ts";
+import { CliConfigSchema } from "./base.ts";
 import { ProjectEnvParseError } from "./errors.ts";
 import { ENV_CAPTURE_REGEX, ENV_CAPTURE_REGEX_STRICT, isEnvReference } from "./lib/env.ts";
 import { findProjectPaths, type ProjectPaths } from "./paths.ts";
@@ -293,7 +293,7 @@ function collectSecretPathPatterns(
   return patterns;
 }
 
-const secretPathPatterns = collectSecretPathPatterns(ProjectConfigSchema.ast as never);
+const secretPathPatterns = collectSecretPathPatterns(CliConfigSchema.ast as never);
 
 function matchesPathPattern(
   pattern: ReadonlyArray<string>,

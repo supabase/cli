@@ -67,7 +67,7 @@ function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "supabase-functions-download-"));
 }
 
-async function writeProjectConfig(cwd: string) {
+async function writeCliConfig(cwd: string) {
   await mkdir(join(cwd, "supabase"), { recursive: true });
   await writeFile(join(cwd, "supabase", "config.toml"), "");
 }
@@ -382,7 +382,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { out, api, layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": multipart,
@@ -436,7 +436,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": multipart,
@@ -477,7 +477,7 @@ describe("functions download", () => {
       ]);
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        yield* Effect.tryPromise(() => writeCliConfig(tempDir));
         const { layer } = setup(tempDir, {
           functionBySlug: {
             "hello-world": makeFunction({
@@ -569,7 +569,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": multipart,
@@ -619,7 +619,7 @@ describe("functions download", () => {
       ]);
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        yield* Effect.tryPromise(() => writeCliConfig(tempDir));
         const { layer } = setup(tempDir, {
           functionBySlug: {
             "hello-world": makeFunction({
@@ -687,7 +687,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { out, layer } = setup(tempDir, {
         list: [
           makeFunction({ slug: "hello-world", name: "Hello World" }),
@@ -731,7 +731,7 @@ describe("functions download", () => {
     const maliciousSlug = "../../../../../poc-escaped-outside-project";
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { api, layer } = setup(tempDir, {
         list: [makeFunction({ slug: maliciousSlug })],
       });
@@ -768,7 +768,7 @@ describe("functions download", () => {
       const tempDir = makeTempDir();
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        yield* Effect.tryPromise(() => writeCliConfig(tempDir));
         // Go's generated client unmarshals the whole `[]FunctionResponse`
         // array in one `json.Unmarshal` call
         // (`apps/cli-go/pkg/api/client.gen.go:22186-22208`); a type mismatch
@@ -824,7 +824,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { out, layer } = setup(tempDir, {
         list: [makeFunction({ slug: "hello-world" })],
         bodyBySlug: {
@@ -864,7 +864,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { layer, proxy } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": multipart,
@@ -887,7 +887,7 @@ describe("functions download", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { layer, proxy } = setup(tempDir, {
         rawArgs: ["functions", "download", "hello-world", "--legacy-bundle"],
       });
@@ -912,7 +912,7 @@ describe("functions download", () => {
       const child = mockChildProcessSpawner({ exitCode: 0 });
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        yield* Effect.tryPromise(() => writeCliConfig(tempDir));
         const { out, layer, proxy } = setup(tempDir, {
           bodyBySlug: {
             "hello-world": { body: "fake-eszip-bytes", contentType: "application/octet-stream" },
@@ -950,7 +950,7 @@ describe("functions download", () => {
     const child = mockChildProcessSpawner({ exitCode: 0 });
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { out, layer, proxy } = setup(tempDir, {
         format: "json",
         bodyBySlug: {
@@ -993,7 +993,7 @@ describe("functions download", () => {
     const child = mockChildProcessSpawner({ exitCode: 0 });
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { out, layer, proxy } = setup(tempDir, {
         format: "json",
         list: [makeFunction({ slug: "hello-world" }), makeFunction({ slug: "goodbye-world" })],
@@ -1040,7 +1040,7 @@ describe("functions download", () => {
       const child = mockChildProcessSpawner({ exitCode: 0 });
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        yield* Effect.tryPromise(() => writeCliConfig(tempDir));
         const { layer, proxy } = setup(tempDir, {
           bodyBySlug: {
             "hello-world": { body: "fake-eszip-bytes", contentType: "application/octet-stream" },
@@ -1094,7 +1094,7 @@ describe("functions download", () => {
       ]);
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        yield* Effect.tryPromise(() => writeCliConfig(tempDir));
         const { out, layer } = setup(tempDir, {
           bodyBySlug: { "hello-world": multipart },
           rawArgs: ["functions", "download", "hello-world", "--use-docker"],
@@ -1134,7 +1134,7 @@ describe("functions download", () => {
       const rawEszipBytes = new Uint8Array([0, 1, 2, 253, 254, 255, 10, 13, 0, 128, 200]);
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        yield* Effect.tryPromise(() => writeCliConfig(tempDir));
         const { layer } = setup(tempDir, {
           bodyBySlug: {
             "hello-world": {
@@ -1170,7 +1170,7 @@ describe("functions download", () => {
       const tempDir = makeTempDir();
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+        yield* Effect.tryPromise(() => writeCliConfig(tempDir));
         const { out, layer, proxy } = setup(tempDir, {
           format: "json",
           list: [],
@@ -1206,7 +1206,7 @@ describe("functions download", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { layer, proxy } = setup(tempDir, {
         format: "json",
         listStatus: 503,
@@ -1298,7 +1298,7 @@ describe("functions download", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { api, layer } = setup(tempDir);
 
       const error = yield* functionsDownload({
@@ -1317,7 +1317,7 @@ describe("functions download", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { layer } = setup(tempDir, { linked: false });
 
       const error = yield* functionsDownload(BASE_FLAGS).pipe(Effect.provide(layer), Effect.flip);
@@ -1332,7 +1332,7 @@ describe("functions download", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { out, layer } = setup(tempDir, {
         list: [],
       });
@@ -1352,7 +1352,7 @@ describe("functions download", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": {
@@ -1374,7 +1374,7 @@ describe("functions download", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": {
@@ -1414,7 +1414,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": multipart,
@@ -1449,7 +1449,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { out, layer } = setup(tempDir, {
         format: "json",
         bodyBySlug: {
@@ -1478,7 +1478,7 @@ describe("functions download", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { layer } = setup(tempDir, {
         listError: new Error("network error"),
       });
@@ -1499,7 +1499,7 @@ describe("functions download", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { layer } = setup(tempDir, {
         listStatus: 503,
         listBody: { message: "unavailable" },
@@ -1521,7 +1521,7 @@ describe("functions download", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { layer } = setup(tempDir, {
         bodyErrorBySlug: {
           "hello-world": new Error("network error"),
@@ -1541,7 +1541,7 @@ describe("functions download", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": {
@@ -1566,7 +1566,7 @@ describe("functions download", () => {
     const child = mockChildProcessSpawner({ exitCode: 0 });
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { layer } = setup(tempDir, {
         bodyErrorBySlug: {
           "hello-world": new Error("network error"),
@@ -1595,7 +1595,7 @@ describe("functions download", () => {
     const child = mockChildProcessSpawner({ exitCode: 0 });
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": {
@@ -1639,7 +1639,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": multipart,
@@ -1689,7 +1689,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": multipart,
@@ -1734,7 +1734,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { layer } = setup(tempDir, {
         bodyBySlug: {
           "hello-world": multipart,
@@ -1769,7 +1769,7 @@ describe("functions download", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       yield* Effect.tryPromise(() =>
         symlink(outsideDir, join(tempDir, "supabase", "functions"), "junction"),
       );
@@ -1881,7 +1881,7 @@ describe("functions download", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+      yield* Effect.tryPromise(() => writeCliConfig(tempDir));
       const { out, layer } = setup(tempDir, {
         format: "json",
         bodyBySlug: {
@@ -1981,7 +1981,7 @@ describe("functions download", () => {
         process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+          yield* Effect.tryPromise(() => writeCliConfig(tempDir));
           const { layer, proxy } = setup(tempDir, {
             bodyBySlug: {
               "hello-world": { body: "fake-eszip-bytes", contentType: "application/octet-stream" },

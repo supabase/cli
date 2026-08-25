@@ -164,7 +164,7 @@ export const legacyStartLocalDatabase = Effect.fnUntraced(function* (fromBackupF
   // `projectId`/`hostname` are NOT destructured under their bare names here — the not-running
   // branch below passes this SAME `context` into `legacyBuildLocalDbContainerInputs` as its
   // `preloadedContext` param (reused, not reloaded — a second `legacyLoadLocalProjectContext`
-  // call would run `@supabase/config`'s `loadProjectConfig` again, which unconditionally
+  // call would run `@supabase/config`'s `loadCliConfig` again, which unconditionally
   // prints deprecated-config-section WARN lines to stderr, doubling them for one invocation),
   // and that function returns the SAME context back verbatim as `inputs.context`, later
   // destructured under `context.projectId`/`context.hostname` — re-declaring those same bare

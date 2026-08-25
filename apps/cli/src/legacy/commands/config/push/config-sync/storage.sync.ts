@@ -1,4 +1,4 @@
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 
 import { diff } from "./config-sync.diff.ts";
 import { encodeToml, type TomlField, type TomlValue } from "./config-sync.toml.ts";
@@ -132,7 +132,7 @@ export interface StoragePresence {
  * declared is excluded from the diff and the update body.
  */
 export function storageSubsetFromConfig(
-  config: ProjectConfig,
+  config: CliConfig,
   presence: StoragePresence,
 ): StorageSubset {
   const s = config.storage;

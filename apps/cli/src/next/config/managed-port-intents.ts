@@ -1,4 +1,4 @@
-import type { LoadedProjectConfig } from "@supabase/config";
+import type { LoadedCliConfig } from "@supabase/config";
 import { PORT_CATALOG, PORT_FIELDS, portFieldsForConfigInput } from "@supabase/stack/effect";
 
 /**
@@ -7,7 +7,7 @@ import { PORT_CATALOG, PORT_FIELDS, portFieldsForConfigInput } from "@supabase/s
  */
 export const managedPortIntents = (
   stackConfig: Parameters<typeof portFieldsForConfigInput>[0],
-  loadedProjectConfig: Pick<LoadedProjectConfig, "document"> | undefined,
+  loadedCliConfig: Pick<LoadedCliConfig, "document"> | undefined,
 ) => {
   const activeFields = portFieldsForConfigInput(stackConfig);
   const disabledFields = PORT_FIELDS.filter(
@@ -16,6 +16,6 @@ export const managedPortIntents = (
   return {
     activeFields,
     disabledFields,
-    document: loadedProjectConfig?.document ?? {},
+    document: loadedCliConfig?.document ?? {},
   };
 };

@@ -3,9 +3,9 @@ export * from "./index.ts";
 export {
   configJsonPath,
   configTomlPath,
-  loadProjectConfig,
-  loadProjectConfigFile,
-  saveProjectConfig,
+  loadCliConfig,
+  loadCliConfigFile,
+  saveCliConfig,
 } from "./io.ts";
 export { inferFunctionsManifest } from "./functions-manifest.ts";
 export {
@@ -15,5 +15,5 @@ export {
   resolveProjectValue,
 } from "./project.ts";
 export { findProjectPaths, findProjectRoot } from "./paths.ts";
-export { projectConfigStoreLayer } from "./project-config.layer.ts";
-export { ProjectConfigStore } from "./project-config.service.ts";
+export { cliConfigStoreLayer } from "./cli-config.layer.ts";
+export { CliConfigStore } from "./cli-config.service.ts";

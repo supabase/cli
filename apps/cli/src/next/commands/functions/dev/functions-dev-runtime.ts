@@ -1,5 +1,5 @@
 import { connectLayer, daemonLayer, Stack, type EdgeRuntimeConfig } from "@supabase/stack/effect";
-import { loadProjectConfig } from "@supabase/config/effect";
+import { loadCliConfig } from "@supabase/config/effect";
 import { Duration, Effect, FileSystem, Layer, Option, Stream } from "effect";
 import { join } from "node:path";
 import { CliSettings } from "../../../config/cli-settings.service.ts";
@@ -38,7 +38,7 @@ interface FunctionsDevStackOptions extends FunctionsDevRuntimeOptions {
 }
 
 interface FunctionsDevWatchChange {
-  readonly touchesProjectConfig: boolean;
+  readonly touchesCliConfig: boolean;
 }
 
 type StackService = typeof Stack.Service;
@@ -53,7 +53,7 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
   yield* ensureProjectStateIgnored(projectHome.projectRoot);
 
   const serviceVersionContext = yield* resolveServiceVersionContext([], undefined);
-  const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
+  const loadedCliConfig = yield* loadCliConfig(projectHome.projectRoot);
   const stackConfig = {
     ...withServiceVersions(toStartStackConfig([], "docker"), serviceVersionContext.runtimeVersions),
     // Functions dev explicitly requires Edge Runtime even when the project
@@ -72,7 +72,7 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
       excludedServices: [],
     },
     ...stackConfig,
-    portIntents: managedPortIntents(stackConfig, loadedProjectConfig ?? undefined),
+    portIntents: managedPortIntents(stackConfig, loadedCliConfig ?? undefined),
   });
   yield* startStackWithProgress().pipe(Effect.provide(stackLayer));
   const stack = yield* Stack.pipe(Effect.provide(stackLayer));
@@ -132,7 +132,7 @@ function watchEventMatches(spec: FunctionsDevWatchPath, event: FileWatchEvent): 
   return spec.names.some((name) => segments.includes(name));
 }
 
-function isProjectConfigEvent(event: FileWatchEvent): boolean {
+function isCliConfigEvent(event: FileWatchEvent): boolean {
   const segments = event.path.replaceAll("\\", "/").split("/");
   return segments.includes("config.toml") || segments.includes("config.json");
 }
@@ -145,7 +145,7 @@ export function watchPaths(paths: ReadonlyArray<FunctionsDevWatchPath>) {
         fileWatcher.watch(spec.path).pipe(
           Stream.filter((events) => events.some((event) => watchEventMatches(spec, event))),
           Stream.map((events) => ({
-            touchesProjectConfig: events.some(isProjectConfigEvent),
+            touchesCliConfig: events.some(isCliConfigEvent),
           })),
         ),
       );
@@ -172,7 +172,7 @@ function applyWatchedChange(
   change: FunctionsDevWatchChange,
 ) {
   return Effect.gen(function* () {
-    if (!change.touchesProjectConfig) {
+    if (!change.touchesCliConfig) {
       return {
         state: currentEdgeRuntimeState,
         action: "functions" as const,

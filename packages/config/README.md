@@ -4,15 +4,15 @@ Supabase project configuration package built on Effect V4 Schema.
 
 It owns:
 
-- the canonical `ProjectConfig` schema
-- the `ProjectConfigStore` Effect service for config IO
+- the canonical `CliConfig` schema
+- the `CliConfigStore` Effect service for config IO
 - JSON Schema generation at `@supabase/config/schema.json`
 - config file loading/saving for `supabase/config.json`
 - backward-compatible TOML support for `supabase/config.toml`
 
 ## Entrypoints
 
-- `@supabase/config` — pure, browser/edge-safe surface: the `ProjectConfig` schema and types,
+- `@supabase/config` — pure, browser/edge-safe surface: the `CliConfig` schema and types,
   config encoding, sparse-config defaults, and errors. No file IO, no Effect-returning functions.
 - `@supabase/config/io` — Promise-based file-IO facade for non-Effect consumers. The bun/node
   implementation is picked automatically via package.json exports conditions. Requires installing
@@ -20,27 +20,27 @@ It owns:
   under Node — and is unavailable in browser bundles (the `browser` condition resolves to a stub that
   throws); use `@supabase/config` there instead.
 - `@supabase/config/effect` — Effect-native superset of `@supabase/config`, adding the
-  `ProjectConfigStore` service, `projectConfigStoreLayer`, and other Effect programs (config
+  `CliConfigStore` service, `cliConfigStoreLayer`, and other Effect programs (config
   loading/saving, project env resolution, functions manifest inference).
-- `@supabase/config/schema.json` — generated JSON Schema for `ProjectConfig`.
+- `@supabase/config/schema.json` — generated JSON Schema for `CliConfig`.
 
 ## Usage
 
 ```ts
 import {
-  ProjectConfigSchema,
-  ProjectConfigStore,
-  projectConfigStoreLayer,
-  type ProjectConfig,
+  CliConfigSchema,
+  CliConfigStore,
+  cliConfigStoreLayer,
+  type CliConfig,
 } from "@supabase/config/effect";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer } from "effect";
 
-const layer = projectConfigStoreLayer.pipe(Layer.provide(BunServices.layer));
+const layer = cliConfigStoreLayer.pipe(Layer.provide(BunServices.layer));
 
 const loaded = await Effect.runPromise(
   Effect.gen(function* () {
-    const store = yield* ProjectConfigStore;
+    const store = yield* CliConfigStore;
     return yield* store.load(process.cwd());
   }).pipe(Effect.provide(layer)),
 );
@@ -49,7 +49,7 @@ const loaded = await Effect.runPromise(
 For convenience entrypoints at the runtime edge:
 
 ```ts
-import { loadProjectConfig } from "@supabase/config/io";
+import { loadCliConfig } from "@supabase/config/io";
 ```
 
 For lazy `env(NAME)` resolution, load project env separately and resolve only the value or subtree you need:

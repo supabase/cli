@@ -1,4 +1,4 @@
-import { loadProjectConfig, loadProjectEnvironment } from "@supabase/config/effect";
+import { loadCliConfig, loadProjectEnvironment } from "@supabase/config/effect";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { legacyAssertDecodableJwkAlgorithm } from "../../shared/legacy-go-jwt.ts";
 import { legacyGoJsonKindName } from "../../shared/legacy-go-json.ts";
@@ -479,7 +479,7 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
   // The dotenv cascade must run BEFORE `loadFromFile` ever decodes `env(...)`
   // TOML references — and that cascade reaches `.env.<SUPABASE_ENV>[.local]`
   // files AND the project-root directory (`<workdir>/.env`), not just
-  // `supabase/.env`/`.env.local`. `loadProjectConfig`'s OWN internal env
+  // `supabase/.env`/`.env.local`. `loadCliConfig`'s OWN internal env
   // resolution (used whenever `options.projectEnv` is omitted,
   // `@supabase/config`'s `loadProjectEnvironment`) only covers that narrower
   // `supabase/`-dir, env-agnostic half — so `[auth].signing_keys_path =
@@ -501,7 +501,7 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
     try: () => legacyResolveProjectEnvironmentValues(projectEnv, cwd),
     catch: (cause) => onConfigParseError(`failed to read config: ${String(cause)}`),
   });
-  const loaded = yield* loadProjectConfig(cwd, {
+  const loaded = yield* loadCliConfig(cwd, {
     projectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
     goViperCompat: true,
     // `cwd` here is the ALREADY-resolved `LegacyCliSettings.workdir` (the
@@ -522,7 +522,7 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
     search: false,
     tomlOnly: true,
   }).pipe(
-    Effect.catchTag("ProjectConfigParseError", (cause) =>
+    Effect.catchTag("CliConfigParseError", (cause) =>
       Effect.fail(onConfigParseError(`failed to parse ${cause.path}: ${String(cause.cause)}`)),
     ),
   );

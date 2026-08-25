@@ -6,10 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, FileSystem, Path, Redacted } from "effect";
 import { findProjectRootFor, loadProjectEnvironmentFor } from "./bun.ts";
-import { ProjectConfigParseError, ProjectEnvParseError } from "./errors.ts";
+import { CliConfigParseError, ProjectEnvParseError } from "./errors.ts";
 import {
   findProjectPaths,
-  loadProjectConfig,
+  loadCliConfig,
   loadProjectEnvironment,
   resolveProjectSubtree,
   resolveProjectValue,
@@ -76,7 +76,7 @@ describe("project discovery and lazy env resolution", () => {
       const configAtRepoRoot = await runConfigEffect(findProjectPaths(repoRoot, { search: false }));
       expect(configAtRepoRoot?.projectRoot).toBe(repoRoot);
 
-      expect(await runConfigEffect(loadProjectConfig(nestedCwd, { search: false }))).toBeNull();
+      expect(await runConfigEffect(loadCliConfig(nestedCwd, { search: false }))).toBeNull();
       expect(
         await runConfigEffect(loadProjectEnvironment({ cwd: nestedCwd, search: false })),
       ).toBeNull();
@@ -287,7 +287,7 @@ describe("project discovery and lazy env resolution", () => {
       await mkdir(join(projectRoot, "supabase"), { recursive: true });
       await writeFile(join(projectRoot, "supabase", "config.toml"), `project_id = "ref_123"\n`);
 
-      const defaultLoaded = await runConfigEffect(loadProjectConfig(projectRoot));
+      const defaultLoaded = await runConfigEffect(loadCliConfig(projectRoot));
       // Field is intentionally optional today so the implicit default can flip on 2026-05-30
       // without losing track of users who explicitly opted in either direction.
       expect(defaultLoaded!.config.api.auto_expose_new_tables).toBeUndefined();
@@ -296,14 +296,14 @@ describe("project discovery and lazy env resolution", () => {
         join(projectRoot, "supabase", "config.toml"),
         `project_id = "ref_123"\n\n[api]\nauto_expose_new_tables = false\n`,
       );
-      const explicitFalse = await runConfigEffect(loadProjectConfig(projectRoot));
+      const explicitFalse = await runConfigEffect(loadCliConfig(projectRoot));
       expect(explicitFalse!.config.api.auto_expose_new_tables).toBe(false);
 
       await writeFile(
         join(projectRoot, "supabase", "config.toml"),
         `project_id = "ref_123"\n\n[api]\nauto_expose_new_tables = true\n`,
       );
-      const explicitTrue = await runConfigEffect(loadProjectConfig(projectRoot));
+      const explicitTrue = await runConfigEffect(loadCliConfig(projectRoot));
       expect(explicitTrue!.config.api.auto_expose_new_tables).toBe(true);
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -329,7 +329,7 @@ auth_token = "env(TWILIO_AUTH_TOKEN)"
 `,
       );
 
-      const loaded = await runConfigEffect(loadProjectConfig(projectRoot));
+      const loaded = await runConfigEffect(loadCliConfig(projectRoot));
       const projectEnv = await runConfigEffect(loadProjectEnvironment({ cwd: projectRoot }));
 
       expect(loaded!.config.auth.jwt_secret).toBe("env(AUTH_JWT_SECRET)");
@@ -356,7 +356,7 @@ jwt_secret = "env(AUTH_JWT_SECRET)"
       );
       await writeFile(join(projectRoot, "supabase", ".env"), "AUTH_JWT_SECRET=super-secret\n");
 
-      const loaded = await runConfigEffect(loadProjectConfig(projectRoot));
+      const loaded = await runConfigEffect(loadCliConfig(projectRoot));
       const projectEnv = await runConfigEffect(loadProjectEnvironment({ cwd: projectRoot }));
 
       const resolved = await runConfigEffect(
@@ -398,7 +398,7 @@ jwt_secret = "env(PREVIEW_JWT_SECRET)"
         "EDGE_API_KEY=edge-secret\nPREVIEW_JWT_SECRET=preview-secret\n",
       );
 
-      const loaded = await runConfigEffect(loadProjectConfig(projectRoot));
+      const loaded = await runConfigEffect(loadCliConfig(projectRoot));
       const projectEnv = await runConfigEffect(loadProjectEnvironment({ cwd: projectRoot }));
 
       const edgeRuntime = await runConfigEffect(
@@ -441,7 +441,7 @@ jwt_secret = "env(MISSING_SECRET)"
 `,
       );
 
-      const loaded = await runConfigEffect(loadProjectConfig(projectRoot));
+      const loaded = await runConfigEffect(loadCliConfig(projectRoot));
       const projectEnv = await runConfigEffect(loadProjectEnvironment({ cwd: projectRoot }));
 
       const resolved = await runConfigEffect(
@@ -477,7 +477,7 @@ foo = "env(EMPTY_SECRET)"
       );
       await writeFile(join(projectRoot, "supabase", ".env"), "EMPTY_SECRET=\n");
 
-      const loaded = await runConfigEffect(loadProjectConfig(projectRoot));
+      const loaded = await runConfigEffect(loadCliConfig(projectRoot));
       const projectEnv = await runConfigEffect(loadProjectEnvironment({ cwd: projectRoot }));
 
       const resolved = await runConfigEffect(
@@ -511,7 +511,7 @@ auth_token = "env(MISSING_SECRET)"
 `,
       );
 
-      const loaded = await runConfigEffect(loadProjectConfig(projectRoot));
+      const loaded = await runConfigEffect(loadCliConfig(projectRoot));
       const projectEnv = await runConfigEffect(loadProjectEnvironment({ cwd: projectRoot }));
 
       const resolved = await runConfigEffect(
@@ -540,8 +540,8 @@ account_sid = "AC123"
 `,
       );
 
-      await expect(runConfigEffect(loadProjectConfig(projectRoot))).rejects.toBeInstanceOf(
-        ProjectConfigParseError,
+      await expect(runConfigEffect(loadCliConfig(projectRoot))).rejects.toBeInstanceOf(
+        CliConfigParseError,
       );
     } finally {
       await rm(cwd, { recursive: true, force: true });
@@ -567,7 +567,7 @@ jwt_secret = "env(lowercase_secret)"
       );
       await writeFile(join(projectRoot, "supabase", ".env"), "lowercase_secret=super-secret\n");
 
-      const loaded = await runConfigEffect(loadProjectConfig(projectRoot));
+      const loaded = await runConfigEffect(loadCliConfig(projectRoot));
       const projectEnv = await runConfigEffect(loadProjectEnvironment({ cwd: projectRoot }));
 
       const resolved = await runConfigEffect(
@@ -600,7 +600,7 @@ jwt_secret = "env(lowercase_secret)"
       );
       await writeFile(join(projectRoot, "supabase", ".env"), "lowercase_secret=super-secret\n");
 
-      const loaded = await runConfigEffect(loadProjectConfig(projectRoot));
+      const loaded = await runConfigEffect(loadCliConfig(projectRoot));
       const projectEnv = await runConfigEffect(loadProjectEnvironment({ cwd: projectRoot }));
 
       const resolved = await runConfigEffect(

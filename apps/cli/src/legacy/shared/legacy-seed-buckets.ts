@@ -1,8 +1,8 @@
 import {
-  loadProjectConfig,
-  type LoadProjectConfigOptions,
-  type ProjectConfig,
-  ProjectConfigSchema,
+  loadCliConfig,
+  type LoadCliConfigOptions,
+  type CliConfig,
+  CliConfigSchema,
 } from "@supabase/config/effect";
 import { Effect, FileSystem, Path, Schema } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
@@ -104,13 +104,13 @@ function emptySummary(): SeedSummary {
 
 /**
  * Embedded-default project config, decoded from an empty object — the same
- * `decodeUnknownSync(ProjectConfigSchema)({})` the loader uses internally
+ * `decodeUnknownSync(CliConfigSchema)({})` the loader uses internally
  * (`packages/config/src/io.ts:54-56`). `seed buckets` never aborts on a
  * missing `config.toml`: it reads the package-global `utils.Config`, initialized
  * to embedded defaults, and `config.Load` no-ops on a missing file. So "no
  * config file" behaves like the embedded-default config.
  */
-const legacyDecodeDefaultProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
+const legacyDecodeDefaultCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
 /**
  * Core of `seed buckets`: load config (merging `[remotes.<ref>]` for a non-empty
@@ -147,7 +147,7 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
    */
   readonly yes?: boolean;
   /**
-   * Skips this function's own `loadProjectConfig` reload in favor of a config
+   * Skips this function's own `loadCliConfig` reload in favor of a config
    * the caller already resolved (and may have folded env overrides into —
    * see `start.handler.ts`'s `effectiveLocalStorageConfig`). `buckets.Run`
    * never reloads config itself: it reads the single process-wide `utils.Config`
@@ -163,7 +163,7 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
    * one-shot `Config.Load()` for that process, so it keeps reloading below.
    */
   readonly resolvedConfig?: {
-    readonly config: ProjectConfig;
+    readonly config: CliConfig;
     readonly document: Record<string, unknown> | undefined;
   };
 }) {
@@ -184,14 +184,14 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
   // --linked. A parse failure aborts before any network call. Skipped entirely
   // when the caller already supplied `resolvedConfig` — see that option's doc
   // comment above.
-  const loadOptions: LoadProjectConfigOptions =
+  const loadOptions: LoadCliConfigOptions =
     projectRef !== "" ? { projectRef, goViperCompat: true } : { goViperCompat: true };
   const loaded =
     opts.resolvedConfig !== undefined
       ? null
-      : yield* loadProjectConfig(cliSettings.workdir, loadOptions).pipe(
+      : yield* loadCliConfig(cliSettings.workdir, loadOptions).pipe(
           Effect.catchTag(
-            "ProjectConfigParseError",
+            "CliConfigParseError",
             (cause) =>
               new LegacySeedConfigLoadError({
                 message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
@@ -205,7 +205,7 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
   // given) always wins over a `null` `loaded` — see that option's doc comment.
   const config =
     opts.resolvedConfig?.config ??
-    (loaded === null ? legacyDecodeDefaultProjectConfig({}) : loaded.config);
+    (loaded === null ? legacyDecodeDefaultCliConfig({}) : loaded.config);
   const document = opts.resolvedConfig?.document ?? (loaded === null ? undefined : loaded.document);
 
   // Go prints this from inside config load whenever a

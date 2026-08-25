@@ -31,7 +31,7 @@ import {
  * Management API).
  */
 
-/** Structural subset of `@supabase/config`'s ProjectConfig used here. */
+/** Structural subset of `@supabase/config`'s CliConfig used here. */
 export interface LegacyStorageConfigView {
   readonly api: {
     readonly enabled: boolean;

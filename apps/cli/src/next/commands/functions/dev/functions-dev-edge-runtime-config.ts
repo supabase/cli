@@ -1,8 +1,8 @@
 import {
-  loadProjectConfig,
+  loadCliConfig,
   loadProjectEnvironment,
   resolveProjectSubtree,
-  type ProjectConfig,
+  type CliConfig,
 } from "@supabase/config/effect";
 import type { EdgeRuntimeConfig } from "@supabase/stack/effect";
 import { Data, Effect, Redacted } from "effect";
@@ -17,8 +17,8 @@ type ResolvedSecretValue = string | Redacted.Redacted<string>;
 type EdgeRuntimePolicy = "oneshot" | "per_worker";
 
 interface ResolvedProjectEdgeRuntimeConfig {
-  readonly enabled: ProjectConfig["edge_runtime"]["enabled"];
-  readonly inspector_port: ProjectConfig["edge_runtime"]["inspector_port"];
+  readonly enabled: CliConfig["edge_runtime"]["enabled"];
+  readonly inspector_port: CliConfig["edge_runtime"]["inspector_port"];
   readonly policy: ResolvedSecretValue;
   readonly secrets?: Readonly<Record<string, ResolvedSecretValue>>;
 }
@@ -93,7 +93,7 @@ function toStackEdgeRuntimeConfig(config: ResolvedProjectEdgeRuntimeConfig): Edg
 
 export const resolveFunctionsDevEdgeRuntimeConfig = Effect.fnUntraced(function* () {
   const projectHome = yield* ProjectHome;
-  const loadedConfig = yield* loadProjectConfig(projectHome.projectRoot);
+  const loadedConfig = yield* loadCliConfig(projectHome.projectRoot);
 
   if (loadedConfig === null) {
     const config = {};
