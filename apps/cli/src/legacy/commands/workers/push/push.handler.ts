@@ -8,7 +8,7 @@ import {
 } from "../workers.output.ts";
 import { legacyAqua } from "../../../shared/legacy-colors.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { classifyWorkerDir } from "../../../../shared/workers/worker-classify.ts";
 import { formatBytes, packageWorkerDirectory } from "../../../../shared/workers/worker-package.ts";
 import { displayPath } from "../../../../shared/workers/worker-paths.ts";
@@ -143,7 +143,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
   const fs = yield* FileSystem.FileSystem;
   const output = yield* Output;
   const api = yield* LegacyPlatformApi;
-  const cliConfig = yield* LegacyCliConfig;
+  const settings = yield* LegacyCliSettings;
 
   const { project, name, projectRef } = input;
   const worker = yield* legacyDescribeWorker(project, name);
@@ -271,7 +271,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
 
   const url =
     settled.spec.exposure === "public"
-      ? workerUrl(projectRef, cliConfig.projectHost, name)
+      ? workerUrl(projectRef, settings.projectHost, name)
       : undefined;
 
   // Suppressed when `-o` is in play: the payload owns stdout, and these lines
