@@ -758,7 +758,7 @@ describe("legacy functions serve integration", () => {
           toDockerPath(tempRoot.current),
         ]);
         expect(dockerRun.args[dockerRun.args.length - 1]).toBe(
-          "edge-runtime start --main-service=/root --port=8081 --policy=per_worker\n",
+          "exec edge-runtime start --main-service=/root --port=8081 --policy=per_worker\n",
         );
 
         const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
@@ -1879,7 +1879,7 @@ describe("legacy functions serve integration", () => {
 
       const commandScript = dockerRun.args[dockerRun.args.length - 1] ?? "";
       expect(commandScript).toBe(
-        "edge-runtime start --main-service=/root --port=8081 --policy=per_worker\n",
+        "exec edge-runtime start --main-service=/root --port=8081 --policy=per_worker\n",
       );
 
       const cp = deployMockState.runCalls.find(
