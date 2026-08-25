@@ -44,7 +44,7 @@
     "jose": "^6.2.9"
   },
   "devDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.233",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.234",
     "@anthropic-ai/sdk": "^0.117.1",
     "@clack/prompts": "^1.7.0",
     "@effect/atom-react": "catalog:",
@@ -62,7 +62,7 @@
     "@supabase/stack": "workspace:*",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
-    "@types/pg": "^8.21.0",
+    "@types/pg": "^8.23.1",
     "@types/pg-copy-streams": "^1.2.5",
     "@types/react": "^19.2.18",
     "@vercel/detect-agent": "^1.2.5",
@@ -79,7 +79,7 @@
     "pg": "^8.23.0",
     "pg-copy-streams": "^7.0.0",
     "posthog-node": "^5.49.1",
-    "prettier": "3.8.1",
+    "prettier": "3.9.6",
     "react": "^19.2.8",
     "react-devtools-core": "^7.0.1",
     "semantic-release": "^25.0.9",
