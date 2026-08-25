@@ -1,11 +1,11 @@
 import { Effect, Option, Redacted } from "effect";
 
 import { LegacyCredentials } from "../auth/legacy-credentials.service.ts";
-import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 
 /**
  * Resolves the Management API access token, preferring an env-set value on
- * `LegacyCliConfig.accessToken` over the keyring / file-backed credentials
+ * `LegacyCliSettings.accessToken` over the keyring / file-backed credentials
  * service.
  *
  * Returns `None` if no token is available. Callers that POST/PUT via the raw
@@ -22,11 +22,11 @@ import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 export const resolveLegacyAccessToken: Effect.Effect<
   Option.Option<Redacted.Redacted<string>>,
   never,
-  LegacyCliConfig | LegacyCredentials
+  LegacyCliSettings | LegacyCredentials
 > = Effect.gen(function* () {
-  const cliConfig = yield* LegacyCliConfig;
-  if (Option.isSome(cliConfig.accessToken)) {
-    return cliConfig.accessToken;
+  const cliSettings = yield* LegacyCliSettings;
+  if (Option.isSome(cliSettings.accessToken)) {
+    return cliSettings.accessToken;
   }
   const credentials = yield* LegacyCredentials;
   return yield* credentials.getAccessToken.pipe(

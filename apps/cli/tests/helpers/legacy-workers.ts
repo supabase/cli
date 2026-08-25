@@ -9,7 +9,7 @@ import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { LegacyPlatformApi } from "../../src/legacy/auth/legacy-platform-api.service.ts";
-import { LegacyCliConfig } from "../../src/legacy/config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../src/legacy/config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../src/legacy/config/legacy-project-ref.service.ts";
 import { LegacyOutputFlag } from "../../src/shared/legacy/global-flags.ts";
 import { randomLayer } from "../../src/shared/runtime/random.layer.ts";
@@ -185,11 +185,11 @@ export function makeWorkersProject(files: Readonly<Record<string, string>> = {})
 }
 
 /**
- * `LegacyCliConfig`, trimmed to what the worker commands read: the workdir they
+ * `LegacyCliSettings`, trimmed to what the worker commands read: the workdir they
  * treat as the project, and the host their URLs are built on.
  */
 const legacyTestCliConfigLayer = (workdir: string) =>
-  Layer.succeed(LegacyCliConfig, {
+  Layer.succeed(LegacyCliSettings, {
     profile: "supabase",
     apiUrl: "https://api.supabase.com",
     projectHost: "supabase.co",
@@ -199,7 +199,7 @@ const legacyTestCliConfigLayer = (workdir: string) =>
     projectId: Option.none(),
     workdir,
     userAgent: "supabase",
-  } as unknown as LegacyCliConfig["Service"]);
+  } as unknown as LegacyCliSettings["Service"]);
 
 /** The resolver, stubbed: `--project-ref` wins, else the linked project. */
 const legacyTestProjectRefLayer = (linked: boolean) =>

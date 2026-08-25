@@ -6,7 +6,7 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import {
   LEGACY_VALID_REF,
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -74,11 +74,11 @@ function setup(opts: SetupOpts = {}) {
     },
     network: opts.network,
   });
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
   });
   return { layer, out, api };
@@ -93,13 +93,13 @@ function setupTracked(opts: SetupOpts = {}) {
     },
     network: opts.network,
   });
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
   });
@@ -304,8 +304,8 @@ describe("legacy functions list integration", () => {
           ),
         ),
     });
-    const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
-    const layer = buildLegacyTestRuntime({ out, api, cliConfig });
+    const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
+    const layer = buildLegacyTestRuntime({ out, api, cliSettings });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyFunctionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -331,8 +331,8 @@ describe("legacy functions list integration", () => {
           ),
         ),
     });
-    const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
-    const layer = buildLegacyTestRuntime({ out, api, cliConfig });
+    const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
+    const layer = buildLegacyTestRuntime({ out, api, cliSettings });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyFunctionsList({ projectRef: Option.none() }));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -392,14 +392,14 @@ describe("legacy functions list integration", () => {
   it.live("flushes telemetry when project ref resolution fails before the API call", () => {
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi();
-    const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+    const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
     const telemetry = mockLegacyTelemetryStateTracked();
     const cache = mockLegacyLinkedProjectCacheTracked();
     const layer = Layer.mergeAll(
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig,
+        cliSettings,
         telemetry: telemetry.layer,
         linkedProjectCache: cache.layer,
       }),

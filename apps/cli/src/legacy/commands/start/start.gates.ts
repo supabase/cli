@@ -1,4 +1,4 @@
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import type {
@@ -54,7 +54,7 @@ export interface LegacyStartGates {
 }
 
 export interface LegacyStartGateInputs {
-  readonly config: ProjectConfig;
+  readonly config: CliConfig;
   readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
   /** `legacyPartitionStartExcludeFlags(flags.exclude).valid`, as a `Set` for O(1) lookup. */
   readonly excludedKeys: ReadonlySet<string>;

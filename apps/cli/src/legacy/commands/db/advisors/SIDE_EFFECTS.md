@@ -49,7 +49,7 @@ One connection. Within one transaction: `BEGIN` → `set local search_path = ''`
 | `PGHOST` / `PGPORT` / … | connection overrides (local / `--db-url`)                            | no                                        |
 
 The API base URL is derived from `SUPABASE_PROFILE`; `SUPABASE_API_URL` is **not**
-honored (see `legacy-cli-config.layer.unit.test.ts`).
+honored (see `legacy-cli-settings.layer.unit.test.ts`).
 
 ## Exit Codes
 

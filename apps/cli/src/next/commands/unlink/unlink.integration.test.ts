@@ -6,10 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Layer, Option } from "effect";
 import { mockOutput, mockRuntimeInfo, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
-import { cliConfigLayer } from "../../config/cli-config.layer.ts";
-import { projectContextLayer } from "../../config/project-context.layer.ts";
-import { projectHomeLayer } from "../../config/project-home.layer.ts";
-import { ProjectHome } from "../../config/project-home.service.ts";
+import { cliSettingsLayer } from "../../config/cli-settings.layer.ts";
+import { cliProjectContextLayer } from "../../config/cli-project-context.layer.ts";
+import { cliProjectHomeLayer } from "../../config/cli-project-home.layer.ts";
+import { CliProjectHome } from "../../config/cli-project-home.service.ts";
 import { projectLinkStateLayer } from "../../config/project-link-state.layer.ts";
 import { ProjectLinkState } from "../../config/project-link-state.service.ts";
 import { unlink } from "./unlink.handler.ts";
@@ -24,24 +24,24 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string> }) {
     homeDir: opts.env?.SUPABASE_HOME ? join(opts.env.SUPABASE_HOME, "..") : join(opts.cwd, ".home"),
   });
   const envLayer = processEnvLayer(opts.env ?? {});
-  const discoveredProjectContextLayer = projectContextLayer.pipe(
+  const discoveredCliProjectContextLayer = cliProjectContextLayer.pipe(
     Layer.provide(BunServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(envLayer),
   );
-  const discoveredCliConfigLayer = cliConfigLayer.pipe(
+  const discoveredCliSettingsLayer = cliSettingsLayer.pipe(
     Layer.provide(runtimeInfoLayer),
-    Layer.provide(discoveredProjectContextLayer),
+    Layer.provide(discoveredCliProjectContextLayer),
   );
-  const discoveredProjectHomeLayer = projectHomeLayer.pipe(
+  const discoveredCliProjectHomeLayer = cliProjectHomeLayer.pipe(
     Layer.provide(BunServices.layer),
     Layer.provide(runtimeInfoLayer),
-    Layer.provide(discoveredProjectContextLayer),
-    Layer.provide(discoveredCliConfigLayer),
+    Layer.provide(discoveredCliProjectContextLayer),
+    Layer.provide(discoveredCliSettingsLayer),
   );
   const discoveredProjectLinkStateLayer = projectLinkStateLayer.pipe(
     Layer.provide(BunServices.layer),
-    Layer.provide(discoveredProjectHomeLayer),
+    Layer.provide(discoveredCliProjectHomeLayer),
   );
   const out = mockOutput({ format: "text", interactive: false });
 
@@ -51,9 +51,9 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string> }) {
       BunServices.layer,
       runtimeInfoLayer,
       envLayer,
-      discoveredProjectContextLayer,
-      discoveredCliConfigLayer,
-      discoveredProjectHomeLayer,
+      discoveredCliProjectContextLayer,
+      discoveredCliSettingsLayer,
+      discoveredCliProjectHomeLayer,
       discoveredProjectLinkStateLayer,
       out.layer,
     ),
@@ -78,14 +78,14 @@ describe("unlink handler", () => {
         cwd: projectRoot,
         env: { SUPABASE_HOME: supabaseHome },
       });
-      const { projectHome, linkState } = yield* Effect.gen(function* () {
+      const { cliProjectHome, linkState } = yield* Effect.gen(function* () {
         return {
-          projectHome: yield* ProjectHome,
+          cliProjectHome: yield* CliProjectHome,
           linkState: yield* ProjectLinkState,
         };
       }).pipe(Effect.provide(layer));
 
-      yield* projectHome.ensureProjectHomeDir;
+      yield* cliProjectHome.ensureCliProjectHomeDir;
       yield* linkState.save({
         project: {
           ref: projectRef,

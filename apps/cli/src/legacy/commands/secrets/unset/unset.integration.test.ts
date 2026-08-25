@@ -9,7 +9,7 @@ import {
   buildLegacyTestRuntime,
   legacyJsonResponse,
   legacyTransportFailure,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyPlatformApi,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -55,12 +55,12 @@ function setup(opts: SetupOpts = {}) {
       return Effect.succeed(legacyJsonResponse(request, opts.deleteStatus ?? 200, null));
     },
   });
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const layer = Layer.mergeAll(
     buildLegacyTestRuntime({
       out,
       api,
-      cliConfig,
+      cliSettings,
       tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
       stdin: mockStdin(opts.stdinIsTty ?? false, opts.stdinInput),
       goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),

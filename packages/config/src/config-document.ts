@@ -1,30 +1,30 @@
 import { Schema } from "effect";
 import * as SmolToml from "smol-toml";
-import { ProjectConfigSchema, type ProjectConfig } from "./base.ts";
+import { CliConfigSchema, type CliConfig } from "./base.ts";
 import type { ConfigFormat } from "./config-format.ts";
-import { getDefaultProjectConfig, setOwnProperty, subtractValue } from "./sparse.ts";
-import type { ProjectEnvironment } from "./project.ts";
+import { getDefaultCliConfig, setOwnProperty, subtractValue } from "./sparse.ts";
+import type { CliProjectEnvironment } from "./project.ts";
 
 /** Shared with `io.ts`'s `getSchemaRef`, which reads this key back off a raw document. */
-export const projectConfigSchemaKey = "$schema";
+export const cliConfigSchemaKey = "$schema";
 
-export type ProjectConfigValueSource = "environment" | "local" | "remote";
+export type CliConfigValueSource = "environment" | "local" | "remote";
 
-export interface ProjectConfigValueOrigin {
+export interface CliConfigValueOrigin {
   readonly path: ReadonlyArray<string>;
-  readonly source: ProjectConfigValueSource;
+  readonly source: CliConfigValueSource;
 }
 
-export interface LoadedProjectConfig {
+export interface LoadedCliConfig {
   readonly path: string;
   readonly format: ConfigFormat;
-  readonly config: ProjectConfig;
+  readonly config: CliConfig;
   readonly schemaRef?: string;
   readonly ignoredPaths: ReadonlyArray<string>;
   /**
    * The raw, post-`env()`-interpolation document the `config` was decoded from,
    * with any matching `[remotes.*]` override already merged in (see
-   * {@link LoadProjectConfigOptions.projectRef}). Lets callers inspect key
+   * {@link LoadCliConfigOptions.projectRef}). Lets callers inspect key
    * presence — which the decoded `config` loses because the schema defaults
    * optional sections — without re-reading the file. Present whenever the file
    * parsed to an object.
@@ -44,18 +44,18 @@ export interface LoadedProjectConfig {
    * Go-parity scan over `document` (e.g. a decrypt-or-abort secret check) may need to fold
    * this back in — Go's decode-time decrypt hook sees these blocks before its later
    * validate-time deletion, so `document` alone under-reports what Go would have decrypted.
-   * Present (possibly `{}`) whenever {@link document} is; absent from `saveProjectConfig`'s
+   * Present (possibly `{}`) whenever {@link document} is; absent from `saveCliConfig`'s
    * result, which has no document to strip from.
    */
   readonly removedDeprecatedExternalProviders?: Readonly<Record<string, unknown>>;
   /** The source that supplied each explicitly configured effective leaf value. */
-  readonly valueOrigins?: ReadonlyArray<ProjectConfigValueOrigin>;
+  readonly valueOrigins?: ReadonlyArray<CliConfigValueOrigin>;
 }
 
-export const projectConfigValueSourceAt = (
-  loaded: Pick<LoadedProjectConfig, "valueOrigins">,
+export const cliConfigValueSourceAt = (
+  loaded: Pick<LoadedCliConfig, "valueOrigins">,
   path: ReadonlyArray<string>,
-): ProjectConfigValueSource | undefined =>
+): CliConfigValueSource | undefined =>
   loaded.valueOrigins?.find(
     (origin) =>
       origin.path.length === path.length &&
@@ -71,12 +71,12 @@ export const projectConfigValueSourceAt = (
  * duplicate-`project_id`/project-ref-format checks across every
  * `[remotes.*]` block (`config.go:594-602,996-1001`) run unconditionally on
  * every config load in Go, not only when a caller ends up selecting a
- * remote — but here they only run when {@link LoadProjectConfigOptions.goViperCompat}
+ * remote — but here they only run when {@link LoadCliConfigOptions.goViperCompat}
  * is `true`, regardless of whether `projectRef` is set, so non-Go-parity
  * callers that never select a remote (and never opt into Go parity) aren't
  * broken by an unrelated duplicate/malformed `[remotes.*]` block.
  */
-export interface LoadProjectConfigOptions {
+export interface LoadCliConfigOptions {
   readonly projectRef?: string;
   /**
    * Pre-resolved project environment used to interpolate `env()` references.
@@ -86,8 +86,8 @@ export interface LoadProjectConfigOptions {
    * also reads `.env.<SUPABASE_ENV>` files) resolve it themselves and pass it in
    * so loading does not re-read those files or depend on `process.env` mutation.
    */
-  readonly projectEnv?: ProjectEnvironment;
-  /** See {@link FindProjectPathsOptions.search}. */
+  readonly cliProjectEnv?: CliProjectEnvironment;
+  /** See {@link FindCliProjectPathsOptions.search}. */
   readonly search?: boolean;
   /**
    * Skip the `config.json`-over-`config.toml` preference below and only ever
@@ -120,9 +120,9 @@ export interface LoadProjectConfigOptions {
   readonly goViperCompat?: boolean;
 }
 
-export interface SaveProjectConfigOptions {
+export interface SaveCliConfigOptions {
   readonly cwd: string;
-  readonly config: ProjectConfig;
+  readonly config: CliConfig;
   readonly format?: ConfigFormat;
   readonly schemaRef?: string;
 }
@@ -136,17 +136,17 @@ export function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const encodeProjectConfig = Schema.encodeSync(ProjectConfigSchema);
+const encodeCliConfig = Schema.encodeSync(CliConfigSchema);
 
-let defaultEncodedProjectConfig: ReturnType<typeof encodeProjectConfig> | undefined;
+let defaultEncodedCliConfig: ReturnType<typeof encodeCliConfig> | undefined;
 
 /**
- * Memoized like `getDefaultProjectConfig` — only the save path needs the
+ * Memoized like `getDefaultCliConfig` — only the save path needs the
  * encoded defaults, so importing the package pays for no schema decode.
  */
-function getDefaultEncodedProjectConfig(): ReturnType<typeof encodeProjectConfig> {
-  defaultEncodedProjectConfig ??= encodeProjectConfig(getDefaultProjectConfig());
-  return defaultEncodedProjectConfig;
+function getDefaultEncodedCliConfig(): ReturnType<typeof encodeCliConfig> {
+  defaultEncodedCliConfig ??= encodeCliConfig(getDefaultCliConfig());
+  return defaultEncodedCliConfig;
 }
 
 const defaultEncodedFunctionConfig = {
@@ -180,39 +180,39 @@ function stripFunctionRecordDefaults(value: unknown): unknown {
   return { ...value, functions };
 }
 
-function encodeMinimalProjectConfig(config: ProjectConfig): Record<string, unknown> {
-  const encoded = stripFunctionRecordDefaults(encodeProjectConfig(config));
-  const stripped = subtractValue(encoded, getDefaultEncodedProjectConfig());
+function encodeMinimalCliConfig(config: CliConfig): Record<string, unknown> {
+  const encoded = stripFunctionRecordDefaults(encodeCliConfig(config));
+  const stripped = subtractValue(encoded, getDefaultEncodedCliConfig());
   return isObject(stripped) ? stripped : {};
 }
 
 function toConfigDocument(
-  config: ProjectConfig,
+  config: CliConfig,
   schemaRef: string | undefined,
 ): Record<string, unknown> {
-  const encoded = encodeMinimalProjectConfig(config);
-  return schemaRef === undefined ? encoded : { [projectConfigSchemaKey]: schemaRef, ...encoded };
+  const encoded = encodeMinimalCliConfig(config);
+  return schemaRef === undefined ? encoded : { [cliConfigSchemaKey]: schemaRef, ...encoded };
 }
 
-export function encodeProjectConfigToJson(config: ProjectConfig): string {
-  return encodeProjectConfigToJsonDocument(config, undefined);
+export function encodeCliConfigToJson(config: CliConfig): string {
+  return encodeCliConfigToJsonDocument(config, undefined);
 }
 
-export function encodeProjectConfigToToml(config: ProjectConfig): string {
-  return encodeProjectConfigToTomlDocument(config, undefined);
+export function encodeCliConfigToToml(config: CliConfig): string {
+  return encodeCliConfigToTomlDocument(config, undefined);
 }
 
-/** Shared with `io.ts`'s `saveProjectConfig`, which needs the `schemaRef`-carrying variant. */
-export function encodeProjectConfigToJsonDocument(
-  config: ProjectConfig,
+/** Shared with `io.ts`'s `saveCliConfig`, which needs the `schemaRef`-carrying variant. */
+export function encodeCliConfigToJsonDocument(
+  config: CliConfig,
   schemaRef: string | undefined,
 ): string {
   return `${JSON.stringify(toConfigDocument(config, schemaRef), null, 2)}\n`;
 }
 
-/** Shared with `io.ts`'s `saveProjectConfig`, which needs the `schemaRef`-carrying variant. */
-export function encodeProjectConfigToTomlDocument(
-  config: ProjectConfig,
+/** Shared with `io.ts`'s `saveCliConfig`, which needs the `schemaRef`-carrying variant. */
+export function encodeCliConfigToTomlDocument(
+  config: CliConfig,
   schemaRef: string | undefined,
 ): string {
   return `${SmolToml.stringify(toConfigDocument(config, schemaRef))}\n`;

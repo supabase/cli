@@ -1,28 +1,28 @@
 import { Console, Effect, FileSystem, Path, Redacted, Schema } from "effect";
 import * as SmolToml from "smol-toml";
-import { ProjectConfigSchema, RemotesSchema, type ProjectConfig } from "./base.ts";
+import { CliConfigSchema, RemotesSchema, type CliConfig } from "./base.ts";
 import {
-  encodeProjectConfigToJsonDocument,
-  encodeProjectConfigToTomlDocument,
+  encodeCliConfigToJsonDocument,
+  encodeCliConfigToTomlDocument,
   isObject,
-  type LoadedProjectConfig,
-  type LoadProjectConfigOptions,
-  projectConfigSchemaKey,
-  type ProjectConfigValueSource,
-  type SaveProjectConfigOptions,
+  type LoadedCliConfig,
+  type LoadCliConfigOptions,
+  cliConfigSchemaKey,
+  type CliConfigValueSource,
+  type SaveCliConfigOptions,
 } from "./config-document.ts";
 import type { ConfigFormat } from "./config-format.ts";
 import {
   DuplicateRemoteProjectIdError,
   InvalidRemoteProjectIdError,
-  ProjectConfigParseError,
+  CliConfigParseError,
 } from "./errors.ts";
 import { interpolateEnvReferencesAgainstSchema } from "./lib/env.ts";
-import { findProjectPaths } from "./paths.ts";
+import { findCliProjectPaths } from "./paths.ts";
 import { setOwnProperty } from "./sparse.ts";
-import { loadProjectEnvironment } from "./project.ts";
+import { loadCliProjectEnvironment } from "./project.ts";
 
-const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
+const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 /**
  * Decodes the `remotes` map with `disableChecks: true` — full type/shape
  * decoding, defaults, and transformations (e.g. secret redaction) still run,
@@ -224,7 +224,7 @@ const applyRemoteOverride = Effect.fnUntraced(function* (
   return { document: merged, appliedRemote: name, remoteLeafPaths };
 });
 
-function parseProjectConfigDocument(content: string, format: ConfigFormat): unknown {
+function parseCliConfigDocument(content: string, format: ConfigFormat): unknown {
   return format === "json" ? JSON.parse(content) : SmolToml.parse(content);
 }
 
@@ -284,7 +284,7 @@ interface NormalizedExternalProvidersDocument {
    * this function mirrors) ever deletes these blocks (`config.go:753,775-783` decode vs.
    * `config.go:882,1148,1419-1425` validate) — so an `encrypted:` secret hiding in one of
    * these blocks still gets decrypted-or-aborted in Go. A caller that needs to reproduce that
-   * decrypt-or-abort check against the returned (already-stripped) {@link LoadedProjectConfig.document}
+   * decrypt-or-abort check against the returned (already-stripped) {@link LoadedCliConfig.document}
    * (e.g. `config push`'s pre-check) can fold this back in. Only the top-level blocks are
    * captured, not any surviving `remotes.*.auth.external.{linkedin,slack}` — that's the
    * separate, already-documented "non-matching remote" gap.
@@ -316,7 +316,7 @@ const DEPRECATED_EXTERNAL_PROVIDERS = ["linkedin", "slack"] as const;
  *  - any `remotes.*.auth.external.{linkedin,slack}` still present (only
  *    possible when no remote matched `projectRef`, so `applyRemoteOverride`
  *    left `remotes` in place) is also stripped, but never reported — purely
- *    so `remoteProjectConfig`'s eager, whole-map schema decode
+ *    so `remoteCliConfigBlock`'s eager, whole-map schema decode
  *    (`packages/config/src/base.ts`) doesn't reject an unselected remote's
  *    deprecated block over a field Go itself never struct-decodes at all for
  *    a remote that isn't in effect.
@@ -362,13 +362,13 @@ function normalizeDeprecatedExternalProviders(
 
 /**
  * Wraps every `edge_runtime.secrets` value in `Redacted` before it's attached
- * to `ProjectConfigParseError.document`. By this point `secrets` values are
+ * to `CliConfigParseError.document`. By this point `secrets` values are
  * real, resolved secrets (post `env()` interpolation, see
- * `interpolateEnvReferencesAgainstSchema` in `loadProjectConfigFile`) — the
+ * `interpolateEnvReferencesAgainstSchema` in `loadCliConfigFile`) — the
  * same values `secret()` (`lib/env.ts`) annotates `x-secret` for elsewhere in
- * this package (`resolveProjectValue`'s `redactValue`). Several callers of
- * `loadProjectConfig` (`gen types`, `next start`, `functions dev/serve/deploy`)
- * don't catch `ProjectConfigParseError` at all, so this keeps the same
+ * this package (`resolveCliConfigValue`'s `redactValue`). Several callers of
+ * `loadCliConfig` (`gen types`, `next start`, `functions dev/serve/deploy`)
+ * don't catch `CliConfigParseError` at all, so this keeps the same
  * accidental-leak protection `Redacted` already gives every other secret path
  * in this package, in case an uncaught error's `document` ever reaches a log
  * or trace. `secrets set`'s `recoverEdgeRuntimeConfig`/`filterDecodableSecrets`
@@ -414,16 +414,16 @@ function getSchemaRef(document: unknown): string | undefined {
     return undefined;
   }
 
-  const schemaRef = document[projectConfigSchemaKey];
+  const schemaRef = document[cliConfigSchemaKey];
   return typeof schemaRef === "string" ? schemaRef : undefined;
 }
 
-function parseProjectConfig(
+function parseCliConfig(
   document: unknown,
   format: ConfigFormat,
   path: string,
   appliedRemote: string | undefined,
-): Effect.Effect<ProjectConfig, ProjectConfigParseError> {
+): Effect.Effect<CliConfig, CliConfigParseError> {
   return Effect.try({
     try: () => {
       // Decode `remotes` separately, with business-rule checks disabled — see
@@ -431,34 +431,32 @@ function parseProjectConfig(
       // `[remotes.*]` blocks reach here still attached to `document` (only a
       // SELECTED remote gets merged in and stripped from `remotes` by
       // `applyRemoteOverride`), so decoding them through the normal,
-      // checks-enabled `decodeProjectConfig` below would apply Go's
+      // checks-enabled `decodeCliConfig` below would apply Go's
       // merged-config-only business rules to every remote regardless of
       // selection. Structural decoding (types, defaults, transformations)
       // still runs either way, matching Go's unconditional `UnmarshalExact`
       // struct decode of every remote.
       const rawRemotes = isObject(document) ? document.remotes : undefined;
-      const config = decodeProjectConfig(
-        isObject(document) ? { ...document, remotes: {} } : document,
-      );
+      const config = decodeCliConfig(isObject(document) ? { ...document, remotes: {} } : document);
       return { ...config, remotes: decodeRemotesWithoutChecks(rawRemotes ?? {}) };
     },
     // `document` always parsed successfully by this point (raw parse failures
-    // are caught earlier, in `loadProjectConfigFile`), so any error here is a
+    // are caught earlier, in `loadCliConfigFile`), so any error here is a
     // schema-decode failure — attach it so callers can attempt a narrower,
     // Go-tolerant re-decode of an unaffected subtree. See the field doc on
-    // `ProjectConfigParseError.document`. Only the `edge_runtime` subtree is
+    // `CliConfigParseError.document`. Only the `edge_runtime` subtree is
     // retained (not the whole document): it's the only slice any caller
     // re-decodes today (`secrets set`'s `recoverEdgeRuntimeConfig`), and several
-    // callers of `loadProjectConfig` (e.g. `gen types`, `next start`,
-    // `functions dev/serve/deploy`) don't catch `ProjectConfigParseError` at
+    // callers of `loadCliConfig` (e.g. `gen types`, `next start`,
+    // `functions dev/serve/deploy`) don't catch `CliConfigParseError` at
     // all, so this error can propagate with whatever we attach here — no
     // reason to carry unrelated sections (db credentials, other
     // `[remotes.*]` blocks, etc.) along for the ride. `appliedRemote` is passed
     // through unconditionally too — see the field doc on
-    // `ProjectConfigParseError.appliedRemote` for why a tolerant caller still
+    // `CliConfigParseError.appliedRemote` for why a tolerant caller still
     // owes the override notice on this path.
     catch: (cause) =>
-      new ProjectConfigParseError({
+      new CliConfigParseError({
         path,
         format,
         cause,
@@ -472,27 +470,27 @@ function parseProjectConfig(
 
 export const configJsonPath = Effect.fnUntraced(function* (cwd: string) {
   const path = yield* Path.Path;
-  const project = yield* findProjectPaths(cwd);
+  const project = yield* findCliProjectPaths(cwd);
   return configJsonPathWith(path, project?.projectRoot ?? cwd);
 });
 
 export const configTomlPath = Effect.fnUntraced(function* (cwd: string) {
   const path = yield* Path.Path;
-  const project = yield* findProjectPaths(cwd);
+  const project = yield* findCliProjectPaths(cwd);
   return configTomlPathWith(path, project?.projectRoot ?? cwd);
 });
 
-export const loadProjectConfigFile = Effect.fnUntraced(function* (
+export const loadCliConfigFile = Effect.fnUntraced(function* (
   filePath: string,
-  options?: LoadProjectConfigOptions,
+  options?: LoadCliConfigOptions,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const format = filePath.endsWith(".json") ? "json" : "toml";
   const content = yield* fs.readFileString(filePath);
   const document = yield* Effect.try({
-    try: () => parseProjectConfigDocument(content, format),
-    catch: (cause) => new ProjectConfigParseError({ path: filePath, format, cause }),
+    try: () => parseCliConfigDocument(content, format),
+    catch: (cause) => new CliConfigParseError({ path: filePath, format, cause }),
   });
   const { document: normalized, deprecatedSections } = normalizeDeprecatedSMTPSections(document);
   // Warn on stderr (matching Go's normalizeDeprecatedSMTPConfig) so the notice
@@ -516,11 +514,11 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
   // otherwise crash the strict decoder with `Expected number` (CLI-1489).
   // The config file lives at `<projectRoot>/supabase/config.{toml,json}`, so
   // walking two directories up gives us the project root that
-  // `loadProjectEnvironment` expects.
+  // `loadCliProjectEnvironment` expects.
   const projectRoot = path.dirname(path.dirname(filePath));
-  const projectEnv =
-    options?.projectEnv ??
-    (yield* loadProjectEnvironment({
+  const cliProjectEnv =
+    options?.cliProjectEnv ??
+    (yield* loadCliProjectEnvironment({
       cwd: projectRoot,
       baseEnv: process.env,
       search: options?.search,
@@ -530,7 +528,7 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
     document: unknown,
     onResolvedEnv?: (path: ReadonlyArray<string>) => void,
   ): unknown =>
-    interpolateEnvReferencesAgainstSchema(document, projectEnv?.values ?? {}, ProjectConfigSchema, {
+    interpolateEnvReferencesAgainstSchema(document, cliProjectEnv?.values ?? {}, CliConfigSchema, {
       goViperCompat,
       onResolvedEnv,
     });
@@ -608,7 +606,7 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
     }
   }
 
-  const config = yield* parseProjectConfig(normalizedForDecode, format, filePath, appliedRemote);
+  const config = yield* parseCliConfig(normalizedForDecode, format, filePath, appliedRemote);
 
   const localPathKeys = new Set(collectLeafPaths(normalized).map(pathKey));
   const remotePathKeys = new Set(remoteLeafPaths.map(pathKey));
@@ -616,7 +614,7 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
   const valueOrigins = isObject(normalizedForDecode)
     ? collectLeafPaths(normalizedForDecode).flatMap((path) => {
         const key = pathKey(path);
-        const source: ProjectConfigValueSource | undefined = environmentPathKeys.has(key)
+        const source: CliConfigValueSource | undefined = environmentPathKeys.has(key)
           ? "environment"
           : remotePathKeys.has(key)
             ? "remote"
@@ -637,15 +635,15 @@ export const loadProjectConfigFile = Effect.fnUntraced(function* (
     appliedRemote,
     removedDeprecatedExternalProviders: removedProviders,
     valueOrigins,
-  } satisfies LoadedProjectConfig;
+  } satisfies LoadedCliConfig;
 });
 
-export const loadProjectConfig = Effect.fnUntraced(function* (
+export const loadCliConfig = Effect.fnUntraced(function* (
   cwd: string,
-  options?: LoadProjectConfigOptions,
+  options?: LoadCliConfigOptions,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const project = yield* findProjectPaths(cwd, { search: options?.search });
+  const project = yield* findCliProjectPaths(cwd, { search: options?.search });
 
   if (project === null) {
     return null;
@@ -659,16 +657,16 @@ export const loadProjectConfig = Effect.fnUntraced(function* (
     : project.configPath.replace(/config\.json$/, "config.toml");
 
   if (!options?.tomlOnly && (yield* fs.exists(jsonPath))) {
-    const json = yield* loadProjectConfigFile(jsonPath, options);
+    const json = yield* loadCliConfigFile(jsonPath, options);
 
     return {
       ...json,
       ignoredPaths: (yield* fs.exists(tomlPath)) ? [tomlPath] : [],
-    } satisfies LoadedProjectConfig;
+    } satisfies LoadedCliConfig;
   }
 
   if (yield* fs.exists(tomlPath)) {
-    return yield* loadProjectConfigFile(tomlPath, options);
+    return yield* loadCliConfigFile(tomlPath, options);
   }
 
   return null;
@@ -710,22 +708,22 @@ function writeFileAtomic(
   }).pipe(Effect.catchTag("PlatformError", (e) => Effect.die(e)));
 }
 
-export const saveProjectConfig = Effect.fnUntraced(function* (options: SaveProjectConfigOptions) {
+export const saveCliConfig = Effect.fnUntraced(function* (options: SaveCliConfigOptions) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const project = yield* findProjectPaths(options.cwd);
+  const project = yield* findCliProjectPaths(options.cwd);
   const baseCwd = project?.projectRoot ?? options.cwd;
   const format = yield* resolveSaveFormat(baseCwd, options.format);
   const existingConfig =
-    options.schemaRef !== undefined || project === null ? null : yield* loadProjectConfig(baseCwd);
+    options.schemaRef !== undefined || project === null ? null : yield* loadCliConfig(baseCwd);
   const schemaRef = options.schemaRef ?? existingConfig?.schemaRef;
   const filePath =
     format === "json" ? configJsonPathWith(path, baseCwd) : configTomlPathWith(path, baseCwd);
   const siblingPath = siblingConfigPathWith(path, baseCwd, format);
   const content =
     format === "json"
-      ? encodeProjectConfigToJsonDocument(options.config, schemaRef)
-      : encodeProjectConfigToTomlDocument(options.config, schemaRef);
+      ? encodeCliConfigToJsonDocument(options.config, schemaRef)
+      : encodeCliConfigToTomlDocument(options.config, schemaRef);
 
   yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
   yield* writeFileAtomic(filePath, content);
@@ -739,5 +737,5 @@ export const saveProjectConfig = Effect.fnUntraced(function* (options: SaveProje
     config: options.config,
     schemaRef,
     ignoredPaths: [],
-  } satisfies LoadedProjectConfig;
+  } satisfies LoadedCliConfig;
 });

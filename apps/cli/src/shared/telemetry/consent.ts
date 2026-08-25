@@ -1,8 +1,8 @@
 import { Effect, FileSystem, Option, Path, Schema } from "effect";
-import { CliConfig } from "../../next/config/cli-config.service.ts";
+import { CliSettings } from "../../next/config/cli-settings.service.ts";
 import { type ConsentState, TelemetryConfigSchema, type TelemetryConfig } from "./types.ts";
 
-export const getConfigDir = CliConfig.useSync((cliConfig) => cliConfig.supabaseHome);
+export const getConfigDir = CliSettings.useSync((cliSettings) => cliSettings.supabaseHome);
 
 const TelemetryConfigFileSchema = Schema.fromJsonString(TelemetryConfigSchema);
 const LegacyTelemetryConfigSchema = Schema.Struct({
@@ -93,13 +93,13 @@ export const writeTelemetryConfig = Effect.fnUntraced(function* (
 export const getEffectiveConsent = Effect.fnUntraced(function* (
   config: Option.Option<TelemetryConfig>,
 ) {
-  const cliConfig = yield* CliConfig;
-  const telemetryDisabled = cliConfig.telemetryDisabled;
+  const cliSettings = yield* CliSettings;
+  const telemetryDisabled = cliSettings.telemetryDisabled;
   if (Option.isSome(telemetryDisabled) && telemetryDisabled.value === "1") {
     return "denied" as const;
   }
 
-  const doNotTrack = cliConfig.doNotTrack;
+  const doNotTrack = cliSettings.doNotTrack;
   if (Option.isSome(doNotTrack) && doNotTrack.value === "1") return "denied" as const;
 
   return Option.match(config, {

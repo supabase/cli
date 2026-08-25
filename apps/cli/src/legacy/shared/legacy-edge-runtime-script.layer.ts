@@ -3,7 +3,7 @@ import * as Net from "node:net";
 
 import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../shared/legacy/global-flags.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
-import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { legacyReadDbToml } from "./legacy-db-config.toml-read.ts";
 import { legacyGetRegistryImageUrl } from "./legacy-docker-registry.ts";
 import { LegacyDockerRun } from "./legacy-docker-run.service.ts";
@@ -46,7 +46,7 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
   LegacyEdgeRuntimeScript,
   Effect.gen(function* () {
     const docker = yield* LegacyDockerRun;
-    const cliConfig = yield* LegacyCliConfig;
+    const cliSettings = yield* LegacyCliSettings;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const debug = yield* LegacyDebugFlag;
@@ -86,14 +86,14 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
           // migra caller passes `opts.denoVersion`, so the base read is a defensive
           // fallback that does not run for them.
           //
-          // Same per-run override for `workdir`: `cliConfig.workdir` is fixed at
+          // Same per-run override for `workdir`: `cliSettings.workdir` is fixed at
           // layer-build time, before a command's own `process.chdir` (bootstrap's
           // real target directory only exists once its handler runs — see
           // `bootstrap.handler.ts`), so every pg-delta/migra caller passes its own
           // `ctx.cwd` here too, keeping the image-pin lookup and the base-config
           // fallback read consistent with the workdir the rest of the run actually
           // targets.
-          const workdir = opts.workdir ?? cliConfig.workdir;
+          const workdir = opts.workdir ?? cliSettings.workdir;
           const denoVersion =
             opts.denoVersion ??
             (yield* legacyReadDbToml(fs, path, workdir).pipe(

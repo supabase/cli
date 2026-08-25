@@ -1,7 +1,7 @@
 import { Effect, FileSystem, Option, Path, Redacted } from "effect";
 
 import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
-import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
 import { saveLegacyProfileName } from "../../config/legacy-profile-file.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
 import {
@@ -105,9 +105,9 @@ export const legacyLogin = Effect.fn("legacy.login")(function* (flags: LegacyLog
 
 const resolveToken = Effect.fnUntraced(function* (flags: LegacyLoginFlags) {
   if (Option.isSome(flags.token)) return Option.some(flags.token.value);
-  const cliConfig = yield* LegacyCliConfig;
-  if (Option.isSome(cliConfig.accessToken)) {
-    return Option.some(Redacted.value(cliConfig.accessToken.value));
+  const cliSettings = yield* LegacyCliSettings;
+  if (Option.isSome(cliSettings.accessToken)) {
+    return Option.some(Redacted.value(cliSettings.accessToken.value));
   }
   const stdin = yield* Stdin;
   if (!stdin.isTTY) {

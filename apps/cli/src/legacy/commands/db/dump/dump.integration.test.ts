@@ -7,7 +7,7 @@ import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
@@ -115,7 +115,7 @@ function mockResolver(opts: {
  * `diff.integration.test.ts`): `loadProjectRef` gives an explicit `--project-ref` flag
  * top precedence, same as Go's `flags.LoadProjectRef` — a real (non-empty) ref pattern
  * is validated so a malformed flag surfaces `LegacyInvalidProjectRefError`, matching the
- * real service. `opts.projectId` stands in for `LegacyCliConfig.projectId`
+ * real service. `opts.projectId` stands in for `LegacyCliSettings.projectId`
  * (`SUPABASE_PROJECT_ID`/`project_id`), which `loadProjectRef` consults before falling
  * back to `opts.ref` (the SAME ref `mockResolver`'s own mock embeds in its resolved
  * `ref`, so both stay consistent regardless of which fixture a test sets).
@@ -273,7 +273,7 @@ function setup(opts: SetupOpts = {}) {
     resolver.layer,
     projectRef.layer,
     docker.layer,
-    mockLegacyCliConfig({
+    mockLegacyCliSettings({
       workdir: opts.workdir ?? "/work/project",
       projectId: opts.projectId ?? Option.none(),
     }),

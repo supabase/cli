@@ -10,7 +10,7 @@ import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
   LEGACY_VALID_REF,
   legacyWithEnv,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyDockerDaemonCliSpawner,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyShadowContainerCliSpawner,
@@ -125,7 +125,7 @@ interface SetupOpts {
   // last-occurrence-wins ordering; defaults to empty.
   readonly args?: ReadonlyArray<string>;
   // When set, the Nth `writeFileString` fails, exercising cleanup-on-failure.
-  // `LegacyCliConfig.projectId` (the `SUPABASE_PROJECT_ID` env-only reader). Defaults
+  // `LegacyCliSettings.projectId` (the `SUPABASE_PROJECT_ID` env-only reader). Defaults
   // to `Option.some("test")`; pass `Option.none()` to exercise the
   // config.toml/workdir-basename fallback `legacyResolveLocalProjectId` provides for
   // the pg-delta edge-runtime cache bind.
@@ -470,7 +470,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     resolver,
     projectRefResolver,
     proxy,
-    mockLegacyCliConfig({ workdir, projectId: opts.projectId ?? Option.some("test") }),
+    mockLegacyCliSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     mockStdin(
       opts.stdinIsTty ?? false,
@@ -993,7 +993,7 @@ describe("legacy db pull", () => {
     // `Config.ProjectId` falls back to the workdir basename (`pkg/config/config.go:563-570`)
     // and `UpdateDockerIds` names the edge-runtime volume from that already-sanitized value
     // (`internal/utils/config.go:57-76`). Before the fix, `ctx.projectId` came from
-    // `LegacyCliConfig.projectId` alone (env-only) and resolved to `""`, mounting
+    // `LegacyCliSettings.projectId` alone (env-only) and resolved to `""`, mounting
     // `supabase_edge_runtime_:/root/.cache/deno:rw` regardless of the real project — reachable
     // here via the declarative-export path (`legacyDeclarativeExportPgDelta`), which reads
     // `ctx.projectId` before any local shadow diff even starts.
@@ -1010,7 +1010,7 @@ describe("legacy db pull", () => {
     () => {
       // `legacyReadDbToml` already gates `toml.projectId` behind `remoteOverrideKeys` so it
       // reflects the matched remote's OWN `project_id` (review: PRRT_kwDOErm0O86XHGDL) — but
-      // `legacyResolveLocalProjectId` tries `cliConfig.projectId` (raw, ungated env) FIRST, so
+      // `legacyResolveLocalProjectId` tries `cliSettings.projectId` (raw, ungated env) FIRST, so
       // an ambient `SUPABASE_PROJECT_ID` that differs from the matched remote must be
       // suppressed here too, or it silently wins back over the already-gated `toml.projectId`
       // (mirrors `diff.integration.test.ts`'s identically-named test).

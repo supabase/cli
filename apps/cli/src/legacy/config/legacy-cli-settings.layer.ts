@@ -13,7 +13,7 @@ import {
   type LegacyDebugLoggerShape,
 } from "../shared/legacy-debug-logger.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
-import { LegacyCliConfig } from "./legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "./legacy-cli-settings.service.ts";
 import { legacyProfileFilePath } from "./legacy-profile-file.ts";
 
 function unknownMessage(error: unknown): string {
@@ -83,7 +83,7 @@ function resolveProfile(
  * `Config.ProjectId` cwd-basename default, run on every config load) must
  * see the real ABSOLUTE directory, never the raw configured string. This
  * resolves the flag/env value against the real process `cwd`, so
- * `LegacyCliConfig.workdir` is always absolute — the invariant that
+ * `LegacyCliSettings.workdir` is always absolute — the invariant that
  * basename-ing it (e.g. `legacyResolveLocalProjectId`'s workdir-basename
  * fallback) operates on a real directory name, not a relative-path fragment
  * like `.` (which would sanitize to an empty project id and build a bare,
@@ -119,14 +119,14 @@ function resolveWorkdir(
   });
 }
 
-export const legacyCliConfigLayer = Layer.unwrap(
+export const legacyCliSettingsLayer = Layer.unwrap(
   Effect.gen(function* () {
     const profileFlag = yield* LegacyProfileFlag;
     const workdirFlag = yield* LegacyWorkdirFlag;
     const debugLogger = yield* LegacyDebugLogger;
 
     return Layer.effect(
-      LegacyCliConfig,
+      LegacyCliSettings,
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -179,7 +179,7 @@ export const legacyCliConfigLayer = Layer.unwrap(
 
         const userAgent = `SupabaseCLI/${CLI_VERSION}`;
 
-        return LegacyCliConfig.of({
+        return LegacyCliSettings.of({
           profile,
           apiUrl,
           projectHost,

@@ -1,4 +1,4 @@
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 import { describe, expect, test } from "vitest";
 
 import { LEGACY_START_DB_RESTORE_SH } from "./templates/db-restore.sh.ts";
@@ -19,7 +19,7 @@ import {
 
 const POSTGRES_CONFIG_HEADER = "\n# supabase [db.settings] configuration\n";
 
-function baseDb(overrides: Partial<ProjectConfig["db"]> = {}): ProjectConfig["db"] {
+function baseDb(overrides: Partial<CliConfig["db"]> = {}): CliConfig["db"] {
   return {
     port: 54322,
     shadow_port: 54320,
@@ -41,8 +41,8 @@ function baseDb(overrides: Partial<ProjectConfig["db"]> = {}): ProjectConfig["db
 }
 
 function baseExperimental(
-  overrides: Partial<ProjectConfig["experimental"]> = {},
-): ProjectConfig["experimental"] {
+  overrides: Partial<CliConfig["experimental"]> = {},
+): CliConfig["experimental"] {
   return {
     webhooks: { enabled: false },
     pgdelta: { enabled: false },

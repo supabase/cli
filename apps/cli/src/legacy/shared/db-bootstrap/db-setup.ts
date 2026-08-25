@@ -114,7 +114,7 @@
  * same reason.
  */
 
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 import { Data, Effect, type FileSystem, Option, type Path, Schedule } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
@@ -258,7 +258,7 @@ export type LegacyStartSetupLocalDatabaseError =
 
 /** Already-resolved Docker images for the three PG15+ one-shot migrate jobs (`initSchema15`'s `initJobs`). */
 export interface LegacyStartDbSetupImages {
-  /** `utils.Config.Realtime.Image`, resolved by the caller (not part of the decoded `ProjectConfig` schema — `toml:"-"`). */
+  /** `utils.Config.Realtime.Image`, resolved by the caller (not part of the decoded `CliConfig` schema — `toml:"-"`). */
   readonly realtime: string;
   /** `utils.Config.Storage.Image`, ditto. */
   readonly storage: string;
@@ -379,7 +379,7 @@ export interface LegacySetupDatabaseInput {
   /** The Supabase project root (parent of `supabase/`). */
   readonly workdir: string;
   /** The caller's already-resolved, effective config (env overrides already applied). */
-  readonly config: ProjectConfig;
+  readonly config: CliConfig;
   /** Effective `[experimental.webhooks].enabled`, including supported environment overrides. */
   readonly webhooksEnabled: boolean;
   /** `db.major_version` (13-17) — Go's `utils.Config.Db.MajorVersion`, resolved by the caller once, ahead of the `db` container's own image tag selection. */
@@ -735,7 +735,7 @@ function legacyStartStorageMigrateEnv(input: {
   readonly jwtSecret: string;
   readonly dbHost: string;
   readonly dbPassword: string;
-  readonly fileSizeLimit: ProjectConfig["storage"]["file_size_limit"];
+  readonly fileSizeLimit: CliConfig["storage"]["file_size_limit"];
 }): Record<string, string> {
   return {
     DB_INSTALL_ROLES: "false",
@@ -762,7 +762,7 @@ function legacyStartStorageMigrateEnv(input: {
 function legacyStartAuthMigrateEnv(input: {
   readonly apiUrl: string;
   readonly authExternalUrl: string | undefined;
-  readonly siteUrl: ProjectConfig["auth"]["site_url"];
+  readonly siteUrl: CliConfig["auth"]["site_url"];
   readonly jwtSecret: string;
   readonly dbHost: string;
   readonly dbPassword: string;
@@ -1194,7 +1194,7 @@ export const legacyStartSetupLocalDatabase = (
     // are this module's own already-loaded config (the latter already resolved +
     // `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` env-overridden by `legacyCheckDbToml`,
     // `legacy-db-config.toml-read.ts`), not re-read from the caller's raw, unresolved
-    // `ProjectConfig`. `input.seedFlags` applies `db reset`'s own `--no-seed`/
+    // `CliConfig`. `input.seedFlags` applies `db reset`'s own `--no-seed`/
     // `--sql-paths` overrides on top of the loaded `[db.seed]` config — a no-op for
     // `db start`, which has neither flag.
     yield* legacyMigrateAndSeed(session, fs, path, workdir, input.version, {

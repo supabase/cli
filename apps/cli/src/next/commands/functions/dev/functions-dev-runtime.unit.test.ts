@@ -102,7 +102,7 @@ describe("functions dev runtime", () => {
       ]);
       const changes = yield* Fiber.join(fiber);
 
-      expect(changes.at(0)?.touchesProjectConfig).toBe(true);
+      expect(changes.at(0)?.touchesCliConfig).toBe(true);
     });
   });
 });

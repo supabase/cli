@@ -10,7 +10,7 @@ import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
 import { mockOutput, mockRuntimeInfo, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyPlatformApi,
   useLegacyTempWorkdir,
 } from "../../../../tests/helpers/legacy-mocks.ts";
@@ -43,7 +43,7 @@ function setup() {
   const runtime = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+    cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
     runtimeInfo: mockRuntimeInfo({ homeDir: tempRoot.current }),
   });
   const layer = Layer.mergeAll(

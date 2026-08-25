@@ -1,12 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { ProjectEnvironment } from "@supabase/config";
+import type { CliProjectEnvironment } from "@supabase/config";
 
 import { parseDotEnv } from "./legacy-dotenv.ts";
 
 /**
- * Fills the gap between `@supabase/config`'s `loadProjectEnvironment` and
+ * Fills the gap between `@supabase/config`'s `loadCliProjectEnvironment` and
  * `loadNestedEnv`. The established
  * behavior walks not just `supabase/` but one directory further, up to the project
  * root/workdir (the loop stops once `cwd == filepath.Dir(repoDir)`, i.e. after
@@ -22,13 +22,13 @@ import { parseDotEnv } from "./legacy-dotenv.ts";
  * files (`.local` variant before non-local, env-specific before bare `.env`)
  * > project-root dotenv files (same internal order).
  *
- * `loadProjectEnvironment` only implements the `supabase/`-dir, plain
+ * `loadCliProjectEnvironment` only implements the `supabase/`-dir, plain
  * `.env`/`.env.local` half of this (no project-root pass, no `SUPABASE_ENV`
  * filename selection) — and it's shared infrastructure used well beyond
  * `legacy/` (the `next/` command tree, `secrets set`), so extending its
  * file-resolution semantics is out of scope for a `stop`/`status` port.
  * Instead, this fills in the missing project-root + `SUPABASE_ENV`-selected
- * files locally: `loadProjectEnvironment`'s already-resolved `values` (its
+ * files locally: `loadCliProjectEnvironment`'s already-resolved `values` (its
  * ambient-wins-over-`supabase/.env`(.local) result) always takes precedence
  * over anything discovered here, since it's already correct for the keys it
  * knows about.
@@ -71,18 +71,18 @@ function readDotEnvFile(path: string): Record<string, string> | undefined {
 /**
  * Returns the merged env-var map `stop`/`status` should read `SUPABASE_*`
  * overrides (project id, auth fields) from — the project-root and
- * `SUPABASE_ENV`-selected files `loadProjectEnvironment` doesn't cover, layered
+ * `SUPABASE_ENV`-selected files `loadCliProjectEnvironment` doesn't cover, layered
  * under only the truly ambient-sourced entries of `projectEnv.values`.
  *
  * Only `projectEnv`'s AMBIENT entries outrank `merged`: `projectEnv.values`
  * also carries plain `supabase/.env`/`.env.local` values it read itself, and
  * those are not necessarily higher Go precedence than an env-specific file
- * (`.env.<env>.local`/`.env.<env>`) `merged` resolved — `loadProjectEnvironment`
+ * (`.env.<env>.local`/`.env.<env>`) `merged` resolved — `loadCliProjectEnvironment`
  * has no notion of `SUPABASE_ENV`-selected filenames, so it can't tell the two
  * apart itself. `merged`'s own walk below already re-derives the full file
  * precedence, including `supabase/.env`(.local), so only ambient needs to be
  * layered back on top (`projectEnv.sources[key] === "ambient"` marks exactly
- * those entries — see `loadProjectEnvironment`'s `ProjectEnvironment` shape).
+ * those entries — see `loadCliProjectEnvironment`'s `CliProjectEnvironment` shape).
  *
  * `projectEnv` is `null` whenever `@supabase/config` found no
  * `supabase/config.toml`/`config.json` (searching ancestors, or at exactly
@@ -94,11 +94,11 @@ function readDotEnvFile(path: string): Record<string, string> | undefined {
  * So a missing/absent config file must not skip dotenv loading — fall back to
  * deriving the same two directories directly from `workdir`
  * (`<workdir>/supabase` and `workdir` itself) and read `process.env` itself as
- * the ambient layer, since there's no `loadProjectEnvironment` result to
+ * the ambient layer, since there's no `loadCliProjectEnvironment` result to
  * consult for it in this branch.
  */
 export function legacyResolveProjectEnvironmentValues(
-  projectEnv: ProjectEnvironment | null,
+  projectEnv: CliProjectEnvironment | null,
   workdir: string,
 ): Record<string, string> {
   const env = process.env["SUPABASE_ENV"] || "development";

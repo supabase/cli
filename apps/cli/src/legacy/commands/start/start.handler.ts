@@ -2,7 +2,7 @@
  * Native TS implementation of `start` — see `SIDE_EFFECTS.md` for the full
  * behavior contract.
  */
-import { inferFunctionsManifest, resolveProjectSubtree } from "@supabase/config/effect";
+import { inferFunctionsManifest, resolveCliConfigSubtree } from "@supabase/config/effect";
 import { Effect, FileSystem, Option, Path, Result } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -24,7 +24,7 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
 import { EventStackStarted } from "../../../shared/telemetry/event-catalog.ts";
-import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyResolveStudioApiUrl } from "../../shared/legacy-api-url.ts";
 import { legacyIsBitbucketPipeline } from "../../shared/legacy-bitbucket-pipeline.ts";
@@ -389,7 +389,7 @@ function legacyHealthWarningText(error: LegacyHealthCheckTimeoutError): string {
 
 export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacyStartFlags) {
   const output = yield* Output;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const telemetryState = yield* LegacyTelemetryState;
   const analytics = yield* Analytics;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -403,7 +403,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
   yield* Effect.gen(function* () {
     // 0. Change into the resolved workdir — unconditional, before `start`'s
     // own flag validation (see step 1).
-    yield* legacyValidateWorkdirIsDirectory(cliConfig.workdir, fs).pipe(
+    yield* legacyValidateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
       Effect.mapError((error) => new LegacyStartWorkdirError({ message: error.message })),
     );
 
@@ -422,7 +422,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // 2. Config load + validate — same config-load/env/project-id
     // resolution sequence as `stop`/`status`.
     const context = yield* legacyLoadLocalProjectContext(
-      cliConfig.workdir,
+      cliSettings.workdir,
       (message) => new LegacyStartConfigLoadError({ message }),
     );
     const values = yield* Effect.try({
@@ -430,7 +430,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         legacyResolveLocalConfigValues(
           context.config,
           context.hostname,
-          cliConfig.workdir,
+          cliSettings.workdir,
           context.projectEnvValues,
           context.loaded?.document,
         ),
@@ -608,7 +608,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // (an already-accepted duplicate config-load pass, matching `db start`'s own independent
     // resolution — see `../../shared/db-bootstrap/db-setup.ts`'s header) still resolves fresh-setup
     // values for its own use when it runs.
-    const dbTomlValues = yield* legacyCheckDbToml(fs, path, cliConfig.workdir);
+    const dbTomlValues = yield* legacyCheckDbToml(fs, path, cliSettings.workdir);
 
     const dbContainerId = localDbContainerId(projectId);
     const filterValue = legacyCliProjectFilterValue(projectId);
@@ -638,7 +638,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           legacyResolveStatusLocalState(
             context.config,
             context.hostname,
-            cliConfig.workdir,
+            cliSettings.workdir,
             context.projectEnvValues,
             context.loaded?.document,
             precomputedLocal,
@@ -770,7 +770,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // regardless of whether auth/realtime/postgrest/storage end up enabled.
     const jwks = yield* Effect.tryPromise({
       try: () =>
-        legacyResolveLocalJwks(config, cliConfig.workdir, values.jwtSecret, projectEnvValues),
+        legacyResolveLocalJwks(config, cliSettings.workdir, values.jwtSecret, projectEnvValues),
       catch: (cause) =>
         new LegacyStartInvalidConfigError({
           message: cause instanceof Error ? cause.message : String(cause),
@@ -816,7 +816,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     } = yield* legacyResolveDbBootstrapConfig(
       fs,
       path,
-      { config, projectEnvValues, workdir: cliConfig.workdir },
+      { config, projectEnvValues, workdir: cliSettings.workdir },
       (message) => new LegacyStartInvalidConfigError({ message }),
     );
 
@@ -827,7 +827,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // `start.gates.ts`'s header) — its default image is resolved
     // independently, pre-pulled whenever it's enabled and not excluded.
     const edgeRuntimeDefaultImage = gates.edgeRuntime
-      ? yield* legacyResolveEdgeRuntimeImage(fs, path, cliConfig.workdir, denoVersion)
+      ? yield* legacyResolveEdgeRuntimeImage(fs, path, cliSettings.workdir, denoVersion)
       : undefined;
     // Pre-pull only ever touches non-excluded services, and the
     // one-shot setup-job images are resolved lazily, only when the
@@ -851,14 +851,14 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     //
     // `config.functions.<slug>.env.<VAR>` is schema-marked deferred
     // (`env(...)`, `packages/config/src/lib/env.ts`) and only gets its
-    // literal interpolated by `resolveProjectSubtree` — without this step, a
+    // literal interpolated by `resolveCliConfigSubtree` — without this step, a
     // configured `[functions.<slug>.env]` entry reaches Edge Runtime as the
     // literal string `"env(API_KEY)"` instead of the real secret.
     // `functions serve`'s own call site already resolves this subtree first
     // (`shared/functions/serve.ts:615-622`) before the same
     // `toPlainFunctionRecord` call — same reasoning as `resolvedEdgeRuntime`
     // below, just for the sibling `functions` subtree.
-    const resolvedFunctions = yield* resolveProjectSubtree(
+    const resolvedFunctions = yield* resolveCliConfigSubtree(
       config.functions,
       { values: projectEnvValues ?? {} },
       "functions",
@@ -866,11 +866,11 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     );
     const configDeclaredFunctions = toPlainFunctionRecord(resolvedFunctions);
     const configFunctions = yield* inferFunctionsManifest({
-      cwd: cliConfig.workdir,
+      cwd: cliSettings.workdir,
       config: { ...config, functions: configDeclaredFunctions },
-      // `search: false`: `cliConfig.workdir` is already the fully-resolved chdir target (same
-      // reasoning as `legacy-local-project-context.ts`'s `loadProjectEnvironment` call) — letting
-      // `findProjectPaths` climb ancestors again here would let an unrelated ancestor project's
+      // `search: false`: `cliSettings.workdir` is already the fully-resolved chdir target (same
+      // reasoning as `legacy-local-project-context.ts`'s `loadCliProjectEnvironment` call) — letting
+      // `findCliProjectPaths` climb ancestors again here would let an unrelated ancestor project's
       // `supabase/functions` win when `--workdir`/`SUPABASE_WORKDIR` points at a subdirectory with
       // no `supabase/config.toml` of its own.
       search: false,
@@ -881,12 +881,12 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     const studioFunctionBinds = gates.studio
       ? yield* resolveFunctionBindMounts(
           projectId,
-          cliConfig.workdir,
-          `${cliConfig.workdir}/supabase`,
+          cliSettings.workdir,
+          `${cliSettings.workdir}/supabase`,
           { configDeclaredFunctions, configFunctions, rawConfigFunctions },
           Option.none(),
           Option.none(),
-          cliConfig.workdir,
+          cliSettings.workdir,
         )
       : new Set<string>();
 
@@ -916,7 +916,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     const startOpts: LegacyContainerOpts = {
       projectId,
       isBitbucketPipeline,
-      workdir: cliConfig.workdir,
+      workdir: cliSettings.workdir,
       extraHosts,
     };
     const dbHost = dbContainerId;
@@ -993,7 +993,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       apiTlsKeyPath.length > 0
     ) {
       tlsCertContent = yield* fs
-        .readFileString(legacyResolveApiTlsPath(cliConfig.workdir, apiTlsCertPath))
+        .readFileString(legacyResolveApiTlsPath(cliSettings.workdir, apiTlsCertPath))
         .pipe(
           Effect.mapError(
             (cause) =>
@@ -1003,7 +1003,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           ),
         );
       tlsKeyContent = yield* fs
-        .readFileString(legacyResolveApiTlsPath(cliConfig.workdir, apiTlsKeyPath))
+        .readFileString(legacyResolveApiTlsPath(cliSettings.workdir, apiTlsKeyPath))
         .pipe(
           Effect.mapError(
             (cause) =>
@@ -1252,7 +1252,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               gcpProjectId: values.gcpProjectId,
               gcpProjectNumber: values.gcpProjectNumber,
               gcpJwtPath: values.gcpJwtPath,
-              workdir: cliConfig.workdir,
+              workdir: cliSettings.workdir,
               dbHost,
               dbPort: LEGACY_START_INTERNAL_DB_PORT,
               dbUser: "postgres",
@@ -1321,7 +1321,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               logflareId: logflareContainerName,
               poolerId: poolerContainerName,
               nginxWorkerProcesses: legacyResolveKongNginxWorkerProcesses(projectEnvValues),
-              workdir: cliConfig.workdir,
+              workdir: cliSettings.workdir,
               emailTemplateMounts: buildKongEmailTemplateMounts(resolvedEmail),
             }),
           };
@@ -1337,7 +1337,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               env: resolveGotrueEnvInput({
                 context,
                 values,
-                workdir: cliConfig.workdir,
+                workdir: cliSettings.workdir,
                 kongContainerName,
                 mailpitContainerName,
                 resolvedEmail,
@@ -1437,7 +1437,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               functionBinds: [...studioFunctionBinds],
               env: {
                 dbPassword,
-                workdir: cliConfig.workdir,
+                workdir: cliSettings.workdir,
                 cliVersion: CLI_VERSION,
                 pgMetaContainerName,
                 kongContainerName,
@@ -1537,7 +1537,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       const dbBootstrapResult = yield* legacyStartDatabase(spawner, {
         fs,
         path,
-        workdir: cliConfig.workdir,
+        workdir: cliSettings.workdir,
         projectId,
         networkId,
         hostname: context.hostname,
@@ -1680,13 +1680,13 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           // `config.edge_runtime.secrets` is still schema-decoded plain
           // strings here — `toPlainEdgeRuntimeConfig` only emits entries
           // whose values are `Redacted` (`shared/functions/serve.ts`), and a
-          // value only becomes `Redacted` after `resolveProjectSubtree`'s
+          // value only becomes `Redacted` after `resolveCliConfigSubtree`'s
           // env-interpolation + secret-path-redaction pass. Without this step
           // every configured `[edge_runtime.secrets]` entry is silently
           // dropped — `functions serve`'s own call site already resolves the
           // subtree first (`shared/functions/serve.ts:603-610`) before
           // calling the same helper.
-          const resolvedEdgeRuntime = yield* resolveProjectSubtree(
+          const resolvedEdgeRuntime = yield* resolveCliConfigSubtree(
             config.edge_runtime,
             { values: projectEnvValues ?? {} },
             "edge_runtime",
@@ -1732,7 +1732,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             projectId,
             networkId,
             image: resolveImage(edgeRuntimeDefaultImage),
-            workdir: cliConfig.workdir,
+            workdir: cliSettings.workdir,
             dbUrl: values.dbUrl,
             apiPort: values.apiPort,
             edgeRuntimePolicy,
@@ -1840,7 +1840,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       // uninterruptibly, matching the unconditional rollback check every
       // other failure path in this handler needs.
       Effect.onError(() =>
-        legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir, debug),
+        legacyRollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug),
       ),
     );
 
@@ -1867,13 +1867,13 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           // Recovery only trusts its own workdir; empty labels use the existing fallback.
           removedContainers = containers.filter(
             (container) =>
-              container.workdir.length === 0 || container.workdir === cliConfig.workdir,
+              container.workdir.length === 0 || container.workdir === cliSettings.workdir,
           );
         },
         debug,
       ).pipe(
         Effect.ensuring(
-          Effect.suspend(() => legacyCleanupStartSecrets(removedContainers, cliConfig.workdir)),
+          Effect.suspend(() => legacyCleanupStartSecrets(removedContainers, cliSettings.workdir)),
         ),
       );
     }
@@ -2086,7 +2086,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         }
       }).pipe(
         Effect.onError(() =>
-          legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir, debug),
+          legacyRollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug),
         ),
       );
     }

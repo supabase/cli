@@ -159,7 +159,7 @@ export async function exec(
   };
 
   // The Go CLI uses a profile system rather than SUPABASE_API_URL. The ts-legacy
-  // CLI mirrors this dual semantics in `LegacyCliConfig` (built-in name first,
+  // CLI mirrors this dual semantics in `LegacyCliSettings` (built-in name first,
   // YAML file path second) for any natively-ported command; proxy-wrapped
   // commands still shell out to Go, which reads the same file directly via
   // viper's SUPABASE_PROFILE (prefix SUPABASE_ + AutomaticEnv) when the value

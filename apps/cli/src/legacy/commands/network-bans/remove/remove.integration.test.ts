@@ -7,7 +7,7 @@ import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -41,11 +41,11 @@ function setup(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 200, body: null },
     network: opts.network,
   });
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     goOutput: opts.legacyOutput === undefined ? Option.none() : Option.some(opts.legacyOutput),
   });
   return { layer, out, api };
@@ -57,13 +57,13 @@ function setupTracked(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 200, body: null },
     network: opts.network,
   });
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
   });
@@ -248,11 +248,11 @@ describe("legacy network-bans remove integration", () => {
       // so a bad ref must win over a bad IP — this is the regression CLI-1856 guards.
       const out = mockOutput({ format: "text" });
       const api = mockLegacyPlatformApi({ response: { status: 200, body: null } });
-      const cliConfig = mockLegacyCliConfig({
+      const cliSettings = mockLegacyCliSettings({
         workdir: tempRoot.current,
         projectId: Option.none(),
       });
-      const layer = buildLegacyTestRuntime({ out, api, cliConfig });
+      const layer = buildLegacyTestRuntime({ out, api, cliSettings });
 
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(

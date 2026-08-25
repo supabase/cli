@@ -4,7 +4,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyIdentityStitch } from "../../../shared/legacy-identity-stitch.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
@@ -203,7 +203,7 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
   const goOutputFlag = yield* LegacyOutputFlag;
   const api = yield* LegacyPlatformApi;
   const httpClient = yield* HttpClient.HttpClient;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
@@ -366,7 +366,7 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
 
     // Effective API base URL: the pflag-reconciled profile's when the scan
     // and the parser disagreed on `--profile`, the config layer's otherwise.
-    const apiUrl = Option.getOrElse(profileApiUrl, () => cliConfig.apiUrl);
+    const apiUrl = Option.getOrElse(profileApiUrl, () => cliSettings.apiUrl);
 
     yield* Effect.gen(function* () {
       const fetching =
@@ -394,7 +394,7 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
           `${apiUrl}/v1/projects/${ref}/config/auth/sso/providers/${providerId}`,
         ).pipe(
           Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
-          HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
+          HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
         );
         const response = yield* httpClient.execute(request).pipe(
           Effect.tapError(() => fetching?.fail() ?? Effect.void),
@@ -543,7 +543,7 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
         `${apiUrl}/v1/projects/${ref}/config/auth/sso/providers/${providerId}`,
       ).pipe(
         Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
-        HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
+        HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
         // See `add.handler.ts` — Go-struct key order required for cli-e2e parity.
         HttpClientRequest.bodyText(encodeGoStructJsonBody(body), "application/json"),
       );

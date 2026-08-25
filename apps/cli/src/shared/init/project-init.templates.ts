@@ -465,7 +465,7 @@ export const INTELLIJ_DENO_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
 
 const ORIOLE_DB_VERSION = "15.1.0.150";
 
-export function renderProjectConfigTemplate(projectId: string, useOrioledb: boolean): string {
+export function renderCliConfigTemplate(projectId: string, useOrioledb: boolean): string {
   return CONFIG_TEMPLATE_RAW.replace("__PROJECT_ID__", projectId).replace(
     "__ORIOLEDB_VERSION__",
     useOrioledb ? ORIOLE_DB_VERSION : "",

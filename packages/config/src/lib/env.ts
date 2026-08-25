@@ -24,7 +24,7 @@ interface EnvAnnotations extends Schema.Annotations.Documentation<string> {
 }
 
 // Marker annotation: this field requires the `env(VAR)` literal form and is
-// resolved post-decode via `resolveProjectValue` / `resolveProjectSubtree`.
+// resolved post-decode via `resolveCliConfigValue` / `resolveCliConfigSubtree`.
 // The pre-decode walker honors this and leaves the literal untouched.
 const X_ENV_DEFERRED = "x-env-deferred" as const;
 

@@ -1,5 +1,5 @@
 import { Command } from "effect/unstable/cli";
-import { projectCommandBaseLayer } from "../../config/project-runtime.layer.ts";
+import { cliProjectCommandBaseLayer } from "../../config/project-runtime.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandInstrumentation } from "../../../shared/telemetry/command-instrumentation.ts";
@@ -16,5 +16,5 @@ export const listCommand = Command.make("list").pipe(
   ]),
   Command.withHandler(() => list().pipe(withCommandInstrumentation(), withJsonErrorHandling)),
   Command.provide(commandRuntimeLayer(["stack", "list"])),
-  Command.provide(projectCommandBaseLayer),
+  Command.provide(cliProjectCommandBaseLayer),
 );

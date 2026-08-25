@@ -4,7 +4,7 @@ import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.se
 import { Output } from "../../shared/output/output.service.ts";
 import { Tty } from "../../shared/runtime/tty.service.ts";
 import { legacyReadProjectRefFile } from "../shared/legacy-temp-paths.ts";
-import { LegacyCliConfig } from "./legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "./legacy-cli-settings.service.ts";
 import {
   LegacyInvalidProjectRefError,
   LegacyProjectNotLinkedError,
@@ -31,12 +31,12 @@ export const legacyProjectRefLayer = Layer.effect(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const cliConfig = yield* LegacyCliConfig;
+    const cliSettings = yield* LegacyCliSettings;
     const tty = yield* Tty;
     const output = yield* Output;
     const platformApi = yield* LegacyPlatformApiFactory;
 
-    const readRefFile = legacyReadProjectRefFile(fs, path, cliConfig.workdir);
+    const readRefFile = legacyReadProjectRefFile(fs, path, cliSettings.workdir);
 
     const promptForProjectRef = Effect.fnUntraced(function* (title: string) {
       const api = yield* platformApi.make.pipe(
@@ -84,8 +84,8 @@ export const legacyProjectRefLayer = Layer.effect(
           if (Option.isSome(flagValue) && flagValue.value.length > 0) {
             return yield* assertValid(flagValue.value);
           }
-          if (Option.isSome(cliConfig.projectId)) {
-            return yield* assertValid(cliConfig.projectId.value);
+          if (Option.isSome(cliSettings.projectId)) {
+            return yield* assertValid(cliSettings.projectId.value);
           }
           const fileValue = yield* readRefFile;
           if (Option.isSome(fileValue)) {
@@ -104,8 +104,8 @@ export const legacyProjectRefLayer = Layer.effect(
           if (Option.isSome(flagValue) && flagValue.value.length > 0) {
             return yield* assertValid(flagValue.value);
           }
-          if (Option.isSome(cliConfig.projectId)) {
-            return yield* assertValid(cliConfig.projectId.value);
+          if (Option.isSome(cliSettings.projectId)) {
+            return yield* assertValid(cliSettings.projectId.value);
           }
           // Go skips the ref-file fallback for link (MemMapFs at link.go:30).
           if (tty.stdinIsTty && output.interactive) {
@@ -123,8 +123,8 @@ export const legacyProjectRefLayer = Layer.effect(
           if (Option.isSome(flagValue) && flagValue.value.length > 0) {
             return Option.some(flagValue.value);
           }
-          if (Option.isSome(cliConfig.projectId)) {
-            return cliConfig.projectId;
+          if (Option.isSome(cliSettings.projectId)) {
+            return cliSettings.projectId;
           }
           // Soft load: `projects list` ignores ALL project-ref resolution
           // errors and only uses the value as a "linked" marker, so a real
@@ -139,8 +139,8 @@ export const legacyProjectRefLayer = Layer.effect(
           if (Option.isSome(flagValue) && flagValue.value.length > 0) {
             return yield* assertValid(flagValue.value);
           }
-          if (Option.isSome(cliConfig.projectId)) {
-            return yield* assertValid(cliConfig.projectId.value);
+          if (Option.isSome(cliSettings.projectId)) {
+            return yield* assertValid(cliSettings.projectId.value);
           }
           const fileValue = yield* readRefFile;
           if (Option.isSome(fileValue)) {

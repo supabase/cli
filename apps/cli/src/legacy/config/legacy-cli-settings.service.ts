@@ -4,13 +4,13 @@ import { Context } from "effect";
 /**
  * Built-in profile names with hard-coded API URLs.
  *
- * `LegacyCliConfig.profile` is typed as `string` (not this union) because
+ * `LegacyCliSettings.profile` is typed as `string` (not this union) because
  * this also supports YAML profile files where `name:` is arbitrary user
- * input. See `legacy-cli-config.layer.ts` for the resolution semantics.
+ * input. See `legacy-cli-settings.layer.ts` for the resolution semantics.
  */
 export type LegacyProfileName = "supabase" | "supabase-staging" | "supabase-local" | "snap";
 
-interface LegacyCliConfigShape {
+interface LegacyCliSettingsShape {
   readonly profile: string;
   readonly apiUrl: string;
   /**
@@ -42,6 +42,6 @@ interface LegacyCliConfigShape {
   readonly userAgent: string;
 }
 
-export class LegacyCliConfig extends Context.Service<LegacyCliConfig, LegacyCliConfigShape>()(
-  "supabase/legacy/CliConfig",
+export class LegacyCliSettings extends Context.Service<LegacyCliSettings, LegacyCliSettingsShape>()(
+  "supabase/legacy/CliSettings",
 ) {}
