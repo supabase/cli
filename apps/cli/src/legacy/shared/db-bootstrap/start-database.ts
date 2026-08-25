@@ -95,6 +95,7 @@ import {
 } from "./messages.ts";
 import {
   legacyBuildPostgresStartContainerSpec,
+  legacyIsSlimPostgresImage,
   type LegacyPostgresStartServiceInput,
 } from "./postgres.service.ts";
 
@@ -121,11 +122,35 @@ export class LegacyStartBackupVolumeExistsError extends Data.TaggedError(
   }
 }
 
+/**
+ * `--from-backup` reached a slim Postgres image. The docker.io restore path is entirely a
+ * property of that image's entrypoint — `docker-entrypoint.sh` running the restore script
+ * this port heredocs into `/docker-entrypoint-initdb.d/migrate.sh` against the
+ * `/etc/backup.sql` bind (`postgres.service.ts`'s restore entrypoint variant) — and the slim
+ * build ships neither seam, so a restore would silently start an empty cluster instead.
+ * Refused before any container is created. Exported only so the exhaustive actionability
+ * guard can inspect its declaration.
+ */
+export class LegacySlimImagesBackupUnsupportedError extends Data.TaggedError(
+  "LegacySlimImagesBackupUnsupportedError",
+)<{
+  readonly message: string;
+  readonly suggestion?: string;
+}> {
+  // The remediation is to change what the caller passed in — the env flag, not the config file
+  // — and the error carries the concrete instruction, so this matches `provideFlags` rather
+  // than the suggestion-free `invalidInput`.
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
 /** Every failure {@link legacyStartDatabase} itself can produce, independent of the caller's own `E`. */
 export type LegacyStartDatabaseError =
   | LegacyNetworkCreateError
   | LegacyVolumeInspectError
   | LegacyStartBackupVolumeExistsError
+  | LegacySlimImagesBackupUnsupportedError
   | LegacyVolumeCreateError
   | LegacyContainerCreateError
   | LegacyContainerStartError
@@ -228,6 +253,17 @@ export const legacyStartDatabase = <E>(
     );
 
     const resolvedPostgresImage = yield* input.resolvePostgresImage;
+
+    // Gated on the resolved ref, not the env flag alone: a registry override can still land this
+    // run on a docker.io image, which restores fine.
+    if (fromBackup !== undefined && legacyIsSlimPostgresImage(resolvedPostgresImage)) {
+      return yield* Effect.fail(
+        new LegacySlimImagesBackupUnsupportedError({
+          message: "--from-backup is not supported with SUPABASE_USE_SLIM_IMAGES",
+          suggestion: "Unset SUPABASE_USE_SLIM_IMAGES to restore from a backup.",
+        }),
+      );
+    }
 
     // Go's `DockerStart` (`docker.go:363-386`): image resolve, THEN network create, both
     // strictly ahead of container create — hoisted here to run ONCE per `start` run instead of

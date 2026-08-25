@@ -103,6 +103,10 @@ Kong's `custom_nginx.template`, Vector's `vector.yaml`, and Postgres's own boots
 script (`postgresql.conf`-equivalent setup) are all rendered in memory and injected
 directly into each container's entrypoint (a `sh -c '... heredoc ...'` command) —
 never written to the host filesystem, since none of them carries secret content.
+Exception: with `SUPABASE_USE_SLIM_IMAGES` enabled the Postgres container keeps the
+slim image's own entrypoint — settings travel as `-c` argv and the bootstrap schema is
+delivered via `docker cp` alongside the root key instead (see `db start`'s
+SIDE_EFFECTS.md, which documents the slim container shape both commands share).
 Kong's `kong.yml`/TLS cert/TLS key, Postgres's `pgsodium_root.key`, and Supavisor's
 `pooler_tenant.exs` DO carry secret content (a service-role-key-derived bearer/query
 key, TLS private key material, and the DB password respectively). Since

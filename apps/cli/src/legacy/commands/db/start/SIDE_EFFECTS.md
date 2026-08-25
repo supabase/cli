@@ -31,6 +31,14 @@ composition reuses too — see that command's `SIDE_EFFECTS.md`):
    `cron.launch_active_jobs = off` appended to `postgresql.conf` — applies regardless of
    `db.major_version`. The backup file itself is bind-mounted `:ro` at `/etc/backup.sql`
    (host path resolved against the CALLER's cwd when relative).
+   `SUPABASE_USE_SLIM_IMAGES` changes the container's shape (never its volume, published
+   port, healthcheck, or labels): the image's own entrypoint is kept instead of a `sh -c`
+   heredoc script, `[db.settings]` travels as trailing `-c key=value` argv rather than a
+   `postgresql.conf` append, and `/etc/postgresql.schema.sql` plus the pgsodium root key are
+   `docker cp`'d in before start (the slim image's bundled `migrate.sh` runs that schema file
+   once, at initdb, exactly like the docker.io image does). `--from-backup` combined with a
+   resolved slim image is refused here instead — the restore entrypoint has no slim
+   equivalent.
 6. Wait for the container to become healthy (`db.health_timeout`, default `2m`). A timeout
    fails the command UNLESS `--from-backup` is set, in which case it is swallowed (a large
    restore can exceed the timeout) — the container-logs dump to stderr still happens

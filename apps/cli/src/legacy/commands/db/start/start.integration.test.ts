@@ -389,6 +389,7 @@ const currentBranchPath = (workdir: string) =>
 describe("legacy db start", () => {
   afterEach(() => {
     delete process.env["SUPABASE_NETWORK_ID"];
+    vi.unstubAllEnvs();
   });
 
   it.live("reports an already-running database without starting a container", () => {
@@ -648,6 +649,34 @@ describe("legacy db start", () => {
         );
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
         expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+      });
+    },
+  );
+
+  // The restore path is entirely a docker.io entrypoint feature, so the slim
+  // image is refused rather than silently starting an empty cluster.
+  it.live(
+    "--from-backup under SUPABASE_USE_SLIM_IMAGES is refused before any container is created",
+    () => {
+      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+      const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(flags("/abs/host/backup.sql")).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const error = Cause.squash(exit.cause);
+          expect(error).toMatchObject({
+            _tag: "LegacySlimImagesBackupUnsupportedError",
+            message: "--from-backup is not supported with SUPABASE_USE_SLIM_IMAGES",
+          });
+          expect((error as { suggestion?: string }).suggestion).toContain(
+            "Unset SUPABASE_USE_SLIM_IMAGES",
+          );
+        }
+        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
       });
     },
   );
