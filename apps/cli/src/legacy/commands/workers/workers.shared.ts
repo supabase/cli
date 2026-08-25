@@ -37,9 +37,20 @@ export const legacyLoadWorkersProject = Effect.fnUntraced(function* () {
   const projectRoot = cliConfig.workdir;
   const supabaseDir = join(projectRoot, "supabase");
 
+  // `tomlOnly`: the entry writer is a TOML text editor. Without this the loader
+  // prefers `supabase/config.json` when one exists, `configPath` becomes the
+  // JSON file, and `commitWorkerEntry` appends a `[workers.<name>]` table to it
+  // — leaving the project config unparseable after the scaffold is on disk.
+  // `functions new` avoids the same trap by resolving `supabase/config.toml`
+  // directly; this is that, through the loader.
+  //
+  // A JSON project therefore gets a `config.toml` written beside its
+  // `config.json`, which the default loader lists in `ignoredPaths`. That is a
+  // known gap: workers are TOML-only until config writing is overhauled.
+  //
   // `loadProjectConfig` returns null when the directory holds no project yet,
   // which is what lets `workers new` scaffold into a bare one.
-  const loaded = yield* loadProjectConfig(projectRoot);
+  const loaded = yield* loadProjectConfig(projectRoot, { tomlOnly: true });
   const section = readWorkersSection(loaded?.config.workers);
 
   return {

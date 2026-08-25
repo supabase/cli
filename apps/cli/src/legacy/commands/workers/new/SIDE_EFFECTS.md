@@ -21,6 +21,14 @@
 | `<workdir>/<source>/*`                          | varies | on success, when `--source` is given                                       |
 | `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | whenever the handler runs — flushed on success and on failure              |
 
+Workers are recorded in `config.toml` only. The project config loader prefers
+`supabase/config.json` when one exists, but the entry writer is a TOML text
+editor, so this command pins the loader to `config.toml` (`tomlOnly`). In a
+project that has a `config.json`, the worker is therefore written to
+`config.toml` — which that loader lists in `ignoredPaths` — and the `config.json`
+is left byte-for-byte alone. A rendered edit that would not parse is refused
+before anything reaches disk.
+
 Writes to `config.toml` are append-only. A worker already recorded under
 `[workers.<name>]` is refused outright — before the runtime and size prompts,
 and before anything reaches disk — because editing an entry the user owns is
@@ -43,13 +51,14 @@ root.
 
 ## Exit Codes
 
-| Code | Condition                                                    |
-| ---- | ------------------------------------------------------------ |
-| `0`  | success                                                      |
-| `1`  | invalid worker name — the name must be a DNS label           |
-| `1`  | bad `--source`: outside the project, or a path the CLI owns  |
-| `1`  | destination exists and is not empty                          |
-| `1`  | the worker is already recorded in `config.toml`, in any form |
+| Code | Condition                                                                           |
+| ---- | ----------------------------------------------------------------------------------- |
+| `0`  | success                                                                             |
+| `1`  | invalid worker name — the name must be a DNS label                                  |
+| `1`  | bad `--source`: outside the project, or a path the CLI owns                         |
+| `1`  | destination exists and is not empty                                                 |
+| `1`  | the worker is already recorded in `config.toml`, in any form                        |
+| `1`  | the rendered `config.toml` would not parse, or `[workers]` is a sealed inline table |
 
 ## Environment Variables
 

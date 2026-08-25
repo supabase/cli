@@ -1,5 +1,6 @@
 import { dirname } from "node:path";
 import { Data, Effect, FileSystem } from "effect";
+import * as SmolToml from "smol-toml";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -11,9 +12,8 @@ import { appendTomlSection, tomlKey } from "./toml-section.ts";
  * The `[workers]` section of `supabase/config.toml`, read through the decoded
  * project config and written back surgically.
  *
- * `[workers]` carries a project-wide `root` plus one `[workers.<name>]` table
- * per worker. The schema in `@supabase/config` models exactly that, so reading
- * is a matter of splitting the scalar off the record; writing goes through
+ * `[workers]` carries one `[workers.<name>]` table per worker. The schema in
+ * `@supabase/config` models exactly that; writing goes through
  * `./toml-section.ts` so a user's comments and formatting survive.
  */
 
@@ -38,6 +38,28 @@ export interface WorkersSection {
  * enough TOML to find and rewrite it safely.
  */
 export class WorkerAlreadyConfiguredError extends Data.TaggedError("WorkerAlreadyConfiguredError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
+
+/**
+ * Appending the new table would leave `config.toml` unparseable.
+ *
+ * `appendTomlSection` renders one table and puts it at the end, which is only
+ * valid when the existing file is valid TOML that does not already seal the
+ * `workers` key. A config whose `[workers]` is an inline table (`workers = {}`)
+ * is the case in point: TOML inline tables cannot be extended, so appending
+ * `[workers.api]` produces a file nothing can read.
+ *
+ * Rather than enumerate the representations that break, the plan is parsed
+ * before it is returned. Anything that does not round-trip is refused while the
+ * refusal is still free — `new` calls this before it writes the scaffold.
+ */
+export class WorkerConfigWriteUnsafeError extends Data.TaggedError("WorkerConfigWriteUnsafeError")<{
   readonly detail: string;
   readonly suggestion: string;
 }> {
@@ -121,10 +143,38 @@ export const planWorkerEntry = Effect.fnUntraced(function* (options: {
   const exists = yield* fs.exists(options.configPath);
   const text = exists ? yield* fs.readFileString(options.configPath) : "";
   const header = `workers.${tomlKey(options.name)}`;
+  const next = appendTomlSection(text, header, options.patch);
+
+  // The rendered file has to parse, and the new table has to be readable back
+  // out of it. Appending text is a syntactic operation on a file this code did
+  // not write, so the only honest check is to read the result.
+  const parsed = yield* Effect.try({
+    try: () => SmolToml.parse(next),
+    catch: (cause) =>
+      new WorkerConfigWriteUnsafeError({
+        detail: `Recording "${options.name}" would make ${options.configPath} unparseable: ${String(cause)}.`,
+        suggestion: `Add [workers.${options.name}] to ${options.configPath} yourself.`,
+      }),
+  });
+
+  const workers = parsed["workers"];
+  if (
+    typeof workers !== "object" ||
+    workers === null ||
+    Array.isArray(workers) ||
+    !(options.name in workers)
+  ) {
+    return yield* Effect.fail(
+      new WorkerConfigWriteUnsafeError({
+        detail: `Recording "${options.name}" in ${options.configPath} would not take effect, because its [workers] section cannot be extended by appending a table.`,
+        suggestion: `Add [workers.${options.name}] to ${options.configPath} yourself.`,
+      }),
+    );
+  }
 
   return {
     configPath: options.configPath,
-    text: appendTomlSection(text, header, options.patch),
+    text: next,
   } satisfies WorkerEntryWrite;
 });
 

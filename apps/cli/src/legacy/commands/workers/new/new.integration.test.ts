@@ -6,7 +6,10 @@ import {
   makeWorkersProject,
   setupLegacyWorkers,
 } from "../../../../../tests/helpers/legacy-workers.ts";
-import { WorkerAlreadyConfiguredError } from "../../../../shared/workers/worker-config.ts";
+import {
+  WorkerAlreadyConfiguredError,
+  WorkerConfigWriteUnsafeError,
+} from "../../../../shared/workers/worker-config.ts";
 import {
   InvalidWorkerNameError,
   InvalidWorkerSourceError,
@@ -290,6 +293,50 @@ describe("legacy workers new", () => {
       // No directory, and config.toml exactly as it was.
       expect(existsSync(join(repo.dir, "supabase", "workers", "api"))).toBe(false);
       expect(repo.config()).toBe('project_id = "demo"\n\nworkers.api.runtime = "node"\n');
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The project config loader prefers `supabase/config.json` when one exists,
+  // and the entry writer is a TOML text editor. Without `tomlOnly` the two
+  // disagree: the plan targets the JSON file and appends a `[workers.api]`
+  // table to it, leaving the project config unparseable — after the scaffold is
+  // already on disk.
+  it.live("leaves config.json alone in a project that has one", () => {
+    const configJson = `${JSON.stringify({ project_id: "demo" }, null, 2)}\n`;
+    const repo = project({ "supabase/config.json": configJson });
+    const { layer } = setupLegacyWorkers({ workdir: repo.dir });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersNew(flags({ name: "api", runtime: Option.some("node") }));
+
+      const jsonPath = join(repo.dir, "supabase", "config.json");
+      expect(readFileSync(jsonPath, "utf8")).toBe(configJson);
+      expect(() => JSON.parse(readFileSync(jsonPath, "utf8"))).not.toThrow();
+
+      // The worker is recorded in config.toml, which is the TOML editor's file.
+      expect(repo.config()).toBe(
+        `${CONFIG_WITH_COMMENTS}\n[workers.api]\nruntime = "node"\nsize = "2gb"\n`,
+      );
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // A sealed inline `[workers]` cannot be extended by appending a table, and
+  // the name is absent from the decoded section, so the already-configured
+  // check does not fire. Parsing the plan is what refuses it — before the
+  // scaffold is written, like every other refusal here.
+  it.live("writes no scaffold when [workers] is a sealed inline table", () => {
+    const before = 'project_id = "demo"\n\nworkers = { web = { runtime = "node" } }\n';
+    const repo = project({ "supabase/config.toml": before });
+    const { layer } = setupLegacyWorkers({ workdir: repo.dir });
+
+    return Effect.gen(function* () {
+      const error = yield* legacyWorkersNew(
+        flags({ name: "api", runtime: Option.some("node") }),
+      ).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerConfigWriteUnsafeError);
+      expect(existsSync(join(repo.dir, "supabase", "workers", "api"))).toBe(false);
+      expect(repo.config()).toBe(before);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
