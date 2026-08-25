@@ -1,4 +1,4 @@
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 
 import { dockerfileServiceImageRaw } from "../../shared/services/dockerfile-images.ts";
 import { legacyServiceContainerIds } from "./legacy-docker-ids.ts";
@@ -221,7 +221,7 @@ export interface LegacyStatusValuesResult {
  * re-signing the anon/service_role JWTs a second time per invocation.
  */
 export interface LegacyStatusState {
-  readonly config: ProjectConfig;
+  readonly config: CliConfig;
   readonly local: LegacyLocalConfigValues;
   readonly kongEnabled: boolean;
   readonly postgrestEnabled: boolean;
@@ -245,7 +245,7 @@ export interface LegacyStatusState {
  * stack happens to be unavailable.
  */
 export interface LegacyStatusLocalState {
-  readonly config: ProjectConfig;
+  readonly config: CliConfig;
   readonly local: LegacyLocalConfigValues;
   readonly apiEnabled: boolean;
   readonly studioSectionEnabled: boolean;
@@ -284,11 +284,11 @@ export interface LegacyStatusLocalState {
  * or its first key is unsupported — see {@link legacyGenerateAsymmetricGoJwt}.
  */
 export function legacyResolveStatusLocalState(
-  config: ProjectConfig,
+  config: CliConfig,
   hostname: string,
   workdir: string,
   projectEnvValues?: Readonly<Record<string, string>>,
-  /** `LoadedProjectConfig.document` — see {@link legacyResolveLocalConfigValues}'s doc comment. */
+  /** `LoadedCliConfig.document` — see {@link legacyResolveLocalConfigValues}'s doc comment. */
   document?: Readonly<Record<string, unknown>>,
   /**
    * An already-resolved {@link legacyResolveLocalConfigValues} result to reuse
@@ -486,14 +486,14 @@ export function legacyStatusValuesFromState(
  * without recomputing `local`.
  */
 export function legacyStatusValues(
-  config: ProjectConfig,
+  config: CliConfig,
   containerIds: LegacyStatusContainerIds,
   hostname: string,
   excluded: ReadonlyArray<string>,
   overrides: ReadonlyMap<string, string>,
   workdir: string,
   projectEnvValues?: Readonly<Record<string, string>>,
-  /** `LoadedProjectConfig.document` — see {@link legacyResolveLocalConfigValues}'s doc comment. */
+  /** `LoadedCliConfig.document` — see {@link legacyResolveLocalConfigValues}'s doc comment. */
   document?: Readonly<Record<string, unknown>>,
 ): LegacyStatusValuesResult {
   const localState = legacyResolveStatusLocalState(

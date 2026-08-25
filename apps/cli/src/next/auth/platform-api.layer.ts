@@ -6,17 +6,17 @@ import {
   CommandRuntime,
   getCommandRuntimeCommand,
 } from "../../shared/runtime/command-runtime.service.ts";
-import { CliConfig } from "../config/cli-config.service.ts";
+import { CliSettings } from "../config/cli-settings.service.ts";
 import { PlatformAuthRequiredError } from "./errors.ts";
 import { Credentials } from "./credentials.service.ts";
 import { PlatformApi } from "./platform-api.service.ts";
 
 export const makePlatformApiServices = Effect.gen(function* () {
-  const cliConfig = yield* CliConfig;
+  const cliSettings = yield* CliSettings;
   const credentials = yield* Credentials;
   const commandRuntime = yield* CommandRuntime;
 
-  const configuredToken = cliConfig.accessToken;
+  const configuredToken = cliSettings.accessToken;
   const storedToken = yield* credentials.getAccessToken;
   const token = Option.isSome(configuredToken) ? configuredToken : storedToken;
 
@@ -31,7 +31,7 @@ export const makePlatformApiServices = Effect.gen(function* () {
   }
 
   const config = {
-    baseUrl: cliConfig.apiUrl,
+    baseUrl: cliSettings.apiUrl,
     accessToken: token.value,
     userAgent: "supabase",
     headers: {

@@ -20,7 +20,7 @@
  *    up by each caller's own handler.
  */
 
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 
 import { isSlimImageRef, slimImagesEnabled } from "../../../shared/services/slim-images.ts";
 import { localDbContainerId } from "../legacy-docker-ids.ts";
@@ -77,9 +77,9 @@ const LEGACY_POSTGRES_CONFIG_HEADER = "\n# supabase [db.settings] configuration\
 
 export interface LegacyPostgresStartServiceInput {
   /** Decoded `[db]` section — every field this builder needs (`port`, `major_version`, `settings`) lives here. */
-  readonly db: ProjectConfig["db"];
+  readonly db: CliConfig["db"];
   /** Decoded `[experimental]` section — only the OrioleDB/S3 fields are read. */
-  readonly experimental: ProjectConfig["experimental"];
+  readonly experimental: CliConfig["experimental"];
   /** Already-resolved (default-or-configured, decrypted) `auth.jwt_secret` — same shape `legacyResolveLocalConfigValues` produces. */
   readonly jwtSecret: string;
   /** `config.auth.jwt_expiry`. */
@@ -139,7 +139,7 @@ export interface LegacyPostgresStartServiceInput {
  * result in empty string" case) — so the empty-settings case is special-cased
  * below instead of delegated to `encodeToml`.
  *
- * `settings` itself is typed optional (`ProjectConfig["db"]["settings"]`
+ * `settings` itself is typed optional (`CliConfig["db"]["settings"]`
  * includes `undefined`) because `db.ts` wraps the whole `[db.settings]` table
  * in `Schema.optionalKey` — in practice the schema's own `withDecodingDefaultKey`
  * always fills in `{}` when the section is absent, but this stays defensive
@@ -147,7 +147,7 @@ export interface LegacyPostgresStartServiceInput {
  * (never-nil) struct value.
  */
 export function legacyPostgresSettingsToPostgresConfig(
-  settings: ProjectConfig["db"]["settings"],
+  settings: CliConfig["db"]["settings"],
 ): string {
   const defined = Object.fromEntries(legacyDefinedPostgresSettings(settings));
   if (Object.keys(defined).length === 0) {
@@ -162,7 +162,7 @@ export function legacyPostgresSettingsToPostgresConfig(
  * pointers, so an unset field must never reach either renderer below.
  */
 function legacyDefinedPostgresSettings(
-  settings: ProjectConfig["db"]["settings"],
+  settings: CliConfig["db"]["settings"],
 ): ReadonlyArray<readonly [string, string | number | boolean]> {
   return Object.entries(settings ?? {}).filter(
     (entry): entry is [string, string | number | boolean] => entry[1] !== undefined,
@@ -179,7 +179,7 @@ function legacyDefinedPostgresSettings(
  * are TOML syntax, whereas `postgres -c` takes the raw value.
  */
 export function legacyPostgresSettingsToConfigArgs(
-  settings: ProjectConfig["db"]["settings"],
+  settings: CliConfig["db"]["settings"],
 ): ReadonlyArray<string> {
   return legacyDefinedPostgresSettings(settings).flatMap(([key, value]) => [
     "-c",
@@ -260,7 +260,7 @@ export function legacyPostgresImageVersionTag(image: string): string {
  * `else if`, so at most one of the two ever fires.
  */
 function legacyPostgresExtraEnv(
-  experimental: ProjectConfig["experimental"],
+  experimental: CliConfig["experimental"],
   image: string,
 ): Readonly<Record<string, string>> {
   if (experimental.orioledb_version !== undefined && experimental.orioledb_version.length > 0) {
@@ -445,7 +445,7 @@ type LegacyPostgresBootFields = Pick<
  * entrypoint only, and the slim bundle owns its own initdb flags.
  */
 function legacyPostgresSlimBootFields(input: {
-  readonly settings: ProjectConfig["db"]["settings"];
+  readonly settings: CliConfig["db"]["settings"];
   readonly rootKey: string;
   readonly password: string;
   readonly jwtSecret: string;
@@ -586,8 +586,8 @@ export const LEGACY_SHADOW_ENTRYPOINT_ARGS = LEGACY_SHADOW_ENTRYPOINT_ARGV.join(
  * backup) plus the shadow's own host port.
  */
 export interface LegacyShadowPostgresContainerSpecInput {
-  readonly db: Pick<ProjectConfig["db"], "major_version" | "settings">;
-  readonly experimental: ProjectConfig["experimental"];
+  readonly db: Pick<CliConfig["db"], "major_version" | "settings">;
+  readonly experimental: CliConfig["experimental"];
   readonly jwtSecret: string;
   readonly jwtExpiry: number;
   readonly networkId: string;

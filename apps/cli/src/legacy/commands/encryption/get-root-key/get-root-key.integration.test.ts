@@ -5,7 +5,7 @@ import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
   LEGACY_VALID_REF,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -30,7 +30,7 @@ function setup(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 200, body: ROOT_KEY_RESPONSE },
     network: opts.network,
   });
-  const cliConfig = mockLegacyCliConfig({
+  const cliSettings = mockLegacyCliSettings({
     workdir: tempRoot.current,
     projectId: opts.projectId ?? Option.some(LEGACY_VALID_REF),
   });
@@ -39,7 +39,7 @@ function setup(opts: SetupOpts = {}) {
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     telemetry: telemetry.layer,
     linkedProjectCache: linkedProjectCache.layer,
   });

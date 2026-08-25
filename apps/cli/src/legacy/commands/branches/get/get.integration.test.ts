@@ -12,7 +12,7 @@ import {
   LEGACY_VALID_REF,
   buildLegacyTestRuntime,
   legacyJsonResponse,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyPlatformApi,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -152,11 +152,11 @@ function buildApi(opts: SetupOpts) {
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const api = buildApi(opts);
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
   });
   return { layer, out, api };

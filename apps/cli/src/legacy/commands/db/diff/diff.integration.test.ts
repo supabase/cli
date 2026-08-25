@@ -13,7 +13,7 @@ import {
   legacyFailWriteStringMatchingFsLayer,
   legacyFailWriteStringOnNthCallFsLayer,
   legacyWithEnv,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyDockerDaemonCliSpawner,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyShadowContainerCliSpawner,
@@ -108,7 +108,7 @@ interface SetupOpts {
   // (`legacyWaitForShadowReady`) keeps polling — the shadow-source branch's equivalent of
   // `neverHealthyShadow`, since that wait no longer consults the Docker healthcheck.
   readonly neverConnectableShadow?: boolean;
-  // `LegacyCliConfig.projectId` (the `SUPABASE_PROJECT_ID` env-only reader). Defaults
+  // `LegacyCliSettings.projectId` (the `SUPABASE_PROJECT_ID` env-only reader). Defaults
   // to `Option.some("test")`; pass `Option.none()` to exercise the
   // config.toml/workdir-basename fallback `legacyResolveLocalProjectId` provides for
   // the pg-delta edge-runtime cache bind.
@@ -456,7 +456,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     resolver,
     projectRefResolver,
     proxy,
-    mockLegacyCliConfig({ workdir, projectId: opts.projectId ?? Option.some("test") }),
+    mockLegacyCliSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     Layer.succeed(
       LegacyNetworkIdFlag,
@@ -2130,7 +2130,7 @@ describe("legacy db diff", () => {
       "invokes the differ with the exact argv, image, network, labels, and empty env/binds (no --schema)",
       () => {
         const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
-        // `LegacyCliConfig.projectId` only feeds pg-delta's own project id (a
+        // `LegacyCliSettings.projectId` only feeds pg-delta's own project id (a
         // SEPARATE mechanism); the shadow/differ's docker network+labels come from
         // `legacyLoadLocalProjectContext`'s REAL resolution (no config.toml
         // `project_id`/`SUPABASE_PROJECT_ID` here), which falls back to the workdir

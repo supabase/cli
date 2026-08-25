@@ -2,7 +2,7 @@ import { DEFAULT_MANAGED_STACK_NAME, httpTransportClientLayer } from "@supabase/
 import { Layer } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { provideProjectCommandRuntime } from "../../../config/project-runtime.layer.ts";
+import { provideCliProjectCommandRuntime } from "../../../config/project-runtime.layer.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { parcelFileWatcherLayer } from "../../../../shared/runtime/parcel-file-watcher.layer.ts";
@@ -47,7 +47,7 @@ export const functionsDevCommand = Command.make("dev", flags).pipe(
     functionsDev(flags).pipe(withCommandInstrumentation(), withJsonErrorHandling),
   ),
   Command.provide(
-    provideProjectCommandRuntime(
+    provideCliProjectCommandRuntime(
       Layer.mergeAll(
         functionsDevRuntimeLayer,
         commandRuntimeLayer(["functions", "dev"]),

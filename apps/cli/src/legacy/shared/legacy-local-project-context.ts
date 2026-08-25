@@ -1,9 +1,9 @@
 import {
-  loadProjectConfig,
-  loadProjectEnvironment,
-  ProjectConfigSchema,
-  type LoadedProjectConfig,
-  type ProjectConfig,
+  loadCliConfig,
+  loadCliProjectEnvironment,
+  CliConfigSchema,
+  type LoadedCliConfig,
+  type CliConfig,
 } from "@supabase/config/effect";
 import { Effect, FileSystem, Path, Schema } from "effect";
 
@@ -39,10 +39,10 @@ import { legacyResolveProjectEnvironmentValues } from "./legacy-project-environm
  * `mapError: (message: string) => E` idiom already used by `legacy-migration-apply.ts`'s exports.
  */
 export interface LegacyLocalProjectContext {
-  readonly config: ProjectConfig;
+  readonly config: CliConfig;
   readonly projectEnvValues: Record<string, string>;
-  /** `null` when no `supabase/config.toml` was found — see `loadProjectConfig`'s own contract. */
-  readonly loaded: LoadedProjectConfig | null;
+  /** `null` when no `supabase/config.toml` was found — see `loadCliConfig`'s own contract. */
+  readonly loaded: LoadedCliConfig | null;
   readonly hostname: string;
   /** Config/env-derived, sanitized project id — see {@link legacySanitizeProjectId}'s doc comment. */
   readonly projectId: string;
@@ -54,7 +54,7 @@ export const legacyLoadLocalProjectContext = <E>(
   // The resolved `--linked`/`--project-ref` ref, when the caller already has one in scope
   // (`db diff`/`db pull`'s shadow-provisioning prelude — CLI-1956 — and the `functions`
   // Docker paths' Go-config pipeline — CLI-1963) — threaded straight into
-  // `loadProjectConfig`'s own `projectRef` option so the matching `[remotes.<ref>]` block
+  // `loadCliConfig`'s own `projectRef` option so the matching `[remotes.<ref>]` block
   // merges over the base config, exactly like `legacyReadDbToml(..., ref)` already does for
   // those same commands' OTHER config read. It also supplies `Eject` default:
   // `flags.LoadConfig` pre-sets `Config.ProjectId =
@@ -64,14 +64,14 @@ export const legacyLoadLocalProjectContext = <E>(
   projectRef?: string,
 ): Effect.Effect<LegacyLocalProjectContext, E, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
-    // `search: false`: `workdir` already IS the fully-resolved chdir target (`legacy-cli-config.
+    // `search: false`: `workdir` already IS the fully-resolved chdir target (`legacy-cli-settings.
     // layer.ts`'s `resolveWorkdir` mirrors `ChangeWorkDir`'s explicit-exact-vs-default-searched
     // resolution), so letting `@supabase/config`'s
-    // `findProjectPaths` climb ancestors again on top of that would let an unrelated ancestor
+    // `findCliProjectPaths` climb ancestors again on top of that would let an unrelated ancestor
     // project's config.toml win when `--workdir`/`SUPABASE_WORKDIR` points at a subdirectory with
     // no `supabase/config.toml` of its own — this never searches past the exact (explicit or
     // defaulted) workdir (`NewPathBuilder`).
-    const projectEnv = yield* loadProjectEnvironment({
+    const projectEnv = yield* loadCliProjectEnvironment({
       cwd: workdir,
       baseEnv: process.env,
       search: false,
@@ -80,13 +80,13 @@ export const legacyLoadLocalProjectContext = <E>(
       // non-test `supabase/.env.local` is then invisible to Go and must not fail config loading
       // here either. `legacyResolveProjectEnvironmentValues` below already applies this same gate
       // for the project-root pass; this mirrors it for the `supabase/`-dir pass
-      // `loadProjectEnvironment` itself performs.
+      // `loadCliProjectEnvironment` itself performs.
       skipEnvLocal: (process.env["SUPABASE_ENV"] || "development") === "test",
     }).pipe(
       Effect.mapError((cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`)),
     );
 
-    // Resolved BEFORE `loadProjectConfig` decodes config.toml (not after): `Config.Load` runs
+    // Resolved BEFORE `loadCliConfig` decodes config.toml (not after): `Config.Load` runs
     // `loadNestedEnv` before `LoadEnvHook` decodes `env(...)` references, so
     // an `env(...)`-valued `project_id` sourced only from a project-root/`SUPABASE_ENV`-selected
     // file must already be visible to the decoder, not just to the `SUPABASE_PROJECT_ID` override
@@ -163,14 +163,14 @@ export const legacyLoadLocalProjectContext = <E>(
     // for one.
 
     // An absent config.toml is not a failure — `flags.LoadConfig` still resolves a project id
-    // via the workdir basename default. Only a malformed file (`loadProjectConfig` failing rather
+    // via the workdir basename default. Only a malformed file (`loadCliConfig` failing rather
     // than returning `null`) is a hard error.
-    const loaded = yield* loadProjectConfig(workdir, {
-      projectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
+    const loaded = yield* loadCliConfig(workdir, {
+      cliProjectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
       search: false,
       // `NewPathBuilder`/`Config.Load` only ever resolves
       // `supabase/config.toml` — it has no concept of a JSON project config file. Without this, a
-      // workdir with a stray `config.json` would make `loadProjectConfig` prefer it over
+      // workdir with a stray `config.json` would make `loadCliConfig` prefer it over
       // `config.toml`.
       tomlOnly: true,
       goViperCompat: true,
@@ -178,10 +178,10 @@ export const legacyLoadLocalProjectContext = <E>(
     }).pipe(
       Effect.mapError((cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`)),
     );
-    const config = loaded?.config ?? Schema.decodeUnknownSync(ProjectConfigSchema)({});
+    const config = loaded?.config ?? Schema.decodeUnknownSync(CliConfigSchema)({});
     const hostname = legacyGetHostname();
     // `loaded?.appliedRemote !== undefined` means a `[remotes.<ref>]` block matched
-    // `projectRef` above and `loadProjectConfig` merged it over the base document
+    // `projectRef` above and `loadCliConfig` merged it over the base document
     // (`packages/config/src/io.ts`'s `applyRemoteOverride`) — including that block's OWN
     // `project_id` field, which is what selected it (`config.project_id` already equals
     // `projectRef`). `mergeRemoteConfig` installs that value at viper's override tier,

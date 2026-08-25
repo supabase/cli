@@ -18,7 +18,7 @@ import {
  * Raised when `supabase/config.toml` cannot be parsed, or a config-load-time
  * validation Go runs before any Storage call fails (bucket name regex,
  * `file_size_limit` numeral). Mirrors the `config push` CLI-1489 tradeoff:
- * `loadProjectConfig` raises `ProjectConfigParseError` on `env(...)` refs over
+ * `loadCliConfig` raises `CliConfigParseError` on `env(...)` refs over
  * numeric/bool fields, which Go resolves transparently.
  */
 export class LegacySeedConfigLoadError extends Data.TaggedError("LegacySeedConfigLoadError")<{

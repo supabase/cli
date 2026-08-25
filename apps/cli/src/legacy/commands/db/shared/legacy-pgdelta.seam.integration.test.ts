@@ -9,7 +9,7 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { afterEach, vi } from "vitest";
 
 import {
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyShadowContainerCliSpawner,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
@@ -131,7 +131,7 @@ function setup(
   const dbConnection = fakeShadowDbConnection();
   const docker = fakeShadowSetupDocker();
   const edge = fakeEdgeRuntime();
-  const cliConfig = mockLegacyCliConfig({ workdir, projectId: Option.none() });
+  const cliSettings = mockLegacyCliSettings({ workdir, projectId: Option.none() });
 
   // Every service `legacyDeclarativeSeamLayer` needs must be provided directly into `seam`
   // itself — the "provide doesn't share to siblings inside Layer.mergeAll" rule (legacy
@@ -140,7 +140,7 @@ function setup(
   // body itself can resolve `Output`/etc.), but that doesn't satisfy `seam`'s OWN identical
   // requirements as a sibling entry in the same merge.
   const seam = legacyDeclarativeSeamLayer.pipe(
-    Layer.provide(cliConfig),
+    Layer.provide(cliSettings),
     Layer.provide(dbConnection.layer),
     Layer.provide(docker.layer),
     Layer.provide(edge.layer),
@@ -169,7 +169,7 @@ function setup(
     edge.layer,
     sslProbe,
     alwaysReadyHttpClientLayer,
-    cliConfig,
+    cliSettings,
     mockRuntimeInfo(),
     Layer.succeed(LegacyNetworkIdFlag, Option.none()),
     Layer.succeed(LegacyExperimentalFlag, false),

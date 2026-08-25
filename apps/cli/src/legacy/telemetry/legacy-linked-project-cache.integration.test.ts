@@ -9,7 +9,7 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { mockAnalytics, mockTelemetryRuntime } from "../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyCredentialsLayer,
   mockLegacyPlatformApi,
 } from "../../../tests/helpers/legacy-mocks.ts";
@@ -65,7 +65,7 @@ describe("legacyLinkedProjectCacheLayer", () => {
       );
       const layer = legacyLinkedProjectCacheLayer.pipe(
         Layer.provide(api.httpClientLayer),
-        Layer.provide(mockLegacyCliConfig({ workdir })),
+        Layer.provide(mockLegacyCliSettings({ workdir })),
         Layer.provide(mockLegacyCredentialsLayer),
         Layer.provide(identityStitch),
         // The cache now also fires org/project groupIdentify (Go parity); it reads
@@ -129,7 +129,7 @@ describe("legacyLinkedProjectCacheLayer", () => {
     );
     const layer = legacyLinkedProjectCacheLayer.pipe(
       Layer.provide(api.httpClientLayer),
-      Layer.provide(mockLegacyCliConfig({ workdir })),
+      Layer.provide(mockLegacyCliSettings({ workdir })),
       Layer.provide(mockLegacyCredentialsLayer),
       Layer.provide(identityStitch),
       Layer.provide(analytics.layer),
@@ -168,7 +168,7 @@ describe("legacyLinkedProjectCacheLayer", () => {
       );
       const layer = legacyLinkedProjectCacheLayer.pipe(
         Layer.provide(api.httpClientLayer),
-        Layer.provide(mockLegacyCliConfig({ workdir })),
+        Layer.provide(mockLegacyCliSettings({ workdir })),
         Layer.provide(mockLegacyCredentialsLayer),
         Layer.provide(identityStitch),
         Layer.provide(analytics.layer),

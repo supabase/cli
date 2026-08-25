@@ -8,7 +8,7 @@ import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
   legacyJsonResponse,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -64,21 +64,21 @@ function buildApi(opts: SetupOpts) {
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: "text" });
   const api = buildApi(opts);
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
-  const layer = buildLegacyTestRuntime({ out, api, cliConfig });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
+  const layer = buildLegacyTestRuntime({ out, api, cliSettings });
   return { layer, out, api };
 }
 
 function setupTracked(opts: SetupOpts = {}) {
   const out = mockOutput({ format: "text" });
   const api = buildApi(opts);
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
   });
@@ -178,11 +178,11 @@ describe("legacy branches delete integration", () => {
             return legacyJsonResponse(request, 200, null);
           }),
       });
-      const cliConfig = mockLegacyCliConfig({
+      const cliSettings = mockLegacyCliSettings({
         workdir: tempRoot.current,
         projectId: Option.none(),
       });
-      const layer = buildLegacyTestRuntime({ out, api, cliConfig });
+      const layer = buildLegacyTestRuntime({ out, api, cliSettings });
       // Simulate the state left by `supabase link <branch>`: project-ref holds
       // the branch's OWN ref, but linked-project.json still holds the real
       // parent — `branches delete` must resolve the parent for the name

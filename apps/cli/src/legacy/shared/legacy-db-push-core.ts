@@ -76,7 +76,7 @@ const applyError = (message: string) => new LegacyDbPushApplyError({ message });
  * for `.env`. `bootstrap.handler.ts` mirrors that: it passes its own
  * `workdir` / `projectRef` / connection directly, never touching
  * `LegacyProjectRefResolver` or `LegacyDbConfigResolver` (which key off
- * `LegacyCliConfig.workdir` — stale after bootstrap's `process.chdir`, see
+ * `LegacyCliSettings.workdir` — stale after bootstrap's `process.chdir`, see
  * bootstrap.handler.ts's workdir comments).
  *
  * The "DRY RUN: …" heads-up line is the literal first line of `push.Run` —
@@ -85,7 +85,7 @@ const applyError = (message: string) => new LegacyDbPushApplyError({ message });
  * here, right before "Connecting to...", not at either caller's call site.
  */
 export interface LegacyDbPushCoreInput {
-  /** Absolute project directory (never read from `LegacyCliConfig.workdir`). */
+  /** Absolute project directory (never read from `LegacyCliSettings.workdir`). */
   readonly workdir: string;
   /** Resolved project ref, or `""` for `--local` / `--db-url`. */
   readonly projectRef: string;
@@ -113,7 +113,7 @@ export interface LegacyDbPushCoreInput {
   readonly includeVault: boolean;
   readonly dnsResolver: "native" | "https";
   /**
-   * `LegacyCliConfig.projectId` (`SUPABASE_PROJECT_ID` env override only) — the
+   * `LegacyCliSettings.projectId` (`SUPABASE_PROJECT_ID` env override only) — the
    * top precedence tier of the pg-delta Docker-volume id. Combined internally
    * with `toml.projectId`, `projectRef`, and a workdir-basename default via
    * {@link legacyResolveLocalProjectId}, mirroring `Config.ProjectId`
@@ -127,7 +127,7 @@ export interface LegacyDbPushCoreInput {
    * rather than falling to the workdir basename; only `--local`/`--db-url`
    * (where Go never seeds `ProjectRef`) fall straight to the basename.
    * Passing this env-only tier straight through as the id (as bootstrap's own
-   * `config.toml` is scaffolded fresh mid-handler, after `LegacyCliConfig` was
+   * `config.toml` is scaffolded fresh mid-handler, after `LegacyCliSettings` was
    * already built) would bind the pg-delta edge-runtime cache volume to the
    * generic `supabase_edge_runtime_` name shared by every unrelated project.
    * The resolved id is sanitized ({@link legacySanitizeProjectId}) before it

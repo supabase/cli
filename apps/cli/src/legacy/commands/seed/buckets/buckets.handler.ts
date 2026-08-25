@@ -38,7 +38,7 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
   yield* Effect.gen(function* () {
     // Resolve the project ref for --linked BEFORE loading config, so that the
     // matching `[remotes.<name>]` override (whose `project_id == ref`) is merged
-    // over the base config by `loadProjectConfig`. The target is selected from
+    // over the base config by `loadCliConfig`. The target is selected from
     // `flag.Changed`, not the flag value: `--linked` is the linked path whenever
     // it's *set* (even `--linked=false`).
     const setFlags = legacySeedChangedTargetFlags(cliArgs.args);

@@ -5,7 +5,7 @@ import { Effect, Exit, Option } from "effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
@@ -36,11 +36,11 @@ function setup(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 201, body: opts.response ?? CREATED },
     network: opts.network,
   });
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
   });
   return { layer, out, api };
@@ -52,12 +52,12 @@ function setupTracked(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 201, body: opts.response ?? CREATED },
     network: opts.network,
   });
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const telemetry = mockLegacyTelemetryStateTracked();
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     telemetry: telemetry.layer,
   });
   return { layer, out, api, telemetry };

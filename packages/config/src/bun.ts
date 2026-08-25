@@ -1,21 +1,21 @@
 import { BunFileSystem, BunPath } from "@effect/platform-bun";
 import { Layer } from "effect";
-import { makeProjectConfigIo, type ProjectConfigIo } from "./promise-facade.ts";
+import { makeCliConfigIo, type CliConfigIo } from "./promise-facade.ts";
 
-const projectConfigIo: ProjectConfigIo = makeProjectConfigIo(
+const cliConfigIo: CliConfigIo = makeCliConfigIo(
   Layer.mergeAll(BunFileSystem.layer, BunPath.layer),
 );
 
-export const loadProjectConfig = projectConfigIo.loadProjectConfig;
-export const findProjectRootFor = projectConfigIo.findProjectRootFor;
-export const findProjectPathsFor = projectConfigIo.findProjectPathsFor;
-export const loadProjectConfigFile = projectConfigIo.loadProjectConfigFile;
-export const loadProjectEnvironmentFor = projectConfigIo.loadProjectEnvironmentFor;
-export const saveProjectConfig = projectConfigIo.saveProjectConfig;
-export const loadFunctionsManifest = projectConfigIo.loadFunctionsManifest;
-export type { ProjectConfigIo } from "./promise-facade.ts";
+export const loadCliConfig = cliConfigIo.loadCliConfig;
+export const findCliProjectRootFor = cliConfigIo.findCliProjectRootFor;
+export const findCliProjectPathsFor = cliConfigIo.findCliProjectPathsFor;
+export const loadCliConfigFile = cliConfigIo.loadCliConfigFile;
+export const loadCliProjectEnvironmentFor = cliConfigIo.loadCliProjectEnvironmentFor;
+export const saveCliConfig = cliConfigIo.saveCliConfig;
+export const loadFunctionsManifest = cliConfigIo.loadFunctionsManifest;
+export type { CliConfigIo } from "./promise-facade.ts";
 // Re-exports every pure symbol from `.` (types, schema, errors, etc.) so
-// `./io` consumers can name `LoadedProjectConfig`/`ProjectPaths`/etc. without
+// `./io` consumers can name `LoadedCliConfig`/`CliProjectPaths`/etc. without
 // a second import from `@supabase/config` — `index.ts`'s own graph is pure,
 // so this doesn't drag anything platform-specific into it. No name
 // collisions with the seven facade functions above (verified against

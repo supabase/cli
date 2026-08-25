@@ -1,7 +1,7 @@
 import type { Option, Redacted } from "effect";
 import { Context } from "effect";
 
-interface CliConfigShape {
+interface CliSettingsShape {
   readonly apiUrl: string;
   readonly dashboardUrl: string;
   readonly projectHost: string;
@@ -16,6 +16,6 @@ interface CliConfigShape {
   readonly doNotTrack: Option.Option<string>;
 }
 
-export class CliConfig extends Context.Service<CliConfig, CliConfigShape>()(
-  "supabase/config/CliConfig",
+export class CliSettings extends Context.Service<CliSettings, CliSettingsShape>()(
+  "supabase/cli/CliSettings",
 ) {}

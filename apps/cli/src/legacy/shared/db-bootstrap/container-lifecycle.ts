@@ -159,7 +159,7 @@ export interface LegacyContainerOpts {
    */
   readonly isBitbucketPipeline: boolean;
   /**
-   * `LegacyCliConfig.workdir` — the project's own working directory. Stamped onto every
+   * `LegacyCliSettings.workdir` — the project's own working directory. Stamped onto every
    * created container as {@link LEGACY_CLI_WORKDIR_LABEL} (see that constant's doc
    * comment) so a later `stop`/{@link legacyRollbackStart} can find this exact directory
    * again from the container's own label, without depending on being invoked from the

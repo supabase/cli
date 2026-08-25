@@ -11,7 +11,7 @@ import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
   LEGACY_FAKE_SHADOW_CONTAINER_ID,
   LEGACY_VALID_REF,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyShadowContainerCliSpawner,
   mockLegacyTelemetryStateTracked,
@@ -370,7 +370,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     docker.layer,
     debugLogger,
     alwaysReadyHttpClientLayer,
-    mockLegacyCliConfig({ workdir }),
+    mockLegacyCliSettings({ workdir }),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     Layer.succeed(LegacyDebugFlag, false),
     Layer.succeed(LegacyExperimentalFlag, false),

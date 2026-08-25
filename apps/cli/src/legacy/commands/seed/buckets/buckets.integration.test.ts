@@ -14,7 +14,7 @@ import {
   legacyJsonResponse,
   legacyStatusCodeFailure,
   legacyTransportFailure,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyPlatformApiService,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyTelemetryStateTracked,
@@ -187,7 +187,7 @@ function setupLegacySeedBuckets(
     out.layer,
     httpLayer,
     telemetry.layer,
-    mockLegacyCliConfig({ workdir }),
+    mockLegacyCliSettings({ workdir }),
     BunServices.layer,
     // Seed-bucket prompts model an interactive user answering via `confirm`.
     mockTty({ stdinIsTty: true, stdoutIsTty: false }),
