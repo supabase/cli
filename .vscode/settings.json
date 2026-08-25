@@ -1,5 +1,12 @@
 {
   "editor.defaultFormatter": "oxc.oxc-vscode",
   "editor.formatOnSave": true,
-  "editor.formatOnSaveMode": "file"
+  "editor.formatOnSaveMode": "file",
+
+  // Using the guidance this blog post to ignore the `.repos` submodules:
+  // https://www.effect.website/blog/the-one-weird-git-trick-that-makes-coding-agents-more-effect-ive#configuring-your-editor
+  "js/ts.preferences.autoImportFileExcludePatterns": [".repos/**"],
+  "files.exclude": { ".repos/**": true },
+  "files.watcherExclude": { ".repos/**": true },
+  "search.exclude": { ".repos/**": true }
 }
