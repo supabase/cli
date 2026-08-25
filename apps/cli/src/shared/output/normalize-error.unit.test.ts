@@ -8,6 +8,7 @@ import {
 } from "@supabase/config";
 import { legacyBranchesCommand } from "../../legacy/commands/branches/branches.command.ts";
 import { legacyNetworkRestrictionsCommand } from "../../legacy/commands/network-restrictions/network-restrictions.command.ts";
+import { CliProjectHomeNotDirectoryError } from "../../next/config/cli-project-home.service.ts";
 import { formatCliError, normalizeCause, normalizeCliError } from "./normalize-error.ts";
 
 const testRoot = Command.make("supabase").pipe(
@@ -87,6 +88,17 @@ describe("normalizeCliError", () => {
     expect(normalizeCliError(error)).toEqual({
       code: "MissingCliConfigValueError",
       message: "MissingCliConfigValueError",
+    });
+  });
+
+  test("CliProjectHomeNotDirectoryError surfaces its tag as code with its own message", () => {
+    const error = new CliProjectHomeNotDirectoryError({
+      message: ".supabase could not be created: a file exists at that path",
+    });
+
+    expect(normalizeCliError(error)).toEqual({
+      code: "CliProjectHomeNotDirectoryError",
+      message: ".supabase could not be created: a file exists at that path",
     });
   });
 
