@@ -19,8 +19,8 @@ export {
   ProjectConfigParseError,
   ProjectEnvParseError,
 } from "./errors.ts";
+export type { ConfigFormat } from "./config-format.ts";
 export {
-  type ConfigFormat,
   type LoadedProjectConfig,
   type LoadProjectConfigOptions,
   type ProjectConfigValueOrigin,

@@ -8,6 +8,8 @@ import { Effect, Layer, Schema } from "effect";
 import { ProjectConfigSchema } from "./base.ts";
 import { ProjectConfigParseError } from "./errors.ts";
 import * as bunFacade from "./bun.ts";
+import * as defaultEntrypoint from "./index.ts";
+import * as ioBrowserFacade from "./io-browser.ts";
 import * as nodeFacade from "./node.ts";
 import { makeProjectConfigIo } from "./promise-facade.ts";
 
@@ -200,20 +202,80 @@ describe("promise-facade via the Bun entrypoint", () => {
   });
 });
 
-describe("promise-facade parity between bun.ts and node.ts", () => {
-  test("node.ts exports the same seven facade function names as bun.ts", () => {
-    const expectedFunctionNames = [
-      "findProjectPathsFor",
-      "findProjectRootFor",
-      "loadFunctionsManifest",
-      "loadProjectConfig",
-      "loadProjectConfigFile",
-      "loadProjectEnvironmentFor",
-      "saveProjectConfig",
-    ];
+const expectedFacadeFunctionNames = [
+  "findProjectPathsFor",
+  "findProjectRootFor",
+  "loadFunctionsManifest",
+  "loadProjectConfig",
+  "loadProjectConfigFile",
+  "loadProjectEnvironmentFor",
+  "saveProjectConfig",
+];
 
-    expect(Object.keys(bunFacade).sort()).toEqual(expectedFunctionNames);
+describe("promise-facade parity between bun.ts, node.ts, and io-browser.ts", () => {
+  // A prior two-way check here (bun.ts vs node.ts only) exempted io-browser.ts
+  // from parity, which is exactly why it was allowed to ship as a bare
+  // top-level `throw` exporting nothing — this three-way check closes that
+  // gap.
+  test("io-browser.ts exports the same seven facade function names as bun.ts and node.ts", () => {
+    for (const facade of [bunFacade, nodeFacade, ioBrowserFacade]) {
+      for (const name of expectedFacadeFunctionNames) {
+        expect(typeof (facade as Record<string, unknown>)[name]).toBe("function");
+      }
+    }
+  });
+
+  // Each module also re-exports every pure symbol from `.` (see
+  // `describe("./io is a superset of src/index.ts", ...)` below), so this
+  // asserts the three modules' full export surfaces stay identical to each
+  // other, not just on the seven facade names above.
+  test("bun.ts, node.ts, and io-browser.ts export the identical set of names", () => {
     expect(Object.keys(nodeFacade).sort()).toEqual(Object.keys(bunFacade).sort());
+    expect(Object.keys(ioBrowserFacade).sort()).toEqual(Object.keys(bunFacade).sort());
+  });
+});
+
+describe("./io is a superset of src/index.ts", () => {
+  test("every runtime export key of index.ts is present, with an identical (not shadowed) binding, in bun.ts, node.ts, and io-browser.ts", () => {
+    const defaultKeys = Object.keys(defaultEntrypoint);
+
+    // Guards against `defaultEntrypoint` being empty due to a broken
+    // import, which would otherwise make the loop below pass trivially.
+    expect(defaultKeys.length).toBeGreaterThan(0);
+
+    for (const [label, facade] of [
+      ["bun.ts", bunFacade],
+      ["node.ts", nodeFacade],
+      ["io-browser.ts", ioBrowserFacade],
+    ] as const) {
+      const mismatches = defaultKeys.flatMap((key) => {
+        if (!(key in facade)) {
+          return [`${label} missing: ${key}`];
+        }
+        const defaultValue = (defaultEntrypoint as Record<string, unknown>)[key];
+        const facadeValue = (facade as Record<string, unknown>)[key];
+        return facadeValue === defaultValue ? [] : [`${label} mismatched (shadowed): ${key}`];
+      });
+
+      expect(mismatches).toEqual([]);
+    }
+  });
+});
+
+describe("io-browser.ts stays side-effect-free", () => {
+  // Uses a dynamic `import()` (rather than relying on the static import at
+  // the top of this file) so this assertion is meaningful on its own: a
+  // regression back to a bare top-level `throw` would fail this specific
+  // test with the rejection below, instead of crashing the whole file at
+  // module-load time before any test runs.
+  test("importing the module does not throw", async () => {
+    await expect(import("./io-browser.ts")).resolves.toBeDefined();
+  });
+
+  test("calling loadProjectConfig rejects with the curated browser-unavailable message", async () => {
+    await expect(ioBrowserFacade.loadProjectConfig("/irrelevant")).rejects.toThrow(
+      '@supabase/config/io is not available in browser bundles; import the pure surface from "@supabase/config" instead.',
+    );
   });
 });
 
@@ -292,21 +354,8 @@ describe("promise-facade rejection shapes", () => {
   });
 });
 
-describe("promise-facade stdin-leak regression (CLI-2231)", () => {
-  // `BunServices.layer`/`NodeServices.layer` pull in Terminal, which attaches
-  // a permanent `process.stdin` "end" listener on first use — this facade
-  // only needs `FileSystem | Path` (see `bun.ts`/`node.ts`), so a facade call
-  // must never grow that listener count.
-  test("a facade call does not attach a process.stdin 'end' listener", async () => {
-    const cwd = makeTempProject();
-    const before = process.stdin.listenerCount("end");
-
-    try {
-      await loadProjectConfig(cwd);
-
-      expect(process.stdin.listenerCount("end")).toBe(before);
-    } finally {
-      await rm(cwd, { recursive: true, force: true });
-    }
-  });
-});
+// The stdin-leak regression guard (CLI-2231) previously lived here, but an
+// ordering-dependent assertion (listener count before/after a facade call)
+// is meaningless once earlier tests in this file have already made the
+// facade's first call — see `promise-facade.stdin.unit.test.ts`, which is
+// the ONLY file allowed to make that first call.

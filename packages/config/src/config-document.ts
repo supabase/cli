@@ -1,13 +1,12 @@
 import { Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { ProjectConfigSchema, type ProjectConfig } from "./base.ts";
+import type { ConfigFormat } from "./config-format.ts";
 import { getDefaultProjectConfig, setOwnProperty, subtractValue } from "./sparse.ts";
 import type { ProjectEnvironment } from "./project.ts";
 
 /** Shared with `io.ts`'s `getSchemaRef`, which reads this key back off a raw document. */
 export const projectConfigSchemaKey = "$schema";
-
-export type ConfigFormat = "json" | "toml";
 
 export type ProjectConfigValueSource = "environment" | "local" | "remote";
 

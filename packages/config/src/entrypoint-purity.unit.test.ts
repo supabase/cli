@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as defaultEntrypoint from "./index.ts";
@@ -32,94 +33,65 @@ const allowedBareSpecifier = (specifier: string): boolean =>
   specifier === "smol-toml" ||
   specifier === "dedent";
 
-// Relative specifiers in this package always carry an explicit `.ts`
-// extension, so a resolved path never needs extension probing. The
-// lookbehind excludes an occurrence of the word "from" that is itself the
-// entire contents of a quoted string argument (e.g. `missing("vonage",
-// "from")` in auth/sms.ts) — a real `from` clause is never immediately
-// preceded by a quote character.
-const fromClauseSpecifier = /(?<!["'])\bfrom\b\s*["']([^"']+)["']/g;
-const sideEffectImportSpecifier = /^\s*import\s*["']([^"']+)["']\s*;?\s*$/gm;
-const dynamicImportOrRequireSpecifier = /\b(?:import|require)\s*\(\s*["']([^"']+)["']\s*\)/g;
-// A whole-statement `import type {...} from "..."` / `export type {...} from
-// "..."` (or `import type Foo from "..."` / `export type * from "..."`) fully
-// erases under `verbatimModuleSyntax` — unlike an inline `type` modifier on an
-// individual specifier inside an otherwise-live import/export, which still
-// emits a runtime `export {} from "..."`/import of the module. Blanking these
-// statements out (preserving newlines, dropping everything else) before
-// specifier extraction keeps the walked graph matching what actually reaches
-// the bundler at runtime.
-const typeOnlyImportExportStatement =
-  /\b(?:import|export)\s+type\b[^;]*?\bfrom\s*["'][^"']+["']\s*;?/g;
-
-function blankOutTypeOnlyStatements(source: string): string {
-  return source.replace(typeOnlyImportExportStatement, (match) => match.replace(/[^\n]/g, " "));
+// This package's tests always run under Bun (`bun --bun vitest`, per
+// `AGENTS.md`) — fail loudly here rather than letting a plain-node vitest
+// run silently pass with an empty/broken walk.
+if (typeof Bun === "undefined") {
+  throw new Error("this test requires the Bun runtime");
 }
 
-/**
- * Strips `//` line comments and `/* *\/` block comments, respecting string and
- * template literals so a URL like `"https://..."` is never mistaken for the
- * start of a line comment. Without this, a commented-out import, or a doc
- * comment mentioning a SQL `from "public"` clause as prose, would false-
- * positive as a real specifier.
- */
-function stripComments(source: string): string {
-  let result = "";
-  let index = 0;
-
-  while (index < source.length) {
-    const char = source[index];
-    const twoChars = source.slice(index, index + 2);
-
-    if (char === '"' || char === "'" || char === "`") {
-      const quote = char;
-      let cursor = index + 1;
-      while (cursor < source.length && source[cursor] !== quote) {
-        cursor += source[cursor] === "\\" ? 2 : 1;
-      }
-      cursor = Math.min(cursor + 1, source.length);
-      result += source.slice(index, cursor);
-      index = cursor;
-      continue;
-    }
-
-    if (twoChars === "//") {
-      const newlineIndex = source.indexOf("\n", index);
-      index = newlineIndex === -1 ? source.length : newlineIndex;
-      continue;
-    }
-
-    if (twoChars === "/*") {
-      const closeIndex = source.indexOf("*/", index + 2);
-      index = closeIndex === -1 ? source.length : closeIndex + 2;
-      continue;
-    }
-
-    result += char;
-    index += 1;
-  }
-
-  return result;
-}
+// `Bun.Transpiler`'s import scanner replaces this file's previous hand-rolled
+// comment-stripping/type-blanking/regex extraction, which had two reproduced
+// false negatives: a template-literal dynamic import (``import(`./io.ts`)``)
+// — the old specifier regex only matched quote characters — and a
+// semicolon-less `export type Foo = number` statement swallowing the very
+// next (real) import into its blanked-out range. `scanImports` is Bun's own
+// TS/JSX-aware parser: it excludes type-only import/export statements,
+// keeps a mixed inline-`type` specifier alive, and reports dynamic
+// `import()`/`require()` calls (as `"dynamic-import"`/`"require-call"`)
+// alongside ordinary `import ... from` statements — all verified against
+// the fixtures in the `describe("extractSpecifiers", ...)` block below.
+const transpiler = new Bun.Transpiler({ loader: "ts" });
 
 function extractSpecifiers(rawSource: string): string[] {
-  const source = blankOutTypeOnlyStatements(stripComments(rawSource));
-  const specifiers: string[] = [];
+  return transpiler.scanImports(rawSource).map((entry) => entry.path);
+}
 
-  for (const pattern of [
-    fromClauseSpecifier,
-    sideEffectImportSpecifier,
-    dynamicImportOrRequireSpecifier,
-  ]) {
-    for (const match of source.matchAll(pattern)) {
-      const specifier = match[1];
-      if (specifier !== undefined) {
-        specifiers.push(specifier);
-      }
+// `scanImports` only reports a dynamic `import()`/`require()` call when its
+// argument is a literal string or a template literal with no `${...}`
+// interpolation (verified below) — a non-literal argument (a bare
+// identifier, or an interpolated template literal) is silently omitted from
+// its result instead of erroring. The walker can't know what such a call
+// might resolve to at runtime, so rather than silently under-reporting the
+// graph, this scans the same (comment-stripped, type-erased) transpiled
+// source for any `import(`/`require(` call whose argument isn't a static
+// string/template literal, and treats a match as a hard failure. Consulting
+// the pre-transpiled comment-free/type-erased source (rather than re-running
+// our own comment stripper) keeps this check honest about only ever seeing
+// what the transpiler itself considers live code.
+const dynamicImportOrRequireCall = /\b(?:import|require)\s*\(\s*([\s\S]*?)\)/g;
+
+function isStaticSpecifierArgument(argument: string): boolean {
+  const trimmed = argument.trim();
+  return (
+    /^"(?:[^"\\]|\\.)*"$/.test(trimmed) ||
+    /^'(?:[^'\\]|\\.)*'$/.test(trimmed) ||
+    /^`[^`$]*`$/.test(trimmed)
+  );
+}
+
+function findUnresolvableDynamicSpecifiers(rawSource: string): string[] {
+  const transformed = transpiler.transformSync(rawSource, "ts");
+  const unresolvable: string[] = [];
+
+  for (const match of transformed.matchAll(dynamicImportOrRequireCall)) {
+    const argument = match[1];
+    if (argument !== undefined && !isStaticSpecifierArgument(argument)) {
+      unresolvable.push(argument.trim());
     }
   }
 
-  return specifiers;
+  return unresolvable;
 }
 
 function readSourceOrThrow(file: string): string {
@@ -151,6 +123,16 @@ function collectImportGraph(entryFile: string): ImportGraph {
 
     const source = readSourceOrThrow(file);
 
+    const unresolvable = findUnresolvableDynamicSpecifiers(source);
+    if (unresolvable.length > 0) {
+      throw new Error(
+        `purity walker found a dynamic import()/require() in ${file} whose argument is not a ` +
+          `static string/template literal, so Bun's scanImports() cannot resolve it to a ` +
+          `specifier: ${unresolvable.join(", ")}. Rewrite it as a static specifier so the walker ` +
+          `can verify what it pulls into the bundle.`,
+      );
+    }
+
     for (const specifier of extractSpecifiers(source)) {
       if (specifier.startsWith(".")) {
         queue.push(join(dirname(file), specifier));
@@ -166,6 +148,12 @@ function collectImportGraph(entryFile: string): ImportGraph {
 describe("extractSpecifiers", () => {
   test("extracts a dynamic import() specifier", () => {
     expect(extractSpecifiers(`const mod = await import("./dynamic-target.ts");`)).toEqual([
+      "./dynamic-target.ts",
+    ]);
+  });
+
+  test("extracts a dynamic import() specifier written as a template literal", () => {
+    expect(extractSpecifiers("const mod = await import(`./dynamic-target.ts`);")).toEqual([
       "./dynamic-target.ts",
     ]);
   });
@@ -221,8 +209,39 @@ export const x = 1;
     expect(extractSpecifiers(source)).toEqual(["./mixed.ts"]);
   });
 
+  test("a semicolon-less type alias does not swallow the next, real import", () => {
+    const source = `export type Foo = number\nimport { b } from "./bad.ts";`;
+    expect(extractSpecifiers(source)).toEqual(["./bad.ts"]);
+  });
+
   test("excludes a bare quoted 'from' string argument, not a real from-clause", () => {
     expect(extractSpecifiers(`missing("vonage", "from")`)).toEqual([]);
+  });
+});
+
+describe("findUnresolvableDynamicSpecifiers", () => {
+  test("does not flag a dynamic import() with a literal string argument", () => {
+    expect(findUnresolvableDynamicSpecifiers(`await import("./foo.ts");`)).toEqual([]);
+  });
+
+  test("does not flag a dynamic import() with a non-interpolated template literal argument", () => {
+    expect(findUnresolvableDynamicSpecifiers("await import(`./foo.ts`);")).toEqual([]);
+  });
+
+  test("flags a dynamic import() with a bare identifier argument", () => {
+    expect(findUnresolvableDynamicSpecifiers(`const p = "./foo.ts"; await import(p);`)).toEqual([
+      "p",
+    ]);
+  });
+
+  test("flags a dynamic import() with an interpolated template literal argument", () => {
+    expect(
+      findUnresolvableDynamicSpecifiers("const p = `foo`; await import(`./${p}.ts`);"),
+    ).toEqual(["`./${p}.ts`"]);
+  });
+
+  test("flags a require() with a bare identifier argument", () => {
+    expect(findUnresolvableDynamicSpecifiers(`const p = "./foo.ts"; require(p);`)).toEqual(["p"]);
   });
 });
 
@@ -232,6 +251,18 @@ describe("collectImportGraph", () => {
     expect(() => collectImportGraph(missingFile)).toThrow(
       `purity walker could not resolve ${missingFile} (imported somewhere in the pure graph)`,
     );
+  });
+
+  test("throws when a file contains an unresolvable dynamic import()/require() argument", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "supabase-purity-walker-"));
+    try {
+      const entryFile = join(cwd, "entry.ts");
+      writeFileSync(entryFile, `const p = "./foo.ts";\nawait import(p);\n`);
+
+      expect(() => collectImportGraph(entryFile)).toThrow(/cannot resolve it to a specifier/);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });
 

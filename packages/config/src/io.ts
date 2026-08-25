@@ -2,7 +2,6 @@ import { Console, Effect, FileSystem, Path, Redacted, Schema } from "effect";
 import * as SmolToml from "smol-toml";
 import { ProjectConfigSchema, RemotesSchema, type ProjectConfig } from "./base.ts";
 import {
-  type ConfigFormat,
   encodeProjectConfigToJsonDocument,
   encodeProjectConfigToTomlDocument,
   isObject,
@@ -12,6 +11,7 @@ import {
   type ProjectConfigValueSource,
   type SaveProjectConfigOptions,
 } from "./config-document.ts";
+import type { ConfigFormat } from "./config-format.ts";
 import {
   DuplicateRemoteProjectIdError,
   InvalidRemoteProjectIdError,
