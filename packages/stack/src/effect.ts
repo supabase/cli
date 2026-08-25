@@ -19,6 +19,8 @@ export {
   StackError,
   StackNotRunningError,
   StackReadinessError,
+  StackRpcProtocolError,
+  StackRpcTransportError,
   StackUnavailableError,
   StopTimeout,
   UpgradePreflightError,

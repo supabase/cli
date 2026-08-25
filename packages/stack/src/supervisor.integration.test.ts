@@ -1,4 +1,4 @@
-import { Cause, Context, Effect, Exit, Layer, Schema } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Predicate, Schema } from "effect";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { fork, type ChildProcess } from "node:child_process";
 import { createServer as createHttpServer } from "node:http";
@@ -22,7 +22,7 @@ import { describe, expect, test } from "vitest";
 import { Stack } from "./Stack.ts";
 import { RemoteStack, updateRemoteLaunch } from "./RemoteStack.ts";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
-import { managedDaemonLayer } from "./supervisor.ts";
+import { managedDaemonLayer, SupervisorStartError } from "./supervisor.ts";
 import { managedStackDocumentPathEffect, managedStackPathsEffect } from "./managed/paths.ts";
 import { stopManagedStack } from "./managed/lifecycle.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
@@ -634,9 +634,9 @@ describe("detached supervisor child journeys", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.squash(exit.cause)).toMatchObject({
-          _tag: "InvalidManagedStackNameError",
-        });
+        expect(Predicate.isTagged(Cause.squash(exit.cause), "InvalidManagedStackNameError")).toBe(
+          true,
+        );
       }
     } finally {
       cleanupRoots(roots);
@@ -654,10 +654,12 @@ describe("detached supervisor child journeys", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.squash(exit.cause)).toMatchObject({
-          _tag: "SupervisorStartError",
-          message: "Supervisor test runtime failed after binding",
-        });
+        const error = Cause.squash(exit.cause);
+        expect(Predicate.isTagged(error, "SupervisorStartError")).toBe(true);
+        expect(error).toBeInstanceOf(SupervisorStartError);
+        if (error instanceof SupervisorStartError) {
+          expect(error.message).toBe("Supervisor test runtime failed after binding");
+        }
       }
     } finally {
       cleanupRoots(roots);
@@ -675,10 +677,12 @@ describe("detached supervisor child journeys", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        expect(Cause.squash(exit.cause)).toMatchObject({
-          _tag: "SupervisorStartError",
-          reason: "owner-stopped",
-        });
+        const error = Cause.squash(exit.cause);
+        expect(Predicate.isTagged(error, "SupervisorStartError")).toBe(true);
+        expect(error).toBeInstanceOf(SupervisorStartError);
+        if (error instanceof SupervisorStartError) {
+          expect(error.reason).toBe("owner-stopped");
+        }
       }
     } finally {
       cleanupRoots(roots);
@@ -769,7 +773,7 @@ describe("detached supervisor child journeys", () => {
       );
       expect(Exit.isFailure(readiness)).toBe(true);
       if (Exit.isFailure(readiness)) {
-        expect(Cause.squash(readiness.cause)).toMatchObject({ _tag: "StackReadinessError" });
+        expect(Predicate.isTagged(Cause.squash(readiness.cause), "StackReadinessError")).toBe(true);
       }
       await Promise.race([
         waitForExit(child.child),

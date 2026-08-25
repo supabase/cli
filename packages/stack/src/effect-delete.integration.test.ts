@@ -4,8 +4,16 @@ import { join } from "node:path";
 import { it } from "@effect/vitest";
 import { Effect } from "effect";
 import { expect } from "vitest";
-import { deleteManagedStackPersistence as deleteWithBun } from "./effect-bun.ts";
-import { deleteManagedStackPersistence as deleteWithNode } from "./effect-node.ts";
+import {
+  deleteManagedStackPersistence as deleteWithBun,
+  StackRpcProtocolError as BunStackRpcProtocolError,
+  StackRpcTransportError as BunStackRpcTransportError,
+} from "./effect-bun.ts";
+import {
+  deleteManagedStackPersistence as deleteWithNode,
+  StackRpcProtocolError as NodeStackRpcProtocolError,
+  StackRpcTransportError as NodeStackRpcTransportError,
+} from "./effect-node.ts";
 import { NoRunningStackError } from "./managed/model.ts";
 
 const makeFixture = Effect.acquireRelease(
@@ -43,4 +51,14 @@ for (const [runtime, deleteManagedStackPersistence] of [
       }),
     ),
   );
+}
+
+for (const [runtime, StackRpcProtocolError, StackRpcTransportError] of [
+  ["Bun", BunStackRpcProtocolError, BunStackRpcTransportError],
+  ["Node", NodeStackRpcProtocolError, NodeStackRpcTransportError],
+] as const) {
+  it(`${runtime} Effect entrypoint exports its public RPC failures`, () => {
+    expect(StackRpcProtocolError).toBeTypeOf("function");
+    expect(StackRpcTransportError).toBeTypeOf("function");
+  });
 }

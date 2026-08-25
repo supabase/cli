@@ -404,48 +404,49 @@ it.live("executes every Stack operation over the same-version RPC endpoint", () 
           yield* remote.start();
           yield* remote.startService("auth");
           const readyError = yield* Effect.flip(remote.startService("error"));
-          expect(readyError).toEqual(
-            expect.objectContaining({
-              _tag: "ServiceReadyError",
+          expect(Predicate.isTagged(readyError, "ServiceReadyError")).toBe(true);
+          if (Predicate.isTagged(readyError, "ServiceReadyError")) {
+            expect(readyError).toMatchObject({
               name: "error",
               reason: "did not become ready",
               exitCode: 17,
-            }),
-          );
-          expect(yield* Effect.flip(remote.startService("unavailable"))).toEqual(
-            expect.objectContaining({
-              _tag: "StackUnavailableError",
+            });
+          }
+          const unavailableError = yield* Effect.flip(remote.startService("unavailable"));
+          expect(Predicate.isTagged(unavailableError, "StackUnavailableError")).toBe(true);
+          if (Predicate.isTagged(unavailableError, "StackUnavailableError")) {
+            expect(unavailableError).toMatchObject({
               phase: "stopping",
               detail: "stack is stopping",
-            }),
-          );
-          expect(yield* Effect.flip(remote.startService("missing"))).toEqual(
-            expect.objectContaining({
-              _tag: "ServiceNotFoundError",
-              name: "missing",
-            }),
-          );
-          expect(yield* Effect.flip(remote.startService("build"))).toEqual(
-            expect.objectContaining({
-              _tag: "StackBuildError",
+            });
+          }
+          const missingError = yield* Effect.flip(remote.startService("missing"));
+          expect(Predicate.isTagged(missingError, "ServiceNotFoundError")).toBe(true);
+          if (Predicate.isTagged(missingError, "ServiceNotFoundError")) {
+            expect(missingError.name).toBe("missing");
+          }
+          const buildError = yield* Effect.flip(remote.startService("build"));
+          expect(Predicate.isTagged(buildError, "StackBuildError")).toBe(true);
+          if (Predicate.isTagged(buildError, "StackBuildError")) {
+            expect(buildError).toMatchObject({
               detail: "docker failed",
               reason: "docker_not_running",
-            }),
-          );
-          expect(yield* Effect.flip(remote.startService("not-running"))).toEqual(
-            expect.objectContaining({
-              _tag: "StackNotRunningError",
-              phase: "stopped",
-            }),
-          );
-          expect(yield* Effect.flip(remote.startService("readiness"))).toEqual(
-            expect.objectContaining({
-              _tag: "StackReadinessError",
+            });
+          }
+          const notRunningError = yield* Effect.flip(remote.startService("not-running"));
+          expect(Predicate.isTagged(notRunningError, "StackNotRunningError")).toBe(true);
+          if (Predicate.isTagged(notRunningError, "StackNotRunningError")) {
+            expect(notRunningError.phase).toBe("stopped");
+          }
+          const readinessError = yield* Effect.flip(remote.startService("readiness"));
+          expect(Predicate.isTagged(readinessError, "StackReadinessError")).toBe(true);
+          if (Predicate.isTagged(readinessError, "StackReadinessError")) {
+            expect(readinessError).toMatchObject({
               target: "auth",
               timeoutMs: 1234,
               detail: "timed out",
-            }),
-          );
+            });
+          }
           yield* remote.stopService("auth");
           yield* remote.restartService("auth");
           yield* remote.reloadFunctions();
@@ -459,11 +460,12 @@ it.live("executes every Stack operation over the same-version RPC endpoint", () 
           if (Exit.isFailure(missingChanges)) {
             const failure = Cause.findErrorOption(missingChanges.cause);
             expect(Option.isSome(failure)).toBe(true);
-            if (Option.isSome(failure))
-              expect(failure.value).toMatchObject({
-                _tag: "ServiceNotFoundError",
-                name: "missing",
-              });
+            if (Option.isSome(failure)) {
+              expect(Predicate.isTagged(failure.value, "ServiceNotFoundError")).toBe(true);
+              if (Predicate.isTagged(failure.value, "ServiceNotFoundError")) {
+                expect(failure.value.name).toBe("missing");
+              }
+            }
           }
           expect(yield* Stream.runCollect(remote.allStateChanges())).toEqual([serviceState]);
           yield* remote.waitReady("auth");
@@ -652,16 +654,15 @@ it.effect("reports the HTTP status when the owner probe is non-successful", () =
       const failure = Cause.findErrorOption(exit.cause);
       expect(Option.isSome(failure)).toBe(true);
       if (Option.isSome(failure)) {
-        expect(failure.value).toMatchObject({
-          _tag: "StackRpcProtocolError",
-          endpoint: endpoint.url,
-          procedure: "owner",
-          detail: "Owner probe returned HTTP 503",
-        });
-        expect(failure.value).not.toHaveProperty(
-          "detail",
-          expect.stringContaining("internal details"),
-        );
+        expect(Predicate.isTagged(failure.value, "StackRpcProtocolError")).toBe(true);
+        if (Predicate.isTagged(failure.value, "StackRpcProtocolError")) {
+          expect(failure.value).toMatchObject({
+            endpoint: endpoint.url,
+            procedure: "owner",
+            detail: "Owner probe returned HTTP 503",
+          });
+          expect(failure.value.detail).not.toContain("internal details");
+        }
       }
     }
   }),
@@ -812,11 +813,13 @@ it.effect("times out a hung fast unary RPC with endpoint and procedure context",
       const failure = Cause.findErrorOption(result.cause);
       expect(Option.isSome(failure)).toBe(true);
       if (Option.isSome(failure)) {
-        expect(failure.value).toMatchObject({
-          _tag: "StackRpcTransportError",
-          endpoint: endpoint.url,
-          procedure: "GetInfo",
-        });
+        expect(Predicate.isTagged(failure.value, "StackRpcTransportError")).toBe(true);
+        if (Predicate.isTagged(failure.value, "StackRpcTransportError")) {
+          expect(failure.value).toMatchObject({
+            endpoint: endpoint.url,
+            procedure: "GetInfo",
+          });
+        }
       }
     }
   }),
