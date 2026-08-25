@@ -18,9 +18,46 @@ This document explains how the CLI's on-disk config document loading works, acro
 - `CliProjectPaths`: the discovered filesystem paths for the active project.
 - `CliProjectContext`: apps/cli's runtime bundle of discovered paths + merged env for the active
   project.
+- `LegacyCliSettings`: apps/cli's legacy shell's own equivalent of `CliSettings` — same role,
+  scoped to the legacy shell, and pending deletion once the legacy/next shells consolidate.
+  Defined at `apps/cli/src/legacy/config/legacy-cli-settings.service.ts`.
+
+Within `CliConfig` itself, `project_id` is overloaded by position: the root-scope `project_id` is
+a local identifier that defaults to the working directory name when running `supabase init` (see
+`packages/config/src/base.ts`), while a `[remotes.<label>].project_id` is the hosted project's
+ref — the value that binds that remote block to a specific persistent Supabase branch.
 
 The `Cli*` prefix names the local checkout side — what the CLI reads, writes, or resolves about
-itself on disk. A bare `Project*` name is reserved for the hosted Supabase project side.
+itself on disk. A bare `Project*` name is reserved for the hosted Supabase project side. (Deliberate
+exceptions live in apps/cli: services that describe the hosted project itself or the CLI's link to
+it — `ProjectLinkRemote`, `ProjectLinkState` (both in `next/config`), and legacy's
+`ProjectRefResolver` (exported as `LegacyProjectRefResolver`, carrying the legacy shell's own
+separate mandatory prefix) — keep the bare `Project*` root under this same rule.)
+
+## The `/io` facade
+
+`@supabase/config` (`.`), `@supabase/config/effect`, and `@supabase/config/io` are the package's
+three published entrypoints (see the package README's "Entrypoints" section for the full
+contract). `./io` is the one whose names diverge from the vocabulary above: it is a Promise-based
+facade over `./effect`'s programs, for non-Effect consumers, and its seven exports (verified
+against `packages/config/src/node.ts`/`bun.ts`) are:
+
+- `loadCliConfig`
+- `saveCliConfig`
+- `loadCliConfigFile`
+- `findCliProjectRootFor`
+- `findCliProjectPathsFor`
+- `loadCliProjectEnvironmentFor`
+- `loadFunctionsManifest`
+
+`loadCliConfig`, `saveCliConfig`, and `loadCliConfigFile` share their name with the `./effect`
+program they wrap (only the return type changes, `Effect` to `Promise`). The other four don't:
+`findCliProjectRootFor`/`findCliProjectPathsFor`/`loadCliProjectEnvironmentFor` add a `For` suffix
+their `./effect` counterparts (`findCliProjectRoot`, `findCliProjectPaths`,
+`loadCliProjectEnvironment`) don't carry, and `loadFunctionsManifest` wraps `./effect`'s
+`inferFunctionsManifest` under an unrelated verb. Settling this naming — the `For` suffix
+convention, and the `loadFunctionsManifest`/`inferFunctionsManifest` divergence — is tracked in
+CLI-2234.
 
 ## Overview
 
@@ -158,8 +195,8 @@ literal, unresolved `env(NAME)`.
 A caller can also resolve `env(NAME)` references explicitly, after config is loaded. The package
 exposes two helpers, from `@supabase/config/effect`:
 
-- `resolveCliConfigValue(value, projectEnv, configPath, options?)`
-- `resolveCliConfigSubtree(value, projectEnv, pathPrefix, options?)`
+- `resolveCliConfigValue(value, cliProjectEnv, configPath, options?)`
+- `resolveCliConfigSubtree(value, cliProjectEnv, pathPrefix, options?)`
 
 Resolution only applies to exact whole-string matches of the form:
 
@@ -173,7 +210,7 @@ These helpers do two things at once:
 
 1. Substitute any string that is still a literal `env(NAME)` reference — this only matters for the
    deferred fields from the previous section, since everything else was already substituted at
-   load time — using `projectEnv.values`. Like the pre-decode substitution, a missing or
+   load time — using `cliProjectEnv.values`. Like the pre-decode substitution, a missing or
    empty-string env var leaves the literal untouched rather than failing.
 2. Wrap every schema-secret-marked (`x-secret`) leaf that resolved to a real value in
    `Redacted<string>` — except a leaf that is still an unresolved literal `env(NAME)` reference,
@@ -279,10 +316,13 @@ The CLI also keeps machine-local project state outside `@supabase/config`'s scop
 (see `apps/cli/docs/supabase-home.md` for the full layout):
 
 - a repo-local `.supabase/` directory, sibling to `supabase/`, holding checkout-specific caches:
-  linked remote project metadata (`project.json`) and checkout-local service-version overrides
-  (`local-versions.json`)
+  linked remote project metadata (`project.json`), checkout-local service-version overrides
+  (`local-versions.json`), and, for ordinary non-Git folders, a workspace-identity marker
+  (`identity.json`) — Git checkouts keep that identity in Git metadata instead and don't write
+  that marker
 - the global `SUPABASE_HOME` directory, holding managed-stack metadata and runtime state, keyed by
-  the discovered project root
+  stack identity — the canonical local-project key relative to the enclosing Git checkout, plus
+  workspace identity — not the config-discovered project root
 
 Neither is part of `@supabase/config`'s input.
 

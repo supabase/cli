@@ -3,6 +3,11 @@
 Supabase project configuration package built on Effect V4 Schema — owns the canonical `CliConfig`
 document schema, config file loading/saving, and JSON Schema generation.
 
+> `CliConfig` is the config _document_ (`supabase/config.toml`/`.json`) — the full local
+> superset the CLI reads and writes. `ProjectConfig` is reserved for the hosted-project
+> subset (not implemented yet). `CliSettings` is the CLI's own runtime settings and lives
+> in the CLI, not this package.
+
 It owns:
 
 - the canonical `CliConfig` schema
