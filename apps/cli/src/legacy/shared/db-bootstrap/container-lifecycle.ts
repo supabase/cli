@@ -490,16 +490,19 @@ export function legacyVolumeExists(
 }
 
 /**
- * Whether an EXISTING database volume is readable by the given (slim) Postgres image, via
- * `docker run --rm --entrypoint /usr/bin/sh -v <name>:/probe <image> -c "test -r
- * /probe/PG_VERSION"` — cheaper than a real bring-up attempt, and runs before any db container
- * is created. `test -r` exits `0` when readable, `1` when not (e.g. a docker.io-initialized
- * volume's `700`-mode PGDATA dirs, owned by that image's postgres uid, blocking the slim image's
- * non-root `65532`). Any OTHER exit (spawn failure, or Docker's own `docker run` convention of
- * `125`/`126`/`127` for a daemon/exec-level problem rather than the probed command's own exit)
- * propagates as a genuine docker-run failure instead of being folded into the `1` case.
+ * Whether an EXISTING database volume is accessible (readable AND writable) to the given (slim)
+ * Postgres image's own user, via `docker run --rm --entrypoint /usr/bin/sh -v <name>:/probe
+ * <image> -c "test -r /probe/PG_VERSION && test -w /probe"` — cheaper than a real bring-up
+ * attempt, and runs before any db container is created. Read alone is not enough: Postgres must
+ * write `postmaster.pid`/WAL under PGDATA, so a read-only-accessible volume would still
+ * crash-loop past this guard. The script exits `0` when accessible, `1` when not (e.g. a
+ * docker.io-initialized volume's `700`-mode PGDATA dirs, owned by that image's postgres uid,
+ * blocking the slim image's non-root `65532`). Any OTHER exit (spawn failure, or Docker's own
+ * `docker run` convention of `125`/`126`/`127` for a daemon/exec-level problem rather than the
+ * probed command's own exit) propagates as a genuine docker-run failure instead of being folded
+ * into the `1` case.
  */
-export function legacyIsVolumeReadableByImage(
+export function legacyIsVolumeAccessibleToImage(
   spawner: Spawner,
   image: string,
   name: string,
@@ -519,28 +522,28 @@ export function legacyIsVolumeReadableByImage(
           `${name}:/probe`,
           image,
           "-c",
-          "test -r /probe/PG_VERSION",
+          "test -r /probe/PG_VERSION && test -w /probe",
         ],
         { stdin: "ignore", stdout: "ignore", stderr: "pipe" },
       ).pipe(
         Effect.mapError((cause) =>
           fail(
-            `failed to probe database volume readability: ${legacyDescribeContainerCliFailure(cause)}`,
+            `failed to probe database volume access: ${legacyDescribeContainerCliFailure(cause)}`,
           ),
         ),
       );
       const [exitCode, stderr] = yield* Effect.all(
         [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
         { concurrency: "unbounded" },
-      ).pipe(Effect.mapError(() => fail("failed to probe database volume readability")));
+      ).pipe(Effect.mapError(() => fail("failed to probe database volume access")));
       if (exitCode === 0) return true;
       if (exitCode === 1) return false;
       const message = stderr.trim();
       return yield* Effect.fail(
         fail(
           message.length > 0
-            ? `failed to probe database volume readability: ${message}`
-            : `failed to probe database volume readability: exit ${exitCode}`,
+            ? `failed to probe database volume access: ${message}`
+            : `failed to probe database volume access: exit ${exitCode}`,
         ),
       );
     }),
