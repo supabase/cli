@@ -67,6 +67,34 @@ const LEGACY_POSTGRES_HEALTHCHECK_INTERVAL_SECONDS = 10;
 const LEGACY_POSTGRES_HEALTHCHECK_TIMEOUT_SECONDS = 2;
 const LEGACY_POSTGRES_HEALTHCHECK_RETRIES = 3;
 
+/** The docker.io image's healthcheck: `pg_isready` alone is a sufficient readiness probe. */
+const LEGACY_POSTGRES_HEALTHCHECK_TEST: ReadonlyArray<string> = [
+  "CMD",
+  "pg_isready",
+  "-U",
+  "postgres",
+  "-h",
+  "127.0.0.1",
+  "-p",
+  "5432",
+];
+
+/**
+ * The slim image's first boot runs initdb + bundled migrations against a TEMPORARY server
+ * before `entry.sh` execs the final `postgres` process, so PID 1 is still the entrypoint
+ * shell during that window and a bare `pg_isready` would pass against the temporary
+ * server. Gate on the final Postgres process the same way `packages/stack`'s own slim
+ * Docker healthcheck does (`postgresDockerHealthCheck`,
+ * `packages/stack/src/services/postgres.ts`).
+ */
+const LEGACY_POSTGRES_SLIM_HEALTHCHECK_TEST: ReadonlyArray<string> = [
+  "CMD",
+  "sh",
+  "-ec",
+  // Linux /proc/1/comm truncates `.postgres-wrapped` to 15 characters.
+  'case "$(cat /proc/1/comm)" in postgres|.postgres-wrapp) pg_isready -U postgres -h 127.0.0.1 -p 5432 ;; *) exit 1 ;; esac',
+];
+
 /** Go's `utils.DbAliases` (`apps/cli-go/internal/utils/config.go:36`). */
 const LEGACY_POSTGRES_NETWORK_ALIASES: ReadonlyArray<string> = ["db", "db.supabase.internal"];
 
@@ -158,8 +186,9 @@ export function legacyPostgresSettingsToPostgresConfig(
 }
 
 /**
- * The `[db.settings]` keys the user actually set — Go's TOML encoder skips nil
- * pointers, so an unset field must never reach either renderer below.
+ * The `[db.settings]` keys the user actually set — an unset field must never reach either
+ * renderer below: both the postgresql.conf TOML renderer and the `-c` argv renderer must
+ * emit only keys the user actually set.
  */
 function legacyDefinedPostgresSettings(
   settings: CliConfig["db"]["settings"],
@@ -549,7 +578,7 @@ export function legacyBuildPostgresStartContainerSpec(
     ...(isPg14OrEarlier ? { tmpfs: { "/docker-entrypoint-initdb.d": "" } } : {}),
     ports: [{ hostPort: String(input.db.port), containerPort: "5432" }],
     healthcheck: {
-      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "127.0.0.1", "-p", "5432"],
+      test: isSlim ? LEGACY_POSTGRES_SLIM_HEALTHCHECK_TEST : LEGACY_POSTGRES_HEALTHCHECK_TEST,
       intervalSeconds: LEGACY_POSTGRES_HEALTHCHECK_INTERVAL_SECONDS,
       timeoutSeconds: LEGACY_POSTGRES_HEALTHCHECK_TIMEOUT_SECONDS,
       retries: LEGACY_POSTGRES_HEALTHCHECK_RETRIES,
@@ -701,7 +730,7 @@ export function legacyBuildShadowPostgresContainerSpec(
     ...(isPg14OrEarlier ? { tmpfs: { "/docker-entrypoint-initdb.d": "" } } : {}),
     ports: [{ hostPort: String(input.shadowPort), containerPort: "5432" }],
     healthcheck: {
-      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "127.0.0.1", "-p", "5432"],
+      test: isSlim ? LEGACY_POSTGRES_SLIM_HEALTHCHECK_TEST : LEGACY_POSTGRES_HEALTHCHECK_TEST,
       intervalSeconds: LEGACY_POSTGRES_HEALTHCHECK_INTERVAL_SECONDS,
       timeoutSeconds: LEGACY_POSTGRES_HEALTHCHECK_TIMEOUT_SECONDS,
       retries: LEGACY_POSTGRES_HEALTHCHECK_RETRIES,

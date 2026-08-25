@@ -236,6 +236,21 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
     });
   });
 
+  test("healthcheck stays the plain pg_isready probe on docker.io even with the slim flag set", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    const spec = legacyBuildPostgresStartContainerSpec(baseInput());
+    expect(spec.healthcheck?.test).toEqual([
+      "CMD",
+      "pg_isready",
+      "-U",
+      "postgres",
+      "-h",
+      "127.0.0.1",
+      "-p",
+      "5432",
+    ]);
+  });
+
   test("port binding maps the configured db.port to container port 5432", () => {
     const spec = legacyBuildPostgresStartContainerSpec(baseInput({ db: baseDb({ port: 12345 }) }));
     expect(spec.ports).toEqual([{ hostPort: "12345", containerPort: "5432" }]);
@@ -532,13 +547,34 @@ describe("slim Postgres image spec", () => {
     expect(spec.binds).toEqual(["supabase_db_myproj:/var/lib/postgresql/data"]);
     expect(spec.ports).toEqual([{ hostPort: "12345", containerPort: "5432" }]);
     expect(spec.healthcheck).toEqual({
-      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "127.0.0.1", "-p", "5432"],
+      test: [
+        "CMD",
+        "sh",
+        "-ec",
+        'case "$(cat /proc/1/comm)" in postgres|.postgres-wrapp) pg_isready -U postgres -h 127.0.0.1 -p 5432 ;; *) exit 1 ;; esac',
+      ],
       intervalSeconds: 10,
       timeoutSeconds: 2,
       retries: 3,
     });
     expect(spec.networkAliases).toEqual(["db", "db.supabase.internal"]);
     expect(spec.restartPolicy).toBe("unless-stopped");
+  });
+
+  test("healthcheck gates on the final postgres process, not the entrypoint shell PID 1 stays during first-boot init", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    const dbSpec = legacyBuildPostgresStartContainerSpec(baseInput({ image: SLIM_POSTGRES_IMAGE }));
+    const shadowSpec = legacyBuildShadowPostgresContainerSpec(
+      baseShadowInput({ image: SLIM_POSTGRES_IMAGE }),
+    );
+    const expected = [
+      "CMD",
+      "sh",
+      "-ec",
+      'case "$(cat /proc/1/comm)" in postgres|.postgres-wrapp) pg_isready -U postgres -h 127.0.0.1 -p 5432 ;; *) exit 1 ;; esac',
+    ];
+    expect(dbSpec.healthcheck?.test).toEqual(expected);
+    expect(shadowSpec.healthcheck?.test).toEqual(expected);
   });
 
   test("appends the shadow's worker cap to the same trailing argv", () => {
