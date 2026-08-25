@@ -42,6 +42,10 @@ updates:
     schedule:
       interval: "cron"
       cronjob: "0 0 * * *"
+    commit-message:
+      prefix: "fix"
+      prefix-development: "chore"
+      include: "scope"
     groups:
       npm-major:
         patterns:

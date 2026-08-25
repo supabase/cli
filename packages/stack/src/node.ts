@@ -24,7 +24,8 @@ const resolveConfigEffectForPlatform: ResolveConfigEffect = (config, options) =>
 /**
  * The Node daemon bootstrap is deliberately not exported from the package. The conditional Effect
  * entry resolves `daemon-node.ts` by file URL through the internal platform adapter. Keep
- * `src/daemon-node.ts` in package.json's `knip.entry` list: static imports cannot see that fork target.
+ * `src/daemon-node.ts` in the `packages/stack` workspace entry in the root `knip.json`: static
+ * imports cannot see that fork target.
  */
 
 export async function createStack(config?: StackConfig): Promise<StackHandle> {
