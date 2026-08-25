@@ -272,12 +272,14 @@ describe("managed stack lifecycle journeys", () => {
             if (!gate.enabled || !path.endsWith("stack.json")) {
               return base.readFileString(path, options);
             }
-            gate.reads += 1;
-            const signal = gate.reads === 1 ? firstRead : secondRead;
             return Effect.gen(function* () {
+              const contents = yield* base.readFileString(path, options);
+              gate.reads += 1;
+              const first = gate.reads === 1;
+              const signal = first ? firstRead : secondRead;
               yield* Deferred.succeed(signal, void 0);
-              yield* Deferred.await(gate.reads === 1 ? releaseFirst : releaseSecond);
-              return yield* base.readFileString(path, options);
+              yield* Deferred.await(first ? releaseFirst : releaseSecond);
+              return contents;
             });
           },
         } satisfies FileSystem.FileSystem;
@@ -312,25 +314,21 @@ describe("managed stack lifecycle journeys", () => {
           versions: { postgres: "17.6.1" },
         };
         gate.enabled = true;
-        const launchFiber = yield* Effect.forkScoped(
-          manager.updateLaunch(owner, { stackId, launch }),
-        );
-        const stopFiber = yield* Effect.forkScoped(
-          manager.recordLifecycle(owner, { stackId, lifecycle: "stopped" }),
-        );
+        const launchFiber = yield* manager
+          .updateLaunch(owner, { stackId, launch })
+          .pipe(Effect.forkScoped({ startImmediately: true }));
         yield* Deferred.await(firstRead);
-        const secondAlreadyRead = yield* Effect.race(
-          Deferred.await(secondRead).pipe(Effect.as(true)),
-          Effect.sleep("100 millis").pipe(Effect.as(false)),
-        );
+        const stopFiber = yield* manager
+          .recordLifecycle(owner, { stackId, lifecycle: "stopped" })
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        const secondAlreadyRead = yield* Deferred.isDone(secondRead);
+        yield* Deferred.succeed(releaseFirst, void 0);
         if (secondAlreadyRead) {
-          yield* Deferred.succeed(releaseFirst, void 0);
-          yield* Deferred.succeed(releaseSecond, void 0);
+          yield* Fiber.join(launchFiber);
         } else {
-          yield* Deferred.succeed(releaseFirst, void 0);
           yield* Deferred.await(secondRead);
-          yield* Deferred.succeed(releaseSecond, void 0);
         }
+        yield* Deferred.succeed(releaseSecond, void 0);
         gate.enabled = false;
         yield* Fiber.join(launchFiber);
         yield* Fiber.join(stopFiber);

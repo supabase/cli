@@ -12,6 +12,7 @@ import {
   acquireControl,
   controlTransportLayer,
   deriveStackId,
+  isControlOwnership,
   managedStackManagerLayer,
   type ControlOwnership,
   type ManagedPortIntentDocument,
@@ -157,7 +158,7 @@ export async function makeManagedStackFixture(
           }),
         };
         const ownership = yield* acquireControl({ stackId, application });
-        if (ownership._tag !== "Owned") throw new Error("fixture failed to acquire control");
+        if (!isControlOwnership(ownership)) throw new Error("fixture failed to acquire control");
         owned = ownership;
         ownedControl = ownership;
         yield* supervisorLifecycle.setClose(ownership.close);

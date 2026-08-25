@@ -492,7 +492,7 @@ const startDaemon = (input: {
     return { stack: localStack, localLifecycle };
   });
 
-const runManaged = (
+const makeRunManagedExecution = (
   input: SupervisorStartMessage,
   platform: SupervisorPlatform,
   scope: Scope.Scope,
@@ -600,7 +600,9 @@ const runManaged = (
     const stackId = deriveStackId(discoveryResult.discovery.identity, input.stackName);
     if (stackId !== input.stackId) {
       return yield* Effect.fail(
-        new SupervisorStartError({ message: "Workspace identity changed before supervisor start" }),
+        new SupervisorStartError({
+          message: "Workspace identity changed before supervisor start",
+        }),
       );
     }
     const requestedMode = configInput.mode ?? input.launch?.mode;
@@ -997,6 +999,13 @@ const runManaged = (
     }),
   );
 };
+
+const runManaged = (
+  input: SupervisorStartMessage,
+  platform: SupervisorPlatform,
+  scope: Scope.Scope,
+): ReturnType<typeof makeRunManagedExecution> =>
+  Effect.suspend(() => makeRunManagedExecution(input, platform, scope));
 
 /** Effect-native child program. Node/Bun entrypoints only call runPromise here. */
 export const runSupervisor = (
