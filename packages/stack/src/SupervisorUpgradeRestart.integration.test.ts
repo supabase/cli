@@ -18,7 +18,7 @@ import type { SupervisorStartMessage } from "./SupervisorProtocol.ts";
 import { SERVICE_CATALOG, SERVICE_NAMES } from "./ServiceCatalog.ts";
 import type { ServiceName } from "./ServiceName.ts";
 import { restartIncompatibleOwner } from "./SupervisorUpgradeRestart.ts";
-import { UpgradePreflightError, UpgradeRestartError } from "./errors.ts";
+import { StopTimeout, UpgradePreflightError, UpgradeRestartError } from "./errors.ts";
 import type { DaemonConfigInput } from "./StackConfigResolver.ts";
 import { fillServiceVersionManifest } from "./versions.ts";
 
@@ -212,6 +212,32 @@ describe("incompatible supervisor upgrade restart", () => {
     );
   });
 
+  it.live("refreshes a launch update committed during the initial preflight", () => {
+    const context = setup();
+    let inspections = 0;
+    return Effect.gen(function* () {
+      const initial = yield* context.manager.inspectStack(context.stackId);
+      if (initial === undefined) return yield* Effect.die("expected managed stack document");
+      const refreshed: ManagedStack = {
+        ...initial,
+        launch: {
+          ...initial.launch,
+          versions: { ...initial.launch.versions, auth: "v-refreshed" },
+        },
+      };
+      const result = yield* restartIncompatibleOwner({
+        ...context,
+        manager: {
+          ...context.manager,
+          inspectStack: () => Effect.sync(() => (inspections++ === 0 ? initial : refreshed)),
+        },
+        controlTransport: context.transport,
+        reacquire: () => Effect.succeed(context.oldOwner),
+      });
+      expect(result.effectiveConfigInput.auth).toEqual({ version: "v-refreshed" });
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+  });
+
   it.live("pins enabled services to persisted launch versions", () => {
     const context = setup();
     const configInput = { ...context.configInput, auth: { version: "v-new" } };
@@ -300,5 +326,45 @@ describe("incompatible supervisor upgrade restart", () => {
         }
       }
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+  });
+
+  it.effect("reports the refreshed owner state when stop times out", () => {
+    const context = setup();
+    const stoppingStatus: ControlOwnerStatus = {
+      ...context.oldOwner.observedStatus,
+      state: "stopping",
+      ready: false,
+    };
+    const transport: ControlTransportShape = {
+      ...context.transport,
+      read: () => Effect.succeed(stoppingStatus),
+      requestStop: () => Effect.never,
+    };
+    return Effect.gen(function* () {
+      const pending = yield* restartIncompatibleOwner({
+        ...context,
+        controlTransport: transport,
+        resolutionTimeout: "30 seconds",
+        reacquire: () => Effect.succeed(context.oldOwner),
+      }).pipe(
+        Effect.provide(NodeServices.layer),
+        Effect.scoped,
+        Effect.exit,
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("30 seconds");
+      yield* Effect.yieldNow;
+      const exit = yield* Fiber.join(pending);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBeInstanceOf(StopTimeout);
+          expect(error.value).toMatchObject({ lastState: "stopping" });
+        }
+      }
+    });
   });
 });

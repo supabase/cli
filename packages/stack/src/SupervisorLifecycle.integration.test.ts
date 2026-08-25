@@ -111,6 +111,24 @@ describe("SupervisorLifecycle", () => {
     }
   });
 
+  it("commits stopping before submitShutdown returns", async () => {
+    const { lifecycle, close } = await makeLifecycle();
+    try {
+      const release = Deferred.makeUnsafe<void>();
+      await Effect.runPromise(lifecycle.publishStack(makeStack(() => Deferred.await(release))));
+
+      await Effect.runPromise(lifecycle.submitShutdown("stop"));
+
+      expect((await Effect.runPromise(lifecycle.currentStatus)).state).toBe("stopping");
+      const runtime = await Effect.runPromise(lifecycle.runtimeStack.pipe(Effect.exit));
+      expect(Exit.isFailure(runtime)).toBe(true);
+      await Effect.runPromise(Deferred.succeed(release, undefined));
+      await Effect.runPromise(lifecycle.awaitShutdown);
+    } finally {
+      await close();
+    }
+  });
+
   it("keeps shared shutdown running when one waiter is interrupted", async () => {
     const { lifecycle, close } = await makeLifecycle();
     try {

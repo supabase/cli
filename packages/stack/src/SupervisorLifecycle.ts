@@ -126,11 +126,21 @@ export class SupervisorLifecycle extends Context.Service<
           Exit.match(exit, { onFailure: Effect.failCause, onSuccess: Effect.succeed }),
         ),
       );
+      const commitStopping = Ref.modify(stateRef, (state): [undefined, SupervisorState] =>
+        state.phase === "running"
+          ? [undefined, { phase: "stopping", stack: state.stack }]
+          : state.phase === "starting"
+            ? [undefined, { phase: "stopping" }]
+            : [undefined, state],
+      ).pipe(Effect.asVoid);
       const submitShutdown = (reason: "stop" | "signal" | "startup-failure" | "dispose") =>
-        Deferred.succeed(shutdownReason, reason).pipe(Effect.asVoid);
+        commitStopping.pipe(
+          Effect.andThen(Deferred.succeed(shutdownReason, reason)),
+          Effect.asVoid,
+        );
       const requestShutdown = (reason: "stop" | "signal" | "startup-failure" | "dispose") =>
         Effect.gen(function* () {
-          yield* Deferred.succeed(shutdownReason, reason);
+          yield* submitShutdown(reason);
           yield* awaitShutdownExit;
         });
       return {

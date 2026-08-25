@@ -362,12 +362,14 @@ export const restartIncompatibleOwner = (
 > =>
   Effect.gen(function* () {
     const phaseTimeout = context.resolutionTimeout ?? UPGRADE_RESTART_PHASE_TIMEOUT;
-    const effectiveConfigInput = yield* preflight(context).pipe(
-      Effect.timeout(phaseTimeout),
-      Effect.catchTag("TimeoutError", () =>
-        Effect.fail(preflightError(context, "Timed out preflighting upgrade restart")),
-      ),
-    );
+    const preflightCurrentLaunch = () =>
+      preflight(context).pipe(
+        Effect.timeout(phaseTimeout),
+        Effect.catchTag("TimeoutError", () =>
+          Effect.fail(preflightError(context, "Timed out preflighting upgrade restart")),
+        ),
+      );
+    yield* preflightCurrentLaunch();
     const attachedOwnerWasStopping = context.oldOwner.observedStatus.state === "stopping";
     const client = makeControlClient(context.controlTransport);
     yield* client
@@ -383,24 +385,18 @@ export const restartIncompatibleOwner = (
             client
               .readOwner(context.oldOwner.endpoint, context.oldOwner.observedStatus.ownershipId)
               .pipe(
-                Effect.flatMap((status) =>
-                  Effect.fail(
-                    new StopTimeout({
-                      endpoint: context.oldOwner.endpoint.url,
-                      ownerSessionId: context.oldOwner.observedStatus.ownerSessionId,
-                      lastState:
-                        status.ownerSessionId === context.oldOwner.observedStatus.ownerSessionId
-                          ? status.state
-                          : context.oldOwner.observedStatus.state,
-                    }),
-                  ),
+                Effect.map((status) =>
+                  status.ownerSessionId === context.oldOwner.observedStatus.ownerSessionId
+                    ? status.state
+                    : context.oldOwner.observedStatus.state,
                 ),
-                Effect.catch(() =>
+                Effect.catch(() => Effect.succeed(context.oldOwner.observedStatus.state)),
+                Effect.flatMap((lastState) =>
                   Effect.fail(
                     new StopTimeout({
                       endpoint: context.oldOwner.endpoint.url,
                       ownerSessionId: context.oldOwner.observedStatus.ownerSessionId,
-                      lastState: context.oldOwner.observedStatus.state,
+                      lastState,
                     }),
                   ),
                 ),
@@ -425,6 +421,7 @@ export const restartIncompatibleOwner = (
           }),
       ),
     );
+    const effectiveConfigInput = yield* preflightCurrentLaunch();
     return { acquisition, effectiveConfigInput, oldSessionEnded: true, attachedOwnerWasStopping };
   });
 
