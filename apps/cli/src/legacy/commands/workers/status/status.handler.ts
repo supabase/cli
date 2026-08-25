@@ -3,7 +3,7 @@ import { Output } from "../../../../shared/output/output.service.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import { legacyEmitWorkersMachineOutput } from "../workers.output.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { displayPath } from "../../../../shared/workers/worker-paths.ts";
 import { formatApiSize } from "../../../../shared/workers/worker-runtimes.ts";
 import { workerUrl } from "../../../../shared/workers/worker-url.ts";
@@ -34,7 +34,7 @@ export const legacyWorkersStatus = Effect.fn("legacy.workers.status")(function* 
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
-  const cliConfig = yield* LegacyCliConfig;
+  const settings = yield* LegacyCliSettings;
 
   // The ref is resolved outside the finalizers because caching it is one of
   // them; everything that can fail on its own — loading `config.toml`,
@@ -65,7 +65,7 @@ export const legacyWorkersStatus = Effect.fn("legacy.workers.status")(function* 
     const record = found.value;
     const url =
       record.spec.exposure === "public"
-        ? workerUrl(projectRef, cliConfig.projectHost, name)
+        ? workerUrl(projectRef, settings.projectHost, name)
         : undefined;
     // Reported only when an entry or the directory establishes it. With neither,
     // the path is an inference about a worker that may have been deployed from

@@ -3,7 +3,7 @@ import { Output } from "../../../../shared/output/output.service.ts";
 import { renderGlamourTable } from "../../../output/legacy-glamour-table.ts";
 import { legacyEmitWorkersMachineOutput } from "../workers.output.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { formatApiSize } from "../../../../shared/workers/worker-runtimes.ts";
 import { workerUrl } from "../../../../shared/workers/worker-url.ts";
 import { listWorkers, type WorkerRecord } from "../../../../shared/workers/workers-api.ts";
@@ -87,7 +87,7 @@ export const legacyWorkersList = Effect.fn("legacy.workers.list")(function* (
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
-  const cliConfig = yield* LegacyCliConfig;
+  const settings = yield* LegacyCliSettings;
 
   // The ref is resolved outside the finalizers because caching it is one of
   // them; everything that can fail on its own — loading `config.toml`,
@@ -122,7 +122,7 @@ export const legacyWorkersList = Effect.fn("legacy.workers.list")(function* (
         localRuntime: project.section.workers[name]?.runtime,
         url:
           record !== undefined && record.spec.exposure === "public"
-            ? workerUrl(projectRef, cliConfig.projectHost, name)
+            ? workerUrl(projectRef, settings.projectHost, name)
             : undefined,
       };
     });
