@@ -2,7 +2,7 @@
   "name": "@supabase/root",
   "private": true,
   "scripts": {
-    "test:unit": "pnpm exec turbo run test:unit:run --",
+    "test:unit": "pnpm exec turbo run test:unit:run --filter=!@supabase/cli-go --",
     "test:integration": "pnpm exec turbo run test:integration:run --",
     "test:e2e": "pnpm exec turbo run test:e2e:run --concurrency=1 --",
     "check:all": "nx run-many -t types:check lint:check fmt:check knip:check",

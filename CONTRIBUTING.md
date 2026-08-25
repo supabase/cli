@@ -178,10 +178,13 @@ pnpm run check:all
 pnpm run test:unit && pnpm run test:integration
 ```
 
-The root test scripts use Turbo to orchestrate the package-local `test:*:run`
-tasks. Unit and integration tasks are uncached for now; e2e tasks are also
-uncached and run one package at a time. Forward a Vitest shard to every e2e
-package with `pnpm run test:e2e --shard=1/3`.
+The root unit and integration scripts use Turbo to fan out the package-local
+`test:*:run` tasks across the standard TypeScript/Vitest workspaces. The Go
+workspace remains package-local because its tests run directly through Go:
+`pnpm --dir apps/cli-go run test:unit`. Go tests are covered by the dedicated
+Go CI workflow. Unit and integration tasks are uncached for now; e2e tasks are
+also uncached and run one package at a time. Forward a Vitest shard to every
+e2e package with `pnpm run test:e2e --shard=1/3`.
 
 ## E2E Compatibility Test Suite
 
