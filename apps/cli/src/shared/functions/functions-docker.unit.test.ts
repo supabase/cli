@@ -1,3 +1,5 @@
+import process from "node:process";
+
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Layer, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -8,6 +10,7 @@ import {
   localDockerId,
   resolveDockerNetworkMode,
   runChildProcess,
+  toDockerPath,
 } from "./functions-docker.ts";
 
 /**
@@ -45,6 +48,32 @@ function mockStreamingChildProcessLayer(
   );
   return Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
 }
+
+describe("toDockerPath", () => {
+  it("keeps a posix absolute path unchanged", () => {
+    expect(toDockerPath("/home/u/p/supabase/functions")).toBe("/home/u/p/supabase/functions");
+  });
+
+  it.runIf(process.platform === "win32")(
+    "strips the drive letter and flips separators for a Windows path",
+    () => {
+      // The container path is constructed here and never re-parsed, so this is
+      // the single guard for supabase/cli#6035's Windows `--workdir` behavior:
+      // a drive-letter colon surviving into the container path would corrupt
+      // every `host:container:mode` bind built from it. `resolve()` only
+      // treats a drive-letter path as absolute on Windows, so the guard is
+      // exercisable only there.
+      const containerPath = toDockerPath("C:\\Users\\u\\p\\supabase\\functions");
+      expect(containerPath).toBe("/Users/u/p/supabase/functions");
+      expect(containerPath).not.toContain(":");
+    },
+  );
+
+  it("never leaves a separator-breaking colon in a locally resolvable path", () => {
+    const containerPath = toDockerPath("/home/u/repo:with:colons/supabase/functions");
+    expect(containerPath).toBe("/home/u/repo:with:colons/supabase/functions");
+  });
+});
 
 describe("buildFunctionsDockerRunArgs", () => {
   it("assembles run/--rm, binds, network, env, labels, image, and container args in order", () => {

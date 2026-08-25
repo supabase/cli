@@ -1359,60 +1359,48 @@ describe("legacy functions serve integration", () => {
       const projectRoot = join(workspaceRoot, "infra", "my-project");
       const rootDenoJson = join(workspaceRoot, "deno.json");
       const libsDir = join(workspaceRoot, "libs");
-      const thingDir = join(libsDir, "thing");
-      const functionDir = join(projectRoot, "supabase", "functions", "hello");
 
       yield* Effect.promise(() => mkdir(join(workspaceRoot, ".git"), { recursive: true }));
-      yield* Effect.promise(() => mkdir(join(projectRoot, "supabase"), { recursive: true }));
-      yield* Effect.promise(() => writeFile(join(projectRoot, ".git"), "gitdir: ignored\n"));
-      yield* Effect.promise(() =>
-        writeFile(
-          rootDenoJson,
+      yield* Effect.promise(async () => {
+        await writeProjectFile(join("infra", "my-project", ".git"), "gitdir: ignored\n");
+        await writeProjectFile(
+          "deno.json",
           JSON.stringify({
             workspace: ["./libs/*", "./infra/*/supabase/functions/*"],
             imports: { "@acme/thing": "./libs/thing/index.ts" },
           }),
-        ),
-      );
-      yield* Effect.promise(() =>
-        writeFile(join(projectRoot, "supabase", "config.toml"), 'project_id = "test-project"\n'),
-      );
-      yield* Effect.promise(() => mkdir(thingDir, { recursive: true }));
-      yield* Effect.promise(() =>
-        writeFile(
-          join(thingDir, "deno.json"),
+        );
+        await writeProjectFile(
+          join("infra", "my-project", "supabase", "config.toml"),
+          'project_id = "test-project"\n',
+        );
+        await writeProjectFile(
+          join("libs", "thing", "deno.json"),
           JSON.stringify({ name: "@acme/thing", version: "1.0.0", exports: "./index.ts" }),
-        ),
-      );
-      yield* Effect.promise(() =>
-        writeFile(join(thingDir, "index.ts"), "export const thing = 1\n"),
-      );
-      yield* Effect.promise(() => mkdir(functionDir, { recursive: true }));
-      yield* Effect.promise(() =>
-        writeFile(
-          join(functionDir, "index.ts"),
+        );
+        await writeProjectFile(join("libs", "thing", "index.ts"), "export const thing = 1\n");
+        const functionRelative = join("infra", "my-project", "supabase", "functions", "hello");
+        await writeProjectFile(
+          join(functionRelative, "index.ts"),
           'import { thing } from "@acme/thing"\nDeno.serve(() => new Response(String(thing)))\n',
-        ),
-      );
-      const sharedDenoJson = JSON.stringify({
-        imports: { "@std/assert": "jsr:@std/assert@1" },
-        scopes: {
-          __local: {
-            __workspace: "../../../../../deno.json",
-            __libs: "../../../../../libs",
+        );
+        const sharedDenoJson = JSON.stringify({
+          imports: { "@std/assert": "jsr:@std/assert@1" },
+          scopes: {
+            __local: {
+              __workspace: "../../../../../deno.json",
+              __libs: "../../../../../libs",
+            },
           },
-        },
-      });
-      yield* Effect.promise(() => writeFile(join(functionDir, "deno.json"), sharedDenoJson));
-      const worldDir = join(projectRoot, "supabase", "functions", "world");
-      yield* Effect.promise(() => mkdir(worldDir, { recursive: true }));
-      yield* Effect.promise(() =>
-        writeFile(
-          join(worldDir, "index.ts"),
+        });
+        await writeProjectFile(join(functionRelative, "deno.json"), sharedDenoJson);
+        const worldRelative = join("infra", "my-project", "supabase", "functions", "world");
+        await writeProjectFile(
+          join(worldRelative, "index.ts"),
           'import { thing } from "@acme/thing"\nDeno.serve(() => new Response(String(thing)))\n',
-        ),
-      );
-      yield* Effect.promise(() => writeFile(join(worldDir, "deno.json"), sharedDenoJson));
+        );
+        await writeProjectFile(join(worldRelative, "deno.json"), sharedDenoJson);
+      });
 
       const resolvedWorkspaceRoot = realpathSync(workspaceRoot);
       const resolvedLibsDir = realpathSync(libsDir);
