@@ -1,6 +1,7 @@
 # @supabase/config
 
-Supabase project configuration package built on Effect V4 Schema.
+Supabase project configuration package built on Effect V4 Schema — owns the canonical `CliConfig`
+document schema, config file loading/saving, and JSON Schema generation.
 
 It owns:
 
@@ -62,7 +63,7 @@ When both `supabase/config.json` and `supabase/config.toml` exist in one project
 
 ## Architecture Docs
 
-- [Project config loading](./docs/project-config-loading.md)
+- [CLI config loading](./docs/cli-config-loading.md)
 
 ## Development
 
