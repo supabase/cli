@@ -1187,6 +1187,14 @@ export const supervisorLayer = (
           }),
         );
       }
+      if (response.owner.state !== "running" || !response.owner.ready) {
+        return yield* Effect.fail(
+          new SupervisorStartError({
+            message: STACK_STOPPED_DURING_STARTUP,
+            reason: "owner-stopped",
+          }),
+        );
+      }
       child.unref();
       detached = true;
       return RemoteStack.layer(response.endpoint, {

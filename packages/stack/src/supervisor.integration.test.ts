@@ -42,6 +42,9 @@ const childEntryPoint = fileURLToPath(
 const errorChildEntryPoint = fileURLToPath(
   new URL("../tests/helpers/supervisor-error-child.ts", import.meta.url),
 );
+const nonReadyChildEntryPoint = fileURLToPath(
+  new URL("../tests/helpers/supervisor-non-ready-child.ts", import.meta.url),
+);
 const bunExecutable = process.env["BUN_EXECUTABLE"] ?? "bun";
 const FILE_WAIT_TIMEOUT_MS = 30_000;
 
@@ -654,6 +657,27 @@ describe("detached supervisor child journeys", () => {
         expect(Cause.squash(exit.cause)).toMatchObject({
           _tag: "SupervisorStartError",
           message: "Supervisor test runtime failed after binding",
+        });
+      }
+    } finally {
+      cleanupRoots(roots);
+    }
+  });
+
+  test("rejects a non-ready started response reported by the child", async () => {
+    const roots = await workspace();
+    try {
+      const exit = await Effect.runPromiseExit(
+        managedDaemonLayer(messageFor(roots), nonReadyChildEntryPoint).pipe(
+          Effect.provide(httpTransportClientLayer),
+          Effect.provide(NodeFileSystem.layer),
+        ),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toMatchObject({
+          _tag: "SupervisorStartError",
+          reason: "owner-stopped",
         });
       }
     } finally {
