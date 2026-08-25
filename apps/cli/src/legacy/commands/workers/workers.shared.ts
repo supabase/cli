@@ -103,7 +103,7 @@ export const legacyDescribeWorkerForReporting = Effect.fnUntraced(function* (
   name: string,
 ) {
   const described = yield* legacyDescribeWorker(project, name).pipe(Effect.option);
-  if (described._tag === "Some") {
+  if (Option.isSome(described)) {
     return described.value;
   }
   // The path is unusable, which for reporting purposes reads the same as having
@@ -137,7 +137,7 @@ export const legacyDescribeWorker = Effect.fnUntraced(function* (
     entry,
     defaultDir,
     sourceDir,
-    sourceExists: info._tag === "Some" && info.value.type === "Directory",
+    sourceExists: Option.isSome(info) && info.value.type === "Directory",
   } satisfies LegacyResolvedWorker;
 });
 

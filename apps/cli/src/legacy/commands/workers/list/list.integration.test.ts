@@ -11,7 +11,10 @@ import {
 } from "../../../../../tests/helpers/legacy-workers.ts";
 import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
 import { LegacyWorkersEnvNotSupportedError } from "../workers.errors.ts";
-import { WorkersUnavailableError } from "../../../../shared/workers/workers.errors.ts";
+import {
+  WorkersApiUnexpectedStatusError,
+  WorkersUnavailableError,
+} from "../../../../shared/workers/workers.errors.ts";
 import { legacyWorkersList } from "./list.handler.ts";
 
 const CONFIG = `project_id = "demo"
@@ -246,7 +249,7 @@ describe("legacy workers list", () => {
     return Effect.gen(function* () {
       const error = yield* legacyWorkersList({ projectRef: Option.none() }).pipe(Effect.flip);
 
-      expect(error._tag).toBe("WorkersApiUnexpectedStatusError");
+      expect(error).toBeInstanceOf(WorkersApiUnexpectedStatusError);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 

@@ -13,6 +13,7 @@ import {
   WorkerDeleteConfirmationRequiredError,
   WorkerDeleteNotConfirmedError,
   WorkerNotDeployedError,
+  WorkersApiUnexpectedStatusError,
 } from "../../../../shared/workers/workers.errors.ts";
 import { legacyWorkersDelete } from "./delete.handler.ts";
 
@@ -204,7 +205,7 @@ describe("legacy workers delete", () => {
         projectRef: Option.none(),
       }).pipe(Effect.flip);
 
-      expect(error._tag).toBe("WorkersApiUnexpectedStatusError");
+      expect(error).toBeInstanceOf(WorkersApiUnexpectedStatusError);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -250,7 +251,7 @@ describe("legacy workers delete", () => {
         projectRef: Option.none(),
       }).pipe(Effect.flip);
 
-      expect(error._tag).toBe("WorkerDeleteConfirmationRequiredError");
+      expect(error).toBeInstanceOf(WorkerDeleteConfirmationRequiredError);
       expect(out.stdoutText).not.toContain("permanently deletes");
       expect(http.routeKeys).not.toContain(deleteRoute);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
