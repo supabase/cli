@@ -6,12 +6,12 @@
  * missing, so configs written for older scaffolds keep working.
  */
 
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 import { legacyResolveNotificationContentPath } from "../../../../shared/legacy-config-validate.ts";
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
-type AuthEmail = ProjectConfig["auth"]["email"];
+type AuthEmail = CliConfig["auth"]["email"];
 
 /**
  * HTML bodies loaded from `content_path` for auth email templates and

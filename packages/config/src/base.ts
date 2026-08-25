@@ -25,7 +25,7 @@ const remoteProjectId = Schema.String.annotate({
   tags: ["general"],
 }).pipe(Schema.withDecodingDefaultKey(Effect.succeed("")));
 
-const baseProjectConfigFields = {
+const baseCliConfigFields = {
   project_id: projectId,
   analytics,
   api,
@@ -40,7 +40,7 @@ const baseProjectConfigFields = {
   experimental,
 };
 
-const remoteProjectConfig = Schema.Struct({
+const remoteCliConfigBlock = Schema.Struct({
   project_id: remoteProjectId,
   analytics,
   api,
@@ -56,7 +56,7 @@ const remoteProjectConfig = Schema.Struct({
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 
 /**
- * Exported separately (not inlined into {@link ProjectConfigSchema}) so
+ * Exported separately (not inlined into {@link CliConfigSchema}) so
  * `packages/config/src/io.ts` can decode it on its own with
  * `disableChecks: true`. Go's `Config.Validate` only ever checks
  * `remotes.*.project_id` format for every remote block
@@ -70,19 +70,19 @@ const remoteProjectConfig = Schema.Struct({
  * selection, rejecting configs Go accepts (e.g. an unselected
  * `[remotes.prod.auth.external.github] enabled = true` stub with no secret).
  */
-export const RemotesSchema = Schema.Record(Schema.String, remoteProjectConfig).annotate({
+export const RemotesSchema = Schema.Record(Schema.String, remoteCliConfigBlock).annotate({
   default: {},
   description: "Remote branch-specific project configuration.",
   tags: ["general"],
 });
 
-export const ProjectConfigSchema = Schema.Struct({
-  ...baseProjectConfigFields,
+export const CliConfigSchema = Schema.Struct({
+  ...baseCliConfigFields,
   remotes: RemotesSchema.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 
-export function toProjectConfigJsonSchema() {
-  const document = Schema.toJsonSchemaDocument(ProjectConfigSchema);
+export function toCliConfigJsonSchema() {
+  const document = Schema.toJsonSchemaDocument(CliConfigSchema);
   return {
     $schema: "https://json-schema.org/draft/2020-12/schema",
     ...document.schema,
@@ -90,5 +90,5 @@ export function toProjectConfigJsonSchema() {
   };
 }
 
-export type ProjectConfig = typeof ProjectConfigSchema.Type;
-export type ProjectConfigJson = typeof ProjectConfigSchema.Encoded;
+export type CliConfig = typeof CliConfigSchema.Type;
+export type CliConfigJson = typeof CliConfigSchema.Encoded;

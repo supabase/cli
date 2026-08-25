@@ -8,7 +8,7 @@ import type {
 import { Effect, Option } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
@@ -82,7 +82,7 @@ export const legacyBranchesGet = Effect.fn("legacy.branches.get")(function* (
   const api = yield* LegacyPlatformApi;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   void (yield* Tty); // ensures Tty is in handler R so legacyPromptBranchId resolves
 
   // `branches` is PARENT-scoped: after `supabase link <branch>`,
@@ -154,7 +154,7 @@ export const legacyBranchesGet = Effect.fn("legacy.branches.get")(function* (
       });
     }
 
-    const projectHost = legacyProjectHost(cliConfig.profile);
+    const projectHost = legacyProjectHost(cliSettings.profile);
     const projected = toStandardEnvs(detail, primary, keys, projectHost);
     if (projected.poolerWarning !== undefined && output.format === "text") {
       // Established output: `fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), err)`.

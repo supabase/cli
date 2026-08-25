@@ -3,7 +3,7 @@ import { Effect, Layer, Option, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import { CLI_VERSION } from "../../shared/cli/version.ts";
-import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { LegacyDebugLogger } from "../shared/legacy-debug-logger.service.ts";
 import { LegacyIdentityStitch } from "../shared/legacy-identity-stitch.ts";
 import { validateLegacyAccessToken } from "./legacy-access-token.ts";
@@ -15,7 +15,7 @@ const MISSING_TOKEN_MESSAGE =
   "Access token not provided. Supply an access token by running `supabase login` or setting the SUPABASE_ACCESS_TOKEN environment variable.";
 
 export const legacyMakePlatformApi = Effect.gen(function* () {
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const credentials = yield* LegacyCredentials;
   const debugLogger = yield* LegacyDebugLogger;
   // Every Management API response is passed through the per-command identity
@@ -37,7 +37,7 @@ export const legacyMakePlatformApi = Effect.gen(function* () {
     );
   };
 
-  const configuredToken = cliConfig.accessToken;
+  const configuredToken = cliSettings.accessToken;
   const resolveAccessToken = Effect.gen(function* () {
     if (Option.isSome(configuredToken)) {
       yield* debugLogger.debug("Using access token from env var...");
@@ -57,7 +57,7 @@ export const legacyMakePlatformApi = Effect.gen(function* () {
     );
   }
   yield* debugLogger.debug(`Supabase CLI ${CLI_VERSION}`);
-  yield* debugLogger.debug(`Using profile: ${cliConfig.profile} (${cliConfig.projectHost})`);
+  yield* debugLogger.debug(`Using profile: ${cliSettings.profile} (${cliSettings.projectHost})`);
   const storedToken = yield* resolveAccessToken;
   if (Option.isNone(storedToken)) {
     return yield* Effect.fail(
@@ -67,9 +67,9 @@ export const legacyMakePlatformApi = Effect.gen(function* () {
 
   return yield* makeApiClient(
     {
-      baseUrl: cliConfig.apiUrl,
+      baseUrl: cliSettings.apiUrl,
       accessToken: storedToken.value,
-      userAgent: cliConfig.userAgent,
+      userAgent: cliSettings.userAgent,
     },
     {
       transformClient,

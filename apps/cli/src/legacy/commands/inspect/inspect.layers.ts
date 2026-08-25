@@ -1,6 +1,6 @@
 import { Layer } from "effect";
 
-import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
+import { legacyCliSettingsLayer } from "../../config/legacy-cli-settings.layer.ts";
 import { legacyDbConfigLayer } from "../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../shared/legacy-db-connection.layer.ts";
 import { legacyIdentityStitchLayer } from "../../shared/legacy-identity-stitch.ts";
@@ -8,15 +8,15 @@ import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.t
 import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
 
 /**
- * `legacyCliConfigLayer` is provided to the resolver AND exposed at the top level
+ * `legacyCliSettingsLayer` is provided to the resolver AND exposed at the top level
  * because `Layer.provide` does not share to merge siblings (legacy CLAUDE.md item
  * 5); the resolver requires it internally and so it is provided to `dbConfig`,
  * while the merge keeps it available alongside.
  */
-const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 
 const dbConfig = legacyDbConfigLayer.pipe(
-  Layer.provide(cliConfig),
+  Layer.provide(cliSettings),
   Layer.provide(legacyDbConnectionLayer),
   Layer.provide(legacyDebugLoggerLayer),
   // The resolver's lazy `--linked` stack snapshots the one per-command
@@ -41,7 +41,7 @@ const dbConfig = legacyDbConfigLayer.pipe(
 export const legacyInspectBaseLayer = Layer.mergeAll(
   dbConfig,
   legacyDbConnectionLayer,
-  cliConfig,
+  cliSettings,
   // The one per-command identity stitcher — a single memoized identity-stitch
   // attempt — exposed at top level so `withLegacyCommandInstrumentation` can read
   // `stitchedDistinctId()` and attribute the cli_command_executed event to the

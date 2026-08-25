@@ -4,7 +4,7 @@ import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import { legacyResolveYesWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import {
@@ -29,7 +29,7 @@ import { LegacyDbPushTargetFlagsError } from "./push.errors.ts";
 export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: LegacyDbPushFlags) {
   const output = yield* Output;
   const resolver = yield* LegacyDbConfigResolver;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const telemetryState = yield* LegacyTelemetryState;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const fs = yield* FileSystem.FileSystem;
@@ -37,7 +37,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
   const cliArgs = yield* CliArgs;
   const dnsResolver = yield* LegacyDnsResolverFlag;
 
-  const workdir = cliConfig.workdir;
+  const workdir = cliSettings.workdir;
   // The project `.env` is applied before the history prompt, so a
   // `SUPABASE_YES` set only in `supabase/.env` auto-confirms. Resolve `yes`
   // with that project env, as `db pull` does.
@@ -127,7 +127,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
       includeSeed: flags.includeSeed,
       includeVault: !flags.skipVault,
       dnsResolver,
-      projectId: cliConfig.projectId,
+      projectId: cliSettings.projectId,
       toml,
       yes,
       emitStructuredResult: true,

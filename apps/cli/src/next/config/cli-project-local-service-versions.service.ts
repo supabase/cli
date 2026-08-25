@@ -39,14 +39,14 @@ export class InvalidLocalServiceVersionsStateError extends Data.TaggedError(
   }
 }
 
-interface ProjectLocalServiceVersionsShape {
+interface CliProjectLocalServiceVersionsShape {
   readonly load: Effect.Effect<
     Option.Option<LocalServiceVersionsState>,
     InvalidLocalServiceVersionsStateError
   >;
 }
 
-export class ProjectLocalServiceVersions extends Context.Service<
-  ProjectLocalServiceVersions,
-  ProjectLocalServiceVersionsShape
->()("supabase/config/ProjectLocalServiceVersions") {}
+export class CliProjectLocalServiceVersions extends Context.Service<
+  CliProjectLocalServiceVersions,
+  CliProjectLocalServiceVersionsShape
+>()("supabase/cli/CliProjectLocalServiceVersions") {}

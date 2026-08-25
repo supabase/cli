@@ -105,7 +105,7 @@ export interface LegacyPgDeltaContext {
  * (`SUPABASE_PROJECT_ID` env → config.toml's `project_id` → sanitized workdir basename,
  * `pkg/config/config.go:563-570` + `Validate` :989-996), sanitized the same way
  * `UpdateDockerIds` derives `EdgeRuntimeId` from it (`internal/utils/config.go:57-76`) —
- * NOT `LegacyCliConfig.projectId` alone, which is env-only and resolves to `""` for a
+ * NOT `LegacyCliSettings.projectId` alone, which is env-only and resolves to `""` for a
  * project that relies on config.toml's `project_id` or the workdir-basename default,
  * mounting the WRONG `supabase_edge_runtime_` Deno-cache volume (review:
  * PRRT_kwDOErm0O86XAlIw). Hoisted here — the single home for every pg-delta context

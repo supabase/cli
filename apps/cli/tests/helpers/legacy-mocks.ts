@@ -40,7 +40,7 @@ import {
   LegacyLoginDecryptError,
   LegacyLoginVerificationError,
 } from "../../src/legacy/commands/login/login.errors.ts";
-import { LegacyCliConfig } from "../../src/legacy/config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../src/legacy/config/legacy-cli-settings.service.ts";
 import {
   LEGACY_PGDATA_BASELINE_MARKER_NAME,
   LEGACY_PGDATA_PATH,
@@ -91,7 +91,7 @@ export const mockLegacyTelemetryStateLayer = Layer.succeed(LegacyTelemetryState,
   resetIdentity: Effect.void,
 });
 
-// Default LegacyCredentials mock. `mockLegacyCliConfig` defaults to an env-set
+// Default LegacyCredentials mock. `mockLegacyCliSettings` defaults to an env-set
 // access token, so handlers never hit the credentials fallback in tests — but
 // the service still needs to be in the layer to satisfy the required-services
 // signature. Save/delete die to surface accidental writes inside read-only
@@ -399,7 +399,7 @@ export function mockLegacyLinkedProjectCacheTracked(): {
 // they need to exercise alternative resolution paths.
 // ---------------------------------------------------------------------------
 
-export function mockLegacyCliConfig(opts: {
+export function mockLegacyCliSettings(opts: {
   readonly workdir: string;
   readonly profile?: string;
   readonly apiUrl?: string;
@@ -409,8 +409,8 @@ export function mockLegacyCliConfig(opts: {
   readonly accessToken?: Option.Option<Redacted.Redacted<string>>;
   readonly projectId?: Option.Option<string>;
   readonly userAgent?: string;
-}): Layer.Layer<LegacyCliConfig> {
-  return Layer.succeed(LegacyCliConfig, {
+}): Layer.Layer<LegacyCliSettings> {
+  return Layer.succeed(LegacyCliSettings, {
     profile: opts.profile ?? "supabase",
     apiUrl: opts.apiUrl ?? LEGACY_DEFAULT_API_URL,
     projectHost: opts.projectHost ?? "supabase.co",
@@ -784,7 +784,7 @@ export function useLegacyShadowCacheDisabled(): void {
 }
 
 /**
- * Ambient isolation for tests that construct the REAL `legacyCliConfigLayer` /
+ * Ambient isolation for tests that construct the REAL `legacyCliSettingsLayer` /
  * `legacyCredentialsLayer` (directly or inside a command runtime layer) against
  * a real filesystem. Those layers read `<homeDir>/.supabase/profile` and
  * `<homeDir>/.supabase/access-token`, resolving `SUPABASE_HOME` /
@@ -1376,7 +1376,7 @@ export interface BuildLegacyTestRuntimeOpts {
     readonly layer: Layer.Layer<LegacyPlatformApi, SupabaseApiConfigError>;
     readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>;
   };
-  readonly cliConfig: Layer.Layer<LegacyCliConfig>;
+  readonly cliSettings: Layer.Layer<LegacyCliSettings>;
   readonly tty?: Layer.Layer<Tty>;
   /**
    * `Stdin` for prompts routed through `legacyPromptYesNo` (piped-answer reads on
@@ -1426,7 +1426,7 @@ export function buildLegacyTestRuntime(opts: BuildLegacyTestRuntimeOpts) {
     opts.out.layer,
     opts.api.layer,
     topLevelFactory,
-    opts.cliConfig,
+    opts.cliSettings,
     tty,
     stdin,
     processControl,
@@ -1437,7 +1437,7 @@ export function buildLegacyTestRuntime(opts: BuildLegacyTestRuntimeOpts) {
           make: LegacyPlatformApi.pipe(Effect.provide(opts.api.layer)),
         }),
       ),
-      Layer.provide(opts.cliConfig),
+      Layer.provide(opts.cliSettings),
       Layer.provide(tty),
       Layer.provide(opts.out.layer),
       Layer.provide(BunServices.layer),

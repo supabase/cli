@@ -523,7 +523,7 @@ export function registerTempStackProject(project: {
   manager.registerStackProject(project);
 }
 
-export function noteStackProjectHome(projectDir: string | undefined, homeDir: string): void {
+export function noteStackCliProjectHome(projectDir: string | undefined, homeDir: string): void {
   if (projectDir === undefined) {
     return;
   }

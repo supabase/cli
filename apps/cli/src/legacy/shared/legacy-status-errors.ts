@@ -20,7 +20,7 @@ export class LegacyStatusWorkdirError extends Data.TaggedError("LegacyStatusWork
   }
 }
 
-/** `loadProjectConfig` rejected `supabase/config.toml` (malformed TOML/JSON). */
+/** `loadCliConfig` rejected `supabase/config.toml` (malformed TOML/JSON). */
 export class LegacyStatusConfigLoadError extends Data.TaggedError("LegacyStatusConfigLoadError")<{
   readonly message: string;
 }> {

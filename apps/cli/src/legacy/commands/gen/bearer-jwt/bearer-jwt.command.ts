@@ -4,7 +4,7 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
-import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
+import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
@@ -52,7 +52,7 @@ export type LegacyGenBearerJwtFlags = CliCommand.Command.Config.Infer<typeof con
 
 const legacyGenBearerJwtRuntimeLayer = Layer.mergeAll(
   legacyDebugLoggerLayer,
-  legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer)),
+  legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer)),
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["gen", "bearer-jwt"]),
   // Branch A's stdin JWK prompt and Branch B's stdin kid prompt (`getSigningKey`,

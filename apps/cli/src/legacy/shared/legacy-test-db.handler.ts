@@ -2,7 +2,7 @@ import * as nodePath from "node:path";
 import { Effect, FileSystem, Option, Path } from "effect";
 
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
-import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { LegacyTelemetryState } from "../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyDbConfigResolver } from "./legacy-db-config.service.ts";
 import { legacyReadDbToml } from "./legacy-db-config.toml-read.ts";
@@ -72,7 +72,7 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
   const resolver = yield* LegacyDbConfigResolver;
   const dbConn = yield* LegacyDbConnection;
   const docker = yield* LegacyDockerRun;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const runtimeInfo = yield* RuntimeInfo;
   const telemetryState = yield* LegacyTelemetryState;
   const fs = yield* FileSystem.FileSystem;
@@ -121,7 +121,7 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
     const args = buildLegacyPgProveArgs({
       paths: flags.paths,
       cwd: runtimeInfo.cwd,
-      workdir: cliConfig.workdir,
+      workdir: cliSettings.workdir,
       debug,
     });
 
@@ -146,7 +146,7 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
         ? { _tag: "named" as const, name: networkId }
         : isLocal
           ? yield* Effect.gen(function* () {
-              const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+              const toml = yield* legacyReadDbToml(fs, path, cliSettings.workdir);
               // Go sanitizes `c.ProjectId` unconditionally (`config.go:471`) —
               // whether it came from `config.toml` or the cwd-basename fallback —
               // before deriving the network name `supabase_network_<id>`
@@ -154,7 +154,7 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
               // "my project" must join the same sanitized network the local stack
               // created, not the literal raw value.
               const projectId = sanitizeProjectId(
-                Option.getOrElse(toml.projectId, () => nodePath.basename(cliConfig.workdir)),
+                Option.getOrElse(toml.projectId, () => nodePath.basename(cliSettings.workdir)),
               );
               return { _tag: "named" as const, name: `supabase_network_${projectId}` };
             })

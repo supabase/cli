@@ -11,7 +11,7 @@ import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -50,11 +50,11 @@ function setup(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 200, body: opts.response ?? SSL_ENFORCED },
     network: opts.network,
   });
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
   });
   return { layer, out, api };
@@ -66,13 +66,13 @@ function setupTracked(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 200, body: opts.response ?? SSL_ENFORCED },
     network: opts.network,
   });
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
   });
@@ -363,7 +363,7 @@ describe("legacy ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("uses --project-ref flag value over LegacyCliConfig.projectId", () => {
+  it.live("uses --project-ref flag value over LegacyCliSettings.projectId", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup({ response: SSL_ENFORCED });
     return Effect.gen(function* () {
@@ -384,11 +384,11 @@ describe("legacy ssl-enforcement update integration", () => {
 
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
-    const cliConfig = mockLegacyCliConfig({
+    const cliSettings = mockLegacyCliSettings({
       workdir: localTempRoot,
       projectId: Option.none(),
     });
-    const layer = buildLegacyTestRuntime({ out, api, cliConfig });
+    const layer = buildLegacyTestRuntime({ out, api, cliSettings });
 
     return Effect.gen(function* () {
       yield* legacySslEnforcementUpdate({
@@ -407,11 +407,11 @@ describe("legacy ssl-enforcement update integration", () => {
     const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-ssl-update-int-no-ref-"));
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
-    const cliConfig = mockLegacyCliConfig({
+    const cliSettings = mockLegacyCliSettings({
       workdir: localTempRoot,
       projectId: Option.none(),
     });
-    const layer = buildLegacyTestRuntime({ out, api, cliConfig });
+    const layer = buildLegacyTestRuntime({ out, api, cliSettings });
 
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(

@@ -32,5 +32,5 @@ interface ProjectLinkRemoteShape {
 }
 
 export class ProjectLinkRemote extends Context.Service<ProjectLinkRemote, ProjectLinkRemoteShape>()(
-  "supabase/config/ProjectLinkRemote",
+  "supabase/cli/ProjectLinkRemote",
 ) {}

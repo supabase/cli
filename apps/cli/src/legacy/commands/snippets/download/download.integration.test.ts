@@ -5,7 +5,7 @@ import { Effect, Exit, Option } from "effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -61,11 +61,11 @@ function setup(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 200, body: opts.response ?? SNIPPET_RESPONSE },
     network: opts.network,
   });
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
   });
@@ -90,11 +90,11 @@ describe("legacy snippets download integration", () => {
     const telemetry = mockLegacyTelemetryStateTracked();
     const cache = mockLegacyLinkedProjectCacheTracked();
     const api = mockLegacyPlatformApi({ response: { status: 200, body: SNIPPET_RESPONSE } });
-    const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+    const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
     const layer = buildLegacyTestRuntime({
       out,
       api,
-      cliConfig,
+      cliSettings,
       telemetry: telemetry.layer,
       linkedProjectCache: cache.layer,
       goOutput: Option.some("json"),

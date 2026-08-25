@@ -1,6 +1,6 @@
 import { Effect, Stdio } from "effect";
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
-import { ProjectHome } from "../../../config/project-home.service.ts";
+import { CliProjectHome } from "../../../config/cli-project-home.service.ts";
 import {
   downloadFunctions,
   makeGoProxyLegacyBundleArgs,
@@ -12,15 +12,15 @@ import type { FunctionsDownloadFlags } from "./download.command.ts";
 
 export const functionsDownload = Effect.fnUntraced(function* (flags: FunctionsDownloadFlags) {
   const api = yield* PlatformApi;
-  const projectHome = yield* ProjectHome;
+  const cliProjectHome = yield* CliProjectHome;
   const proxy = yield* LegacyGoProxy;
   const stdio = yield* Stdio.Stdio;
   const rawArgs = yield* stdio.args;
-  const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersionPin(projectHome.supabaseDir);
+  const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersionPin(cliProjectHome.supabaseDir);
 
   yield* downloadFunctions(flags, {
     api,
-    projectRoot: projectHome.projectRoot,
+    projectRoot: cliProjectHome.projectRoot,
     rawArgs,
     goConfigCompat: undefined,
     edgeRuntimeVersion,
@@ -30,7 +30,7 @@ export const functionsDownload = Effect.fnUntraced(function* (flags: FunctionsDo
     // mode) — `downloadFunctions` emits the `Output` envelope itself.
     proxyDownload: (proxyFlags, projectRef, captureOutput) => {
       const args = makeGoProxyLegacyBundleArgs(proxyFlags.functionName, projectRef);
-      const cwd = projectHome.projectRoot;
+      const cwd = cliProjectHome.projectRoot;
       return captureOutput
         ? Effect.asVoid(
             proxy.execCapture(args, { cwd, stdin: "ignore", suppressChildTelemetry: true }),

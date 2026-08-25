@@ -10,7 +10,7 @@ import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
 import { mockOutput, mockRuntimeInfo, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyPlatformApi,
   useLegacyTempWorkdir,
 } from "../../../../tests/helpers/legacy-mocks.ts";
@@ -38,7 +38,7 @@ function setup() {
   const runtime = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+    cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
     // `RuntimeInfo` is ambient (not provided by `legacyManagementApiRuntimeLayer`
     // itself), so the real `legacyCredentialsLayer` built inline inside the
     // command for the "gate open" case resolves ITS `RuntimeInfo` from this

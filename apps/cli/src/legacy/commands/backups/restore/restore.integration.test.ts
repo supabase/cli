@@ -11,7 +11,7 @@ import {
   LEGACY_VALID_REF,
   buildLegacyTestRuntime,
   legacyJsonResponse,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyPlatformApi,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -33,11 +33,11 @@ function setup(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 201, body: null },
     network: opts.network,
   });
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
   });
   return { layer, out, api };
@@ -131,7 +131,7 @@ describe("legacy backups restore integration", () => {
     },
   );
 
-  it.live("uses --project-ref flag over LegacyCliConfig.projectId", () => {
+  it.live("uses --project-ref flag over LegacyCliSettings.projectId", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup();
     return Effect.gen(function* () {
@@ -177,11 +177,11 @@ describe("legacy backups restore integration", () => {
     const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-backups-restore-int-noref-"));
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({});
-    const cliConfig = mockLegacyCliConfig({
+    const cliSettings = mockLegacyCliSettings({
       workdir: localTempRoot,
       projectId: Option.none(),
     });
-    const layer = buildLegacyTestRuntime({ out, api, cliConfig });
+    const layer = buildLegacyTestRuntime({ out, api, cliSettings });
 
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -240,14 +240,14 @@ describe("legacy backups restore integration", () => {
         return Effect.succeed(legacyJsonResponse(request, 201, null));
       },
     });
-    const cliConfig = mockLegacyCliConfig({
+    const cliSettings = mockLegacyCliSettings({
       workdir: localTempRoot,
       projectId: Option.none(),
     });
     const layer = buildLegacyTestRuntime({
       out,
       api,
-      cliConfig,
+      cliSettings,
       tty: mockTty({ stdinIsTty: true, stdoutIsTty: true }),
     });
 
