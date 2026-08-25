@@ -9,7 +9,7 @@ import {
 import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
 import { legacyResolveResetSeedConfig } from "../../../shared/db-bootstrap/db-setup.ts";
@@ -87,7 +87,7 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
   const output = yield* Output;
   const resolver = yield* LegacyDbConfigResolver;
   const dbConn = yield* LegacyDbConnection;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const telemetryState = yield* LegacyTelemetryState;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const fs = yield* FileSystem.FileSystem;
@@ -95,7 +95,7 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
   const cliArgs = yield* CliArgs;
   const dnsResolver = yield* LegacyDnsResolverFlag;
 
-  const workdir = cliConfig.workdir;
+  const workdir = cliSettings.workdir;
   const migrationsDir = path.join(workdir, "supabase", "migrations");
   // The project `.env` is applied before the `yes`/`experimental` gates are
   // read, so a `SUPABASE_YES` / `SUPABASE_EXPERIMENTAL` set only in
@@ -390,7 +390,7 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
         const pgDeltaCtx: LegacyPgDeltaContext = {
           projectId: legacySanitizeProjectId(
             legacyResolveLocalProjectId(
-              Option.getOrUndefined(cliConfig.projectId),
+              Option.getOrUndefined(cliSettings.projectId),
               Option.getOrUndefined(toml.projectId) ??
                 (linkedRef !== undefined && linkedRef !== "" ? linkedRef : undefined),
               workdir,

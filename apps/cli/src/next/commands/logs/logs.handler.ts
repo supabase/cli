@@ -1,7 +1,7 @@
 import { connectLayer, Stack } from "@supabase/stack/effect";
 import { Effect, Stream } from "effect";
-import { CliConfig } from "../../config/cli-config.service.ts";
-import { ProjectHome } from "../../config/project-home.service.ts";
+import { CliSettings } from "../../config/cli-settings.service.ts";
+import { CliProjectHome } from "../../config/cli-project-home.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { ProcessControl } from "../../../shared/runtime/process-control.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -50,8 +50,8 @@ export const logs = Effect.fnUntraced(function* (flags: LogsFlags) {
   return yield* Effect.scoped(
     Effect.gen(function* () {
       const output = yield* Output;
-      const cliConfig = yield* CliConfig;
-      const projectHome = yield* ProjectHome;
+      const cliSettings = yield* CliSettings;
+      const cliProjectHome = yield* CliProjectHome;
       const processControl = yield* ProcessControl;
       const runtimeInfo = yield* RuntimeInfo;
 
@@ -66,8 +66,8 @@ export const logs = Effect.fnUntraced(function* (flags: LogsFlags) {
 
       const layer = yield* connectLayer({
         cwd: runtimeInfo.cwd,
-        cacheRoot: cliConfig.supabaseHome,
-        projectDir: projectHome.projectRoot,
+        cacheRoot: cliSettings.supabaseHome,
+        projectDir: cliProjectHome.projectRoot,
         name: flags.stack,
       });
       const stack = yield* Effect.provide(Stack, layer);

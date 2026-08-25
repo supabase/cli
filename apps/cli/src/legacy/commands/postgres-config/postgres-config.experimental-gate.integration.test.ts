@@ -9,7 +9,7 @@ import { mockOutput, mockTelemetryRuntime } from "../../../../tests/helpers/mock
 import {
   buildLegacyTestRuntime,
   legacyIsolatedHomeLayer,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyPlatformApi,
   useLegacyTempWorkdir,
 } from "../../../../tests/helpers/legacy-mocks.ts";
@@ -40,9 +40,9 @@ function setup() {
   const runtime = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+    cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
     // The "gate open" case builds the real `legacyManagementApiRuntimeLayer`
-    // inline inside the command; its cliConfig/credentials layers read real
+    // inline inside the command; its cliSettings/credentials layers read real
     // files under homeDir and ambient env — an ambient SUPABASE_ACCESS_TOKEN,
     // SUPABASE_EXPERIMENTAL, or OS keyring entry on the machine running the
     // test would make these assertions non-deterministic. Isolate both, keeping

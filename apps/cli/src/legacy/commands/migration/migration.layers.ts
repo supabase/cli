@@ -3,7 +3,7 @@ import { Layer } from "effect";
 import { legacyHttpClientLayer } from "../../auth/legacy-http-debug.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
-import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
+import { legacyCliSettingsLayer } from "../../config/legacy-cli-settings.layer.ts";
 import { legacyDbConfigLayer } from "../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
@@ -12,7 +12,7 @@ import { legacyIdentityStitchLayer } from "../../shared/legacy-identity-stitch.t
 import { legacyLinkedDbResolverRuntimeLayer } from "../../shared/legacy-management-api-runtime.layer.ts";
 import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
 
-const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 
 /**
  * Runtime layer for `supabase migration new`. The leanest of the migration
@@ -22,14 +22,14 @@ const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer
  * and `Tty` come from the root layer.
  */
 export const legacyMigrationNewRuntimeLayer = Layer.mergeAll(
-  cliConfig,
+  cliSettings,
   legacyTelemetryStateLayer,
   stdinLayer,
   commandRuntimeLayer(["migration", "new"]),
 );
 
 const dbConfig = legacyDbConfigLayer.pipe(
-  Layer.provide(cliConfig),
+  Layer.provide(cliSettings),
   Layer.provide(legacyDbConnectionLayer),
   Layer.provide(legacyDebugLoggerLayer),
   Layer.provide(legacyIdentityStitchLayer),
@@ -53,7 +53,7 @@ export const legacyMigrationDbRuntimeLayer = (commandPath: ReadonlyArray<string>
   Layer.mergeAll(
     dbConfig,
     legacyDbConnectionLayer,
-    cliConfig,
+    cliSettings,
     legacyIdentityStitchLayer,
     legacyTelemetryStateLayer,
     stdinLayer,

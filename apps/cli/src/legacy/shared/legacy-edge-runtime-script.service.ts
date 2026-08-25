@@ -45,9 +45,9 @@ export interface LegacyEdgeRuntimeRunOpts {
    * The caller's authoritative target directory (e.g. `LegacyPgDeltaContext.cwd`),
    * used to resolve the `supabase/.temp/edge-runtime-version` image pin (and, when
    * `denoVersion` is absent, the base-config fallback read). Overrides the layer's
-   * own `LegacyCliConfig.workdir` — needed because that layer is built once, before
+   * own `LegacyCliSettings.workdir` — needed because that layer is built once, before
    * a command's own `process.chdir` (e.g. `bootstrap`, whose real target directory
-   * only exists after its handler runs). Absent → the layer's `LegacyCliConfig.workdir`.
+   * only exists after its handler runs). Absent → the layer's `LegacyCliSettings.workdir`.
    */
   readonly workdir?: string;
 }

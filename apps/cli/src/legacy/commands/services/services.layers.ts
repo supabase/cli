@@ -4,8 +4,8 @@ import type * as HttpClient from "effect/unstable/http/HttpClient";
 
 import { legacyCredentialsLayer } from "../../auth/legacy-credentials.layer.ts";
 import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
-import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
-import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
+import { legacyCliSettingsLayer } from "../../config/legacy-cli-settings.layer.ts";
+import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
 import { LegacyDebugLogger } from "../../shared/legacy-debug-logger.service.ts";
 import {
@@ -27,21 +27,21 @@ import { CommandRuntime } from "../../../shared/runtime/command-runtime.service.
  * the handler can choose the local-only path.
  */
 export const legacyServicesRuntimeLayer = (() => {
-  const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+  const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
   const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
   const credentials = legacyCredentialsLayer.pipe(
-    Layer.provide(cliConfig),
+    Layer.provide(cliSettings),
     Layer.provide(legacyDebugLoggerLayer),
   );
 
   const built = Layer.mergeAll(
     httpClient,
     credentials,
-    cliConfig,
+    cliSettings,
     legacyDebugLoggerLayer,
     legacyLinkedProjectCacheLayer.pipe(
       Layer.provide(credentials),
-      Layer.provide(cliConfig),
+      Layer.provide(cliSettings),
       Layer.provide(httpClient),
       // The cache GET stitches session identity via the one per-command
       // `LegacyIdentityStitch` (a single per-command `sync.Once`).
@@ -69,7 +69,7 @@ export const legacyServicesRuntimeLayer = (() => {
 type LegacyServicesServices =
   | HttpClient.HttpClient
   | LegacyCredentials
-  | LegacyCliConfig
+  | LegacyCliSettings
   | LegacyDebugLogger
   | LegacyLinkedProjectCache
   | LegacyTelemetryState

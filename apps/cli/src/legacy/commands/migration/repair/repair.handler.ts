@@ -8,7 +8,7 @@ import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyAqua } from "../../../shared/legacy-colors.ts";
 import { legacyLoadProjectEnv } from "../../../shared/legacy-db-config.toml-read.ts";
@@ -119,7 +119,7 @@ const runRepair = Effect.fnUntraced(function* (
   const output = yield* Output;
   const resolver = yield* LegacyDbConfigResolver;
   const connection = yield* LegacyDbConnection;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
@@ -140,7 +140,7 @@ const runRepair = Effect.fnUntraced(function* (
     );
   }
 
-  const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
+  const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
   const repairAll = input.versions.length === 0;
   const connType = target.connType ?? "linked"; // repair defaults to `--linked`.
 
@@ -172,7 +172,7 @@ const runRepair = Effect.fnUntraced(function* (
   // SUPABASE_YES set only in supabase/.env auto-confirms the repair-all prompt, but a
   // flag conflict still surfaces before any .env read. Resolve --yes against the
   // project env here, not just process.env.
-  const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+  const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir);
   const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
 
   // Linked repair caches the project ref + identifies project groups, gated on the

@@ -3,8 +3,8 @@ import { DEFAULT_MANAGED_STACK_NAME } from "@supabase/stack/effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { projectLinkStateLayer } from "../../config/project-link-state.layer.ts";
-import { projectLocalServiceVersionsLayer } from "../../config/project-local-service-versions.layer.ts";
-import { provideProjectCommandRuntime } from "../../config/project-runtime.layer.ts";
+import { cliProjectLocalServiceVersionsLayer } from "../../config/cli-project-local-service-versions.layer.ts";
+import { provideCliProjectCommandRuntime } from "../../config/project-runtime.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandInstrumentation } from "../../../shared/telemetry/command-instrumentation.ts";
@@ -19,10 +19,10 @@ const flags = {
 
 export type StatusFlags = CliCommand.Command.Config.Infer<typeof flags>;
 
-const statusRuntimeLayer = provideProjectCommandRuntime(
+const statusRuntimeLayer = provideCliProjectCommandRuntime(
   Layer.mergeAll(
     projectLinkStateLayer,
-    projectLocalServiceVersionsLayer,
+    cliProjectLocalServiceVersionsLayer,
     commandRuntimeLayer(["status"]),
   ),
 );

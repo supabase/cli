@@ -1,13 +1,13 @@
 import {
-  ProjectConfigSchema,
-  findProjectPaths,
+  CliConfigSchema,
+  findCliProjectPaths,
   inferFunctionsManifest,
-  loadProjectConfig,
-  resolveProjectSubtree,
-  resolveProjectValue,
-  type ProjectConfig,
-  type ProjectEnvironment,
-  type ResolvedProjectValue,
+  loadCliConfig,
+  resolveCliConfigSubtree,
+  resolveCliConfigValue,
+  type CliConfig,
+  type CliProjectEnvironment,
+  type ResolvedCliConfigValue,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config/effect";
 import {
@@ -74,10 +74,10 @@ import {
   runChildProcess,
   toDockerPath,
 } from "./functions-docker.ts";
-import { loadFunctionsProjectConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
+import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
 import { edgeRuntimeImage, resolveEdgeRuntimeVersionPin } from "./functions.shared.ts";
-const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
-const defaultProjectConfig = decodeProjectConfig({});
+const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
+const defaultCliConfig = decodeCliConfig({});
 
 const dockerRuntimeServerPort = 8081;
 const dockerRuntimeInspectorPort = 8083;
@@ -166,11 +166,11 @@ interface PlainServeAuthConfig {
   readonly jwt_secret?: string;
   readonly anon_key?: string;
   readonly service_role_key?: string;
-  readonly third_party: ProjectConfig["auth"]["third_party"];
+  readonly third_party: CliConfig["auth"]["third_party"];
 }
 
 export interface PlainServeEdgeRuntimeConfig {
-  readonly policy: ProjectConfig["edge_runtime"]["policy"];
+  readonly policy: CliConfig["edge_runtime"]["policy"];
   readonly inspector_port: number;
   readonly deno_version?: number;
   readonly secrets: Readonly<Record<string, string>>;
@@ -235,7 +235,7 @@ export interface ServeAuthArtifacts {
  * {@link ServeResolvedConfig} (which also carries `auth`/`configPath`, used
  * only to resolve {@link ServeAuthArtifacts} and therefore irrelevant once
  * those are already resolved). `start`'s own bring-up builds this directly
- * from its own already-loaded `ProjectConfig` via {@link toPlainEdgeRuntimeConfig}/
+ * from its own already-loaded `CliConfig` via {@link toPlainEdgeRuntimeConfig}/
  * {@link toPlainFunctionRecord}/`inferFunctionsManifest` (`@supabase/config`)
  * rather than going through {@link resolveServeConfig}'s independent
  * config-loading pipeline.
@@ -380,7 +380,7 @@ function reveal(value: string | Redacted.Redacted<string> | undefined): string |
 }
 
 function toPlainAuthConfig(
-  auth: ProjectConfig["auth"] | ResolvedProjectValue<ProjectConfig["auth"]>,
+  auth: CliConfig["auth"] | ResolvedCliConfigValue<CliConfig["auth"]>,
 ): PlainServeAuthConfig {
   return {
     enabled: auth.enabled,
@@ -421,11 +421,11 @@ function toPlainAuthConfig(
  * Exported so `start`'s own edge-runtime bring-up
  * (`legacy/commands/start/services/edge-runtime.service.ts`) can reuse this
  * exact `Redacted`-unwrapping/zero-hash-filtering logic against its own,
- * already-loaded `ProjectConfig` instead of duplicating it — see
+ * already-loaded `CliConfig` instead of duplicating it — see
  * {@link ServeEdgeRuntimeContainerConfig}'s doc comment.
  */
 export function toPlainEdgeRuntimeConfig(
-  edgeRuntime: ProjectConfig["edge_runtime"] | ResolvedProjectValue<ProjectConfig["edge_runtime"]>,
+  edgeRuntime: CliConfig["edge_runtime"] | ResolvedCliConfigValue<CliConfig["edge_runtime"]>,
 ): PlainServeEdgeRuntimeConfig {
   return {
     policy: reveal(edgeRuntime.policy) ?? "",
@@ -439,7 +439,7 @@ export function toPlainEdgeRuntimeConfig(
     // casing. ListSecrets then keeps only entries with a non-empty SHA256:
     // `DecryptSecretHookFunc` (`pkg/config/secret.go:94-107`) leaves the
     // SHA256 empty exactly when the value is empty or a still-unresolved
-    // `env(VAR)` literal. In the TS pipeline `resolveProjectSubtree` wraps
+    // `env(VAR)` literal. In the TS pipeline `resolveCliConfigSubtree` wraps
     // resolved secret leaves in `Redacted` and leaves unresolved `env()`
     // literals as plain strings, so `Redacted.isRedacted` + non-empty mirrors
     // both zero-hash cases — the same guard `secrets set` uses
@@ -456,7 +456,7 @@ export function toPlainEdgeRuntimeConfig(
 
 /** Exported for the same reason as {@link toPlainEdgeRuntimeConfig}. */
 export function toPlainFunctionRecord(
-  functions: ProjectConfig["functions"] | ResolvedProjectValue<ProjectConfig["functions"]>,
+  functions: CliConfig["functions"] | ResolvedCliConfigValue<CliConfig["functions"]>,
 ): Readonly<Record<string, ManifestFunctionConfig>> {
   return Object.fromEntries(
     Object.entries(functions).map(([slug, config]) => [
@@ -700,7 +700,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   goViperCompat: boolean,
   goConfigCompat: FunctionsGoConfigCompat | undefined,
 ) {
-  const projectEnv = yield* loadServeProjectEnvironment(projectRoot);
+  const projectEnv = yield* loadServeCliProjectEnvironment(projectRoot);
   const projectRef = Option.match(projectIdOverride, {
     onNone: () => undefined,
     onSome: (value) => {
@@ -708,54 +708,54 @@ const resolveServeConfig = Effect.fnUntraced(function* (
       return normalized.length > 0 ? normalized : undefined;
     },
   });
-  // `loadProjectConfig` interpolates `env()` references against the project
+  // `loadCliConfig` interpolates `env()` references against the project
   // environment. We resolve that environment ourselves (Go-accurate, layering
   // `.env.<SUPABASE_ENV>`/`.env.local`/`.env` over the ambient env) and pass it
   // in, so loading neither re-reads those files nor mutates `process.env`.
   //
   // `search: false`/`tomlOnly: true` when `goConfigCompat` is set (legacy
-  // shell): this MUST match `loadFunctionsProjectConfig`'s own options below
+  // shell): this MUST match `loadFunctionsCliConfig`'s own options below
   // exactly, or the two loads can resolve two different files (an ancestor's
   // config.toml vs this dir's; a stray config.json vs config.toml) — one
   // supplying `auth`/`edgeRuntime`/`apiPort` here, the other supplying
   // `denoVersion`/`Config.Validate` below, silently mixing fields from two
   // different projects. `next` (`goConfigCompat === undefined`) keeps the
   // package defaults (ancestor search, JSON preferred), unchanged.
-  const loadedConfig = yield* loadProjectConfig(projectRoot, {
+  const loadedConfig = yield* loadCliConfig(projectRoot, {
     ...(projectRef === undefined ? {} : { projectRef }),
-    ...(projectEnv === null ? {} : { projectEnv }),
+    ...(projectEnv === null ? {} : { cliProjectEnv: projectEnv }),
     goViperCompat,
     ...(goConfigCompat === undefined ? {} : { search: false, tomlOnly: true }),
   });
-  const baseConfig = loadedConfig?.config ?? defaultProjectConfig;
+  const baseConfig = loadedConfig?.config ?? defaultCliConfig;
 
   const auth =
     projectEnv === null
       ? toPlainAuthConfig(baseConfig.auth)
       : toPlainAuthConfig(
-          yield* resolveProjectSubtree(baseConfig.auth, projectEnv, "auth", { goViperCompat }),
+          yield* resolveCliConfigSubtree(baseConfig.auth, projectEnv, "auth", { goViperCompat }),
         );
   const edgeRuntime =
     projectEnv === null
       ? toPlainEdgeRuntimeConfig(baseConfig.edge_runtime)
       : toPlainEdgeRuntimeConfig(
-          yield* resolveProjectSubtree(baseConfig.edge_runtime, projectEnv, "edge_runtime", {
+          yield* resolveCliConfigSubtree(baseConfig.edge_runtime, projectEnv, "edge_runtime", {
             goViperCompat,
           }),
         );
   const apiPort =
     projectEnv === null
       ? baseConfig.api.port
-      : (yield* resolveProjectSubtree(baseConfig.api, projectEnv, "api", { goViperCompat })).port;
+      : (yield* resolveCliConfigSubtree(baseConfig.api, projectEnv, "api", { goViperCompat })).port;
   const configDeclaredFunctions =
     projectEnv === null
       ? toPlainFunctionRecord(baseConfig.functions)
       : toPlainFunctionRecord(
-          yield* resolveProjectSubtree(baseConfig.functions, projectEnv, "functions", {
+          yield* resolveCliConfigSubtree(baseConfig.functions, projectEnv, "functions", {
             goViperCompat,
           }),
         );
-  const configForManifest: ProjectConfig = {
+  const configForManifest: CliConfig = {
     ...baseConfig,
     functions: configDeclaredFunctions,
   };
@@ -767,7 +767,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
     projectEnv === null
       ? (baseConfig.project_id ?? "")
       : (reveal(
-          yield* resolveProjectValue(baseConfig.project_id ?? "", projectEnv, "project_id", {
+          yield* resolveCliConfigValue(baseConfig.project_id ?? "", projectEnv, "project_id", {
             goViperCompat,
           }),
         ) ?? "");
@@ -793,7 +793,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   // derivation — a known gap, narrow to trigger but NOT cosmetic when hit:
   // unlike `deploy`/`download` (which use `context.projectId` outright),
   // `rawProjectId` below only ever sees `SUPABASE_PROJECT_ID` from the
-  // *ambient* shell (`projectIdOverride`, from `LegacyCliConfig`), not from
+  // *ambient* shell (`projectIdOverride`, from `LegacyCliSettings`), not from
   // project dotenv. A project that sets it only in `supabase/.env` therefore
   // gets a different `supabase_edge_runtime_<id>`/`supabase_network_<id>`
   // here than `deploy`/`download`/`start` resolve for the SAME project — so
@@ -808,7 +808,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   const goContext =
     goConfigCompat === undefined
       ? undefined
-      : yield* loadFunctionsProjectConfig({
+      : yield* loadFunctionsCliConfig({
           projectRoot,
           projectRef,
           goConfigCompat,
@@ -1097,8 +1097,8 @@ function ambientProjectEnv() {
   );
 }
 
-const loadServeProjectEnvironment = Effect.fnUntraced(function* (projectRoot: string) {
-  const paths = yield* findProjectPaths(projectRoot);
+const loadServeCliProjectEnvironment = Effect.fnUntraced(function* (projectRoot: string) {
+  const paths = yield* findCliProjectPaths(projectRoot);
   if (paths === null) {
     return null;
   }
@@ -1144,7 +1144,7 @@ const loadServeProjectEnvironment = Effect.fnUntraced(function* (projectRoot: st
     }
   }
 
-  return { paths, values, loadedPaths, sources } satisfies ProjectEnvironment;
+  return { paths, values, loadedPaths, sources } satisfies CliProjectEnvironment;
 });
 
 /**

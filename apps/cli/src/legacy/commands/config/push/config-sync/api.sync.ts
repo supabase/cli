@@ -1,4 +1,4 @@
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 
 import { diff } from "./config-sync.diff.ts";
 import { encodeToml, type TomlField, type TomlValue } from "./config-sync.toml.ts";
@@ -58,7 +58,7 @@ export interface RemoteApiConfig {
 }
 
 /** Projects the loaded `config.api` into the push subset. */
-export function apiSubsetFromConfig(config: ProjectConfig): ApiSubset {
+export function apiSubsetFromConfig(config: CliConfig): ApiSubset {
   const api = config.api;
   return {
     enabled: api.enabled,

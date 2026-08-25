@@ -1,5 +1,5 @@
 import { Effect, Layer, Context, Option } from "effect";
-import { loadProjectConfig } from "@supabase/config/effect";
+import { loadCliConfig } from "@supabase/config/effect";
 import {
   DEFAULT_MANAGED_STACK_NAME,
   daemonLayer,
@@ -9,12 +9,12 @@ import {
 } from "@supabase/stack/effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { projectLocalServiceVersionsLayer } from "../../config/project-local-service-versions.layer.ts";
+import { cliProjectLocalServiceVersionsLayer } from "../../config/cli-project-local-service-versions.layer.ts";
 import { ensureProjectStateIgnored } from "../../config/project-gitignore.ts";
-import { CliConfig } from "../../config/cli-config.service.ts";
-import { ProjectHome } from "../../config/project-home.service.ts";
+import { CliSettings } from "../../config/cli-settings.service.ts";
+import { CliProjectHome } from "../../config/cli-project-home.service.ts";
 import { projectLinkStateLayer } from "../../config/project-link-state.layer.ts";
-import { provideProjectCommandRuntime } from "../../config/project-runtime.layer.ts";
+import { provideCliProjectCommandRuntime } from "../../config/project-runtime.layer.ts";
 import {
   resolveServiceVersionContext,
   type ResolvedServiceVersionContext,
@@ -161,22 +161,22 @@ export const startCommand = Command.make("start", flags).pipe(
     ),
   ),
   Command.provide((flags) => {
-    const providedRuntimeLayer = provideProjectCommandRuntime(
+    const providedRuntimeLayer = provideCliProjectCommandRuntime(
       Layer.mergeAll(
         projectLinkStateLayer,
-        projectLocalServiceVersionsLayer,
+        cliProjectLocalServiceVersionsLayer,
         commandRuntimeLayer(["start"]),
       ),
     );
 
     const runtimeStateEffect = Effect.gen(function* () {
       const output = yield* Output;
-      const cliConfig = yield* CliConfig;
-      const projectHome = yield* ProjectHome;
+      const cliSettings = yield* CliSettings;
+      const cliProjectHome = yield* CliProjectHome;
       const runtimeInfo = yield* RuntimeInfo;
       const existingSummary = yield* resolveStackSummary({
-        cacheRoot: cliConfig.supabaseHome,
-        projectDir: projectHome.projectRoot,
+        cacheRoot: cliSettings.supabaseHome,
+        projectDir: cliProjectHome.projectRoot,
         cwd: runtimeInfo.cwd,
         name: flags.stack,
       }).pipe(Effect.catchTag("NoRunningStackError", () => Effect.succeed(undefined)));
@@ -190,9 +190,9 @@ export const startCommand = Command.make("start", flags).pipe(
       // unset behaves as false (revoke the default Data API GRANTs) to match the new cloud
       // default. Explicit true preserves the legacy auto-expose behaviour but is deprecated and
       // emits a warning; the field is removed entirely on 2026-10-30.
-      const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
+      const loadedCliConfig = yield* loadCliConfig(cliProjectHome.projectRoot);
       const { autoExposeNewTables, deprecationWarning } = resolveAutoExposeNewTables(
-        loadedProjectConfig?.config.api.auto_expose_new_tables,
+        loadedCliConfig?.config.api.auto_expose_new_tables,
       );
       if (deprecationWarning !== undefined) {
         yield* output.warn(deprecationWarning);
@@ -207,15 +207,15 @@ export const startCommand = Command.make("start", flags).pipe(
         postgres: { ...baseStackConfig.postgres, autoExposeNewTables },
       };
       yield* output.intro("Start local Supabase stack");
-      yield* ensureProjectStateIgnored(projectHome.projectRoot);
+      yield* ensureProjectStateIgnored(cliProjectHome.projectRoot);
 
-      const portIntents = managedPortIntents(stackConfig, loadedProjectConfig ?? undefined);
+      const portIntents = managedPortIntents(stackConfig, loadedCliConfig ?? undefined);
       const configuredSummary =
         existingSummary === undefined
           ? undefined
           : yield* resolveStackSummary({
-              cacheRoot: cliConfig.supabaseHome,
-              projectDir: projectHome.projectRoot,
+              cacheRoot: cliSettings.supabaseHome,
+              projectDir: cliProjectHome.projectRoot,
               cwd: runtimeInfo.cwd,
               name: flags.stack,
               portDocument: portIntents,
@@ -230,17 +230,17 @@ export const startCommand = Command.make("start", flags).pipe(
       };
 
       const stackLayer = yield* daemonLayer({
-        cacheRoot: cliConfig.supabaseHome,
+        cacheRoot: cliSettings.supabaseHome,
         cwd: runtimeInfo.cwd,
-        projectDir: projectHome.projectRoot,
+        projectDir: cliProjectHome.projectRoot,
         name: flags.stack,
         portIntents,
         launch,
         ...stackConfig,
       });
       const summary = yield* resolveStackSummary({
-        cacheRoot: cliConfig.supabaseHome,
-        projectDir: projectHome.projectRoot,
+        cacheRoot: cliSettings.supabaseHome,
+        projectDir: cliProjectHome.projectRoot,
         cwd: runtimeInfo.cwd,
         name: flags.stack,
       });
@@ -260,8 +260,8 @@ export const startCommand = Command.make("start", flags).pipe(
             : { drift: configuredSummary.drift }),
           serviceVersionContext,
           lifecycleInput: {
-            cacheRoot: cliConfig.supabaseHome,
-            workspacePath: projectHome.projectRoot,
+            cacheRoot: cliSettings.supabaseHome,
+            workspacePath: cliProjectHome.projectRoot,
             stackName: flags.stack,
             cwd: runtimeInfo.cwd,
           },

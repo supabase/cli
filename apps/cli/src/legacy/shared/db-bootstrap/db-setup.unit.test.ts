@@ -1,8 +1,8 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ProjectConfig } from "@supabase/config";
-import { ProjectConfigSchema } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
+import { CliConfigSchema } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, FileSystem, Layer, Path, Schema, Sink, Stream } from "effect";
@@ -28,7 +28,7 @@ import {
   type LegacyStartSetupLocalDatabaseInput,
 } from "./db-setup.ts";
 
-const decodeConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
+const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
 /**
  * Fingerprints unique to each transcribed SQL constant — see `db-setup.ts`'s
@@ -203,7 +203,7 @@ function writeConfigToml(workdir: string, content: string): void {
   writeFileSync(join(supabaseDir, "config.toml"), content);
 }
 
-const defaultConfig: ProjectConfig = decodeConfig({});
+const defaultConfig: CliConfig = decodeConfig({});
 
 function baseInput(
   workdir: string,

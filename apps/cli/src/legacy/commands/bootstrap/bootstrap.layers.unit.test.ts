@@ -26,7 +26,7 @@ import {
 import {
   LEGACY_VALID_TOKEN,
   legacyIsolatedHomeLayer,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyCredentialsLayer,
   mockLegacyLinkedProjectCacheLayer,
   mockLegacyLoginApi,
@@ -104,7 +104,7 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
-    // The runtime layer under test builds the REAL legacyCliConfigLayer against
+    // The runtime layer under test builds the REAL legacyCliSettingsLayer against
     // the real filesystem — see legacyIsolatedHomeLayer's docs. Bootstrap's
     // legacyPlatformApiLayer additionally eagerly validates the access token at
     // layer-construction time, so inject a valid token via the isolated env —
@@ -119,7 +119,7 @@ function ambientStubs() {
     mockTelemetryRuntime(),
     out.layer,
     flagLayers,
-    mockLegacyCliConfig({ workdir: "/tmp/bootstrap-layers-test" }),
+    mockLegacyCliSettings({ workdir: "/tmp/bootstrap-layers-test" }),
     mockLegacyCredentialsLayer,
     mockLegacyLinkedProjectCacheLayer,
     mockLegacyTelemetryStateLayer,

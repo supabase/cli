@@ -41,7 +41,7 @@ function setup(args: ReadonlyArray<string>) {
     CliOutput.layer(textCliOutputFormatter()),
     out.layer,
     Layer.succeed(CliArgs, { args }),
-    // `legacyStorageGatewayRuntimeLayer`'s cliConfig/credentials layers read
+    // `legacyStorageGatewayRuntimeLayer`'s cliSettings/credentials layers read
     // real env/files when built. Neither check under test ever reaches that
     // lazy factory, but isolate ambient env and homeDir defensively anyway —
     // same rationale as the sibling experimental-gate tests (ssl-enforcement,

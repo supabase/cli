@@ -5,7 +5,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Exit, Layer, Option } from "effect";
-import { ProjectHome } from "../../../config/project-home.service.ts";
+import { CliProjectHome } from "../../../config/cli-project-home.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { functionsDevWatchPaths, resolveFunctionsBundle } from "./functions-dev-config.ts";
 import {
@@ -34,14 +34,14 @@ function projectLayer(cwd: string) {
       }),
     ),
     Layer.succeed(
-      ProjectHome,
-      ProjectHome.of({
+      CliProjectHome,
+      CliProjectHome.of({
         projectRoot: cwd,
         supabaseDir: join(cwd, "supabase"),
         projectHomeDir,
         projectLinkPath: join(projectHomeDir, "project.json"),
         projectLocalVersionsPath: join(projectHomeDir, "local-versions.json"),
-        ensureProjectHomeDir: Effect.void,
+        ensureCliProjectHomeDir: Effect.void,
       }),
     ),
   );

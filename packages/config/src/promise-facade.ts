@@ -1,31 +1,31 @@
 import type { FileSystem, Path } from "effect";
 import { Layer, ManagedRuntime } from "effect";
 import type {
-  LoadedProjectConfig,
-  LoadProjectConfigOptions,
-  SaveProjectConfigOptions,
+  LoadedCliConfig,
+  LoadCliConfigOptions,
+  SaveCliConfigOptions,
 } from "./config-document.ts";
 import type { FunctionsManifest } from "./functions-manifest-model.ts";
 import { inferFunctionsManifest } from "./functions-manifest.ts";
-import type { ProjectPaths } from "./paths.ts";
-import type { LoadProjectEnvironmentOptions, ProjectEnvironment } from "./project.ts";
-import { loadProjectEnvironment } from "./project.ts";
-import { findProjectPaths, findProjectRoot } from "./paths.ts";
-import { projectConfigStoreLayer } from "./project-config.layer.ts";
-import { ProjectConfigStore } from "./project-config.service.ts";
+import type { CliProjectPaths } from "./paths.ts";
+import type { LoadCliProjectEnvironmentOptions, CliProjectEnvironment } from "./project.ts";
+import { loadCliProjectEnvironment } from "./project.ts";
+import { findCliProjectPaths, findCliProjectRoot } from "./paths.ts";
+import { cliConfigStoreLayer } from "./cli-config.layer.ts";
+import { CliConfigStore } from "./cli-config.service.ts";
 
-export interface ProjectConfigIo {
-  readonly loadProjectConfig: (
+export interface CliConfigIo {
+  readonly loadCliConfig: (
     cwd: string,
-    options?: LoadProjectConfigOptions,
-  ) => Promise<LoadedProjectConfig | null>;
-  readonly findProjectRootFor: (cwd: string) => Promise<string | null>;
-  readonly findProjectPathsFor: (cwd: string) => Promise<ProjectPaths | null>;
-  readonly loadProjectConfigFile: (path: string) => Promise<LoadedProjectConfig>;
-  readonly loadProjectEnvironmentFor: (
-    options: LoadProjectEnvironmentOptions,
-  ) => Promise<ProjectEnvironment | null>;
-  readonly saveProjectConfig: (options: SaveProjectConfigOptions) => Promise<LoadedProjectConfig>;
+    options?: LoadCliConfigOptions,
+  ) => Promise<LoadedCliConfig | null>;
+  readonly findCliProjectRootFor: (cwd: string) => Promise<string | null>;
+  readonly findCliProjectPathsFor: (cwd: string) => Promise<CliProjectPaths | null>;
+  readonly loadCliConfigFile: (path: string) => Promise<LoadedCliConfig>;
+  readonly loadCliProjectEnvironmentFor: (
+    options: LoadCliProjectEnvironmentOptions,
+  ) => Promise<CliProjectEnvironment | null>;
+  readonly saveCliConfig: (options: SaveCliConfigOptions) => Promise<LoadedCliConfig>;
   readonly loadFunctionsManifest: (cwd: string) => Promise<FunctionsManifest>;
 }
 
@@ -35,12 +35,12 @@ export interface ProjectConfigIo {
  * platform layer providing a superset of `FileSystem | Path` (e.g.
  * `BunServices.layer` / `NodeServices.layer`) is assignable here.
  */
-export function makeProjectConfigIo(
+export function makeCliConfigIo(
   platformLayer: Layer.Layer<FileSystem.FileSystem | Path.Path>,
-): ProjectConfigIo {
+): CliConfigIo {
   function buildRuntime() {
     return ManagedRuntime.make(
-      Layer.mergeAll(platformLayer, projectConfigStoreLayer.pipe(Layer.provide(platformLayer))),
+      Layer.mergeAll(platformLayer, cliConfigStoreLayer.pipe(Layer.provide(platformLayer))),
     );
   }
 
@@ -59,18 +59,18 @@ export function makeProjectConfigIo(
   }
 
   return {
-    loadProjectConfig: async (cwd, options) =>
-      getRuntime().runPromise(ProjectConfigStore.use((store) => store.load(cwd, options))),
-    findProjectRootFor: async (cwd) => getRuntime().runPromise(findProjectRoot(cwd)),
-    findProjectPathsFor: async (cwd) => getRuntime().runPromise(findProjectPaths(cwd)),
-    loadProjectConfigFile: async (path) =>
-      getRuntime().runPromise(ProjectConfigStore.use((store) => store.loadFile(path))),
-    loadProjectEnvironmentFor: async (options) =>
+    loadCliConfig: async (cwd, options) =>
+      getRuntime().runPromise(CliConfigStore.use((store) => store.load(cwd, options))),
+    findCliProjectRootFor: async (cwd) => getRuntime().runPromise(findCliProjectRoot(cwd)),
+    findCliProjectPathsFor: async (cwd) => getRuntime().runPromise(findCliProjectPaths(cwd)),
+    loadCliConfigFile: async (path) =>
+      getRuntime().runPromise(CliConfigStore.use((store) => store.loadFile(path))),
+    loadCliProjectEnvironmentFor: async (options) =>
       getRuntime().runPromise(
-        loadProjectEnvironment({ ...options, baseEnv: options.baseEnv ?? process.env }),
+        loadCliProjectEnvironment({ ...options, baseEnv: options.baseEnv ?? process.env }),
       ),
-    saveProjectConfig: async (options) =>
-      getRuntime().runPromise(ProjectConfigStore.use((store) => store.save(options))),
+    saveCliConfig: async (options) =>
+      getRuntime().runPromise(CliConfigStore.use((store) => store.save(options))),
     loadFunctionsManifest: async (cwd) => getRuntime().runPromise(inferFunctionsManifest({ cwd })),
   };
 }

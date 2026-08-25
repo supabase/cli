@@ -16,7 +16,7 @@ import { legacyGoUrlParse } from "./legacy-storage-url.ts";
  * - **D** = `legacy-db-config.toml-read.ts` — raw smol-toml document + `EnvLookup`,
  * Effect-based, fails with `LegacyDbConfigLoadError`. Feeds ~15 db/migration commands via
  * `legacy-db-config.layer.ts`.
- * - **L** = `legacy-local-config-values.ts` — decoded `@supabase/config` `ProjectConfig`,
+ * - **L** = `legacy-local-config-values.ts` — decoded `@supabase/config` `CliConfig`,
  * synchronous `node:fs`, throws plain `Error`. Feeds `legacy-status-values.ts` and
  * `stop/stop.handler.ts`.
  *
@@ -29,7 +29,7 @@ import { legacyGoUrlParse } from "./legacy-storage-url.ts";
  * {@link legacyValidateResolvedConfig} is now IMPLEMENTED and fully wired into BOTH callers: L
  * (`legacy-local-config-values.ts`'s `legacyResolveLocalConfigValues`) and D
  * (`legacy-db-config.toml-read.ts`'s `legacyReadDbToml`) each build a
- * {@link LegacyConfigValidationInput} from their own decoded config (a `ProjectConfig` + raw
+ * {@link LegacyConfigValidationInput} from their own decoded config (a `CliConfig` + raw
  * `document` for L, a raw smol-toml document + `EnvLookup` for D) and call this function once,
  * at the correct position. Wiring D through this module also fixed D's `db.major_version
  * === 0` divergence (D used to fall through to the generic invalid-value message; it now

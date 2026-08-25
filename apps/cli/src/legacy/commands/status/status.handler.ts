@@ -1,7 +1,7 @@
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, FileSystem, Option } from "effect";
 
-import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
 import { MachineErrorContext } from "../../../shared/output/machine-error-context.service.ts";
@@ -90,7 +90,7 @@ function formatGoStringSlice(items: ReadonlyArray<string>): string {
 export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyStatusFlags) {
   const output = yield* Output;
   const goOutputFlag = yield* LegacyOutputFlag;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const telemetryState = yield* LegacyTelemetryState;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fs = yield* FileSystem.FileSystem;
@@ -137,7 +137,7 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // unconditionally — before `status`'s own
     // override-name parsing or handler body. A missing or non-directory
     // path fails immediately, so this must win over every later error.
-    yield* legacyValidateWorkdirIsDirectory(cliConfig.workdir, fs).pipe(
+    yield* legacyValidateWorkdirIsDirectory(cliSettings.workdir, fs).pipe(
       Effect.mapError((error) => new LegacyStatusWorkdirError({ message: error.message })),
     );
 
@@ -160,7 +160,7 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // the full rationale (including why workdir validation stays out
     // of it and is instead handled by step 0 above).
     const context = yield* legacyLoadLocalProjectContext(
-      cliConfig.workdir,
+      cliSettings.workdir,
       (message) => new LegacyStatusConfigLoadError({ message }),
     );
 
@@ -178,7 +178,7 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
         legacyResolveStatusLocalState(
           context.config,
           context.hostname,
-          cliConfig.workdir,
+          cliSettings.workdir,
           context.projectEnvValues,
           context.loaded?.document,
         ),

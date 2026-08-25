@@ -1,4 +1,4 @@
-import type { ProjectConfigIo } from "./promise-facade.ts";
+import type { CliConfigIo } from "./promise-facade.ts";
 
 // Resolved by bundlers targeting `browser` for the `@supabase/config/io`
 // subpath. There is no browser-safe file-IO implementation — browser
@@ -18,29 +18,29 @@ async function unavailableInBrowser(): Promise<never> {
   );
 }
 
-// Typed against `ProjectConfigIo` (mirroring how `bun.ts`/`node.ts` type
+// Typed against `CliConfigIo` (mirroring how `bun.ts`/`node.ts` type
 // their own facade object) so this module cannot structurally diverge from
 // the real facades' export shape.
-const projectConfigIo: ProjectConfigIo = {
-  loadProjectConfig: unavailableInBrowser,
-  findProjectRootFor: unavailableInBrowser,
-  findProjectPathsFor: unavailableInBrowser,
-  loadProjectConfigFile: unavailableInBrowser,
-  loadProjectEnvironmentFor: unavailableInBrowser,
-  saveProjectConfig: unavailableInBrowser,
+const cliConfigIo: CliConfigIo = {
+  loadCliConfig: unavailableInBrowser,
+  findCliProjectRootFor: unavailableInBrowser,
+  findCliProjectPathsFor: unavailableInBrowser,
+  loadCliConfigFile: unavailableInBrowser,
+  loadCliProjectEnvironmentFor: unavailableInBrowser,
+  saveCliConfig: unavailableInBrowser,
   loadFunctionsManifest: unavailableInBrowser,
 };
 
-export const loadProjectConfig = projectConfigIo.loadProjectConfig;
-export const findProjectRootFor = projectConfigIo.findProjectRootFor;
-export const findProjectPathsFor = projectConfigIo.findProjectPathsFor;
-export const loadProjectConfigFile = projectConfigIo.loadProjectConfigFile;
-export const loadProjectEnvironmentFor = projectConfigIo.loadProjectEnvironmentFor;
-export const saveProjectConfig = projectConfigIo.saveProjectConfig;
-export const loadFunctionsManifest = projectConfigIo.loadFunctionsManifest;
-export type { ProjectConfigIo } from "./promise-facade.ts";
+export const loadCliConfig = cliConfigIo.loadCliConfig;
+export const findCliProjectRootFor = cliConfigIo.findCliProjectRootFor;
+export const findCliProjectPathsFor = cliConfigIo.findCliProjectPathsFor;
+export const loadCliConfigFile = cliConfigIo.loadCliConfigFile;
+export const loadCliProjectEnvironmentFor = cliConfigIo.loadCliProjectEnvironmentFor;
+export const saveCliConfig = cliConfigIo.saveCliConfig;
+export const loadFunctionsManifest = cliConfigIo.loadFunctionsManifest;
+export type { CliConfigIo } from "./promise-facade.ts";
 // Re-exports every pure symbol from `.` (types, schema, errors, etc.) so
-// `./io` consumers can name `LoadedProjectConfig`/`ProjectPaths`/etc. without
+// `./io` consumers can name `LoadedCliConfig`/`CliProjectPaths`/etc. without
 // a second import from `@supabase/config` — `index.ts`'s own graph is pure,
 // so this doesn't drag anything platform-specific into it, and this module
 // stays platform-free. No name collisions with the seven facade functions

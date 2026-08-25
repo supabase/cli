@@ -9,12 +9,12 @@ import { Command } from "effect/unstable/cli";
 import {
   mockAnalytics,
   mockOutput,
-  mockProjectContext,
+  mockCliProjectContext,
   mockRuntimeInfo,
   mockTty,
   processEnvLayer,
 } from "../../../../tests/helpers/mocks.ts";
-import { cliConfigLayer } from "../../../next/config/cli-config.layer.ts";
+import { cliSettingsLayer } from "../../../next/config/cli-settings.layer.ts";
 import { processControlLayer } from "../../../shared/runtime/process-control.layer.ts";
 import { EventCommandExecuted } from "../../../shared/telemetry/event-catalog.ts";
 import { legacyAnalyticsLayer } from "../../telemetry/legacy-analytics.layer.ts";
@@ -60,10 +60,10 @@ function setupWithRealAnalytics(dir: string) {
   const runtimeInfoLayer = mockRuntimeInfo({ homeDir: dir });
   const ttyLayer = mockTty();
   const envLayer = processEnvLayer({ SUPABASE_HOME: dir });
-  const projectContextLayer = mockProjectContext();
-  const configLayer = cliConfigLayer.pipe(
+  const cliProjectContextLayer = mockCliProjectContext();
+  const configLayer = cliSettingsLayer.pipe(
     Layer.provide(runtimeInfoLayer),
-    Layer.provide(projectContextLayer),
+    Layer.provide(cliProjectContextLayer),
   );
   const analyticsLayer = legacyAnalyticsLayer.pipe(
     Layer.provide(configLayer),

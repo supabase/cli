@@ -4,8 +4,8 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import { legacyCredentialsLayer } from "../auth/legacy-credentials.layer.ts";
 import { legacyPlatformApiFactoryLayer } from "../auth/legacy-platform-api-factory.layer.ts";
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
-import { legacyCliConfigLayer } from "../config/legacy-cli-config.layer.ts";
-import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { legacyCliSettingsLayer } from "../config/legacy-cli-settings.layer.ts";
+import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { legacyProjectRefLayer } from "../config/legacy-project-ref.layer.ts";
 import { LegacyProjectRefResolver } from "../config/legacy-project-ref.service.ts";
 import { legacyDebugLoggerLayer } from "./legacy-debug-logger.layer.ts";
@@ -31,10 +31,10 @@ import { CommandRuntime } from "../../shared/runtime/command-runtime.service.ts"
  * Management API client.
  */
 export function legacyStorageGatewayRuntimeLayer(subcommand: ReadonlyArray<string>) {
-  const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+  const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
   const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
   const credentials = legacyCredentialsLayer.pipe(
-    Layer.provide(cliConfig),
+    Layer.provide(cliSettings),
     Layer.provide(legacyDebugLoggerLayer),
   );
   // Lazy factory: build does NOT resolve a token. Token resolution is deferred
@@ -43,19 +43,19 @@ export function legacyStorageGatewayRuntimeLayer(subcommand: ReadonlyArray<strin
   // API.
   const platformApiFactory = legacyPlatformApiFactoryLayer.pipe(
     Layer.provide(credentials),
-    Layer.provide(cliConfig),
+    Layer.provide(cliSettings),
     Layer.provide(legacyDebugLoggerLayer),
     Layer.provide(legacyIdentityStitchLayer),
   );
 
   const built = Layer.mergeAll(
-    cliConfig,
+    cliSettings,
     platformApiFactory,
     httpClient,
-    legacyProjectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliConfig)),
+    legacyProjectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
     legacyLinkedProjectCacheLayer.pipe(
       Layer.provide(credentials),
-      Layer.provide(cliConfig),
+      Layer.provide(cliSettings),
       Layer.provide(httpClient),
       Layer.provide(legacyIdentityStitchLayer),
     ),
@@ -72,7 +72,7 @@ export function legacyStorageGatewayRuntimeLayer(subcommand: ReadonlyArray<strin
 
 type LegacyStorageGatewayServices =
   | LegacyPlatformApiFactory
-  | LegacyCliConfig
+  | LegacyCliSettings
   | LegacyProjectRefResolver
   | LegacyLinkedProjectCache
   | LegacyTelemetryState

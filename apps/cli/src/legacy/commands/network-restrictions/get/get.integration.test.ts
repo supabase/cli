@@ -7,7 +7,7 @@ import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -52,11 +52,11 @@ function setup(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 200, body: opts.response ?? APPLIED_WITH_CIDRS },
     network: opts.network,
   });
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
   });
   return { layer, out, api };
@@ -68,13 +68,13 @@ function setupTracked(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 200, body: opts.response ?? APPLIED_WITH_CIDRS },
     network: opts.network,
   });
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
   });
@@ -233,7 +233,7 @@ describe("legacy network-restrictions get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("uses --project-ref flag value over LegacyCliConfig.projectId", () => {
+  it.live("uses --project-ref flag value over LegacyCliSettings.projectId", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup({ response: APPLIED_WITH_CIDRS });
     return Effect.gen(function* () {

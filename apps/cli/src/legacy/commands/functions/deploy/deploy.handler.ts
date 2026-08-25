@@ -5,7 +5,7 @@ import { resolveEdgeRuntimeVersionPin } from "../../../../shared/functions/funct
 import { legacyAqua, legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
 import { legacyFunctionsGoConfigCompat } from "../../../shared/legacy-functions-go-config.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
 import { legacyDashboardUrl } from "../../../shared/legacy-profile.ts";
@@ -18,7 +18,7 @@ export const legacyFunctionsDeploy = Effect.fn("legacy.functions.deploy")(functi
   flags: LegacyFunctionsDeployFlags,
 ) {
   const api = yield* LegacyPlatformApi;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const resolver = yield* LegacyProjectRefResolver;
   // `--yes` OR `SUPABASE_YES` inside the `--prune` confirm — the env var
   // must auto-confirm too, not just the flag.
@@ -29,17 +29,17 @@ export const legacyFunctionsDeploy = Effect.fn("legacy.functions.deploy")(functi
   const stdio = yield* Stdio.Stdio;
   const rawArgs = yield* stdio.args;
   const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersionPin(
-    join(cliConfig.workdir, "supabase"),
+    join(cliSettings.workdir, "supabase"),
   );
   let resolvedProjectRef = Option.none<string>();
 
   yield* deployFunctions(flags, {
     api,
-    cwd: cliConfig.workdir,
+    cwd: cliSettings.workdir,
     flagCwd: runtimeInfo.cwd,
-    projectRoot: cliConfig.workdir,
-    supabaseDir: join(cliConfig.workdir, "supabase"),
-    dashboardUrl: legacyDashboardUrl(cliConfig.profile),
+    projectRoot: cliSettings.workdir,
+    supabaseDir: join(cliSettings.workdir, "supabase"),
+    dashboardUrl: legacyDashboardUrl(cliSettings.profile),
     goConfigCompat: legacyFunctionsGoConfigCompat,
     yes,
     rawArgs,

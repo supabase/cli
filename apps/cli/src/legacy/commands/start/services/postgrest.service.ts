@@ -16,7 +16,7 @@
  * own documented PostgREST exception.
  */
 
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
@@ -27,11 +27,11 @@ import {
 
 export interface LegacyPostgrestEnvInput {
   /** `config.api.schemas` — joined with `,` into `PGRST_DB_SCHEMAS`. */
-  readonly schemas: ProjectConfig["api"]["schemas"];
+  readonly schemas: CliConfig["api"]["schemas"];
   /** `config.api.extra_search_path` — joined with `,` into `PGRST_DB_EXTRA_SEARCH_PATH`. */
-  readonly extraSearchPath: ProjectConfig["api"]["extra_search_path"];
+  readonly extraSearchPath: CliConfig["api"]["extra_search_path"];
   /** `config.api.max_rows`. */
-  readonly maxRows: ProjectConfig["api"]["max_rows"];
+  readonly maxRows: CliConfig["api"]["max_rows"];
   /** The `db` container's own Docker name (`legacyServiceContainerName("db", projectId)`). */
   readonly dbHost: string;
   /** See `legacyStartInternalDbPassword` (`../../../shared/db-bootstrap/internal-db-connection.ts`). */
@@ -68,9 +68,9 @@ export interface LegacyPostgrestContainerSpecInput {
   readonly networkId: string;
   /** `utils.Config.Api.Image`, already resolved/pulled by the caller (`image-prepull.ts`). */
   readonly image: string;
-  readonly schemas: ProjectConfig["api"]["schemas"];
-  readonly extraSearchPath: ProjectConfig["api"]["extra_search_path"];
-  readonly maxRows: ProjectConfig["api"]["max_rows"];
+  readonly schemas: CliConfig["api"]["schemas"];
+  readonly extraSearchPath: CliConfig["api"]["extra_search_path"];
+  readonly maxRows: CliConfig["api"]["max_rows"];
   /** `LegacyLocalConfigValues.dbUrl` — reused, not recomputed, to derive the internal DB password. */
   readonly dbUrl: string;
   readonly jwks: string;

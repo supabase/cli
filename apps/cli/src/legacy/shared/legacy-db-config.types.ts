@@ -53,7 +53,7 @@ export interface LegacyDbConfigFlags {
    * `LegacyProjectRefResolver.loadProjectRef`) — it is NOT a full substitute for
    * that env var. `SUPABASE_PROJECT_ID` also drives the LOCAL container id and
    * the pg-delta project id (`legacyResolvePgDeltaProjectId`, read from
-   * `cliConfig.projectId` in `db diff`/`db pull`/`db reset`), which this flag
+   * `cliSettings.projectId` in `db diff`/`db pull`/`db reset`), which this flag
    * deliberately does NOT touch — the `db` commands' `--project-ref` only ever
    * feeds the resolver above, never the local-side id derivation.
    */

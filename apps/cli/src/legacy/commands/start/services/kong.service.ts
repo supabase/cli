@@ -250,7 +250,7 @@ export interface LegacyKongContainerSpecInput {
    */
   readonly nginxWorkerProcesses: string;
   /**
-   * `LegacyCliConfig.workdir` — used to resolve any relative
+   * `LegacyCliSettings.workdir` — used to resolve any relative
    * {@link emailTemplateMounts} `contentPath` to an absolute host path.
    */
   readonly workdir: string;

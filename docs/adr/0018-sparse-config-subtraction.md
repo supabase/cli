@@ -65,3 +65,22 @@ All functions are pure and synchronous, operating on decoded config values, with
 - [CLI-2155](https://linear.app/supabase/issue/CLI-2155/store-the-config-default-values-and-provide-mapping-function) — this ticket
 - [CLI-2156](https://linear.app/supabase/issue/CLI-2156/add-supabase-config-diff-to-the-cli) — `config diff`, consumer of the subtract core
 - [CLI-2064](https://linear.app/supabase/issue/CLI-2064/add-supabase-config-pull-to-the-cli) — `config pull`
+
+## Addendum (2026-08-25): `ProjectConfig`/`CliConfig` vocabulary rename (CLI-2235)
+
+CLI-2235 (PR #6328) renamed this ADR's `ProjectConfig` symbols to `CliConfig` ones. Read every
+`ProjectConfig` above as what the settled vocabulary now calls `CliConfig` — the config-file
+document — not the hosted-project subset ADR 0019 assigns to `ProjectConfig` going forward; this
+ADR's `ProjectConfig` never meant that subset. Old → new:
+
+| Old                       | New                   |
+| ------------------------- | --------------------- |
+| `SparseProjectConfig`     | `SparseCliConfig`     |
+| `BaseProjectConfig`       | `BaseCliConfig`       |
+| `getDefaultProjectConfig` | `getDefaultCliConfig` |
+| `subtractProjectConfig`   | `subtractCliConfig`   |
+
+`omitDefaultValues` is unchanged. See
+[`packages/config/docs/cli-config-loading.md`](../../packages/config/docs/cli-config-loading.md)
+for the settled vocabulary going forward, and ADR 0009's own addendum for the sibling rename of
+this package's config-document load/save/schema symbols.
