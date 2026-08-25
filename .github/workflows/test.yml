@@ -179,7 +179,7 @@ jobs:
         run: pnpm exec nx run supabase:build
 
       - name: Run end-to-end tests
-        run: pnpm run test:e2e --shard=${{ matrix.shard }}/3
+        run: pnpm exec turbo run test:e2e:run --only --concurrency=1 -- --shard=${{ matrix.shard }}/3
         env:
           CLI_HARNESS_TARGET: ts-legacy
           SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go

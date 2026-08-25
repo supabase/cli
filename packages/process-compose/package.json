@@ -8,10 +8,12 @@
   },
   "scripts": {
     "test": "pnpm run test:unit && pnpm run test:integration",
-    "test:unit": "bun --bun vitest run --project unit --coverage.reportsDirectory=coverage/unit",
-    "test:integration": "bun --bun vitest run --project integration --coverage.reportsDirectory=coverage/integration",
-    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name",
-    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name"
+    "test:unit": "pnpm exec turbo run @supabase/process-compose#test:unit:run --",
+    "test:unit:run": "bun --bun vitest run --project unit --coverage.reportsDirectory=coverage/unit",
+    "test:integration": "pnpm exec turbo run @supabase/process-compose#test:integration:run --",
+    "test:integration:run": "bun --bun vitest run --project integration --coverage.reportsDirectory=coverage/integration",
+    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name,@supabase/root",
+    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name,@supabase/root"
   },
   "dependencies": {
     "effect": "catalog:"
@@ -22,26 +24,7 @@
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@vitest/coverage-istanbul": "catalog:",
-    "knip": "catalog:",
-    "oxfmt": "catalog:",
-    "oxlint": "catalog:",
-    "oxlint-tsgolint": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
-  },
-  "knip": {
-    "entry": [
-      "src/**/*.test.ts",
-      "tests/**/*.ts"
-    ],
-    "ignoreDependencies": [
-      "oxfmt",
-      "oxlint",
-      "oxlint-tsgolint"
-    ],
-    "ignoreBinaries": [
-      "nx",
-      "taskkill"
-    ]
   }
 }

@@ -144,6 +144,16 @@ the whole reset** (not just "skip buckets").
 | `SUPABASE_DB_PORT` / `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*` | local-path container-recreate config overrides, same as `db start`                                                                                                                                                                                                         | no                                                      |
 | `SUPABASE_NETWORK_ID` (`--network-id`)                                                                     | forces the recreated container/network onto an existing Docker network                                                                                                                                                                                                     | no                                                      |
 
+## Connection loss during migration apply
+
+A migration file's statements and its history insert are sent as one batch. If the connection is
+already gone when that batch is handed to the driver, nothing reaches the server, so the failure is
+reported as a lost connection (with the driver's own reason and, locally, the hint to restart the
+stack) rather than against a statement that never ran. Once any part of the batch has been written,
+and for the pipeline-incompatible statements the same loop runs on their own (`CREATE INDEX
+CONCURRENTLY`, `VACUUM`, ...), a failure still reports as `At statement: N` with the statement
+echoed, because those may genuinely have reached the server.
+
 ## Exit Codes
 
 | Code | Condition                                                                                                                                  |

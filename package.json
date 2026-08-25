@@ -2,9 +2,9 @@
   "name": "@supabase/root",
   "private": true,
   "scripts": {
-    "test:unit": "pnpm --recursive --if-present run test:unit",
-    "test:integration": "pnpm --recursive --if-present run test:integration",
-    "test:e2e": "pnpm --recursive --if-present --workspace-concurrency=1 run test:e2e",
+    "test:unit": "pnpm exec turbo run test:unit:run --",
+    "test:integration": "pnpm exec turbo run test:integration:run --",
+    "test:e2e": "pnpm exec turbo run test:e2e:run --concurrency=1 --",
     "check:all": "nx run-many -t types:check lint:check fmt:check knip:check",
     "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix",
     "repos:install": "git submodule update --init --recursive",
@@ -13,11 +13,13 @@
     "cli-release": "bun tools/release/local-release.ts"
   },
   "devDependencies": {
+    "knip": "catalog:",
     "nx": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:",
     "pkg-pr-new": "0.0.88",
+    "turbo": "catalog:",
     "typescript": "catalog:",
     "verdaccio": "^6.9.3"
   },
@@ -27,5 +29,28 @@
       "version": "24"
     }
   },
-  "packageManager": "pnpm@11.4.0"
+  "packageManager": "pnpm@11.4.0",
+  "nx": {
+    "includedScripts": [],
+    "targets": {
+      "lint:check": {
+        "command": "oxlint"
+      },
+      "lint:fix": {
+        "command": "oxlint --fix"
+      },
+      "fmt:check": {
+        "command": "oxfmt --check"
+      },
+      "fmt:fix": {
+        "command": "oxfmt"
+      },
+      "knip:check": {
+        "command": "knip-bun"
+      },
+      "knip:fix": {
+        "command": "knip-bun --fix"
+      }
+    }
+  }
 }

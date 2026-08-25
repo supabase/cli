@@ -143,23 +143,25 @@ pnpm run fix:all     # run all fixers across every project
 
 Standard TypeScript workspaces (`apps/cli`, `packages/api`, `packages/config`, `packages/process-compose`, `packages/stack`) declare their package scripts explicitly. Test suites vary by package: unit tests are standard, while integration and e2e tests exist only where applicable.
 
-| Script             | What it does                                                                   |
-| ------------------ | ------------------------------------------------------------------------------ |
-| `test`             | Run the package's declared test suites                                         |
-| `test:unit`        | Run unit tests                                                                 |
-| `test:integration` | Run integration tests where applicable                                         |
-| `test:e2e`         | Run end-to-end tests where applicable                                          |
-| `check:all`        | Run all check targets for this project                                         |
-| `fix:all`          | Run all fix targets for this project                                           |
-| `types:check`      | Type-check with `tsc --noEmit` _(inferred by Nx plugin)_                       |
-| `lint:check`       | Check for lint errors with `oxlint` _(inferred by Nx plugin)_                  |
-| `lint:fix`         | Auto-fix lint errors _(inferred by Nx plugin)_                                 |
-| `fmt:check`        | Check formatting with `oxfmt --check` _(inferred by Nx plugin)_                |
-| `fmt:fix`          | Auto-fix formatting _(inferred by Nx plugin)_                                  |
-| `knip:check`       | Find unused exports and dependencies with `knip-bun` _(inferred by Nx plugin)_ |
-| `knip:fix`         | Auto-remove unused exports and dependencies _(inferred by Nx plugin)_          |
+| Script             | What it does                                             |
+| ------------------ | -------------------------------------------------------- |
+| `test`             | Run the package's declared test suites                   |
+| `test:unit`        | Run unit tests                                           |
+| `test:integration` | Run integration tests where applicable                   |
+| `test:e2e`         | Run end-to-end tests where applicable                    |
+| `check:all`        | Run all check targets for this project                   |
+| `fix:all`          | Run all fix targets for this project                     |
+| `types:check`      | Type-check with `tsc --noEmit` _(inferred by Nx plugin)_ |
 
-The test scripts are declared in each package's `package.json`, so package-local test commands are directly discoverable and can be sharded independently. The remaining quality scripts (`types:check`, `lint:*`, `fmt:*`, `knip:*`) are injected by local Nx plugins in `tools/nx-plugins/` and can be discovered via `nx show project <name>`.
+The test scripts are declared in each package's `package.json`, so package-local test commands are directly discoverable and can be sharded independently. Type-checking remains an Nx-inferred target.
+
+Linting, formatting, and unused-code analysis are repo-wide rather than per-package: `oxlint`, `oxfmt`, and `knip` read `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key) and run as `lint:*`/`fmt:*`/`knip:*` targets on the `@supabase/root` project (declared in the root `package.json`). Each package's `check:all`/`fix:all` includes them, and running the tools directly also just works:
+
+```sh
+pnpm exec oxlint
+pnpm exec oxfmt
+pnpm exec knip-bun
+```
 
 Quality checks are run from the workspace you are changing:
 
@@ -175,6 +177,11 @@ pnpm run test:integration
 pnpm run check:all
 pnpm run test:unit && pnpm run test:integration
 ```
+
+The root test scripts use Turbo to orchestrate the package-local `test:*:run`
+tasks. Unit and integration tasks are uncached for now; e2e tasks are also
+uncached and run one package at a time. Forward a Vitest shard to every e2e
+package with `pnpm run test:e2e --shard=1/3`.
 
 ## E2E Compatibility Test Suite
 
@@ -222,8 +229,8 @@ cd apps/cli-e2e
 pnpm test            # ts-legacy target (default and only target)
 pnpm test:legacy     # ts-legacy target (explicit, same as above)
 
-# Or via Nx from the repo root
-nx run @supabase/cli-e2e:test:e2e
+# Or via Turbo from the repo root
+pnpm --filter @supabase/cli-e2e run test:e2e
 ```
 
 ### Recording fixtures
@@ -343,14 +350,14 @@ Nx is the task runner for this repo. It handles caching, parallelism, and cross-
 **Run a single target:**
 
 ```sh
-nx run @supabase/api:knip:check
+nx run @supabase/api:types:check
 nx run supabase:test
 ```
 
 **Run a target across all projects:**
 
 ```sh
-nx run-many -t knip:check
+nx run-many -t types:check
 nx run-many -t lint:check fmt:check types:check knip:check
 ```
 
@@ -358,8 +365,10 @@ nx run-many -t lint:check fmt:check types:check knip:check
 
 ```sh
 nx affected -t test
-nx affected -t lint:check fmt:check types:check knip:check
+nx affected -t types:check
 ```
+
+Lint, format, and knip targets live on the root project and always cover the whole repo (a few seconds at most), so run them with `nx run-many` (or the tools directly) rather than `nx affected`.
 
 **Inspect a project's full task configuration** (including inferred targets):
 
@@ -367,7 +376,7 @@ nx affected -t lint:check fmt:check types:check knip:check
 nx show project @supabase/api
 ```
 
-This is the best way to see what targets exist on a project, what their inputs and outputs are, and whether they are cached. Some targets are not declared in `package.json` but are injected by local Nx plugins — `knip:check` and `knip:fix` are examples of this.
+This is the best way to see what quality targets exist on a project, what their inputs and outputs are, and whether they are cached. Test orchestration is handled by Turbo's package-local `test:*:run` tasks instead.
 
 ### Caching
 
@@ -376,7 +385,7 @@ Nx caches task results locally under `.nx/cache`. A target hits the cache when a
 To force a re-run and bypass the cache:
 
 ```sh
-nx run @supabase/api:knip:check --skip-nx-cache
+nx run @supabase/api:types:check --skip-nx-cache
 ```
 
 To clear all cached results:

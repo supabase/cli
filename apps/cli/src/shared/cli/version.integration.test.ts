@@ -8,6 +8,9 @@ import { nextRoot } from "../../next/cli/root.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
 import { CliArgs } from "./cli-args.service.ts";
 
+const formatLogArg = (value: unknown): string =>
+  typeof value === "object" && value !== null ? JSON.stringify(value) : String(value);
+
 describe("CLI --version (text)", () => {
   const versionLayer = (args: ReadonlyArray<string>) =>
     Layer.mergeAll(
@@ -25,8 +28,8 @@ describe("CLI --version (text)", () => {
           rest.length === 0
             ? first === undefined
               ? ""
-              : String(first)
-            : [first, ...rest].map(String).join(" ");
+              : formatLogArg(first)
+            : [first, ...rest].map(formatLogArg).join(" ");
         logs.push(line);
       });
     try {
@@ -54,8 +57,8 @@ describe("CLI --version (text)", () => {
           rest.length === 0
             ? first === undefined
               ? ""
-              : String(first)
-            : [first, ...rest].map(String).join(" ");
+              : formatLogArg(first)
+            : [first, ...rest].map(formatLogArg).join(" ");
         logs.push(line);
       });
     try {

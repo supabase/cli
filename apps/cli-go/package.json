@@ -1,0 +1,7 @@
+{
+  "name": "@supabase/cli-go",
+  "private": true,
+  "scripts": {
+    "build": "go build -o supabase-go ."
+  }
+}

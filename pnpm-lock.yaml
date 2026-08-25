@@ -54,6 +54,9 @@ catalogs:
     tldts:
       specifier: ^7.4.10
       version: 7.4.10
+    turbo:
+      specifier: 2.10.11
+      version: 2.10.11
     typescript:
       specifier: ^7.0.2
       version: 7.0.2
@@ -71,6 +74,9 @@ importers:
 
   .:
     devDependencies:
+      knip:
+        specifier: 'catalog:'
+        version: 6.32.2
       nx:
         specifier: 'catalog:'
         version: 23.1.1
@@ -86,6 +92,9 @@ importers:
       pkg-pr-new:
         specifier: 0.0.88
         version: 0.0.88
+      turbo:
+        specifier: 'catalog:'
+        version: 2.10.11
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -131,6 +140,30 @@ importers:
         version: 1.3.0
       '@parcel/watcher':
         specifier: ^2.6.0
+        version: 2.6.0
+      '@parcel/watcher-darwin-arm64':
+        specifier: 2.6.0
+        version: 2.6.0
+      '@parcel/watcher-darwin-x64':
+        specifier: 2.6.0
+        version: 2.6.0
+      '@parcel/watcher-linux-arm64-glibc':
+        specifier: 2.6.0
+        version: 2.6.0
+      '@parcel/watcher-linux-arm64-musl':
+        specifier: 2.6.0
+        version: 2.6.0
+      '@parcel/watcher-linux-x64-glibc':
+        specifier: 2.6.0
+        version: 2.6.0
+      '@parcel/watcher-linux-x64-musl':
+        specifier: 2.6.0
+        version: 2.6.0
+      '@parcel/watcher-win32-arm64':
+        specifier: 2.6.0
+        version: 2.6.0
+      '@parcel/watcher-win32-x64':
+        specifier: 2.6.0
         version: 2.6.0
       '@supabase/api':
         specifier: workspace:*
@@ -186,18 +219,6 @@ importers:
       ink-spinner:
         specifier: ^5.0.0
         version: 5.0.0(ink@7.1.1(@types/react@19.2.18)(react-devtools-core@7.0.1)(react@19.2.8))(react@19.2.8)
-      knip:
-        specifier: 'catalog:'
-        version: 6.32.2
-      oxfmt:
-        specifier: 'catalog:'
-        version: 0.63.0
-      oxlint:
-        specifier: 'catalog:'
-        version: 1.78.0(oxlint-tsgolint@7.0.2001)
-      oxlint-tsgolint:
-        specifier: 'catalog:'
-        version: 7.0.2001
       pg:
         specifier: ^8.23.0
         version: 8.23.0
@@ -275,24 +296,14 @@ importers:
       '@vitest/coverage-istanbul':
         specifier: 'catalog:'
         version: 4.1.10(vitest@4.1.10)
-      knip:
-        specifier: 'catalog:'
-        version: 6.32.2
-      oxfmt:
-        specifier: 'catalog:'
-        version: 0.63.0
-      oxlint:
-        specifier: 'catalog:'
-        version: 1.78.0(oxlint-tsgolint@7.0.2001)
-      oxlint-tsgolint:
-        specifier: 'catalog:'
-        version: 7.0.2001
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
       vitest:
         specifier: 'catalog:'
         version: 4.1.10(@types/node@26.2.0)(@vitest/coverage-istanbul@4.1.10)(vite@8.1.4(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0))
+
+  apps/cli-go: {}
 
   apps/docs:
     dependencies:
@@ -355,18 +366,6 @@ importers:
       '@vitest/coverage-istanbul':
         specifier: 'catalog:'
         version: 4.1.10(vitest@4.1.10)
-      knip:
-        specifier: 'catalog:'
-        version: 6.32.2
-      oxfmt:
-        specifier: 'catalog:'
-        version: 0.63.0
-      oxlint:
-        specifier: 'catalog:'
-        version: 1.78.0(oxlint-tsgolint@7.0.2001)
-      oxlint-tsgolint:
-        specifier: 'catalog:'
-        version: 7.0.2001
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -397,18 +396,6 @@ importers:
       '@vitest/coverage-istanbul':
         specifier: 'catalog:'
         version: 4.1.10(vitest@4.1.10)
-      knip:
-        specifier: 'catalog:'
-        version: 6.32.2
-      oxfmt:
-        specifier: 'catalog:'
-        version: 0.63.0
-      oxlint:
-        specifier: 'catalog:'
-        version: 1.78.0(oxlint-tsgolint@7.0.2001)
-      oxlint-tsgolint:
-        specifier: 'catalog:'
-        version: 7.0.2001
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -447,18 +434,6 @@ importers:
       '@vitest/coverage-istanbul':
         specifier: 'catalog:'
         version: 4.1.10(vitest@4.1.10)
-      knip:
-        specifier: 'catalog:'
-        version: 6.32.2
-      oxfmt:
-        specifier: 'catalog:'
-        version: 0.63.0
-      oxlint:
-        specifier: 'catalog:'
-        version: 1.78.0(oxlint-tsgolint@7.0.2001)
-      oxlint-tsgolint:
-        specifier: 'catalog:'
-        version: 7.0.2001
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -487,18 +462,6 @@ importers:
       '@vitest/coverage-istanbul':
         specifier: 'catalog:'
         version: 4.1.10(vitest@4.1.10)
-      knip:
-        specifier: 'catalog:'
-        version: 6.32.2
-      oxfmt:
-        specifier: 'catalog:'
-        version: 0.63.0
-      oxlint:
-        specifier: 'catalog:'
-        version: 1.78.0(oxlint-tsgolint@7.0.2001)
-      oxlint-tsgolint:
-        specifier: 'catalog:'
-        version: 7.0.2001
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -536,18 +499,6 @@ importers:
       '@vitest/coverage-istanbul':
         specifier: 'catalog:'
         version: 4.1.10(vitest@4.1.10)
-      knip:
-        specifier: 'catalog:'
-        version: 6.32.2
-      oxfmt:
-        specifier: 'catalog:'
-        version: 0.63.0
-      oxlint:
-        specifier: 'catalog:'
-        version: 1.78.0(oxlint-tsgolint@7.0.2001)
-      oxlint-tsgolint:
-        specifier: 'catalog:'
-        version: 7.0.2001
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
@@ -1330,13 +1281,6 @@ packages:
 
   '@napi-rs/wasm-runtime@0.2.4':
     resolution: {integrity: sha512-9zESzOO5aDByvhIAsOy9TbpZ0Ur2AJbUI7UT73kcUTS2mxAMHOBaa1st/jAymNoCtvrit99kkzT1FZuXVcgfIQ==}
-
-  '@napi-rs/wasm-runtime@1.2.2':
-    resolution: {integrity: sha512-JfB4kuJQjaoHuCTseIINHtHWeJnvgEcxjwA5t/Y00ZgaOO1Crz3fjT/p8kT28zA/Caz7oiUMn3d6H2yOVCVwuw==}
-    engines: {node: ^20.19.0 || ^22.13.0 || >=23.5.0}
-    peerDependencies:
-      '@emnapi/core': ^1.7.1 || ^2.0.0-alpha.3
-      '@emnapi/runtime': ^1.7.1 || ^2.0.0-alpha.3
 
   '@napi-rs/wasm-runtime@1.2.3':
     resolution: {integrity: sha512-UMduMbqO5s5zF2NkNacMT/yK5Y5QiKvWr2+50bzIIxFDwVJ2h49b+oyjaCGPhJxd2/gC2x39EHv/gHVuu36x2Q==}
@@ -2808,6 +2752,36 @@ packages:
 
   '@tsconfig/bun@1.0.11':
     resolution: {integrity: sha512-DQA3HOKFQ+/yPTUa73k5QGcuEM1ExtL6uWQMR0QrfOTitm0oLHqHd1tI74WtEtMqlIu+tvSMELJ6p5uNxVE7lw==}
+
+  '@turbo/darwin-64@2.10.11':
+    resolution: {integrity: sha512-v3R+1R/Ysozyo+p7Ri8MCIbndOvYt3DgPFrGLhrhQHfvyvbxyH3WyJj+A/2JTNmNleuAlh3JUyCV0iSVHIONTA==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@turbo/darwin-arm64@2.10.11':
+    resolution: {integrity: sha512-R0a0CvGAeYYsBgPIgFNB3agGXh6qukjduNhFlwVVX1Ss2IdBJLXmgjytNGmo084bLKS0B6UdLRwKhXMHKKaObQ==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@turbo/linux-64@2.10.11':
+    resolution: {integrity: sha512-dGlY2vg7jpsLjGS1bf9sD/cw1sGMAYbeHGQKGRFxd5Zaj+Ufbj8cNXl/vIit8ueCU97zhL/znn60ZV5iSfZAxw==}
+    cpu: [x64]
+    os: [android, linux]
+
+  '@turbo/linux-arm64@2.10.11':
+    resolution: {integrity: sha512-eSP9+jjsSCBs2x0QpJZlp49dSD1EIMwXH7PsMIhdWk7w6IThhuKJ+jL95JQ2IW7tRjRmdh8gKcKQtrHLD5R5lA==}
+    cpu: [arm64]
+    os: [android, linux]
+
+  '@turbo/windows-64@2.10.11':
+    resolution: {integrity: sha512-4aD7edogJ8arK8DOyvjTI2KKwmchD5M/WM4BZgidrtFf7aSgn8Ce2rJnDwmriw980c2cKlHnhXtlGy38VtKB8g==}
+    cpu: [x64]
+    os: [win32]
+
+  '@turbo/windows-arm64@2.10.11':
+    resolution: {integrity: sha512-m8tJkIrTrbQ9O1uHxV0GUq623Zg1678xGna8eMsy4KbygUX/wVFgdZDYV/AxyoyaW/U7nyKoBvaDVwm22p9xqA==}
+    cpu: [arm64]
+    os: [win32]
 
   '@tybys/wasm-util@0.10.3':
     resolution: {integrity: sha512-F3fo1MYrRJYL3zER0OUOmkutjr1Vp23m7OsSgp7nq4SP6OqX6C/56XFIPAl5bt3zaBRjmW7SGz3u/6LwFpYcOg==}
@@ -6500,10 +6474,6 @@ packages:
   tinybench@2.9.0:
     resolution: {integrity: sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==}
 
-  tinyexec@1.2.4:
-    resolution: {integrity: sha512-SHf/r48b7vOrjve9PxJo3MN5v5yuyjHvdUcrQffT3WXMUfnGmHDVbC4k3sHJaJTgZCwpUplIaAo5ANtMyp3YHg==}
-    engines: {node: '>=18'}
-
   tinyexec@1.3.0:
     resolution: {integrity: sha512-QKAl9m8gWWGHV8jZcPeym6j+XULi6tOf1mT83WYJ4Lk2ytW/uwAWkrP0uFsdoYMdueVJ0qs26wZ+23xeB4ibNQ==}
     engines: {node: '>=18'}
@@ -6582,6 +6552,10 @@ packages:
   tunnel@0.0.6:
     resolution: {integrity: sha512-1h/Lnq9yajKY2PEbBadPXj3VxsDDu844OnaAo52UVmIzIvwwtBPIuNvkjuzBlTWpfJyUbG3ez0KSBibQkj4ojg==}
     engines: {node: '>=0.6.11 <=0.7.0 || >=0.7.3'}
+
+  turbo@2.10.11:
+    resolution: {integrity: sha512-yQfwQVoRXwOuyX1LxiJFBFNg6VfuYh+/RyZLd82+isgyLkBXw3S5XRRzvcck1FAjSCG5sVyLd+O1eDMvYa3J7g==}
+    hasBin: true
 
   tweetnacl@0.14.5:
     resolution: {integrity: sha512-KXXFFdAbFXY4geFIwoyNK+f5Z1b7swfXABfL7HXCmoIWMKU3dmS26672A4EeQtDzLKy7SXmfBu51JolvEKwtGA==}
@@ -7315,7 +7289,6 @@ snapshots:
     dependencies:
       '@emnapi/wasi-threads': 1.2.2
       tslib: 2.8.1
-    optional: true
 
   '@emnapi/core@1.4.5':
     dependencies:
@@ -7335,7 +7308,6 @@ snapshots:
   '@emnapi/runtime@1.11.3':
     dependencies:
       tslib: 2.8.1
-    optional: true
 
   '@emnapi/runtime@1.4.5':
     dependencies:
@@ -7348,7 +7320,6 @@ snapshots:
   '@emnapi/wasi-threads@1.2.2':
     dependencies:
       tslib: 2.8.1
-    optional: true
 
   '@esbuild/aix-ppc64@0.28.2':
     optional: true
@@ -7735,21 +7706,21 @@ snapshots:
 
   '@napi-rs/wasm-runtime@0.2.4':
     dependencies:
-      '@emnapi/core': 1.4.5
-      '@emnapi/runtime': 1.4.5
-      '@tybys/wasm-util': 0.9.0
-
-  '@napi-rs/wasm-runtime@1.2.2(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)':
-    dependencies:
       '@emnapi/core': 1.11.2
-      '@emnapi/runtime': 1.11.2
-      '@tybys/wasm-util': 0.10.3
-    optional: true
+      '@emnapi/runtime': 1.11.3
+      '@tybys/wasm-util': 0.9.0
 
   '@napi-rs/wasm-runtime@1.2.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)':
     dependencies:
       '@emnapi/core': 1.11.1
       '@emnapi/runtime': 1.11.1
+      '@tybys/wasm-util': 0.10.3
+    optional: true
+
+  '@napi-rs/wasm-runtime@1.2.3(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)':
+    dependencies:
+      '@emnapi/core': 1.11.2
+      '@emnapi/runtime': 1.11.2
       '@tybys/wasm-util': 0.10.3
     optional: true
 
@@ -8018,7 +7989,7 @@ snapshots:
     dependencies:
       '@emnapi/core': 1.11.2
       '@emnapi/runtime': 1.11.2
-      '@napi-rs/wasm-runtime': 1.2.2(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)
+      '@napi-rs/wasm-runtime': 1.2.3(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)
     optional: true
 
   '@oxc-resolver/binding-win32-arm64-msvc@11.24.2':
@@ -8162,11 +8133,9 @@ snapshots:
   '@parcel/watcher-android-arm64@2.6.0':
     optional: true
 
-  '@parcel/watcher-darwin-arm64@2.6.0':
-    optional: true
+  '@parcel/watcher-darwin-arm64@2.6.0': {}
 
-  '@parcel/watcher-darwin-x64@2.6.0':
-    optional: true
+  '@parcel/watcher-darwin-x64@2.6.0': {}
 
   '@parcel/watcher-freebsd-x64@2.6.0':
     optional: true
@@ -8177,23 +8146,17 @@ snapshots:
   '@parcel/watcher-linux-arm-musl@2.6.0':
     optional: true
 
-  '@parcel/watcher-linux-arm64-glibc@2.6.0':
-    optional: true
+  '@parcel/watcher-linux-arm64-glibc@2.6.0': {}
 
-  '@parcel/watcher-linux-arm64-musl@2.6.0':
-    optional: true
+  '@parcel/watcher-linux-arm64-musl@2.6.0': {}
 
-  '@parcel/watcher-linux-x64-glibc@2.6.0':
-    optional: true
+  '@parcel/watcher-linux-x64-glibc@2.6.0': {}
 
-  '@parcel/watcher-linux-x64-musl@2.6.0':
-    optional: true
+  '@parcel/watcher-linux-x64-musl@2.6.0': {}
 
-  '@parcel/watcher-win32-arm64@2.6.0':
-    optional: true
+  '@parcel/watcher-win32-arm64@2.6.0': {}
 
-  '@parcel/watcher-win32-x64@2.6.0':
-    optional: true
+  '@parcel/watcher-win32-x64@2.6.0': {}
 
   '@parcel/watcher@2.6.0':
     dependencies:
@@ -8873,6 +8836,24 @@ snapshots:
 
   '@tsconfig/bun@1.0.11': {}
 
+  '@turbo/darwin-64@2.10.11':
+    optional: true
+
+  '@turbo/darwin-arm64@2.10.11':
+    optional: true
+
+  '@turbo/linux-64@2.10.11':
+    optional: true
+
+  '@turbo/linux-arm64@2.10.11':
+    optional: true
+
+  '@turbo/windows-64@2.10.11':
+    optional: true
+
+  '@turbo/windows-arm64@2.10.11':
+    optional: true
+
   '@tybys/wasm-util@0.10.3':
     dependencies:
       tslib: 2.8.1
@@ -9495,7 +9476,7 @@ snapshots:
 
   brace-expansion@5.0.8:
     dependencies:
-      balanced-match: 4.0.3
+      balanced-match: 4.0.4
 
   brace-expansion@5.0.9:
     dependencies:
@@ -11664,7 +11645,7 @@ snapshots:
 
   minimatch@10.2.5:
     dependencies:
-      brace-expansion: 5.0.8
+      brace-expansion: 5.0.9
 
   minimatch@10.2.6:
     dependencies:
@@ -11993,7 +11974,7 @@ snapshots:
       bl: 4.1.0
       chalk: 4.1.2
       cli-cursor: 3.1.0
-      cli-spinners: 2.6.1
+      cli-spinners: 2.9.2
       is-interactive: 1.0.0
       is-unicode-supported: 0.1.0
       log-symbols: 4.1.0
@@ -13197,8 +13178,6 @@ snapshots:
 
   tinybench@2.9.0: {}
 
-  tinyexec@1.2.4: {}
-
   tinyexec@1.3.0: {}
 
   tinyglobby@0.2.17:
@@ -13261,6 +13240,15 @@ snapshots:
       safe-buffer: 5.2.1
 
   tunnel@0.0.6: {}
+
+  turbo@2.10.11:
+    optionalDependencies:
+      '@turbo/darwin-64': 2.10.11
+      '@turbo/darwin-arm64': 2.10.11
+      '@turbo/linux-64': 2.10.11
+      '@turbo/linux-arm64': 2.10.11
+      '@turbo/windows-64': 2.10.11
+      '@turbo/windows-arm64': 2.10.11
 
   tweetnacl@0.14.5: {}
 
@@ -13543,7 +13531,7 @@ snapshots:
       picomatch: 4.0.5
       std-env: 4.2.0
       tinybench: 2.9.0
-      tinyexec: 1.2.4
+      tinyexec: 1.3.0
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.0
       vite: 8.1.4(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(yaml@2.9.0)

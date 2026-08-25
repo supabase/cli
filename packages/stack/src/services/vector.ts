@@ -106,7 +106,7 @@ export const makeVectorServiceDocker = (opts: DockerVectorOptions) => {
     entrypoint: "sh",
     cmd: [
       "-c",
-      `cat <<'EOF' > /etc/vector/vector.yaml && vector --config /etc/vector/vector.yaml
+      `cat <<'EOF' > /etc/vector/vector.yaml && exec vector --config /etc/vector/vector.yaml
 ${vectorConfig(
   opts.serviceHost,
   opts.analyticsPort,

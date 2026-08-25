@@ -4,8 +4,8 @@ packages:
   - "tools/*"
 
 allowBuilds:
-  '@parcel/watcher': true
-  '@launchql/protobufjs': true
+  "@parcel/watcher": true
+  "@launchql/protobufjs": true
   esbuild: true
   msgpackr-extract: true
   nx: true
@@ -29,6 +29,7 @@ catalog:
   "oxlint": "^1.78.0"
   "oxlint-tsgolint": "^7.0.2001"
   "tldts": "^7.4.10"
+  "turbo": "2.10.11"
   "vitest": "^4.1.10"
 
 blockExoticSubdeps: true
@@ -39,6 +40,12 @@ overrides:
 
 minimumReleaseAge: 10200
 minimumReleaseAgeExclude:
+  - "@turbo/darwin-64@2.10.11"
+  - "@turbo/darwin-arm64@2.10.11"
+  - "@turbo/linux-64@2.10.11"
+  - "@turbo/linux-arm64@2.10.11"
+  - "@turbo/windows-64@2.10.11"
+  - "@turbo/windows-arm64@2.10.11"
   - "@effect/atom-react@4.0.0-rc.111"
   - "@effect/platform-bun@4.0.0-rc.111"
   - "@effect/platform-node@4.0.0-rc.111"
@@ -50,6 +57,7 @@ minimumReleaseAgeExclude:
   - "@types/bun@1.4.0"
   - "bun-types@1.4.0"
   - "effect@4.0.0-rc.111"
+  - "turbo@2.10.11"
 
 supportedArchitectures:
   cpu:
@@ -67,4 +75,4 @@ supportedArchitectures:
     - win32
 
 patchedDependencies:
-  '@libpg-query/parser@17.6.10': patches/@libpg-query__parser@17.6.10.patch
+  "@libpg-query/parser@17.6.10": patches/@libpg-query__parser@17.6.10.patch

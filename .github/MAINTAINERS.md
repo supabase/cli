@@ -11,7 +11,7 @@ that carries the **`open-for-contribution`** label. This is enforced by the
 lives in [`scripts/contribution-gate.ts`](./scripts/contribution-gate.ts).
 
 The gate runs **reactively on each PR** so a non-conforming PR is closed right away, and
-can also be **swept across every open PR on demand** via the workflow's *Run workflow*
+can also be **swept across every open PR on demand** via the workflow's _Run workflow_
 button.
 
 A pull request is **auto-closed with an explanatory comment** when the author is external

@@ -37,7 +37,9 @@ describe("legacyBuildEdgeRuntimeStartCmd", () => {
 
 describe("legacyBuildEdgeRuntimeEntrypoint", () => {
   it("returns just the command (newline-terminated) when there are no files", () => {
-    expect(legacyBuildEdgeRuntimeEntrypoint([], "edge-runtime start")).toBe("edge-runtime start\n");
+    expect(legacyBuildEdgeRuntimeEntrypoint([], "edge-runtime start")).toBe(
+      "exec edge-runtime start\n",
+    );
   });
 
   it("writes a single file via a sentinel here-document then runs the command", () => {
@@ -45,10 +47,8 @@ describe("legacyBuildEdgeRuntimeEntrypoint", () => {
       [{ name: "index.ts", content: "console.log(1);" }],
       "edge-runtime start --main-service=. --port=5",
     );
-    // Byte-for-byte port of Go's buildEdgeRuntimeEntrypoint: openers (joined with
-    // ` && `) precede the command, then the bodies with their sentinels.
     expect(out).toBe(
-      "cat <<'__EDGE_RT_FILE_0__' > index.ts && edge-runtime start --main-service=. --port=5\n" +
+      "cat <<'__EDGE_RT_FILE_0__' > index.ts && exec edge-runtime start --main-service=. --port=5\n" +
         "console.log(1);\n__EDGE_RT_FILE_0__\n",
     );
   });
@@ -62,13 +62,15 @@ describe("legacyBuildEdgeRuntimeEntrypoint", () => {
       "CMD",
     );
     expect(out).toBe(
-      "cat <<'__EDGE_RT_FILE_0__' > index.ts && cat <<'__EDGE_RT_FILE_1__' > .npmrc && CMD\n" +
+      "cat <<'__EDGE_RT_FILE_0__' > index.ts && cat <<'__EDGE_RT_FILE_1__' > .npmrc && exec CMD\n" +
         "A\n__EDGE_RT_FILE_0__\nB\n__EDGE_RT_FILE_1__\n",
     );
   });
 
   it("preserves file contents that themselves contain EOF-like text", () => {
     const out = legacyBuildEdgeRuntimeEntrypoint([{ name: "index.ts", content: "EOF\nmore" }], "C");
-    expect(out).toBe("cat <<'__EDGE_RT_FILE_0__' > index.ts && C\nEOF\nmore\n__EDGE_RT_FILE_0__\n");
+    expect(out).toBe(
+      "cat <<'__EDGE_RT_FILE_0__' > index.ts && exec C\nEOF\nmore\n__EDGE_RT_FILE_0__\n",
+    );
   });
 });

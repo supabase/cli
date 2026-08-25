@@ -8,10 +8,10 @@ See [ADR 0003](adr/0003-self-documenting-cli.md) for the original design rationa
 
 Three global flags power the documentation pipeline:
 
-| Flag | Purpose |
-|------|---------|
-| `--usage` | Output the full CLI spec in [usage](https://usage.jdx.dev) format (KDL) and exit |
-| `--skill` | Auto-detect installed AI agents and write SKILL.md files to each agent's skills directory |
+| Flag                 | Purpose                                                                                      |
+| -------------------- | -------------------------------------------------------------------------------------------- |
+| `--usage`            | Output the full CLI spec in [usage](https://usage.jdx.dev) format (KDL) and exit             |
+| `--skill`            | Auto-detect installed AI agents and write SKILL.md files to each agent's skills directory    |
 | `--skill-dir <path>` | Write SKILL.md files to a custom directory (useful when no agent is detected or for testing) |
 
 These flags are defined in `apps/cli/src/lib/global-flags.ts` and work from any subcommand position. For example, both `supabase --usage` and `supabase login --usage` emit the same full CLI spec.
@@ -34,12 +34,12 @@ When invoked from a subcommand (e.g. `supabase login --skill`), only that subtre
 
 Key files:
 
-| File | Role |
-|------|------|
-| `apps/cli/src/lib/agent-detect.ts` | Filesystem-based agent detection (40+ agents) |
-| `apps/cli/src/lib/skill-writer.ts` | Writes `SKILL.md` files with YAML frontmatter |
+| File                                 | Role                                                 |
+| ------------------------------------ | ---------------------------------------------------- |
+| `apps/cli/src/lib/agent-detect.ts`   | Filesystem-based agent detection (40+ agents)        |
+| `apps/cli/src/lib/skill-writer.ts`   | Writes `SKILL.md` files with YAML frontmatter        |
 | `apps/cli/src/lib/guide-injector.ts` | Injects auto-generated sections into guide templates |
-| `apps/cli/src/lib/guide-registry.ts` | Maps command paths to guide entries |
+| `apps/cli/src/lib/guide-registry.ts` | Maps command paths to guide entries                  |
 
 ## Guide files
 
