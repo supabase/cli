@@ -5,6 +5,7 @@ import { afterEach, expect, test } from "vitest";
 import { describe } from "vitest";
 import {
   makeTempLegacyStackProject,
+  overrideStackPorts,
   requireCliSuccess,
   runSupabase,
 } from "../../../../../tests/helpers/cli.ts";
@@ -53,6 +54,7 @@ describe("supabase db diff (e2e, pg-delta declarative privileges)", () => {
         exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
       });
       requireCliSuccess(init, "init setup");
+      await overrideStackPorts(projectDir);
 
       // Exclude the heaviest, least relevant services — `db diff` only needs the
       // local Postgres container reachable, same rationale as stop/status.

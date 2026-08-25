@@ -16,14 +16,19 @@ import {
   legacyBuildLocalDbContainerInputs,
   type LegacyLocalDbContainerInputs,
 } from "../../../shared/db-bootstrap/local-container-inputs.ts";
-import { legacyWaitForHealthyServices } from "../../../shared/db-bootstrap/health-check.ts";
+import { legacyWaitForShadowReady } from "../../../shared/db-bootstrap/health-check.ts";
 import {
-  legacyCreateShadowDatabase,
+  legacyAcquireShadowDatabase,
+  type LegacyShadowAcquiredHandle,
+  type LegacyShadowCacheOpts,
+} from "../../../shared/db-bootstrap/shadow-cache.ts";
+import {
+  legacyMemoizeSuccess,
   legacyMigrateNextShadowDatabase,
   legacyRemoveShadowDatabase,
+  legacyShadowConnConfig,
   legacyShadowRunInputFromLocalContainerInputs,
   legacySetupShadowDatabase,
-  type LegacyShadowDatabaseHandle,
 } from "../../../shared/db-bootstrap/shadow-database.ts";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
@@ -75,20 +80,36 @@ interface NativeShadowBase {
   readonly image: string;
 }
 
-const setupRunInput = (input: NativeShadowInput, handle: LegacyShadowDatabaseHandle) => ({
+interface ProvisionedMigrationsShadow extends LegacyPgDeltaNextMigrationsShadow {
+  readonly snapshotKey: string | undefined;
+}
+
+interface ProvisionedDeclarativeShadow {
+  readonly declarativeUrl: string;
+  readonly restoredFromPgDataSnapshot: boolean;
+  readonly snapshotKey: string | undefined;
+}
+
+/**
+ * Bypass pg-delta's same-database guard when both shadows share one snapshot
+ * key and the declarative side was restored from that tar. A cold-exported
+ * migrations handle is still that tar's lineage.
+ */
+export function legacyAllowSameDatabaseIdentityForPlanShadows(opts: {
+  readonly declarativeRestoredFromPgDataSnapshot: boolean;
+  readonly sameSnapshotKey: boolean;
+}): boolean {
+  return opts.declarativeRestoredFromPgDataSnapshot && opts.sameSnapshotKey;
+}
+
+const setupRunInput = (input: NativeShadowInput, handle: LegacyShadowAcquiredHandle) => ({
   fs: input.base.fs,
   path: input.base.path,
   workdir: input.base.workdir,
   projectId: input.base.projectId,
   container: handle.containerId,
   networkId: input.base.networkId,
-  connConfig: {
-    host: input.base.hostname,
-    port: input.base.shadowPort,
-    user: "postgres",
-    password: input.base.password,
-    database: "postgres",
-  },
+  connConfig: legacyShadowConnConfig(input.base),
   setup: input.base.setup,
 });
 
@@ -156,7 +177,15 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           request.toml.remoteOverrideKeys,
         );
         const image = yield* localInputs.resolvePostgresImage;
-        return { localInputs, image } satisfies NativeShadowBase;
+        // One JWKS memo shared by every input built from this base: `provisionPlan`'s two
+        // shadows must hash identical JWKS bytes or their snapshot keys can never match.
+        return {
+          localInputs: {
+            ...localInputs,
+            setup: { ...localInputs.setup, jwks: legacyMemoizeSuccess(localInputs.setup.jwks) },
+          },
+          image,
+        } satisfies NativeShadowBase;
       }).pipe(Effect.provide(runtime));
 
     const buildNativeInput = (
@@ -175,36 +204,63 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
       ),
     });
 
-    const acquireShadow = (input: NativeShadowInput) =>
-      Effect.acquireRelease(legacyCreateShadowDatabase(input.spawner, input.base), (handle) =>
-        legacyRemoveShadowDatabase(input.spawner, handle.containerId).pipe(
-          Effect.provideService(Output, output),
-        ),
+    /**
+     * Cache-aware acquire, released when the current scope closes — next returns a URL the
+     * engine keeps using after provision, so this cannot be `legacyWithShadowDatabase`
+     * (that wrapper removes the container when `use` returns).
+     */
+    const acquireShadow = (input: NativeShadowInput, opts: LegacyShadowCacheOpts) =>
+      Effect.acquireRelease(
+        legacyAcquireShadowDatabase(input.spawner, input.base, opts),
+        (handle) =>
+          legacyRemoveShadowDatabase(input.spawner, handle.containerId).pipe(
+            Effect.provideService(Output, output),
+          ),
       );
 
-    const provisionMigrations = (input: NativeShadowInput) =>
-      Effect.gen(function* () {
-        const handle = yield* acquireShadow(input);
-        yield* legacyWaitForHealthyServices(input.spawner, [handle.containerId], {
+    const awaitShadowReady = (input: NativeShadowInput, handle: LegacyShadowAcquiredHandle) =>
+      legacyWaitForShadowReady(
+        input.spawner,
+        handle.containerId,
+        legacyShadowConnConfig(input.base),
+        {
           timeoutSeconds: input.base.healthTimeoutSeconds,
-        });
+          image: input.base.image,
+        },
+      );
+
+    const provisionMigrations = (input: NativeShadowInput, opts: LegacyShadowCacheOpts) =>
+      Effect.gen(function* () {
+        const handle = yield* acquireShadow(input, opts);
+        yield* awaitShadowReady(input, handle);
         const setup = setupRunInput(input, handle);
-        yield* legacyMigrateNextShadowDatabase(input.spawner, setup);
+        yield* legacyMigrateNextShadowDatabase(input.spawner, setup, handle);
         return {
           migrationsUrl: legacyToPostgresURL(setup.connConfig),
-        } satisfies LegacyPgDeltaNextMigrationsShadow;
+          snapshotKey: handle.snapshotKey,
+        } satisfies ProvisionedMigrationsShadow;
       }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
 
-    const provisionDeclarative = (input: NativeShadowInput) =>
+    const provisionDeclarative = (input: NativeShadowInput, opts: LegacyShadowCacheOpts) =>
       Effect.gen(function* () {
-        const handle = yield* acquireShadow(input);
-        yield* legacyWaitForHealthyServices(input.spawner, [handle.containerId], {
-          timeoutSeconds: input.base.healthTimeoutSeconds,
-        });
+        const handle = yield* acquireShadow(input, opts);
+        yield* awaitShadowReady(input, handle);
         const setup = setupRunInput(input, handle);
-        yield* legacySetupShadowDatabase(input.spawner, setup, { webhooks: "disabled" });
-        return legacyToPostgresURL(setup.connConfig);
+        yield* legacySetupShadowDatabase(input.spawner, setup, { webhooks: "disabled" }, handle);
+        return {
+          declarativeUrl: legacyToPostgresURL(setup.connConfig),
+          restoredFromPgDataSnapshot: handle.baselinePresent,
+          snapshotKey: handle.snapshotKey,
+        } satisfies ProvisionedDeclarativeShadow;
       }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
+
+    const cacheOpts = (
+      opts: LegacyPgDeltaNextShadowInput,
+      webhooks: NonNullable<LegacyShadowCacheOpts["webhooks"]>,
+    ): LegacyShadowCacheOpts => ({
+      webhooks,
+      ...(opts.bypassCache === true ? { bypassCache: true } : {}),
+    });
 
     return LegacyPgDeltaNextShadow.of({
       provisionMigrations: (opts) =>
@@ -212,7 +268,7 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           const port = yield* nextPort();
           const built = yield* buildNativeBase(opts);
           const input = buildNativeInput(opts, built, port);
-          return yield* provisionMigrations(input);
+          return yield* provisionMigrations(input, cacheOpts(opts, "config"));
         }).pipe(Effect.mapError(nextShadowError)),
       provisionPlan: (opts) =>
         Effect.gen(function* () {
@@ -221,11 +277,23 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           const built = yield* buildNativeBase(opts);
           const migrationsInput = buildNativeInput(opts, built, migrationsPort);
           const declarativeInput = buildNativeInput(opts, built, declarativePort);
-          const migrations = yield* provisionMigrations(migrationsInput);
-          const declarativeUrl = yield* provisionDeclarative(declarativeInput);
+          const migrations = yield* provisionMigrations(migrationsInput, cacheOpts(opts, "config"));
+          const declarative = yield* provisionDeclarative(
+            declarativeInput,
+            cacheOpts(opts, "disabled"),
+          );
           return {
-            ...migrations,
-            declarativeUrl,
+            migrationsUrl: migrations.migrationsUrl,
+            declarativeUrl: declarative.declarativeUrl,
+            // Key equality is what encodes lineage: the declarative shadow restored the very tar
+            // the migrations side either restored or exported this run, so the two clusters are
+            // physical clones. An absent key (uncached/bypassed/uncachable) is never lineage.
+            allowSameDatabaseIdentity: legacyAllowSameDatabaseIdentityForPlanShadows({
+              declarativeRestoredFromPgDataSnapshot: declarative.restoredFromPgDataSnapshot,
+              sameSnapshotKey:
+                migrations.snapshotKey !== undefined &&
+                migrations.snapshotKey === declarative.snapshotKey,
+            }),
           } satisfies LegacyPgDeltaNextPlanShadows;
         }).pipe(Effect.mapError(nextShadowError)),
     });

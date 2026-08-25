@@ -40,6 +40,7 @@ import {
   legacyBuildLocalDbContainerInputs,
   type LegacyLocalDbContainerInputs,
 } from "../../../shared/db-bootstrap/local-container-inputs.ts";
+import { legacyWithShadowDatabase } from "../../../shared/db-bootstrap/shadow-cache.ts";
 import {
   legacyCreateShadowDatabase,
   legacyPrepareRawShadow,
@@ -786,9 +787,15 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
               pgDelta: toml.pgDelta,
               ctx,
             };
-            // Register cleanup atomically with shadow acquisition.
-            return yield* Effect.acquireUseRelease(
-              legacyCreateShadowDatabase(spawner, shadowInput),
+            // `legacyWithShadowDatabase` (`shadow-cache.ts`) owns the interrupt-safe lifecycle
+            // and the cache seam. Each pooler-retry attempt still acquires and releases its own
+            // shadow — on the warm path every attempt restores a fresh container from the same
+            // cached snapshot. The key's webhooks policy must mirror what
+            // `legacyPrepareShadowSource` selects for this mode (legacy migrate forces `pg_net`
+            // on, next follows config), or the two engines could restore each other's tars.
+            return yield* legacyWithShadowDatabase(
+              spawner,
+              shadowInput,
               (handle) =>
                 Effect.gen(function* () {
                   const shadow = yield* legacyPrepareShadowSource(spawner, handle, shadowInput);
@@ -838,7 +845,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                   });
                   return { sql, files: undefined, debug: undefined };
                 }),
-              (handle) => legacyRemoveShadowDatabase(spawner, handle.containerId),
+              { webhooks: migrationMode === "pgdelta-next" ? "config" : "enabled" },
             );
           });
         const diffOutcome = yield* withPoolerFallback(targetEndpoint, runShadowDiff);

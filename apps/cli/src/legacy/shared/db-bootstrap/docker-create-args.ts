@@ -45,13 +45,19 @@
  * call site actually needs one; there is no value in modelling Docker surface
  * this builder never has to reproduce.
  *
- * One field has no Go struct equivalent at all: {@link LegacyStartContainerSpec.secretFiles}.
- * It exists purely because this module's own "shell out to `docker create`"
- * architecture (unlike Go's direct Engine API calls) has an argv-exposure
- * problem `container.Config`/`container.HostConfig` never had — see that
- * field's doc comment, and `container-lifecycle.ts`'s `legacyCreateContainer`,
- * for the mitigation.
+ * Two fields have no Go struct equivalent at all:
+ * {@link LegacyStartContainerSpec.secretFiles} and
+ * {@link LegacyStartContainerSpec.preStartArchives}. The first exists purely
+ * because this module's own "shell out to `docker create`" architecture (unlike
+ * Go's direct Engine API calls) has an argv-exposure problem
+ * `container.Config`/`container.HostConfig` never had; the second because Go
+ * destroys its shadow container on every run and so never needs to seed a
+ * container's filesystem before it starts. See each field's doc comment, and
+ * `container-lifecycle.ts`'s `legacyCreateContainer`, for how both are
+ * delivered.
  */
+
+import type { PlatformError, Stream } from "effect";
 
 import {
   legacyBindMountSpecSource,
@@ -123,6 +129,26 @@ interface LegacyStartSecretFileSpec {
   readonly content: string;
 }
 
+/**
+ * One tar archive to extract into the created-but-not-yet-started container — see
+ * {@link LegacyStartContainerSpec.preStartArchives}'s doc comment for the full contract. Not
+ * exported on its own: callers reference it structurally through that field.
+ */
+interface LegacyStartPreStartArchiveSpec {
+  /**
+   * The directory INSIDE the container the archive's members are unpacked relative to, i.e.
+   * `docker cp - <id>:<containerPath>`. Always a POSIX container path, never a host path.
+   */
+  readonly containerPath: string;
+  /**
+   * The tar bytes, as a lazily-consumed stream (typically `FileSystem.stream(hostTarPath)`).
+   * A stream rather than a host path on purpose: it keeps the archive's own storage decisions
+   * with the producer, and `legacyCreateContainer` needs no `FileSystem` in its own context to
+   * deliver it.
+   */
+  readonly tar: Stream.Stream<Uint8Array, PlatformError.PlatformError>;
+}
+
 export interface LegacyStartContainerSpec {
   /** `container.Config.Image` (already resolved/pulled — resolution is out of scope here). */
   readonly image: string;
@@ -192,6 +218,25 @@ export interface LegacyStartContainerSpec {
    * over the Engine API) for that same reason.
    */
   readonly secretFiles?: ReadonlyArray<LegacyStartSecretFileSpec>;
+  /**
+   * Tar archives to unpack into the container's own filesystem AFTER `docker create` and
+   * strictly BEFORE `docker start` — the shape `docker cp - <id>:<containerPath>` (tar on
+   * stdin) implements. No Go equivalent: Go's shadow container is destroyed on every run, so
+   * nothing in the Go CLI ever seeds a container's filesystem ahead of its entrypoint.
+   *
+   * The one consumer today is the shadow baseline cache (`shadow-cache.ts`), which restores a
+   * previously exported PGDATA directory so the `supabase/postgres` entrypoint finds a
+   * `PG_VERSION` file and skips `initdb` entirely. The delivery form matters and is not
+   * interchangeable with {@link secretFiles}': `docker cp <hostDir> <id>:<path>` resets the
+   * copied tree's ownership to the archive-extracting user (root), and Postgres refuses to
+   * start on a data directory it does not own, whereas the tar-STREAM form preserves each
+   * member's uid/gid verbatim.
+   *
+   * NOT consumed here — {@link legacyBuildStartContainerCreateArgs} stays pure/no-I/O and never
+   * reads this field, exactly like {@link secretFiles}. `container-lifecycle.ts`'s
+   * `legacyCreateContainer` is the sole consumer.
+   */
+  readonly preStartArchives?: ReadonlyArray<LegacyStartPreStartArchiveSpec>;
   /**
    * `container.Config.Entrypoint`'s first element. Docker CLI's `--entrypoint`
    * only accepts a single executable/script name (unlike the Engine API field,

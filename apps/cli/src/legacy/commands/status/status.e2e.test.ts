@@ -3,6 +3,7 @@ import { afterEach, expect, test } from "vitest";
 import { describe } from "vitest";
 import {
   makeTempLegacyStackProject,
+  overrideStackPorts,
   requireCliSuccess,
   runSupabase,
 } from "../../../../tests/helpers/cli.ts";
@@ -44,6 +45,7 @@ describe("supabase status (e2e)", () => {
         exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
       });
       requireCliSuccess(init, "init setup");
+      await overrideStackPorts(projectDir);
 
       const start = await runSupabase(
         ["start", "--exclude", "studio", "--exclude", "logflare", "--exclude", "vector"],
