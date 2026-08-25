@@ -21,9 +21,9 @@ write a second StateManager metadata file.
 
 The managed supervisor owns the port lease, service processes, and one complete
 loopback HTTP application. It records `starting`, `running`, `failed`, and
-`stopped` in `stack.json`. `SupervisorLifecycle` owns one atomic state and one
-cached shutdown transaction; stop requests from HTTP, signals, parent IPC,
-startup failure, and explicit disposal all join that transaction.
+`stopped` in `stack.json`. `SupervisorSession` owns one command queue and actor
+fiber; stop requests from HTTP, signals, startup failure, and explicit disposal
+all join that serialized state machine.
 
 The application is assembled before the deterministic listener binds and has
 only three routes:
@@ -33,7 +33,7 @@ only three routes:
 - `POST /stop` accepts an ownership id and exact owner session id, returns a
   flushed `202`, and lets the caller wait for that session to end; and
 - `POST /rpc` serves same-version Effect RPC over framed NDJSON when
-  `SupervisorLifecycle.runtimeStack` has published the runtime. Requests carry
+  `SupervisorSession.runtimeStack` has published the runtime. Requests carry
   the expected ownership id and owner session; a stale session fence is
   rejected before a handler runs. Before runtime publication, handlers
   fail fast with typed `StackUnavailableError`.
@@ -43,11 +43,12 @@ waits for the targeted owner session and document transition, then lets the
 owner dispose the runtime before releasing control. A stale delayed stop gets
 `409` from the new owner and cannot tear it down.
 
-Every shutdown source joins one cached lifecycle transaction. Once accepted,
-the transaction always attempts runtime stop, runtime disposal,
-ownership/listener close, and `closed` publication, even when an earlier step
-fails. It preserves the first cleanup failure and its exact `Cause` after all
-steps have run. Node and Bun close listeners gracefully after flushing the
+Every shutdown source submits to one session actor. Once accepted, the actor
+publishes `stopping`, interrupts and joins startup, attempts runtime stop and
+disposal, closes the runtime scope, persists terminal state, and closes the
+ownership listener last, even when an earlier step fails. It preserves the
+first cleanup failure and its exact `Cause` after all steps have run. Node and
+Bun close listeners gracefully after flushing the
 accepted `202`; the stable client drains that response and then polls the exact
 session fence, so listener shutdown cannot be stranded by an unread body.
 

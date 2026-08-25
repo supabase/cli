@@ -139,7 +139,7 @@ New stacks can adopt newer catalog defaults immediately. Existing stacks remain 
 changes their managed launch metadata. When `supabase start` encounters an incompatible live owner,
 it performs an explicit stop/start upgrade restart after preflight. The restart is authorized only by that
 explicit operation: it preflights while the old owner is live, stops the exact captured session through
-the stable `ControlClient`, re-observes it to completion, and reacquires ownership within bounded time.
+the stable `ControlClient`, waits for that session to release ownership, and launches an ordinary child.
 Persisted exclusions are reapplied to effective runtime
 service policies before preflight, active-port calculation, allocation, configuration resolution, and
 startup—not merely copied into `stack.json`. The upgrade restart preserves durable stack identity and

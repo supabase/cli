@@ -24,7 +24,7 @@ import {
 import { controlTransportLayer } from "./platform-node.ts";
 import { Stack } from "./Stack.ts";
 import { SupervisorControlServer } from "./SupervisorControlServer.ts";
-import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
+import { makeSupervisorSessionFixture } from "../tests/helpers/SupervisorSessionFixture.ts";
 
 const STACK_ID = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const COLLIDING_STACK_ID = `${STACK_ID.slice(0, 10)}${"f".repeat(54)}`;
@@ -66,7 +66,7 @@ const makeStack = (started: { value: boolean }): Stack["Service"] => ({
 const makeStaticOwner = (stackId: string, stack: Stack["Service"]) =>
   Effect.gen(function* () {
     const ownerSessionId = crypto.randomUUID();
-    const lifecycle = yield* SupervisorLifecycle.make({
+    const lifecycle = yield* makeSupervisorSessionFixture({
       ownershipId: stackId,
       ownerSessionId,
       daemonCliVersion: "test",
@@ -225,7 +225,7 @@ describe("managed control endpoint", () => {
       Effect.scoped(
         live(
           Effect.gen(function* () {
-            const lifecycle = yield* SupervisorLifecycle.make({
+            const lifecycle = yield* makeSupervisorSessionFixture({
               ownershipId: STACK_ID,
               ownerSessionId: crypto.randomUUID(),
               daemonCliVersion: "test",

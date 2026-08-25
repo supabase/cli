@@ -13,7 +13,7 @@ import { httpTransportClientLayer } from "./HttpTransportClient.ts";
 import { managedStackDocumentPathEffect, managedStackPathsEffect } from "./managed/paths.ts";
 import { Stack } from "./Stack.ts";
 import { SupervisorControlServer } from "./SupervisorControlServer.ts";
-import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
+import { makeSupervisorSessionFixture } from "../tests/helpers/SupervisorSessionFixture.ts";
 import {
   connectManagedStack,
   deleteManagedStack,
@@ -152,7 +152,7 @@ describe("managed stack lifecycle journeys", () => {
           stop: () => Effect.sync(() => void (stopped.value = true)),
         } satisfies Stack["Service"];
         const ownerSessionId = crypto.randomUUID();
-        const lifecycle = yield* SupervisorLifecycle.make({
+        const lifecycle = yield* makeSupervisorSessionFixture({
           ownershipId: stackId,
           ownerSessionId,
           daemonCliVersion: "test",
@@ -211,7 +211,7 @@ describe("managed stack lifecycle journeys", () => {
         const manager = yield* ManagedStackManager;
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
-        const lifecycle = yield* SupervisorLifecycle.make({
+        const lifecycle = yield* makeSupervisorSessionFixture({
           ownershipId: stackId,
           ownerSessionId: crypto.randomUUID(),
           daemonCliVersion: "old-cli",

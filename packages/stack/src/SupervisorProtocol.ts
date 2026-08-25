@@ -10,7 +10,8 @@ const portIntentSchema = Schema.Struct({
 });
 
 export const SupervisorStartCommandSchema = Schema.Struct({
-  type: Schema.Literals(["start", "upgrade-restart"]),
+  type: Schema.Literal("start"),
+  replacement: Schema.optionalKey(Schema.Boolean),
   cliVersion: Schema.String,
   stackId: Schema.String,
   workspacePath: Schema.String,
@@ -46,22 +47,12 @@ export type SupervisorStartedMessage = Schema.Schema.Type<typeof SupervisorStart
 export const SupervisorErrorEventSchema = Schema.Struct({
   type: Schema.Literal("error"),
   message: Schema.String,
-  errorCode: Schema.optionalKey(
-    Schema.Literals([
-      "DAEMON_UPGRADE_REQUIRED",
-      "UPGRADE_PREFLIGHT",
-      "UPGRADE_RESTART",
-      "STOP_TIMEOUT",
-    ]),
-  ),
+  errorCode: Schema.optionalKey(Schema.Literal("DAEMON_UPGRADE_REQUIRED")),
   stackId: Schema.optionalKey(Schema.String),
   oldCliVersion: Schema.optionalKey(Schema.String),
   newCliVersion: Schema.optionalKey(Schema.String),
   state: Schema.optionalKey(ControlOwnerStateSchema),
   ready: Schema.optionalKey(Schema.Boolean),
-  detail: Schema.optionalKey(Schema.String),
-  endpoint: Schema.optionalKey(Schema.String),
-  ownerSessionId: Schema.optionalKey(Schema.String),
 });
 export type SupervisorErrorMessage = Schema.Schema.Type<typeof SupervisorErrorEventSchema>;
 

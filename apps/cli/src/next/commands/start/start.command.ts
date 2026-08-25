@@ -272,7 +272,7 @@ export const startCommand = Command.make("start", flags).pipe(
                 "Existing connections will briefly disconnect.",
               ].join("\n"),
             )
-            .pipe(Effect.andThen(restartManagedStackForUpgrade(managedInput))),
+            .pipe(Effect.andThen(restartManagedStackForUpgrade(managedInput, error))),
         ),
       );
       const summary = yield* resolveStackSummary({

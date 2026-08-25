@@ -1,18 +1,11 @@
-import { Duration, Effect, FileSystem, Path, Scope } from "effect";
+import { Duration, Effect, FileSystem, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { validateStackRuntime, type StackRuntimeSelection } from "./ContainerRuntime.ts";
 import type { SupervisorStartMessage } from "./SupervisorProtocol.ts";
 import {
   makeControlClient,
-  type ControlAcquisition,
-  type ControlAddressConflictError,
-  type ControlBindError,
-  type ControlAttached,
-  type ControlProtocolError,
-  type ControlProtocolMismatchError,
-  type ControlTransportError,
+  type ControlProbe,
   type ControlTransportShape,
-  type InvalidControlOwnershipIdError,
 } from "./managed/control.ts";
 import type { ManagedStackManagerShape } from "./managed/manager.ts";
 import { managedStackPathsEffect } from "./managed/paths.ts";
@@ -27,42 +20,25 @@ import {
   resolveConfig,
   type DaemonConfigInput,
 } from "./StackConfigResolver.ts";
-import {
-  StopTimeout,
-  SupervisorStartError,
-  UpgradePreflightError,
-  UpgradeRestartError,
-} from "./errors.ts";
+import { StopTimeout, UpgradePreflightError, UpgradeRestartError } from "./errors.ts";
 
-export interface UpgradeRestartContext {
+interface UpgradeRestartContext {
   readonly stackId: string;
-  readonly oldOwner: ControlAttached;
+  readonly oldCliVersion: string;
+  readonly oldOwner?: ControlProbe;
   readonly input: SupervisorStartMessage;
   readonly configInput: DaemonConfigInput;
   readonly manager: ManagedStackManagerShape;
   readonly controlTransport: ControlTransportShape;
   readonly resolutionTimeout?: Duration.Input;
-  /** Reclaims the deterministic endpoint after the captured owner disappears. */
-  readonly reacquire: () => Effect.Effect<
-    ControlAcquisition,
-    | InvalidControlOwnershipIdError
-    | ControlBindError
-    | ControlTransportError
-    | ControlProtocolError
-    | ControlProtocolMismatchError
-    | ControlAddressConflictError,
-    Scope.Scope
-  >;
 }
 
 export interface UpgradeRestartResult {
-  readonly acquisition: ControlAcquisition;
   readonly effectiveConfigInput: DaemonConfigInput;
-  readonly oldSessionEnded: true;
-  readonly attachedOwnerWasStopping: boolean;
+  readonly launch: ManagedStackLaunch;
 }
 
-export const UPGRADE_RESTART_PHASE_TIMEOUT = Duration.seconds(30);
+const UPGRADE_RESTART_PHASE_TIMEOUT = Duration.seconds(30);
 
 const runtimeSelectionForLaunch = (launch: ManagedStackLaunch): StackRuntimeSelection =>
   launch.mode === "native"
@@ -234,7 +210,7 @@ const applyPersistedLaunch = (
 const preflightError = (context: UpgradeRestartContext, detail: string): UpgradePreflightError =>
   new UpgradePreflightError({
     stackId: context.stackId,
-    oldCliVersion: context.oldOwner.observedStatus.daemonCliVersion,
+    oldCliVersion: context.oldCliVersion,
     newCliVersion: context.input.cliVersion,
     detail,
   });
@@ -264,7 +240,7 @@ const causeMessage = (cause: unknown): string => {
 const preflight = (
   context: UpgradeRestartContext,
 ): Effect.Effect<
-  DaemonConfigInput,
+  UpgradeRestartResult,
   UpgradePreflightError,
   FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
 > =>
@@ -337,28 +313,20 @@ const preflight = (
         ports: syntheticPorts,
       },
     ).pipe(Effect.mapError((cause) => preflightError(context, causeMessage(cause))));
-    return effectiveConfigInput;
+    return { effectiveConfigInput, launch: existing.launch };
   });
 
 /**
- * Performs the complete incompatible-owner upgrade restart transaction. The outer supervisor
- * retains only IPC/listener ownership and startup composition concerns.
+ * Parent-side replacement transaction. It proves the persisted launch is
+ * startable before asking the exact incompatible session to stop, then reads
+ * and validates the launch again before a fresh child is spawned.
  */
-export const restartIncompatibleOwner = (
+export const prepareUpgradeReplacement = (
   context: UpgradeRestartContext,
 ): Effect.Effect<
   UpgradeRestartResult,
-  | UpgradePreflightError
-  | SupervisorStartError
-  | StopTimeout
-  | ControlTransportError
-  | ControlProtocolError
-  | ControlProtocolMismatchError
-  | ControlAddressConflictError
-  | InvalidControlOwnershipIdError
-  | ControlBindError
-  | UpgradeRestartError,
-  FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
+  UpgradePreflightError | StopTimeout | UpgradeRestartError,
+  FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
 > =>
   Effect.gen(function* () {
     const phaseTimeout = context.resolutionTimeout ?? UPGRADE_RESTART_PHASE_TIMEOUT;
@@ -369,49 +337,45 @@ export const restartIncompatibleOwner = (
           Effect.fail(preflightError(context, "Timed out preflighting upgrade restart")),
         ),
       );
-    yield* preflightCurrentLaunch();
-    const attachedOwnerWasStopping = context.oldOwner.observedStatus.state === "stopping";
+    const initial = yield* preflightCurrentLaunch();
+    const oldOwner = context.oldOwner;
+    if (oldOwner === undefined) return initial;
     const client = makeControlClient(context.controlTransport);
     yield* client
-      .stopSession(
-        context.oldOwner.endpoint,
-        context.oldOwner.observedStatus.ownershipId,
-        context.oldOwner.observedStatus.ownerSessionId,
-      )
+      .stopSession(oldOwner.endpoint, oldOwner.status.ownershipId, oldOwner.status.ownerSessionId)
       .pipe(
         Effect.timeoutOrElse({
           duration: phaseTimeout,
           orElse: () =>
-            client
-              .readOwner(context.oldOwner.endpoint, context.oldOwner.observedStatus.ownershipId)
-              .pipe(
-                Effect.map((status) =>
-                  status.ownerSessionId === context.oldOwner.observedStatus.ownerSessionId
-                    ? status.state
-                    : context.oldOwner.observedStatus.state,
-                ),
-                Effect.catch(() => Effect.succeed(context.oldOwner.observedStatus.state)),
-                Effect.flatMap((lastState) =>
-                  Effect.fail(
-                    new StopTimeout({
-                      endpoint: context.oldOwner.endpoint.url,
-                      ownerSessionId: context.oldOwner.observedStatus.ownerSessionId,
-                      lastState,
-                    }),
-                  ),
+            client.readOwner(oldOwner.endpoint, oldOwner.status.ownershipId).pipe(
+              Effect.map((status) =>
+                status.ownerSessionId === oldOwner.status.ownerSessionId
+                  ? status.state
+                  : oldOwner.status.state,
+              ),
+              Effect.catch(() => Effect.succeed(oldOwner.status.state)),
+              Effect.flatMap((lastState) =>
+                Effect.fail(
+                  new StopTimeout({
+                    endpoint: oldOwner.endpoint.url,
+                    ownerSessionId: oldOwner.status.ownerSessionId,
+                    lastState,
+                  }),
                 ),
               ),
+            ),
         }),
-      );
-    const acquisition = yield* context.reacquire().pipe(
-      Effect.timeout(phaseTimeout),
-      Effect.catchTag("TimeoutError", () =>
-        Effect.fail(
-          new SupervisorStartError({
-            message: "Timed out waiting for upgrade restart",
-          }),
+        Effect.mapError((error) =>
+          error instanceof StopTimeout
+            ? error
+            : new UpgradeRestartError({
+                stackId: context.stackId,
+                newCliVersion: context.input.cliVersion,
+                detail: causeMessage(error),
+              }),
         ),
-      ),
+      );
+    return yield* preflightCurrentLaunch().pipe(
       Effect.mapError(
         (error) =>
           new UpgradeRestartError({
@@ -421,17 +385,6 @@ export const restartIncompatibleOwner = (
           }),
       ),
     );
-    const effectiveConfigInput = yield* preflightCurrentLaunch().pipe(
-      Effect.mapError(
-        (error) =>
-          new UpgradeRestartError({
-            stackId: context.stackId,
-            newCliVersion: context.input.cliVersion,
-            detail: causeMessage(error),
-          }),
-      ),
-    );
-    return { acquisition, effectiveConfigInput, oldSessionEnded: true, attachedOwnerWasStopping };
   });
 
 export { runtimeSelectionForLaunch };

@@ -1,10 +1,10 @@
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Predicate } from "effect";
+import { Deferred, Effect, Layer, ManagedRuntime, Predicate } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import { createServer } from "node:http";
 import { describe, expect, it } from "vitest";
 import { SupervisorControlServer } from "./SupervisorControlServer.ts";
-import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
+import { makeSupervisorSessionFixture } from "../tests/helpers/SupervisorSessionFixture.ts";
 import { makeTestStack } from "./testing.ts";
 
 describe("SupervisorControlServer", () => {
@@ -16,7 +16,7 @@ describe("SupervisorControlServer", () => {
       const result = await runtime.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
-            const lifecycle = yield* SupervisorLifecycle.make({
+            const lifecycle = yield* makeSupervisorSessionFixture({
               ownershipId: "stack",
               ownerSessionId: "session",
               daemonCliVersion: "test",
@@ -51,7 +51,7 @@ describe("SupervisorControlServer", () => {
       const result = await runtime.runPromise(
         Effect.scoped(
           Effect.gen(function* () {
-            const lifecycle = yield* SupervisorLifecycle.make({
+            const lifecycle = yield* makeSupervisorSessionFixture({
               ownershipId: "stack",
               ownerSessionId: "session",
               daemonCliVersion: "test",
@@ -93,51 +93,6 @@ describe("SupervisorControlServer", () => {
         body: JSON.stringify({ ok: true }),
         stopping: "stopping",
       });
-    } finally {
-      await runtime.dispose();
-    }
-  });
-
-  it("projects deleting on /owner while destructive cleanup is gated", async () => {
-    const serverLayer = NodeHttpServer.layer(() => createServer(), { port: 0 }).pipe(Layer.orDie);
-    const runtime = ManagedRuntime.make(serverLayer);
-    try {
-      const result = await runtime.runPromise(
-        Effect.scoped(
-          Effect.gen(function* () {
-            const lifecycle = yield* SupervisorLifecycle.make({
-              ownershipId: "stack",
-              ownerSessionId: "session",
-              daemonCliVersion: "test",
-              close: Effect.void,
-            });
-            const entered = Deferred.makeUnsafe<void>();
-            const release = Deferred.makeUnsafe<void>();
-            const server = yield* HttpServer.HttpServer;
-            const application = yield* SupervisorControlServer.make(lifecycle);
-            yield* server.serve(application);
-            const address = server.address;
-            if (!Predicate.isTagged(address, "TcpAddress")) throw new Error("expected tcp address");
-            const deleting = yield* Effect.forkScoped(
-              lifecycle.beginDeleting.pipe(
-                Effect.andThen(Deferred.succeed(entered, undefined)),
-                Effect.andThen(Deferred.await(release)),
-                Effect.andThen(lifecycle.requestShutdown("dispose")),
-              ),
-            );
-            yield* Deferred.await(entered);
-            const response = yield* Effect.tryPromise(() =>
-              fetch(`http://127.0.0.1:${address.port}/owner`, { headers: { connection: "close" } }),
-            );
-            const body = yield* Effect.promise(() => response.json());
-            yield* Deferred.succeed(release, undefined);
-            yield* Fiber.join(deleting);
-            return { status: response.status, body };
-          }),
-        ),
-      );
-      expect(result.status).toBe(200);
-      expect(result.body).toMatchObject({ state: "deleting", ready: false });
     } finally {
       await runtime.dispose();
     }

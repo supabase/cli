@@ -33,7 +33,7 @@ import {
 } from "./errors.ts";
 import { acquireControl, ControlTransport, isControlOwnership } from "./managed/control.ts";
 import { makeSupervisorControlApplication } from "./SupervisorControlServer.ts";
-import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
+import { makeSupervisorSessionFixture } from "../tests/helpers/SupervisorSessionFixture.ts";
 import { makeTestStack } from "./testing.ts";
 
 const ownerId = "b".repeat(64);
@@ -221,7 +221,7 @@ it.live("executes every Stack operation over the same-version RPC endpoint", () 
   live(
     Effect.scoped(
       Effect.gen(function* () {
-        const lifecycle = yield* SupervisorLifecycle.make({
+        const lifecycle = yield* makeSupervisorSessionFixture({
           ownershipId: ownerId,
           ownerSessionId: "rpc-session",
           daemonCliVersion: "test",
@@ -508,7 +508,7 @@ it.live("fences stale RPC clients after deterministic endpoint replacement", () 
         let handlerCalls = 0;
         const makeOwner = (ownerSessionId: string, daemonCliVersion: string) =>
           Effect.gen(function* () {
-            const lifecycle = yield* SupervisorLifecycle.make({
+            const lifecycle = yield* makeSupervisorSessionFixture({
               ownershipId: stackId,
               ownerSessionId,
               daemonCliVersion,
@@ -709,7 +709,7 @@ it.live("closes an owner while another client still consumes an RPC stream", () 
           stream: "stdout" as const,
           line: "ready",
         };
-        const lifecycle = yield* SupervisorLifecycle.make({
+        const lifecycle = yield* makeSupervisorSessionFixture({
           ownershipId: ownerId,
           ownerSessionId,
           daemonCliVersion: "test",
@@ -1174,7 +1174,7 @@ it.live("interrupts the real RPC handler fiber when the client request is cancel
               Effect.as(info),
             ),
         };
-        const lifecycle = yield* SupervisorLifecycle.make({
+        const lifecycle = yield* makeSupervisorSessionFixture({
           ownershipId: ownerId,
           ownerSessionId: "rpc-cancel-session",
           daemonCliVersion: "test",

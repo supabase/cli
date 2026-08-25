@@ -8,6 +8,8 @@ import type { PortLease } from "./PortAllocator.ts";
 import type { Stack } from "./Stack.ts";
 import type { ResolvedStackConfig } from "./StackConfig.ts";
 import type { ManagedDaemonConfigInput } from "./layers.ts";
+import type { DaemonUpgradeRequired } from "./errors.ts";
+import { defaultCacheRoot } from "./paths.ts";
 import {
   daemonLayer as daemonLayerForPlatform,
   restartManagedStackForUpgrade as restartManagedStackForUpgradeForPlatform,
@@ -39,8 +41,14 @@ export const foregroundLayer = (
 export const daemonLayer = (input: ManagedDaemonConfigInput) =>
   daemonLayerForPlatform(input, daemonEntryPoint);
 
-export const restartManagedStackForUpgrade = (input: ManagedDaemonConfigInput) =>
-  restartManagedStackForUpgradeForPlatform(input, daemonEntryPoint);
+export const restartManagedStackForUpgrade = (
+  input: ManagedDaemonConfigInput,
+  mismatch: DaemonUpgradeRequired,
+) =>
+  restartManagedStackForUpgradeForPlatform(input, mismatch, daemonEntryPoint).pipe(
+    Effect.provide(managedLayer(input.cacheRoot ?? defaultCacheRoot())),
+    Effect.provide(controlTransportLayer),
+  );
 
 const managedLayer = (cacheRoot: string) =>
   managedStackManagerLayer({ stateRoot: join(cacheRoot, "managed") });

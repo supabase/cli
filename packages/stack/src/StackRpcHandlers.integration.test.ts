@@ -9,7 +9,7 @@ import { StackBuildError } from "./errors.ts";
 import { acquireControl, isControlOwnership } from "./managed/control.ts";
 import { controlTransportLayer } from "./platform-node.ts";
 import { makeSupervisorControlApplication } from "./SupervisorControlServer.ts";
-import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
+import { makeSupervisorSessionFixture } from "../tests/helpers/SupervisorSessionFixture.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 import { stackRpcFenceHeaders } from "./StackRpc.ts";
 
@@ -90,7 +90,7 @@ const stack: Stack["Service"] = {
 it.live("serves handler behavior over the RPC boundary", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const lifecycle = yield* SupervisorLifecycle.make({
+      const lifecycle = yield* makeSupervisorSessionFixture({
         ownershipId: OWNER_ID,
         ownerSessionId: "handler-session",
         daemonCliVersion: "test",
@@ -182,7 +182,7 @@ it.live("serves handler behavior over the RPC boundary", () =>
 it.live("rejects launch updates after supervisor shutdown begins", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const lifecycle = yield* SupervisorLifecycle.make({
+      const lifecycle = yield* makeSupervisorSessionFixture({
         ownershipId: OWNER_ID,
         ownerSessionId: "launch-update-session",
         daemonCliVersion: "test",
@@ -215,7 +215,7 @@ it.live("rejects launch updates after supervisor shutdown begins", () =>
       });
 
       yield* Effect.gen(function* () {
-        yield* lifecycle.submitShutdown("stop");
+        yield* lifecycle.submitShutdown;
         yield* Deferred.await(stopStarted);
         const unavailable = yield* Effect.flip(
           updateRemoteLaunch(

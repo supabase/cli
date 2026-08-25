@@ -20,7 +20,7 @@ introduce a second service registry, repository contract, or SQLite adapter.
 ## Managed startup at a glance
 
 The parent resolves the workspace identity before forking. The child creates a
-`SupervisorLifecycle` and the complete control application before attempting
+`SupervisorSession` actor and the complete control application before attempting
 the deterministic loopback bind. Ownership is claimed before expensive
 workspace reconciliation, while `/owner` and the session-fenced `/stop` route
 remain available throughout startup. Runtime RPC is gated until the runtime is
@@ -50,7 +50,7 @@ sequenceDiagram
 ```
 
 `running` in the managed document is recorded only after
-`SupervisorLifecycle` has published a ready runtime. The lifecycle is the one
+`SupervisorSession` has published a ready runtime. The actor is the one
 atomic state projection: control is available during `starting`, while RPC
 handlers read `runtimeStack` and fail fast with typed `StackUnavailableError`
 until `running` (and again during shutdown).
@@ -101,17 +101,16 @@ stack.
 
 ### Concurrency and cleanup
 
-`SupervisorLifecycle` owns one shutdown fiber in its scope. The fiber waits for
-the first shutdown reason, then runs one uninterruptible teardown transaction.
-Every stop or terminal-readiness caller joins that transaction, so concurrent
-requests share its result and interrupting one caller cannot cancel the owner.
-The transaction independently attempts runtime stop, runtime disposal,
-ownership/listener close, and publication of `closed`; the first cleanup
-failure (including the exact primary `Cause`) is returned only after all
-cleanup steps have been attempted. For HTTP stop, Node and Bun close the
-listener gracefully after flushing a successful `202`; the stable client
-consumes that bounded response and polls the exact session fence until the
-owner disappears.
+`SupervisorSession` owns one command `Queue`, one actor fiber, the startup
+fiber, and a child runtime scope. `/stop`, signals, startup completion, and
+unexpected runtime disposal submit commands to that actor instead of mutating
+lifecycle state independently. Shutdown publishes `stopping`, interrupts and
+joins startup, stops and disposes any constructed runtime, closes its scope,
+persists the terminal document state, and releases the control listener last.
+Concurrent stop callers join the same actor-owned result. For HTTP stop, Node
+and Bun close the listener gracefully after flushing a successful `202`; the
+stable client consumes that bounded response and polls the exact session fence
+until the owner disappears.
 
 `StackPreparation` resolves independent services with a concurrency cap of four.
 Its closure includes the resources for every public graph dependency a requested
@@ -149,14 +148,14 @@ runtime requests; it never edits the document directly.
 1. `daemonLayer` discovers the workspace and derives the stack id before the
    parent forks a supervisor child. Managed-only port intents and launch
    metadata stay separate from the generic daemon configuration.
-2. The child constructs lifecycle state and the complete static application,
+2. The child constructs the session actor and the complete static application,
    then claims the deterministic endpoint. A bind failure never leaves a
    partially installed runtime server.
 3. The owner re-checks workspace identity, re-reads the document, selects or
    validates its concrete runtime, and reconciles stale named resources. The
    manager allocates or reuses ports and records `starting`.
 4. The child builds the direct runtime, publishes it through
-   `SupervisorLifecycle`, records `running`, and sends the verified owner
+   `SupervisorSession`, records `running`, and sends the verified owner
    descriptor to the parent.
 5. The parent returns a `RemoteStack` layer. The CLI invokes `StackRpc` over
    `POST /rpc` for runtime operations.
@@ -313,11 +312,12 @@ The public `@supabase/stack/effect` entry exposes this authorization as
 `restartManagedStackForUpgrade`. Ordinary `daemonLayer` calls cannot authorize a
 restart: an incompatible owner fails with `DaemonUpgradeRequired` and remains running.
 
-An upgrade restart is one supervisor-owned transaction. After preflight, the
-CLI emits its restart notice, then the supervisor uses the shared stable
-`ControlClient` with the captured ownership and session ids, re-observes that
-exact session until it has ended, and reacquires the deterministic endpoint
-within a bounded timeout. Persisted
+An upgrade restart is one parent-owned transaction. After preflight, the CLI
+emits its restart notice, then the parent uses the shared stable `ControlClient`
+with the captured ownership and session ids and waits for that exact session to
+end. It re-reads and preflights the persisted launch before spawning an ordinary
+child marked as the authorized replacement. The child only starts or attaches;
+it never decides to stop an incompatible owner. Persisted
 exclusions are applied to effective runtime service policies before preflight,
 active-port calculation, allocation, configuration resolution, and startup;
 copying them only into `stack.json` is insufficient. Once the new runtime is
@@ -337,14 +337,14 @@ containing the old session id receives `409` from the new owner.
 
 ### Static application and lifecycle ownership
 
-`SupervisorLifecycle` owns the atomic lifecycle state, owner session, runtime
-publication, and one cached shutdown transaction. All shutdown sources join
-that transaction. The accepted `202` stop response is flushed by the listener's
-graceful close; the stable control client consumes the bounded response body and
-polls the exact fenced session until it disappears. Teardown then attempts
-runtime stop and disposal, ownership/listener close, and `closed` publication
-while preserving the first cleanup `Cause`. Node, Bun, and compiled Bun
-children use the same pre-bind application and lifecycle composition.
+`SupervisorSession` owns lifecycle state, the owner session, runtime
+publication, and the serialized shutdown state machine. All shutdown sources
+submit to its `Queue`. The accepted `202` stop response is flushed by the
+listener's graceful close; the stable control client consumes the bounded
+response body and polls the exact fenced session until it disappears. The actor
+finishes startup cancellation and runtime-scope finalizers before terminal
+persistence and ownership/listener close. Node, Bun, and compiled Bun children
+use the same pre-bind application and session composition.
 
 ## Service execution and `ApiProxy`
 

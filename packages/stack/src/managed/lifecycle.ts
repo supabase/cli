@@ -16,8 +16,7 @@ import {
   type ManagedStackLaunchUpdateRequest,
 } from "./manager.ts";
 import { acquireControl, ControlTransport, isControlOwnership } from "./control.ts";
-import { makeSupervisorControlApplication } from "../SupervisorControlServer.ts";
-import { SupervisorLifecycle } from "../SupervisorLifecycle.ts";
+import { CONTROL_PROTOCOL, CONTROL_PROTOCOL_VERSION } from "../DaemonProtocol.ts";
 import {
   DaemonUpgradeRequired,
   StackBuildError,
@@ -227,18 +226,18 @@ export const deleteManagedStack = (
     const stackId = yield* stackIdForInput(manager, input);
     yield* Effect.scoped(
       Effect.gen(function* () {
-        const lifecycle = yield* SupervisorLifecycle.make({
-          ownershipId: stackId,
-          ownerSessionId: crypto.randomUUID(),
-          daemonCliVersion: "managed",
-        });
-        const application = {
-          app: yield* makeSupervisorControlApplication(lifecycle),
-        };
+        const ownerSessionId = crypto.randomUUID();
         const acquisition = yield* acquireControl({
           stackId,
-          initialStatus: yield* lifecycle.currentStatus,
-          application,
+          initialStatus: {
+            controlProtocol: CONTROL_PROTOCOL,
+            controlProtocolVersion: CONTROL_PROTOCOL_VERSION,
+            ownershipId: stackId,
+            ownerSessionId,
+            state: "deleting",
+            ready: false,
+            daemonCliVersion: "managed",
+          },
         }).pipe(
           Effect.flatMap((candidate) =>
             isControlOwnership(candidate)
@@ -250,13 +249,6 @@ export const deleteManagedStack = (
           ),
           Effect.mapError(() => new ManagedStackAttachedError({ stackId })),
         );
-        // Keep the control listener bound until the destructive delete has
-        // completed. A concurrent fenced /stop may transition this lifecycle
-        // to closed, but must not release the endpoint while the document and
-        // backing data are still being removed. Install the no-op close before
-        // revalidating identity as well, so every path after acquisition has
-        // the same ownership fence and cleanup guarantee.
-        yield* lifecycle.setClose(Effect.void);
         const result = yield* Effect.gen(function* () {
           const revalidatedStackId = yield* stackIdForInput(manager, input);
           if (revalidatedStackId !== stackId) {
@@ -266,11 +258,8 @@ export const deleteManagedStack = (
               }),
             );
           }
-          yield* lifecycle.beginDeleting;
           return yield* manager.deleteStack(stackId, acquisition);
-        })
-          .pipe(Effect.ensuring(acquisition.close))
-          .pipe(Effect.ensuring(lifecycle.requestShutdown("dispose").pipe(Effect.ignore)));
+        }).pipe(Effect.ensuring(acquisition.close));
         if (result.outcome === "already-absent") return yield* Effect.fail(noRunningStack(input));
       }),
     );

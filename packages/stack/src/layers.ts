@@ -17,8 +17,11 @@ import { HttpTransportClient } from "./HttpTransportClient.ts";
 import { DEFAULT_MANAGED_STACK_NAME, defaultCacheRoot } from "./paths.ts";
 import type { ManagedStackLaunchInput } from "./managed/document.ts";
 import type { ManagedPortIntentDocument } from "./managed/model.ts";
+import { ManagedStackManager } from "./managed/manager.ts";
+import { ControlTransport } from "./managed/control.ts";
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
+import { prepareUpgradeReplacement } from "./SupervisorUpgradeRestart.ts";
 import {
   DaemonUpgradeRequired,
   StackRpcProtocolError,
@@ -123,19 +126,14 @@ export type ManagedDaemonConfigInput = DaemonConfigInput & {
 // Daemon-backed mode
 // ---------------------------------------------------------------------------
 
-const managedSupervisorLayer = (
+interface ManagedSupervisorStart {
+  readonly message: SupervisorStartMessage;
+  readonly configInput: DaemonConfigInput;
+}
+
+const managedSupervisorStartMessage = (
   input: ManagedDaemonConfigInput,
-  daemonEntryPoint: string,
-  type: SupervisorStartMessage["type"],
-): Effect.Effect<
-  Layer.Layer<Stack, DaemonUpgradeRequired | StackRpcProtocolError | StackRpcTransportError>,
-  | DaemonStartError
-  | DaemonUpgradeRequired
-  | UpgradePreflightError
-  | UpgradeRestartError
-  | StopTimeout,
-  FileSystem.FileSystem | Path.Path | HttpTransportClient
-> =>
+): Effect.Effect<ManagedSupervisorStart, DaemonStartError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     // Keep managed coordination metadata out of the generic daemon config.
     const { portIntents, launch, ...daemonConfigInput } = input;
@@ -155,26 +153,40 @@ const managedSupervisorLayer = (
       projectDir,
       name,
     };
-    const httpTransportClient = yield* HttpTransportClient;
     const discovery = yield* ensureEnvironment(projectDir).pipe(
       Effect.provide(gitConfigStoreLayer),
-      Effect.mapError((error) =>
-        error instanceof DaemonUpgradeRequired
-          ? error
-          : new DaemonStartError({ message: error.message }),
-      ),
+      Effect.mapError((error) => new DaemonStartError({ message: error.message })),
     );
-    const startMsg: SupervisorStartMessage = {
-      type,
-      cliVersion: input.cliVersion,
-      stackId: deriveStackId(discovery.identity, name),
-      workspacePath: projectDir,
-      stackName: name,
-      stateRoot,
-      config,
-      portIntents,
-      ...(launch === undefined ? {} : { launch }),
+    return {
+      configInput: config,
+      message: {
+        type: "start",
+        cliVersion: input.cliVersion,
+        stackId: deriveStackId(discovery.identity, name),
+        workspacePath: projectDir,
+        stackName: name,
+        stateRoot,
+        config,
+        portIntents,
+        ...(launch === undefined ? {} : { launch }),
+      },
     };
+  });
+
+const launchManagedSupervisor = (
+  startMsg: SupervisorStartMessage,
+  daemonEntryPoint: string,
+): Effect.Effect<
+  Layer.Layer<Stack, DaemonUpgradeRequired | StackRpcProtocolError | StackRpcTransportError>,
+  | DaemonStartError
+  | DaemonUpgradeRequired
+  | UpgradePreflightError
+  | UpgradeRestartError
+  | StopTimeout,
+  HttpTransportClient
+> =>
+  Effect.gen(function* () {
+    const httpTransportClient = yield* HttpTransportClient;
     return yield* supervisorLayer(startMsg, daemonEntryPoint).pipe(
       Effect.provideService(HttpTransportClient, httpTransportClient),
       Effect.mapError((error) =>
@@ -188,13 +200,19 @@ const managedSupervisorLayer = (
     );
   });
 
+const managedSupervisorLayer = (input: ManagedDaemonConfigInput, daemonEntryPoint: string) =>
+  managedSupervisorStartMessage(input).pipe(
+    Effect.flatMap(({ message }) => launchManagedSupervisor(message, daemonEntryPoint)),
+  );
+
 /** Fork the unified supervisor and return a RemoteStack layer connected to it. */
 export const daemonLayer = (input: ManagedDaemonConfigInput, daemonEntryPoint: string) =>
-  managedSupervisorLayer(input, daemonEntryPoint, "start");
+  managedSupervisorLayer(input, daemonEntryPoint);
 
 /** Explicitly authorize a full stop/start when the current owner is incompatible. */
 export const restartManagedStackForUpgrade = (
   input: ManagedDaemonConfigInput,
+  mismatch: DaemonUpgradeRequired,
   daemonEntryPoint: string,
 ): Effect.Effect<
   Layer.Layer<Stack, DaemonUpgradeRequired | StackRpcProtocolError | StackRpcTransportError>,
@@ -203,5 +221,59 @@ export const restartManagedStackForUpgrade = (
   | UpgradePreflightError
   | UpgradeRestartError
   | StopTimeout,
-  FileSystem.FileSystem | Path.Path | HttpTransportClient
-> => managedSupervisorLayer(input, daemonEntryPoint, "upgrade-restart");
+  | FileSystem.FileSystem
+  | Path.Path
+  | HttpTransportClient
+  | ManagedStackManager
+  | ControlTransport
+  | import("effect/unstable/process").ChildProcessSpawner.ChildProcessSpawner
+> =>
+  Effect.gen(function* () {
+    const { message: startMsg, configInput } = yield* managedSupervisorStartMessage(input);
+    const manager = yield* ManagedStackManager;
+    const controlTransport = yield* ControlTransport;
+    const probe = yield* manager.probeControl(startMsg.stackId).pipe(
+      Effect.mapError(
+        (error) =>
+          new UpgradeRestartError({
+            stackId: startMsg.stackId,
+            newCliVersion: startMsg.cliVersion,
+            detail: error.message,
+          }),
+      ),
+    );
+    if (probe?.status.daemonCliVersion === startMsg.cliVersion) {
+      return yield* launchManagedSupervisor(startMsg, daemonEntryPoint);
+    }
+    const prepared = yield* prepareUpgradeReplacement({
+      stackId: startMsg.stackId,
+      oldCliVersion: probe?.status.daemonCliVersion ?? mismatch.oldCliVersion,
+      ...(probe === undefined ? {} : { oldOwner: probe }),
+      input: startMsg,
+      configInput,
+      manager,
+      controlTransport,
+    });
+    return yield* launchManagedSupervisor(
+      {
+        ...startMsg,
+        replacement: true,
+        config: prepared.effectiveConfigInput,
+        launch: prepared.launch,
+      },
+      daemonEntryPoint,
+    ).pipe(
+      Effect.mapError((error) =>
+        error instanceof DaemonUpgradeRequired ||
+        error instanceof UpgradePreflightError ||
+        error instanceof UpgradeRestartError ||
+        error instanceof StopTimeout
+          ? error
+          : new UpgradeRestartError({
+              stackId: startMsg.stackId,
+              newCliVersion: startMsg.cliVersion,
+              detail: error.message,
+            }),
+      ),
+    );
+  });

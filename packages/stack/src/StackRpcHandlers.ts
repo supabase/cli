@@ -9,24 +9,24 @@ import { inheritReadyOptions } from "./StackConfig.ts";
 import { StackRpc } from "./StackRpc.ts";
 import type { Stack } from "./Stack.ts";
 import type { StackLaunchUpdateRpc } from "./StackRpc.ts";
-import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
+import { SupervisorSession } from "./SupervisorSession.ts";
 
 type StackService = Stack["Service"];
 
 const local = <A, E>(
-  lifecycle: SupervisorLifecycle["Service"],
+  session: SupervisorSession["Service"],
   operation: (
     stack: StackService,
   ) => Effect.Effect<A, E | StackRpcTransportError | StackRpcProtocolError>,
 ): Effect.Effect<A, E | StackUnavailableError> =>
-  lifecycle.runtimeStack.pipe(
+  session.runtimeStack.pipe(
     Effect.flatMap(operation),
     Effect.catchTag("StackRpcTransportError", (error) => Effect.die(error)),
     Effect.catchTag("StackRpcProtocolError", (error) => Effect.die(error)),
   );
 
 const localStream = <A, E>(
-  lifecycle: SupervisorLifecycle["Service"],
+  session: SupervisorSession["Service"],
   operation: (
     stack: StackService,
   ) => Effect.Effect<
@@ -34,7 +34,7 @@ const localStream = <A, E>(
     E | StackRpcTransportError | StackRpcProtocolError
   >,
 ): Stream.Stream<A, E | StackUnavailableError> =>
-  Stream.unwrap(lifecycle.runtimeStack.pipe(Effect.flatMap(operation))).pipe(
+  Stream.unwrap(session.runtimeStack.pipe(Effect.flatMap(operation))).pipe(
     Stream.catchTag("StackRpcTransportError", (error) => Stream.die(error)),
     Stream.catchTag("StackRpcProtocolError", (error) => Stream.die(error)),
   );
@@ -61,50 +61,50 @@ export const StackLaunchUpdater = Context.Reference<StackLaunchUpdater>(
 /** Runtime-backed implementations for the shared StackRpc contract. */
 export const StackRpcHandlers = StackRpc.toLayer(
   Effect.gen(function* () {
-    const lifecycle = yield* SupervisorLifecycle;
+    const session = yield* SupervisorSession;
     const launchUpdater = yield* StackLaunchUpdater;
     return {
-      GetInfo: () => local(lifecycle, (stack) => stack.getInfo()),
-      StartStack: () => local(lifecycle, (stack) => stack.start()),
+      GetInfo: () => local(session, (stack) => stack.getInfo()),
+      StartStack: () => local(session, (stack) => stack.start()),
       StartService: ({ name }: { readonly name: string }) =>
-        local(lifecycle, (stack) => stack.startService(name)),
+        local(session, (stack) => stack.startService(name)),
       StopService: ({ name }: { readonly name: string }) =>
-        local(lifecycle, (stack) => stack.stopService(name)),
+        local(session, (stack) => stack.stopService(name)),
       RestartService: ({ name }: { readonly name: string }) =>
-        local(lifecycle, (stack) => stack.restartService(name)),
+        local(session, (stack) => stack.restartService(name)),
       WaitStackReady: ({
         options,
       }: {
         readonly options?: Parameters<StackService["waitAllReady"]>[0];
-      }) => local(lifecycle, (stack) => stack.waitAllReady(options ?? inheritReadyOptions)),
+      }) => local(session, (stack) => stack.waitAllReady(options ?? inheritReadyOptions)),
       WaitServiceReady: ({
         name,
         options,
       }: {
         readonly name: string;
         readonly options?: Parameters<StackService["waitReady"]>[1];
-      }) => local(lifecycle, (stack) => stack.waitReady(name, options ?? inheritReadyOptions)),
+      }) => local(session, (stack) => stack.waitReady(name, options ?? inheritReadyOptions)),
       ReloadFunctions: ({
         options,
       }: {
         readonly options?: Parameters<StackService["reloadFunctions"]>[0];
-      }) => local(lifecycle, (stack) => stack.reloadFunctions(options)),
+      }) => local(session, (stack) => stack.reloadFunctions(options)),
       ReloadEdgeRuntime: (options: Parameters<StackService["reloadEdgeRuntime"]>[0]) =>
-        local(lifecycle, (stack) => stack.reloadEdgeRuntime(options)),
+        local(session, (stack) => stack.reloadEdgeRuntime(options)),
       UpdateLaunch: ({
         stackId,
         launch,
       }: {
         readonly stackId: string;
         readonly launch: StackLaunchUpdateRpc;
-      }) => local(lifecycle, () => launchUpdater.update(stackId, launch)),
+      }) => local(session, () => launchUpdater.update(stackId, launch)),
       GetServiceState: ({ name }: { readonly name: string }) =>
-        local(lifecycle, (stack) => stack.getState(name)),
-      GetAllServiceStates: () => local(lifecycle, (stack) => stack.getAllStates()),
+        local(session, (stack) => stack.getState(name)),
+      GetAllServiceStates: () => local(session, (stack) => stack.getAllStates()),
       WatchServiceStates: ({ name }: { readonly name?: string }) =>
         name === undefined
-          ? localStream(lifecycle, (stack) => Effect.succeed(stack.allStateChanges()))
-          : localStream(lifecycle, (stack) => stack.stateChanges(name)),
+          ? localStream(session, (stack) => Effect.succeed(stack.allStateChanges()))
+          : localStream(session, (stack) => stack.stateChanges(name)),
       GetLogHistory: ({
         name,
         limit,
@@ -115,8 +115,8 @@ export const StackRpcHandlers = StackRpc.toLayer(
         readonly services?: ReadonlyArray<string>;
       }) =>
         name === undefined
-          ? local(lifecycle, (stack) => stack.logHistoryAll(limit, services))
-          : local(lifecycle, (stack) =>
+          ? local(session, (stack) => stack.logHistoryAll(limit, services))
+          : local(session, (stack) =>
               stack.getState(name).pipe(Effect.flatMap(() => stack.logHistory(name, limit))),
             ),
       WatchLogs: ({
@@ -127,12 +127,12 @@ export const StackRpcHandlers = StackRpc.toLayer(
         readonly services?: ReadonlyArray<string>;
       }) =>
         name === undefined
-          ? localStream(lifecycle, (stack) =>
+          ? localStream(session, (stack) =>
               Effect.forEach(services ?? [], (service) => stack.getState(service), {
                 discard: true,
               }).pipe(Effect.as(stack.subscribeAllLogs(services))),
             )
-          : localStream(lifecycle, (stack) =>
+          : localStream(session, (stack) =>
               stack.getState(name).pipe(Effect.as(stack.subscribeLogs(name))),
             ),
     };

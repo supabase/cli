@@ -5,7 +5,7 @@ import { httpTransportClientLayer } from "./HttpTransportClient.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { Stack } from "./Stack.ts";
 import { makeSupervisorControlApplication } from "./SupervisorControlServer.ts";
-import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
+import { makeSupervisorSessionFixture } from "../tests/helpers/SupervisorSessionFixture.ts";
 import { makeTestStack } from "./testing.ts";
 
 const isBun = typeof Bun !== "undefined";
@@ -16,7 +16,7 @@ describe("Bun runtime RPC", () => {
     const { controlTransportLayer } = await import("./platform-bun.ts");
     const scope = Scope.makeUnsafe();
     const lifecycle = await Effect.runPromise(
-      SupervisorLifecycle.make({
+      makeSupervisorSessionFixture({
         ownershipId: ownerId,
         ownerSessionId: "bun-rpc-session",
         daemonCliVersion: "test",

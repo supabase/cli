@@ -1,5 +1,4 @@
 import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
-import { BunFileSystem, BunServices } from "@effect/platform-bun";
 import { Deferred, Effect, Layer, Stream, Duration } from "effect";
 import { createServer, type Server } from "node:net";
 import { existsSync, writeFileSync } from "node:fs";
@@ -20,10 +19,6 @@ import {
   controlTransportLayer as nodeControlTransportLayer,
   platformFactory as nodePlatformFactory,
 } from "../../src/platform-node.ts";
-import {
-  controlTransportLayer as bunControlTransportLayer,
-  platformFactory as bunPlatformFactory,
-} from "../../src/platform-bun.ts";
 import { PORT_FIELDS } from "../../src/PortCatalog.ts";
 import type { PortLease } from "../../src/PortAllocator.ts";
 import type { ResolvedDaemonConfig } from "../../src/StackConfig.ts";
@@ -245,62 +240,57 @@ const resolutionTimeout = (): Duration.Input => {
 const testPlatform = (): "node" | "bun" =>
   process.env["SUPABASE_STACK_TEST_PLATFORM"] === "bun" ? "bun" : "node";
 
-const managerLayer = (stateRoot: string, platform: "node" | "bun") =>
-  managedStackManagerLayer({ stateRoot, preferCatalogDefaults: false }).pipe(
-    Layer.provide(
-      platform === "bun"
-        ? Layer.mergeAll(BunFileSystem.layer, gitConfigStoreLayer, bunControlTransportLayer)
-        : Layer.mergeAll(
-            NodeFileSystem.layer,
-            NodePath.layer,
-            gitConfigStoreLayer,
-            nodeControlTransportLayer,
+const decorateManagerLayer = <E, R>(base: Layer.Layer<ManagedStackManager, E, R>) => {
+  const readyFile = process.env["SUPABASE_STACK_TEST_ENSURE_READY_FILE"];
+  const releaseFile = process.env["SUPABASE_STACK_TEST_ENSURE_RELEASE_FILE"];
+  return Layer.effect(
+    ManagedStackManager,
+    ManagedStackManager.pipe(
+      Effect.map((manager) => ({
+        ...manager,
+        startStack: (input: Parameters<typeof manager.startStack>[0]) =>
+          manager.startStack(input).pipe(
+            Effect.tap(() => {
+              const markerFile = process.env["SUPABASE_STACK_TEST_MANAGED_STARTED_FILE"];
+              const releaseFile = process.env["SUPABASE_STACK_TEST_MANAGED_STARTED_RELEASE_FILE"];
+              return Effect.sync(() => {
+                if (markerFile !== undefined) writeFileSync(markerFile, "started");
+              }).pipe(
+                Effect.andThen(releaseFile === undefined ? Effect.void : waitForFile(releaseFile)),
+                Effect.orDie,
+              );
+            }),
           ),
+        ...(readyFile === undefined || releaseFile === undefined
+          ? {}
+          : {
+              ensureWorkspace: (workspacePath: string) =>
+                Effect.sync(() => writeFileSync(readyFile, "ready")).pipe(
+                  Effect.andThen(waitForFile(releaseFile)),
+                  Effect.andThen(manager.ensureWorkspace(workspacePath)),
+                ),
+            }),
+      })),
     ),
-    (base) => {
-      const readyFile = process.env["SUPABASE_STACK_TEST_ENSURE_READY_FILE"];
-      const releaseFile = process.env["SUPABASE_STACK_TEST_ENSURE_RELEASE_FILE"];
-      return Layer.effect(
-        ManagedStackManager,
-        ManagedStackManager.pipe(
-          Effect.map((manager) => ({
-            ...manager,
-            startStack: (input: Parameters<typeof manager.startStack>[0]) =>
-              manager.startStack(input).pipe(
-                Effect.tap(() => {
-                  const markerFile = process.env["SUPABASE_STACK_TEST_MANAGED_STARTED_FILE"];
-                  const releaseFile =
-                    process.env["SUPABASE_STACK_TEST_MANAGED_STARTED_RELEASE_FILE"];
-                  return Effect.sync(() => {
-                    if (markerFile !== undefined) writeFileSync(markerFile, "started");
-                  }).pipe(
-                    Effect.andThen(
-                      releaseFile === undefined ? Effect.void : waitForFile(releaseFile),
-                    ),
-                    Effect.orDie,
-                  );
-                }),
-              ),
-            ...(readyFile === undefined || releaseFile === undefined
-              ? {}
-              : {
-                  ensureWorkspace: (workspacePath: string) =>
-                    Effect.sync(() => writeFileSync(readyFile, "ready")).pipe(
-                      Effect.andThen(waitForFile(releaseFile)),
-                      Effect.andThen(manager.ensureWorkspace(workspacePath)),
-                    ),
-                }),
-          })),
+  ).pipe(Layer.provide(base));
+};
+
+const nodeManagerLayer = (stateRoot: string) =>
+  decorateManagerLayer(
+    managedStackManagerLayer({ stateRoot, preferCatalogDefaults: false }).pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          NodeFileSystem.layer,
+          NodePath.layer,
+          gitConfigStoreLayer,
+          nodeControlTransportLayer,
         ),
-      ).pipe(Layer.provide(base));
-    },
+      ),
+    ),
   );
 
-export const runTestSupervisor = (): void => {
-  const platformKind = testPlatform();
-  const baseControlTransportLayer =
-    platformKind === "bun" ? bunControlTransportLayer : nodeControlTransportLayer;
-  const testControlTransportLayer = Layer.effect(
+const testControlTransportLayer = <E, R>(base: Layer.Layer<ControlTransport, E, R>) =>
+  Layer.effect(
     ControlTransport,
     Effect.gen(function* () {
       const transport = yield* ControlTransport;
@@ -310,26 +300,58 @@ export const runTestSupervisor = (): void => {
           transport.read(endpoint).pipe(Effect.tap(observeAttachedBeforeReady)),
       };
     }),
-  ).pipe(Layer.provide(baseControlTransportLayer));
-  const supervisorPlatform: SupervisorPlatform = {
-    platformFactory: platformKind === "bun" ? bunPlatformFactory : nodePlatformFactory,
-    managerLayer: (stateRoot) => managerLayer(stateRoot, platformKind),
-    runtimeLayer: testRuntime,
-    resolutionTimeout: resolutionTimeout(),
-  };
-  const program = runSupervisor(supervisorPlatform).pipe(
-    Effect.provide(gitConfigStoreLayer),
-    Effect.provide(testControlTransportLayer),
-  );
-  void Effect.runPromise(
-    platformKind === "bun"
-      ? program.pipe(Effect.provide(BunServices.layer), Effect.provide(BunFileSystem.layer))
-      : program.pipe(
-          Effect.provide(NodeServices.layer),
-          Effect.provide(NodeFileSystem.layer),
-          Effect.provide(NodePath.layer),
+  ).pipe(Layer.provide(base));
+
+export const runTestSupervisor = (): void => {
+  const platformKind = testPlatform();
+  if (platformKind === "node") {
+    const supervisorPlatform: SupervisorPlatform = {
+      platformFactory: nodePlatformFactory,
+      managerLayer: nodeManagerLayer,
+      runtimeLayer: testRuntime,
+      resolutionTimeout: resolutionTimeout(),
+    };
+    const program = runSupervisor(supervisorPlatform).pipe(
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(testControlTransportLayer(nodeControlTransportLayer)),
+      Effect.provide(NodeServices.layer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+    );
+    void Effect.runPromise(program);
+    return;
+  }
+  void Promise.all([
+    import("@effect/platform-bun/BunFileSystem"),
+    import("@effect/platform-bun/BunServices"),
+    import("../../src/platform-bun.ts"),
+  ]).then(([bunFileSystem, bunServices, bunPlatform]) => {
+    const managerLayer = (stateRoot: string) =>
+      decorateManagerLayer(
+        managedStackManagerLayer({ stateRoot, preferCatalogDefaults: false }).pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              bunFileSystem.layer,
+              gitConfigStoreLayer,
+              bunPlatform.controlTransportLayer,
+            ),
+          ),
         ),
-  );
+      );
+    const supervisorPlatform: SupervisorPlatform = {
+      platformFactory: bunPlatform.platformFactory,
+      managerLayer,
+      runtimeLayer: testRuntime,
+      resolutionTimeout: resolutionTimeout(),
+    };
+    const program = runSupervisor(supervisorPlatform).pipe(
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(testControlTransportLayer(bunPlatform.controlTransportLayer)),
+      Effect.provide(bunServices.layer),
+      Effect.provide(bunFileSystem.layer),
+    );
+    return Effect.runPromise(program);
+  });
 };
 
 if (import.meta.main) runTestSupervisor();

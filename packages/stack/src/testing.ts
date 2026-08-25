@@ -53,4 +53,4 @@ export const makeTestStack = (
 
 export { HttpTransportClient } from "./HttpTransportClient.ts";
 export { makeSupervisorControlApplication } from "./SupervisorControlServer.ts";
-export { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
+export { SupervisorSession } from "./SupervisorSession.ts";

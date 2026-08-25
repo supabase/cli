@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import * as BunServices from "@effect/platform-bun/BunServices";
 import {
   Stack,
   StackServiceState,
@@ -6,7 +6,7 @@ import {
   type StackInfo,
   httpTransportClientLayer,
 } from "@supabase/stack/effect";
-import { makeSupervisorControlApplication, SupervisorLifecycle } from "@supabase/stack/testing";
+import { makeSupervisorControlApplication, SupervisorSession } from "@supabase/stack/testing";
 import {
   ManagedStackManager,
   acquireControl,
@@ -128,9 +128,8 @@ export async function makeManagedStackFixture(
     Layer.mergeAll(managedStackManagerLayer({ stateRoot }), controlTransportLayer),
   );
   const ready = await managerRuntime.runPromise(Deferred.make<void>());
-  const daemonReady = await managerRuntime.runPromise(Deferred.make<void>());
   let stackId = "";
-  let lifecycleScope: Scope.Scope | undefined;
+  let sessionScope: Scope.Scope | undefined;
   let ownedControl: ControlOwnership | undefined;
   const setup = managerRuntime.runFork(
     Effect.scoped(
@@ -138,16 +137,16 @@ export async function makeManagedStackFixture(
         const manager = yield* ManagedStackManager;
         const environment = yield* manager.ensureWorkspace(projectRoot);
         stackId = deriveStackId(environment.identity, stackName);
-        lifecycleScope = Scope.makeUnsafe();
-        const supervisorLifecycle = yield* SupervisorLifecycle.make({
+        sessionScope = Scope.makeUnsafe();
+        const sessionController = yield* SupervisorSession.make({
           ownershipId: stackId,
           ownerSessionId: crypto.randomUUID(),
           daemonCliVersion: cliVersion,
-          close: Effect.void,
-        }).pipe(Effect.provide(Layer.succeed(Scope.Scope, lifecycleScope)));
+        }).pipe(Effect.provide(Layer.succeed(Scope.Scope, sessionScope)));
+        const session = sessionController.service;
         let owned: ControlOwnership | undefined;
         const application = {
-          app: yield* makeSupervisorControlApplication(supervisorLifecycle, {
+          app: yield* makeSupervisorControlApplication(session, {
             update: (id, next) =>
               owned === undefined
                 ? Effect.fail(new StackBuildError({ detail: "fixture owner is not acquired" }))
@@ -161,7 +160,6 @@ export async function makeManagedStackFixture(
         if (!isControlOwnership(ownership)) throw new Error("fixture failed to acquire control");
         owned = ownership;
         ownedControl = ownership;
-        yield* supervisorLifecycle.setClose(ownership.close);
         const started = yield* manager.startStack({
           workspacePath: projectRoot,
           stackName,
@@ -189,15 +187,38 @@ export async function makeManagedStackFixture(
           serviceEndpoints: {},
         };
         if (running && ownerState === undefined) {
-          const runtimeStack = stackService(
-            info,
-            manager.recordLifecycle(ownership, { stackId, lifecycle: "stopped" }).pipe(
-              Effect.asVoid,
-              Effect.catch(() => Effect.void),
-            ),
-          );
-          yield* supervisorLifecycle.publishStack(runtimeStack);
-          yield* Deferred.await(daemonReady);
+          const runtimeStack = stackService(info, Effect.void);
+          yield* sessionController.run({
+            startup: () => Effect.succeed(runtimeStack),
+            stack: (stack) => stack,
+            awaitDisposed: () => Effect.never,
+            onRunning: () => Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
+            onStopped: manager
+              .recordLifecycle(ownership, { stackId, lifecycle: "stopped" })
+              .pipe(Effect.asVoid),
+            onFailure: () =>
+              manager
+                .recordLifecycle(ownership, { stackId, lifecycle: "failed" })
+                .pipe(Effect.asVoid),
+            closeOwner: ownership.close,
+            errorDetail: (cause) => String(cause),
+          });
+          return;
+        } else if (ownerState !== undefined) {
+          yield* Deferred.succeed(ready, undefined);
+          yield* sessionController.run({
+            startup: () => Effect.never,
+            stack: (stack: Stack["Service"]) => stack,
+            awaitDisposed: () => Effect.never,
+            onRunning: () => Effect.void,
+            onStopped: manager
+              .recordLifecycle(ownership, { stackId, lifecycle: "stopped" })
+              .pipe(Effect.asVoid),
+            onFailure: () => Effect.void,
+            closeOwner: ownership.close,
+            errorDetail: (cause) => String(cause),
+          });
+          return;
         } else if (!running) {
           yield* ownership.close;
         }
@@ -207,9 +228,6 @@ export async function makeManagedStackFixture(
       }),
     ),
   );
-  if (running && ownerState === undefined) {
-    await managerRuntime.runPromise(Deferred.succeed(daemonReady, void 0));
-  }
   await managerRuntime.runPromise(Deferred.await(ready));
 
   const baseLayer = Layer.mergeAll(
@@ -285,7 +303,7 @@ export async function makeManagedStackFixture(
     cliVersion,
     async dispose() {
       await managerRuntime.runPromise(Fiber.interrupt(setup).pipe(Effect.exit));
-      await Effect.runPromise(Scope.close(lifecycleScope ?? Scope.makeUnsafe(), Exit.void)).catch(
+      await Effect.runPromise(Scope.close(sessionScope ?? Scope.makeUnsafe(), Exit.void)).catch(
         () => undefined,
       );
       await managerRuntime.dispose();

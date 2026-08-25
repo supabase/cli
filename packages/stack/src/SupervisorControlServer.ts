@@ -9,11 +9,11 @@ import {
   StackRpcHandlers,
   type StackLaunchUpdater as StackLaunchUpdaterService,
 } from "./StackRpcHandlers.ts";
-import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
+import { SupervisorSession } from "./SupervisorSession.ts";
 
 /** Builds the complete static supervisor application before listener binding. */
 export const makeSupervisorControlApplication = (
-  lifecycle: SupervisorLifecycle["Service"],
+  session: SupervisorSession["Service"],
   launchUpdater?: StackLaunchUpdaterService,
 ): Effect.Effect<
   Effect.Effect<
@@ -30,12 +30,12 @@ export const makeSupervisorControlApplication = (
         ? StackRpcHandlers
         : StackRpcHandlers.pipe(Layer.provide(Layer.succeed(StackLaunchUpdater, launchUpdater)));
     const rpc = yield* RpcServer.toHttpEffect(StackRpc).pipe(
-      Effect.provide(handlers.pipe(Layer.provide(Layer.succeed(SupervisorLifecycle, lifecycle)))),
+      Effect.provide(handlers.pipe(Layer.provide(Layer.succeed(SupervisorSession, session)))),
       Effect.provide(RpcSerialization.layerNdjson),
     );
     const fencedRpc = Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
-      const status = yield* lifecycle.currentStatus;
+      const status = yield* session.currentStatus;
       if (
         !matchesStackRpcFence(request.headers, {
           ownershipId: status.ownershipId,
@@ -52,14 +52,14 @@ export const makeSupervisorControlApplication = (
       HttpRouter.route(
         "GET",
         "/owner",
-        lifecycle.currentStatus.pipe(Effect.map(HttpServerResponse.jsonUnsafe)),
+        session.currentStatus.pipe(Effect.map(HttpServerResponse.jsonUnsafe)),
       ),
       HttpRouter.route(
         "POST",
         "/stop",
         Effect.gen(function* () {
           const request = yield* HttpServerRequest.schemaBodyJson(ControlStopRequestSchema);
-          const status = yield* lifecycle.currentStatus;
+          const status = yield* session.currentStatus;
           if (
             request.ownershipId !== status.ownershipId ||
             request.ownerSessionId !== status.ownerSessionId
@@ -68,7 +68,7 @@ export const makeSupervisorControlApplication = (
           }
           // Submit ownership of the stop transaction before returning 202. The
           // listener closes gracefully after the response is flushed.
-          yield* lifecycle.submitShutdown("stop");
+          yield* session.submitShutdown;
           return HttpServerResponse.jsonUnsafe({ ok: true }, { status: 202 });
         }).pipe(
           Effect.catchTags({

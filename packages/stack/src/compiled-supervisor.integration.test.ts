@@ -10,6 +10,7 @@ import { describe, expect, test, beforeAll, afterAll } from "vitest";
 import { controlEndpoint, type ControlEndpoint } from "./managed/control.ts";
 import { deriveStackId, type EnvironmentIdentity } from "./managed/environment.ts";
 import { managedStackDocumentPathEffect } from "./managed/paths.ts";
+import { managedStackLaunchInputSchema } from "./managed/document.ts";
 import {
   CompiledSupervisorParentEventSchema,
   type CompiledSupervisorStartMessage,
@@ -266,7 +267,7 @@ describe("compiled Bun detached supervisor", () => {
     rmSync(artifactRoot, { recursive: true, force: true });
   });
 
-  test("starts, attaches, session-stops, and upgrade-restarts through compiled child re-entry", async () => {
+  test("starts, attaches, session-stops, and replaces through compiled child re-entry", async () => {
     const roots = makeWorkspace();
     let first: CompiledParent | undefined;
     let attached: CompiledParent | undefined;
@@ -323,24 +324,27 @@ describe("compiled Bun detached supervisor", () => {
       const oldDocument = documentFor(roots).value;
       const oldRuntime = oldDocument["runtime"] as { readonly pid: number };
       runtimePids.add(oldRuntime.pid);
-      const oldLaunch = oldDocument["launch"];
+      const oldLaunch = Schema.decodeUnknownSync(managedStackLaunchInputSchema)(
+        oldDocument["launch"],
+      );
       const oldPorts = oldDocument["ports"];
       writeFileSync(sentinel, "upgrade-restart-preserve");
 
+      expect(await stop(endpoint, oldOwner.ownershipId, oldOwner.ownerSessionId)).toMatchObject({
+        status: 202,
+      });
+      await waitForProcessExit(oldRuntime.pid);
+      await first.exited;
+      await waitForEndpointUnavailable(endpoint);
+
       upgradeRestart = spawnCompiledParent(
         messageFor(roots, {
-          type: "upgrade-restart",
+          replacement: true,
           cliVersion: "2.61.0",
-          launch: {
-            mode: "native",
-            versions: { postgres: "new-default" },
-            excludedServices: [],
-          },
+          launch: oldLaunch,
         }),
       );
       await upgradeRestart.ready;
-      await waitForProcessExit(oldRuntime.pid);
-      await first.exited;
       const currentOwner = await owner(endpoint);
       expect(currentOwner).toMatchObject({
         daemonCliVersion: "2.61.0",

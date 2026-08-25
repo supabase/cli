@@ -1,4 +1,4 @@
-import { BunServices } from "@effect/platform-bun";
+import * as BunServices from "@effect/platform-bun/BunServices";
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
 import { fileURLToPath } from "node:url";
 import { Effect, Exit, Layer, Scope } from "effect";

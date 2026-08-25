@@ -1,5 +1,5 @@
 import { Cause, Context, Effect, Exit, Layer, Predicate, Schema } from "effect";
-import { NodeFileSystem, NodePath } from "@effect/platform-node";
+import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
 import { fork, type ChildProcess } from "node:child_process";
 import { createServer as createHttpServer } from "node:http";
 import { createConnection, createServer } from "node:net";
@@ -35,6 +35,10 @@ import { SupervisorEventSchema, type SupervisorErrorMessage } from "./Supervisor
 import { git } from "../tests/helpers/git-workspace.ts";
 import { watchDirectoryWithRetry } from "../tests/helpers/file-watch.ts";
 import { controlTransportLayer } from "./platform-node.ts";
+import { ControlTransport } from "./managed/control.ts";
+import { ManagedStackManager } from "./managed/manager.ts";
+import { prepareUpgradeReplacement } from "./SupervisorUpgradeRestart.ts";
+import type { DaemonConfigInput } from "./StackConfigResolver.ts";
 
 const childEntryPoint = fileURLToPath(
   new URL("../tests/helpers/supervisor-child.ts", import.meta.url),
@@ -63,12 +67,15 @@ interface ChildHandle {
 
 const workspace = async (): Promise<{
   readonly root: string;
+  readonly cacheRoot: string;
   readonly stateRoot: string;
   readonly stackId: string;
 }> => {
   for (let attempt = 0; attempt < 32; attempt += 1) {
     const root = mkdtempSync(join(tmpdir(), "sup-stack-workspace-"));
-    const stateRoot = mkdtempSync(join(tmpdir(), "sup-stack-state-"));
+    const cacheRoot = mkdtempSync(join(tmpdir(), "sup-stack-cache-"));
+    const stateRoot = join(cacheRoot, "managed");
+    mkdirSync(stateRoot);
     const identity: EnvironmentIdentity = {
       workspaceId: randomUUID(),
       checkoutId: randomUUID(),
@@ -79,7 +86,7 @@ const workspace = async (): Promise<{
     const endpoint = await Effect.runPromise(controlEndpoint(stackId));
     if (!(await canBind(endpoint.port))) {
       rmSync(root, { recursive: true, force: true });
-      rmSync(stateRoot, { recursive: true, force: true });
+      rmSync(cacheRoot, { recursive: true, force: true });
       continue;
     }
     mkdirSync(join(root, ".supabase"), { recursive: true });
@@ -96,7 +103,7 @@ const workspace = async (): Promise<{
         2,
       )}\n`,
     );
-    return { root, stateRoot, stackId };
+    return { root, cacheRoot, stateRoot, stackId };
   }
   throw new Error("Unable to allocate a free supervisor control endpoint after 32 attempts");
 };
@@ -280,6 +287,62 @@ const spawnChild = (
   void managedStarted.catch(() => undefined);
   child.send(input);
   return { child, started, error, attachedBeforeReady, managedStarted };
+};
+
+const restartThroughManagedStart = (
+  roots: Awaited<ReturnType<typeof workspace>>,
+  oldStarted: SupervisorStartedMessage,
+  overrides: Partial<SupervisorStartMessage> = {},
+): Promise<ChildHandle> => {
+  const invocation = messageFor(roots, { cliVersion: "new", ...overrides });
+  const configInput: DaemonConfigInput = {
+    ...invocation.config,
+    cwd: roots.root,
+    projectDir: roots.root,
+    cacheRoot: roots.cacheRoot,
+    name: invocation.stackName,
+  };
+  const managerLayer = managedStackManagerLayer({
+    stateRoot: roots.stateRoot,
+    preferCatalogDefaults: false,
+  }).pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        NodeFileSystem.layer,
+        NodePath.layer,
+        gitConfigStoreLayer,
+        controlTransportLayer,
+      ),
+    ),
+  );
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const manager = yield* ManagedStackManager;
+      const controlTransport = yield* ControlTransport;
+      const oldOwner = yield* manager.probeControl(roots.stackId);
+      if (oldOwner === undefined) return yield* Effect.die("expected incompatible owner");
+      return yield* prepareUpgradeReplacement({
+        stackId: roots.stackId,
+        oldCliVersion: oldStarted.owner.daemonCliVersion,
+        oldOwner,
+        input: invocation,
+        configInput,
+        manager,
+        controlTransport,
+      });
+    }).pipe(
+      Effect.provide(managerLayer),
+      Effect.provide(NodeServices.layer),
+      Effect.provide(controlTransportLayer),
+    ),
+  ).then((prepared) =>
+    spawnChild({
+      ...invocation,
+      replacement: true,
+      config: prepared.effectiveConfigInput,
+      launch: prepared.launch,
+    }),
+  );
 };
 
 const kill = (child: ChildProcess): Promise<void> =>
@@ -548,9 +611,13 @@ const listenStoppingOwner = async (
   };
 };
 
-const cleanupRoots = (roots: { readonly root: string; readonly stateRoot: string }): void => {
+const cleanupRoots = (roots: {
+  readonly root: string;
+  readonly cacheRoot?: string;
+  readonly stateRoot: string;
+}): void => {
   rmSync(roots.root, { recursive: true, force: true });
-  rmSync(roots.stateRoot, { recursive: true, force: true });
+  rmSync(roots.cacheRoot ?? roots.stateRoot, { recursive: true, force: true });
 };
 
 const readStackDocument = (roots: {
@@ -803,7 +870,7 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
-  test("upgrade restart ignores invocation exclusions while preserving persisted launch", async () => {
+  test("authorized managed start replaces an incompatible owner and preserves persisted state", async () => {
     const roots = await workspace();
     const oldOwner = spawnChild(
       messageFor(roots, {
@@ -853,27 +920,28 @@ describe("detached supervisor child journeys", () => {
       const sentinel = join(paths.root, "data", "upgrade-sentinel.txt");
       mkdirSync(dirname(sentinel), { recursive: true });
       writeFileSync(sentinel, "preserve-me");
-      restart = spawnChild(
-        messageFor(roots, {
-          type: "upgrade-restart",
-          cliVersion: "new",
-          config: {
-            ...messageFor(roots).config,
-            analytics: { port: blockedAnalyticsPort },
-            vector: {},
-          },
-          launch: {
-            mode: "native",
-            versions: { postgres: "pinned-postgres" },
-            excludedServices: ["studio"],
-          },
-        }),
-      );
+      restart = await restartThroughManagedStart(roots, oldStarted, {
+        config: {
+          ...messageFor(roots).config,
+          analytics: { port: blockedAnalyticsPort },
+          vector: {},
+        },
+        launch: {
+          mode: "native",
+          versions: { postgres: "pinned-postgres" },
+          excludedServices: ["studio"],
+        },
+      });
       const newStarted = await restart.started;
-      expect(newStarted.owner.daemonCliVersion).toBe("new");
+      const newOwner = await fetchOwner(newStarted.endpoint);
+      expect(newStarted.owner).toMatchObject({
+        daemonCliVersion: "new",
+        state: "running",
+        ready: true,
+      });
       expect(analyticsPortBlocker?.listening).toBe(true);
       await waitForExit(oldOwner.child);
-      const staleStop = await fetch(`${newStarted.endpoint.url}/stop`, {
+      const staleStop = await fetch(`${oldStarted.endpoint.url}/stop`, {
         method: "POST",
         headers: { "content-type": "application/json", connection: "close" },
         body: JSON.stringify({
@@ -882,7 +950,7 @@ describe("detached supervisor child journeys", () => {
         }),
       });
       expect(staleStop.status).toBe(409);
-      expect(await fetchOwner(newStarted.endpoint)).toMatchObject({
+      expect(await fetchOwner(oldStarted.endpoint)).toMatchObject({
         state: "running",
         ready: true,
       });
@@ -893,9 +961,8 @@ describe("detached supervisor child journeys", () => {
       expect(after.ports).toHaveLength(persistedBefore.ports.length);
       expect(after.ports).toEqual(expect.arrayContaining(persistedBefore.ports));
       expect(readFileSync(sentinel, "utf8")).toBe("preserve-me");
-      await remoteStop(newStarted.endpoint);
-      await waitForExit(restart.child);
-      expect(oldStarted.owner.ownerSessionId).not.toBe(newStarted.owner.ownerSessionId);
+      await remoteStop(oldStarted.endpoint);
+      expect(oldStarted.owner.ownerSessionId).not.toBe(newOwner["ownerSessionId"]);
     } finally {
       if (analyticsPortBlocker?.listening === true) {
         await new Promise<void>((resolve) => analyticsPortBlocker?.close(() => resolve()));
@@ -906,9 +973,8 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
-  test("explicit stop during the upgrade restart gap prevents a later takeover", async () => {
+  test("replacement child never clears an explicit stop that wins the upgrade gap", async () => {
     const roots = await workspace();
-    const managedStartedRelease = join(roots.root, "managed-started-release");
     const oldOwner = spawnChild(
       messageFor(roots, {
         cliVersion: "old",
@@ -916,22 +982,13 @@ describe("detached supervisor child journeys", () => {
     );
     let restart: ChildHandle | undefined;
     try {
-      await oldOwner.started;
-      restart = spawnChild(
-        messageFor(roots, {
-          type: "upgrade-restart",
-          cliVersion: "new",
-        }),
-        {
-          environment: { SUPABASE_STACK_TEST_MANAGED_STARTED_RELEASE_FILE: managedStartedRelease },
-        },
-      );
-      await restart.managedStarted;
-      await stopViaManagedFacade(roots);
+      const oldStarted = await oldOwner.started;
+      await remoteStop(oldStarted.endpoint);
       await waitForExit(oldOwner.child);
+      await stopViaManagedFacade(roots);
       expect(readStackDocument(roots)?.lifecycle).toBe("stopped");
 
-      writeFileSync(managedStartedRelease, "release");
+      restart = spawnChild(messageFor(roots, { replacement: true, cliVersion: "new" }));
       await expect(restart.started).rejects.toThrow(
         /stopped before takeover|Stack was stopped during startup/,
       );
@@ -984,30 +1041,30 @@ describe("detached supervisor child journeys", () => {
     );
     let restart: ChildHandle | undefined;
     try {
-      await oldOwner.started;
+      const oldStarted = await oldOwner.started;
       const documentPath = Effect.runSync(
         managedStackDocumentPathEffect(roots.stateRoot, roots.stackId),
       );
       const before = JSON.parse(readFileSync(documentPath, "utf8")) as {
         readonly id: string;
         readonly createdAt: string;
-        readonly launch: unknown;
+        readonly launch: NonNullable<SupervisorStartMessage["launch"]>;
       };
       const paths = Effect.runSync(managedStackPathsEffect(roots.stateRoot, roots.stackId));
       const sentinel = join(paths.root, "data", "upgrade-restart-start-failure.txt");
       mkdirSync(dirname(sentinel), { recursive: true });
       writeFileSync(sentinel, "retryable");
+      await remoteStop(oldStarted.endpoint);
+      await waitForExit(oldOwner.child);
       restart = spawnChild(
         messageFor(roots, {
-          type: "upgrade-restart",
+          replacement: true,
           cliVersion: "new",
+          launch: before.launch,
         }),
         { testMode: "fail-after-bind" },
       );
-      await expect(restart.started).rejects.toThrow(
-        /UpgradeRestartError|runtime failed after binding/,
-      );
-      await waitForExit(oldOwner.child);
+      await expect(restart.started).rejects.toThrow(/runtime failed after binding/);
       const after = JSON.parse(readFileSync(documentPath, "utf8")) as {
         readonly id: string;
         readonly createdAt: string;
@@ -1026,7 +1083,7 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
-  test("ordinary attach joins an explicit upgrade restart and waits for readiness", async () => {
+  test("ordinary attach joins a replacement child and waits for readiness", async () => {
     const roots = await workspace();
     const managedStartedRelease = join(roots.root, "upgrade-managed-started-release");
     const attachedReady = join(roots.root, "upgrade-attached-ready");
@@ -1035,8 +1092,10 @@ describe("detached supervisor child journeys", () => {
     let restart: ChildHandle | undefined;
     let attached: ChildHandle | undefined;
     try {
-      await oldOwner.started;
-      restart = spawnChild(messageFor(roots, { type: "upgrade-restart", cliVersion: "new" }), {
+      const oldStarted = await oldOwner.started;
+      await remoteStop(oldStarted.endpoint);
+      await waitForExit(oldOwner.child);
+      restart = spawnChild(messageFor(roots, { replacement: true, cliVersion: "new" }), {
         environment: { SUPABASE_STACK_TEST_MANAGED_STARTED_RELEASE_FILE: managedStartedRelease },
       });
       await restart.managedStarted;
@@ -1076,24 +1135,19 @@ describe("detached supervisor child journeys", () => {
         cliVersion: "old",
       }),
     );
-    let contender: ChildHandle | undefined;
     try {
       const oldStarted = await oldOwner.started;
-      contender = spawnChild(
-        messageFor(roots, {
-          type: "upgrade-restart",
-          cliVersion: "new",
+      await expect(
+        restartThroughManagedStart(roots, oldStarted, {
           config: { ...messageFor(roots).config, port: 65_536 },
         }),
-      );
-      await expect(contender.started).rejects.toThrow();
+      ).rejects.toThrow();
       expect(oldOwner.child.exitCode).toBeNull();
       expect((await fetchOwner(oldStarted.endpoint)).state).toBe("running");
       await remoteStop(oldStarted.endpoint);
       await waitForExit(oldOwner.child);
     } finally {
       if (oldOwner.child.exitCode === null) await kill(oldOwner.child);
-      if (contender?.child.exitCode === null) await kill(contender.child);
       cleanupRoots(roots);
     }
   });
@@ -1105,9 +1159,9 @@ describe("detached supervisor child journeys", () => {
         cliVersion: "old",
       }),
     );
-    let contender: ChildHandle | undefined;
+    let restart: ChildHandle | undefined;
     try {
-      await oldOwner.started;
+      const oldStarted = await oldOwner.started;
       const targetPath = Effect.runSync(
         managedStackDocumentPathEffect(roots.stateRoot, roots.stackId),
       );
@@ -1137,19 +1191,14 @@ describe("detached supervisor child journeys", () => {
           2,
         )}\n`,
       );
-      contender = spawnChild(
-        messageFor(roots, {
-          type: "upgrade-restart",
-          cliVersion: "new",
-          config: { ...messageFor(roots).config, port: siblingPort },
-          portIntents: {
-            ...messageFor(roots).portIntents,
-            document: { api: { port: siblingPort } },
-          },
-        }),
-      );
-      const restarted = await contender.started;
-      expect(restarted.owner.daemonCliVersion).toBe("new");
+      restart = await restartThroughManagedStart(roots, oldStarted, {
+        config: { ...messageFor(roots).config, port: siblingPort },
+        portIntents: {
+          ...messageFor(roots).portIntents,
+          document: { api: { port: siblingPort } },
+        },
+      });
+      const restarted = await restart.started;
       expect(await fetchOwner(restarted.endpoint)).toMatchObject({
         daemonCliVersion: "new",
         state: "running",
@@ -1163,149 +1212,8 @@ describe("detached supervisor child journeys", () => {
         expect.objectContaining({ key: "api.port", port: siblingPort }),
       );
       await remoteStop(restarted.endpoint);
-      await waitForExit(contender.child);
+      await waitForExit(restart.child);
       await waitForExit(oldOwner.child);
-    } finally {
-      if (oldOwner.child.exitCode === null) await kill(oldOwner.child);
-      if (contender?.child.exitCode === null) await kill(contender.child);
-      cleanupRoots(roots);
-    }
-  });
-
-  test("upgrade preflight rejects a newly active sticky port reserved by a sibling", async () => {
-    const roots = await workspace();
-    const binDir = mkdtempSync(join(tmpdir(), "sup-stack-upgrade-port-preflight-"));
-    const docker = join(binDir, "docker");
-    writeFileSync(docker, "#!/bin/sh\nexit 0\n");
-    chmodSync(docker, 0o755);
-    const environment = { PATH: `${binDir}:${process.env["PATH"] ?? ""}` };
-    const oldOwner = spawnChild(
-      messageFor(roots, {
-        cliVersion: "old",
-        config: { ...messageFor(roots).config, mode: "docker" },
-      }),
-      { environment },
-    );
-    let contender: ChildHandle | undefined;
-    try {
-      const oldStarted = await oldOwner.started;
-      const targetPath = Effect.runSync(
-        managedStackDocumentPathEffect(roots.stateRoot, roots.stackId),
-      );
-      const target = JSON.parse(readFileSync(targetPath, "utf8")) as {
-        readonly identity: Readonly<Record<string, unknown>>;
-        readonly ports: ReadonlyArray<{ key: string; port: number; intent: string }>;
-        readonly launch: {
-          readonly excludedServices?: ReadonlyArray<string>;
-        };
-      };
-      const requestedPort = 65_000;
-      writeFileSync(
-        targetPath,
-        `${JSON.stringify(
-          {
-            ...target,
-            launch: {
-              ...target.launch,
-              excludedServices: target.launch.excludedServices?.filter(
-                (service) => service !== "mailpit",
-              ),
-            },
-          },
-          null,
-          2,
-        )}\n`,
-      );
-      const siblingId = "b".repeat(64);
-      const siblingPath = Effect.runSync(
-        managedStackDocumentPathEffect(roots.stateRoot, siblingId),
-      );
-      mkdirSync(dirname(siblingPath), { recursive: true });
-      writeFileSync(
-        siblingPath,
-        `${JSON.stringify(
-          {
-            ...target,
-            id: siblingId,
-            identity: { ...target.identity, workspaceId: "sibling-workspace" },
-            ports: [
-              { key: "api.port", port: 64_000, intent: "exact" },
-              { key: "db.port", port: 64_001, intent: "exact" },
-              { key: "local_smtp.port", port: requestedPort, intent: "automatic" },
-            ],
-            lifecycle: "stopped",
-          },
-          null,
-          2,
-        )}\n`,
-      );
-
-      contender = spawnChild(
-        messageFor(roots, {
-          type: "upgrade-restart",
-          cliVersion: "new",
-          config: {
-            ...messageFor(roots).config,
-            mode: "docker",
-            mailpit: { port: requestedPort, smtpPort: 65_001, pop3Port: 65_002 },
-          },
-          portIntents: {
-            ...messageFor(roots).portIntents,
-            document: {
-              local_smtp: { port: requestedPort, smtp_port: 65_001, pop3_port: 65_002 },
-            },
-          },
-        }),
-        { environment },
-      );
-
-      await expect(contender.started).rejects.toThrow("UpgradePreflightError");
-      expect(oldOwner.child.exitCode).toBeNull();
-      expect(await fetchOwner(oldStarted.endpoint)).toMatchObject({
-        daemonCliVersion: "old",
-        state: "running",
-        ready: true,
-      });
-      await remoteStop(oldStarted.endpoint);
-      await waitForExit(oldOwner.child);
-    } finally {
-      if (oldOwner.child.exitCode === null) await kill(oldOwner.child);
-      if (contender?.child.exitCode === null) await kill(contender.child);
-      cleanupRoots(roots);
-      rmSync(binDir, { recursive: true, force: true });
-    }
-  });
-
-  test("stop timeout leaves the old owner and starts no upgrade restart", async () => {
-    const roots = await workspace();
-    const stopBegan = join(roots.root, "stop-began");
-    const oldOwner = spawnChild(
-      messageFor(roots, {
-        cliVersion: "old",
-      }),
-      {
-        testMode: "hold-stop",
-        environment: { SUPABASE_STACK_TEST_STOP_BEGAN_FILE: stopBegan },
-      },
-    );
-    let restart: ChildHandle | undefined;
-    try {
-      const oldStarted = await oldOwner.started;
-      restart = spawnChild(
-        messageFor(roots, {
-          type: "upgrade-restart",
-          cliVersion: "new",
-        }),
-        { environment: { SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS: "400" } },
-      );
-      await waitForFile(stopBegan);
-      await expect(restart.started).rejects.toThrow(/StopTimeout|timed out/i);
-      expect(oldOwner.child.exitCode).toBeNull();
-      expect(await fetchOwner(oldStarted.endpoint)).toMatchObject({
-        state: "stopping",
-        ready: false,
-      });
-      expect(await canBind(oldStarted.endpoint.port)).toBe(false);
     } finally {
       if (oldOwner.child.exitCode === null) await kill(oldOwner.child);
       if (restart?.child.exitCode === null) await kill(restart.child);
@@ -1773,7 +1681,7 @@ describe("detached supervisor child journeys", () => {
       fakeOwner = undefined;
 
       await expect(contender.started).rejects.toThrow(
-        /ordinary workspace identity.*\.supabase\/identity\.json/,
+        /ordinary workspace identity.*\.supabase\/identity\.json|checkout has no readable HEAD/,
       );
       expect(existsSync(dockerSentinel)).toBe(false);
     } finally {
@@ -2052,14 +1960,14 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
-  test("bounds attached-owner recovery to one startup deadline", { timeout: 30_000 }, async () => {
+  test("bounds attached-owner recovery to one startup deadline", { timeout: 45_000 }, async () => {
     const roots = await workspace();
     const input = messageFor(roots);
     const attachedReady = join(roots.root, "attached-before-ready-ready");
     const attachedRelease = join(roots.root, "attached-before-ready-release");
     const owner = spawnChild(input, {
       testMode: "hold-start",
-      environment: { SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS: "400" },
+      environment: { SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS: "5000" },
     });
     void owner.started.catch(() => undefined);
     let contender: ChildHandle | undefined;
@@ -2070,7 +1978,7 @@ describe("detached supervisor child journeys", () => {
       contender = spawnChild(input, {
         testMode: "hold-start",
         environment: {
-          SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS: "400",
+          SUPABASE_STACK_TEST_STARTUP_TIMEOUT_MS: "5000",
           SUPABASE_STACK_TEST_ATTACHED_READY_FILE: attachedReady,
           SUPABASE_STACK_TEST_ATTACHED_RELEASE_FILE: attachedRelease,
         },

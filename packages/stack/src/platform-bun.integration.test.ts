@@ -8,7 +8,7 @@ import {
   makeControlClient,
 } from "./managed/control.ts";
 import { makeSupervisorControlApplication } from "./SupervisorControlServer.ts";
-import { SupervisorLifecycle } from "./SupervisorLifecycle.ts";
+import { makeSupervisorSessionFixture } from "../tests/helpers/SupervisorSessionFixture.ts";
 import { makeTestStack } from "./testing.ts";
 
 const isBun = typeof Bun !== "undefined";
@@ -171,7 +171,7 @@ describe("Bun control transport", () => {
   (isBun ? test : test.skip)("installs the complete owner app before bind returns", async () => {
     const scope = Scope.makeUnsafe();
     const lifecycle = await Effect.runPromise(
-      SupervisorLifecycle.make({
+      makeSupervisorSessionFixture({
         ownershipId: "a".repeat(64),
         ownerSessionId: "session",
         daemonCliVersion: "test",
@@ -270,7 +270,7 @@ describe("Bun control transport", () => {
   (isBun ? test : test.skip)("flushes /stop before graceful Bun close", async () => {
     const scope = Scope.makeUnsafe();
     const lifecycle = await Effect.runPromise(
-      SupervisorLifecycle.make({
+      makeSupervisorSessionFixture({
         ownershipId: "c".repeat(64),
         ownerSessionId: "session",
         daemonCliVersion: "test",
@@ -349,7 +349,7 @@ describe("Bun control transport", () => {
       const ownershipId = "d".repeat(64);
       const ownerSessionId = "immediate-stop-session";
       const lifecycle = await Effect.runPromise(
-        SupervisorLifecycle.make({
+        makeSupervisorSessionFixture({
           ownershipId,
           ownerSessionId,
           daemonCliVersion: "test",
