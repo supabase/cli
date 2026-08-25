@@ -442,6 +442,85 @@ describe("managed control endpoint", () => {
     ),
   );
 
+  it.effect("retries an unreachable owner candidate before considering later candidates", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const candidates = yield* controlEndpointCandidates(STACK_ID);
+        const ownerEndpoint = candidates[0]!;
+        const ownerStatus: ControlOwnerStatus = {
+          controlProtocol: "supabase-stack-control",
+          controlProtocolVersion: 1,
+          ownershipId: STACK_ID,
+          ownerSessionId: "owner-session",
+          state: "running",
+          ready: true,
+          daemonCliVersion: "old",
+        };
+        const attachUnavailable = yield* Deferred.make<void>();
+        let ownerReads = 0;
+        const attemptedBinds: Array<number> = [];
+        const transport = Layer.succeed(ControlTransport, {
+          bind: (endpoint) => {
+            attemptedBinds.push(endpoint.port);
+            return Effect.fail(
+              new ControlBindError({
+                endpoint,
+                reason: endpoint.port === ownerEndpoint.port ? "in-use" : "failed",
+                cause: new Error(
+                  endpoint.port === ownerEndpoint.port
+                    ? "owner is listening"
+                    : "must not bind a later candidate while the owner is unreachable",
+                ),
+              }),
+            );
+          },
+          read: (endpoint) => {
+            if (endpoint.port !== ownerEndpoint.port) {
+              return Effect.fail(
+                new ControlTransportError({
+                  endpoint,
+                  reason: "unreachable",
+                  cause: new Error("candidate is free"),
+                }),
+              );
+            }
+            ownerReads += 1;
+            if (ownerReads > 2) return Effect.succeed(ownerStatus);
+            return (
+              ownerReads === 2 ? Deferred.succeed(attachUnavailable, undefined) : Effect.void
+            ).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new ControlTransportError({
+                    endpoint,
+                    reason: "unreachable",
+                    cause: new Error("owner handshake is temporarily unavailable"),
+                  }),
+                ),
+              ),
+            );
+          },
+          requestStop: () => Effect.void,
+        });
+        const pending = yield* acquireControl({ stackId: STACK_ID }).pipe(
+          Effect.provide(transport),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.await(attachUnavailable);
+        yield* TestClock.adjust("50 millis");
+        yield* Effect.yieldNow;
+        const result = yield* Fiber.join(pending).pipe(Effect.result);
+
+        expect(Result.isSuccess(result)).toBe(true);
+        if (Result.isSuccess(result)) {
+          expect(isControlAttached(result.success)).toBe(true);
+          expect(result.success.endpoint).toEqual(ownerEndpoint);
+        }
+        expect(attemptedBinds).toEqual([ownerEndpoint.port]);
+      }),
+    ),
+  );
+
   it.live("fails closed when an owner probe encounters ambiguous transport", () =>
     Effect.scoped(
       Effect.gen(function* () {

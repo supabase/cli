@@ -652,6 +652,7 @@ const acquireAtCandidates = (
         ),
       );
       if (attached !== undefined) return attached;
+      if (pending !== undefined) break;
     }
     if (pending !== undefined) return yield* Effect.fail(pending);
     return yield* Effect.fail(
