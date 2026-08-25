@@ -59,10 +59,12 @@ API-sourced config values carry the raw response, governed by five rules:
    status and maps non-2xx responses to API errors before any decode — as
    existing `executeRaw` callers do — rather than feeding an error body into
    the config schema. `@supabase/config`'s schema then decodes
-   `data.attributes` and must pass unknown keys through without failing.
-   This lenient decode is the primary protection against
-   API-ahead-of-package skew; `_apiResponse` is only the access mechanism
-   for what it let through.
+   `data.attributes` and must tolerate unknown keys without failing.
+   Tolerate, not inline: an unknown key never lands on the decoded
+   `ProjectConfig` (that is Alternative 4, rejected) — it stays reachable
+   only through the raw object rule 1 attaches. This lenient decode is the
+   primary protection against API-ahead-of-package skew; `_apiResponse` is
+   the only access mechanism for what it tolerated.
 3. **Metadata is invisible to walks by construction, not filtered by key.**
    Neither reserved name is excluded from the structural walks (sparse
    subtraction, default omission, value-origin tracking) by a key check in
@@ -92,7 +94,9 @@ API-sourced config values carry the raw response, governed by five rules:
    typed field (the API↔config mapping includes renames, boolean inversions,
    and unit conversions). This precedence does not apply to fields the schema
    annotates `x-secret` (`packages/config/src/lib/env.ts`'s `secret()` /
-   `env({ secret: true })`, e.g. `edge_runtime.secrets.*`): the API only ever
+   `env({ secret: true })` — e.g. `auth.external.<provider>.secret` or
+   `auth.captcha.secret`, which map from the v2 response's `auth` attribute
+   record): the API only ever
    returns an HMAC digest for these, never the underlying value, so letting
    the typed field win would hand the digest to the normal encoder and
    persist it despite rule 4. For `x-secret` fields the mapping omits the
@@ -102,10 +106,16 @@ API-sourced config values carry the raw response, governed by five rules:
    document, or the rewrite would drop the user's secret along with the
    digest; and drift comparison must treat `x-secret` fields as not
    comparable, since a local plaintext or `env(...)` reference can never
-   meaningfully equal a remote digest. Consumers needing "which API fields
-   does this package version not understand" use a registry-derived
-   `unmappedApiFields()` helper (raw attributes minus the keys the mapping
-   consumed) rather than a second stored field.
+   meaningfully equal a remote digest. Local-only secrets such as
+   `edge_runtime.secrets.*` never appear in the API response at all; the
+   graduation carve-out is moot for them, and the source-from-local
+   obligation is what keeps them in the file. Consumers needing "which API
+   fields does this package version not understand" use a registry-derived
+   `unmappedApiFields()` helper rather than a second stored field. The
+   subtraction is by path, not by top-level key: the registry records every
+   mapped API path (`auth.<setting>`, `database.major_version`, …) and the
+   helper walks the raw attributes deeply, so a new field nested inside an
+   existing section — the common API-ahead case — still surfaces.
 
 ## Rationale
 
@@ -206,7 +216,11 @@ API-sourced config values carry the raw response, governed by five rules:
 ## Related Decisions
 
 - ADR 0018: sparse config subtraction — defines the structural walks that
-  rule 3 keeps the metadata invisible to.
+  rule 3 keeps the metadata invisible to. This ADR supersedes 0018's
+  assignment of API→`ProjectConfig` translation to the diff core (CLI-2156):
+  the mapping lives in `@supabase/config` so the CLI and Studio share one
+  implementation. 0018 is amended accordingly; its subtraction core stays
+  independent of the API shape.
 - ADR 0009: configuration schema & validation.
 
 ## See Also

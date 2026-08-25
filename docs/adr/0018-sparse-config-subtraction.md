@@ -25,7 +25,7 @@ All functions are pure and synchronous, operating on decoded config values, with
 
 ## Rationale
 
-- **One core instead of a cascade.** The merge-and-prune cascade sketched in CLI-2155's planning comment reduces algebraically to `subtract(merge(local, remote), defaults)`. Exporting the subtraction gives `config diff` and `config pull` the shared comparison core without binding this package to the Management API's response shape (translating that shape to `ProjectConfig` is CLI-2156's concern).
+- **One core instead of a cascade.** The merge-and-prune cascade sketched in CLI-2155's planning comment reduces algebraically to `subtract(merge(local, remote), defaults)`. Exporting the subtraction gives `config diff` and `config pull` the shared comparison core while keeping the subtraction itself independent of the Management API's response shape. (This ADR originally assigned the translation of that shape to `ProjectConfig` to the diff core, CLI-2156; ADR 0019 supersedes that assignment — the mapping lives in `@supabase/config` as a separate layer so the CLI and Studio share one mapper. The subtraction core's independence from the API shape is unchanged.)
 - **Defaults derived, not duplicated.** Every field's default already lives in the schema (`default` annotations plus `withDecodingDefaultKey`). Decoding `{}` materializes them; a parallel hand-written defaults object would drift.
 - **Strict deep equality, array order matters.** Order is semantically load-bearing for values like `api.extra_search_path` (Postgres `search_path` resolution order). Treating reordered arrays as equal would prune values that behave differently from the default. The false-positive cost (a semantically-default-but-reordered array survives as harmless noise) is far cheaper than wrongly deleting meaningful config.
 - **Dropping empty sections is lossless.** Every section carries a section-level decoding default, so an absent section and an empty section decode identically; empty carcass headers are pure diff noise.
@@ -49,7 +49,7 @@ All functions are pure and synchronous, operating on decoded config values, with
 
 ## Alternatives Considered
 
-1. **Merge-and-prune cascade as a single function** (`(apiResponse, configToml) → massaged config`): binds `@supabase/config` to the Management API response shape and entangles this package with remote-to-local translation, which belongs to the diff core (CLI-2156).
+1. **Merge-and-prune cascade as a single function** (`(apiResponse, configToml) → massaged config`): entangles the subtraction with remote-to-local translation in one function. (ADR 0019 later moved the translation itself into this package as a separate mapping layer; the rejection stands — mapping and subtraction remain separate functions.)
 2. **Recursing into `remotes` against global defaults**: looks obviously correct, is subtly wrong — pruning a remote's `api.max_rows = 1000` (global default) under a base that sets `500` changes the branch's effective value from 1000 to 500.
 3. **Hand-written defaults reference object**: duplicates ~100 defaults already declared in the schema and drifts silently.
 4. **Order-insensitive array comparison**: prunes reordered arrays whose order is semantically meaningful (`extra_search_path`).
@@ -58,6 +58,7 @@ All functions are pure and synchronous, operating on decoded config values, with
 
 - [ADR 0009](0009-configuration-schema-and-validation.md): Configuration Schema & Validation — the umbrella charter this decision answers a slice of (default config generation, `@supabase/config` package architecture)
 - [ADR 0006](0006-environment-management.md): Environment Management — remote blocks and branch mapping semantics
+- [ADR 0019](0019-config-api-response-passthrough.md): Raw API-Response Passthrough — supersedes this ADR's assignment of API→`ProjectConfig` translation to the diff core (CLI-2156): the mapping lives in `@supabase/config` so the CLI and Studio share one implementation, while the subtraction core stays independent of the API shape
 
 ## See Also
 
