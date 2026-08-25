@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { loadProjectConfig } from "@supabase/config/effect";
-import { Effect, FileSystem } from "effect";
+import { Effect, FileSystem, Option } from "effect";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import {
   readWorkersSection,
@@ -37,9 +37,20 @@ export const legacyLoadWorkersProject = Effect.fnUntraced(function* () {
   const projectRoot = cliConfig.workdir;
   const supabaseDir = join(projectRoot, "supabase");
 
+  // `tomlOnly`: the entry writer is a TOML text editor. Without this the loader
+  // prefers `supabase/config.json` when one exists, `configPath` becomes the
+  // JSON file, and `commitWorkerEntry` appends a `[workers.<name>]` table to it
+  // — leaving the project config unparseable after the scaffold is on disk.
+  // `functions new` avoids the same trap by resolving `supabase/config.toml`
+  // directly; this is that, through the loader.
+  //
+  // A JSON project therefore gets a `config.toml` written beside its
+  // `config.json`, which the default loader lists in `ignoredPaths`. That is a
+  // known gap: workers are TOML-only until config writing is overhauled.
+  //
   // `loadProjectConfig` returns null when the directory holds no project yet,
   // which is what lets `workers new` scaffold into a bare one.
-  const loaded = yield* loadProjectConfig(projectRoot);
+  const loaded = yield* loadProjectConfig(projectRoot, { tomlOnly: true });
   const section = readWorkersSection(loaded?.config.workers);
 
   return {
@@ -161,7 +172,7 @@ export const legacyDiscoverWorkerNames = Effect.fnUntraced(function* (
   const scaffolded: Array<string> = [];
   for (const entry of entries) {
     const info = yield* fs.stat(join(project.workersDir, entry)).pipe(Effect.option);
-    if (info._tag === "Some" && info.value.type === "Directory") {
+    if (Option.isSome(info) && info.value.type === "Directory") {
       scaffolded.push(entry);
     }
   }

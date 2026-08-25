@@ -52,8 +52,8 @@ export const legacyWorkersNewCommand = Command.make("new", config).pipe(
   Command.withShortDescription("Scaffold a worker locally"),
   Command.withExamples([
     {
-      command: "supabase workers new",
-      description: "Scaffold a worker, prompting for runtime and size",
+      command: "supabase workers new api",
+      description: "Scaffold supabase/workers/api, prompting for runtime and size",
     },
     {
       command: "supabase workers new api --runtime node",

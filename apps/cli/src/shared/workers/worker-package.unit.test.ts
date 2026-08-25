@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { gunzipSync } from "node:zlib";
-import { Effect } from "effect";
+import { Effect, Exit } from "effect";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { formatBytes, packageWorkerDirectory } from "./worker-package.ts";
 
@@ -150,9 +150,9 @@ describe("packageWorkerDirectory", () => {
 
     // Running as root defeats the permission, so only assert when it took hold.
     if (readableAsCurrentUser(unreadable)) {
-      expect(exit._tag).toBe("Success");
+      expect(Exit.isSuccess(exit)).toBe(true);
     } else {
-      expect(exit._tag).toBe("Failure");
+      expect(Exit.isFailure(exit)).toBe(true);
     }
     chmodSync(unreadable, 0o600);
   });
@@ -168,9 +168,9 @@ describe("packageWorkerDirectory", () => {
     );
 
     if (listableAsCurrentUser(locked)) {
-      expect(exit._tag).toBe("Success");
+      expect(Exit.isSuccess(exit)).toBe(true);
     } else {
-      expect(exit._tag).toBe("Failure");
+      expect(Exit.isFailure(exit)).toBe(true);
     }
     chmodSync(locked, 0o700);
   });
@@ -198,7 +198,7 @@ describe("packageWorkerDirectory tar limits", () => {
       packageWorkerDirectory(dir).pipe(Effect.provide(BunServices.layer), Effect.exit),
     );
 
-    expect(exit._tag).toBe("Failure");
+    expect(Exit.isFailure(exit)).toBe(true);
     // A failure, not a defect: the difference is whether the JSON error handler
     // ever sees it.
     expect(JSON.stringify(exit)).toContain("TarPathTooLong");
