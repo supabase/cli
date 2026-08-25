@@ -19,9 +19,16 @@ import {
 import { legacyWaitForShadowReady } from "../../../shared/db-bootstrap/health-check.ts";
 import {
   legacyAcquireShadowDatabase,
+  legacyPeekShadowBaseline,
   type LegacyShadowAcquiredHandle,
+  type LegacyShadowBaselinePeek,
   type LegacyShadowCacheOpts,
 } from "../../../shared/db-bootstrap/shadow-cache.ts";
+import {
+  legacyBufferedShadowOutput,
+  legacyResolvePlanShadowStrategy,
+  legacyRunPlanShadowProvisions,
+} from "./legacy-pgdelta-next-shadow.plan.ts";
 import {
   legacyMemoizeSuccess,
   legacyMigrateNextShadowDatabase,
@@ -134,19 +141,21 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
     const dbConnection = yield* LegacyDbConnection;
     const httpClient = yield* HttpClient.HttpClient;
 
-    const runtime = Layer.mergeAll(
-      Layer.succeed(FileSystem.FileSystem, fs),
-      Layer.succeed(Path.Path, path),
-      Layer.succeed(LegacyDebugFlag, debugFlag),
-      Layer.succeed(LegacyExperimentalFlag, experimentalFlag),
-      Layer.succeed(LegacyNetworkIdFlag, networkIdFlag),
-      Layer.succeed(CliArgs, cliArgs),
-      Layer.succeed(Output, output),
-      Layer.succeed(RuntimeInfo, runtimeInfo),
-      Layer.succeed(LegacyDockerRun, docker),
-      Layer.succeed(LegacyDbConnection, dbConnection),
-      Layer.succeed(HttpClient.HttpClient, httpClient),
-    );
+    const runtimeWith = (outputService: typeof Output.Service) =>
+      Layer.mergeAll(
+        Layer.succeed(FileSystem.FileSystem, fs),
+        Layer.succeed(Path.Path, path),
+        Layer.succeed(LegacyDebugFlag, debugFlag),
+        Layer.succeed(LegacyExperimentalFlag, experimentalFlag),
+        Layer.succeed(LegacyNetworkIdFlag, networkIdFlag),
+        Layer.succeed(CliArgs, cliArgs),
+        Layer.succeed(Output, outputService),
+        Layer.succeed(RuntimeInfo, runtimeInfo),
+        Layer.succeed(LegacyDockerRun, docker),
+        Layer.succeed(LegacyDbConnection, dbConnection),
+        Layer.succeed(HttpClient.HttpClient, httpClient),
+      );
+    const runtime = runtimeWith(output);
 
     const nextPort = (excluded?: number) =>
       Effect.gen(function* () {
@@ -229,19 +238,38 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
         },
       );
 
-    const provisionMigrations = (input: NativeShadowInput, opts: LegacyShadowCacheOpts) =>
+    const provisionMigrations = (
+      input: NativeShadowInput,
+      opts: LegacyShadowCacheOpts,
+      onBaselineSeam: Effect.Effect<void> = Effect.void,
+    ) =>
       Effect.gen(function* () {
         const handle = yield* acquireShadow(input, opts);
-        yield* awaitShadowReady(input, handle);
-        const setup = setupRunInput(input, handle);
-        yield* legacyMigrateNextShadowDatabase(input.spawner, setup, handle);
+        // Baseline-handoff waits on `onBaselineSeam` before warm-restoring the declarative
+        // shadow. A snapshot-cold handle reaches that seam when its export publishes the tar;
+        // any other handle (warm-raced or uncached) never snapshots, so signal immediately.
+        const seamWillRun = handle.snapshotRequired && !handle.baselinePresent;
+        const seamHandle: LegacyShadowAcquiredHandle = seamWillRun
+          ? {
+              ...handle,
+              snapshotBaseline: handle.snapshotBaseline.pipe(Effect.ensuring(onBaselineSeam)),
+            }
+          : handle;
+        if (!seamWillRun) yield* onBaselineSeam;
+        yield* awaitShadowReady(input, seamHandle);
+        const setup = setupRunInput(input, seamHandle);
+        yield* legacyMigrateNextShadowDatabase(input.spawner, setup, seamHandle);
         return {
           migrationsUrl: legacyToPostgresURL(setup.connConfig),
-          snapshotKey: handle.snapshotKey,
+          snapshotKey: seamHandle.snapshotKey,
         } satisfies ProvisionedMigrationsShadow;
       }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
 
-    const provisionDeclarative = (input: NativeShadowInput, opts: LegacyShadowCacheOpts) =>
+    const provisionDeclarative = (
+      input: NativeShadowInput,
+      opts: LegacyShadowCacheOpts,
+      outputService: typeof Output.Service = output,
+    ) =>
       Effect.gen(function* () {
         const handle = yield* acquireShadow(input, opts);
         yield* awaitShadowReady(input, handle);
@@ -252,7 +280,7 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           restoredFromPgDataSnapshot: handle.baselinePresent,
           snapshotKey: handle.snapshotKey,
         } satisfies ProvisionedDeclarativeShadow;
-      }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
+      }).pipe(Effect.provide(runtimeWith(outputService)), Effect.mapError(nextShadowError));
 
     const cacheOpts = (
       opts: LegacyPgDeltaNextShadowInput,
@@ -277,17 +305,47 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           const built = yield* buildNativeBase(opts);
           const migrationsInput = buildNativeInput(opts, built, migrationsPort);
           const declarativeInput = buildNativeInput(opts, built, declarativePort);
-          const migrations = yield* provisionMigrations(migrationsInput, cacheOpts(opts, "config"));
-          const declarative = yield* provisionDeclarative(
-            declarativeInput,
-            cacheOpts(opts, "disabled"),
-          );
+          const [migrationsPeek, declarativePeek] = yield* Effect.all([
+            legacyPeekShadowBaseline(migrationsInput.base, cacheOpts(opts, "config")),
+            legacyPeekShadowBaseline(declarativeInput.base, cacheOpts(opts, "disabled")),
+          ]);
+          const withPeek = (
+            cache: LegacyShadowCacheOpts,
+            peek: LegacyShadowBaselinePeek,
+          ): LegacyShadowCacheOpts =>
+            peek.state === "uncachable"
+              ? cache
+              : { ...cache, precomputedKeyInputs: peek.keyInputs };
+          const strategy = legacyResolvePlanShadowStrategy(migrationsPeek, declarativePeek);
+          // Peeked inputs are reused only where the acquire follows the peek immediately: the
+          // migrations acquire always does, the declarative one only under `parallel`. Delayed
+          // declarative acquires (handoff / sequential) re-resolve so a mid-run `roles.sql`
+          // edit cannot publish a baseline under a stale key. Identity still uses the acquired
+          // handles' snapshot keys, so a delayed re-resolve cannot lie about lineage.
+          const migrationsOpts = withPeek(cacheOpts(opts, "config"), migrationsPeek);
+          const declarativeOpts =
+            strategy === "parallel"
+              ? withPeek(cacheOpts(opts, "disabled"), declarativePeek)
+              : cacheOpts(opts, "disabled");
+
+          const buffered =
+            strategy === "sequential" ? undefined : legacyBufferedShadowOutput(output);
+          const provisions = legacyRunPlanShadowProvisions({
+            strategy,
+            provisionMigrations: (onBaselineSeam) =>
+              provisionMigrations(migrationsInput, migrationsOpts, onBaselineSeam),
+            provisionDeclarative: provisionDeclarative(
+              declarativeInput,
+              declarativeOpts,
+              buffered === undefined ? output : buffered.output,
+            ),
+          });
+          const [migrations, declarative] = yield* buffered === undefined
+            ? provisions
+            : provisions.pipe(Effect.ensuring(buffered.flush));
           return {
             migrationsUrl: migrations.migrationsUrl,
             declarativeUrl: declarative.declarativeUrl,
-            // Key equality is what encodes lineage: the declarative shadow restored the very tar
-            // the migrations side either restored or exported this run, so the two clusters are
-            // physical clones. An absent key (uncached/bypassed/uncachable) is never lineage.
             allowSameDatabaseIdentity: legacyAllowSameDatabaseIdentityForPlanShadows({
               declarativeRestoredFromPgDataSnapshot: declarative.restoredFromPgDataSnapshot,
               sameSnapshotKey:
