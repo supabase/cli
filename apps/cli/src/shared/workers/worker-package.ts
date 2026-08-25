@@ -1,5 +1,5 @@
 import { gzipSync } from "node:zlib";
-import { Effect, FileSystem } from "effect";
+import { Effect, FileSystem, Option } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import { createTar, type TarEntry, TarPathTooLongError } from "./tar.ts";
 
@@ -51,7 +51,7 @@ const collectEntries = (
       // by file, keeps a broken link from vanishing, and stops a link pointing at
       // an ancestor from being walked into.
       const linkTarget = yield* fs.readLink(absolutePath).pipe(Effect.option);
-      if (linkTarget._tag === "Some") {
+      if (Option.isSome(linkTarget)) {
         entries.push({
           path: relativePath,
           contents: new Uint8Array(0),
@@ -65,7 +65,7 @@ const collectEntries = (
       const info = yield* fs.stat(absolutePath);
 
       const modified = info.mtime;
-      const mtime = modified._tag === "Some" ? Math.floor(modified.value.getTime() / 1000) : 0;
+      const mtime = Option.isSome(modified) ? Math.floor(modified.value.getTime() / 1000) : 0;
 
       if (info.type === "Directory") {
         entries.push({ path: `${relativePath}/`, contents: new Uint8Array(0), mode: 0o755, mtime });
