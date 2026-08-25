@@ -50,7 +50,7 @@ import {
 import type { LegacyWorkersPushFlags } from "./push.command.ts";
 
 /**
- * `supabase workers push [name]` — build (when there is code to build) and
+ * `supabase workers push [name...]` — build (when there is code to build) and
  * deploy the worker into the linked project. Registered under `deploy` as an
  * alias, for anyone reaching for the `supabase functions` verb out of habit.
  *
@@ -156,7 +156,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
   // does not exist, and only then failing on the path.
   {
     const stat = yield* fs.stat(worker.sourceDir).pipe(Effect.option);
-    if (stat._tag === "None" || stat.value.type !== "Directory") {
+    if (Option.isNone(stat) || stat.value.type !== "Directory") {
       return yield* Effect.fail(
         new WorkerSourceMissingError({
           detail: `There is no worker source at ${sourceDisplay}.`,
