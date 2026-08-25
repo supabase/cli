@@ -34,16 +34,17 @@
     "dev:legacy": "pnpm exec bun src/legacy/main.ts",
     "test": "nx run-many -t test:core test:e2e --projects=$npm_package_name",
     "test:core": "nx run-many -t test:unit test:integration --projects=$npm_package_name --coverage.enabled",
+    "test:live": "bun --bun vitest run --project live",
     "test:smoke": "bun run tests/smoke-test.ts",
-    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name",
-    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name"
+    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name,@supabase/root",
+    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name,@supabase/root"
   },
   "dependencies": {
     "eciesjs": "^0.5.0",
-    "jose": "^6.2.8"
+    "jose": "^6.2.9"
   },
   "devDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.232",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.234",
     "@anthropic-ai/sdk": "^0.117.1",
     "@clack/prompts": "^1.7.0",
     "@effect/atom-react": "catalog:",
@@ -55,13 +56,13 @@
     "@parcel/watcher": "^2.6.0",
     "@supabase/api": "workspace:*",
     "@supabase/config": "workspace:*",
-    "@supabase/pg-delta": "1.0.0-alpha.42",
+    "@supabase/pg-delta": "1.0.0-alpha.46",
     "@supabase/pg-topo": "1.0.0-alpha.5",
     "@supabase/process-compose": "workspace:*",
     "@supabase/stack": "workspace:*",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
-    "@types/pg": "^8.21.0",
+    "@types/pg": "^8.23.1",
     "@types/pg-copy-streams": "^1.2.5",
     "@types/react": "^19.2.18",
     "@vercel/detect-agent": "^1.2.5",
@@ -71,13 +72,10 @@
     "esbuild": "^0.28.2",
     "ink": "^7.1.1",
     "ink-spinner": "^5.0.0",
-    "knip": "catalog:",
-    "oxfmt": "catalog:",
-    "oxlint": "catalog:",
-    "oxlint-tsgolint": "catalog:",
     "pg": "^8.23.0",
     "pg-copy-streams": "^7.0.0",
-    "posthog-node": "^5.49.0",
+    "posthog-node": "^5.49.1",
+    "prettier": "3.9.6",
     "react": "^19.2.8",
     "react-devtools-core": "^7.0.1",
     "semantic-release": "^25.0.9",
@@ -109,41 +107,6 @@
     "plugins": [
       "@semantic-release/commit-analyzer",
       "@semantic-release/release-notes-generator"
-    ]
-  },
-  "knip": {
-    "entry": [
-      "src/shared/cli/bin.ts",
-      "src/**/*.test.ts",
-      "src/**/*.e2e.test.ts",
-      "src/**/*.live.test.ts"
-    ],
-    "ignore": [
-      "scripts/*.ts",
-      "tests/**/*.ts",
-      "src/shared/telemetry/event-catalog.ts",
-      "src/shared/workers/stacks/**"
-    ],
-    "ignoreBinaries": [
-      "nx",
-      "mkfifo"
-    ],
-    "ignoreDependencies": [
-      "@parcel/watcher-darwin-arm64",
-      "@parcel/watcher-darwin-x64",
-      "@parcel/watcher-linux-arm64-glibc",
-      "@parcel/watcher-linux-arm64-musl",
-      "@parcel/watcher-linux-x64-glibc",
-      "@parcel/watcher-linux-x64-musl",
-      "@parcel/watcher-win32-arm64",
-      "@parcel/watcher-win32-x64",
-      "oxfmt",
-      "oxlint",
-      "oxlint-tsgolint",
-      "semantic-release",
-      "@anthropic-ai/claude-agent-sdk",
-      "@anthropic-ai/sdk",
-      "@modelcontextprotocol/sdk"
     ]
   },
   "nx": {

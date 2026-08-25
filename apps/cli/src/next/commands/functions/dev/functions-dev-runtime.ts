@@ -1,5 +1,5 @@
 import { connectLayer, daemonLayer, Stack, type EdgeRuntimeConfig } from "@supabase/stack/effect";
-import { loadProjectConfig } from "@supabase/config";
+import { loadProjectConfig } from "@supabase/config/effect";
 import { Duration, Effect, FileSystem, Layer, Option, Stream } from "effect";
 import { join } from "node:path";
 import { CliConfig } from "../../../config/cli-config.service.ts";
@@ -54,10 +54,13 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
 
   const serviceVersionContext = yield* resolveServiceVersionContext([], undefined);
   const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
-  const stackConfig = withServiceVersions(
-    toStartStackConfig([], "auto"),
-    serviceVersionContext.runtimeVersions,
-  );
+  const stackConfig = {
+    ...withServiceVersions(toStartStackConfig([], "docker"), serviceVersionContext.runtimeVersions),
+    // Functions dev explicitly requires Edge Runtime even when the project
+    // config supplies only schema defaults. Request Docker explicitly so the
+    // managed daemon validates container availability before persisting state.
+    servicePolicies: { "edge-runtime": "eager" as const },
+  };
   const stackLayer = yield* daemonLayer({
     cacheRoot: cliConfig.supabaseHome,
     cwd: runtimeInfo.cwd,
@@ -65,7 +68,6 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
     name: opts.stack,
     edgeRuntime: opts.edgeRuntime,
     launch: {
-      mode: "auto",
       versions: serviceVersionContext.pinnedBaseline,
       excludedServices: [],
     },

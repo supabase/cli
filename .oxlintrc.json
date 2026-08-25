@@ -1,0 +1,37 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "options": {
+    "typeAware": true,
+    "denyWarnings": true
+  },
+  "ignorePatterns": [
+    ".repos",
+    "apps/cli-go",
+    "apps/cli-e2e/fixtures",
+    "**/testdata",
+    "**/dist",
+    "**/coverage",
+    "**/.next",
+    "**/.source"
+  ],
+  "rules": {
+    // Spreading an Effect Data.Class instance into its constructor is the
+    // idiomatic copy-with-update pattern (`new State({ ...state, ... })`).
+    "typescript/no-misused-spread": "off",
+    // Effect combinators are passed as references by design, e.g.
+    // `.pipe(semaphore.withPermit)`; they do not rely on `this`.
+    "typescript/unbound-method": "off",
+    // Too strict for CLI string building; `no-base-to-string` still guards
+    // against `[object Object]` interpolation bugs.
+    "typescript/restrict-template-expressions": "off"
+  },
+  "overrides": [
+    {
+      // Legacy CLI is superseded by src/next; not worth the cleanup churn.
+      "files": ["apps/cli/src/legacy/**"],
+      "rules": {
+        "typescript/no-base-to-string": "off"
+      }
+    }
+  ]
+}

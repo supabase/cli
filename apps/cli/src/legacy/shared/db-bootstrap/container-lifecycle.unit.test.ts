@@ -490,7 +490,7 @@ describe("legacyCreateContainer secretFiles", () => {
       Effect.map((error) => {
         expect(error).toBeInstanceOf(LegacyContainerCreateError);
         expect(error.message).toBe(
-          "failed to create docker container: failed to copy secret file into container: Error: No such container: container-id-def",
+          "failed to create docker container: failed to copy secret file into container: exit 1: Error: No such container: container-id-def",
         );
         expect(mock.spawned.map((args) => args[0])).toEqual(["create", "cp"]);
         expect(mock.spawned[1]).toEqual(["cp", "-", "container-id-def:/"]);

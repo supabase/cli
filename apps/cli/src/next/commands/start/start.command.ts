@@ -1,5 +1,5 @@
-import { Effect, Layer, Context } from "effect";
-import { loadProjectConfig } from "@supabase/config";
+import { Effect, Layer, Context, Option } from "effect";
+import { loadProjectConfig } from "@supabase/config/effect";
 import {
   DEFAULT_MANAGED_STACK_NAME,
   daemonLayer,
@@ -79,14 +79,15 @@ export const serviceVersionFlag = Flag.string("service-version").pipe(
 
 const modeFlag = Flag.choice("mode", startModes).pipe(
   Flag.withDescription(
-    'Stack startup mode. "auto" prefers native binaries and falls back to Docker, "native" requires native-compatible services, and "docker" forces Docker for all services.',
+    'Stack startup mode. "native" requires native-compatible services and "docker" requires a usable Docker or Podman runtime.',
   ),
-  Flag.withDefault("auto" as StartMode),
+  Flag.optional,
+  Flag.map(Option.getOrUndefined),
 );
 
 interface StartVersionStateShape {
   readonly launch: {
-    readonly mode: StartMode;
+    readonly mode?: StartMode;
     readonly versions: Readonly<Record<string, string>>;
     readonly excludedServices: ReadonlyArray<ExcludedStackService>;
   };
@@ -124,7 +125,7 @@ export type StartFlags = CliCommand.Command.Config.Infer<typeof flags>;
 export const startCommand = Command.make("start", flags).pipe(
   Command.withDescription(
     "Start the local Supabase development stack.\n\n" +
-      "Starts the full local Supabase stack. Use --mode auto (default) to prefer native binaries and fall back to Docker, --mode native to require native-compatible services, or --mode docker to force Docker-backed startup.\n\n" +
+      "Starts the full local Supabase stack when Docker or Podman is usable; otherwise a supported host starts the native-capable service set. Use --mode to require one explicitly.\n\n" +
       "Named CLI stacks persist managed runtime state under the Supabase home directory. Use --exclude to skip optional services. Use --detach to run in the background.",
   ),
   Command.withShortDescription("Start local Supabase stack"),
@@ -196,8 +197,9 @@ export const startCommand = Command.make("start", flags).pipe(
       if (deprecationWarning !== undefined) {
         yield* output.warn(deprecationWarning);
       }
+      const effectiveMode = flags.mode ?? existingSummary?.launch.mode;
       const baseStackConfig = withServiceVersions(
-        toStartStackConfig(flags.exclude, flags.mode),
+        toStartStackConfig(flags.exclude, effectiveMode),
         serviceVersionContext.runtimeVersions,
       );
       const stackConfig = {
@@ -219,7 +221,7 @@ export const startCommand = Command.make("start", flags).pipe(
               portDocument: portIntents,
             });
       const launch = {
-        mode: flags.mode,
+        ...(flags.mode === undefined ? {} : { mode: flags.mode }),
         versions: serviceVersionContext.pinnedBaseline,
         excludedServices: flags.exclude,
         ...(existingSummary?.lastNotifiedUpdateFingerprint === undefined
@@ -242,12 +244,11 @@ export const startCommand = Command.make("start", flags).pipe(
         cwd: runtimeInfo.cwd,
         name: flags.stack,
       });
-
       return {
         stackLayer,
         startVersionState: StartVersionState.of({
           launch: {
-            mode: flags.mode,
+            mode: summary.launch.mode,
             versions: serviceVersionContext.pinnedBaseline,
             excludedServices: flags.exclude,
           },

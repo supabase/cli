@@ -13,42 +13,42 @@ We define 5 metric categories with specific signals to track. All metrics are de
 
 ### Adoption
 
-| Metric | Definition | Why it matters |
-|--------|-----------|----------------|
+| Metric                         | Definition                                                    | Why it matters                                                   |
+| ------------------------------ | ------------------------------------------------------------- | ---------------------------------------------------------------- |
 | **Monthly Active Users (MAU)** | Unique users who ran at least one command in the past 30 days | **North star metric** — single number for overall product health |
-| New installs per week | First-time CLI executions | Growth rate |
-| LLM vs human split | Ratio of non-TTY to TTY sessions | Validates the dual-audience thesis — are LLMs actually using it? |
+| New installs per week          | First-time CLI executions                                     | Growth rate                                                      |
+| LLM vs human split             | Ratio of non-TTY to TTY sessions                              | Validates the dual-audience thesis — are LLMs actually using it? |
 
 ### Engagement
 
-| Metric | Definition | Why it matters |
-|--------|-----------|----------------|
-| Commands per session | Average commands between CLI start and idle timeout | One-and-done vs workflow usage |
-| Command frequency distribution | Ranked usage count per command | Guides investment — unused commands are candidates for removal |
-| Multi-command chains | Sessions with 3+ commands | Signal of deep usage, especially from LLM agents composing workflows |
+| Metric                         | Definition                                          | Why it matters                                                       |
+| ------------------------------ | --------------------------------------------------- | -------------------------------------------------------------------- |
+| Commands per session           | Average commands between CLI start and idle timeout | One-and-done vs workflow usage                                       |
+| Command frequency distribution | Ranked usage count per command                      | Guides investment — unused commands are candidates for removal       |
+| Multi-command chains           | Sessions with 3+ commands                           | Signal of deep usage, especially from LLM agents composing workflows |
 
 ### Retention
 
-| Metric | Definition | Why it matters |
-|--------|-----------|----------------|
-| Week 1 retention | % of new users who return within 7 days | Early signal of product-market fit |
-| Month 1 retention | % of new users who return within 30 days | Sustained value signal |
-| Churn by command | Last command before a user stops returning | Identifies commands that drive users away |
+| Metric            | Definition                                 | Why it matters                            |
+| ----------------- | ------------------------------------------ | ----------------------------------------- |
+| Week 1 retention  | % of new users who return within 7 days    | Early signal of product-market fit        |
+| Month 1 retention | % of new users who return within 30 days   | Sustained value signal                    |
+| Churn by command  | Last command before a user stops returning | Identifies commands that drive users away |
 
 ### Quality
 
-| Metric | Definition | Why it matters |
-|--------|-----------|----------------|
-| **Command success rate** | % of commands exiting 0 | **Quality guardrail** — growth doesn't matter if commands are failing |
-| Error code distribution | Frequency of each error code | Prioritizes which errors to fix first |
-| p50 / p95 command latency | Wall-clock time per command | Validates performance budgets from ADR 0001 in the real world |
+| Metric                    | Definition                   | Why it matters                                                        |
+| ------------------------- | ---------------------------- | --------------------------------------------------------------------- |
+| **Command success rate**  | % of commands exiting 0      | **Quality guardrail** — growth doesn't matter if commands are failing |
+| Error code distribution   | Frequency of each error code | Prioritizes which errors to fix first                                 |
+| p50 / p95 command latency | Wall-clock time per command  | Validates performance budgets from ADR 0001 in the real world         |
 
 ### Onboarding
 
-| Metric | Definition | Why it matters |
-|--------|-----------|----------------|
-| Time to first successful command | Duration from install to first exit code 0 | Measures onboarding friction |
-| Drop-off funnel | install → first run → login → first meaningful command (`supabase dev` or `supabase link`) | Identifies where new users get stuck |
+| Metric                           | Definition                                                                                 | Why it matters                       |
+| -------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------ |
+| Time to first successful command | Duration from install to first exit code 0                                                 | Measures onboarding friction         |
+| Drop-off funnel                  | install → first run → login → first meaningful command (`supabase dev` or `supabase link`) | Identifies where new users get stuck |
 
 ## Rationale
 
@@ -66,10 +66,10 @@ We define 5 metric categories with specific signals to track. All metrics are de
 
 A single OpenTelemetry-based pipeline handles all concerns — product analytics, performance traces, and error diagnostics. The backend evolves in phases:
 
-| Phase | Backend | Purpose | Status |
-|---|---|---|---|
-| **Phase 1** | **Sentry** (via `@sentry/bun`) | All 5 metric categories + error diagnostics + performance traces | Now |
-| **Phase 2** | **Grafana** (company-owned) | Long-term analytics + custom observability dashboards | Future |
+| Phase       | Backend                        | Purpose                                                          | Status |
+| ----------- | ------------------------------ | ---------------------------------------------------------------- | ------ |
+| **Phase 1** | **Sentry** (via `@sentry/bun`) | All 5 metric categories + error diagnostics + performance traces | Now    |
+| **Phase 2** | **Grafana** (company-owned)    | Long-term analytics + custom observability dashboards            | Future |
 
 Both phases consume the same OTel spans with the same attributes. The CLI code does not change between phases — only the exporter configuration. ADR 0001 Pillar 5 and this ADR share infrastructure — one telemetry event schema, one write path, one consent model.
 
@@ -81,24 +81,24 @@ type TelemetryEvent = {
   schema_version: 1;
 
   // Identity
-  device_id: string;       // random UUID, persisted in ~/.supabase/telemetry.json
-  session_id: string;      // rotates on 30-min idle
-  is_first_run: boolean;   // true on very first CLI execution
-  user_id?: string;        // Supabase account UUID, present after `supabase login`
+  device_id: string; // random UUID, persisted in ~/.supabase/telemetry.json
+  session_id: string; // rotates on 30-min idle
+  is_first_run: boolean; // true on very first CLI execution
+  user_id?: string; // Supabase account UUID, present after `supabase login`
 
   // Command
-  command: string;         // e.g. "dev", "projects list"
-  exit_code: number;       // 0 = success, 1-4 = error categories
-  duration_ms: number;     // wall-clock time
-  startup_ms: number;      // time to parse args and load handler
-  error_code?: string;     // e.g. "AUTH_TOKEN_EXPIRED" (only on failure)
+  command: string; // e.g. "dev", "projects list"
+  exit_code: number; // 0 = success, 1-4 = error categories
+  duration_ms: number; // wall-clock time
+  startup_ms: number; // time to parse args and load handler
+  error_code?: string; // e.g. "AUTH_TOKEN_EXPIRED" (only on failure)
 
   // Environment
-  is_tty: boolean;         // true = human, false = LLM/CI/pipe
-  is_ci: boolean;          // true if running in known CI environment
-  os: string;              // e.g. "darwin", "linux", "win32"
-  arch: string;            // e.g. "arm64", "x64"
-  cli_version: string;     // e.g. "0.1.0"
+  is_tty: boolean; // true = human, false = LLM/CI/pipe
+  is_ci: boolean; // true if running in known CI environment
+  os: string; // e.g. "darwin", "linux", "win32"
+  arch: string; // e.g. "arm64", "x64"
+  cli_version: string; // e.g. "0.1.0"
 
   // API activity
   api_request_count: number;
@@ -107,7 +107,7 @@ type TelemetryEvent = {
 
   // Workflow spans (only for workflow commands, see ADR 0007)
   spans?: Array<{
-    name: string;          // e.g. "docker.start", "config.load"
+    name: string; // e.g. "docker.start", "config.load"
     duration_ms: number;
   }>;
 };

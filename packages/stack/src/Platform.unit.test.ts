@@ -4,10 +4,7 @@ import {
   detectPlatform,
   dockerHostAddress,
   dockerNetworkArgs,
-  postgresAssetName,
-  postgrestAssetName,
-  authAssetName,
-  edgeRuntimeAssetName,
+  nativeTargetForPlatform,
 } from "./Platform.ts";
 
 describe("detectPlatform", () => {
@@ -22,79 +19,21 @@ describe("detectPlatform", () => {
   );
 });
 
-describe("postgresAssetName", () => {
+describe("nativeTargetForPlatform", () => {
   it("maps darwin-arm64", () => {
-    expect(postgresAssetName({ os: "darwin", arch: "arm64" })).toBe("darwin-arm64");
+    expect(nativeTargetForPlatform({ os: "darwin", arch: "arm64" })).toBe("darwin-arm64");
   });
 
   it("maps linux-x64", () => {
-    expect(postgresAssetName({ os: "linux", arch: "x64" })).toBe("linux-x64");
+    expect(nativeTargetForPlatform({ os: "linux", arch: "x64" })).toBe("linux-amd64");
   });
 
   it("maps linux-arm64", () => {
-    expect(postgresAssetName({ os: "linux", arch: "arm64" })).toBe("linux-arm64");
+    expect(nativeTargetForPlatform({ os: "linux", arch: "arm64" })).toBe("linux-arm64");
   });
 
   it("returns null for unsupported", () => {
-    expect(postgresAssetName({ os: "win32", arch: "x64" })).toBeNull();
-  });
-});
-
-describe("postgrestAssetName", () => {
-  it("maps darwin-arm64 to macos-aarch64", () => {
-    expect(postgrestAssetName({ os: "darwin", arch: "arm64" })).toBe("macos-aarch64");
-  });
-
-  it("maps linux-x64 to linux-static-x86-64", () => {
-    expect(postgrestAssetName({ os: "linux", arch: "x64" })).toBe("linux-static-x86-64");
-  });
-
-  it("maps linux-arm64 to ubuntu-aarch64", () => {
-    expect(postgrestAssetName({ os: "linux", arch: "arm64" })).toBe("ubuntu-aarch64");
-  });
-
-  it("maps win32-x64 to windows-x86-64", () => {
-    expect(postgrestAssetName({ os: "win32", arch: "x64" })).toBe("windows-x86-64");
-  });
-
-  it("returns null for unsupported", () => {
-    expect(postgrestAssetName({ os: "win32", arch: "arm64" })).toBeNull();
-  });
-});
-
-describe("authAssetName", () => {
-  it("maps darwin-arm64 to darwin-arm64", () => {
-    expect(authAssetName({ os: "darwin", arch: "arm64" })).toBe("darwin-arm64");
-  });
-
-  it("maps linux-x64 to x86", () => {
-    expect(authAssetName({ os: "linux", arch: "x64" })).toBe("x86");
-  });
-
-  it("maps linux-arm64 to arm64", () => {
-    expect(authAssetName({ os: "linux", arch: "arm64" })).toBe("arm64");
-  });
-
-  it("returns null for unsupported", () => {
-    expect(authAssetName({ os: "darwin", arch: "x64" })).toBeNull();
-  });
-});
-
-describe("edgeRuntimeAssetName", () => {
-  it("maps darwin-arm64 to aarch64-darwin", () => {
-    expect(edgeRuntimeAssetName({ os: "darwin", arch: "arm64" })).toBe("aarch64-darwin");
-  });
-
-  it("maps linux-x64 to x86_64-linux", () => {
-    expect(edgeRuntimeAssetName({ os: "linux", arch: "x64" })).toBe("x86_64-linux");
-  });
-
-  it("maps linux-arm64 to aarch64-linux", () => {
-    expect(edgeRuntimeAssetName({ os: "linux", arch: "arm64" })).toBe("aarch64-linux");
-  });
-
-  it("returns null for unsupported", () => {
-    expect(edgeRuntimeAssetName({ os: "win32", arch: "x64" })).toBeNull();
+    expect(nativeTargetForPlatform({ os: "win32", arch: "x64" })).toBeUndefined();
   });
 });
 

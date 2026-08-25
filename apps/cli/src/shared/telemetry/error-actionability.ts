@@ -983,6 +983,9 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
       ? { ...actionability.invalidConfig, fingerprint_suffix: "port_allocation" }
       : actionability.unknown,
   BinaryNotFoundError: () => actionability.invalidConfig,
+  BinaryManifestError: () => actionability.externalNetwork,
+  BinaryRuntimeError: () => actionability.externalNetwork,
+  BinaryHostCompatibilityError: () => actionability.invalidConfig,
   DownloadError: () => actionability.externalNetwork,
   ChecksumMismatchError: () => ({
     ...actionability.externalNetwork,
@@ -1012,6 +1015,10 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   PortAllocationError: () => ({
     ...actionability.invalidConfig,
     fingerprint_suffix: "port_allocation",
+  }),
+  AtomicClaimUnsupportedError: () => ({
+    ...actionability.invalidInput,
+    fingerprint_suffix: "managed_identity",
   }),
   StackNotRunningError: () => actionability.startStack,
   StackReadinessError: () => actionability.startStack,

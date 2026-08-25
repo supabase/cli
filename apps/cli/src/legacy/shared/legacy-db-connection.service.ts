@@ -113,9 +113,10 @@ export interface LegacyDbSession {
    * statements that completed before the error.
    *
    * A batch runs on its own pooled connection, which the driver checks out per
-   * call. Failing to acquire it raises `LegacyDbConnectError` (a connection-setup
-   * failure, surfaced verbatim — not masked as an exec error), consistent with
-   * {@link queryRaw}; only the batch's own execution raises `LegacyDbExecError`.
+   * call. Failing to acquire it, or losing it before any of the batch reaches the
+   * wire, raises `LegacyDbConnectError` (a connection failure, surfaced verbatim —
+   * not masked as an exec error), consistent with {@link queryRaw}; only a batch
+   * that was actually written raises `LegacyDbExecError`.
    */
   readonly execBatch: (
     statements: ReadonlyArray<LegacyDbBatchStatement>,

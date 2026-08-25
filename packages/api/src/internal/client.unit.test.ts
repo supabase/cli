@@ -1071,6 +1071,7 @@ describe("makeSupabaseApiClient", () => {
                   id: "abcdefghijklmnopqrst",
                   attributes: {
                     database: {
+                      major_version: 17,
                       ssl_enforced: true,
                       network_restrictions: {
                         entitlement: "disallowed",
@@ -1140,6 +1141,7 @@ describe("makeSupabaseApiClient", () => {
     );
 
     expect(result.data.attributes.database.network_restrictions.entitlement).toBe("disallowed");
+    expect(result.data.attributes.database.major_version).toBe(17);
     expect(result.data.attributes.storage.upstream_target).toBe("main");
     expect(result.data.attributes.api.db_pool).toBeNull();
   });

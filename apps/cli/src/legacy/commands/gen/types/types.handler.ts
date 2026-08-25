@@ -1,4 +1,4 @@
-import { loadProjectConfig } from "@supabase/config";
+import { loadProjectConfig } from "@supabase/config/effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { Effect, FileSystem, Option, Path, Stdio, Stream } from "effect";
 import {
@@ -384,7 +384,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     readonly port: number;
     readonly probeHost: string;
     readonly probePort: number;
-    readonly networkMode: "host" | string;
+    readonly networkMode: "host" | (string & {});
     readonly includedSchemas: string;
     readonly postgrestV9Compat: boolean;
     readonly pgmetaVersionOverride?: string;

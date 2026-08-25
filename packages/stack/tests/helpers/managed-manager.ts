@@ -1,4 +1,5 @@
-import { Effect, Stream } from "effect";
+import { NodeFileSystem } from "@effect/platform-node";
+import { Effect, Predicate, Stream } from "effect";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
@@ -6,10 +7,11 @@ import { join } from "node:path";
 import type {
   ManagedStackManagerShape,
   ManagedStackStartResult,
+  StartStackRequest,
 } from "../../src/managed/manager.ts";
 import { managedStackManagerLayer } from "../../src/managed/manager.ts";
 import type { ManagedPortIntentDocument } from "../../src/managed/model.ts";
-import { acquireControl } from "../../src/managed/control.ts";
+import { acquireControl, isControlOwnership } from "../../src/managed/control.ts";
 import { deriveStackId, ensureEnvironment } from "../../src/managed/environment.ts";
 import { reservePortSet } from "../../src/PortAllocator.ts";
 import type { Stack } from "../../src/Stack.ts";
@@ -105,7 +107,7 @@ export const freePorts = (
         field,
         selection: { kind: "automatic" as const },
       })),
-    );
+    ).pipe(Effect.provide(NodeFileSystem.layer));
     const ports = FREE_PORT_FIELDS.slice(0, count).flatMap((field) => {
       const port = lease.ports[field];
       return port === undefined ? [] : [port];
@@ -151,7 +153,7 @@ export const acquireWorkspaceControl = (base: string, prefix = "workspace") =>
       const acquired = yield* acquireControl({ stackId }).pipe(
         Effect.map((ownership) => ({ ownership })),
         Effect.catch((error) =>
-          error._tag === "ControlAddressConflictError" && Date.now() < deadline
+          Predicate.isTagged(error, "ControlAddressConflictError") && Date.now() < deadline
             ? Effect.succeed(undefined)
             : Effect.fail(error),
         ),
@@ -173,14 +175,26 @@ export const startWithOwner = (
     const environment = yield* ensureEnvironment(workspacePath);
     const stackId = deriveStackId(environment.identity, stackName);
     const ownership = yield* acquireControl({ stackId });
-    if (ownership._tag !== "Owned") throw new Error("expected stack control ownership");
+    if (!isControlOwnership(ownership)) throw new Error("expected stack control ownership");
     return yield* manager.startStack({
       workspacePath,
       stackName,
       portDocument,
       ownership,
       lifecycle,
+      launch: { mode: "native", versions: {} },
     });
+  });
+
+export const startManagedStack = (
+  manager: ManagedStackManagerShape,
+  request: Omit<StartStackRequest, "launch"> & {
+    readonly launch?: StartStackRequest["launch"];
+  },
+) =>
+  manager.startStack({
+    ...request,
+    launch: request.launch ?? { mode: "native", versions: {} },
   });
 
 export const releaseLease = (result: ManagedStackStartResult): Effect.Effect<void> =>

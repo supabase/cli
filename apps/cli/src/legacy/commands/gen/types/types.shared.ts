@@ -35,7 +35,7 @@ export interface LegacyGenTypesDbTarget {
   readonly url: string;
   readonly host: string;
   readonly port: number;
-  readonly networkMode: "host" | string;
+  readonly networkMode: "host" | (string & {});
 }
 
 export function defaultSchemas(extraSchemas: ReadonlyArray<string> = []) {

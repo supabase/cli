@@ -5,6 +5,7 @@ const DaemonErrorCodeSchema = Schema.Literals([
   "SERVICE_NOT_READY",
   "STACK_READINESS_TIMEOUT",
   "STACK_BUILD_ERROR",
+  "STACK_NOT_RUNNING",
 ]);
 
 const StackBuildReasonSchema = Schema.Literals([
@@ -38,6 +39,7 @@ export const DaemonErrorResponseSchema = Schema.Struct({
   service: Schema.optionalKey(Schema.String),
   exitCode: Schema.optionalKey(Schema.Number),
   timeoutMs: Schema.optionalKey(Schema.Number),
+  phase: Schema.optionalKey(Schema.String),
   reason: Schema.optionalKey(StackBuildReasonSchema),
 });
 

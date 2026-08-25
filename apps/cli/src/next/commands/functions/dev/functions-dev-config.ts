@@ -4,7 +4,7 @@ import {
   loadProjectConfig,
   loadProjectEnvironment,
   resolveProjectSubtree,
-} from "@supabase/config";
+} from "@supabase/config/effect";
 import type { ResolvedFunctionsBundle } from "@supabase/stack/effect";
 import { Effect, Option, Redacted } from "effect";
 import { basename, dirname, join, resolve } from "node:path";

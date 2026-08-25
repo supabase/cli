@@ -10,11 +10,15 @@ import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
   LEGACY_FAKE_SHADOW_CONTAINER_ID,
   LEGACY_VALID_REF,
+  legacyFailWriteStringMatchingFsLayer,
   legacyFailWriteStringOnNthCallFsLayer,
+  legacyWithEnv,
   mockLegacyCliConfig,
+  mockLegacyDockerDaemonCliSpawner,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyShadowContainerCliSpawner,
   mockLegacyTelemetryStateTracked,
+  useLegacyShadowCacheDisabled,
   useLegacyTempWorkdir,
   legacySequentialExecBatch,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -41,6 +45,7 @@ import {
   type LegacyDbSession,
   type LegacyPgConnInput,
 } from "../../../shared/legacy-db-connection.service.ts";
+import { LegacyDbConnectError } from "../../../shared/legacy-db-connection.errors.ts";
 import { LegacyDockerRunError } from "../../../shared/legacy-docker-run.errors.ts";
 import {
   LegacyDockerRun,
@@ -88,11 +93,21 @@ interface SetupOpts {
   readonly networkId?: string; // --network-id value forwarded to docker runs
   // When set, the Nth `writeFileString` fails, exercising cleanup-on-failure.
   readonly failWriteOnCall?: number;
+  // When set, the first `writeFileString` whose path matches fails. Prefer this
+  // over `failWriteOnCall` when shadow setup writes extra SQL before the
+  // command's `--file` migration.
+  readonly failWriteMatching?: (path: string) => boolean;
   // When set, the shadow container never reports healthy — for the interrupt-during-
   // health-wait regression coverage (review: PRRT_kwDOErm0O86XMrID). See
   // `mockLegacyShadowContainerCliSpawner`'s own doc comment for why this is required
-  // (not `Effect.never`) to observe a genuinely suspended retry loop.
+  // (not `Effect.never`) to observe a genuinely suspended retry loop. Only the
+  // `--use-pgadmin` branch still gates on the Docker healthcheck; the shadow-source
+  // branch gates on `neverConnectableShadow` below instead.
   readonly neverHealthyShadow?: boolean;
+  // When set, every connect to the shadow's own port is refused, so the readiness gate
+  // (`legacyWaitForShadowReady`) keeps polling — the shadow-source branch's equivalent of
+  // `neverHealthyShadow`, since that wait no longer consults the Docker healthcheck.
+  readonly neverConnectableShadow?: boolean;
   // `LegacyCliConfig.projectId` (the `SUPABASE_PROJECT_ID` env-only reader). Defaults
   // to `Option.some("test")`; pass `Option.none()` to exercise the
   // config.toml/workdir-basename fallback `legacyResolveLocalProjectId` provides for
@@ -128,6 +143,10 @@ interface SetupOpts {
   // host-gateway` (Linux-only). Defaults to `"linux"` (every other test's implicit
   // baseline); pass `"darwin"`/`"win32"` to exercise the no-add-host branch.
   readonly platform?: NodeJS.Platform;
+  // Swaps the stateless shadow spawner for the stateful Docker model, whose
+  // `stop`/`cp`/`start` really move bytes. Required by (and only by) the tests that
+  // enable the shadow BASELINE CACHE — see `mockLegacyDockerDaemonCliSpawner`.
+  readonly statefulDocker?: boolean;
 }
 
 const alwaysReadyHttpClientLayer = Layer.succeed(
@@ -137,14 +156,28 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
   ),
 );
 
-/** Records every `LegacyDbConnection.connect` target's database name, and every `exec`/`query` SQL run against it. */
-function fakeShadowDbConnection() {
+/** `[db] shadow_port`'s schema default — the port every connect to the shadow itself dials. */
+const LEGACY_SHADOW_PORT = 54320;
+
+/**
+ * Records every `LegacyDbConnection.connect` target's database name, and every `exec`/`query`
+ * SQL run against it.
+ *
+ * `neverConnectableShadow` makes every connect to the SHADOW port fail (leaving the local
+ * target's own connects untouched) — the shadow's readiness gate is now a direct connect probe
+ * (`legacyWaitForShadowReady`), so a shadow that never accepts a connection is what keeps a
+ * provisioning fiber genuinely suspended inside that retry loop.
+ */
+function fakeShadowDbConnection(opts: { readonly neverConnectableShadow?: boolean } = {}) {
   const connectedDatabases: Array<string> = [];
   const execCalls: Array<string> = [];
   const layer = Layer.succeed(LegacyDbConnection, {
     connect: (cfg: LegacyPgConnInput) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         connectedDatabases.push(cfg.database);
+        if (opts.neverConnectableShadow === true && cfg.port === LEGACY_SHADOW_PORT) {
+          return yield* Effect.fail(new LegacyDbConnectError({ message: "connection refused" }));
+        }
         const session: LegacyDbSession = {
           exec: (sql) =>
             Effect.sync(() => {
@@ -175,7 +208,14 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     dbNotRunning: opts.dbNotRunning ?? false,
     dbInspectFailsWith: opts.dbInspectFailsWith,
   });
-  const shadowDbConnection = fakeShadowDbConnection();
+  // The shadow baseline cache's cold export and warm restore only mean anything against a
+  // daemon that actually holds container state and carries `docker cp` bytes, so the cache
+  // tests below opt into the stateful model instead.
+  const dockerDaemon =
+    opts.statefulDocker === true ? mockLegacyDockerDaemonCliSpawner() : undefined;
+  const shadowDbConnection = fakeShadowDbConnection({
+    neverConnectableShadow: opts.neverConnectableShadow ?? false,
+  });
 
   const explicitDiffCalls: LegacyPgDeltaExplicitDiffInput[] = [];
   const databaseDiffCalls: LegacyPgDeltaDatabaseDiffInput[] = [];
@@ -411,7 +451,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     edge,
     docker,
     shadowDbConnection.layer,
-    shadowSpawner.layer,
+    dockerDaemon?.layer ?? shadowSpawner.layer,
     alwaysReadyHttpClientLayer,
     resolver,
     projectRefResolver,
@@ -432,10 +472,13 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockRuntimeInfo({ platform: opts.platform ?? "linux" }),
   );
   // Merged last so its `FileSystem` overrides everything above (last-wins).
-  const layer =
-    opts.failWriteOnCall === undefined
-      ? baseLayer
-      : Layer.merge(baseLayer, legacyFailWriteStringOnNthCallFsLayer(opts.failWriteOnCall));
+  const failWriteLayer =
+    opts.failWriteMatching !== undefined
+      ? legacyFailWriteStringMatchingFsLayer(opts.failWriteMatching)
+      : opts.failWriteOnCall !== undefined
+        ? legacyFailWriteStringOnNthCallFsLayer(opts.failWriteOnCall)
+        : undefined;
+  const layer = failWriteLayer === undefined ? baseLayer : Layer.merge(baseLayer, failWriteLayer);
 
   return {
     layer,
@@ -454,6 +497,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     differRegistryEnvAtCall,
     shadowSetupJobCalls,
     shadowSpawned: shadowSpawner.spawned,
+    dockerDaemon,
     shadowConnectedDatabases: shadowDbConnection.connectedDatabases,
     shadowExecCalls: shadowDbConnection.execCalls,
   };
@@ -492,6 +536,7 @@ const stderr = (out: ReturnType<typeof mockOutput>) =>
   );
 
 const tmp = useLegacyTempWorkdir();
+useLegacyShadowCacheDisabled();
 
 // --- native --use-pgadmin fixtures ---
 
@@ -1954,37 +1999,36 @@ describe("legacy db diff", () => {
   });
 
   it.live(
-    "removes the shadow container on a SIGINT-style interruption during the health wait, without waiting for the health-check timeout",
+    "removes the shadow container on a SIGINT-style interruption during the readiness wait, without waiting for the readiness timeout",
     () => {
       // Regression test for the acquireUseRelease restructuring (review:
       // PRRT_kwDOErm0O86XMrID): an earlier shape passed the ENTIRE
       // `legacyPrepareShadowSource` (create -> health-wait -> migrate ->
       // declarative-apply) as `acquireUseRelease`'s `acquire`, which Effect's
       // `uninterruptibleMask` (no `restore` around `acquire`) made completely
-      // uninterruptible — a SIGINT landing during the health wait (which can run for
-      // up to 30 real seconds, `LEGACY_HEALTH_CHECK_TIMEOUT_SECONDS`) was silently
-      // swallowed until the health check gave up on its own. `acquire` is now ONLY
-      // `legacyCreateShadowDatabase`
-      // (container creation); the health wait runs inside the interruptible `use`
-      // phase instead, so a `Fiber.interrupt` here must land promptly.
-      const s = setup(tmp.current, { neverHealthyShadow: true });
+      // uninterruptible — a SIGINT landing during the readiness wait (which can run
+      // for up to 30 real seconds, `LEGACY_HEALTH_CHECK_TIMEOUT_SECONDS`) was silently
+      // swallowed until the wait gave up on its own. `acquire` is now ONLY
+      // `legacyCreateShadowDatabase` (container creation); the readiness wait runs
+      // inside the interruptible `use` phase instead, so a `Fiber.interrupt` here must
+      // land promptly.
+      const s = setup(tmp.current, { neverConnectableShadow: true });
       return Effect.gen(function* () {
         const fiber = yield* legacyDbDiff(flags()).pipe(
           Effect.provide(s.layer),
           Effect.forkChild({ startImmediately: true }),
         );
-        // Wait until the shadow's own health check has actually probed the
-        // never-healthy container at least once — proving the fiber is genuinely
-        // suspended inside `legacyWaitForHealthyServices`'s retry loop, not merely
-        // past the `create` call.
-        while (!s.shadowSpawned.some((c) => c.args[0] === "container" && c.args[1] === "inspect")) {
+        // Wait until the shadow's readiness gate has actually refused a connect at
+        // least once — proving the fiber is genuinely suspended inside
+        // `legacyWaitForShadowReady`'s retry loop, not merely past the `create` call.
+        while (s.shadowConnectedDatabases.length === 0) {
           yield* Effect.sleep("5 millis");
         }
         // `Fiber.interrupt` only resolves once the target fiber (and its finalizers,
         // including `legacyRemoveShadowDatabase`) has fully completed — if `acquire`
-        // still covered the health wait, this call would hang for up to 30 real
+        // still covered the readiness wait, this call would hang for up to 30 real
         // seconds (or until this test's own timeout), instead of resolving as soon
-        // as the in-flight probe's own subprocess call returns.
+        // as the in-flight probe returns.
         yield* Fiber.interrupt(fiber);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
@@ -2469,12 +2513,9 @@ describe("legacy db diff", () => {
     it.effect(
       "fails with LegacyDbDiffWriteError when writing the pgAdmin --file migration fails",
       () => {
-        // Shadow setup writes the branch marker and `revoke-api-privileges.sql`
-        // before the command writes the pgAdmin migration, so call #3 is the
-        // diff-file write exercised here.
         const s = setup(tmp.current, {
           pgadminStdout: [JSON.stringify([pgadminEntry()])],
-          failWriteOnCall: 3,
+          failWriteMatching: (path) => path.includes("pgadmin_diff"),
         });
         return Effect.gen(function* () {
           const error = yield* legacyDbDiff(
@@ -2565,5 +2606,62 @@ describe("legacy db diff", () => {
         });
       },
     );
+  });
+
+  describe("shadow baseline cache", () => {
+    /** The `.tar` files published under the per-test `SUPABASE_HOME` this block pins. */
+    const publishedTars = () => {
+      const dir = join(tmp.current, "_supabase_home", "cache", "shadow-baseline");
+      return existsSync(dir) ? readdirSync(dir).filter((entry) => entry.endsWith(".tar")) : [];
+    };
+
+    /**
+     * Runs `db diff` with the shadow baseline cache on and artifacts under the workdir,
+     * against the stateful Docker model the export/restore round trip needs.
+     */
+    const runCached = (implementation: "legacy" | "next") => {
+      const s = setup(tmp.current, {
+        statefulDocker: true,
+        pgDeltaImplementation: implementation,
+        diffSql: "create table t ();\n",
+      });
+      return legacyWithEnv(
+        "SUPABASE_HOME",
+        join(tmp.current, "_supabase_home"),
+        legacyWithEnv(
+          "SUPABASE_SHADOW_CACHE",
+          "1",
+          legacyDbDiff(flags({ usePgDelta: Option.some(true) })).pipe(Effect.provide(s.layer)),
+        ),
+      ).pipe(Effect.as(s));
+    };
+
+    // Regression: both migrate paths used to pass a hardcoded `{ webhooks: "enabled" }`, so the
+    // legacy run's forced-`pg_net` baseline and the next run's config-following baseline keyed
+    // to the SAME tar and silently restored each other's cluster. The handler now forks the
+    // policy on `migrationMode`; `shadow-cache.integration.test.ts` covers the cache's half of
+    // the contract, this covers `db diff`'s call site.
+    it.live("a legacy-engine baseline is never restored into a pg-delta-next run", () => {
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        "[experimental.pgdelta]\nenabled = true\n",
+      );
+      return Effect.gen(function* () {
+        // Legacy migrate forces `pg_net` on regardless of config, and publishes that baseline.
+        const legacyRun = yield* runCached("legacy");
+        expect(legacyRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
+        const legacyTars = publishedTars();
+        expect(legacyTars).toHaveLength(1);
+
+        // pg-delta next follows the config (webhooks are off here), so it must cold-provision
+        // and publish its OWN baseline rather than restore the forced-on one above.
+        const nextRun = yield* runCached("next");
+        expect(nextRun.dockerDaemon?.stepCalls("cp-in")).toHaveLength(0);
+        expect(nextRun.dockerDaemon?.stepCalls("cp-out")).toHaveLength(1);
+        expect(publishedTars()).toHaveLength(2);
+        expect(publishedTars()).toEqual(expect.arrayContaining(legacyTars));
+      });
+    });
   });
 });

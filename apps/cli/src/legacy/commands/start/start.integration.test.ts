@@ -867,7 +867,7 @@ describe("legacy start integration", () => {
           child.spawned
             .filter((spawn) => spawn.args[0] === "stop")
             .map((spawn) => spawn.args[1])
-            .sort(),
+            .sort((left, right) => (left ?? "").localeCompare(right ?? "")),
         ).toEqual(["db-id", "kong-id"]);
         expect(
           child.spawned.some(

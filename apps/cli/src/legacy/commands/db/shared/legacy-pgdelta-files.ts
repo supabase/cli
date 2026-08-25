@@ -76,6 +76,7 @@ export const LegacyReadPgDeltaExportManifest = Effect.fnUntraced(function* (
   const baselineDigest = readManifestValue(decoded, "baselineDigest");
   const defaultOwner = readManifestValue(decoded, "defaultOwner");
   const files = readManifestValue(decoded, "files");
+  const loadOrder = readManifestValue(decoded, "loadOrder");
   return {
     redactSecrets,
     scope,
@@ -83,6 +84,9 @@ export const LegacyReadPgDeltaExportManifest = Effect.fnUntraced(function* (
     ...(typeof baselineDigest === "string" ? { baselineDigest } : {}),
     ...(typeof defaultOwner === "string" || defaultOwner === null ? { defaultOwner } : {}),
     ...(Array.isArray(files) && files.every((file) => typeof file === "string") ? { files } : {}),
+    ...(Array.isArray(loadOrder) && loadOrder.every((file) => typeof file === "string")
+      ? { loadOrder }
+      : {}),
   } satisfies LegacyPgDeltaExportManifest;
 });
 

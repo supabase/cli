@@ -1,5 +1,5 @@
 import { daemonLayer, resolveManagedStack, stopDaemon } from "@supabase/stack/effect";
-import { loadProjectConfig } from "@supabase/config";
+import { loadProjectConfig } from "@supabase/config/effect";
 import { Effect, Option } from "effect";
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
 import { CliConfig } from "../../../config/cli-config.service.ts";
@@ -145,19 +145,16 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
     // TODO: run `supabase pull` against the new branch before restarting the stack
     // so the local config reflects the branch's migrations and seed state.
     // `pull` does not exist yet.
-    const launchConfig =
-      stackCheck.value.launch === undefined
-        ? toStartStackConfig([], "auto")
-        : withServiceVersions(
-            toStartStackConfig(
-              stackCheck.value.launch.excludedServices?.filter(
-                (service): service is ExcludedStackService =>
-                  excludedStackServices.some((candidate) => candidate === service),
-              ) ?? [],
-              stackCheck.value.launch.mode,
-            ),
-            stackCheck.value.launch.versions,
-          );
+    const launch = stackCheck.value.launch;
+    const launchConfig = withServiceVersions(
+      toStartStackConfig(
+        launch.excludedServices?.filter((service): service is ExcludedStackService =>
+          excludedStackServices.some((candidate) => candidate === service),
+        ) ?? [],
+        launch.mode,
+      ),
+      launch.versions,
+    );
     const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
 
     const stackLayer = yield* daemonLayer({
@@ -166,7 +163,7 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
       projectDir: projectHome.projectRoot,
       name: stackName,
       portIntents: managedPortIntents(launchConfig, loadedProjectConfig ?? undefined),
-      ...(stackCheck.value.launch !== undefined && { launch: stackCheck.value.launch }),
+      launch,
       ...launchConfig,
     });
 
