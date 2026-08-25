@@ -199,6 +199,7 @@ interface ServeFunctionContainerConfig {
 
 interface WatchSpec {
   readonly root: string;
+  readonly recursive: boolean;
   readonly matchPaths?: ReadonlySet<string>;
 }
 
@@ -308,11 +309,12 @@ declare const SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
 
 export const serveFileWatcherLayer = Layer.sync(FileWatcher, () =>
   FileWatcher.of({
-    watch: (root) =>
+    watch: (root, options) =>
       Stream.callback<ReadonlyArray<FileWatchEvent>, FileWatcherError>((queue) =>
         Effect.acquireRelease(
           Effect.sync(() => {
-            const watcher = watch(root, { recursive: true }, (eventType, filename) => {
+            const recursive = options?.recursive ?? true;
+            const watcher = watch(root, { recursive }, (eventType, filename) => {
               const pathname =
                 filename === null || filename === undefined || filename.length === 0
                   ? root
@@ -1173,7 +1175,7 @@ async function buildWatchSpecs(binds: ReadonlyArray<string>): Promise<ReadonlyAr
     try {
       const info = await stat(hostPath);
       if (info.isDirectory()) {
-        specs.set(hostPath, { root: hostPath });
+        specs.set(hostPath, { root: hostPath, recursive: true });
       } else {
         const root = dirname(hostPath);
         const existing = specs.get(root);
@@ -1182,7 +1184,7 @@ async function buildWatchSpecs(binds: ReadonlyArray<string>): Promise<ReadonlyAr
         }
         const matchPaths = new Set(existing?.matchPaths ?? []);
         matchPaths.add(hostPath);
-        specs.set(root, { root, matchPaths });
+        specs.set(root, { root, recursive: false, matchPaths });
       }
     } catch {
       continue;
@@ -1237,10 +1239,15 @@ const waitForRestartSignal = Effect.fnUntraced(function* (watchSpecs: ReadonlyAr
 
   const stream = Stream.mergeAll(
     watchSpecs.map((spec) =>
-      fileWatcher.watch(spec.root, { ignore: watchIgnoreGlobs }).pipe(
-        Stream.map((events) => events.filter((event) => eventMatchesSpec(spec, event))),
-        Stream.filter((events) => events.length > 0),
-      ),
+      fileWatcher
+        .watch(spec.root, {
+          ignore: watchIgnoreGlobs,
+          recursive: spec.recursive,
+        })
+        .pipe(
+          Stream.map((events) => events.filter((event) => eventMatchesSpec(spec, event))),
+          Stream.filter((events) => events.length > 0),
+        ),
     ),
     { concurrency: "unbounded" },
   ).pipe(
@@ -1637,6 +1644,8 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
 
     const functionsDir = join(input.projectRoot, functionsDirName);
     const functionBinds = new Set<string>();
+    const watchableBinds = new Set<string>();
+    const emittedScopeWarnings = new Set<string>();
     const functionsConfig: Record<string, ServeFunctionContainerConfig> = {};
 
     for (const config of functionConfigs) {
@@ -1646,6 +1655,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       }
 
       const bindWarnings: string[] = [];
+      const scopeBinds = new Set<string>();
       for (const bind of yield* Effect.promise(() =>
         buildDockerBinds(projectId, functionsDir, functionsDir, config, {
           additionalModuleRoots: [input.flagCwd],
@@ -1653,9 +1663,15 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
           onWarning: async (message) => {
             bindWarnings.push(message);
           },
+          onScopeBindOutsideRoots: (bind) => {
+            scopeBinds.add(bind);
+          },
         }),
       )) {
         functionBinds.add(bind);
+        if (!scopeBinds.has(bind)) {
+          watchableBinds.add(bind);
+        }
       }
       const missingSourceWarning = bindWarnings.find((warning) =>
         warning.includes("failed to read file:"),
@@ -1664,6 +1680,15 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         return yield* Effect.fail(
           new Error(missingSourceWarning.trimStart().replace(/^WARN:\s*/, "")),
         );
+      }
+      for (const warning of bindWarnings) {
+        if (
+          warning.startsWith("WARN: Mounting import map scope target") &&
+          !emittedScopeWarnings.has(warning)
+        ) {
+          emittedScopeWarnings.add(warning);
+          yield* output.raw(warning, "stderr");
+        }
       }
       const functionEnv =
         input.discoverFunctionEnvFiles && Option.isNone(input.envFile)
@@ -1796,7 +1821,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       return {
         containerId,
         cleanup: removeRuntimeArtifacts.pipe(Effect.orDie),
-        watchSpecs: yield* Effect.promise(() => buildWatchSpecs([...functionBinds])),
+        watchSpecs: yield* Effect.promise(() => buildWatchSpecs([...watchableBinds])),
       } satisfies StartedRuntime;
     }).pipe(Effect.onError(() => bestEffortCleanupRuntimeArtifacts));
   },

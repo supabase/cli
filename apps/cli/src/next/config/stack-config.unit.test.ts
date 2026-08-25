@@ -2,28 +2,38 @@ import { describe, expect, it } from "vitest";
 import { toStartStackConfig, withServiceVersions } from "./stack-config.ts";
 
 describe("toStartStackConfig", () => {
-  it("uses lazy service startup with the requested runtime mode", () => {
-    expect(toStartStackConfig([], "auto")).toMatchObject({
-      mode: "auto",
-      startupMode: "lazy",
+  it("leaves mode unset so the stack package can select the usable runtime", () => {
+    expect(toStartStackConfig([], undefined)).not.toHaveProperty("mode");
+  });
+
+  it("uses the requested runtime mode and catalog service defaults", () => {
+    expect(toStartStackConfig([], "docker")).toMatchObject({
+      mode: "docker",
     });
     expect(toStartStackConfig([], "docker")).toMatchObject({
       mode: "docker",
-      startupMode: "lazy",
     });
     expect(toStartStackConfig([], "native")).toMatchObject({
       mode: "native",
-      startupMode: "lazy",
+      realtime: false,
+      storage: false,
+      imgproxy: false,
+      mailpit: false,
+      pgmeta: false,
+      studio: false,
+      analytics: false,
+      vector: false,
+      pooler: false,
     });
   });
 
   it("dedupes excluded services when building stack config", () => {
-    expect(toStartStackConfig(["auth", "auth"], "auto")).toMatchObject({
-      mode: "auto",
+    expect(toStartStackConfig(["auth", "auth"], "docker")).toMatchObject({
+      mode: "docker",
       auth: false,
     });
-    expect(toStartStackConfig(["auth", "postgrest"], "auto")).toMatchObject({
-      mode: "auto",
+    expect(toStartStackConfig(["auth", "postgrest"], "docker")).toMatchObject({
+      mode: "docker",
       auth: false,
       postgrest: false,
     });
@@ -33,7 +43,7 @@ describe("toStartStackConfig", () => {
 describe("withServiceVersions", () => {
   it("injects linked service versions without re-enabling excluded services", () => {
     expect(
-      withServiceVersions(toStartStackConfig([], "auto"), {
+      withServiceVersions(toStartStackConfig([], "docker"), {
         postgres: "17.6.1.090",
         postgrest: "14.5",
         auth: "2.187.0",
@@ -49,7 +59,7 @@ describe("withServiceVersions", () => {
     });
 
     expect(
-      withServiceVersions(toStartStackConfig(["auth", "storage"], "auto"), {
+      withServiceVersions(toStartStackConfig(["auth", "storage"], "docker"), {
         postgres: "17.6.1.090",
         auth: "2.187.0",
         storage: "1.39.2",

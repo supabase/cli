@@ -30,6 +30,7 @@ import { legacyFindDropStatements } from "../../../shared/legacy-sql-split.ts";
 import { legacyBuildLocalDbContainerInputs } from "../../../shared/db-bootstrap/local-container-inputs.ts";
 import { legacyIsLocalDbRunning } from "../../../shared/db-bootstrap/local-db-running.ts";
 import { legacyWaitForHealthyServices } from "../../../shared/db-bootstrap/health-check.ts";
+import { legacyWithShadowDatabase } from "../../../shared/db-bootstrap/shadow-cache.ts";
 import {
   legacyCreateShadowDatabase,
   legacyMigrateShadowDatabase,
@@ -690,9 +691,14 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         pgDelta: cfg.pgDelta,
         ctx,
       };
-      // Register cleanup atomically with creation; prepare and diff remain interruptible.
-      diffResult = yield* Effect.acquireUseRelease(
-        legacyCreateShadowDatabase(spawner, shadowInput),
+      // `legacyWithShadowDatabase` (`shadow-cache.ts`) owns the interrupt-safe lifecycle and the
+      // cache seam — a plain create/remove pair when `SUPABASE_SHADOW_CACHE` is unset. The key's
+      // webhooks policy must mirror what `legacyPrepareShadowSource` selects for this mode
+      // (legacy migrate forces `pg_net` on, next follows config), or the two engines could
+      // restore each other's tars.
+      diffResult = yield* legacyWithShadowDatabase(
+        spawner,
+        shadowInput,
         (handle) =>
           Effect.gen(function* () {
             const shadow = yield* legacyPrepareShadowSource(spawner, handle, shadowInput);
@@ -740,7 +746,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
             // single migration file.
             return { sql, files: undefined };
           }),
-        (handle) => legacyRemoveShadowDatabase(spawner, handle.containerId),
+        { webhooks: migrationMode === "pgdelta-next" ? "config" : "enabled" },
       );
     }
     const out = diffResult.sql;

@@ -1,4 +1,4 @@
-import { Deferred, Effect, Layer, Option, Context, Schedule, Result } from "effect";
+import { Deferred, Effect, Layer, Option, Context, Predicate, Schedule, Result } from "effect";
 import {
   Headers,
   HttpBody,
@@ -137,9 +137,7 @@ function makeProxyHandler(
   return (req: HttpServerRequest.HttpServerRequest) =>
     Effect.gen(function* () {
       const activation = yield* activator.activate(opts.service).pipe(
-        Effect.tapError((error) =>
-          error._tag === "StackReadinessError" ? signalTerminalFailure : Effect.void,
-        ),
+        Effect.tapErrorTag("StackReadinessError", () => signalTerminalFailure),
         Effect.result,
       );
       if (Result.isFailure(activation)) {
@@ -198,7 +196,7 @@ function makeProxyHandler(
       const request = client.execute(outReq);
       const outRes = yield* opts.retryColdStart === true
         ? Effect.retry(request, {
-            while: (error) => error.reason._tag === "TransportError",
+            while: (error) => Predicate.isTagged(error.reason, "TransportError"),
             schedule: COLD_START_RETRY_SCHEDULE,
           })
         : request;

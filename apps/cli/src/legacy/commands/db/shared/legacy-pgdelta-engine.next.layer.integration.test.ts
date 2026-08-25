@@ -61,7 +61,7 @@ const toml: LegacyDbTomlValues = {
 };
 
 function setup() {
-  const state = { migrations: 0, plan: 0 };
+  const state = { migrations: 0, plan: 0, planBypassCache: undefined as boolean | undefined };
   const shadow = Layer.succeed(LegacyPgDeltaNextShadow, {
     provisionMigrations: () =>
       Effect.sync(() => {
@@ -71,9 +71,10 @@ function setup() {
           Effect.fail(new LegacyDeclarativeShadowDbError({ message: "stop after routing" })),
         ),
       ),
-    provisionPlan: () =>
+    provisionPlan: (opts) =>
       Effect.sync(() => {
         state.plan += 1;
+        state.planBypassCache = opts.bypassCache;
       }).pipe(
         Effect.andThen(
           Effect.fail(new LegacyDeclarativeShadowDbError({ message: "stop after routing" })),
@@ -124,7 +125,8 @@ describe("pg-delta next shadow selection", () => {
         })
         .pipe(Effect.exit);
 
-      expect(state).toEqual({ migrations: 0, plan: 0 });
+      expect(state.migrations).toBe(0);
+      expect(state.plan).toBe(0);
     }).pipe(Effect.provide(layer));
   });
 
@@ -145,7 +147,8 @@ describe("pg-delta next shadow selection", () => {
         })
         .pipe(Effect.exit);
 
-      expect(state).toEqual({ migrations: 1, plan: 0 });
+      expect(state.migrations).toBe(1);
+      expect(state.plan).toBe(0);
     }).pipe(Effect.provide(layer));
   });
 
@@ -172,7 +175,37 @@ describe("pg-delta next shadow selection", () => {
         })
         .pipe(Effect.exit);
 
-      expect(state).toEqual({ migrations: 0, plan: 1 });
+      expect(state.migrations).toBe(0);
+      expect(state.plan).toBe(1);
+      expect(state.planBypassCache).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("forwards --no-cache as bypassCache on the declarative plan shadows", () => {
+    const { state, layer } = setup();
+    return Effect.gen(function* () {
+      const engine = yield* LegacyPgDeltaEngine;
+      yield* engine
+        .planDeclarativeSchema({
+          ...common,
+          toml,
+          files: [{ name: "schema.sql", sql: "create table example(id int);" }],
+          noCache: true,
+          setupInputs: {
+            image: "postgres:17",
+            majorVersion: 17,
+            authEnabled: true,
+            storageEnabled: true,
+            realtimeEnabled: true,
+            autoExpose: false,
+            vaultNames: [],
+            rolesSql: "",
+          },
+        })
+        .pipe(Effect.exit);
+
+      expect(state.plan).toBe(1);
+      expect(state.planBypassCache).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 });

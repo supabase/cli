@@ -1,3 +1,4 @@
+import { Predicate } from "effect";
 import type { RestartPolicy } from "./ServiceDef.ts";
 import type { ServiceDesiredState } from "./ServiceState.ts";
 
@@ -23,11 +24,14 @@ export function decideRestart(options: {
   readonly maxRestarts: number;
   readonly desired: ServiceDesiredState;
 }): RestartDecision {
+  const causeIsUnhealthy = Predicate.isTagged(options.cause, "Unhealthy");
+  const processExit = Predicate.isTagged(options.cause, "ProcessExit") ? options.cause : undefined;
+
   if (options.desired !== "running") {
     return { _tag: "Terminate", reason: "NotDesired" };
   }
 
-  if (options.cause._tag === "Unhealthy" && options.policy === "no") {
+  if (causeIsUnhealthy && options.policy === "no") {
     return { _tag: "KeepRunningUnhealthy" };
   }
 
@@ -35,7 +39,7 @@ export function decideRestart(options: {
     options.policy === "always" ||
     options.policy === "unless-stopped" ||
     (options.policy === "on-failure" &&
-      (options.cause._tag === "Unhealthy" || options.cause.exitCode !== 0));
+      (causeIsUnhealthy || (processExit !== undefined && processExit.exitCode !== 0)));
 
   if (!policyAllowsRestart) {
     return { _tag: "Terminate", reason: "PolicyDisabled" };

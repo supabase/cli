@@ -97,7 +97,8 @@ The `--output`/`-o` flag does not change deploy output.
   CLI uploaded any reachable import unbounded; #5755 widened the TS boundary from the
   workdir to the git root.
 - Requires a linked project unless `--project-ref` is provided.
-- Uses API/server-side bundling by default; `--use-docker` and `--legacy-bundle` select local bundling.
+- Bundles locally with Docker by default (`--use-docker` defaults to true and is hidden); `--use-api` selects server-side bundling, and a stopped Docker daemon falls back to it after a `WARNING: Docker is not running`.
+- Local Docker bundling mounts existing local values declared under an import map's `scopes` read-only, including targets outside the nearest Git root; each such out-of-root mount prints a `WARN` naming the host path. The mounted target itself is bound as declared; imports reached from inside an out-of-root target are not additionally bound. API source uploads retain their existing source-root restrictions.
 - `--use-api`, `--use-docker`, and `--legacy-bundle` are mutually exclusive deploy modes.
 - `--prune` deletes deployed Functions that are not present locally after a confirmation prompt;
   global `--yes` skips the prompt.
