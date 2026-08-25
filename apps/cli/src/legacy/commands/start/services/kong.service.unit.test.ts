@@ -167,12 +167,14 @@ describe("legacyBuildKongContainerSpec", () => {
     expect(spec.healthcheck).toBeUndefined();
   });
 
-  test("emits the fixed KONG_* env vars, including the resolved worker-process count (start.go:568-587)", () => {
+  test("emits the fixed KONG_* env vars, including the resolved worker-process count", () => {
     const spec = legacyBuildKongContainerSpec(base);
     expect(spec.env).toEqual({
       KONG_DATABASE: "off",
       KONG_DECLARATIVE_CONFIG: "/home/kong/kong.yml",
       KONG_DNS_ORDER: "LAST,A,CNAME",
+      KONG_DNS_NOT_FOUND_TTL: "1",
+      KONG_DNS_VALID_TTL: "5",
       KONG_PLUGINS: "request-transformer,cors",
       KONG_PORT_MAPS: "54321:8000",
       KONG_NGINX_PROXY_PROXY_BUFFER_SIZE: "160k",

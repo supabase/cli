@@ -302,6 +302,9 @@ export function legacyBuildKongContainerSpec(
       KONG_DECLARATIVE_CONFIG: "/home/kong/kong.yml",
       // Ref: https://github.com/supabase/cli/issues/14
       KONG_DNS_ORDER: "LAST,A,CNAME",
+      // Ref: https://github.com/supabase/supabase/pull/47846
+      KONG_DNS_NOT_FOUND_TTL: "1",
+      KONG_DNS_VALID_TTL: "5",
       KONG_PLUGINS: "request-transformer,cors",
       KONG_PORT_MAPS: `${input.apiPort}:8000`,
       // Ref: https://github.com/Kong/kong/issues/3974#issuecomment-482105126
