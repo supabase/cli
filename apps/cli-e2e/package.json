@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "pnpm run test:e2e",
-    "test:e2e": "pnpm exec turbo run @supabase/cli-e2e#test:e2e:run --",
+    "test:e2e": "pnpm exec turbo run supabase#build && pnpm exec turbo run @supabase/cli-e2e#test:e2e:run --only --",
     "test:e2e:run": "bun --bun vitest run",
     "test:legacy": "CLI_HARNESS_TARGET=ts-legacy pnpm run test:e2e",
     "test:next": "CLI_HARNESS_TARGET=ts-next pnpm run test:e2e",

@@ -4,7 +4,7 @@
   "scripts": {
     "test:unit": "pnpm exec turbo run test:unit:run --filter=!@supabase/cli-go --",
     "test:integration": "pnpm exec turbo run test:integration:run --",
-    "test:e2e": "pnpm exec turbo run test:e2e:run --concurrency=1 --",
+    "test:e2e": "pnpm exec turbo run supabase#build && pnpm exec turbo run test:e2e:run --only --concurrency=1 --",
     "check:all": "nx run-many -t types:check lint:check fmt:check knip:check",
     "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix",
     "repos:install": "git submodule update --init --recursive",
