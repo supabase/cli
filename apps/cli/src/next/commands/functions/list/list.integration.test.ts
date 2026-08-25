@@ -270,7 +270,7 @@ describe("functions list", () => {
       const data = success?.data as {
         functions: Array<{
           slug: string;
-          local: unknown | null;
+          local: unknown;
           remote: { slug: string } | null;
         }>;
         sources: { remote: { checked: boolean; project_ref?: string } };
@@ -310,7 +310,7 @@ describe("functions list", () => {
       const data = success?.data as {
         functions: Array<{
           slug: string;
-          local: unknown | null;
+          local: unknown;
           remote: { slug: string; import_map_path?: string | null } | null;
         }>;
         sources: { remote: { checked: boolean; project_ref?: string; reason?: string } };
@@ -346,7 +346,7 @@ describe("functions list", () => {
 
       const success = out.messages.find((message) => message.type === "success");
       const data = success?.data as {
-        functions: Array<{ slug: string; local: unknown | null; remote: unknown | null }>;
+        functions: Array<{ slug: string; local: unknown; remote: unknown }>;
       };
       expect(data.functions).toEqual([
         expect.objectContaining({

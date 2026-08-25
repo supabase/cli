@@ -1,6 +1,6 @@
 import { connectLayer, daemonLayer, Stack, type EdgeRuntimeConfig } from "@supabase/stack/effect";
-import { loadProjectConfig } from "@supabase/config";
 import { Context, Duration, Effect, FileSystem, Layer, Option, Stream } from "effect";
+import { loadProjectConfig } from "@supabase/config/effect";
 import { join } from "node:path";
 import { CLI_VERSION } from "../../../../shared/cli/version.ts";
 import { CliConfig } from "../../../config/cli-config.service.ts";

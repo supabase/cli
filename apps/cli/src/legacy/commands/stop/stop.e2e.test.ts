@@ -5,6 +5,7 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import {
   makeTempLegacyStackProject,
+  overrideStackPorts,
   requireCliSuccess,
   runSupabase,
 } from "../../../../tests/helpers/cli.ts";
@@ -59,6 +60,7 @@ describe("supabase stop (e2e)", () => {
         exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
       });
       requireCliSuccess(init, "init setup");
+      await overrideStackPorts(projectDir);
 
       // Exclude the heaviest, least relevant services (Next.js Studio build, the
       // logging pipeline) — `stop`'s Docker label-filtering logic doesn't care
@@ -122,6 +124,7 @@ describe("supabase stop (e2e)", () => {
         exitTimeoutMs: CLI_COMMAND_TIMEOUT_MS,
       });
       requireCliSuccess(init, "init setup");
+      await overrideStackPorts(projectDir);
 
       const start = await runSupabase(
         ["start", "--exclude", "studio", "--exclude", "logflare", "--exclude", "vector"],

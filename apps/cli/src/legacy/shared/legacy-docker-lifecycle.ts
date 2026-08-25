@@ -81,7 +81,7 @@ function splitNonEmptyLines(text: string): ReadonlyArray<string> {
 }
 
 /**
- * Shared `docker ps --filter label=<filterValue> [--all] --format
+ * Shared `docker ps --filter label=<filterValue> [--filter label=…] [--all] --format
  * <formatArg>` spawn: one Docker CLI invocation is one underlying `GET
  * /containers/json` Docker Engine API request regardless of `--format`
  * (`--format` only controls how the CLI renders the already-returned JSON
@@ -89,17 +89,23 @@ function splitNonEmptyLines(text: string): ReadonlyArray<string> {
  * through here so two differently-formatted needs never accidentally cost
  * two real requests. See {@link legacyListContainerIdsAndNames}'s doc
  * comment for why that distinction matters for Go-parity request-log tests.
+ *
+ * Multiple `labelFilters` are ANDed by Docker itself (repeating `--filter label=` narrows the
+ * match), so scoping a listing to a second label costs no extra request either.
  */
 function spawnDockerPsLines(
   spawner: Spawner,
-  opts: { readonly projectIdFilter: string; readonly all: boolean; readonly formatArg: string },
+  opts: {
+    readonly labelFilters: ReadonlyArray<string>;
+    readonly all: boolean;
+    readonly formatArg: string;
+  },
 ): Effect.Effect<ReadonlyArray<string>, LegacyDockerLifecycleListError> {
   return Effect.scoped(
     Effect.gen(function* () {
       const args = [
         "ps",
-        "--filter",
-        `label=${opts.projectIdFilter}`,
+        ...opts.labelFilters.flatMap((filterValue) => ["--filter", `label=${filterValue}`]),
         ...(opts.all ? ["--all"] : []),
         "--format",
         opts.formatArg,
@@ -164,7 +170,7 @@ export const legacyListContainersByLabel = (
   },
 ) =>
   spawnDockerPsLines(spawner, {
-    projectIdFilter: opts.projectIdFilter,
+    labelFilters: [opts.projectIdFilter],
     all: opts.all,
     formatArg: opts.format === "names" ? "{{.Names}}" : "{{.ID}}",
   });
@@ -207,7 +213,7 @@ export const legacyListContainerIdsAndNames = (
   },
 ): Effect.Effect<ReadonlyArray<LegacyContainerIdName>, LegacyDockerLifecycleListError> =>
   spawnDockerPsLines(spawner, {
-    projectIdFilter: opts.projectIdFilter,
+    labelFilters: [opts.projectIdFilter],
     all: opts.all,
     formatArg: `{{.ID}}\t{{.Names}}\t{{.Label "${LEGACY_CLI_WORKDIR_LABEL}"}}`,
   }).pipe(

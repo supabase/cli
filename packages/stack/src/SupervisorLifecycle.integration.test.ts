@@ -129,6 +129,29 @@ describe("SupervisorLifecycle", () => {
     }
   });
 
+  it("stops a published runtime after startup failure", async () => {
+    const { lifecycle, close } = await makeLifecycle();
+    try {
+      let stopped = false;
+      await Effect.runPromise(
+        lifecycle.publishStack(
+          makeStack(() =>
+            Effect.sync(() => {
+              stopped = true;
+            }),
+          ),
+        ),
+      );
+
+      await Effect.runPromise(lifecycle.fail("startup failed after publication"));
+      await Effect.runPromise(lifecycle.requestShutdown("startup-failure"));
+
+      expect(stopped).toBe(true);
+    } finally {
+      await close();
+    }
+  });
+
   it("keeps shared shutdown running when one waiter is interrupted", async () => {
     const { lifecycle, close } = await makeLifecycle();
     try {

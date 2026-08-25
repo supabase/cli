@@ -1,4 +1,4 @@
-import { loadProjectConfig, loadProjectEnvironment } from "@supabase/config";
+import { loadProjectConfig, loadProjectEnvironment } from "@supabase/config/effect";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { legacyAssertDecodableJwkAlgorithm } from "../../shared/legacy-go-jwt.ts";
 import { legacyGoJsonKindName } from "../../shared/legacy-go-json.ts";

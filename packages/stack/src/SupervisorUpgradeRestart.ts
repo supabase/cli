@@ -421,7 +421,16 @@ export const restartIncompatibleOwner = (
           }),
       ),
     );
-    const effectiveConfigInput = yield* preflightCurrentLaunch();
+    const effectiveConfigInput = yield* preflightCurrentLaunch().pipe(
+      Effect.mapError(
+        (error) =>
+          new UpgradeRestartError({
+            stackId: context.stackId,
+            newCliVersion: context.input.cliVersion,
+            detail: causeMessage(error),
+          }),
+      ),
+    );
     return { acquisition, effectiveConfigInput, oldSessionEnded: true, attachedOwnerWasStopping };
   });
 

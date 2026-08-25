@@ -335,6 +335,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
               context: input.context,
               toml: input.toml,
               ...(input.projectRef !== undefined ? { projectRef: input.projectRef } : {}),
+              ...(input.noCache ? { bypassCache: true } : {}),
             });
             const migrations = parseLegacyConnectionString(shadow.migrationsUrl);
             const declarative = parseLegacyConnectionString(shadow.declarativeUrl);
@@ -359,6 +360,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
               shadowPool: declarativePool,
               files: legacyFilesForDeclarativeShadowLoad(input.files, prep.restorePgjwt),
               allowDrops: true,
+              ...(shadow.allowSameDatabaseIdentity ? { allowSameDatabaseIdentity: true } : {}),
               debug: input.debug,
               schema: input.schema,
               formatOptions: input.formatOptions,

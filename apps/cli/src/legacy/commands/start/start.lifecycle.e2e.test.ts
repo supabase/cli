@@ -7,7 +7,11 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, test } from "vitest";
 
-import { requireCliSuccess, runSupabase } from "../../../../tests/helpers/cli.ts";
+import {
+  overrideStackPorts,
+  requireCliSuccess,
+  runSupabase,
+} from "../../../../tests/helpers/cli.ts";
 import {
   legacySanitizeProjectId,
   legacyServiceContainerName,
@@ -100,6 +104,7 @@ describe("supabase start (e2e)", () => {
         exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
       });
       requireCliSuccess(init, "init setup");
+      await overrideStackPorts(projectDir);
 
       const start = await runSupabase(startArgs, {
         entrypoint: "legacy",
@@ -229,6 +234,7 @@ describe("supabase start (e2e)", () => {
         if (address === null || typeof address === "string") {
           throw new Error("Failed to allocate a proxy port");
         }
+        await overrideStackPorts(projectDir);
 
         const excludeArgs = LEGACY_SERVICE_CATALOG.flatMap((entry) =>
           entry.excludeKey === undefined ||
@@ -288,6 +294,7 @@ describe("supabase start (e2e)", () => {
         exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
       });
       requireCliSuccess(init, "init setup");
+      await overrideStackPorts(projectDir);
 
       // A `scratch` image whose entrypoint is not an executable binary — the
       // kernel refuses it with exactly the "exec format error" this diagnoses.

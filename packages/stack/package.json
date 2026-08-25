@@ -25,8 +25,8 @@
     "test:core": "nx run-many -t test:unit test:integration --projects=$npm_package_name",
     "test:e2e:warmup": "bun run tests/warmup-e2e.ts",
     "sync:versions": "bun run scripts/sync-versions-from-dockerfile.ts",
-    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name",
-    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name"
+    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name,@supabase/root",
+    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name,@supabase/root"
   },
   "dependencies": {
     "@effect/platform-bun": "catalog:",
@@ -40,27 +40,7 @@
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "@vitest/coverage-istanbul": "catalog:",
-    "knip": "catalog:",
-    "oxfmt": "catalog:",
-    "oxlint": "catalog:",
-    "oxlint-tsgolint": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
-  },
-  "knip": {
-    "entry": [
-      "scripts/**/*.ts",
-      "src/**/*.test.ts",
-      "src/daemon-node.ts",
-      "tests/**/*.ts"
-    ],
-    "ignoreDependencies": [
-      "oxfmt",
-      "oxlint",
-      "oxlint-tsgolint"
-    ],
-    "ignoreBinaries": [
-      "nx"
-    ]
   }
 }

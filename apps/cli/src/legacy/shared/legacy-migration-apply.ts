@@ -747,9 +747,9 @@ const execMigrationBatch = <E>(
           const base = executed;
           yield* session.execBatch(operations).pipe(
             Effect.mapError((cause) => {
-              // Acquiring the batch's connection failed: there is no failing
-              // statement to name, so the connect error (and its suggestion) is
-              // surfaced verbatim instead of being rendered as `At statement: N`.
+              // The batch's connection failed, either on checkout or before any of
+              // it reached the wire: there is no failing statement to name, so the
+              // connect error is surfaced verbatim instead of `At statement: N`.
               if (cause instanceof LegacyDbConnectError) return cause;
               // `statementIndex` is set by every batch failure the driver raises; a
               // session that omits it can only have failed before the first statement.

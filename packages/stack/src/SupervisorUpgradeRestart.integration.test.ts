@@ -238,6 +238,38 @@ describe("incompatible supervisor upgrade restart", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
   });
 
+  it.live("reports a restart failure when the refreshed launch cannot be preflighted", () => {
+    const context = setup();
+    let inspections = 0;
+    return Effect.gen(function* () {
+      const exit = yield* restartIncompatibleOwner({
+        ...context,
+        manager: {
+          ...context.manager,
+          inspectStack: () =>
+            inspections++ === 0
+              ? context.manager.inspectStack(context.stackId)
+              : Effect.succeed(undefined),
+        },
+        controlTransport: context.transport,
+        reacquire: () => Effect.succeed(context.oldOwner),
+      }).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const error = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) {
+          expect(error.value).toBeInstanceOf(UpgradeRestartError);
+          expect(error.value).toMatchObject({
+            stackId: context.stackId,
+            newCliVersion: context.input.cliVersion,
+            detail: "Managed stack document is missing",
+          });
+        }
+      }
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+  });
+
   it.live("pins enabled services to persisted launch versions", () => {
     const context = setup();
     const configInput = { ...context.configInput, auth: { version: "v-new" } };

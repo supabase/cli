@@ -175,10 +175,10 @@ const SUPERVISOR_HANDSHAKE_TIMEOUT = Duration.sum(
   SUPERVISOR_STARTUP_TIMEOUT,
   SUPERVISOR_HANDSHAKE_GRACE,
 );
-// Preflight, old-session stop, and endpoint reacquisition each have one phase
-// budget before the normal child startup budget begins.
+// Initial preflight, old-session stop, endpoint reacquisition, and refreshed
+// preflight each have one phase budget before normal child startup begins.
 const UPGRADE_RESTART_HANDSHAKE_TIMEOUT = Duration.sum(
-  Duration.times(UPGRADE_RESTART_PHASE_TIMEOUT, 3),
+  Duration.times(UPGRADE_RESTART_PHASE_TIMEOUT, 4),
   SUPERVISOR_HANDSHAKE_TIMEOUT,
 );
 
@@ -710,19 +710,23 @@ const makeRunManagedExecution = (
         effectiveConfigInput = restart.effectiveConfigInput;
         initialAcquisition = restart.acquisition;
       } else {
+        const reacquireInitialAcquisition = () =>
+          reacquireAfterDeath().pipe(
+            Effect.tap((next) =>
+              Effect.sync(() => {
+                initialAcquisition = next;
+              }),
+            ),
+            Effect.asVoid,
+          );
         yield* awaitAttachedOwnerReady(initialAcquisition).pipe(
-          Effect.catchTag("ControlTransportError", (error) =>
-            error.reason === "unreachable"
-              ? reacquireAfterDeath().pipe(
-                  Effect.tap((next) =>
-                    Effect.sync(() => {
-                      initialAcquisition = next;
-                    }),
-                  ),
-                  Effect.asVoid,
-                )
-              : Effect.fail(error),
-          ),
+          Effect.catchTags({
+            ControlTransportError: (error) =>
+              error.reason === "unreachable" ? reacquireInitialAcquisition() : Effect.fail(error),
+            ControlAddressConflictError: reacquireInitialAcquisition,
+            ControlProtocolError: reacquireInitialAcquisition,
+            ControlProtocolMismatchError: reacquireInitialAcquisition,
+          }),
         );
       }
     }
@@ -1012,7 +1016,7 @@ export const runSupervisor = (
   platform: SupervisorPlatform,
 ): Effect.Effect<
   void,
-  SupervisorStartError | unknown,
+  unknown, // SupervisorStartError plus arbitrary child-program failures
   | ControlTransport
   | import("effect").FileSystem.FileSystem
   | import("effect").Path.Path

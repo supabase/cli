@@ -5,7 +5,7 @@ import {
   resolveProjectSubtree,
   type ProjectConfig,
   type ProjectConfigParseError,
-} from "@supabase/config";
+} from "@supabase/config/effect";
 import { V1BulkCreateSecretsInput } from "@supabase/api/effect";
 import { parse as parseDotenv } from "dotenv";
 import { Effect, FileSystem, Option, Path, Redacted, Schema } from "effect";

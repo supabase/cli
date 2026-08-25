@@ -21,7 +21,11 @@ export type SupervisorState =
       readonly phase: "stopping";
       readonly stack?: Stack["Service"];
     }
-  | { readonly phase: "failed"; readonly detail: string }
+  | {
+      readonly phase: "failed";
+      readonly detail: string;
+      readonly stack?: Stack["Service"];
+    }
   | { readonly phase: "deleting" }
   | { readonly phase: "closed" };
 
@@ -80,7 +84,9 @@ export class SupervisorLifecycle extends Context.Service<
                 ? current.stack
                 : current.phase === "stopping"
                   ? current.stack
-                  : undefined;
+                  : current.phase === "failed"
+                    ? current.stack
+                    : undefined;
             yield* Ref.set(stateRef, {
               phase: "stopping",
               ...(stack === undefined ? {} : { stack }),
@@ -186,9 +192,11 @@ export class SupervisorLifecycle extends Context.Service<
         ).pipe(Effect.asVoid),
         fail: (detail) =>
           Ref.modify(stateRef, (state): [undefined, SupervisorState] =>
-            state.phase === "starting" || state.phase === "running"
-              ? [undefined, { phase: "failed", detail }]
-              : [undefined, state],
+            state.phase === "running"
+              ? [undefined, { phase: "failed", detail, stack: state.stack }]
+              : state.phase === "starting"
+                ? [undefined, { phase: "failed", detail }]
+                : [undefined, state],
           ).pipe(Effect.asVoid),
         submitShutdown,
         requestShutdown,

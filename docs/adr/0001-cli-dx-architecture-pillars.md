@@ -110,10 +110,10 @@ async function listProjects(flags: ProjectFlags): Promise<CommandResult<Project[
 
 | Use                   | For                                                       |
 | --------------------- | --------------------------------------------------------- |
-| Positional arguments  | The primary "what": `supabase branches create my-branch`      |
+| Positional arguments  | The primary "what": `supabase branches create my-branch`  |
 | Flags                 | Modifiers and options: `--target docker`, `--output json` |
-| Stdin                 | Bulk data: `cat migration.sql \| supabase db execute`         |
-| Config file           | Persistent defaults: `supabase.config.json`                   |
+| Stdin                 | Bulk data: `cat migration.sql \| supabase db execute`     |
+| Config file           | Persistent defaults: `supabase.config.json`               |
 | Environment variables | Secrets and CI overrides: `SUPABASE_ACCESS_TOKEN`         |
 
 **Precedence** (highest to lowest):
@@ -256,10 +256,10 @@ Error codes enable LLM agents to handle errors programmatically, documentation t
 
 **Exit codes**:
 
-| Code | Meaning            |
-| ---- | ------------------ |
-| 0    | Success            |
-| 1    | Any error          |
+| Code | Meaning              |
+| ---- | -------------------- |
+| 0    | Success              |
+| 1    | Any error            |
 | 130  | Interrupted (Ctrl+C) |
 
 Error categorization (auth vs network vs usage) is communicated through the structured error output (`error.code` field in JSON), not through exit codes. This matches the convention used by most production CLIs (Terraform, kubectl, Wrangler, Vercel).
@@ -337,12 +337,12 @@ Remote telemetry is **opt-in by default** — it is never sent unless the user e
 
 **Performance budgets** (CI-enforced):
 
-| Operation                            | Budget               |
-| ------------------------------------ | -------------------- |
-| CLI startup (parse args, no command) | < 50ms               |
-| `supabase --help`                        | < 100ms              |
-| `supabase status` (local, no network)    | < 200ms              |
-| `supabase projects` (network call)       | < 1s (excl. network) |
+| Operation                             | Budget               |
+| ------------------------------------- | -------------------- |
+| CLI startup (parse args, no command)  | < 50ms               |
+| `supabase --help`                     | < 100ms              |
+| `supabase status` (local, no network) | < 200ms              |
+| `supabase projects` (network call)    | < 1s (excl. network) |
 
 **Lazy loading is essential**: use dynamic imports so `supabase branches list` doesn't load Docker modules or migration logic. Startup stays fast regardless of how many commands exist.
 
@@ -468,10 +468,10 @@ test("LLM workflow: list projects, then get status", async () => {
 
   // Step 2: use output from step 1 to query a specific project
   const ref = projects.data[0].ref;
-  const status = Bun.spawn(
-    ["bun", "run", "apps/cli/src/index.ts", "status", "--project", ref],
-    { stdout: "pipe", env: { ...process.env, SUPABASE_ACCESS_TOKEN: "test-token" } },
-  );
+  const status = Bun.spawn(["bun", "run", "apps/cli/src/index.ts", "status", "--project", ref], {
+    stdout: "pipe",
+    env: { ...process.env, SUPABASE_ACCESS_TOKEN: "test-token" },
+  });
   const result = JSON.parse(await new Response(status.stdout).text());
   expect(result.ok).toBe(true);
 });

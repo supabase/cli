@@ -3,7 +3,7 @@ import {
   type LoadProjectConfigOptions,
   ProjectConfigSchema,
   type ProjectConfig,
-} from "@supabase/config";
+} from "@supabase/config/effect";
 import { Effect, Schema } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 

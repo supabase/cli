@@ -471,6 +471,21 @@ const listenStartingOwner = (
     }),
   );
 
+const listenMalformedOwner = (
+  endpoint: ControlEndpoint,
+): Promise<ReturnType<typeof createHttpServer>> =>
+  bindFakeOwner(endpoint, () =>
+    createHttpServer((request, response) => {
+      if (request.method === "GET" && request.url === "/owner") {
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({ owner: "unrelated-listener" }));
+        return;
+      }
+      response.writeHead(404);
+      response.end();
+    }),
+  );
+
 const listenOwnerSequence = (
   endpoint: ControlEndpoint,
   ownershipId: string,
@@ -1910,6 +1925,45 @@ describe("detached supervisor child journeys", () => {
       expect(await fetchOwner(restartedEndpoint)).toMatchObject({ state: "starting" });
     } finally {
       if (owner.child.exitCode === null) await kill(owner.child);
+      if (contender?.child.exitCode === null) await kill(contender.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("reacquires after an attached endpoint is rebound by an unrelated listener", async () => {
+    const roots = await workspace();
+    const input = messageFor(roots);
+    const endpoint = await Effect.runPromise(controlEndpoint(roots.stackId));
+    const attachedReady = join(roots.root, "attached-rebind-ready");
+    const attachedRelease = join(roots.root, "attached-rebind-release");
+    let attachedOwner: ReturnType<typeof createHttpServer> | undefined;
+    let unrelatedListener: ReturnType<typeof createHttpServer> | undefined;
+    let contender: ChildHandle | undefined;
+    try {
+      attachedOwner = await listenStartingOwner(endpoint, roots.stackId);
+      contender = spawnChild(input, {
+        environment: {
+          SUPABASE_STACK_TEST_ATTACHED_READY_FILE: attachedReady,
+          SUPABASE_STACK_TEST_ATTACHED_RELEASE_FILE: attachedRelease,
+        },
+      });
+      await contender.attachedBeforeReady;
+
+      await new Promise<void>((resolve, reject) =>
+        attachedOwner?.close((cause) => (cause === undefined ? resolve() : reject(cause))),
+      );
+      attachedOwner = undefined;
+      unrelatedListener = await listenMalformedOwner(endpoint);
+      writeFileSync(attachedRelease, "release");
+
+      const restarted = await contender.started;
+      expect(restarted.attached).not.toBe(true);
+      expect(restarted.endpoint.port).not.toBe(endpoint.port);
+      await remoteStop(restarted.endpoint);
+      await waitForExit(contender.child);
+    } finally {
+      attachedOwner?.close();
+      unrelatedListener?.close();
       if (contender?.child.exitCode === null) await kill(contender.child);
       cleanupRoots(roots);
     }

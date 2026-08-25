@@ -11,10 +11,10 @@ The simple `handler → CommandResult<T> → render` flow assumes the handler ru
 
 Most commands don't need progress at all. Only workflow commands (`dev`, `push`, `pull`, `migrations push`) benefit from real-time feedback. This means we need two handler shapes, not one:
 
-| Command type | Handler shape | Example |
-|---|---|---|
-| Simple (CRUD) | `async (flags) → CommandResult<T>` | `listProjects`, `createBranch` |
-| Workflow | Yields events or calls a context — see patterns below | `runDev`, `pushMigrations` |
+| Command type  | Handler shape                                         | Example                        |
+| ------------- | ----------------------------------------------------- | ------------------------------ |
+| Simple (CRUD) | `async (flags) → CommandResult<T>`                    | `listProjects`, `createBranch` |
+| Workflow      | Yields events or calls a context — see patterns below | `runDev`, `pushMigrations`     |
 
 ## Decision
 
@@ -37,9 +37,7 @@ type StepEvent = {
   message: string;
 };
 
-type CommandEvent<T> =
-  | StepEvent
-  | { type: "result"; data: CommandResult<T> };
+type CommandEvent<T> = StepEvent | { type: "result"; data: CommandResult<T> };
 ```
 
 ### Pattern A — AsyncGenerator
@@ -326,13 +324,17 @@ async function renderDev(flags: DevFlags) {
 function createJsonContext(): CommandContext {
   return {
     step(phase, message) {
-      process.stdout.write(JSON.stringify({ type: "step", phase, status: "running", message }) + "\n");
+      process.stdout.write(
+        JSON.stringify({ type: "step", phase, status: "running", message }) + "\n",
+      );
     },
     done(phase, message) {
       process.stdout.write(JSON.stringify({ type: "step", phase, status: "done", message }) + "\n");
     },
     fail(phase, message) {
-      process.stdout.write(JSON.stringify({ type: "step", phase, status: "failed", message }) + "\n");
+      process.stdout.write(
+        JSON.stringify({ type: "step", phase, status: "failed", message }) + "\n",
+      );
     },
   };
 }
@@ -344,9 +346,15 @@ function createJsonContext(): CommandContext {
 test("runDev reports correct phases", async () => {
   const events: Array<{ phase: string; status: string; message: string }> = [];
   const ctx: CommandContext = {
-    step(phase, msg) { events.push({ phase, status: "running", message: msg }); },
-    done(phase, msg) { events.push({ phase, status: "done", message: msg }); },
-    fail(phase, msg) { events.push({ phase, status: "failed", message: msg }); },
+    step(phase, msg) {
+      events.push({ phase, status: "running", message: msg });
+    },
+    done(phase, msg) {
+      events.push({ phase, status: "done", message: msg });
+    },
+    fail(phase, msg) {
+      events.push({ phase, status: "failed", message: msg });
+    },
   };
 
   const result = await runDev(testFlags, ctx);
@@ -361,14 +369,14 @@ test("runDev reports correct phases", async () => {
 
 ### Trade-off Comparison
 
-| Dimension | AsyncGenerator | Context Injection |
-|---|---|---|
-| Handler purity | Fully pure — yields data, no callbacks | Almost pure — calls an injected interface |
-| With React-Ink | Works, but needs `for await` → `setState` bridge | Very natural — callbacks map directly to `setState` |
-| With Clack | Very natural — imperative loop matches imperative API | Natural — adapter wraps Clack's spinner |
+| Dimension         | AsyncGenerator                                                 | Context Injection                                           |
+| ----------------- | -------------------------------------------------------------- | ----------------------------------------------------------- |
+| Handler purity    | Fully pure — yields data, no callbacks                         | Almost pure — calls an injected interface                   |
+| With React-Ink    | Works, but needs `for await` → `setState` bridge               | Very natural — callbacks map directly to `setState`         |
+| With Clack        | Very natural — imperative loop matches imperative API          | Natural — adapter wraps Clack's spinner                     |
 | Handler signature | Different from simple commands (`AsyncGenerator` vs `Promise`) | Same return type (`Promise<CommandResult<T>>`), extra param |
-| Backpressure | Built-in — generator pauses until consumer is ready | None — fire and forget |
-| Testing | Collect and assert on array of events | Spy on context methods |
+| Backpressure      | Built-in — generator pauses until consumer is ready            | None — fire and forget                                      |
+| Testing           | Collect and assert on array of events                          | Spy on context methods                                      |
 
 ### Observability Integration
 

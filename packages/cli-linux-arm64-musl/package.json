@@ -2,23 +2,34 @@
   "name": "@supabase/cli-linux-arm64-musl",
   "version": "0.0.0",
   "description": "Supabase CLI binary (linux-arm64-musl)",
-  "license": "MIT",
   "homepage": "https://github.com/supabase/cli#readme",
   "bugs": {
     "url": "https://github.com/supabase/cli/issues"
   },
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/supabase/cli.git",
     "directory": "packages/cli-linux-arm64-musl"
   },
-  "os": ["linux"],
-  "cpu": ["arm64"],
-  "libc": ["musl"],
-  "preferUnplugged": true,
-  "files": ["bin/"],
+  "files": [
+    "bin/"
+  ],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "libc": [
+    "musl"
+  ],
   "publishConfig": {
     "access": "public",
-    "executableFiles": ["bin/supabase", "bin/supabase-go"]
-  }
+    "executableFiles": [
+      "bin/supabase",
+      "bin/supabase-go"
+    ]
+  },
+  "preferUnplugged": true
 }
