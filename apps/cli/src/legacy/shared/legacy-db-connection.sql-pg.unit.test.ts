@@ -591,15 +591,23 @@ describe("legacyToExecError (pg server-error extraction)", () => {
 });
 
 describe("LegacyPgBatchQuery.submit", () => {
-  const fakeConnection = (writable: boolean) => {
+  const fakeConnection = (writable: boolean, opts: { dieOnUncork?: boolean } = {}) => {
     const frames: Array<string> = [];
     const record = (frame: string) => () => {
       frames.push(frame);
     };
+    const stream = {
+      writable,
+      cork: record("cork"),
+      uncork: () => {
+        frames.push("uncork");
+        if (opts.dieOnUncork === true) stream.writable = false;
+      },
+    };
     return {
       frames,
       connection: {
-        stream: { writable, cork: record("cork"), uncork: record("uncork") },
+        stream,
         parse: record("parse"),
         bind: record("bind"),
         describe: record("describe"),
@@ -618,6 +626,19 @@ describe("LegacyPgBatchQuery.submit", () => {
     expect(error?.message).toBe("the connection's socket is no longer writable");
     expect(batch.outcome).toBe("unsent");
     expect(frames).toEqual([]);
+  });
+
+  it("reports a batch whose stream died during the uncork flush as unsent", () => {
+    const { connection, frames } = fakeConnection(true, { dieOnUncork: true });
+    const batch = new LegacyPgBatchQuery([{ sql: "select 1" }], () => {});
+
+    const error = batch.submit(connection);
+
+    expect(error?.message).toBe(
+      "the connection's socket became unwritable while the batch was flushing",
+    );
+    expect(batch.outcome).toBe("unsent");
+    expect(frames).toEqual(["cork", "parse", "bind", "describe", "execute", "sync", "uncork"]);
   });
 
   it("writes parse/bind/describe/execute per statement and one sync while writable", () => {

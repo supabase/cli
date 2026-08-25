@@ -309,14 +309,20 @@ export class LegacyPgBatchQuery implements Pg.Submittable {
         connection.execute({ portal: "" }, true);
       }
       connection.sync();
-      this.outcome = "submitted";
-      return null;
     } catch (error) {
       this.outcome = started ? "poisoned" : "unsent";
       return error instanceof Error ? error : new Error(String(error));
     } finally {
       connection.stream.uncork?.();
     }
+    // The corked frames only hit the socket at uncork, and a dead peer destroys the
+    // stream synchronously during that flush — so only now does writable prove the
+    // batch actually left the process.
+    if (!connection.stream.writable) {
+      return new Error("the connection's socket became unwritable while the batch was flushing");
+    }
+    this.outcome = "submitted";
+    return null;
   }
 
   handleRowDescription(): void {}
