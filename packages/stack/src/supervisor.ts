@@ -696,7 +696,7 @@ export const runSupervisor = (
   platform: SupervisorPlatform,
 ): Effect.Effect<
   void,
-  SupervisorStartError | unknown,
+  unknown, // SupervisorStartError plus arbitrary child-program failures
   | ControlTransport
   | import("effect").FileSystem.FileSystem
   | import("effect").Path.Path

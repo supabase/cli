@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, describe, expect, test, vi, type MockInstance } from "vitest";
 import { BunServices } from "@effect/platform-bun";
 import { mkdtempSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -1998,7 +1998,7 @@ major_version = "not-a-number"
 
 describe("config io deprecated [inbucket] back-compat", () => {
   let warnings: Array<string> = [];
-  let errorSpy: ReturnType<typeof vi.spyOn> | undefined;
+  let errorSpy: MockInstance<typeof console.error> | undefined;
 
   function captureWarnings() {
     warnings = [];
@@ -2131,7 +2131,7 @@ port = 54324
 
 describe("config io deprecated [auth.external.{linkedin,slack}] back-compat", () => {
   let warnings: Array<string> = [];
-  let errorSpy: ReturnType<typeof vi.spyOn> | undefined;
+  let errorSpy: MockInstance<typeof console.error> | undefined;
 
   function captureWarnings() {
     warnings = [];

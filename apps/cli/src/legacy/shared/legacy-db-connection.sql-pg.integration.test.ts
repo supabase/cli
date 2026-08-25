@@ -20,6 +20,7 @@ import {
 import {
   legacyAcquirePgPool,
   legacyDbConnectionSqlPgLayer,
+  LegacyPgBatchQuery,
 } from "./legacy-db-connection.sql-pg.layer.ts";
 
 const SUGGESTION_CONTEXT = {
@@ -176,11 +177,14 @@ const fakeBatchServer = (
     readonly emptyAt?: number;
     /** Never answer an extended-protocol frame, so a batch hangs until interrupted. */
     readonly stall?: boolean;
+    /** Drop the connection on the first Sync, so a batch dies mid-flight. */
+    readonly destroyOnFirstSync?: boolean;
   } = {},
 ): Promise<{
   readonly port: number;
   readonly close: () => void;
   readonly state: FakeBatchServerState;
+  readonly sockets: ReadonlyArray<net.Socket>;
 }> =>
   new Promise((resolve) => {
     const state: FakeBatchServerState = {
@@ -189,7 +193,9 @@ const fakeBatchServer = (
       params: [],
       syncs: 0,
     };
+    const sockets: Array<net.Socket> = [];
     const server = net.createServer((socket) => {
+      sockets.push(socket);
       let sawStartup = false;
       let pending = Buffer.alloc(0);
       let failed = false;
@@ -268,6 +274,10 @@ const fakeBatchServer = (
             }
           } else if (type === "S") {
             state.syncs += 1;
+            if (options.destroyOnFirstSync === true && state.syncs === 1) {
+              socket.destroy();
+              return;
+            }
             if (options.failOnSync === true && !failed) {
               socket.write(
                 errorResponse({
@@ -288,7 +298,7 @@ const fakeBatchServer = (
     });
     server.listen(0, "127.0.0.1", () => {
       const address = server.address() as net.AddressInfo;
-      resolve({ port: address.port, close: () => server.close(), state });
+      resolve({ port: address.port, close: () => server.close(), state, sockets });
     });
   });
 
@@ -649,6 +659,101 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
           ),
         ),
       );
+    }),
+  );
+
+  it.live("fails a batch whose connection drops after it was written, then recovers", () =>
+    // A socket dropped after the batch was written must fail that batch and must not leave
+    // the client to be handed to the next one.
+    Effect.gen(function* () {
+      const server = yield* Effect.promise(() => fakeBatchServer({ destroyOnFirstSync: true }));
+      yield* runWithBatchServer(server, (session) =>
+        Effect.gen(function* () {
+          const error = yield* session.execBatch([{ sql: "SELECT 1" }, { sql: "SELECT 2" }]).pipe(
+            Effect.flip,
+            Effect.timeoutOrElse({
+              duration: Duration.seconds(10),
+              orElse: () => Effect.die("execBatch never settled after the connection died"),
+            }),
+          );
+          expect(error._tag).toBe("LegacyDbExecError");
+          expect(asBatchExecError(error).message).toContain("Connection terminated unexpectedly");
+          yield* session.execBatch([{ sql: "SELECT 3" }]);
+        }),
+      );
+    }),
+  );
+
+  it.live("survives an idle raw-client socket death and redials for the next query", () =>
+    // node-postgres emits `error` on an idle client; with no listener that terminates the
+    // process, so a database dying between two `queryRaw` calls must not take the CLI with it,
+    // and must not leave the corpse cached for the calls after it.
+    Effect.gen(function* () {
+      const server = yield* Effect.promise(() => fakeBatchServer());
+      yield* runWithBatchServer(server, (session) =>
+        Effect.gen(function* () {
+          yield* session.queryRaw("SELECT 1");
+          // `queryRaw` runs on its own client, opened after the pool's, so it is the
+          // newest connection the server has accepted.
+          const rawSocket = server.sockets.at(-1);
+          const openedBeforeRedial = server.sockets.length;
+
+          const closed = new Promise<void>((resolve) => {
+            rawSocket?.on("close", () => resolve());
+          });
+          yield* Effect.sync(() => rawSocket?.destroy());
+          yield* Effect.promise(() => closed);
+
+          // Whether the client has already noticed the death decides if this call redials or
+          // fails on the corpse, and that ordering is not ours to control, so accept either.
+          yield* session.queryRaw("SELECT 1").pipe(
+            Effect.exit,
+            Effect.timeoutOrElse({
+              duration: Duration.seconds(10),
+              orElse: () => Effect.die("queryRaw never settled after the idle socket died"),
+            }),
+          );
+
+          yield* session.queryRaw("SELECT 1");
+          expect(server.sockets.length).toBeGreaterThan(openedBeforeRedial);
+        }),
+      );
+    }),
+  );
+
+  it.live("refuses to write a batch onto a real pooled client whose socket is already gone", () =>
+    // The unit test drives `submit` through a hand-built connection; this pins the same
+    // refusal against a real node-postgres client, so a driver change that stops making the
+    // socket unwritable would be caught rather than mocked over. Destroying the socket and
+    // submitting in one synchronous block keeps the window deterministic: `writable` flips
+    // immediately, while pg only marks the client unqueryable on the next tick's close.
+    Effect.gen(function* () {
+      const server = yield* Effect.promise(() => fakeBatchServer());
+      yield* Effect.gen(function* () {
+        const pool = yield* legacyAcquirePgPool(
+          {
+            host: "127.0.0.1",
+            port: server.port,
+            user: "postgres",
+            password: SENTINEL_PASSWORD,
+            database: "postgres",
+            sslmode: "disable",
+          },
+          { isLocal: true, dnsResolver: "native" },
+        );
+        const client = yield* Effect.promise(() => pool.connect());
+        const batch = new LegacyPgBatchQuery([{ sql: "SELECT 1" }], () => {});
+
+        const refusal = yield* Effect.sync(() => {
+          client.connection.stream.destroy();
+          return batch.submit(client.connection);
+        });
+
+        expect(refusal?.message).toBe("the connection's socket is no longer writable");
+        expect(batch.outcome).toBe("unsent");
+        expect(server.state.frameTypes).toEqual([]);
+        client.release(new Error("done"));
+      }).pipe(Effect.scoped, Effect.ensuring(Effect.sync(server.close)));
     }),
   );
 

@@ -6,10 +6,10 @@
 
 ADR 0001 Pillar 5 and ADR 0002 share infrastructure. No separate metrics SDK and tracing SDK — one telemetry event schema, one write path, one consent model. A single OpenTelemetry-based pipeline handles all concerns, with the backend evolving in phases:
 
-| Phase | Backend | Purpose | Status |
-|---|---|---|---|
-| **Phase 1** | **Sentry** (via `@sentry/bun`) | All 5 metric categories + error diagnostics + performance traces | Now |
-| **Phase 2** | **Grafana** (company-owned) | Long-term analytics + custom observability dashboards | Future |
+| Phase       | Backend                        | Purpose                                                          | Status |
+| ----------- | ------------------------------ | ---------------------------------------------------------------- | ------ |
+| **Phase 1** | **Sentry** (via `@sentry/bun`) | All 5 metric categories + error diagnostics + performance traces | Now    |
+| **Phase 2** | **Grafana** (company-owned)    | Long-term analytics + custom observability dashboards            | Future |
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -129,7 +129,7 @@ Note: `user_id` (Supabase account UUID) is a future enhancement, pending a profi
 const resource = new Resource({
   "service.name": "supabase-cli",
   "service.version": CLI_VERSION,
-  "cli.device_id": getDeviceId(),   // always present, never rotates
+  "cli.device_id": getDeviceId(), // always present, never rotates
   "os.type": process.platform,
   "host.arch": process.arch,
 });
@@ -148,13 +148,13 @@ const resource = new Resource({
 
 Privacy guarantees:
 
-| What we track | What we never track |
-|---|---|
-| Random device UUID | IP address, username, hostname |
-| Command name and exit code | Command arguments or flag values |
-| Timing and error codes | File paths, SQL content, project names |
-| OS and architecture | Environment variables |
-| Stack traces (via span.recordException()) | Email, name, or other profile data |
+| What we track                             | What we never track                    |
+| ----------------------------------------- | -------------------------------------- |
+| Random device UUID                        | IP address, username, hostname         |
+| Command name and exit code                | Command arguments or flag values       |
+| Timing and error codes                    | File paths, SQL content, project names |
+| OS and architecture                       | Environment variables                  |
+| Stack traces (via span.recordException()) | Email, name, or other profile data     |
 
 ## Local Storage
 
@@ -273,8 +273,8 @@ const result = await listProjects(flags);
 
 // 4. Set error attributes, record exception, set ERROR status
 span.setAttributes({
-  "cli.exit_code": 1,               // error
-  "cli.duration_ms": 12,            // fast failure
+  "cli.exit_code": 1, // error
+  "cli.duration_ms": 12, // fast failure
   "cli.error_code": "AUTH_TOKEN_EXPIRED",
   "cli.api_request_count": 1,
   "cli.api_request_duration_ms": 8,
@@ -375,22 +375,22 @@ Non-TTY defaults to `denied` without prompting — this means LLM agents and CI 
 
 Mapping every metric from the 5 categories to a query over span attributes. Queries use TraceQL-like syntax referencing span attributes:
 
-| Category | Metric | Derived from |
-|---|---|---|
-| Adoption | Monthly Active Users (MAU) | `count(distinct resource.cli.device_id) where span.cli.command exists and timestamp > now() - 30d` |
-| Adoption | New installs per week | `count(distinct resource.cli.device_id) where span.cli.is_first_run = true and timestamp > now() - 7d` |
-| Adoption | LLM vs human split | `count(*) by span.cli.is_tty` (false = LLM/CI, true = human) |
-| Engagement | Commands per session | `count(*) by span.cli.session_id` → average |
-| Engagement | Command frequency distribution | `count(*) by span.cli.command order by count desc` |
-| Engagement | Multi-command chains | `count(distinct span.cli.session_id) where session_span_count >= 3` |
-| Retention | Week 1 retention | `resource.cli.device_id` seen in both week 0 and week 1 after `span.cli.is_first_run = true` |
-| Retention | Month 1 retention | `resource.cli.device_id` seen in both month 0 and month 1 after `span.cli.is_first_run = true` |
-| Retention | Churn by command | Last `span.cli.command` before a `resource.cli.device_id` stops appearing |
-| Quality | Command success rate | `count(span.cli.exit_code = 0) / count(*)` |
-| Quality | Error code distribution | `count(*) by span.cli.error_code where span.cli.error_code exists` |
-| Quality | p50/p95 command latency | `histogram_quantile(0.50, span.cli.duration_ms)`, `histogram_quantile(0.95, span.cli.duration_ms)` |
-| Onboarding | Time to first successful command | `min(timestamp where span.cli.exit_code = 0) - min(timestamp) where span.cli.is_first_run = true` per `resource.cli.device_id` |
-| Onboarding | Drop-off funnel | Sequential presence of `is_first_run → cli.command='login' → cli.command='dev' OR cli.command='link'` per `resource.cli.device_id` |
+| Category   | Metric                           | Derived from                                                                                                                       |
+| ---------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Adoption   | Monthly Active Users (MAU)       | `count(distinct resource.cli.device_id) where span.cli.command exists and timestamp > now() - 30d`                                 |
+| Adoption   | New installs per week            | `count(distinct resource.cli.device_id) where span.cli.is_first_run = true and timestamp > now() - 7d`                             |
+| Adoption   | LLM vs human split               | `count(*) by span.cli.is_tty` (false = LLM/CI, true = human)                                                                       |
+| Engagement | Commands per session             | `count(*) by span.cli.session_id` → average                                                                                        |
+| Engagement | Command frequency distribution   | `count(*) by span.cli.command order by count desc`                                                                                 |
+| Engagement | Multi-command chains             | `count(distinct span.cli.session_id) where session_span_count >= 3`                                                                |
+| Retention  | Week 1 retention                 | `resource.cli.device_id` seen in both week 0 and week 1 after `span.cli.is_first_run = true`                                       |
+| Retention  | Month 1 retention                | `resource.cli.device_id` seen in both month 0 and month 1 after `span.cli.is_first_run = true`                                     |
+| Retention  | Churn by command                 | Last `span.cli.command` before a `resource.cli.device_id` stops appearing                                                          |
+| Quality    | Command success rate             | `count(span.cli.exit_code = 0) / count(*)`                                                                                         |
+| Quality    | Error code distribution          | `count(*) by span.cli.error_code where span.cli.error_code exists`                                                                 |
+| Quality    | p50/p95 command latency          | `histogram_quantile(0.50, span.cli.duration_ms)`, `histogram_quantile(0.95, span.cli.duration_ms)`                                 |
+| Onboarding | Time to first successful command | `min(timestamp where span.cli.exit_code = 0) - min(timestamp) where span.cli.is_first_run = true` per `resource.cli.device_id`     |
+| Onboarding | Drop-off funnel                  | Sequential presence of `is_first_run → cli.command='login' → cli.command='dev' OR cli.command='link'` per `resource.cli.device_id` |
 
 **Phase 1 (Sentry)**: Metrics are derived via Sentry Discover queries filtering on span tags (`cli.command`, `cli.device_id`, etc.). Error code distribution and crash diagnostics use native Sentry Issues.
 
@@ -398,45 +398,45 @@ Mapping every metric from the 5 categories to a query over span attributes. Quer
 
 Completeness check — every span attribute is used by at least one metric:
 
-| Attribute | Used by |
-|---|---|
-| `resource.cli.device_id` | MAU, retention, churn, onboarding funnel |
-| `span.cli.session_id` | Commands per session, multi-command chains |
-| `span.cli.is_first_run` | New installs, retention cohorts, onboarding funnel |
-| `span.cli.command` | Command frequency, churn by command, drop-off funnel |
-| `span.cli.exit_code` | Command success rate |
-| `span.cli.duration_ms` | p50/p95 latency |
-| `span.cli.startup_ms` | Performance monitoring (ADR 0001 budgets) |
-| `span.cli.error_code` | Error code distribution |
-| `span.cli.is_tty` | LLM vs human split |
-| `span.cli.is_ci` | LLM vs human split (refinement) |
-| `resource.os.type`, `resource.host.arch` | Segment any metric by platform |
-| `resource.service.version` | Segment any metric by version, track regression |
-| `span.cli.api_request_count` | Performance analysis |
-| `span.cli.api_request_duration_ms` | Performance analysis |
-| `span.cli.api_request_errors` | Quality analysis (backend reliability) |
-| child spans (phases) | Per-phase latency breakdown for workflow commands |
+| Attribute                                | Used by                                              |
+| ---------------------------------------- | ---------------------------------------------------- |
+| `resource.cli.device_id`                 | MAU, retention, churn, onboarding funnel             |
+| `span.cli.session_id`                    | Commands per session, multi-command chains           |
+| `span.cli.is_first_run`                  | New installs, retention cohorts, onboarding funnel   |
+| `span.cli.command`                       | Command frequency, churn by command, drop-off funnel |
+| `span.cli.exit_code`                     | Command success rate                                 |
+| `span.cli.duration_ms`                   | p50/p95 latency                                      |
+| `span.cli.startup_ms`                    | Performance monitoring (ADR 0001 budgets)            |
+| `span.cli.error_code`                    | Error code distribution                              |
+| `span.cli.is_tty`                        | LLM vs human split                                   |
+| `span.cli.is_ci`                         | LLM vs human split (refinement)                      |
+| `resource.os.type`, `resource.host.arch` | Segment any metric by platform                       |
+| `resource.service.version`               | Segment any metric by version, track regression      |
+| `span.cli.api_request_count`             | Performance analysis                                 |
+| `span.cli.api_request_duration_ms`       | Performance analysis                                 |
+| `span.cli.api_request_errors`            | Quality analysis (backend reliability)               |
+| child spans (phases)                     | Per-phase latency breakdown for workflow commands    |
 
 Note: `cli.user_id` (Supabase account UUID) is omitted from v1. It will be added as a future enhancement when a profile endpoint is available, enabling cross-device identity linking and per-account error lookup.
 
 Performance impact:
 
-| Operation | Cost |
-|---|---|
-| Span construction | < 0.1ms |
-| Local NDJSON write | < 0.5ms |
-| Sentry SDK export (async) | < 0.1ms |
-| **Total per command** | **< 1ms** |
+| Operation                 | Cost      |
+| ------------------------- | --------- |
+| Span construction         | < 0.1ms   |
+| Local NDJSON write        | < 0.5ms   |
+| Sentry SDK export (async) | < 0.1ms   |
+| **Total per command**     | **< 1ms** |
 
 ## Implementation Status
 
-| Area | Current State | Target State |
-|------|--------------|--------------|
-| Tracing framework | LogTape structured logging (flat events) | OTel spans via `@sentry/bun` |
-| ConsentState | 2-state (`"granted" \| "denied"`) | 3-state (`"pending" \| "granted" \| "denied"`) |
-| Default consent | `"granted"` when no config exists | `"denied"` for non-TTY; prompt for TTY |
-| API metrics | Fields in type but not collected | Collect from injected API client |
-| Remote export | None (local NDJSON + debug only) | Sentry SDK (Phase 1) |
-| PII filtering | None | `beforeSend` hooks in Sentry config |
-| `cli_version` | Hardcoded `"0.1.0"` | Read from package.json or build constant |
-| Child spans | Not implemented | Per-phase spans for workflow commands |
+| Area              | Current State                            | Target State                                   |
+| ----------------- | ---------------------------------------- | ---------------------------------------------- |
+| Tracing framework | LogTape structured logging (flat events) | OTel spans via `@sentry/bun`                   |
+| ConsentState      | 2-state (`"granted" \| "denied"`)        | 3-state (`"pending" \| "granted" \| "denied"`) |
+| Default consent   | `"granted"` when no config exists        | `"denied"` for non-TTY; prompt for TTY         |
+| API metrics       | Fields in type but not collected         | Collect from injected API client               |
+| Remote export     | None (local NDJSON + debug only)         | Sentry SDK (Phase 1)                           |
+| PII filtering     | None                                     | `beforeSend` hooks in Sentry config            |
+| `cli_version`     | Hardcoded `"0.1.0"`                      | Read from package.json or build constant       |
+| Child spans       | Not implemented                          | Per-phase spans for workflow commands          |

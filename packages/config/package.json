@@ -16,8 +16,8 @@
   },
   "scripts": {
     "build": "bun run ./scripts/build.ts",
-    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name",
-    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name",
+    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name,@supabase/root",
+    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name,@supabase/root",
     "test": "nx run-many -t test:core test:e2e --projects=$npm_package_name",
     "test:core": "nx run-many -t test:unit test:integration --projects=$npm_package_name"
   },
@@ -32,10 +32,6 @@
     "@types/bun": "catalog:",
     "@vitest/coverage-istanbul": "catalog:",
     "effect": "catalog:",
-    "knip": "catalog:",
-    "oxfmt": "catalog:",
-    "oxlint": "catalog:",
-    "oxlint-tsgolint": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   },
@@ -51,16 +47,6 @@
     "@effect/platform-node": {
       "optional": true
     }
-  },
-  "knip": {
-    "ignoreDependencies": [
-      "oxfmt",
-      "oxlint",
-      "oxlint-tsgolint"
-    ],
-    "ignoreBinaries": [
-      "nx"
-    ]
   },
   "nx": {
     "targets": {

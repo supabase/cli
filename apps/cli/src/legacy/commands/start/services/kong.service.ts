@@ -37,8 +37,8 @@
  * disk when TLS is enabled AND both `cert_path`/`key_path` are configured —
  * see {@link LegacyKongContainerSpecInput.tlsCertContent}'s doc comment.
  * {@link legacyBuildKongEntrypointScript} reproduces the remaining
- * `custom_nginx.template` heredoc + exec line byte-for-byte; see its doc
- * comment for the exact shell mechanics.
+ * `custom_nginx.template` heredoc; the final command is `exec`'d so Kong
+ * is PID 1 and `docker stop` reaches it directly.
  *
  * Kong mints no JWTs of its own: `BearerToken`/`QueryToken` are Kong
  * `request-transformer`/lua expression STRINGS built from the four
@@ -121,7 +121,7 @@ export function legacyBuildKongQueryToken(apiKeys: LegacyKongApiKeys): string {
  * never touches `process.env`.
  */
 export function legacyResolveKongNginxWorkerProcesses(
-  projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
+  projectEnvValues?: Readonly<Record<string, string>>,
 ): string {
   return legacyEnvOrDefault("KONG_NGINX_WORKER_PROCESSES", "1", projectEnvValues);
 }
@@ -174,7 +174,7 @@ export function legacyBuildKongEmailTemplateBind(
 
 const LEGACY_KONG_ENTRYPOINT_HEAD =
   "cat <<'EOF' > /home/kong/custom_nginx.template && \\\n" +
-  "./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template\n";
+  "exec ./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template\n";
 
 /**
  * Builds the surviving (non-secret) half of the Kong entrypoint: only the

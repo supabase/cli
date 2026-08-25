@@ -384,7 +384,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     readonly port: number;
     readonly probeHost: string;
     readonly probePort: number;
-    readonly networkMode: "host" | string;
+    readonly networkMode: "host" | (string & {});
     readonly includedSchemas: string;
     readonly postgrestV9Compat: boolean;
     readonly pgmetaVersionOverride?: string;

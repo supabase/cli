@@ -54,8 +54,8 @@ import { ProcessControl } from "../runtime/process-control.service.ts";
 import {
   buildDockerBinds,
   discoverFunctionSlugs,
-  dockerBindContainerPath,
-  dockerBindHostPath,
+  type DockerBind,
+  formatDockerBind,
   dockerWorkdirLabel,
   rawFunctionConfigRecord,
   resolveFunctionConfigs,
@@ -199,6 +199,7 @@ interface ServeFunctionContainerConfig {
 
 interface WatchSpec {
   readonly root: string;
+  readonly recursive: boolean;
   readonly matchPaths?: ReadonlySet<string>;
 }
 
@@ -308,11 +309,12 @@ declare const SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
 
 export const serveFileWatcherLayer = Layer.sync(FileWatcher, () =>
   FileWatcher.of({
-    watch: (root) =>
+    watch: (root, options) =>
       Stream.callback<ReadonlyArray<FileWatchEvent>, FileWatcherError>((queue) =>
         Effect.acquireRelease(
           Effect.sync(() => {
-            const watcher = watch(root, { recursive: true }, (eventType, filename) => {
+            const recursive = options?.recursive ?? true;
+            const watcher = watch(root, { recursive }, (eventType, filename) => {
               const pathname =
                 filename === null || filename === undefined || filename.length === 0
                   ? root
@@ -1151,21 +1153,25 @@ const loadServeProjectEnvironment = Effect.fnUntraced(function* (projectRoot: st
  * but Podman rejects the container outright (supabase/cli#6035), so the flag can
  * only be set for a path a bind actually materializes.
  */
-function hasBindUnder(binds: Iterable<string>, containerPath: string): boolean {
+function hasBindUnder(binds: Iterable<DockerBind>, containerPath: string): boolean {
   for (const bind of binds) {
-    const target = dockerBindContainerPath(bind);
-    if (target === containerPath || target.startsWith(`${containerPath}/`)) {
+    if (
+      bind.containerPath === containerPath ||
+      bind.containerPath.startsWith(`${containerPath}/`)
+    ) {
       return true;
     }
   }
   return false;
 }
 
-async function buildWatchSpecs(binds: ReadonlyArray<string>): Promise<ReadonlyArray<WatchSpec>> {
+async function buildWatchSpecs(
+  binds: ReadonlyArray<DockerBind>,
+): Promise<ReadonlyArray<WatchSpec>> {
   const specs = new Map<string, WatchSpec>();
 
   for (const bind of binds) {
-    const hostPath = dockerBindHostPath(bind);
+    const hostPath = bind.hostPath;
     if (!isAbsolute(hostPath)) {
       continue;
     }
@@ -1173,7 +1179,7 @@ async function buildWatchSpecs(binds: ReadonlyArray<string>): Promise<ReadonlyAr
     try {
       const info = await stat(hostPath);
       if (info.isDirectory()) {
-        specs.set(hostPath, { root: hostPath });
+        specs.set(hostPath, { root: hostPath, recursive: true });
       } else {
         const root = dirname(hostPath);
         const existing = specs.get(root);
@@ -1182,7 +1188,7 @@ async function buildWatchSpecs(binds: ReadonlyArray<string>): Promise<ReadonlyAr
         }
         const matchPaths = new Set(existing?.matchPaths ?? []);
         matchPaths.add(hostPath);
-        specs.set(root, { root, matchPaths });
+        specs.set(root, { root, recursive: false, matchPaths });
       }
     } catch {
       continue;
@@ -1237,10 +1243,15 @@ const waitForRestartSignal = Effect.fnUntraced(function* (watchSpecs: ReadonlyAr
 
   const stream = Stream.mergeAll(
     watchSpecs.map((spec) =>
-      fileWatcher.watch(spec.root, { ignore: watchIgnoreGlobs }).pipe(
-        Stream.map((events) => events.filter((event) => eventMatchesSpec(spec, event))),
-        Stream.filter((events) => events.length > 0),
-      ),
+      fileWatcher
+        .watch(spec.root, {
+          ignore: watchIgnoreGlobs,
+          recursive: spec.recursive,
+        })
+        .pipe(
+          Stream.map((events) => events.filter((event) => eventMatchesSpec(spec, event))),
+          Stream.filter((events) => events.length > 0),
+        ),
     ),
     { concurrency: "unbounded" },
   ).pipe(
@@ -1471,7 +1482,8 @@ export function buildServeEntrypointCommand(
   command: ReadonlyArray<string>,
   multilineEnvScriptPath?: string,
 ) {
-  return `${multilineEnvScriptPath === undefined ? "" : `. ${multilineEnvScriptPath}\n`}${command.join(" ")}
+  // `exec` so edge-runtime is PID 1; sourced env survives into the replacement process.
+  return `${multilineEnvScriptPath === undefined ? "" : `. ${multilineEnvScriptPath}\n`}exec ${command.join(" ")}
 `;
 }
 
@@ -1558,7 +1570,7 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
           },
         }),
       )) {
-        binds.add(bind);
+        binds.add(formatDockerBind(bind));
       }
       const missingSourceWarning = bindWarnings.find((warning) =>
         warning.includes("failed to read file:"),
@@ -1636,7 +1648,9 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     );
 
     const functionsDir = join(input.projectRoot, functionsDirName);
-    const functionBinds = new Set<string>();
+    const functionBinds = new Map<string, DockerBind>();
+    const watchableBinds = new Map<string, DockerBind>();
+    const emittedScopeWarnings = new Set<string>();
     const functionsConfig: Record<string, ServeFunctionContainerConfig> = {};
 
     for (const config of functionConfigs) {
@@ -1655,7 +1669,11 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
           },
         }),
       )) {
-        functionBinds.add(bind);
+        const key = formatDockerBind(bind);
+        functionBinds.set(key, bind);
+        if (!bind.externalScope) {
+          watchableBinds.set(key, bind);
+        }
       }
       const missingSourceWarning = bindWarnings.find((warning) =>
         warning.includes("failed to read file:"),
@@ -1664,6 +1682,15 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         return yield* Effect.fail(
           new Error(missingSourceWarning.trimStart().replace(/^WARN:\s*/, "")),
         );
+      }
+      for (const warning of bindWarnings) {
+        if (
+          warning.startsWith("WARN: Mounting import map scope target") &&
+          !emittedScopeWarnings.has(warning)
+        ) {
+          emittedScopeWarnings.add(warning);
+          yield* output.raw(warning, "stderr");
+        }
       }
       const functionEnv =
         input.discoverFunctionEnvFiles && Option.isNone(input.envFile)
@@ -1676,7 +1703,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       );
     }
 
-    const binds = new Set(functionBinds);
+    const binds = [...functionBinds.values()];
 
     yield* ensureDockerNamedVolume(localDockerId("edge_runtime", projectId), projectId);
     yield* ensureDockerNetwork(networkMode, projectId);
@@ -1770,7 +1797,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         `com.docker.compose.project=${labels["com.docker.compose.project"]}`,
         "--label",
         `${dockerWorkdirLabel}=${input.projectRoot}`,
-        ...([...binds] as ReadonlyArray<string>).flatMap((bind) => ["-v", bind]),
+        ...binds.flatMap((bind) => ["-v", formatDockerBind(bind)]),
         ...(dockerMultilineEnvScript === undefined ? [] : ["-v", dockerMultilineEnvScript.bind]),
         ...(dockerEnvFile === undefined ? [] : ["--env-file", dockerEnvFile.path]),
         ...(input.platform === "linux" ? ["--add-host", "host.docker.internal:host-gateway"] : []),
@@ -1796,7 +1823,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       return {
         containerId,
         cleanup: removeRuntimeArtifacts.pipe(Effect.orDie),
-        watchSpecs: yield* Effect.promise(() => buildWatchSpecs([...functionBinds])),
+        watchSpecs: yield* Effect.promise(() => buildWatchSpecs([...watchableBinds.values()])),
       } satisfies StartedRuntime;
     }).pipe(Effect.onError(() => bestEffortCleanupRuntimeArtifacts));
   },

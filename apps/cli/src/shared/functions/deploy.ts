@@ -313,23 +313,15 @@ function toBundledFileUrl(hostPath: string) {
   return url.toString();
 }
 
-const DOCKER_BIND_MODE_PATTERN = /:(?:ro|rw)(?:,[zZ])?$/;
-
-export function dockerBindHostPath(bind: string) {
-  const withoutMode = bind.replace(DOCKER_BIND_MODE_PATTERN, "");
-  const separatorIndex = withoutMode.lastIndexOf(":");
-  return separatorIndex === -1 ? withoutMode : withoutMode.slice(0, separatorIndex);
+export interface DockerBind {
+  readonly hostPath: string;
+  readonly containerPath: string;
+  readonly mode: "ro" | "rw";
+  readonly externalScope: boolean;
 }
 
-/**
- * Container side of a `host:container[:mode]` bind. Unlike {@link dockerBindHostPath},
- * a bind with no separator yields `""` rather than the whole string, so a malformed
- * entry can never prefix-match a real container path.
- */
-export function dockerBindContainerPath(bind: string) {
-  const withoutMode = bind.replace(DOCKER_BIND_MODE_PATTERN, "");
-  const separatorIndex = withoutMode.lastIndexOf(":");
-  return separatorIndex === -1 ? "" : withoutMode.slice(separatorIndex + 1);
+export function formatDockerBind(bind: DockerBind) {
+  return `${bind.hostPath}:${bind.containerPath}:${bind.mode}`;
 }
 
 function dockerNpmEnv(env: NodeJS.ProcessEnv = process.env): ReadonlyArray<string> {
@@ -918,20 +910,20 @@ async function expandStaticPattern(pattern: string): Promise<ReadonlyArray<strin
 
 async function forEachLocalImportMapTarget(
   importMap: ImportMapFile,
-  onTarget: (pathname: string) => Promise<void>,
+  onTarget: (pathname: string, kind: "import" | "scope") => Promise<void>,
 ) {
   for (const target of Object.values(importMap.imports)) {
     if (isRemoteImportTarget(target)) {
       continue;
     }
-    await onTarget(target);
+    await onTarget(target, "import");
   }
   for (const scope of Object.values(importMap.scopes)) {
     for (const target of Object.values(scope)) {
       if (isRemoteImportTarget(target)) {
         continue;
       }
-      await onTarget(target);
+      await onTarget(target, "scope");
     }
   }
 }
@@ -1172,26 +1164,26 @@ function createBundledMetadata(
 }
 
 function sanitizeDockerBinds(
-  binds: ReadonlyArray<string>,
+  binds: ReadonlyArray<DockerBind>,
   functionsDir: string,
   outputDir: string,
 ) {
   const normalizedFunctionsDir = `${toSlash(resolve(functionsDir))}/`;
   const normalizedOutputDir = `${toSlash(resolve(outputDir))}/`;
   const seen = new Set<string>();
-  const result: string[] = [];
+  const result: DockerBind[] = [];
 
   for (const bind of binds) {
-    const hostPath = dockerBindHostPath(bind);
-    const normalizedHostPath = `${toSlash(resolve(hostPath))}${bind.endsWith(":rw") || bind.endsWith(":ro") ? "" : "/"}`;
+    const normalizedHostPath = toSlash(resolve(bind.hostPath));
     if (
       normalizedHostPath.startsWith(normalizedFunctionsDir) ||
       normalizedHostPath.startsWith(normalizedOutputDir)
     ) {
       continue;
     }
-    if (!seen.has(bind)) {
-      seen.add(bind);
+    const key = formatDockerBind(bind);
+    if (!seen.has(key)) {
+      seen.add(key);
       result.push(bind);
     }
   }
@@ -1209,7 +1201,7 @@ export async function buildDockerBinds(
     readonly onWarning?: (message: string) => Promise<void>;
     readonly skipMissingImportMapTargets?: boolean;
   } = {},
-) {
+): Promise<ReadonlyArray<DockerBind>> {
   const hostFunctionsDir = resolve(functionsDir);
   const hostOutputDir = resolve(outputDir);
   const projectRoot = resolve(functionsDir, "..", "..");
@@ -1230,29 +1222,57 @@ export async function buildDockerBinds(
     ).flatMap((root) => (root === undefined ? [] : [root])),
   ];
   const importMapAllowedRoots = await resolveImportMapAllowedRoots(sourceRoot, config.importMap);
-  const binds = [`${hostFunctionsDir}:${toDockerPath(hostFunctionsDir)}:ro`];
+  const binds: DockerBind[] = [
+    {
+      hostPath: hostFunctionsDir,
+      containerPath: toDockerPath(hostFunctionsDir),
+      mode: "ro",
+      externalScope: false,
+    },
+  ];
   if (process.env["BITBUCKET_CLONE_DIR"] === undefined) {
-    binds.unshift(`${localDockerId("edge_runtime", projectId)}:/root/.cache/deno:rw`);
+    binds.unshift({
+      hostPath: localDockerId("edge_runtime", projectId),
+      containerPath: "/root/.cache/deno",
+      mode: "rw",
+      externalScope: false,
+    });
   }
 
   if (!hostOutputDir.startsWith(hostFunctionsDir)) {
-    binds.push(`${hostOutputDir}:${toDockerPath(hostOutputDir)}:rw`);
+    binds.push({
+      hostPath: hostOutputDir,
+      containerPath: toDockerPath(hostOutputDir),
+      mode: "rw",
+      externalScope: false,
+    });
   }
 
-  const extraBinds: string[] = [];
+  const warn = options.onWarning ?? (async () => {});
+  const extraBinds: DockerBind[] = [];
+  const explicitScopeBinds = new Map<string, DockerBind>();
   const appendBindWithinRoots = async (roots: ReadonlyArray<string>, pathname: string) => {
     const hostPath = await realpath(pathname);
-    if (!isContainedInAnyPath(roots, hostPath)) {
-      return;
+    const contained = isContainedInAnyPath(roots, hostPath);
+    if (contained) {
+      extraBinds.push({
+        hostPath,
+        containerPath: toDockerPath(hostPath),
+        mode: "ro",
+        externalScope: false,
+      });
     }
-    extraBinds.push(`${hostPath}:${toDockerPath(hostPath)}:ro`);
+    return { hostPath, contained };
   };
-  const appendProjectBind = async (pathname: string, _contents: Uint8Array) =>
-    appendBindWithinRoots([realSourceRoot], pathname);
-  const appendModuleBind = async (pathname: string, _contents: Uint8Array) =>
-    appendBindWithinRoots(moduleRoots, pathname);
-  const appendImportMapBind = async (pathname: string, _contents: Uint8Array) =>
-    appendBindWithinRoots(importMapAllowedRoots, pathname);
+  const appendProjectBind = async (pathname: string, _contents: Uint8Array) => {
+    await appendBindWithinRoots([realSourceRoot], pathname);
+  };
+  const appendModuleBind = async (pathname: string, _contents: Uint8Array) => {
+    await appendBindWithinRoots(moduleRoots, pathname);
+  };
+  const appendImportMapBind = async (pathname: string, _contents: Uint8Array) => {
+    await appendBindWithinRoots(importMapAllowedRoots, pathname);
+  };
   const importMap =
     config.importMap.length > 0
       ? await loadImportMapFile(config.importMap, appendImportMapBind)
@@ -1263,12 +1283,22 @@ export async function buildDockerBinds(
     moduleRoots,
     sourceRoot,
     appendModuleBind,
-    options.onWarning ?? (async () => {}),
+    warn,
   );
-  await forEachLocalImportMapTarget(importMap, async (target) => {
+  await forEachLocalImportMapTarget(importMap, async (target, kind) => {
     try {
-      await appendBindWithinRoots(importMapAllowedRoots, target);
-      if ((await stat(target)).isDirectory()) {
+      const { hostPath, contained } = await appendBindWithinRoots(importMapAllowedRoots, target);
+      const isDirectory = (await stat(target)).isDirectory();
+      if (!contained && kind === "scope") {
+        const scopeBind: DockerBind = {
+          hostPath,
+          containerPath: toDockerPath(target),
+          mode: "ro",
+          externalScope: true,
+        };
+        explicitScopeBinds.set(formatDockerBind(scopeBind), scopeBind);
+      }
+      if (isDirectory) {
         return;
       }
       await walkLocalImportMapTargetImports(
@@ -1286,15 +1316,11 @@ export async function buildDockerBinds(
         // reaches through that file still fails via the walker's
         // FunctionImportNotDirectoryError.
         if (error.code === "ENOTDIR") {
-          await (options.onWarning ?? (async () => {}))(
-            `WARN: Skipping import map target that is not a directory: ${target}\n`,
-          );
+          await warn(`WARN: Skipping import map target that is not a directory: ${target}\n`);
           return;
         }
         if (options.skipMissingImportMapTargets === true && error.code === "ENOENT") {
-          await (options.onWarning ?? (async () => {}))(
-            `WARN: Skipping missing import map target: ${target}\n`,
-          );
+          await warn(`WARN: Skipping missing import map target: ${target}\n`);
           return;
         }
       }
@@ -1316,7 +1342,23 @@ export async function buildDockerBinds(
     }
   }
 
-  return [...binds, ...sanitizeDockerBinds(extraBinds, hostFunctionsDir, hostOutputDir)];
+  const sanitizedExtraBinds = sanitizeDockerBinds(extraBinds, hostFunctionsDir, hostOutputDir);
+  const occupiedContainerPaths = new Set(
+    [...binds, ...sanitizedExtraBinds].map((bind) => bind.containerPath),
+  );
+  const uniqueScopeBinds: DockerBind[] = [];
+  for (const bind of explicitScopeBinds.values()) {
+    if (occupiedContainerPaths.has(bind.containerPath)) {
+      continue;
+    }
+    occupiedContainerPaths.add(bind.containerPath);
+    uniqueScopeBinds.push(bind);
+    await warn(
+      `WARN: Mounting import map scope target outside the project root: ${bind.hostPath}\n`,
+    );
+  }
+
+  return [...binds, ...sanitizedExtraBinds, ...uniqueScopeBinds];
 }
 
 function shouldUseDenoJsonDiscovery(entrypoint: string, importMap: string) {
@@ -1437,7 +1479,7 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
       image,
       projectId,
       networkMode,
-      binds,
+      binds: binds.map(formatDockerBind),
       env,
       // Go: `WorkingDir: utils.ToDockerPath(cwd)` (`bundle.go:79`), where
       // `cwd` is the post-`ChangeWorkDir` workdir — `functionsDir` is

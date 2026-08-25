@@ -59,6 +59,7 @@ When an ADR becomes outdated, mark it as `deprecated` or reference the supersedi
 | 0016 | [Legacy Port Completion and Go CLI Authority Scope](0016-legacy-port-completion-and-go-cli-authority-scope.md) | proposed   |
 | 0017 | [Simplified Managed Stack Architecture](0017-simplified-managed-stack-architecture.md)                         | accepted   |
 | 0018 | [Sparse Config Subtraction](0018-sparse-config-subtraction.md)                                                 | proposed   |
+| 0019 | [Raw API-Response Passthrough on API-Sourced Config](0019-config-api-response-passthrough.md)                  | accepted   |
 
 ## Template
 

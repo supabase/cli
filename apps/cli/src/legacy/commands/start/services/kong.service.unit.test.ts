@@ -117,7 +117,7 @@ describe("legacyBuildKongEntrypointScript", () => {
     const script = legacyBuildKongEntrypointScript("NGINX_TEMPLATE");
     expect(script).toBe(
       "cat <<'EOF' > /home/kong/custom_nginx.template && \\\n" +
-        "./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template\n" +
+        "exec ./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template\n" +
         "NGINX_TEMPLATE\nEOF\n",
     );
   });
