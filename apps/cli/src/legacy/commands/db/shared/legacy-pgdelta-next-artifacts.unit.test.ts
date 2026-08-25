@@ -10,7 +10,7 @@ import {
   legacyPgDeltaNextTempPath,
   legacySavePgDeltaNextDebugArtifacts,
 } from "./legacy-pgdelta-next-artifacts.ts";
-import { legacyPgDeltaTempPath } from "../../../shared/legacy-pgdelta.cache.ts";
+import { legacyPgDeltaTempPath } from "../../../shared/legacy-pgdelta.paths.ts";
 
 describe("pg-delta next artifact generation", () => {
   it.effect("writes structured non-cache artifacts and metadata under v2", () => {

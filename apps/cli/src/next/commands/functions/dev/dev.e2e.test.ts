@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
@@ -11,6 +11,7 @@ import {
 import { cleanupRegisteredStackProjects } from "../../../../../tests/helpers/stack-e2e-cleanup.ts";
 
 const FUNCTIONS_DEV_STARTUP_TIMEOUT_MS = 60_000;
+const FUNCTIONS_URL_PATTERN = /Functions URL:\s+(https?:\/\/[^\s/]+\/functions\/v1)/;
 const FUNCTIONS_DEV_STEP_TIMEOUT_MS = 30_000;
 const FUNCTIONS_DEV_CLEANUP_TIMEOUT_MS = 30_000;
 const FUNCTIONS_DEV_TEST_TIMEOUT_MS =
@@ -93,9 +94,8 @@ describe("supabase functions dev (e2e)", () => {
           /Edge Functions dev server is running\./,
           FUNCTIONS_DEV_STARTUP_TIMEOUT_MS,
         );
-        const functionUrlMatch = `${devProc.stdout()}\n${devProc.stderr()}`.match(
-          /Functions URL:\s+(https?:\/\/[^\s/]+\/functions\/v1)/,
-        );
+        await devProc.waitForOutput(FUNCTIONS_URL_PATTERN, FUNCTIONS_DEV_STARTUP_TIMEOUT_MS);
+        const functionUrlMatch = devProc.stdout().match(FUNCTIONS_URL_PATTERN);
         if (functionUrlMatch?.[1] === undefined) {
           throw new Error(
             `Functions dev output did not include a URL.\nstdout:\n${devProc.stdout()}\nstderr:\n${devProc.stderr()}`,
@@ -104,18 +104,31 @@ describe("supabase functions dev (e2e)", () => {
         const functionUrl = `${functionUrlMatch[1]}/hello-world`;
 
         const functionOffset = devProc.stdout().length;
-        const functionRestart = devProc.waitForOutput(
-          FUNCTION_FILES_RESTART_PATTERN,
-          FUNCTIONS_DEV_STEP_TIMEOUT_MS,
-          functionOffset,
-        );
         const newResult = await runSupabase(["functions", "new", "hello-world"], {
           cwd: project.dir,
           home: home.dir,
           exitTimeoutMs: FUNCTIONS_DEV_STEP_TIMEOUT_MS,
         });
         expect(newResult.exitCode).toBe(0);
-        await functionRestart;
+        // The dev server prints its startup lines before the file watcher has
+        // subscribed and exposes no watcher-ready signal, so a write that lands
+        // in that window is silently lost. Re-touch the created function until
+        // the dev server reports it, bounded by the step deadline.
+        const functionRestartDeadline = Date.now() + FUNCTIONS_DEV_STEP_TIMEOUT_MS;
+        for (;;) {
+          try {
+            await devProc.waitForOutput(FUNCTION_FILES_RESTART_PATTERN, 5_000, functionOffset);
+            break;
+          } catch (error) {
+            if (
+              Date.now() >= functionRestartDeadline ||
+              (error instanceof Error && error.message.startsWith("Process exited"))
+            ) {
+              throw error;
+            }
+            await writeFile(functionPath, await readFile(functionPath, "utf8"));
+          }
+        }
 
         await assertFunctionResponse(functionUrl, {}, (response, body) => {
           expect(response.status).toBe(401);

@@ -1,0 +1,422 @@
+import { describe, expect, it } from "@effect/vitest";
+import { Option } from "effect";
+
+import { legacyResolveSetupWebhooksEnabled } from "./db-setup.ts";
+import {
+  LEGACY_SHADOW_BASELINE_KEEP,
+  LEGACY_SHADOW_BASELINE_MAX_AGE_MS,
+  legacyIsShadowBaselinePartial,
+  legacyIsShadowBaselineTar,
+  legacyShadowBaselineTarFileName,
+  legacyShadowBaselineTarsToEvict,
+  legacyShadowCacheKey,
+  type LegacyShadowCacheKeyInputs,
+} from "./shadow-cache.ts";
+
+const baseKeyInputs = (): LegacyShadowCacheKeyInputs => ({
+  postgresImage: "public.ecr.aws/supabase/postgres:17.6.1.158",
+  majorVersion: 17,
+  jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
+  jwtExpiry: 3600,
+  rootKey: "d4dc5b6d4a1d6a10b2c1e5b6a7c8d9e0",
+  dbPassword: "postgres",
+  dbSettings: { effective_cache_size: "128MB", max_connections: 100 },
+  autoExposeNewTables: Option.none(),
+  storageTargetMigration: "20240101000000",
+  webhooksEnabled: true,
+  rolesSql: "create role custom_role;\n",
+  vault: [{ name: "secret", value: "value", resolved: true }],
+  jwks: '{"keys":[]}',
+  services: {
+    realtime: { enabled: true, image: "supabase/realtime:v2.34.47" },
+    storage: { enabled: true, image: "supabase/storage-api:v1.25.7" },
+    auth: { enabled: true, image: "supabase/gotrue:v2.177.0" },
+  },
+});
+
+describe("legacyResolveSetupWebhooksEnabled", () => {
+  it("matches legacySetupDatabase: enabled/disabled override config, config follows the flag", () => {
+    expect(legacyResolveSetupWebhooksEnabled("enabled", false)).toBe(true);
+    expect(legacyResolveSetupWebhooksEnabled("enabled", true)).toBe(true);
+    expect(legacyResolveSetupWebhooksEnabled("disabled", true)).toBe(false);
+    expect(legacyResolveSetupWebhooksEnabled("disabled", false)).toBe(false);
+    expect(legacyResolveSetupWebhooksEnabled("config", true)).toBe(true);
+    expect(legacyResolveSetupWebhooksEnabled("config", false)).toBe(false);
+    expect(legacyResolveSetupWebhooksEnabled(undefined, true)).toBe(true);
+    expect(legacyResolveSetupWebhooksEnabled(undefined, false)).toBe(false);
+  });
+});
+
+describe("legacyShadowCacheKey", () => {
+  it("is stable for identical inputs and independent of object key order", () => {
+    const first = legacyShadowCacheKey(baseKeyInputs());
+    expect(legacyShadowCacheKey(baseKeyInputs())).toBe(first);
+    expect(
+      legacyShadowCacheKey({
+        ...baseKeyInputs(),
+        dbSettings: { max_connections: 100, effective_cache_size: "128MB" },
+      }),
+    ).toBe(first);
+    expect(first).toMatch(/^[0-9a-f]{16}$/u);
+    expect(legacyShadowBaselineTarFileName(first)).toBe(`shadow-baseline-${first}.tar`);
+  });
+
+  it("changes when ANY baked-in input changes", () => {
+    const base = baseKeyInputs();
+    const mutations: ReadonlyArray<{
+      readonly label: string;
+      readonly inputs: LegacyShadowCacheKeyInputs;
+    }> = [
+      { label: "postgres image tag", inputs: { ...base, postgresImage: "postgres:17.6.1.159" } },
+      { label: "major version", inputs: { ...base, majorVersion: 15 } },
+      { label: "jwt secret", inputs: { ...base, jwtSecret: "other-secret" } },
+      { label: "jwt expiry", inputs: { ...base, jwtExpiry: 7200 } },
+      { label: "root key", inputs: { ...base, rootKey: "0000" } },
+      { label: "db password", inputs: { ...base, dbPassword: "hunter2" } },
+      { label: "db settings", inputs: { ...base, dbSettings: { max_connections: 200 } } },
+      {
+        label: "auto expose new tables",
+        inputs: { ...base, autoExposeNewTables: Option.some(true) },
+      },
+      { label: "effective webhooks / pg_net", inputs: { ...base, webhooksEnabled: false } },
+      { label: "roles.sql", inputs: { ...base, rolesSql: "" } },
+      {
+        label: "storage migration pin (storage enabled, majorVersion >= 15)",
+        inputs: { ...base, storageTargetMigration: "20250607080910" },
+      },
+      {
+        label: "storage migration pin (pinned vs unpinned)",
+        inputs: { ...base, storageTargetMigration: "" },
+      },
+      {
+        label: "jwks (realtime enabled, majorVersion >= 15)",
+        inputs: { ...base, jwks: '{"keys":["rotated"]}' },
+      },
+      {
+        label: "vault secret name",
+        inputs: { ...base, vault: [{ name: "other", value: "value", resolved: true }] },
+      },
+      {
+        label: "vault secret value",
+        inputs: { ...base, vault: [{ name: "secret", value: "rotated", resolved: true }] },
+      },
+      {
+        label: "realtime image",
+        inputs: {
+          ...base,
+          services: { ...base.services, realtime: { enabled: true, image: "realtime:next" } },
+        },
+      },
+      {
+        label: "storage image",
+        inputs: {
+          ...base,
+          services: { ...base.services, storage: { enabled: true, image: "storage:next" } },
+        },
+      },
+      {
+        label: "auth image",
+        inputs: {
+          ...base,
+          services: { ...base.services, auth: { enabled: true, image: "gotrue:next" } },
+        },
+      },
+      {
+        label: "realtime enabled flag",
+        inputs: {
+          ...base,
+          services: {
+            ...base.services,
+            realtime: { enabled: false, image: base.services.realtime.image },
+          },
+        },
+      },
+      {
+        label: "storage enabled flag",
+        inputs: {
+          ...base,
+          services: {
+            ...base.services,
+            storage: { enabled: false, image: base.services.storage.image },
+          },
+        },
+      },
+      {
+        label: "auth enabled flag",
+        inputs: {
+          ...base,
+          services: { ...base.services, auth: { enabled: false, image: base.services.auth.image } },
+        },
+      },
+    ];
+    const baseKey = legacyShadowCacheKey(base);
+    const seen = new Map<string, string>([[baseKey, "base"]]);
+    for (const mutation of mutations) {
+      const key = legacyShadowCacheKey(mutation.inputs);
+      const collision = seen.get(key);
+      expect(collision, `${mutation.label} must change the cache key`).toBeUndefined();
+      seen.set(key, mutation.label);
+    }
+  });
+
+  it("collapses auto_expose_new_tables to the behavior legacyApplyApiPrivileges actually takes", () => {
+    // `legacyApplyApiPrivileges` (`db-setup.ts`) returns early ONLY for an explicit `true`; unset
+    // and explicit `false` both exec the revoke SQL, so they bake the identical cluster and must
+    // share a snapshot instead of forcing a ~90MB re-export.
+    const base = baseKeyInputs();
+    const unset = legacyShadowCacheKey({ ...base, autoExposeNewTables: Option.none() });
+    const explicitFalse = legacyShadowCacheKey({
+      ...base,
+      autoExposeNewTables: Option.some(false),
+    });
+    const explicitTrue = legacyShadowCacheKey({ ...base, autoExposeNewTables: Option.some(true) });
+    expect(explicitFalse).toBe(unset);
+    expect(explicitTrue).not.toBe(unset);
+  });
+
+  it("excludes a disabled service's image tag entirely", () => {
+    const base = baseKeyInputs();
+    const withRealtimeA: LegacyShadowCacheKeyInputs = {
+      ...base,
+      services: { ...base.services, realtime: { enabled: false, image: "supabase/realtime:v1" } },
+    };
+    const withRealtimeB: LegacyShadowCacheKeyInputs = {
+      ...base,
+      services: { ...base.services, realtime: { enabled: false, image: "supabase/realtime:v2" } },
+    };
+    expect(legacyShadowCacheKey(withRealtimeA)).toBe(legacyShadowCacheKey(withRealtimeB));
+  });
+
+  it("excludes the resolved jwks when realtime is disabled", () => {
+    const base = baseKeyInputs();
+    const disabledRealtime: LegacyShadowCacheKeyInputs = {
+      ...base,
+      services: {
+        ...base.services,
+        realtime: { ...base.services.realtime, enabled: false },
+      },
+    };
+    const withJwksA: LegacyShadowCacheKeyInputs = { ...disabledRealtime, jwks: '{"keys":["a"]}' };
+    const withJwksB: LegacyShadowCacheKeyInputs = { ...disabledRealtime, jwks: '{"keys":["b"]}' };
+    expect(legacyShadowCacheKey(withJwksA)).toBe(legacyShadowCacheKey(withJwksB));
+  });
+
+  it("excludes the resolved jwks when majorVersion is below 15, even with realtime enabled", () => {
+    const base = baseKeyInputs();
+    const pre15: LegacyShadowCacheKeyInputs = { ...base, majorVersion: 14 };
+    const withJwksA: LegacyShadowCacheKeyInputs = { ...pre15, jwks: '{"keys":["a"]}' };
+    const withJwksB: LegacyShadowCacheKeyInputs = { ...pre15, jwks: '{"keys":["b"]}' };
+    expect(legacyShadowCacheKey(withJwksA)).toBe(legacyShadowCacheKey(withJwksB));
+  });
+
+  it("excludes the storage migration pin when storage is disabled", () => {
+    const base = baseKeyInputs();
+    const disabledStorage: LegacyShadowCacheKeyInputs = {
+      ...base,
+      services: {
+        ...base.services,
+        storage: { ...base.services.storage, enabled: false },
+      },
+    };
+    const withPinA: LegacyShadowCacheKeyInputs = {
+      ...disabledStorage,
+      storageTargetMigration: "20240101000000",
+    };
+    const withPinB: LegacyShadowCacheKeyInputs = {
+      ...disabledStorage,
+      storageTargetMigration: "20250607080910",
+    };
+    expect(legacyShadowCacheKey(withPinA)).toBe(legacyShadowCacheKey(withPinB));
+  });
+
+  it("excludes the storage migration pin when majorVersion is below 15, even with storage enabled", () => {
+    const base = baseKeyInputs();
+    const pre15: LegacyShadowCacheKeyInputs = { ...base, majorVersion: 14 };
+    const withPinA: LegacyShadowCacheKeyInputs = { ...pre15, storageTargetMigration: "a" };
+    const withPinB: LegacyShadowCacheKeyInputs = { ...pre15, storageTargetMigration: "b" };
+    expect(legacyShadowCacheKey(withPinA)).toBe(legacyShadowCacheKey(withPinB));
+  });
+
+  it("cannot collide scalar fields across line boundaries", () => {
+    const base = baseKeyInputs();
+    // A newline embedded in one unrestricted scalar must not be able to forge the next
+    // payload line: rootKey `p\ndb_password="q"` + password `r` vs rootKey `p` + a password
+    // whose tail mimics the same text.
+    const left = legacyShadowCacheKey({
+      ...base,
+      rootKey: 'p"\ndb_password="q',
+      dbPassword: "r",
+    });
+    const right = legacyShadowCacheKey({
+      ...base,
+      rootKey: "p",
+      dbPassword: 'q"\ndb_password="r',
+    });
+    expect(left).not.toBe(right);
+  });
+
+  it("excludes unresolved vault secrets, which the upsert never processes", () => {
+    const base = baseKeyInputs();
+    const withUnresolved = legacyShadowCacheKey({
+      ...base,
+      vault: [...base.vault, { name: "pending", value: "", resolved: false }],
+    });
+    expect(withUnresolved).toBe(legacyShadowCacheKey(base));
+    // A RESOLVED empty value does land in the cluster, so it must re-key.
+    const withResolvedEmpty = legacyShadowCacheKey({
+      ...base,
+      vault: [...base.vault, { name: "pending", value: "", resolved: true }],
+    });
+    expect(withResolvedEmpty).not.toBe(legacyShadowCacheKey(base));
+  });
+
+  it("cannot collide vault name/value pairs across the tuple boundary", () => {
+    const base = baseKeyInputs();
+    // `name=a=b, value=c` vs `name=a, value=b=c` — a bare `=`-joined encoding serializes both
+    // as `vault=a=b=c`.
+    const left = legacyShadowCacheKey({
+      ...base,
+      vault: [{ name: "a=b", value: "c", resolved: true }],
+    });
+    const right = legacyShadowCacheKey({
+      ...base,
+      vault: [{ name: "a", value: "b=c", resolved: true }],
+    });
+    expect(left).not.toBe(right);
+  });
+
+  it("hashes vault secrets in a name-stable order", () => {
+    const base = baseKeyInputs();
+    const ascending = legacyShadowCacheKey({
+      ...base,
+      vault: [
+        { name: "a", value: "1", resolved: true },
+        { name: "b", value: "2", resolved: true },
+      ],
+    });
+    const descending = legacyShadowCacheKey({
+      ...base,
+      vault: [
+        { name: "b", value: "2", resolved: true },
+        { name: "a", value: "1", resolved: true },
+      ],
+    });
+    expect(ascending).toBe(descending);
+  });
+});
+describe("shadow baseline tar retention", () => {
+  const key = "0123456789abcdef";
+  const now = 1_700_000_000_000;
+
+  it("recognizes only this module's own published snapshots", () => {
+    expect(legacyIsShadowBaselineTar(legacyShadowBaselineTarFileName(key))).toBe(true);
+    for (const other of [
+      "catalog-local-migrations-abc-123.json",
+      "shadow-baseline.tar",
+      `shadow-baseline-${key}.tar.4242.partial`,
+      `shadow-cache-${key}.json`,
+      "pgdelta-debug.zip",
+      // Wrong key length / non-hex.
+      "shadow-baseline-0123456789abcde.tar",
+      "shadow-baseline-0123456789abcdefg.tar",
+      "shadow-baseline-0123456789ABCDEF.tar",
+    ]) {
+      expect(legacyIsShadowBaselineTar(other), other).toBe(false);
+    }
+  });
+
+  it("recognizes only this module's own partial temp files as abandoned-sweep candidates", () => {
+    expect(legacyIsShadowBaselinePartial(`shadow-baseline-${key}.tar.4242.partial`)).toBe(true);
+    for (const other of [
+      legacyShadowBaselineTarFileName(key),
+      "shadow-baseline-fedcba9876543210.tar",
+      "shadow-baseline.tar.4242.partial",
+      `shadow-baseline-${key}.tar.partial`,
+      `shadow-baseline-${key}.tar.4242.partial.bak`,
+      "catalog-local-migrations-abc-123.json",
+    ]) {
+      expect(legacyIsShadowBaselinePartial(other), other).toBe(false);
+    }
+  });
+
+  it("evicts aged tars and keeps the newest N among survivors", () => {
+    const aged = now - LEGACY_SHADOW_BASELINE_MAX_AGE_MS - 1;
+    const fresh = now - 1_000;
+    const entries = [
+      { fileName: legacyShadowBaselineTarFileName("aaaaaaaaaaaaaaaa"), mtimeMs: aged },
+      { fileName: legacyShadowBaselineTarFileName("bbbbbbbbbbbbbbbb"), mtimeMs: fresh },
+      { fileName: legacyShadowBaselineTarFileName("cccccccccccccccc"), mtimeMs: fresh - 10 },
+      { fileName: "catalog-abc.json", mtimeMs: aged },
+      { fileName: `shadow-baseline-${key}.tar.1.partial`, mtimeMs: aged },
+    ];
+    expect(
+      legacyShadowBaselineTarsToEvict(entries, now, {
+        keep: 1,
+        maxAgeMs: LEGACY_SHADOW_BASELINE_MAX_AGE_MS,
+      }),
+    ).toEqual([
+      legacyShadowBaselineTarFileName("aaaaaaaaaaaaaaaa"),
+      legacyShadowBaselineTarFileName("cccccccccccccccc"),
+    ]);
+  });
+
+  it("evicts the oldest beyond the keep cap when all are fresh", () => {
+    const entries = Array.from({ length: LEGACY_SHADOW_BASELINE_KEEP + 2 }, (_, index) => ({
+      fileName: legacyShadowBaselineTarFileName(index.toString(16).padStart(16, "0")),
+      mtimeMs: now - index * 1_000,
+    }));
+    const evicted = legacyShadowBaselineTarsToEvict(entries, now);
+    expect(evicted).toHaveLength(2);
+    expect(evicted).toContain(
+      legacyShadowBaselineTarFileName(LEGACY_SHADOW_BASELINE_KEEP.toString(16).padStart(16, "0")),
+    );
+    expect(evicted).toContain(
+      legacyShadowBaselineTarFileName(
+        (LEGACY_SHADOW_BASELINE_KEEP + 1).toString(16).padStart(16, "0"),
+      ),
+    );
+  });
+
+  it("never evicts the current key, even when it is aged or over the cap", () => {
+    const current = legacyShadowBaselineTarFileName("dddddddddddddddd");
+    const aged = now - LEGACY_SHADOW_BASELINE_MAX_AGE_MS - 1;
+    const evicted = legacyShadowBaselineTarsToEvict(
+      [
+        { fileName: current, mtimeMs: aged },
+        { fileName: legacyShadowBaselineTarFileName("aaaaaaaaaaaaaaaa"), mtimeMs: now - 1_000 },
+        { fileName: legacyShadowBaselineTarFileName("bbbbbbbbbbbbbbbb"), mtimeMs: now - 2_000 },
+        { fileName: legacyShadowBaselineTarFileName("cccccccccccccccc"), mtimeMs: now - 3_000 },
+        { fileName: legacyShadowBaselineTarFileName("eeeeeeeeeeeeeeee"), mtimeMs: now - 4_000 },
+      ],
+      now,
+      { retainFileName: current },
+    );
+    expect(evicted).not.toContain(current);
+    expect(evicted).toContain(legacyShadowBaselineTarFileName("eeeeeeeeeeeeeeee"));
+  });
+
+  it("drops a 4th young tar once the keep cap is full", () => {
+    const entries = Array.from({ length: 4 }, (_, index) => ({
+      fileName: legacyShadowBaselineTarFileName(index.toString(16).padStart(16, "0")),
+      mtimeMs: now - index * 1_000,
+    }));
+    expect(legacyShadowBaselineTarsToEvict(entries, now)).toEqual([
+      legacyShadowBaselineTarFileName("0000000000000003"),
+    ]);
+  });
+
+  it("never returns a file that is not one of this module's own snapshots", () => {
+    expect(
+      legacyShadowBaselineTarsToEvict(
+        [
+          { fileName: "catalog-local-migrations-abc-123.json", mtimeMs: 0 },
+          { fileName: "shadow-baseline.tar", mtimeMs: 0 },
+          { fileName: `shadow-baseline-${key}.tar.4242.partial`, mtimeMs: 0 },
+          { fileName: `shadow-cache-${key}.json`, mtimeMs: 0 },
+          { fileName: "pgdelta-debug.zip", mtimeMs: 0 },
+        ],
+        now,
+      ),
+    ).toEqual([]);
+  });
+});

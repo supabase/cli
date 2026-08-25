@@ -24,6 +24,7 @@ import {
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApiService,
   mockLegacyTelemetryStateTracked,
+  useLegacyShadowCacheDisabled,
   useLegacyTempWorkdir,
 } from "../../../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../../../shared/cli/cli-args.service.ts";
@@ -452,6 +453,7 @@ const legacyUuidLoadError = () =>
 
 describe("legacy db schema declarative sync integration", () => {
   const tmp = useLegacyTempWorkdir();
+  useLegacyShadowCacheDisabled();
 
   it.effect("gate: fails when pg-delta is not enabled", () => {
     seedDeclarative(tmp.current);

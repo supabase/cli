@@ -918,20 +918,20 @@ async function expandStaticPattern(pattern: string): Promise<ReadonlyArray<strin
 
 async function forEachLocalImportMapTarget(
   importMap: ImportMapFile,
-  onTarget: (pathname: string) => Promise<void>,
+  onTarget: (pathname: string, kind: "import" | "scope") => Promise<void>,
 ) {
   for (const target of Object.values(importMap.imports)) {
     if (isRemoteImportTarget(target)) {
       continue;
     }
-    await onTarget(target);
+    await onTarget(target, "import");
   }
   for (const scope of Object.values(importMap.scopes)) {
     for (const target of Object.values(scope)) {
       if (isRemoteImportTarget(target)) {
         continue;
       }
-      await onTarget(target);
+      await onTarget(target, "scope");
     }
   }
 }
@@ -1207,6 +1207,7 @@ export async function buildDockerBinds(
   options: {
     readonly additionalModuleRoots?: ReadonlyArray<string>;
     readonly onWarning?: (message: string) => Promise<void>;
+    readonly onScopeBindOutsideRoots?: (bind: string) => void;
     readonly skipMissingImportMapTargets?: boolean;
   } = {},
 ) {
@@ -1239,7 +1240,9 @@ export async function buildDockerBinds(
     binds.push(`${hostOutputDir}:${toDockerPath(hostOutputDir)}:rw`);
   }
 
+  const warn = options.onWarning ?? (async () => {});
   const extraBinds: string[] = [];
+  const explicitScopeBinds = new Set<string>();
   const appendBindWithinRoots = async (roots: ReadonlyArray<string>, pathname: string) => {
     const hostPath = await realpath(pathname);
     if (!isContainedInAnyPath(roots, hostPath)) {
@@ -1263,12 +1266,20 @@ export async function buildDockerBinds(
     moduleRoots,
     sourceRoot,
     appendModuleBind,
-    options.onWarning ?? (async () => {}),
+    warn,
   );
-  await forEachLocalImportMapTarget(importMap, async (target) => {
+  await forEachLocalImportMapTarget(importMap, async (target, kind) => {
     try {
-      await appendBindWithinRoots(importMapAllowedRoots, target);
-      if ((await stat(target)).isDirectory()) {
+      const hostPath = await realpath(target);
+      const contained = isContainedInAnyPath(importMapAllowedRoots, hostPath);
+      if (contained) {
+        extraBinds.push(`${hostPath}:${toDockerPath(hostPath)}:ro`);
+      }
+      const isDirectory = (await stat(target)).isDirectory();
+      if (!contained && kind === "scope") {
+        explicitScopeBinds.add(`${hostPath}:${toDockerPath(target)}:ro`);
+      }
+      if (isDirectory) {
         return;
       }
       await walkLocalImportMapTargetImports(
@@ -1286,15 +1297,11 @@ export async function buildDockerBinds(
         // reaches through that file still fails via the walker's
         // FunctionImportNotDirectoryError.
         if (error.code === "ENOTDIR") {
-          await (options.onWarning ?? (async () => {}))(
-            `WARN: Skipping import map target that is not a directory: ${target}\n`,
-          );
+          await warn(`WARN: Skipping import map target that is not a directory: ${target}\n`);
           return;
         }
         if (options.skipMissingImportMapTargets === true && error.code === "ENOENT") {
-          await (options.onWarning ?? (async () => {}))(
-            `WARN: Skipping missing import map target: ${target}\n`,
-          );
+          await warn(`WARN: Skipping missing import map target: ${target}\n`);
           return;
         }
       }
@@ -1316,7 +1323,25 @@ export async function buildDockerBinds(
     }
   }
 
-  return [...binds, ...sanitizeDockerBinds(extraBinds, hostFunctionsDir, hostOutputDir)];
+  const sanitizedExtraBinds = sanitizeDockerBinds(extraBinds, hostFunctionsDir, hostOutputDir);
+  const occupiedContainerPaths = new Set(
+    [...binds, ...sanitizedExtraBinds].map(dockerBindContainerPath),
+  );
+  const uniqueScopeBinds: string[] = [];
+  for (const bind of explicitScopeBinds) {
+    const containerPath = dockerBindContainerPath(bind);
+    if (occupiedContainerPaths.has(containerPath)) {
+      continue;
+    }
+    occupiedContainerPaths.add(containerPath);
+    uniqueScopeBinds.push(bind);
+    options.onScopeBindOutsideRoots?.(bind);
+    await warn(
+      `WARN: Mounting import map scope target outside the project root: ${dockerBindHostPath(bind)}\n`,
+    );
+  }
+
+  return [...binds, ...sanitizedExtraBinds, ...uniqueScopeBinds];
 }
 
 function shouldUseDenoJsonDiscovery(entrypoint: string, importMap: string) {
