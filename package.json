@@ -1,16 +1,10 @@
 {
   "name": "@supabase/root",
   "private": true,
-  "devEngines": {
-    "runtime": {
-      "name": "node",
-      "version": "24"
-    }
-  },
   "scripts": {
-    "test:core": "nx run-many -t test:unit test:integration --coverage.enabled",
-    "test:e2e": "nx run-many -t test:e2e",
-    "affected:test:e2e": "nx affected -t test:e2e",
+    "test:unit": "pnpm --recursive --if-present run test:unit",
+    "test:integration": "pnpm --recursive --if-present run test:integration",
+    "test:e2e": "pnpm --recursive --if-present --workspace-concurrency=1 run test:e2e",
     "check:all": "nx run-many -t types:check lint:check fmt:check knip:check",
     "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix",
     "repos:install": "git submodule update --init --recursive",
@@ -18,7 +12,6 @@
     "local-registry": "bun tools/release/local-registry.ts",
     "cli-release": "bun tools/release/local-release.ts"
   },
-  "packageManager": "pnpm@11.4.0",
   "devDependencies": {
     "nx": "catalog:",
     "oxfmt": "catalog:",
@@ -27,5 +20,12 @@
     "pkg-pr-new": "0.0.88",
     "typescript": "catalog:",
     "verdaccio": "^6.9.3"
-  }
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "24"
+    }
+  },
+  "packageManager": "pnpm@11.4.0"
 }

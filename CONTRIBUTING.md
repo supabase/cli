@@ -141,15 +141,14 @@ pnpm run fix:all     # run all fixers across every project
 
 ### Standard package scripts
 
-All standard TypeScript workspaces (`apps/cli`, `packages/api`, `packages/config`, `packages/process-compose`, `packages/stack`) expose the following scripts:
+Standard TypeScript workspaces (`apps/cli`, `packages/api`, `packages/config`, `packages/process-compose`, `packages/stack`) declare their package scripts explicitly. Test suites vary by package: unit tests are standard, while integration and e2e tests exist only where applicable.
 
 | Script             | What it does                                                                   |
 | ------------------ | ------------------------------------------------------------------------------ |
-| `test`             | Run the full test suite (unit + integration + e2e)                             |
-| `test:core`        | Run unit and integration tests                                                 |
-| `test:unit`        | Run unit tests _(inferred by Nx plugin)_                                       |
-| `test:integration` | Run integration tests _(inferred by Nx plugin)_                                |
-| `test:e2e`         | Run end-to-end tests _(inferred by Nx plugin)_                                 |
+| `test`             | Run the package's declared test suites                                         |
+| `test:unit`        | Run unit tests                                                                 |
+| `test:integration` | Run integration tests where applicable                                         |
+| `test:e2e`         | Run end-to-end tests where applicable                                          |
 | `check:all`        | Run all check targets for this project                                         |
 | `fix:all`          | Run all fix targets for this project                                           |
 | `types:check`      | Type-check with `tsc --noEmit` _(inferred by Nx plugin)_                       |
@@ -160,7 +159,7 @@ All standard TypeScript workspaces (`apps/cli`, `packages/api`, `packages/config
 | `knip:check`       | Find unused exports and dependencies with `knip-bun` _(inferred by Nx plugin)_ |
 | `knip:fix`         | Auto-remove unused exports and dependencies _(inferred by Nx plugin)_          |
 
-The inferred scripts (`test:unit`, `test:integration`, `test:e2e`, `types:check`, `lint:*`, `fmt:*`, `knip:*`) are not declared in `package.json` — they are injected by local Nx plugins in `tools/nx-plugins/`. They are fully cached and can be discovered via `nx show project <name>`.
+The test scripts are declared in each package's `package.json`, so package-local test commands are directly discoverable and can be sharded independently. The remaining quality scripts (`types:check`, `lint:*`, `fmt:*`, `knip:*`) are injected by local Nx plugins in `tools/nx-plugins/` and can be discovered via `nx show project <name>`.
 
 Quality checks are run from the workspace you are changing:
 
@@ -168,10 +167,13 @@ Quality checks are run from the workspace you are changing:
 # From a project directory — scoped to that project only:
 pnpm run check:all
 pnpm run fix:all
-pnpm run test
+pnpm run test:unit
+# If this package declares an integration suite:
+pnpm run test:integration
 
 # From the workspace root — runs across all projects:
 pnpm run check:all
+pnpm run test:unit && pnpm run test:integration
 ```
 
 ## E2E Compatibility Test Suite

@@ -146,7 +146,7 @@ pnpm test
 Useful subsets:
 
 ```sh
-pnpm test:core                 # unit + integration (no binary required)
+pnpm run test:unit && pnpm run test:integration  # unit + integration (no binary required)
 pnpm test:legacy-integration   # legacy behavioral tests (requires SUPABASE_GO_BINARY — see CLAUDE.md)
 pnpm test:e2e                  # end-to-end subprocess tests
 ```

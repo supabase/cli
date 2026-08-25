@@ -35,5 +35,5 @@ runtime contracts.
 ```sh
 pnpm check:all
 pnpm fix:all
-pnpm test:core
+pnpm run test:unit && pnpm run test:integration
 ```

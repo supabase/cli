@@ -13,8 +13,8 @@
     "build": "bun run ./scripts/build.ts",
     "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name",
     "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name",
-    "test": "nx run-many -t test:core test:e2e --projects=$npm_package_name",
-    "test:core": "nx run-many -t test:unit test:integration --projects=$npm_package_name"
+    "test": "pnpm run test:unit",
+    "test:unit": "bun --bun vitest run --project unit --coverage.reportsDirectory=coverage/unit"
   },
   "dependencies": {
     "@effect/platform-bun": "catalog:",

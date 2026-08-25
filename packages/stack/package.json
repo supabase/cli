@@ -21,8 +21,10 @@
     "./daemon-bun": "./src/daemon-bun.ts"
   },
   "scripts": {
-    "test": "nx run-many -t test:core test:e2e --projects=$npm_package_name",
-    "test:core": "nx run-many -t test:unit test:integration --projects=$npm_package_name",
+    "test": "pnpm run test:unit && pnpm run test:integration && pnpm run test:e2e",
+    "test:unit": "bun --bun vitest run --project unit --coverage.reportsDirectory=coverage/unit",
+    "test:integration": "bun --bun vitest run --project integration --coverage.reportsDirectory=coverage/integration",
+    "test:e2e": "bun --bun vitest run --project e2e",
     "test:e2e:warmup": "bun run tests/warmup-e2e.ts",
     "sync:versions": "bun run scripts/sync-versions-from-dockerfile.ts",
     "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name",

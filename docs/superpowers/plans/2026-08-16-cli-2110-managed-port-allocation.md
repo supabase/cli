@@ -158,7 +158,7 @@ Only retain origins whose paths still exist in `normalizedForDecode`.
 ```bash
 pnpm --filter @supabase/config exec vitest run src/io.unit.test.ts
 pnpm --filter @supabase/config check:all
-pnpm --filter @supabase/config test:core
+pnpm --filter @supabase/config test:unit
 ```
 
 Expected: all pass.
@@ -917,9 +917,9 @@ git diff --check
 
 ```bash
 pnpm --filter @supabase/config check:all
-pnpm --filter @supabase/config test:core
+pnpm --filter @supabase/config test:unit
 pnpm --filter @supabase/stack check:all
-pnpm --filter @supabase/stack test:core
+pnpm --filter @supabase/stack test:unit && pnpm --filter @supabase/stack test:integration
 ```
 
 Expected: every command passes; no e2e target runs.

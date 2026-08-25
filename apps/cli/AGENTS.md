@@ -452,9 +452,9 @@ Rules:
 
 ## Testing
 
-Use `bun run test` (not `bun test`) to run tests. The `package.json` `test` script runs all Vitest projects with coverage enabled for the `core` project.
+Use `pnpm run test` to run tests. The `package.json` `test` script runs the unit, integration, and e2e Vitest projects, with coverage enabled for unit and integration.
 
-Use `bun run test:core` for the main in-process suite, and `bun run test:e2e` for the sequential subprocess suite.
+Use `pnpm run test:unit && pnpm run test:integration` for the main in-process suite, and `pnpm run test:e2e` for the sequential subprocess suite.
 
 Always run the relevant unit and integration tests automatically for the command or workspace you changed.
 Do not run the full e2e suite automatically. Only run e2e when the user asks, or when you need extra confidence for the command you touched.
@@ -547,7 +547,7 @@ that run after crashes.
 After finishing any task or refactor, always run all quality checks before considering the work done:
 
 ```sh
-bun run test
+pnpm run test:unit && pnpm run test:integration
 bun run --parallel "*:check"
 ```
 

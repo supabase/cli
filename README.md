@@ -128,7 +128,7 @@ cd apps/cli
 
 pnpm dev:next -- --help
 pnpm check:all
-pnpm test:core
+pnpm run test:unit && pnpm run test:integration
 ```
 
 Useful source entry points:
@@ -157,7 +157,7 @@ Before opening a PR, run the checks for the workspace you touched.
 
 ```sh
 pnpm check:all
-pnpm test
+pnpm run test:unit && pnpm run test:integration
 ```
 
 PR titles must use conventional commits, for example:

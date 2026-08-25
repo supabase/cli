@@ -45,6 +45,7 @@ export default defineConfig({
         test: {
           name: "unit",
           include: ["**/*.unit.test.ts"],
+          env: { FORCE_COLOR: "1" },
         },
       },
       {

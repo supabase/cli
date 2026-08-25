@@ -7,8 +7,9 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "nx run-many -t test:core test:e2e --projects=$npm_package_name",
-    "test:core": "nx run-many -t test:unit test:integration --projects=$npm_package_name",
+    "test": "pnpm run test:unit && pnpm run test:integration",
+    "test:unit": "bun --bun vitest run --project unit --coverage.reportsDirectory=coverage/unit",
+    "test:integration": "bun --bun vitest run --project integration --coverage.reportsDirectory=coverage/integration",
     "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name",
     "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name"
   },
