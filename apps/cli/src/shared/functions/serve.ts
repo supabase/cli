@@ -1825,8 +1825,11 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
 
       // The container must exist for `docker cp` to have a target, and must not be running
       // yet so edge-runtime never races the copy.
-      yield* runEdgeRuntimeDockerStep(command);
-      input.onContainerCreated?.();
+      yield* Effect.uninterruptibleMask((restore) =>
+        restore(runEdgeRuntimeDockerStep(command)).pipe(
+          Effect.tap(() => Effect.sync(() => input.onContainerCreated?.())),
+        ),
+      );
       yield* runEdgeRuntimeDockerStep(["cp", "-", `${containerId}:/`], {
         messagePrefix: "failed to copy edge runtime main service into container",
         stdin: Stream.make(serveMainArchive),
