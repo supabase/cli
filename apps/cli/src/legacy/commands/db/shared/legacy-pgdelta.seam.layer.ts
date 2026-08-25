@@ -91,10 +91,11 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
     // and satisfy `LegacyDeclarativeSeamShape`'s `Effect<T, E>` (no leftover requirements)
     // without hand-enumerating every transitive dependency — mirrors
     // `legacy-platform-api-factory.layer.ts`'s identical capture-and-provide shape.
+    // `legacyExportDeclarativeCatalogRef`'s requirements are today identical to
+    // `LegacyExportBaselineCatalogDeps`; if they ever diverge, the declarative
+    // closure below stops typechecking and the new deps must be added here.
     const context = yield* Effect.context<
-      | LegacyExportBaselineCatalogDeps
-      | LegacyExportDeclarativeCatalogDeps
-      | LegacyStartLocalDatabaseDeps
+      LegacyExportBaselineCatalogDeps | LegacyStartLocalDatabaseDeps
     >();
 
     return LegacyDeclarativeSeam.of({
@@ -271,15 +272,6 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
 
 type LegacyExportBaselineCatalogDeps =
   ReturnType<typeof legacyExportBaselineCatalogRef> extends Effect.Effect<
-    infer _A,
-    infer _E,
-    infer R
-  >
-    ? R
-    : never;
-
-type LegacyExportDeclarativeCatalogDeps =
-  ReturnType<typeof legacyExportDeclarativeCatalogRef> extends Effect.Effect<
     infer _A,
     infer _E,
     infer R

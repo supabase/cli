@@ -9,8 +9,8 @@
     "test:legacy": "CLI_HARNESS_TARGET=ts-legacy bun --bun vitest run",
     "test:next": "CLI_HARNESS_TARGET=ts-next bun --bun vitest run",
     "record": "RECORD=true CLI_HARNESS_TARGET=ts-legacy bun --bun vitest run",
-    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name",
-    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name"
+    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name,@supabase/root",
+    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name,@supabase/root"
   },
   "dependencies": {
     "@supabase/cli-test-helpers": "workspace:*"
@@ -20,9 +20,6 @@
     "@types/bun": "catalog:",
     "@vitest/coverage-istanbul": "catalog:",
     "knip": "catalog:",
-    "oxfmt": "catalog:",
-    "oxlint": "catalog:",
-    "oxlint-tsgolint": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
   },
@@ -34,11 +31,6 @@
     ],
     "ignore": [
       "fixtures/**"
-    ],
-    "ignoreDependencies": [
-      "oxfmt",
-      "oxlint",
-      "oxlint-tsgolint"
     ],
     "ignoreBinaries": [
       "nx"

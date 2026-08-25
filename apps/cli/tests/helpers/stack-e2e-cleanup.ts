@@ -212,10 +212,17 @@ async function removeProjectWithDocker(projectDir: string): Promise<boolean> {
       { stdio: ["ignore", "ignore", "pipe"], timeout: 30_000 },
     );
   } catch (error) {
-    const stderr =
+    const rawStderr =
       error != null && typeof error === "object" && "stderr" in error
-        ? String((error as { stderr: unknown }).stderr ?? "").trim()
+        ? (error as { stderr: unknown }).stderr
         : "";
+    const stderr = (
+      typeof rawStderr === "string"
+        ? rawStderr
+        : rawStderr instanceof Uint8Array
+          ? new TextDecoder().decode(rawStderr)
+          : ""
+    ).trim();
     dockerErr = stderr || (error instanceof Error ? error.message : String(error));
   }
 

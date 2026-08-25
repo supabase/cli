@@ -121,7 +121,7 @@ export function legacyBuildKongQueryToken(apiKeys: LegacyKongApiKeys): string {
  * never touches `process.env`.
  */
 export function legacyResolveKongNginxWorkerProcesses(
-  projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
+  projectEnvValues?: Readonly<Record<string, string>>,
 ): string {
   return legacyEnvOrDefault("KONG_NGINX_WORKER_PROCESSES", "1", projectEnvValues);
 }

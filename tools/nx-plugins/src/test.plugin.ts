@@ -9,7 +9,7 @@ export const createNodesV2: CreateNodesV2<TestPluginOptions> = [
   "{apps,packages}/*/vitest.config.ts",
   async (vitestConfigFiles, _options, context) => {
     return await createNodesFromFiles(
-      async (vitestConfigPath, _, context, idx) => {
+      async (vitestConfigPath, _, context) => {
         const projectRoot = dirname(vitestConfigPath);
         const project: ProjectConfiguration = {
           root: projectRoot,
@@ -26,7 +26,7 @@ export const createNodesV2: CreateNodesV2<TestPluginOptions> = [
         project.targets ??= {};
 
         const absoluteFilePath = join(context.workspaceRoot, vitestConfigPath);
-        const { resolveConfig } = await loadVitestDynamicImport();
+        const { resolveConfig } = await import("vitest/node");
         const vitestConfig = await resolveConfig({
           config: absoluteFilePath,
           mode: "development",
@@ -87,8 +87,4 @@ function createTestTarget(name: string = "", inputs: string[] = [], extraInputs:
       ],
     },
   };
-}
-
-function loadVitestDynamicImport() {
-  return Function('return import("vitest/node")')();
 }

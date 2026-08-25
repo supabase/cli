@@ -397,7 +397,14 @@ export const decodePlatformInput = <S extends Schema.ConstraintDecoder<unknown, 
 function interpolatePath(pathTemplate: string, input: JsonRecord): string {
   return pathTemplate.replaceAll(/\{([^}]+)\}/g, (_match, key: string) => {
     const value = input[key];
-    return value === undefined ? `{${key}}` : encodeURIComponent(String(value));
+    if (value === undefined) return `{${key}}`;
+    const text =
+      typeof value === "string"
+        ? value
+        : typeof value === "number" || typeof value === "boolean" || typeof value === "bigint"
+          ? String(value)
+          : (JSON.stringify(value) ?? "");
+    return encodeURIComponent(text);
   });
 }
 
