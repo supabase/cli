@@ -6,7 +6,7 @@ import path from "node:path";
 import { Effect, Layer, Option } from "effect";
 import { cliSettingsLayer } from "../../next/config/cli-settings.layer.ts";
 import {
-  mockProjectContext,
+  mockCliProjectContext,
   mockRuntimeInfo,
   processEnvLayer,
 } from "../../../tests/helpers/mocks.ts";
@@ -24,23 +24,23 @@ function makeConfig(consent: TelemetryConfig["consent"]): TelemetryConfig {
 
 function withEnv(env: Record<string, string>) {
   const runtimeInfoLayer = mockRuntimeInfo();
-  const projectContextLayer = mockProjectContext();
+  const cliProjectContextLayer = mockCliProjectContext();
   return Layer.mergeAll(
     runtimeInfoLayer,
-    projectContextLayer,
+    cliProjectContextLayer,
     processEnvLayer(env),
-    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
+    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
   );
 }
 
 function emptyEnv() {
   const runtimeInfoLayer = mockRuntimeInfo();
-  const projectContextLayer = mockProjectContext();
+  const cliProjectContextLayer = mockCliProjectContext();
   return Layer.mergeAll(
     runtimeInfoLayer,
-    projectContextLayer,
+    cliProjectContextLayer,
     processEnvLayer(),
-    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
+    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
   );
 }
 

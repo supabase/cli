@@ -107,7 +107,7 @@ async function writeSigningKeys(contents: string) {
  * (selected by `SUPABASE_ENV`, defaulting to `"development"`) but
  * `@supabase/config`'s OWN default env resolution does NOT
  * (`legacyResolveSigningKeysConfigPaths` must resolve an accurate
- * `ProjectEnvironment` and thread it through explicitly).
+ * `CliProjectEnvironment` and thread it through explicitly).
  */
 async function writeSupabaseEnvDevelopment(contents: string) {
   await mkdir(join(tempRoot.current, "supabase"), { recursive: true });

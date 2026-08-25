@@ -1,7 +1,7 @@
 import {
   loadCliConfig,
-  loadProjectEnvironment,
-  resolveProjectSubtree,
+  loadCliProjectEnvironment,
+  resolveCliConfigSubtree,
   type CliConfig,
 } from "@supabase/config/effect";
 import type { EdgeRuntimeConfig } from "@supabase/stack/effect";
@@ -103,7 +103,7 @@ export const resolveFunctionsDevEdgeRuntimeConfig = Effect.fnUntraced(function* 
     };
   }
 
-  const projectEnv = yield* loadProjectEnvironment({
+  const projectEnv = yield* loadCliProjectEnvironment({
     cwd: projectHome.projectRoot,
     baseEnv: process.env,
   });
@@ -116,7 +116,7 @@ export const resolveFunctionsDevEdgeRuntimeConfig = Effect.fnUntraced(function* 
     };
   }
 
-  const resolved = yield* resolveProjectSubtree(
+  const resolved = yield* resolveCliConfigSubtree(
     loadedConfig.config.edge_runtime,
     projectEnv,
     "edge_runtime",

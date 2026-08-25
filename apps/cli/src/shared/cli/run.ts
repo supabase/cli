@@ -16,7 +16,7 @@ import { GoProxyInvocation, goProxyInvocationLayer } from "../legacy/go-proxy-in
 import { cliSettingsLayer } from "../../next/config/cli-settings.layer.ts";
 import { projectHomeLayer } from "../../next/config/project-home.layer.ts";
 import { ProjectLocalServiceVersions } from "../../next/config/project-local-service-versions.service.ts";
-import { projectContextLayer } from "../../next/config/project-context.layer.ts";
+import { cliProjectContextLayer } from "../../next/config/cli-project-context.layer.ts";
 import { projectLinkStateLayer } from "../../next/config/project-link-state.layer.ts";
 import { processControlLayer } from "../runtime/process-control.layer.ts";
 import { runtimeInfoLayer } from "../runtime/runtime-info.layer.ts";
@@ -641,13 +641,13 @@ export function withoutParseErrorHelpDump<A, E, R>(
   });
 }
 
-function projectContextLayerFor(runtimeLayer: Layer.Layer<never>) {
-  return projectContextLayer.pipe(Layer.provide(runtimeLayer), Layer.provide(BunServices.layer));
+function cliProjectContextLayerFor(runtimeLayer: Layer.Layer<never>) {
+  return cliProjectContextLayer.pipe(Layer.provide(runtimeLayer), Layer.provide(BunServices.layer));
 }
 
 function cliSettingsLayerFor(runtimeLayer: Layer.Layer<never>) {
   return cliSettingsLayer.pipe(
-    Layer.provide(projectContextLayerFor(runtimeLayer)),
+    Layer.provide(cliProjectContextLayerFor(runtimeLayer)),
     Layer.provide(runtimeLayer),
   );
 }
@@ -655,7 +655,7 @@ function cliSettingsLayerFor(runtimeLayer: Layer.Layer<never>) {
 function projectHomeLayerFor(runtimeLayer: Layer.Layer<never>) {
   return projectHomeLayer.pipe(
     Layer.provide(cliSettingsLayerFor(runtimeLayer)),
-    Layer.provide(projectContextLayerFor(runtimeLayer)),
+    Layer.provide(cliProjectContextLayerFor(runtimeLayer)),
     Layer.provide(runtimeLayer),
     Layer.provide(BunServices.layer),
   );
@@ -731,7 +731,7 @@ function cliProgramFor(
     Effect.provide(telemetryRuntimeLayer),
     Effect.provide(cliSettingsLayerFor(runtimeLayer)),
     Effect.provide(projectHomeLayerFor(runtimeLayer)),
-    Effect.provide(projectContextLayerFor(runtimeLayer)),
+    Effect.provide(cliProjectContextLayerFor(runtimeLayer)),
     Effect.provide(projectLinkStateLayer),
     Effect.provide(runtimeLayer),
     Effect.provide(httpTransportClientLayer),
@@ -872,7 +872,7 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
       Effect.provide(telemetryRuntimeLayer),
       Effect.provide(projectHomeLayerFor(handledRuntimeLayer)),
       Effect.provide(cliSettingsLayerFor(handledRuntimeLayer)),
-      Effect.provide(projectContextLayerFor(handledRuntimeLayer)),
+      Effect.provide(cliProjectContextLayerFor(handledRuntimeLayer)),
       Effect.provide(processControlLayer),
       Effect.provide(runtimeInfoLayer),
       Effect.provide(ttyLayer),

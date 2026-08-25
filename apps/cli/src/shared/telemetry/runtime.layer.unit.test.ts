@@ -8,7 +8,7 @@ import { cliSettingsLayer } from "../../next/config/cli-settings.layer.ts";
 import { TelemetryRuntime } from "./runtime.service.ts";
 import { telemetryRuntimeLayer } from "./runtime.layer.ts";
 import {
-  mockProjectContext,
+  mockCliProjectContext,
   mockRuntimeInfo,
   mockTty,
   processEnvLayer,
@@ -24,7 +24,7 @@ function buildLayer(opts: {
   stdoutIsTty?: boolean;
 }): Layer.Layer<TelemetryRuntime> {
   const runtimeInfoLayer = mockRuntimeInfo({ homeDir: opts.homeDir });
-  const projectContextLayer = mockProjectContext();
+  const cliProjectContextLayer = mockCliProjectContext();
   const envLayer = processEnvLayer({
     SUPABASE_HOME: opts.homeDir,
     ...opts.env,
@@ -32,7 +32,7 @@ function buildLayer(opts: {
   const ttyLayer = mockTty({ stdoutIsTty: opts.stdoutIsTty ?? false });
   const configLayer = cliSettingsLayer.pipe(
     Layer.provide(runtimeInfoLayer),
-    Layer.provide(projectContextLayer),
+    Layer.provide(cliProjectContextLayer),
   );
   const telemetryLayer = telemetryRuntimeLayer.pipe(
     Layer.provide(configLayer),

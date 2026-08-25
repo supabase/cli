@@ -1,13 +1,13 @@
 import {
   CliConfigSchema,
-  findProjectPaths,
+  findCliProjectPaths,
   inferFunctionsManifest,
   loadCliConfig,
-  resolveProjectSubtree,
-  resolveProjectValue,
+  resolveCliConfigSubtree,
+  resolveCliConfigValue,
   type CliConfig,
-  type ProjectEnvironment,
-  type ResolvedProjectValue,
+  type CliProjectEnvironment,
+  type ResolvedCliConfigValue,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config/effect";
 import {
@@ -380,7 +380,7 @@ function reveal(value: string | Redacted.Redacted<string> | undefined): string |
 }
 
 function toPlainAuthConfig(
-  auth: CliConfig["auth"] | ResolvedProjectValue<CliConfig["auth"]>,
+  auth: CliConfig["auth"] | ResolvedCliConfigValue<CliConfig["auth"]>,
 ): PlainServeAuthConfig {
   return {
     enabled: auth.enabled,
@@ -425,7 +425,7 @@ function toPlainAuthConfig(
  * {@link ServeEdgeRuntimeContainerConfig}'s doc comment.
  */
 export function toPlainEdgeRuntimeConfig(
-  edgeRuntime: CliConfig["edge_runtime"] | ResolvedProjectValue<CliConfig["edge_runtime"]>,
+  edgeRuntime: CliConfig["edge_runtime"] | ResolvedCliConfigValue<CliConfig["edge_runtime"]>,
 ): PlainServeEdgeRuntimeConfig {
   return {
     policy: reveal(edgeRuntime.policy) ?? "",
@@ -439,7 +439,7 @@ export function toPlainEdgeRuntimeConfig(
     // casing. ListSecrets then keeps only entries with a non-empty SHA256:
     // `DecryptSecretHookFunc` (`pkg/config/secret.go:94-107`) leaves the
     // SHA256 empty exactly when the value is empty or a still-unresolved
-    // `env(VAR)` literal. In the TS pipeline `resolveProjectSubtree` wraps
+    // `env(VAR)` literal. In the TS pipeline `resolveCliConfigSubtree` wraps
     // resolved secret leaves in `Redacted` and leaves unresolved `env()`
     // literals as plain strings, so `Redacted.isRedacted` + non-empty mirrors
     // both zero-hash cases — the same guard `secrets set` uses
@@ -456,7 +456,7 @@ export function toPlainEdgeRuntimeConfig(
 
 /** Exported for the same reason as {@link toPlainEdgeRuntimeConfig}. */
 export function toPlainFunctionRecord(
-  functions: CliConfig["functions"] | ResolvedProjectValue<CliConfig["functions"]>,
+  functions: CliConfig["functions"] | ResolvedCliConfigValue<CliConfig["functions"]>,
 ): Readonly<Record<string, ManifestFunctionConfig>> {
   return Object.fromEntries(
     Object.entries(functions).map(([slug, config]) => [
@@ -700,7 +700,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   goViperCompat: boolean,
   goConfigCompat: FunctionsGoConfigCompat | undefined,
 ) {
-  const projectEnv = yield* loadServeProjectEnvironment(projectRoot);
+  const projectEnv = yield* loadServeCliProjectEnvironment(projectRoot);
   const projectRef = Option.match(projectIdOverride, {
     onNone: () => undefined,
     onSome: (value) => {
@@ -733,25 +733,25 @@ const resolveServeConfig = Effect.fnUntraced(function* (
     projectEnv === null
       ? toPlainAuthConfig(baseConfig.auth)
       : toPlainAuthConfig(
-          yield* resolveProjectSubtree(baseConfig.auth, projectEnv, "auth", { goViperCompat }),
+          yield* resolveCliConfigSubtree(baseConfig.auth, projectEnv, "auth", { goViperCompat }),
         );
   const edgeRuntime =
     projectEnv === null
       ? toPlainEdgeRuntimeConfig(baseConfig.edge_runtime)
       : toPlainEdgeRuntimeConfig(
-          yield* resolveProjectSubtree(baseConfig.edge_runtime, projectEnv, "edge_runtime", {
+          yield* resolveCliConfigSubtree(baseConfig.edge_runtime, projectEnv, "edge_runtime", {
             goViperCompat,
           }),
         );
   const apiPort =
     projectEnv === null
       ? baseConfig.api.port
-      : (yield* resolveProjectSubtree(baseConfig.api, projectEnv, "api", { goViperCompat })).port;
+      : (yield* resolveCliConfigSubtree(baseConfig.api, projectEnv, "api", { goViperCompat })).port;
   const configDeclaredFunctions =
     projectEnv === null
       ? toPlainFunctionRecord(baseConfig.functions)
       : toPlainFunctionRecord(
-          yield* resolveProjectSubtree(baseConfig.functions, projectEnv, "functions", {
+          yield* resolveCliConfigSubtree(baseConfig.functions, projectEnv, "functions", {
             goViperCompat,
           }),
         );
@@ -767,7 +767,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
     projectEnv === null
       ? (baseConfig.project_id ?? "")
       : (reveal(
-          yield* resolveProjectValue(baseConfig.project_id ?? "", projectEnv, "project_id", {
+          yield* resolveCliConfigValue(baseConfig.project_id ?? "", projectEnv, "project_id", {
             goViperCompat,
           }),
         ) ?? "");
@@ -1097,8 +1097,8 @@ function ambientProjectEnv() {
   );
 }
 
-const loadServeProjectEnvironment = Effect.fnUntraced(function* (projectRoot: string) {
-  const paths = yield* findProjectPaths(projectRoot);
+const loadServeCliProjectEnvironment = Effect.fnUntraced(function* (projectRoot: string) {
+  const paths = yield* findCliProjectPaths(projectRoot);
   if (paths === null) {
     return null;
   }
@@ -1144,7 +1144,7 @@ const loadServeProjectEnvironment = Effect.fnUntraced(function* (projectRoot: st
     }
   }
 
-  return { paths, values, loadedPaths, sources } satisfies ProjectEnvironment;
+  return { paths, values, loadedPaths, sources } satisfies CliProjectEnvironment;
 });
 
 /**

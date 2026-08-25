@@ -1,8 +1,8 @@
 import {
   loadCliConfig,
-  loadProjectEnvironment,
+  loadCliProjectEnvironment,
   CliConfigSchema,
-  resolveProjectSubtree,
+  resolveCliConfigSubtree,
   type CliConfig,
   type CliConfigParseError,
 } from "@supabase/config/effect";
@@ -163,13 +163,13 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
     // are unresolved are skipped. This filters on whether the SHA256 hash is
     // set: the hash is empty exactly when `DecryptSecretHookFunc`
     // (`pkg/config/secret.go:98`) sees a still-literal `env(VAR)` and returns
-    // without hashing. In the TS path, `resolveProjectSubtree`
+    // without hashing. In the TS path, `resolveCliConfigSubtree`
     // wraps every resolved secret leaf in `Redacted<string>`; unresolved env()
     // literals stay as plain strings, so `Redacted.isRedacted(...)` is the
     // equivalent guard.
     const merged = new Map<string, string>();
     // A malformed config.toml (or a malformed `.env`/`.env.local` sibling —
-    // see the `ProjectEnvParseError` catch below) is swallowed here (logged
+    // see the `CliProjectEnvParseError` catch below) is swallowed here (logged
     // to the debug logger) and this proceeds with an empty
     // `EdgeRuntime.Secrets` — env-file and positional-arg secrets still
     // work. `secrets set` has no `--linked`/`--local`/`--db-url` flag, so
@@ -250,7 +250,7 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
         );
       }),
       // `loadCliConfig` resolves `env(VAR)` references against
-      // `.env`/`.env.local` (`loadProjectEnvironment` inside
+      // `.env`/`.env.local` (`loadCliProjectEnvironment` inside
       // `loadCliConfigFile`) *before* schema decode, so a malformed dotenv
       // line fails with this distinct tag rather than `CliConfigParseError`.
       // `Load()` (`pkg/config/config.go:788-791`) calls `loadNestedEnv`
@@ -259,7 +259,7 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
       // in this failure path, unlike the schema-decode-only case above. Recover
       // to `null`, not `recoverEdgeRuntimeConfig`: there is no parsed document
       // to recover a subtree from.
-      Effect.catchTag("ProjectEnvParseError", (cause) =>
+      Effect.catchTag("CliProjectEnvParseError", (cause) =>
         debugLogger.debug(`failed to parse ${cause.path}:${cause.line}`).pipe(Effect.as(null)),
       ),
       // Two `[remotes.*]` blocks declare the same `project_id` as `ref` —
@@ -283,12 +283,12 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
       ),
     );
     if (loadedConfig !== null) {
-      const projectEnv = yield* loadProjectEnvironment({
+      const projectEnv = yield* loadCliProjectEnvironment({
         cwd: runtimeInfo.cwd,
         baseEnv: process.env,
       });
       if (projectEnv !== null) {
-        const resolved = yield* resolveProjectSubtree(
+        const resolved = yield* resolveCliConfigSubtree(
           loadedConfig.edge_runtime,
           projectEnv,
           "edge_runtime",

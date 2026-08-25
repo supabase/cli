@@ -7,15 +7,15 @@ const cliConfigIo: CliConfigIo = makeCliConfigIo(
 );
 
 export const loadCliConfig = cliConfigIo.loadCliConfig;
-export const findProjectRootFor = cliConfigIo.findProjectRootFor;
-export const findProjectPathsFor = cliConfigIo.findProjectPathsFor;
+export const findCliProjectRootFor = cliConfigIo.findCliProjectRootFor;
+export const findCliProjectPathsFor = cliConfigIo.findCliProjectPathsFor;
 export const loadCliConfigFile = cliConfigIo.loadCliConfigFile;
-export const loadProjectEnvironmentFor = cliConfigIo.loadProjectEnvironmentFor;
+export const loadCliProjectEnvironmentFor = cliConfigIo.loadCliProjectEnvironmentFor;
 export const saveCliConfig = cliConfigIo.saveCliConfig;
 export const loadFunctionsManifest = cliConfigIo.loadFunctionsManifest;
 export type { CliConfigIo } from "./promise-facade.ts";
 // Re-exports every pure symbol from `.` (types, schema, errors, etc.) so
-// `./io` consumers can name `LoadedCliConfig`/`ProjectPaths`/etc. without
+// `./io` consumers can name `LoadedCliConfig`/`CliProjectPaths`/etc. without
 // a second import from `@supabase/config` — `index.ts`'s own graph is pure,
 // so this doesn't drag anything platform-specific into it. No name
 // collisions with the seven facade functions above (verified against

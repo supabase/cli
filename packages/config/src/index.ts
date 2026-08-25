@@ -17,7 +17,7 @@ export {
   InvalidRemoteProjectIdError,
   MissingCliConfigValueError,
   CliConfigParseError,
-  ProjectEnvParseError,
+  CliProjectEnvParseError,
 } from "./errors.ts";
 export type { ConfigFormat } from "./config-format.ts";
 export {
@@ -38,12 +38,12 @@ export {
   type ResolvedFunctionConfig,
 } from "./functions-manifest-model.ts";
 export type {
-  LoadProjectEnvironmentOptions,
-  ProjectEnvironment,
-  ResolvedProjectValue,
-  ResolveProjectOptions,
+  LoadCliProjectEnvironmentOptions,
+  CliProjectEnvironment,
+  ResolvedCliConfigValue,
+  ResolveCliConfigOptions,
 } from "./project.ts";
-export type { ProjectPaths } from "./paths.ts";
+export type { CliProjectPaths } from "./paths.ts";
 export { CLI_CONFIG_SCHEMA_URL } from "./schema-metadata.ts";
 export {
   type BaseCliConfig,

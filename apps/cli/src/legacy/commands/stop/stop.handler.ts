@@ -43,7 +43,7 @@ import {
  * `SUPABASE_PROJECT_ID` — so an env-file-only value
  * overrides config.toml too, not only an ambient shell export.
  * `legacyResolveProjectEnvironmentValues` implements that full precedence
- * chain (see its doc comment) on top of `loadProjectEnvironment`'s
+ * chain (see its doc comment) on top of `loadCliProjectEnvironment`'s
  * `supabase/`-dir-only result, so it's used here instead of reading
  * `process.env` directly. It still returns a usable map (falling back to
  * `<workdir>/supabase`/`workdir` and `process.env` itself) even when no

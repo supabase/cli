@@ -2,8 +2,8 @@ import {
   inferFunctionsManifest,
   loadDotEnvFile,
   loadCliConfig,
-  loadProjectEnvironment,
-  resolveProjectSubtree,
+  loadCliProjectEnvironment,
+  resolveCliConfigSubtree,
 } from "@supabase/config/effect";
 import type { ResolvedFunctionsBundle } from "@supabase/stack/effect";
 import { Effect, Option, Redacted } from "effect";
@@ -35,21 +35,21 @@ export const resolveFunctionsBundle = Effect.fnUntraced(function* (
 ) {
   const projectHome = yield* ProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
-  const projectEnvironment = yield* loadProjectEnvironment({
+  const cliProjectEnvironment = yield* loadCliProjectEnvironment({
     cwd: projectHome.projectRoot,
     baseEnv: process.env,
   });
   const loadedConfig = yield* loadCliConfig(projectHome.projectRoot);
   const cliConfig =
-    projectEnvironment === null || loadedConfig === null
+    cliProjectEnvironment === null || loadedConfig === null
       ? undefined
       : {
           ...loadedConfig.config,
           functions: Object.fromEntries(
             Object.entries(
-              yield* resolveProjectSubtree(
+              yield* resolveCliConfigSubtree(
                 loadedConfig.config.functions,
-                projectEnvironment,
+                cliProjectEnvironment,
                 "functions",
               ),
             ).map(([name, config]) => [

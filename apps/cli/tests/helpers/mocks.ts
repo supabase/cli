@@ -4,7 +4,7 @@ import process from "node:process";
 import { BunServices } from "@effect/platform-bun";
 import { Deferred, Effect, Layer, Option, PubSub, Redacted, Stream } from "effect";
 import type { ReactElement } from "react";
-import type { ProjectEnvironment, ProjectPaths } from "@supabase/config";
+import type { CliProjectEnvironment, CliProjectPaths } from "@supabase/config";
 import { Stack, StackServiceState, type StackInfo } from "@supabase/stack/effect";
 import { HttpTransportClient } from "@supabase/stack/testing";
 import { Api } from "../../src/next/auth/api.service.ts";
@@ -23,7 +23,7 @@ import {
   ProjectLinkState,
   type ProjectLinkStateValue,
 } from "../../src/next/config/project-link-state.service.ts";
-import { ProjectContext } from "../../src/next/config/project-context.service.ts";
+import { CliProjectContext } from "../../src/next/config/cli-project-context.service.ts";
 import { NonInteractiveError } from "../../src/shared/output/errors.ts";
 import { Output } from "../../src/shared/output/output.service.ts";
 import type { OutputFormat } from "../../src/shared/output/types.ts";
@@ -849,15 +849,15 @@ export function processEnvLayer(
   );
 }
 
-export function mockProjectContext(
+export function mockCliProjectContext(
   opts: {
-    paths?: Option.Option<ProjectPaths>;
-    projectEnv?: Option.Option<ProjectEnvironment>;
+    paths?: Option.Option<CliProjectPaths>;
+    projectEnv?: Option.Option<CliProjectEnvironment>;
   } = {},
-): Layer.Layer<ProjectContext> {
+): Layer.Layer<CliProjectContext> {
   return Layer.succeed(
-    ProjectContext,
-    ProjectContext.of({
+    CliProjectContext,
+    CliProjectContext.of({
       paths: opts.paths ?? Option.none(),
       projectEnv: opts.projectEnv ?? Option.none(),
     }),
@@ -990,7 +990,7 @@ export function mockProjectLocalServiceVersions(
 
 export function emptyEnv() {
   const runtimeInfoLayer = mockRuntimeInfo();
-  const projectContextLayer = mockProjectContext();
+  const cliProjectContextLayer = mockCliProjectContext();
   const envLayer = processEnvLayer();
   const projectHomeLayer = mockProjectHome();
   const projectLinkStateLayer = mockProjectLinkState();
@@ -999,7 +999,7 @@ export function emptyEnv() {
   return Layer.mergeAll(
     BunServices.layer,
     runtimeInfoLayer,
-    projectContextLayer,
+    cliProjectContextLayer,
     projectHomeLayer,
     projectLinkStateLayer,
     projectLocalServiceVersionsLayer,
@@ -1008,7 +1008,7 @@ export function emptyEnv() {
     envLayer,
     mockTty(),
     mockProcessControl().layer,
-    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
+    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
     Layer.succeed(HttpTransportClient, {
       request: () => Effect.die("unexpected HttpTransportClient access in tests"),
     }),
@@ -1017,20 +1017,20 @@ export function emptyEnv() {
 
 export function withEnv(env: Record<string, string>) {
   const runtimeInfoLayer = mockRuntimeInfo();
-  const projectContextLayer = mockProjectContext();
+  const cliProjectContextLayer = mockCliProjectContext();
   const envLayer = processEnvLayer(env);
   const projectHomeLayer = mockProjectHome();
   const analytics = mockAnalytics();
   return Layer.mergeAll(
     BunServices.layer,
     runtimeInfoLayer,
-    projectContextLayer,
+    cliProjectContextLayer,
     projectHomeLayer,
     analytics.layer,
     mockTelemetryRuntime(),
     envLayer,
     mockTty(),
     mockProcessControl().layer,
-    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
+    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
   );
 }

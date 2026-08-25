@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Layer, Option } from "effect";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
-import { projectContextLayer } from "./project-context.layer.ts";
-import { ProjectContext } from "./project-context.service.ts";
+import { cliProjectContextLayer } from "./cli-project-context.layer.ts";
+import { CliProjectContext } from "./cli-project-context.service.ts";
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "supabase-project-context-"));
@@ -19,14 +19,14 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string> }) {
     homeDir: join(opts.cwd, ".home"),
   });
   const envLayer = processEnvLayer(opts.env ?? {});
-  return projectContextLayer.pipe(
+  return cliProjectContextLayer.pipe(
     Layer.provide(BunServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(envLayer),
   );
 }
 
-describe("projectContextLayer", () => {
+describe("cliProjectContextLayer", () => {
   it.live("loads when supabase/config.toml uses env() on numeric fields (CLI-1489)", () => {
     const tempDir = makeTempDir();
     const projectRoot = join(tempDir, "repo");
@@ -52,8 +52,8 @@ describe("projectContextLayer", () => {
         ),
       );
 
-      const projectContext = yield* Effect.gen(function* () {
-        return yield* ProjectContext;
+      const cliProjectContext = yield* Effect.gen(function* () {
+        return yield* CliProjectContext;
       }).pipe(
         Effect.provide(
           buildLayer({
@@ -67,11 +67,11 @@ describe("projectContextLayer", () => {
         ),
       );
 
-      expect(Option.isSome(projectContext.paths)).toBe(true);
-      if (Option.isSome(projectContext.paths)) {
-        expect(projectContext.paths.value.projectRoot).toBe(projectRoot);
+      expect(Option.isSome(cliProjectContext.paths)).toBe(true);
+      if (Option.isSome(cliProjectContext.paths)) {
+        expect(cliProjectContext.paths.value.projectRoot).toBe(projectRoot);
       }
-      expect(Option.isSome(projectContext.projectEnv)).toBe(true);
+      expect(Option.isSome(cliProjectContext.projectEnv)).toBe(true);
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );
@@ -81,12 +81,12 @@ describe("projectContextLayer", () => {
     const tempDir = makeTempDir();
 
     return Effect.gen(function* () {
-      const projectContext = yield* Effect.gen(function* () {
-        return yield* ProjectContext;
+      const cliProjectContext = yield* Effect.gen(function* () {
+        return yield* CliProjectContext;
       }).pipe(Effect.provide(buildLayer({ cwd: tempDir })));
 
-      expect(Option.isNone(projectContext.paths)).toBe(true);
-      expect(Option.isNone(projectContext.projectEnv)).toBe(true);
+      expect(Option.isNone(cliProjectContext.paths)).toBe(true);
+      expect(Option.isNone(cliProjectContext.projectEnv)).toBe(true);
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );

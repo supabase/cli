@@ -7,9 +7,9 @@ import { join } from "node:path";
 import { Cause, Effect, Exit, Layer, Option, Result } from "effect";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import { cliSettingsLayer } from "./cli-settings.layer.ts";
-import { projectContextLayer } from "./project-context.layer.ts";
+import { cliProjectContextLayer } from "./cli-project-context.layer.ts";
 import { projectHomeLayer } from "./project-home.layer.ts";
-import { ProjectContext } from "./project-context.service.ts";
+import { CliProjectContext } from "./cli-project-context.service.ts";
 import { ProjectHome, ProjectHomeNotDirectoryError } from "./project-home.service.ts";
 
 function makeTempDir(): string {
@@ -22,19 +22,19 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?:
     homeDir: opts.homeDir ?? join(opts.cwd, ".home"),
   });
   const envLayer = processEnvLayer(opts.env ?? {});
-  const discoveredProjectContextLayer = projectContextLayer.pipe(
+  const discoveredCliProjectContextLayer = cliProjectContextLayer.pipe(
     Layer.provide(BunServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(envLayer),
   );
   const discoveredCliSettingsLayer = cliSettingsLayer.pipe(
     Layer.provide(runtimeInfoLayer),
-    Layer.provide(discoveredProjectContextLayer),
+    Layer.provide(discoveredCliProjectContextLayer),
   );
   const discoveredProjectHomeLayer = projectHomeLayer.pipe(
     Layer.provide(BunServices.layer),
     Layer.provide(runtimeInfoLayer),
-    Layer.provide(discoveredProjectContextLayer),
+    Layer.provide(discoveredCliProjectContextLayer),
     Layer.provide(discoveredCliSettingsLayer),
   );
 
@@ -42,7 +42,7 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?:
     BunServices.layer,
     runtimeInfoLayer,
     envLayer,
-    discoveredProjectContextLayer,
+    discoveredCliProjectContextLayer,
     discoveredCliSettingsLayer,
     discoveredProjectHomeLayer,
   );
@@ -63,14 +63,14 @@ describe("projectHomeLayer", () => {
         writeFile(join(packageRoot, "supabase", "config.toml"), 'project_id = "web"\n'),
       );
 
-      const { projectHome, projectContext } = yield* Effect.gen(function* () {
+      const { projectHome, cliProjectContext } = yield* Effect.gen(function* () {
         return {
           projectHome: yield* ProjectHome,
-          projectContext: yield* ProjectContext,
+          cliProjectContext: yield* CliProjectContext,
         };
       }).pipe(Effect.provide(buildLayer({ cwd, env: { SUPABASE_HOME: supabaseHome } })));
 
-      expect(Option.isSome(projectContext.paths)).toBe(true);
+      expect(Option.isSome(cliProjectContext.paths)).toBe(true);
       expect(projectHome.projectRoot).toBe(packageRoot);
       expect(projectHome.supabaseDir).toBe(join(packageRoot, "supabase"));
       expect(projectHome.projectHomeDir).toBe(join(packageRoot, ".supabase"));

@@ -18,9 +18,9 @@ import {
   CliConfigParseError,
 } from "./errors.ts";
 import { interpolateEnvReferencesAgainstSchema } from "./lib/env.ts";
-import { findProjectPaths } from "./paths.ts";
+import { findCliProjectPaths } from "./paths.ts";
 import { setOwnProperty } from "./sparse.ts";
-import { loadProjectEnvironment } from "./project.ts";
+import { loadCliProjectEnvironment } from "./project.ts";
 
 const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 /**
@@ -366,7 +366,7 @@ function normalizeDeprecatedExternalProviders(
  * real, resolved secrets (post `env()` interpolation, see
  * `interpolateEnvReferencesAgainstSchema` in `loadCliConfigFile`) — the
  * same values `secret()` (`lib/env.ts`) annotates `x-secret` for elsewhere in
- * this package (`resolveProjectValue`'s `redactValue`). Several callers of
+ * this package (`resolveCliConfigValue`'s `redactValue`). Several callers of
  * `loadCliConfig` (`gen types`, `next start`, `functions dev/serve/deploy`)
  * don't catch `CliConfigParseError` at all, so this keeps the same
  * accidental-leak protection `Redacted` already gives every other secret path
@@ -472,13 +472,13 @@ function parseCliConfig(
 
 export const configJsonPath = Effect.fnUntraced(function* (cwd: string) {
   const path = yield* Path.Path;
-  const project = yield* findProjectPaths(cwd);
+  const project = yield* findCliProjectPaths(cwd);
   return configJsonPathWith(path, project?.projectRoot ?? cwd);
 });
 
 export const configTomlPath = Effect.fnUntraced(function* (cwd: string) {
   const path = yield* Path.Path;
-  const project = yield* findProjectPaths(cwd);
+  const project = yield* findCliProjectPaths(cwd);
   return configTomlPathWith(path, project?.projectRoot ?? cwd);
 });
 
@@ -516,11 +516,11 @@ export const loadCliConfigFile = Effect.fnUntraced(function* (
   // otherwise crash the strict decoder with `Expected number` (CLI-1489).
   // The config file lives at `<projectRoot>/supabase/config.{toml,json}`, so
   // walking two directories up gives us the project root that
-  // `loadProjectEnvironment` expects.
+  // `loadCliProjectEnvironment` expects.
   const projectRoot = path.dirname(path.dirname(filePath));
   const projectEnv =
     options?.projectEnv ??
-    (yield* loadProjectEnvironment({
+    (yield* loadCliProjectEnvironment({
       cwd: projectRoot,
       baseEnv: process.env,
       search: options?.search,
@@ -645,7 +645,7 @@ export const loadCliConfig = Effect.fnUntraced(function* (
   options?: LoadCliConfigOptions,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const project = yield* findProjectPaths(cwd, { search: options?.search });
+  const project = yield* findCliProjectPaths(cwd, { search: options?.search });
 
   if (project === null) {
     return null;
@@ -713,7 +713,7 @@ function writeFileAtomic(
 export const saveCliConfig = Effect.fnUntraced(function* (options: SaveCliConfigOptions) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const project = yield* findProjectPaths(options.cwd);
+  const project = yield* findCliProjectPaths(options.cwd);
   const baseCwd = project?.projectRoot ?? options.cwd;
   const format = yield* resolveSaveFormat(baseCwd, options.format);
   const existingConfig =

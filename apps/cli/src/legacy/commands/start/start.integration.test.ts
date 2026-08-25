@@ -2473,7 +2473,7 @@ content_path = "./supabase/templates/custom_notice.html"
         // registry override that only exists in the project's own `.env` file.
         const workdir = tempRoot.current;
         const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
-        // `loadProjectEnvironment`'s `envPath` is `<workdir>/supabase/.env` (`findProjectPaths`),
+        // `loadCliProjectEnvironment`'s `envPath` is `<workdir>/supabase/.env` (`findCliProjectPaths`),
         // written after `setup()` so the `supabase/` dir (created by `writeConfig`) already exists.
         writeFileSync(
           join(workdir, "supabase", ".env"),

@@ -9,7 +9,7 @@ import { Command } from "effect/unstable/cli";
 import {
   mockAnalytics,
   mockOutput,
-  mockProjectContext,
+  mockCliProjectContext,
   mockRuntimeInfo,
   mockTty,
   processEnvLayer,
@@ -60,10 +60,10 @@ function setupWithRealAnalytics(dir: string) {
   const runtimeInfoLayer = mockRuntimeInfo({ homeDir: dir });
   const ttyLayer = mockTty();
   const envLayer = processEnvLayer({ SUPABASE_HOME: dir });
-  const projectContextLayer = mockProjectContext();
+  const cliProjectContextLayer = mockCliProjectContext();
   const configLayer = cliSettingsLayer.pipe(
     Layer.provide(runtimeInfoLayer),
-    Layer.provide(projectContextLayer),
+    Layer.provide(cliProjectContextLayer),
   );
   const analyticsLayer = legacyAnalyticsLayer.pipe(
     Layer.provide(configLayer),

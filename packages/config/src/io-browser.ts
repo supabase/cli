@@ -23,24 +23,24 @@ async function unavailableInBrowser(): Promise<never> {
 // the real facades' export shape.
 const cliConfigIo: CliConfigIo = {
   loadCliConfig: unavailableInBrowser,
-  findProjectRootFor: unavailableInBrowser,
-  findProjectPathsFor: unavailableInBrowser,
+  findCliProjectRootFor: unavailableInBrowser,
+  findCliProjectPathsFor: unavailableInBrowser,
   loadCliConfigFile: unavailableInBrowser,
-  loadProjectEnvironmentFor: unavailableInBrowser,
+  loadCliProjectEnvironmentFor: unavailableInBrowser,
   saveCliConfig: unavailableInBrowser,
   loadFunctionsManifest: unavailableInBrowser,
 };
 
 export const loadCliConfig = cliConfigIo.loadCliConfig;
-export const findProjectRootFor = cliConfigIo.findProjectRootFor;
-export const findProjectPathsFor = cliConfigIo.findProjectPathsFor;
+export const findCliProjectRootFor = cliConfigIo.findCliProjectRootFor;
+export const findCliProjectPathsFor = cliConfigIo.findCliProjectPathsFor;
 export const loadCliConfigFile = cliConfigIo.loadCliConfigFile;
-export const loadProjectEnvironmentFor = cliConfigIo.loadProjectEnvironmentFor;
+export const loadCliProjectEnvironmentFor = cliConfigIo.loadCliProjectEnvironmentFor;
 export const saveCliConfig = cliConfigIo.saveCliConfig;
 export const loadFunctionsManifest = cliConfigIo.loadFunctionsManifest;
 export type { CliConfigIo } from "./promise-facade.ts";
 // Re-exports every pure symbol from `.` (types, schema, errors, etc.) so
-// `./io` consumers can name `LoadedCliConfig`/`ProjectPaths`/etc. without
+// `./io` consumers can name `LoadedCliConfig`/`CliProjectPaths`/etc. without
 // a second import from `@supabase/config` — `index.ts`'s own graph is pure,
 // so this doesn't drag anything platform-specific into it, and this module
 // stays platform-free. No name collisions with the seven facade functions

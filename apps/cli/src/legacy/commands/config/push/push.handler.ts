@@ -1,5 +1,5 @@
 import { dirname } from "node:path";
-import { findProjectRoot, loadCliConfig } from "@supabase/config/effect";
+import { findCliProjectRoot, loadCliConfig } from "@supabase/config/effect";
 import { Effect, FileSystem, Path } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
@@ -100,7 +100,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   // (walking up, same as `loadCliConfig` below and the workdir change
   // before config load), so a push from a subdirectory still reads the
   // project root's `supabase/.env`.
-  const projectRoot = (yield* findProjectRoot(runtimeInfo.cwd)) ?? runtimeInfo.cwd;
+  const projectRoot = (yield* findCliProjectRoot(runtimeInfo.cwd)) ?? runtimeInfo.cwd;
   const projectEnv = yield* legacyLoadProjectEnv(fs, path, projectRoot);
   const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
   // dotenvx private keys for decrypting `encrypted:` secrets, from the shell

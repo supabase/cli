@@ -55,7 +55,7 @@ import { loadCliConfig } from "@supabase/config/io";
 For lazy `env(NAME)` resolution, load project env separately and resolve only the value or subtree you need:
 
 ```ts
-import { loadProjectEnvironment, resolveProjectSubtree } from "@supabase/config/effect";
+import { loadCliProjectEnvironment, resolveCliConfigSubtree } from "@supabase/config/effect";
 ```
 
 When both `supabase/config.json` and `supabase/config.toml` exist in one project, JSON wins. Saves preserve the existing format when possible and default new config files to JSON.

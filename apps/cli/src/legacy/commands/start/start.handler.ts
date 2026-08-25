@@ -2,7 +2,7 @@
  * Native TS implementation of `start` — see `SIDE_EFFECTS.md` for the full
  * behavior contract.
  */
-import { inferFunctionsManifest, resolveProjectSubtree } from "@supabase/config/effect";
+import { inferFunctionsManifest, resolveCliConfigSubtree } from "@supabase/config/effect";
 import { Effect, FileSystem, Option, Path, Result } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -851,14 +851,14 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     //
     // `config.functions.<slug>.env.<VAR>` is schema-marked deferred
     // (`env(...)`, `packages/config/src/lib/env.ts`) and only gets its
-    // literal interpolated by `resolveProjectSubtree` — without this step, a
+    // literal interpolated by `resolveCliConfigSubtree` — without this step, a
     // configured `[functions.<slug>.env]` entry reaches Edge Runtime as the
     // literal string `"env(API_KEY)"` instead of the real secret.
     // `functions serve`'s own call site already resolves this subtree first
     // (`shared/functions/serve.ts:615-622`) before the same
     // `toPlainFunctionRecord` call — same reasoning as `resolvedEdgeRuntime`
     // below, just for the sibling `functions` subtree.
-    const resolvedFunctions = yield* resolveProjectSubtree(
+    const resolvedFunctions = yield* resolveCliConfigSubtree(
       config.functions,
       { values: projectEnvValues ?? {} },
       "functions",
@@ -869,8 +869,8 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       cwd: cliSettings.workdir,
       config: { ...config, functions: configDeclaredFunctions },
       // `search: false`: `cliSettings.workdir` is already the fully-resolved chdir target (same
-      // reasoning as `legacy-local-project-context.ts`'s `loadProjectEnvironment` call) — letting
-      // `findProjectPaths` climb ancestors again here would let an unrelated ancestor project's
+      // reasoning as `legacy-local-project-context.ts`'s `loadCliProjectEnvironment` call) — letting
+      // `findCliProjectPaths` climb ancestors again here would let an unrelated ancestor project's
       // `supabase/functions` win when `--workdir`/`SUPABASE_WORKDIR` points at a subdirectory with
       // no `supabase/config.toml` of its own.
       search: false,
@@ -1680,13 +1680,13 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           // `config.edge_runtime.secrets` is still schema-decoded plain
           // strings here — `toPlainEdgeRuntimeConfig` only emits entries
           // whose values are `Redacted` (`shared/functions/serve.ts`), and a
-          // value only becomes `Redacted` after `resolveProjectSubtree`'s
+          // value only becomes `Redacted` after `resolveCliConfigSubtree`'s
           // env-interpolation + secret-path-redaction pass. Without this step
           // every configured `[edge_runtime.secrets]` entry is silently
           // dropped — `functions serve`'s own call site already resolves the
           // subtree first (`shared/functions/serve.ts:603-610`) before
           // calling the same helper.
-          const resolvedEdgeRuntime = yield* resolveProjectSubtree(
+          const resolvedEdgeRuntime = yield* resolveCliConfigSubtree(
             config.edge_runtime,
             { values: projectEnvValues ?? {} },
             "edge_runtime",

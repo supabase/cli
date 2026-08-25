@@ -3,7 +3,7 @@ import { resolveSupabaseHome } from "../../shared/config/supabase-home.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { resolvePosthogConfig } from "../../shared/telemetry/posthog-config.ts";
 import { CliSettings } from "./cli-settings.service.ts";
-import { ProjectContext } from "./project-context.service.ts";
+import { CliProjectContext } from "./cli-project-context.service.ts";
 
 const SUPABASE_API_URL = "https://api.supabase.com";
 const SUPABASE_DASHBOARD_URL = "https://supabase.com/dashboard";
@@ -19,8 +19,8 @@ function readEnv(
 
 const makeCliSettings = Effect.gen(function* () {
   const runtimeInfo = yield* RuntimeInfo;
-  const projectContext = yield* ProjectContext;
-  const effectiveEnv = Option.match(projectContext.projectEnv, {
+  const cliProjectContext = yield* CliProjectContext;
+  const effectiveEnv = Option.match(cliProjectContext.projectEnv, {
     onNone: () => process.env,
     onSome: (projectEnv) => projectEnv.values,
   });

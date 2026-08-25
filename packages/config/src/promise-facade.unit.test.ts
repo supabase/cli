@@ -14,12 +14,12 @@ import * as nodeFacade from "./node.ts";
 import { makeCliConfigIo } from "./promise-facade.ts";
 
 const {
-  findProjectPathsFor,
-  findProjectRootFor,
+  findCliProjectPathsFor,
+  findCliProjectRootFor,
   loadFunctionsManifest,
   loadCliConfig,
   loadCliConfigFile,
-  loadProjectEnvironmentFor,
+  loadCliProjectEnvironmentFor,
   saveCliConfig,
 } = bunFacade;
 
@@ -86,7 +86,7 @@ describe("promise-facade via the Bun entrypoint", () => {
     }
   });
 
-  test("findProjectRootFor and findProjectPathsFor resolve from a nested cwd inside a temp project", async () => {
+  test("findCliProjectRootFor and findCliProjectPathsFor resolve from a nested cwd inside a temp project", async () => {
     const cwd = makeTempProject();
     const nested = join(cwd, "apps", "web", "src", "components");
 
@@ -95,8 +95,8 @@ describe("promise-facade via the Bun entrypoint", () => {
       await mkdir(nested, { recursive: true });
       await writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "nested-ref"\n');
 
-      const root = await findProjectRootFor(nested);
-      const paths = await findProjectPathsFor(nested);
+      const root = await findCliProjectRootFor(nested);
+      const paths = await findCliProjectPathsFor(nested);
 
       expect(root).toBe(cwd);
       expect(paths).toEqual({
@@ -111,18 +111,18 @@ describe("promise-facade via the Bun entrypoint", () => {
     }
   });
 
-  test("findProjectRootFor and findProjectPathsFor resolve to null when there is no project", async () => {
+  test("findCliProjectRootFor and findCliProjectPathsFor resolve to null when there is no project", async () => {
     const cwd = makeTempProject();
 
     try {
-      await expect(findProjectRootFor(cwd)).resolves.toBeNull();
-      await expect(findProjectPathsFor(cwd)).resolves.toBeNull();
+      await expect(findCliProjectRootFor(cwd)).resolves.toBeNull();
+      await expect(findCliProjectPathsFor(cwd)).resolves.toBeNull();
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }
   });
 
-  test("loadProjectEnvironmentFor reads supabase/.env layered under an explicit baseEnv", async () => {
+  test("loadCliProjectEnvironmentFor reads supabase/.env layered under an explicit baseEnv", async () => {
     const cwd = makeTempProject();
 
     try {
@@ -133,7 +133,7 @@ describe("promise-facade via the Bun entrypoint", () => {
       // `baseEnv` is passed explicitly (never the default `process.env`) so
       // this assertion can't be satisfied by an unrelated variable leaking in
       // from the real process environment.
-      const projectEnv = await loadProjectEnvironmentFor({ cwd, baseEnv: {} });
+      const projectEnv = await loadCliProjectEnvironmentFor({ cwd, baseEnv: {} });
 
       expect(projectEnv?.values.GREETING).toBe("hello-from-dotenv");
       expect(projectEnv?.sources.GREETING).toBe(".env");
@@ -143,7 +143,7 @@ describe("promise-facade via the Bun entrypoint", () => {
     }
   });
 
-  test("loadProjectEnvironmentFor honors an explicit baseEnv instead of silently defaulting to process.env", async () => {
+  test("loadCliProjectEnvironmentFor honors an explicit baseEnv instead of silently defaulting to process.env", async () => {
     const cwd = makeTempProject();
 
     try {
@@ -151,7 +151,7 @@ describe("promise-facade via the Bun entrypoint", () => {
       await writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "env-ref"\n');
       await writeFile(join(cwd, "supabase", ".env"), "GREETING=from-dotenv\n");
 
-      const projectEnv = await loadProjectEnvironmentFor({
+      const projectEnv = await loadCliProjectEnvironmentFor({
         cwd,
         baseEnv: { GREETING: "from-explicit-base-env" },
       });
@@ -203,12 +203,12 @@ describe("promise-facade via the Bun entrypoint", () => {
 });
 
 const expectedFacadeFunctionNames = [
-  "findProjectPathsFor",
-  "findProjectRootFor",
+  "findCliProjectPathsFor",
+  "findCliProjectRootFor",
   "loadFunctionsManifest",
   "loadCliConfig",
   "loadCliConfigFile",
-  "loadProjectEnvironmentFor",
+  "loadCliProjectEnvironmentFor",
   "saveCliConfig",
 ];
 
@@ -295,8 +295,8 @@ describe("promise-facade singleton runtime", () => {
       );
       const io = makeCliConfigIo(countingLayer);
 
-      await io.findProjectRootFor(cwd);
-      await io.findProjectRootFor(cwd);
+      await io.findCliProjectRootFor(cwd);
+      await io.findCliProjectRootFor(cwd);
 
       expect(builds).toBe(1);
     } finally {

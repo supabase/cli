@@ -10,10 +10,10 @@ export {
 export { inferFunctionsManifest } from "./functions-manifest.ts";
 export {
   loadDotEnvFile,
-  loadProjectEnvironment,
-  resolveProjectSubtree,
-  resolveProjectValue,
+  loadCliProjectEnvironment,
+  resolveCliConfigSubtree,
+  resolveCliConfigValue,
 } from "./project.ts";
-export { findProjectPaths, findProjectRoot } from "./paths.ts";
+export { findCliProjectPaths, findCliProjectRoot } from "./paths.ts";
 export { cliConfigStoreLayer } from "./cli-config.layer.ts";
 export { CliConfigStore } from "./cli-config.service.ts";

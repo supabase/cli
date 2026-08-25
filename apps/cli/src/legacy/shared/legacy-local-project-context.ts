@@ -1,6 +1,6 @@
 import {
   loadCliConfig,
-  loadProjectEnvironment,
+  loadCliProjectEnvironment,
   CliConfigSchema,
   type LoadedCliConfig,
   type CliConfig,
@@ -67,11 +67,11 @@ export const legacyLoadLocalProjectContext = <E>(
     // `search: false`: `workdir` already IS the fully-resolved chdir target (`legacy-cli-settings.
     // layer.ts`'s `resolveWorkdir` mirrors `ChangeWorkDir`'s explicit-exact-vs-default-searched
     // resolution), so letting `@supabase/config`'s
-    // `findProjectPaths` climb ancestors again on top of that would let an unrelated ancestor
+    // `findCliProjectPaths` climb ancestors again on top of that would let an unrelated ancestor
     // project's config.toml win when `--workdir`/`SUPABASE_WORKDIR` points at a subdirectory with
     // no `supabase/config.toml` of its own — this never searches past the exact (explicit or
     // defaulted) workdir (`NewPathBuilder`).
-    const projectEnv = yield* loadProjectEnvironment({
+    const projectEnv = yield* loadCliProjectEnvironment({
       cwd: workdir,
       baseEnv: process.env,
       search: false,
@@ -80,7 +80,7 @@ export const legacyLoadLocalProjectContext = <E>(
       // non-test `supabase/.env.local` is then invisible to Go and must not fail config loading
       // here either. `legacyResolveProjectEnvironmentValues` below already applies this same gate
       // for the project-root pass; this mirrors it for the `supabase/`-dir pass
-      // `loadProjectEnvironment` itself performs.
+      // `loadCliProjectEnvironment` itself performs.
       skipEnvLocal: (process.env["SUPABASE_ENV"] || "development") === "test",
     }).pipe(
       Effect.mapError((cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`)),

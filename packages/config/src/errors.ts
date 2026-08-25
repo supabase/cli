@@ -48,7 +48,7 @@ export class CliConfigParseError extends Data.TaggedError("CliConfigParseError")
   readonly appliedRemote?: string;
 }> {}
 
-export class ProjectEnvParseError extends Data.TaggedError("ProjectEnvParseError")<{
+export class CliProjectEnvParseError extends Data.TaggedError("CliProjectEnvParseError")<{
   readonly path: string;
   readonly line: number;
 }> {}

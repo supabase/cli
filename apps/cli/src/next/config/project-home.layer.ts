@@ -1,12 +1,12 @@
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
-import { ProjectContext } from "./project-context.service.ts";
+import { CliProjectContext } from "./cli-project-context.service.ts";
 import { ProjectHome, ProjectHomeNotDirectoryError } from "./project-home.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 
 const PROJECT_HOME_DIR_NAME = ".supabase";
 const PROJECT_LINK_FILE_NAME = "project.json";
 
-const findProjectRootFromRepoState = (
+const findCliProjectRootFromRepoState = (
   cwd: string,
 ): Effect.Effect<string, never, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
@@ -35,11 +35,11 @@ const makeProjectHome = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runtimeInfo = yield* RuntimeInfo;
-  const projectContext = yield* ProjectContext;
+  const cliProjectContext = yield* CliProjectContext;
 
-  const projectRoot = Option.isSome(projectContext.paths)
-    ? projectContext.paths.value.projectRoot
-    : yield* findProjectRootFromRepoState(runtimeInfo.cwd);
+  const projectRoot = Option.isSome(cliProjectContext.paths)
+    ? cliProjectContext.paths.value.projectRoot
+    : yield* findCliProjectRootFromRepoState(runtimeInfo.cwd);
   const supabaseDir = path.join(projectRoot, "supabase");
   const projectHomeDir = path.join(projectRoot, PROJECT_HOME_DIR_NAME);
   const projectLinkPath = path.join(projectHomeDir, "project.json");

@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { Effect, Layer, Option } from "effect";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import { cliSettingsLayer } from "./cli-settings.layer.ts";
-import { projectContextLayer } from "./project-context.layer.ts";
+import { cliProjectContextLayer } from "./cli-project-context.layer.ts";
 import { projectHomeLayer } from "./project-home.layer.ts";
 import { projectLocalServiceVersionsLayer } from "./project-local-service-versions.layer.ts";
 import { ProjectHome } from "./project-home.service.ts";
@@ -23,19 +23,19 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?:
     homeDir: opts.homeDir ?? join(opts.cwd, ".home"),
   });
   const envLayer = processEnvLayer(opts.env ?? {});
-  const discoveredProjectContextLayer = projectContextLayer.pipe(
+  const discoveredCliProjectContextLayer = cliProjectContextLayer.pipe(
     Layer.provide(BunServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(envLayer),
   );
   const discoveredCliSettingsLayer = cliSettingsLayer.pipe(
     Layer.provide(runtimeInfoLayer),
-    Layer.provide(discoveredProjectContextLayer),
+    Layer.provide(discoveredCliProjectContextLayer),
   );
   const discoveredProjectHomeLayer = projectHomeLayer.pipe(
     Layer.provide(BunServices.layer),
     Layer.provide(runtimeInfoLayer),
-    Layer.provide(discoveredProjectContextLayer),
+    Layer.provide(discoveredCliProjectContextLayer),
     Layer.provide(discoveredCliSettingsLayer),
   );
   const discoveredProjectLocalServiceVersionsLayer = projectLocalServiceVersionsLayer.pipe(
@@ -47,7 +47,7 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?:
     BunServices.layer,
     runtimeInfoLayer,
     envLayer,
-    discoveredProjectContextLayer,
+    discoveredCliProjectContextLayer,
     discoveredCliSettingsLayer,
     discoveredProjectHomeLayer,
     discoveredProjectLocalServiceVersionsLayer,

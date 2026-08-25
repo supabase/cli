@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, vi } from "vitest";
 import { Effect, FileSystem, Layer, Option, Redacted } from "effect";
 import {
-  mockProjectContext,
+  mockCliProjectContext,
   mockRuntimeInfo,
   processEnvLayer,
 } from "../../../tests/helpers/mocks.ts";
@@ -66,13 +66,13 @@ vi.mock("@napi-rs/keyring", () => ({
 
 function makeLayer(home: string, env: Record<string, string> = {}) {
   const runtimeInfoLayer = mockRuntimeInfo({ homeDir: home });
-  const projectContextLayer = mockProjectContext();
+  const cliProjectContextLayer = mockCliProjectContext();
   const baseLayer = Layer.mergeAll(
     BunServices.layer,
     runtimeInfoLayer,
-    projectContextLayer,
+    cliProjectContextLayer,
     processEnvLayer({ HOME: home, ...env }),
-    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
+    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
   );
   return credentialsLayer.pipe(Layer.provide(baseLayer));
 }
@@ -220,18 +220,18 @@ describe("Credentials", () => {
           readFileString: (_path: string) => Effect.fail(new Error("permission denied") as any),
         } as any);
         const runtimeInfoLayer = mockRuntimeInfo({ homeDir: tempHome });
-        const projectContextLayer = mockProjectContext();
+        const cliProjectContextLayer = mockCliProjectContext();
         const layer = credentialsLayer.pipe(
           Layer.provide(
             Layer.mergeAll(
               failingFs,
               BunServices.layer,
               runtimeInfoLayer,
-              projectContextLayer,
+              cliProjectContextLayer,
               processEnvLayer({ HOME: tempHome }),
               cliSettingsLayer.pipe(
                 Layer.provide(runtimeInfoLayer),
-                Layer.provide(projectContextLayer),
+                Layer.provide(cliProjectContextLayer),
               ),
             ),
           ),

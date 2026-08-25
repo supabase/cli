@@ -3,7 +3,7 @@ import * as SmolToml from "smol-toml";
 import { CliConfigSchema, type CliConfig } from "./base.ts";
 import type { ConfigFormat } from "./config-format.ts";
 import { getDefaultCliConfig, setOwnProperty, subtractValue } from "./sparse.ts";
-import type { ProjectEnvironment } from "./project.ts";
+import type { CliProjectEnvironment } from "./project.ts";
 
 /** Shared with `io.ts`'s `getSchemaRef`, which reads this key back off a raw document. */
 export const cliConfigSchemaKey = "$schema";
@@ -86,8 +86,8 @@ export interface LoadCliConfigOptions {
    * also reads `.env.<SUPABASE_ENV>` files) resolve it themselves and pass it in
    * so loading does not re-read those files or depend on `process.env` mutation.
    */
-  readonly projectEnv?: ProjectEnvironment;
-  /** See {@link FindProjectPathsOptions.search}. */
+  readonly projectEnv?: CliProjectEnvironment;
+  /** See {@link FindCliProjectPathsOptions.search}. */
   readonly search?: boolean;
   /**
    * Skip the `config.json`-over-`config.toml` preference below and only ever

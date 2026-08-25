@@ -1,4 +1,4 @@
-import { loadCliConfig, loadProjectEnvironment } from "@supabase/config/effect";
+import { loadCliConfig, loadCliProjectEnvironment } from "@supabase/config/effect";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { legacyAssertDecodableJwkAlgorithm } from "../../shared/legacy-go-jwt.ts";
 import { legacyGoJsonKindName } from "../../shared/legacy-go-json.ts";
@@ -481,7 +481,7 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
   // files AND the project-root directory (`<workdir>/.env`), not just
   // `supabase/.env`/`.env.local`. `loadCliConfig`'s OWN internal env
   // resolution (used whenever `options.projectEnv` is omitted,
-  // `@supabase/config`'s `loadProjectEnvironment`) only covers that narrower
+  // `@supabase/config`'s `loadCliProjectEnvironment`) only covers that narrower
   // `supabase/`-dir, env-agnostic half — so `[auth].signing_keys_path =
   // "env(KEYS_PATH)"` with `KEYS_PATH` set only in
   // `.env.development`/`<workdir>/.env` would otherwise stay literally
@@ -489,7 +489,7 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
   // with it fine. Fills the exact same gap `legacy-local-project-context.ts`'s
   // `legacyLoadLocalProjectContext` already fills for `stop`/`status`, via the
   // same two-step resolution.
-  const projectEnv = yield* loadProjectEnvironment({
+  const projectEnv = yield* loadCliProjectEnvironment({
     cwd,
     baseEnv: process.env,
     search: false,

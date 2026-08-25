@@ -7,7 +7,7 @@ import {
   type ResolvedFunctionConfig,
 } from "./functions-manifest-model.ts";
 import { loadCliConfig } from "./io.ts";
-import { findProjectPaths } from "./paths.ts";
+import { findCliProjectPaths } from "./paths.ts";
 
 const functionSlugPattern = /^[a-zA-Z0-9_-]+$/;
 const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
@@ -16,7 +16,7 @@ const emptyConfig = decodeCliConfig({});
 interface InferFunctionsManifestOptions {
   readonly cwd: string;
   readonly config?: CliConfig;
-  /** Forwarded to {@link findProjectPaths}'s own `search` option — see its doc comment. */
+  /** Forwarded to {@link findCliProjectPaths}'s own `search` option — see its doc comment. */
   readonly search?: boolean;
 }
 
@@ -71,8 +71,8 @@ export const inferFunctionsManifest = Effect.fnUntraced(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const projectPaths = yield* findProjectPaths(options.cwd, { search: options.search });
-  const projectRoot = projectPaths?.projectRoot ?? options.cwd;
+  const cliProjectPaths = yield* findCliProjectPaths(options.cwd, { search: options.search });
+  const projectRoot = cliProjectPaths?.projectRoot ?? options.cwd;
   const config =
     options.config ??
     (yield* loadCliConfig(options.cwd).pipe(

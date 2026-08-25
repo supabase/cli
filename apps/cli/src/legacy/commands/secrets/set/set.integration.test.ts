@@ -573,12 +573,12 @@ FROM_CONFIG = "config-value"
     () => {
       // `loadCliConfig` resolves `env(VAR)` references against
       // `supabase/.env`/`.env.local` *before* schema decode, so a malformed
-      // dotenv line fails with `ProjectEnvParseError` rather than
+      // dotenv line fails with `CliProjectEnvParseError` rather than
       // `CliConfigParseError`. `Load()` (`pkg/config/config.go:788-791`)
       // calls `loadNestedEnv` first too and swallows any error the same
       // non-fatal way — so this must not abort the command either. `.env`
       // is only read once a `supabase/config.toml`/`.json` is found
-      // (`findProjectPaths`), so a config.toml must exist here too.
+      // (`findCliProjectPaths`), so a config.toml must exist here too.
       writeConfig(
         `[edge_runtime.secrets]
 FROM_CONFIG = "config-value"

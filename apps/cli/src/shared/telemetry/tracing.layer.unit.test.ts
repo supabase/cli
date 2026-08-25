@@ -16,7 +16,7 @@ import { Effect, Exit, Layer, Option, Context, Tracer } from "effect";
 import { cliSettingsLayer } from "../../next/config/cli-settings.layer.ts";
 import type { TelemetryConfig } from "./types.ts";
 import {
-  mockProjectContext,
+  mockCliProjectContext,
   mockRuntimeInfo,
   mockTty,
   processEnvLayer,
@@ -53,13 +53,13 @@ function buildLayer(opts: { home: string; env?: Record<string, string>; stdoutIs
     platform: "linux",
     arch: "x64",
   });
-  const projectContextLayer = mockProjectContext();
+  const cliProjectContextLayer = mockCliProjectContext();
   return Layer.mergeAll(
     fsLayer,
     runtimeInfoLayer,
-    projectContextLayer,
+    cliProjectContextLayer,
     processEnvLayer(env),
-    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
+    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
     mockTty({
       stdoutIsTty: opts.stdoutIsTty ?? false,
       stdinIsTty: false,

@@ -8,8 +8,8 @@ import { Effect, Layer, Option, Redacted } from "effect";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import { CliSettings } from "./cli-settings.service.ts";
 import { cliSettingsLayer } from "./cli-settings.layer.ts";
-import { projectContextLayer } from "./project-context.layer.ts";
-import { ProjectContext } from "./project-context.service.ts";
+import { cliProjectContextLayer } from "./cli-project-context.layer.ts";
+import { CliProjectContext } from "./cli-project-context.service.ts";
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "supabase-cli-settings-"));
@@ -21,21 +21,21 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?:
     homeDir: opts.homeDir ?? join(opts.cwd, ".home"),
   });
   const envLayer = processEnvLayer(opts.env ?? {});
-  const discoveredProjectContextLayer = projectContextLayer.pipe(
+  const discoveredCliProjectContextLayer = cliProjectContextLayer.pipe(
     Layer.provide(BunServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(envLayer),
   );
   const discoveredCliSettingsLayer = cliSettingsLayer.pipe(
     Layer.provide(runtimeInfoLayer),
-    Layer.provide(discoveredProjectContextLayer),
+    Layer.provide(discoveredCliProjectContextLayer),
   );
 
   return Layer.mergeAll(
     BunServices.layer,
     runtimeInfoLayer,
     envLayer,
-    discoveredProjectContextLayer,
+    discoveredCliProjectContextLayer,
     discoveredCliSettingsLayer,
   );
 }
@@ -45,10 +45,10 @@ describe("cliSettingsLayer", () => {
     const tempDir = makeTempDir();
     return Effect.gen(function* () {
       const cliSettings = yield* CliSettings;
-      const projectContext = yield* ProjectContext;
+      const cliProjectContext = yield* CliProjectContext;
 
       expect(cliSettings.apiUrl).toBe("https://ambient.example");
-      expect(Option.isNone(projectContext.paths)).toBe(true);
+      expect(Option.isNone(cliProjectContext.paths)).toBe(true);
     }).pipe(
       Effect.provide(
         buildLayer({
@@ -96,18 +96,18 @@ describe("cliSettingsLayer", () => {
           ),
         );
 
-        const { cliSettings, projectContext } = yield* Effect.gen(function* () {
+        const { cliSettings, cliProjectContext } = yield* Effect.gen(function* () {
           return {
             cliSettings: yield* CliSettings,
-            projectContext: yield* ProjectContext,
+            cliProjectContext: yield* CliProjectContext,
           };
         }).pipe(Effect.provide(buildLayer({ cwd })));
 
         expect(cliSettings.apiUrl).toBe("https://local.example");
         expect(cliSettings.dashboardUrl).toBe("https://dashboard.example");
-        expect(Option.isSome(projectContext.paths)).toBe(true);
-        if (Option.isSome(projectContext.paths)) {
-          expect(projectContext.paths.value.projectRoot).toBe(packageRoot);
+        expect(Option.isSome(cliProjectContext.paths)).toBe(true);
+        if (Option.isSome(cliProjectContext.paths)) {
+          expect(cliProjectContext.paths.value.projectRoot).toBe(packageRoot);
         }
       }).pipe(
         Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
