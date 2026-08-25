@@ -15,7 +15,7 @@ import {
   mockOutput,
   mockProcessControl,
   mockProjectLinkState,
-  mockProjectLocalServiceVersions,
+  mockCliProjectLocalServiceVersions,
 } from "../../../../tests/helpers/mocks.ts";
 import { makeRunningStackFixture } from "../../../../tests/helpers/running-stack.ts";
 
@@ -74,7 +74,7 @@ describe("start handler", () => {
                 Layer.succeed(StartVersionState, state),
                 mockProcessControl().layer,
                 mockProjectLinkState(),
-                mockProjectLocalServiceVersions(),
+                mockCliProjectLocalServiceVersions(),
                 BunServices.layer,
                 inkLayer,
               );

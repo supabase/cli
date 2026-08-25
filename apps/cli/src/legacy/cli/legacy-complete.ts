@@ -1704,7 +1704,7 @@ export function legacyCaptureCompleteTelemetryEffect(
 
 const LEGACY_COMPLETE_TELEMETRY_TIMEOUT = "2 seconds";
 
-// `legacyAnalyticsLayer` on its own still needs `CliConfig | RuntimeInfo | Tty`
+// `legacyAnalyticsLayer` on its own still needs `CliSettings | RuntimeInfo | Tty`
 // (via the `telemetryRuntimeLayer` it folds in) on top of the `FileSystem`/
 // `Path` platform layer — `shared/cli/run.ts` normally supplies those as part
 // of its own much larger composed tree. `standaloneAnalyticsConfigLayer`

@@ -158,7 +158,7 @@ export function legacyPflagWorkdirValue(
  * command from the root `PersistentPreRunE` — after `ParseFlags` and
  * `ValidateArgs`, before `ValidateRequiredFlags`, `ValidateFlagGroups`, and
  * `RunE` — so no API call is ever made. The Effect layer neither validates
- * the resolved workdir (`legacy-cli-config.layer.ts` only path-resolves it)
+ * the resolved workdir (`legacy-cli-settings.layer.ts` only path-resolves it)
  * nor sees the value at all when `--workdir` consumed a flag-shaped token,
  * hence the emulation here (PR #5974 review round 6).
  *
@@ -205,7 +205,7 @@ export const legacyValidatePflagWorkdir = Effect.fnUntraced(function* (
  * parsed flag cannot distinguish an explicit `--profile supabase` from the
  * flag's default, so that value is treated as unset (the config layer
  * closes the same gap with its own argv scan,
- * `legacy-cli-config.layer.ts`).
+ * `legacy-cli-settings.layer.ts`).
  */
 export function legacyPflagProfileValue(
   scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
@@ -243,7 +243,7 @@ export function legacyPflagProfileValue(
  * Emulates `LoadProfile` for
  * the pflag/viper-effective profile, returning the API URL the request must
  * target when it differs from the one the Effect config layer resolved —
- * `Option.none` means the layer's `LegacyCliConfig.apiUrl` already matches
+ * `Option.none` means the layer's `LegacyCliSettings.apiUrl` already matches
  * the established resolution. The profile loads immediately BEFORE `ChangeWorkDir`, so a load
  * failure here must precede the workdir check (and, like it, the
  * required-flag check, the mutex check, and any API request).

@@ -11,7 +11,7 @@ import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyCredentialsTracked,
   mockLegacyPlatformApiService,
   mockLegacyTelemetryStateTracked,
@@ -63,12 +63,15 @@ function setup(opts: SetupOpts = {}) {
   const telemetry = mockLegacyTelemetryStateTracked();
   const credentials = mockLegacyCredentialsTracked({ deleteFails: opts.deleteFails });
   const apiMock = mockLegacyPlatformApiService({ v1: {} });
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current, projectId: Option.none() });
+  const cliSettings = mockLegacyCliSettings({
+    workdir: tempRoot.current,
+    projectId: Option.none(),
+  });
   const layer = Layer.mergeAll(
     buildLegacyTestRuntime({
       out,
       api: { layer: apiMock.layer, httpClientLayer: noopHttpClient },
-      cliConfig,
+      cliSettings,
       analytics: mockAnalytics(),
       telemetry: telemetry.layer,
     }),

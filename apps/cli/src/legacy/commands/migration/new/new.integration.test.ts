@@ -7,7 +7,7 @@ import { badArgument } from "effect/PlatformError";
 
 import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -52,7 +52,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     out.layer,
     telemetry.layer,
     mockStdin(opts.isTTY ?? true, opts.piped),
-    mockLegacyCliConfig({ workdir }),
+    mockLegacyCliSettings({ workdir }),
     BunServices.layer,
     ...(opts.openDoesNotMaterialize === true || opts.writeDoesNotMaterialize === true
       ? [nonMaterializingFsLayer(workdir, opts)]
@@ -229,7 +229,7 @@ describe("legacy migration new", () => {
         out.layer,
         telemetry.layer,
         failingStdin,
-        mockLegacyCliConfig({ workdir: tmp.current }),
+        mockLegacyCliSettings({ workdir: tmp.current }),
         BunServices.layer,
       );
       return Effect.gen(function* () {

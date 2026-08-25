@@ -17,7 +17,7 @@ import {
 } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApiService,
   mockLegacyTelemetryStateTracked,
@@ -501,7 +501,7 @@ function setup(
     out.layer,
     conn.layer,
     resolver.layer,
-    mockLegacyCliConfig({ workdir }),
+    mockLegacyCliSettings({ workdir }),
     BunServices.layer,
     child.layer,
     mockRuntimeInfo({ platform: "linux" }),

@@ -23,7 +23,7 @@ import {
 } from "../../../../../tests/helpers/mocks.ts";
 import {
   legacyIsolatedHomeLayer,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyCredentialsLayer,
   mockLegacyLinkedProjectCacheLayer,
   mockLegacyTelemetryStateLayer,
@@ -80,7 +80,7 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
-    // The runtime layer under test builds the REAL legacyCliConfigLayer against
+    // The runtime layer under test builds the REAL legacyCliSettingsLayer against
     // the real filesystem — see legacyIsolatedHomeLayer's docs.
     legacyIsolatedHomeLayer(tempRoot.current),
     mockTty(),
@@ -89,7 +89,7 @@ function ambientStubs() {
     mockTelemetryRuntime(),
     out.layer,
     flagLayers,
-    mockLegacyCliConfig({ workdir: "/tmp/gen-types-layers-test" }),
+    mockLegacyCliSettings({ workdir: "/tmp/gen-types-layers-test" }),
     mockLegacyCredentialsLayer,
     mockLegacyLinkedProjectCacheLayer,
     mockLegacyTelemetryStateLayer,

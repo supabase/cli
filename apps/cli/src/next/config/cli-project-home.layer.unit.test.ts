@@ -6,11 +6,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Cause, Effect, Exit, Layer, Option, Result } from "effect";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
-import { cliConfigLayer } from "./cli-config.layer.ts";
-import { projectContextLayer } from "./project-context.layer.ts";
-import { projectHomeLayer } from "./project-home.layer.ts";
-import { ProjectContext } from "./project-context.service.ts";
-import { ProjectHome, ProjectHomeNotDirectoryError } from "./project-home.service.ts";
+import { cliSettingsLayer } from "./cli-settings.layer.ts";
+import { cliProjectContextLayer } from "./cli-project-context.layer.ts";
+import { cliProjectHomeLayer } from "./cli-project-home.layer.ts";
+import { CliProjectContext } from "./cli-project-context.service.ts";
+import { CliProjectHome, CliProjectHomeNotDirectoryError } from "./cli-project-home.service.ts";
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "supabase-project-home-"));
@@ -22,33 +22,33 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?:
     homeDir: opts.homeDir ?? join(opts.cwd, ".home"),
   });
   const envLayer = processEnvLayer(opts.env ?? {});
-  const discoveredProjectContextLayer = projectContextLayer.pipe(
+  const discoveredCliProjectContextLayer = cliProjectContextLayer.pipe(
     Layer.provide(BunServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(envLayer),
   );
-  const discoveredCliConfigLayer = cliConfigLayer.pipe(
+  const discoveredCliSettingsLayer = cliSettingsLayer.pipe(
     Layer.provide(runtimeInfoLayer),
-    Layer.provide(discoveredProjectContextLayer),
+    Layer.provide(discoveredCliProjectContextLayer),
   );
-  const discoveredProjectHomeLayer = projectHomeLayer.pipe(
+  const discoveredCliProjectHomeLayer = cliProjectHomeLayer.pipe(
     Layer.provide(BunServices.layer),
     Layer.provide(runtimeInfoLayer),
-    Layer.provide(discoveredProjectContextLayer),
-    Layer.provide(discoveredCliConfigLayer),
+    Layer.provide(discoveredCliProjectContextLayer),
+    Layer.provide(discoveredCliSettingsLayer),
   );
 
   return Layer.mergeAll(
     BunServices.layer,
     runtimeInfoLayer,
     envLayer,
-    discoveredProjectContextLayer,
-    discoveredCliConfigLayer,
-    discoveredProjectHomeLayer,
+    discoveredCliProjectContextLayer,
+    discoveredCliSettingsLayer,
+    discoveredCliProjectHomeLayer,
   );
 }
 
-describe("projectHomeLayer", () => {
+describe("cliProjectHomeLayer", () => {
   it.live("resolves a repo-local project home from the nearest discovered config root", () => {
     const tempDir = makeTempDir();
     const repoRoot = join(tempDir, "repo");
@@ -63,18 +63,18 @@ describe("projectHomeLayer", () => {
         writeFile(join(packageRoot, "supabase", "config.toml"), 'project_id = "web"\n'),
       );
 
-      const { projectHome, projectContext } = yield* Effect.gen(function* () {
+      const { cliProjectHome, cliProjectContext } = yield* Effect.gen(function* () {
         return {
-          projectHome: yield* ProjectHome,
-          projectContext: yield* ProjectContext,
+          cliProjectHome: yield* CliProjectHome,
+          cliProjectContext: yield* CliProjectContext,
         };
       }).pipe(Effect.provide(buildLayer({ cwd, env: { SUPABASE_HOME: supabaseHome } })));
 
-      expect(Option.isSome(projectContext.paths)).toBe(true);
-      expect(projectHome.projectRoot).toBe(packageRoot);
-      expect(projectHome.supabaseDir).toBe(join(packageRoot, "supabase"));
-      expect(projectHome.projectHomeDir).toBe(join(packageRoot, ".supabase"));
-      expect(projectHome.projectLocalVersionsPath).toBe(
+      expect(Option.isSome(cliProjectContext.paths)).toBe(true);
+      expect(cliProjectHome.projectRoot).toBe(packageRoot);
+      expect(cliProjectHome.supabaseDir).toBe(join(packageRoot, "supabase"));
+      expect(cliProjectHome.projectHomeDir).toBe(join(packageRoot, ".supabase"));
+      expect(cliProjectHome.projectLocalVersionsPath).toBe(
         join(packageRoot, ".supabase", "local-versions.json"),
       );
     }).pipe(
@@ -96,13 +96,13 @@ describe("projectHomeLayer", () => {
       yield* Effect.tryPromise(() => mkdir(cwd, { recursive: true }));
 
       const layer = buildLayer({ cwd, env: { SUPABASE_HOME: join(tempDir, "supabase-home") } });
-      const projectHome = yield* Effect.gen(function* () {
-        return yield* ProjectHome;
+      const cliProjectHome = yield* Effect.gen(function* () {
+        return yield* CliProjectHome;
       }).pipe(Effect.provide(layer));
 
-      expect(projectHome.projectRoot).toBe(projectRoot);
-      expect(projectHome.projectHomeDir).toBe(join(projectRoot, ".supabase"));
-      expect(projectHome.supabaseDir).toBe(join(projectRoot, "supabase"));
+      expect(cliProjectHome.projectRoot).toBe(projectRoot);
+      expect(cliProjectHome.projectHomeDir).toBe(join(projectRoot, ".supabase"));
+      expect(cliProjectHome.supabaseDir).toBe(join(projectRoot, "supabase"));
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );
@@ -118,13 +118,13 @@ describe("projectHomeLayer", () => {
       yield* Effect.tryPromise(() => mkdir(cwd, { recursive: true }));
 
       const layer = buildLayer({ cwd, env: { SUPABASE_HOME: join(tempDir, "supabase-home") } });
-      const projectHome = yield* Effect.gen(function* () {
-        return yield* ProjectHome;
+      const cliProjectHome = yield* Effect.gen(function* () {
+        return yield* CliProjectHome;
       }).pipe(Effect.provide(layer));
 
-      expect(projectHome.projectRoot).toBe(cwd);
-      expect(projectHome.projectHomeDir).toBe(join(cwd, ".supabase"));
-      expect(projectHome.projectLinkPath).toBe(join(cwd, ".supabase", "project.json"));
+      expect(cliProjectHome.projectRoot).toBe(cwd);
+      expect(cliProjectHome.projectHomeDir).toBe(join(cwd, ".supabase"));
+      expect(cliProjectHome.projectLinkPath).toBe(join(cwd, ".supabase", "project.json"));
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );
@@ -139,13 +139,13 @@ describe("projectHomeLayer", () => {
         cwd: projectRoot,
         env: { SUPABASE_HOME: join(tempDir, "supabase-home") },
       });
-      const projectHome = yield* Effect.gen(function* () {
-        return yield* ProjectHome;
+      const cliProjectHome = yield* Effect.gen(function* () {
+        return yield* CliProjectHome;
       }).pipe(Effect.provide(layer));
 
-      yield* projectHome.ensureProjectHomeDir;
-      yield* Effect.tryPromise(() => writeFile(projectHome.projectLinkPath, "{}\n"));
-      expect(yield* Effect.tryPromise(() => readFile(projectHome.projectLinkPath, "utf8"))).toBe(
+      yield* cliProjectHome.ensureCliProjectHomeDir;
+      yield* Effect.tryPromise(() => writeFile(cliProjectHome.projectLinkPath, "{}\n"));
+      expect(yield* Effect.tryPromise(() => readFile(cliProjectHome.projectLinkPath, "utf8"))).toBe(
         "{}\n",
       );
     }).pipe(
@@ -153,44 +153,47 @@ describe("projectHomeLayer", () => {
     );
   });
 
-  it.live("dies with ProjectHomeNotDirectoryError when a FILE occupies the .supabase path", () => {
-    const tempDir = makeTempDir();
-    const projectRoot = join(tempDir, "repo");
+  it.live(
+    "dies with CliProjectHomeNotDirectoryError when a FILE occupies the .supabase path",
+    () => {
+      const tempDir = makeTempDir();
+      const projectRoot = join(tempDir, "repo");
 
-    return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => mkdir(projectRoot, { recursive: true }));
-      yield* Effect.tryPromise(() =>
-        writeFile(join(projectRoot, ".supabase"), "not a directory\n"),
-      );
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => mkdir(projectRoot, { recursive: true }));
+        yield* Effect.tryPromise(() =>
+          writeFile(join(projectRoot, ".supabase"), "not a directory\n"),
+        );
 
-      const layer = buildLayer({
-        cwd: projectRoot,
-        env: { SUPABASE_HOME: join(tempDir, "supabase-home") },
-      });
-      const projectHome = yield* Effect.gen(function* () {
-        return yield* ProjectHome;
-      }).pipe(Effect.provide(layer));
+        const layer = buildLayer({
+          cwd: projectRoot,
+          env: { SUPABASE_HOME: join(tempDir, "supabase-home") },
+        });
+        const cliProjectHome = yield* Effect.gen(function* () {
+          return yield* CliProjectHome;
+        }).pipe(Effect.provide(layer));
 
-      const exit = yield* projectHome.ensureProjectHomeDir.pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const defect = Cause.findDefect(exit.cause);
-        expect(Result.isSuccess(defect)).toBe(true);
-        if (Result.isSuccess(defect)) {
-          expect(defect.success).toBeInstanceOf(ProjectHomeNotDirectoryError);
-          expect(defect.success).toMatchObject({ _tag: "ProjectHomeNotDirectoryError" });
-          expect((defect.success as ProjectHomeNotDirectoryError).message).toContain(
-            "could not be created",
-          );
+        const exit = yield* cliProjectHome.ensureCliProjectHomeDir.pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const defect = Cause.findDefect(exit.cause);
+          expect(Result.isSuccess(defect)).toBe(true);
+          if (Result.isSuccess(defect)) {
+            expect(defect.success).toBeInstanceOf(CliProjectHomeNotDirectoryError);
+            expect(defect.success).toMatchObject({ _tag: "CliProjectHomeNotDirectoryError" });
+            expect((defect.success as CliProjectHomeNotDirectoryError).message).toContain(
+              "could not be created",
+            );
+          }
         }
-      }
-    }).pipe(
-      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
-    );
-  });
+      }).pipe(
+        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+      );
+    },
+  );
 
   it.live(
-    "dies with ProjectHomeNotDirectoryError (BadResource) when a FILE occupies an ancestor of the project home path",
+    "dies with CliProjectHomeNotDirectoryError (BadResource) when a FILE occupies an ancestor of the project home path",
     () => {
       // Distinct from the AlreadyExists case above: here `.supabase` itself
       // doesn't exist, but a FILE sits on one of ITS OWN parent directories
@@ -208,19 +211,19 @@ describe("projectHomeLayer", () => {
           cwd,
           env: { SUPABASE_HOME: join(tempDir, "supabase-home") },
         });
-        const projectHome = yield* Effect.gen(function* () {
-          return yield* ProjectHome;
+        const cliProjectHome = yield* Effect.gen(function* () {
+          return yield* CliProjectHome;
         }).pipe(Effect.provide(layer));
 
-        const exit = yield* projectHome.ensureProjectHomeDir.pipe(Effect.exit);
+        const exit = yield* cliProjectHome.ensureCliProjectHomeDir.pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const defect = Cause.findDefect(exit.cause);
           expect(Result.isSuccess(defect)).toBe(true);
           if (Result.isSuccess(defect)) {
-            expect(defect.success).toBeInstanceOf(ProjectHomeNotDirectoryError);
-            expect(defect.success).toMatchObject({ _tag: "ProjectHomeNotDirectoryError" });
-            expect((defect.success as ProjectHomeNotDirectoryError).message).toContain(
+            expect(defect.success).toBeInstanceOf(CliProjectHomeNotDirectoryError);
+            expect(defect.success).toMatchObject({ _tag: "CliProjectHomeNotDirectoryError" });
+            expect((defect.success as CliProjectHomeNotDirectoryError).message).toContain(
               "could not be created",
             );
           }

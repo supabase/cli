@@ -79,5 +79,5 @@ are suppressed. Interactive prompts (browser path) fail with `NonInteractiveErro
 - Token resolution priority: `--token` → `SUPABASE_ACCESS_TOKEN` → piped stdin (non-TTY) → browser flow (TTY).
 - The login-session query string is built without URL-encoding.
 - Telemetry stitch always replaces a stale `distinct_id`, independent of the platform-API auto-stitch. The stitch _aliases_ only — it never calls `identify`.
-- On success, an explicitly-set profile is persisted to `~/.supabase/profile`; `LegacyCliConfig` reads it back as the lowest-precedence profile source.
+- On success, an explicitly-set profile is persisted to `~/.supabase/profile`; `LegacyCliSettings` reads it back as the lowest-precedence profile source.
 - ANSI styling (Aqua/Bold) renders as plain text.

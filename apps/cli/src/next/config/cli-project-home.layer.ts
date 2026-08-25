@@ -1,12 +1,12 @@
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
-import { ProjectContext } from "./project-context.service.ts";
-import { ProjectHome, ProjectHomeNotDirectoryError } from "./project-home.service.ts";
+import { CliProjectContext } from "./cli-project-context.service.ts";
+import { CliProjectHome, CliProjectHomeNotDirectoryError } from "./cli-project-home.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 
 const PROJECT_HOME_DIR_NAME = ".supabase";
 const PROJECT_LINK_FILE_NAME = "project.json";
 
-const findProjectRootFromRepoState = (
+const findCliProjectRootFromRepoState = (
   cwd: string,
 ): Effect.Effect<string, never, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
@@ -31,27 +31,27 @@ const findProjectRootFromRepoState = (
     }
   });
 
-const makeProjectHome = Effect.gen(function* () {
+const makeCliProjectHome = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runtimeInfo = yield* RuntimeInfo;
-  const projectContext = yield* ProjectContext;
+  const cliProjectContext = yield* CliProjectContext;
 
-  const projectRoot = Option.isSome(projectContext.paths)
-    ? projectContext.paths.value.projectRoot
-    : yield* findProjectRootFromRepoState(runtimeInfo.cwd);
+  const projectRoot = Option.isSome(cliProjectContext.paths)
+    ? cliProjectContext.paths.value.projectRoot
+    : yield* findCliProjectRootFromRepoState(runtimeInfo.cwd);
   const supabaseDir = path.join(projectRoot, "supabase");
   const projectHomeDir = path.join(projectRoot, PROJECT_HOME_DIR_NAME);
   const projectLinkPath = path.join(projectHomeDir, "project.json");
   const projectLocalVersionsPath = path.join(projectHomeDir, "local-versions.json");
 
-  const ensureProjectHomeDir = fs
+  const ensureCliProjectHomeDir = fs
     .makeDirectory(projectHomeDir, { recursive: true, mode: 0o700 })
     .pipe(
       Effect.catchTag("PlatformError", (error) =>
         error.reason._tag === "AlreadyExists" || error.reason._tag === "BadResource"
           ? Effect.die(
-              new ProjectHomeNotDirectoryError({
+              new CliProjectHomeNotDirectoryError({
                 message: `${projectHomeDir} could not be created: a file (or a symlink loop) exists at that path or on one of its parent directories. Remove or rename it so the Supabase CLI can store project state there.`,
               }),
             )
@@ -59,14 +59,14 @@ const makeProjectHome = Effect.gen(function* () {
       ),
     );
 
-  return ProjectHome.of({
+  return CliProjectHome.of({
     projectRoot,
     supabaseDir,
     projectHomeDir,
     projectLinkPath,
     projectLocalVersionsPath,
-    ensureProjectHomeDir,
+    ensureCliProjectHomeDir,
   });
 });
 
-export const projectHomeLayer = Layer.effect(ProjectHome, makeProjectHome);
+export const cliProjectHomeLayer = Layer.effect(CliProjectHome, makeCliProjectHome);

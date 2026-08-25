@@ -34,7 +34,7 @@ import {
   LegacyNetworkIdFlag,
   legacyResolveDebugWithProjectEnv,
 } from "../../../shared/legacy/global-flags.ts";
-import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
 import { legacyCheckDbToml } from "../legacy-db-config.toml-read.ts";
 import { LegacyDbConfigLoadError } from "../legacy-db-config.errors.ts";
 import {
@@ -116,7 +116,7 @@ export interface LegacyStartLocalDatabaseResult {
  */
 export const legacyStartLocalDatabase = Effect.fnUntraced(function* (fromBackupFlag?: string) {
   const output = yield* Output;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runtimeInfo = yield* RuntimeInfo;
@@ -128,7 +128,7 @@ export const legacyStartLocalDatabase = Effect.fnUntraced(function* (fromBackupF
   // validation aborts before any container work. `legacyCheckDbToml` is that exact
   // load+validate — call it here (not via `legacyIsLocalDbRunning`'s best-effort read, which
   // swallows config errors) so a start fails fast on a broken config.
-  const dbTomlValues = yield* legacyCheckDbToml(fs, path, cliConfig.workdir);
+  const dbTomlValues = yield* legacyCheckDbToml(fs, path, cliSettings.workdir);
 
   // Threaded into `legacyRollbackStart`'s own `legacyDockerRemoveAll` teardown —
   // `--debug` gates that function's `Pruned …:` stderr reports, matching
@@ -158,13 +158,13 @@ export const legacyStartLocalDatabase = Effect.fnUntraced(function* (fromBackupF
   // already-running check, so a malformed `auth.*` duration field must fail this call even
   // when Postgres is already running, not just on a fresh start.
   const context = yield* legacyLoadLocalProjectContext(
-    cliConfig.workdir,
+    cliSettings.workdir,
     (message) => new LegacyDbConfigLoadError({ message }),
   );
   // `projectId`/`hostname` are NOT destructured under their bare names here — the not-running
   // branch below passes this SAME `context` into `legacyBuildLocalDbContainerInputs` as its
   // `preloadedContext` param (reused, not reloaded — a second `legacyLoadLocalProjectContext`
-  // call would run `@supabase/config`'s `loadProjectConfig` again, which unconditionally
+  // call would run `@supabase/config`'s `loadCliConfig` again, which unconditionally
   // prints deprecated-config-section WARN lines to stderr, doubling them for one invocation),
   // and that function returns the SAME context back verbatim as `inputs.context`, later
   // destructured under `context.projectId`/`context.hostname` — re-declaring those same bare
@@ -631,7 +631,7 @@ export const legacyStartLocalDatabase = Effect.fnUntraced(function* (fromBackupF
       legacyResolveLocalConfigValues(
         config,
         hostnameForValidation,
-        cliConfig.workdir,
+        cliSettings.workdir,
         projectEnvValues,
         loaded?.document,
       ),
@@ -648,8 +648,8 @@ export const legacyStartLocalDatabase = Effect.fnUntraced(function* (fromBackupF
     spawner,
     fs,
     path,
-    cliConfig.workdir,
-    Option.getOrUndefined(cliConfig.projectId),
+    cliSettings.workdir,
+    Option.getOrUndefined(cliSettings.projectId),
   );
   if (running) {
     return { status: "already-running" } satisfies LegacyStartLocalDatabaseResult;
@@ -672,7 +672,7 @@ export const legacyStartLocalDatabase = Effect.fnUntraced(function* (fromBackupF
   // deprecated-config-section stderr warning for this single invocation.
   const inputs = yield* legacyBuildLocalDbContainerInputs(
     spawner,
-    cliConfig.workdir,
+    cliSettings.workdir,
     networkIdFlag,
     runtimeInfo.platform,
     debug,
@@ -706,7 +706,7 @@ export const legacyStartLocalDatabase = Effect.fnUntraced(function* (fromBackupF
   yield* legacyStartDatabase(spawner, {
     fs,
     path,
-    workdir: cliConfig.workdir,
+    workdir: cliSettings.workdir,
     projectId,
     networkId,
     hostname,
@@ -726,7 +726,7 @@ export const legacyStartLocalDatabase = Effect.fnUntraced(function* (fromBackupF
     },
   }).pipe(
     Effect.onError(() =>
-      legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir, debug),
+      legacyRollbackStart(spawner, filterValue, isFreshVolume, cliSettings.workdir, debug),
     ),
   );
 

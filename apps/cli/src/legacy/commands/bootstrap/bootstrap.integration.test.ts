@@ -17,7 +17,7 @@ import {
   type LegacyApiHandler,
   LEGACY_VALID_REF,
   legacyJsonResponse,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyCredentialsTracked,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyLoginApi,
@@ -171,7 +171,7 @@ function setup(opts: SetupOpts = {}) {
   };
   const api = mockLegacyPlatformApi({ handler });
 
-  const cliConfig = mockLegacyCliConfig({
+  const cliSettings = mockLegacyCliSettings({
     workdir: tempRoot.current,
     projectHost: "supabase.co",
     accessToken: opts.loggedIn === false ? Option.none() : undefined,
@@ -230,7 +230,7 @@ function setup(opts: SetupOpts = {}) {
     api.layer,
     api.factoryLayer,
     api.httpClientLayer,
-    cliConfig,
+    cliSettings,
     mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
     // cwd differs from the (absolute) workdir so the "Using workdir" line prints,
     // matching the established `cwd != CurrentDirAbs` guard.

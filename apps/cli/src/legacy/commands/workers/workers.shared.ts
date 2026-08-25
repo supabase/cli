@@ -1,7 +1,7 @@
 import { join } from "node:path";
-import { loadProjectConfig } from "@supabase/config/effect";
+import { loadCliConfig } from "@supabase/config/effect";
 import { Effect, FileSystem, Option } from "effect";
-import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
 import {
   readWorkersSection,
   type WorkerEntry,
@@ -15,7 +15,7 @@ import { InvalidWorkerNameError } from "../../../shared/workers/workers.errors.t
  * What every `supabase workers` command needs before it does anything: where
  * the project is, what `[workers]` says, and which worker is being acted on.
  *
- * The project directory is `LegacyCliConfig.workdir` rather than an ancestor
+ * The project directory is `LegacyCliSettings.workdir` rather than an ancestor
  * walk from the current directory. That is the resolved workdir every other
  * legacy command acts on — `--workdir`/`SUPABASE_WORKDIR` when given, else the
  * ancestor walk Go's own `getProjectRoot` performs — so `supabase workers`
@@ -33,8 +33,8 @@ export interface LegacyWorkersProject {
 }
 
 export const legacyLoadWorkersProject = Effect.fnUntraced(function* () {
-  const cliConfig = yield* LegacyCliConfig;
-  const projectRoot = cliConfig.workdir;
+  const settings = yield* LegacyCliSettings;
+  const projectRoot = settings.workdir;
   const supabaseDir = join(projectRoot, "supabase");
 
   // `tomlOnly`: the entry writer is a TOML text editor. Without this the loader
@@ -48,9 +48,9 @@ export const legacyLoadWorkersProject = Effect.fnUntraced(function* () {
   // `config.json`, which the default loader lists in `ignoredPaths`. That is a
   // known gap: workers are TOML-only until config writing is overhauled.
   //
-  // `loadProjectConfig` returns null when the directory holds no project yet,
+  // `loadCliConfig` returns null when the directory holds no project yet,
   // which is what lets `workers new` scaffold into a bare one.
-  const loaded = yield* loadProjectConfig(projectRoot, { tomlOnly: true });
+  const loaded = yield* loadCliConfig(projectRoot, { tomlOnly: true });
   const section = readWorkersSection(loaded?.config.workers);
 
   return {

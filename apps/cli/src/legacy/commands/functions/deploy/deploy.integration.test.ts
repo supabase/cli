@@ -8,7 +8,7 @@ import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import {
   buildLegacyTestRuntime,
   legacyJsonResponse,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -46,7 +46,7 @@ const baseFlags: LegacyFunctionsDeployFlags = {
   legacyBundle: false,
 };
 
-async function writeProjectConfig(cwd: string, content = 'project_id = "test-project"\n') {
+async function writeCliConfig(cwd: string, content = 'project_id = "test-project"\n') {
   await mkdir(join(cwd, "supabase"), { recursive: true });
   await writeFile(join(cwd, "supabase", "config.toml"), content);
 }
@@ -132,7 +132,7 @@ describe("legacy functions deploy", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         linkedProjectCache: linkedProjectCache.layer,
         telemetry: telemetry.layer,
@@ -144,7 +144,7 @@ describe("legacy functions deploy", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+      yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
       yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
       yield* legacyFunctionsDeploy(baseFlags);
@@ -204,7 +204,7 @@ describe("legacy functions deploy", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
       Layer.succeed(LegacyYesFlag, false),
@@ -214,7 +214,7 @@ describe("legacy functions deploy", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+      yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
       yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
       yield* legacyFunctionsDeploy({
@@ -266,7 +266,7 @@ describe("legacy functions deploy", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({
+        cliSettings: mockLegacyCliSettings({
           workdir: tempRoot.current,
           projectId: Option.none(),
         }),
@@ -286,7 +286,7 @@ describe("legacy functions deploy", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+      yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
       yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
       yield* legacyFunctionsDeploy({
@@ -335,7 +335,7 @@ describe("legacy functions deploy", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: callerDir }),
       }),
       Layer.succeed(LegacyYesFlag, false),
@@ -352,7 +352,7 @@ describe("legacy functions deploy", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+      yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
       yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
       yield* Effect.tryPromise(() => mkdir(callerDir, { recursive: true }));
       yield* Effect.tryPromise(() =>
@@ -401,7 +401,7 @@ describe("legacy functions deploy", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: callerDir }),
       }),
       Layer.succeed(LegacyYesFlag, false),
@@ -412,7 +412,7 @@ describe("legacy functions deploy", () => {
 
     return Effect.gen(function* () {
       yield* Effect.tryPromise(() =>
-        writeProjectConfig(
+        writeCliConfig(
           tempRoot.current,
           ['project_id = "test-project"', "[functions.configured]", "verify_jwt = false", ""].join(
             "\n",
@@ -487,7 +487,7 @@ describe("legacy functions deploy", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir }),
+        cliSettings: mockLegacyCliSettings({ workdir }),
         runtimeInfo: mockRuntimeInfo({ cwd: workdir }),
       }),
       Layer.succeed(LegacyYesFlag, false),
@@ -498,7 +498,7 @@ describe("legacy functions deploy", () => {
 
     return Effect.gen(function* () {
       yield* Effect.tryPromise(() => mkdir(join(repoRoot, ".git"), { recursive: true }));
-      yield* Effect.tryPromise(() => writeProjectConfig(workdir));
+      yield* Effect.tryPromise(() => writeCliConfig(workdir));
       yield* Effect.tryPromise(() =>
         writeLocalFunction(
           workdir,
@@ -569,7 +569,7 @@ describe("legacy functions deploy", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
       Layer.succeed(LegacyYesFlag, false),
@@ -580,7 +580,7 @@ describe("legacy functions deploy", () => {
 
     return Effect.gen(function* () {
       yield* Effect.tryPromise(() =>
-        writeProjectConfig(
+        writeCliConfig(
           tempRoot.current,
           [
             'project_id = "test-project"',
@@ -674,7 +674,7 @@ describe("legacy functions deploy", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
       Layer.succeed(LegacyYesFlag, true),
@@ -691,7 +691,7 @@ describe("legacy functions deploy", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+      yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
       yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
       yield* legacyFunctionsDeploy({ ...baseFlags, prune: true });
@@ -772,7 +772,7 @@ describe("legacy functions deploy", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
         Layer.succeed(LegacyYesFlag, false),
@@ -787,7 +787,7 @@ describe("legacy functions deploy", () => {
       const { out, api, layer } = setupBulkDeploy({ deployStatuses: [201, 409] });
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+        yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
         yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
         yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "bye-world"));
 
@@ -822,7 +822,7 @@ describe("legacy functions deploy", () => {
       const { out, api, layer } = setupBulkDeploy({ deployStatuses: [409, 400] });
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+        yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
         yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
         yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "bye-world"));
 
@@ -855,7 +855,7 @@ describe("legacy functions deploy", () => {
       });
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+        yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
         yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
         yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "bye-world"));
 
@@ -888,7 +888,7 @@ describe("legacy functions deploy", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
       Layer.succeed(LegacyYesFlag, false),
@@ -923,7 +923,7 @@ describe("legacy functions deploy", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
         Layer.succeed(LegacyYesFlag, false),
@@ -1002,7 +1002,7 @@ describe("legacy functions deploy", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
         Layer.succeed(LegacyYesFlag, false),
@@ -1012,7 +1012,7 @@ describe("legacy functions deploy", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+        yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
         yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
         yield* legacyFunctionsDeploy({
@@ -1060,7 +1060,7 @@ describe("legacy functions deploy", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
         Layer.succeed(LegacyYesFlag, false),
@@ -1070,7 +1070,7 @@ describe("legacy functions deploy", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+        yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
         yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
         yield* legacyFunctionsDeploy({
@@ -1126,7 +1126,7 @@ describe("legacy functions deploy", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
         Layer.succeed(LegacyYesFlag, false),
@@ -1137,7 +1137,7 @@ describe("legacy functions deploy", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+        yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
         yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
         yield* legacyFunctionsDeploy({
@@ -1184,7 +1184,7 @@ describe("legacy functions deploy", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
         Layer.succeed(LegacyYesFlag, false),
@@ -1216,7 +1216,7 @@ describe("legacy functions deploy", () => {
     it.live("keeps the injected styling out of the json error payload", () => {
       const { out, layer, deployNoFunctions } = setupNoFunctionsTest("json");
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+        yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
 
         yield* deployNoFunctions.pipe(withJsonErrorHandling);
 
@@ -1235,7 +1235,7 @@ describe("legacy functions deploy", () => {
     it.live("still emphasizes the functions dir in the text-mode error", () => {
       const { layer, deployNoFunctions } = setupNoFunctionsTest("text");
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+        yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
 
         const error = yield* deployNoFunctions.pipe(Effect.flip);
 
@@ -1265,7 +1265,7 @@ describe("legacy functions deploy", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
           Layer.succeed(LegacyYesFlag, false),
@@ -1275,7 +1275,7 @@ describe("legacy functions deploy", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current, 'project_id = ""\n'));
+          yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current, 'project_id = ""\n'));
           yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
           const error = yield* legacyFunctionsDeploy(baseFlags).pipe(Effect.flip);
@@ -1304,7 +1304,7 @@ describe("legacy functions deploy", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
           Layer.succeed(LegacyYesFlag, false),
@@ -1315,7 +1315,7 @@ describe("legacy functions deploy", () => {
 
         return Effect.gen(function* () {
           yield* Effect.tryPromise(() =>
-            writeProjectConfig(
+            writeCliConfig(
               tempRoot.current,
               ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
             ),
@@ -1347,7 +1347,7 @@ describe("legacy functions deploy", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
           Layer.succeed(LegacyYesFlag, false),
@@ -1357,7 +1357,7 @@ describe("legacy functions deploy", () => {
         );
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current, 'project_id = ""\n'));
+          yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current, 'project_id = ""\n'));
 
           const error = yield* legacyFunctionsDeploy({
             ...baseFlags,
@@ -1383,7 +1383,7 @@ describe("legacy functions deploy", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
         Layer.succeed(LegacyYesFlag, false),
@@ -1393,7 +1393,7 @@ describe("legacy functions deploy", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+        yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
 
         const error = yield* legacyFunctionsDeploy({
           ...baseFlags,
@@ -1446,7 +1446,7 @@ describe("legacy functions deploy", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
           Layer.succeed(LegacyYesFlag, false),
@@ -1460,7 +1460,7 @@ describe("legacy functions deploy", () => {
         process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+          yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
           yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
           yield* legacyFunctionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
@@ -1499,7 +1499,7 @@ describe("legacy functions deploy", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
           Layer.succeed(LegacyYesFlag, false),
@@ -1513,7 +1513,7 @@ describe("legacy functions deploy", () => {
         process.env["SUPABASE_NETWORK_ID"] = "env-network";
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+          yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
           yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
           yield* legacyFunctionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
@@ -1552,7 +1552,7 @@ describe("legacy functions deploy", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
           Layer.succeed(LegacyYesFlag, false),
@@ -1573,7 +1573,7 @@ describe("legacy functions deploy", () => {
         process.env["SUPABASE_NETWORK_ID"] = "env-network";
 
         return Effect.gen(function* () {
-          yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+          yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
           yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
           yield* legacyFunctionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
@@ -1613,7 +1613,7 @@ describe("legacy functions deploy", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
             runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
           }),
           Layer.succeed(LegacyYesFlag, false),
@@ -1625,7 +1625,7 @@ describe("legacy functions deploy", () => {
 
         return Effect.gen(function* () {
           yield* Effect.tryPromise(() =>
-            writeProjectConfig(tempRoot.current, 'project_id = "test-project"\n'),
+            writeCliConfig(tempRoot.current, 'project_id = "test-project"\n'),
           );
           yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
@@ -1652,7 +1652,7 @@ describe("legacy functions deploy", () => {
           ]);
           // `-w <toDockerPath(projectRoot)>` — the bundler sets WorkingDir to
           // the post-ChangeWorkDir cwd, which `deploy.ts`/`deploy.handler.ts`
-          // resolve to `cliConfig.workdir`, i.e. `tempRoot.current` in this test.
+          // resolve to `cliSettings.workdir`, i.e. `tempRoot.current` in this test.
           const workingDirIndex = runCommand?.args.indexOf("-w") ?? -1;
           expect(runCommand?.args.slice(workingDirIndex, workingDirIndex + 2)).toEqual([
             "-w",
@@ -1672,7 +1672,7 @@ describe("legacy functions deploy", () => {
       () => {
         // Established behavior: `supabase/config.toml` only ever resolves
         // from the already-resolved workdir, with no ancestor climb —
-        // implemented via `loadFunctionsProjectConfig`'s `search: false` (a
+        // implemented via `loadFunctionsCliConfig`'s `search: false` (a
         // real behavior change: deploy did NOT have this before CLI-1963,
         // unlike download).
         const nestedWorkdir = join(tempRoot.current, "nested");
@@ -1683,7 +1683,7 @@ describe("legacy functions deploy", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: nestedWorkdir }),
+            cliSettings: mockLegacyCliSettings({ workdir: nestedWorkdir }),
             runtimeInfo: mockRuntimeInfo({ cwd: nestedWorkdir }),
           }),
           Layer.succeed(LegacyYesFlag, false),
@@ -1695,7 +1695,7 @@ describe("legacy functions deploy", () => {
 
         return Effect.gen(function* () {
           yield* Effect.tryPromise(() =>
-            writeProjectConfig(tempRoot.current, 'project_id = "ancestor-project"\n'),
+            writeCliConfig(tempRoot.current, 'project_id = "ancestor-project"\n'),
           );
           yield* Effect.tryPromise(() => writeLocalFunction(nestedWorkdir, "hello-world"));
 
@@ -1752,7 +1752,7 @@ describe("legacy functions deploy", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
         }),
         Layer.succeed(LegacyYesFlag, false),
@@ -1763,7 +1763,7 @@ describe("legacy functions deploy", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+        yield* Effect.tryPromise(() => writeCliConfig(tempRoot.current));
         yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
 
         const platformApi = yield* LegacyPlatformApi;

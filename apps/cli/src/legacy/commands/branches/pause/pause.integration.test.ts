@@ -6,7 +6,7 @@ import {
   LEGACY_VALID_REF,
   buildLegacyTestRuntime,
   legacyJsonResponse,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -78,21 +78,21 @@ function buildApi(opts: SetupOpts) {
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: "text" });
   const api = buildApi(opts);
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
-  const layer = buildLegacyTestRuntime({ out, api, cliConfig });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
+  const layer = buildLegacyTestRuntime({ out, api, cliSettings });
   return { layer, out, api };
 }
 
 function setupTracked(opts: SetupOpts = {}) {
   const out = mockOutput({ format: "text" });
   const api = buildApi(opts);
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
   });

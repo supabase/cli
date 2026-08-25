@@ -8,7 +8,7 @@ import { Effect, Exit, Layer, Option } from "effect";
 
 import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../shared/legacy/global-flags.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
-import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { LegacyDockerRun, type LegacyDockerRunOpts } from "./legacy-docker-run.service.ts";
 import { legacyEdgeRuntimeScriptLayer } from "./legacy-edge-runtime-script.layer.ts";
 import { LegacyEdgeRuntimeScript } from "./legacy-edge-runtime-script.service.ts";
@@ -41,8 +41,8 @@ function fakeDocker(result: { exitCode: number; stdout?: string; stderr?: string
 
 // `workdir` points at a directory without `supabase/.temp/edge-runtime-version`,
 // so the image resolver falls back to the default tag (the read is orElseSucceed).
-function makeCliConfig(workdir = "/nonexistent-workdir") {
-  return Layer.succeed(LegacyCliConfig, {
+function makeCliSettings(workdir = "/nonexistent-workdir") {
+  return Layer.succeed(LegacyCliSettings, {
     profile: "supabase",
     apiUrl: "https://api.supabase.com",
     projectHost: "supabase.co",
@@ -57,14 +57,14 @@ function makeCliConfig(workdir = "/nonexistent-workdir") {
 
 function setup(
   result: { exitCode: number; stdout?: string; stderr?: string },
-  opts: { readonly cliConfigWorkdir?: string } = {},
+  opts: { readonly cliSettingsWorkdir?: string } = {},
 ) {
   const docker = fakeDocker(result);
   const layer = legacyEdgeRuntimeScriptLayer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
         docker.layer,
-        makeCliConfig(opts.cliConfigWorkdir),
+        makeCliSettings(opts.cliSettingsWorkdir),
         Layer.succeed(RuntimeInfo, {
           cwd: "/nonexistent-workdir",
           platform: "darwin",
@@ -142,10 +142,10 @@ describe("legacyEdgeRuntimeScriptLayer sentinel handling", () => {
   });
 
   it.effect(
-    "resolves the image pin from `opts.workdir`, overriding the layer's own `cliConfig.workdir`",
+    "resolves the image pin from `opts.workdir`, overriding the layer's own `cliSettings.workdir`",
     () => {
       // Regression coverage (review thread on CLI-1953): `bootstrap` targets a
-      // directory other than the invocation directory, and `LegacyCliConfig` is
+      // directory other than the invocation directory, and `LegacyCliSettings` is
       // built once, before that `process.chdir` runs — so its `workdir` never
       // reflects bootstrap's real target. `opts.workdir` (threaded from
       // `LegacyPgDeltaContext.cwd` by every pg-delta/migra caller) must win the
@@ -165,7 +165,7 @@ describe("legacyEdgeRuntimeScriptLayer sentinel handling", () => {
 
       const { layer, docker } = setup(
         { exitCode: 1, stdout: "", stderr: "main worker has been destroyed\n" },
-        { cliConfigWorkdir: configWorkdir },
+        { cliSettingsWorkdir: configWorkdir },
       );
 
       return Effect.gen(function* () {

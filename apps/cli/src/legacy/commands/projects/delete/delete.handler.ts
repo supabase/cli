@@ -3,7 +3,7 @@ import { Effect, FileSystem, Option, Path } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyInvalidProjectRefError } from "../../../config/legacy-project-ref.errors.ts";
 import {
   INVALID_PROJECT_REF_MESSAGE,
@@ -36,7 +36,7 @@ export const legacyProjectsDelete = Effect.fn("legacy.projects.delete")(function
   const output = yield* Output;
   const api = yield* LegacyPlatformApi;
   const resolver = yield* LegacyProjectRefResolver;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
   // `--yes` OR `SUPABASE_YES` — the env var must auto-confirm too, not just
@@ -122,7 +122,7 @@ export const legacyProjectsDelete = Effect.fn("legacy.projects.delete")(function
 
     // Best-effort unlink: when the linked ref file matches the deleted ref,
     // remove the `supabase/.temp` directory.
-    const tempDir = path.join(cliConfig.workdir, "supabase", ".temp");
+    const tempDir = path.join(cliSettings.workdir, "supabase", ".temp");
     const refPath = path.join(tempDir, "project-ref");
     // The link file written by `supabase link` holds exactly the ref.
     // Compare against the trimmed content so a corrupt/multi-ref file can't

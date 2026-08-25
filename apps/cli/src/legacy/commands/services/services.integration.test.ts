@@ -8,7 +8,7 @@ import { Stdio } from "effect";
 import { Cause, Effect, Exit, Layer, Option, Redacted } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
-import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
 import { INVALID_PROJECT_REF_MESSAGE } from "../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
 import { LEGACY_GLOBAL_FLAGS, LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
@@ -68,8 +68,8 @@ function setup(
       telemetry.layer,
       Layer.succeed(LegacyOutputFlag, opts.goOutput ?? Option.none()),
       Layer.succeed(
-        LegacyCliConfig,
-        LegacyCliConfig.of({
+        LegacyCliSettings,
+        LegacyCliSettings.of({
           profile: "supabase",
           apiUrl: opts.apiUrl ?? "https://api.supabase.com",
           projectHost: "supabase.co",

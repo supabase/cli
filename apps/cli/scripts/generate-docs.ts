@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { PROJECT_CONFIG_SCHEMA_URL, toProjectConfigJsonSchema } from "@supabase/config";
+import { CLI_CONFIG_SCHEMA_URL, toCliConfigJsonSchema } from "@supabase/config";
 import { nextRoot } from "../src/next/cli/root.ts";
 import { collectCommands, getHelpDoc } from "../src/next/docs/command-docs.ts";
 import { formatHelpDocAsMarkdown } from "../src/next/docs/markdown-formatter.ts";
@@ -73,8 +73,8 @@ function generateCommandDocs() {
 }
 
 function generateConfigSchemaAsset() {
-  const schema = toProjectConfigJsonSchema();
-  const schemaPathname = new URL(PROJECT_CONFIG_SCHEMA_URL).pathname.replace(/^\/docs/, "");
+  const schema = toCliConfigJsonSchema();
+  const schemaPathname = new URL(CLI_CONFIG_SCHEMA_URL).pathname.replace(/^\/docs/, "");
   const filePath = path.join(defaultDocsPublicDir, schemaPathname);
 
   mkdirSync(path.dirname(filePath), { recursive: true });

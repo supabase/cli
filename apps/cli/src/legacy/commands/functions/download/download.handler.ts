@@ -9,7 +9,7 @@ import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { legacyAqua, legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
 import { legacyFunctionsGoConfigCompat } from "../../../shared/legacy-functions-go-config.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -19,7 +19,7 @@ export const legacyFunctionsDownload = Effect.fn("legacy.functions.download")(fu
   flags: LegacyFunctionsDownloadFlags,
 ) {
   const api = yield* LegacyPlatformApi;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
@@ -27,13 +27,13 @@ export const legacyFunctionsDownload = Effect.fn("legacy.functions.download")(fu
   const stdio = yield* Stdio.Stdio;
   const rawArgs = yield* stdio.args;
   const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersionPin(
-    join(cliConfig.workdir, "supabase"),
+    join(cliSettings.workdir, "supabase"),
   );
   let resolvedProjectRef = Option.none<string>();
 
   yield* downloadFunctions(flags, {
     api,
-    projectRoot: cliConfig.workdir,
+    projectRoot: cliSettings.workdir,
     rawArgs,
     goConfigCompat: legacyFunctionsGoConfigCompat,
     edgeRuntimeVersion,

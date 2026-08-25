@@ -7,7 +7,7 @@ import {
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyAqua, legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
 import {
@@ -45,7 +45,7 @@ const runDown = Effect.fnUntraced(function* (
   const output = yield* Output;
   const resolver = yield* LegacyDbConfigResolver;
   const connection = yield* LegacyDbConnection;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
@@ -87,7 +87,7 @@ const runDown = Effect.fnUntraced(function* (
   // SUPABASE_YES set only in supabase/.env auto-confirms, but a flag conflict still
   // surfaces before any .env read. Resolve --yes against the project env here, not
   // just process.env.
-  const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+  const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir);
   const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
 
   // Linked down caches the project ref, gated on the ref loaded in pre-run, NOT
@@ -113,7 +113,7 @@ const runDown = Effect.fnUntraced(function* (
     }
 
     const ref = Option.getOrUndefined(cfg.ref ?? Option.none());
-    const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref);
+    const toml = yield* legacyReadDbToml(fs, path, cliSettings.workdir, ref);
 
     yield* Effect.scoped(
       Effect.gen(function* () {
@@ -156,7 +156,7 @@ const runDown = Effect.fnUntraced(function* (
         yield* output.raw(`Resetting database to version: ${version}\n`, "stderr");
         yield* legacyDropUserSchemas(session);
         yield* legacyUpsertVaultSecrets(session, toml.vault);
-        yield* legacyMigrateAndSeed(session, fs, path, cliConfig.workdir, version, {
+        yield* legacyMigrateAndSeed(session, fs, path, cliSettings.workdir, version, {
           migrationsEnabled: toml.migrationsEnabled,
           seed: toml.seed,
           // `version` is always non-empty here (`migration down` reverts to a concrete
