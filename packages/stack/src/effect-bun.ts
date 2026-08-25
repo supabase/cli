@@ -13,7 +13,7 @@ import {
   restartManagedStackForUpgrade as restartManagedStackForUpgradeForPlatform,
   foregroundLayer as foregroundLayerForPlatform,
 } from "./layers.ts";
-import { daemonEntryPoint, platformFactory } from "./platform-bun.ts";
+import { controlTransportLayer, daemonEntryPoint, platformFactory } from "./platform-bun.ts";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
 import {
   connectManagedLayer,
@@ -57,7 +57,11 @@ export const stopDaemon = (opts: Parameters<typeof stopDaemonCore>[0]) =>
   stopDaemonCore(opts).pipe(Effect.provide(managedLayer(opts.cacheRoot)));
 export const deleteManagedStackPersistence = (
   opts: Parameters<typeof deleteManagedStackPersistenceCore>[0],
-) => deleteManagedStackPersistenceCore(opts).pipe(Effect.provide(managedLayer(opts.cacheRoot)));
+) =>
+  deleteManagedStackPersistenceCore(opts).pipe(
+    Effect.provide(managedLayer(opts.cacheRoot)),
+    Effect.provide(controlTransportLayer),
+  );
 
 export const resolveManagedDocument = (opts: {
   readonly workspacePath: string;

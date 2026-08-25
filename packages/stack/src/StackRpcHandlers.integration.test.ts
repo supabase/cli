@@ -1,9 +1,9 @@
 import { ServiceNotFoundError } from "@supabase/process-compose";
 import { it } from "@effect/vitest";
-import { Context, Effect, Layer, Stream } from "effect";
+import { Context, Deferred, Effect, Layer, Stream } from "effect";
 import { expect } from "vitest";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
-import { RemoteStack } from "./RemoteStack.ts";
+import { RemoteStack, updateRemoteLaunch } from "./RemoteStack.ts";
 import { Stack } from "./Stack.ts";
 import { StackBuildError } from "./errors.ts";
 import { acquireControl, isControlOwnership } from "./managed/control.ts";
@@ -173,5 +173,67 @@ it.live("serves handler behavior over the RPC boundary", () =>
       expect(rawBody).not.toContain("must-not-appear-in-errors");
       expect(rawBody).not.toContain("relative/index.ts");
     }).pipe(Effect.provide(controlTransportLayer)),
+  ),
+);
+
+it.live("rejects launch updates after supervisor shutdown begins", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const lifecycle = yield* SupervisorLifecycle.make({
+        ownershipId: OWNER_ID,
+        ownerSessionId: "launch-update-session",
+        daemonCliVersion: "test",
+      });
+      const updates: Array<string> = [];
+      const application = {
+        app: yield* makeSupervisorControlApplication(lifecycle, {
+          update: (stackId) =>
+            Effect.sync(() => {
+              updates.push(stackId);
+            }),
+        }),
+      };
+      const owner = yield* acquireControl({
+        stackId: OWNER_ID,
+        initialStatus: yield* lifecycle.currentStatus,
+        application,
+      });
+      if (!isControlOwnership(owner)) throw new Error("expected control ownership");
+      yield* lifecycle.setClose(owner.close);
+      const status = yield* owner.ownerStatus;
+      const stopStarted = yield* Deferred.make<void>();
+      const releaseStop = yield* Deferred.make<void>();
+      yield* lifecycle.publishStack({
+        ...stack,
+        stop: () =>
+          Deferred.succeed(stopStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseStop)),
+          ),
+      });
+
+      yield* Effect.gen(function* () {
+        yield* lifecycle.submitShutdown("stop");
+        yield* Deferred.await(stopStarted);
+        const unavailable = yield* Effect.flip(
+          updateRemoteLaunch(
+            owner.endpoint,
+            {
+              cliVersion: "test",
+              owner: {
+                ownershipId: status.ownershipId,
+                ownerSessionId: status.ownerSessionId,
+                controlProtocolVersion: status.controlProtocolVersion,
+                daemonCliVersion: status.daemonCliVersion,
+              },
+            },
+            OWNER_ID,
+            { versions: { postgres: "17.6.1.076" } },
+          ),
+        );
+        expect(unavailable).toMatchObject({ _tag: "StackUnavailableError", phase: "stopping" });
+        expect(updates).toEqual([]);
+      }).pipe(Effect.ensuring(Deferred.succeed(releaseStop, undefined).pipe(Effect.asVoid)));
+      yield* lifecycle.awaitShutdown;
+    }).pipe(Effect.provide(controlTransportLayer), Effect.provide(httpTransportClientLayer)),
   ),
 );

@@ -143,6 +143,7 @@ const stopServiceErrors = Schema.Union([
   StackNotRunningErrorSchema,
 ]);
 const serviceStateErrors = Schema.Union([StackUnavailableErrorSchema, ServiceNotFoundErrorSchema]);
+const updateLaunchErrors = Schema.Union([StackUnavailableErrorSchema, StackBuildErrorSchema]);
 
 const StackServiceStateSchema = Schema.Struct({
   name: Schema.String,
@@ -226,7 +227,7 @@ export const StackRpc = RpcGroup.make(
   Rpc.make("UpdateLaunch", {
     payload: { stackId: Schema.String, launch: StackLaunchUpdateRpcSchema },
     success: Schema.Void,
-    error: StackBuildErrorSchema,
+    error: updateLaunchErrors,
   }),
   Rpc.make("GetServiceState", {
     payload: { name: Schema.String },

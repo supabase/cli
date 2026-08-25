@@ -97,7 +97,7 @@ export const StackRpcHandlers = StackRpc.toLayer(
       }: {
         readonly stackId: string;
         readonly launch: StackLaunchUpdateRpc;
-      }) => launchUpdater.update(stackId, launch),
+      }) => local(lifecycle, () => launchUpdater.update(stackId, launch)),
       GetServiceState: ({ name }: { readonly name: string }) =>
         local(lifecycle, (stack) => stack.getState(name)),
       GetAllServiceStates: () => local(lifecycle, (stack) => stack.getAllStates()),

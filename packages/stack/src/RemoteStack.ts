@@ -15,6 +15,7 @@ import {
   StackBuildError,
   StackRpcProtocolError,
   StackRpcTransportError,
+  StackUnavailableError,
 } from "./errors.ts";
 import { HttpTransportClient, makeHttpControlClient } from "./HttpTransportClient.ts";
 import {
@@ -368,7 +369,11 @@ export const updateRemoteLaunch = (
   launch: StackLaunchUpdateRpc,
 ): Effect.Effect<
   void,
-  DaemonUpgradeRequired | StackBuildError | StackRpcTransportError | StackRpcProtocolError,
+  | DaemonUpgradeRequired
+  | StackBuildError
+  | StackUnavailableError
+  | StackRpcTransportError
+  | StackRpcProtocolError,
   HttpTransportClient
 > =>
   Effect.scoped(

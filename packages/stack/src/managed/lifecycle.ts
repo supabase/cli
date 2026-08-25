@@ -23,6 +23,7 @@ import {
   StackBuildError,
   StackRpcProtocolError,
   StackRpcTransportError,
+  StackUnavailableError,
 } from "../errors.ts";
 import {
   ManagedStackNotStoppedError,
@@ -288,6 +289,7 @@ export const updateManagedLaunch = (
   | HttpTransportClientError
   | DaemonUpgradeRequired
   | StackBuildError
+  | StackUnavailableError
   | StackRpcProtocolError
   | StackRpcTransportError,
   ManagedStackManager | HttpTransportClient
