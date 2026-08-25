@@ -4,7 +4,7 @@ import {
   ProjectConfigSchema,
   type LoadedProjectConfig,
   type ProjectConfig,
-} from "@supabase/config";
+} from "@supabase/config/effect";
 import { Effect, FileSystem, Path, Schema } from "effect";
 
 import { LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY } from "./legacy-bitbucket-pipeline.ts";

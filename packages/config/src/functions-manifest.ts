@@ -1,26 +1,17 @@
 import { Effect, FileSystem, Path, Schema } from "effect";
 import { ProjectConfigSchema, type ProjectConfig } from "./base.ts";
+import {
+  edgeFunctionDenoConfigFileName,
+  edgeFunctionEntrypointFileName,
+  edgeFunctionsDirectoryName,
+  type ResolvedFunctionConfig,
+} from "./functions-manifest-model.ts";
 import { loadProjectConfig } from "./io.ts";
 import { findProjectPaths } from "./paths.ts";
 
 const functionSlugPattern = /^[a-zA-Z0-9_-]+$/;
 const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
 const emptyConfig = decodeProjectConfig({});
-
-export const edgeFunctionsDirectoryName = "functions";
-export const edgeFunctionEntrypointFileName = "index.ts";
-export const edgeFunctionDenoConfigFileName = "deno.json";
-
-export interface ResolvedFunctionConfig {
-  readonly enabled: boolean;
-  readonly verify_jwt: boolean;
-  readonly import_map: string;
-  readonly entrypoint: string;
-  readonly static_files: ReadonlyArray<string>;
-  readonly env: Readonly<Record<string, string>>;
-}
-
-export type FunctionsManifest = Readonly<Record<string, ResolvedFunctionConfig>>;
 
 interface InferFunctionsManifestOptions {
   readonly cwd: string;

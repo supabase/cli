@@ -13,7 +13,7 @@ import {
   loadProjectEnvironment,
   resolveProjectSubtree,
   resolveProjectValue,
-} from "./index.ts";
+} from "./effect.ts";
 
 function makeTempProject(): string {
   return mkdtempSync(join(tmpdir(), "supabase-project-config-"));

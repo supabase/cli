@@ -34,10 +34,10 @@
     "includedScripts": [],
     "targets": {
       "lint:check": {
-        "command": "oxlint"
+        "command": "oxlint --disable-nested-config"
       },
       "lint:fix": {
-        "command": "oxlint --fix"
+        "command": "oxlint --disable-nested-config --fix"
       },
       "fmt:check": {
         "command": "oxfmt --check"

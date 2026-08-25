@@ -9,16 +9,18 @@ import { Cause, Effect, Exit, FileSystem, Layer, Option, Path, Redacted, Schema 
 import { ProjectConfigSchema, toProjectConfigJsonSchema } from "./base.ts";
 import { loadProjectConfig as loadProjectConfigFromBun } from "./bun.ts";
 import {
-  configJsonPath,
-  configTomlPath,
   encodeProjectConfigToJson,
   encodeProjectConfigToToml,
-  loadProjectConfig,
-  loadProjectConfigFile,
   projectConfigValueSourceAt,
   type LoadedProjectConfig,
-  saveProjectConfig,
   type LoadProjectConfigOptions,
+} from "./config-document.ts";
+import {
+  configJsonPath,
+  configTomlPath,
+  loadProjectConfig,
+  loadProjectConfigFile,
+  saveProjectConfig,
 } from "./io.ts";
 import { loadProjectConfig as loadProjectConfigFromNode } from "./node.ts";
 import { projectConfigStoreLayer } from "./project-config.layer.ts";
