@@ -1268,7 +1268,7 @@ runtime = "deno"
 `,
       );
 
-      const loaded = await runConfigEffect(loadProjectConfig(cwd));
+      const loaded = await runConfigEffect(loadCliConfig(cwd));
       expect(loaded).not.toBeNull();
       expect(loaded!.config.workers).toEqual({ api: { runtime: "node" } });
     } finally {
