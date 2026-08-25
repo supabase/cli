@@ -1,4 +1,4 @@
-import { loadProjectConfig } from "@supabase/config";
+import { loadProjectConfig } from "@supabase/config/effect";
 import { defaultPublishableKey } from "@supabase/stack/effect";
 import { Effect, FileSystem, Option, Path } from "effect";
 

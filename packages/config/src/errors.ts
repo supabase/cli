@@ -1,5 +1,5 @@
 import { Data } from "effect";
-import type { ConfigFormat } from "./io.ts";
+import type { ConfigFormat } from "./config-format.ts";
 
 export class ProjectConfigParseError extends Data.TaggedError("ProjectConfigParseError")<{
   readonly path: string;

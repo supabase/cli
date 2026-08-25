@@ -4,7 +4,7 @@ import {
   edgeFunctionEntrypointFileName,
   edgeFunctionsDirectoryName,
   findProjectPaths,
-} from "@supabase/config";
+} from "@supabase/config/effect";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";

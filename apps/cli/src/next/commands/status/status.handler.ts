@@ -1,5 +1,5 @@
 import { Effect, Option } from "effect";
-import { loadProjectConfig } from "@supabase/config";
+import { loadProjectConfig } from "@supabase/config/effect";
 import {
   connectLayer,
   fillServiceVersionManifest,
