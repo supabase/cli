@@ -10,7 +10,7 @@ import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
 import { mockOutput, mockRuntimeInfo, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyPlatformApi,
   useLegacyTempWorkdir,
 } from "../../../../tests/helpers/legacy-mocks.ts";
@@ -39,7 +39,7 @@ function setup() {
   const runtime = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+    cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
     // Keep the file-based token fallback inside this test's isolated tempRoot
     // so a stray token at the shared default test home can't leak in.
     runtimeInfo: mockRuntimeInfo({ homeDir: tempRoot.current }),

@@ -5,8 +5,8 @@ import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Layer } from "effect";
-import { projectCommandBaseLayer } from "./project-runtime.layer.ts";
-import { ProjectHome } from "./project-home.service.ts";
+import { cliProjectCommandBaseLayer } from "./project-runtime.layer.ts";
+import { CliProjectHome } from "./cli-project-home.service.ts";
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "supabase-project-runtime-"));
@@ -25,12 +25,12 @@ describe("project-runtime.layer", () => {
       );
       yield* Effect.sync(() => process.chdir(projectRoot));
 
-      const projectHome = yield* Effect.gen(function* () {
-        return yield* ProjectHome;
-      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, projectCommandBaseLayer)));
+      const cliProjectHome = yield* Effect.gen(function* () {
+        return yield* CliProjectHome;
+      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, cliProjectCommandBaseLayer)));
       const resolvedProjectRoot = yield* Effect.tryPromise(() => realpath(projectRoot));
-      expect(projectHome.projectRoot).toBe(resolvedProjectRoot);
-      expect(projectHome.projectHomeDir).toBe(join(resolvedProjectRoot, ".supabase"));
+      expect(cliProjectHome.projectRoot).toBe(resolvedProjectRoot);
+      expect(cliProjectHome.projectHomeDir).toBe(join(resolvedProjectRoot, ".supabase"));
     }).pipe(
       Effect.ensuring(Effect.sync(() => process.chdir(previousCwd))),
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),

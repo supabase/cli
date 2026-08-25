@@ -2,7 +2,7 @@ import { Effect, FileSystem, Option, Path, Schedule } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 import { LegacyPlatformApi } from "../../auth/legacy-platform-api.service.ts";
-import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
 import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
 import {
@@ -70,7 +70,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
   const output = yield* Output;
   const tty = yield* Tty;
   const runtimeInfo = yield* RuntimeInfo;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const templateService = yield* LegacyTemplateService;
@@ -92,7 +92,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
   const originalCwd = process.cwd();
   let createdRef: string | undefined;
   // Resolved bootstrap workdir, hoisted so the linked-project-cache finalizer writes
-  // beside the other `supabase/.temp/` files instead of `cliConfig.workdir`.
+  // beside the other `supabase/.temp/` files instead of `cliSettings.workdir`.
   let resolvedWorkdir: string | undefined;
 
   yield* Effect.gen(function* () {
@@ -268,8 +268,8 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     // shape, minus its own IPv6/pooler-fallback — a pre-existing, out-of-scope
     // `.env` divergence: unlike step L below, `.env` is never used to actually
     // connect, so it doesn't need the real probe+fallback resolution).
-    const dbConfig = deriveDbConfig(projectRef, created.dbPassword, cliConfig.projectHost);
-    const supabaseUrl = `https://${projectRef}.${cliConfig.projectHost}`;
+    const dbConfig = deriveDbConfig(projectRef, created.dbPassword, cliSettings.projectHost);
+    const supabaseUrl = `https://${projectRef}.${cliSettings.projectHost}`;
     const envFilePath = path.join(workdir, ".env");
     let envFileWritten = true;
     yield* Effect.gen(function* () {
@@ -328,7 +328,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     // `workdir`/`projectRef`/`toml` straight through as plain values instead
     // of calling `legacyDbPush` (the full flags-based command), which would
     // re-resolve them via `LegacyProjectRefResolver`/`LegacyDbConfigResolver`
-    // — both keyed off `LegacyCliConfig.workdir`, stale after this handler's
+    // — both keyed off `LegacyCliSettings.workdir`, stale after this handler's
     // own `process.chdir` above (step D) since that layer is built once,
     // before the handler runs.
     //
@@ -348,14 +348,14 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     // established connect-suggestion hint instead of silently falling back
     // to the generic "--debug" suggestion.
     const suggestionContext: LegacyConnectSuggestionContext = {
-      dashboardUrl: cliConfig.dashboardUrl,
-      profileName: cliConfig.profile,
+      dashboardUrl: cliSettings.dashboardUrl,
+      profileName: cliSettings.profile,
     };
     const resolvedConn = yield* legacyResolveLinkedConn(
       projectRef,
       workdir,
-      cliConfig.projectHost,
-      cliConfig.poolerHost,
+      cliSettings.projectHost,
+      cliSettings.poolerHost,
       dnsResolver,
       Option.some(created.dbPassword),
     ).pipe(
@@ -377,7 +377,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       includeSeed: true,
       includeVault: true,
       dnsResolver,
-      projectId: cliConfig.projectId,
+      projectId: cliSettings.projectId,
       toml,
       yes: pushYes,
       emitStructuredResult: false,

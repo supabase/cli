@@ -42,7 +42,7 @@ function setup(args: ReadonlyArray<string>) {
     CliOutput.layer(textCliOutputFormatter()),
     out.layer,
     Layer.succeed(CliArgs, { args }),
-    // `legacyStorageGatewayRuntimeLayer`'s cliConfig/credentials layers read
+    // `legacyStorageGatewayRuntimeLayer`'s cliSettings/credentials layers read
     // real env/files when built. The jobs check under test never reaches that
     // lazy factory, but isolate ambient env defensively anyway.
     processEnvLayer({ SUPABASE_NO_KEYRING: "1" }),

@@ -1,7 +1,7 @@
 import { Data, Effect, Exit, Option, Redacted } from "effect";
 import { Url, UrlParams } from "effect/unstable/http";
 import { validateToken } from "../../auth/token.ts";
-import { CliConfig } from "../../config/cli-config.service.ts";
+import { CliSettings } from "../../config/cli-settings.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Api } from "../../auth/api.service.ts";
 import type { LoginSessionResponse } from "../../auth/api.service.ts";
@@ -49,11 +49,11 @@ const resolveAuthenticatedDistinctId = Effect.fnUntraced(function* (
 ) {
   const api = yield* Api;
   const analytics = yield* Analytics;
-  const cliConfig = yield* CliConfig;
+  const cliSettings = yield* CliSettings;
   const telemetryRuntime = yield* TelemetryRuntime;
   const configDir = yield* getConfigDir;
 
-  const profileExit = yield* api.fetchProfile(cliConfig.apiUrl, token).pipe(Effect.exit);
+  const profileExit = yield* api.fetchProfile(cliSettings.apiUrl, token).pipe(Effect.exit);
   if (Exit.isFailure(profileExit)) {
     telemetryRuntime.identity.clear();
     yield* clearDistinctId(configDir);
@@ -122,9 +122,9 @@ const resolveToken = Effect.fnUntraced(function* (tokenFlag: Option.Option<strin
     return Option.some<ResolvedToken>({ token: Redacted.make(tokenFlag.value), source: "flag" });
   }
 
-  const cliConfig = yield* CliConfig;
-  if (Option.isSome(cliConfig.accessToken)) {
-    return Option.some<ResolvedToken>({ token: cliConfig.accessToken.value, source: "env" });
+  const cliSettings = yield* CliSettings;
+  if (Option.isSome(cliSettings.accessToken)) {
+    return Option.some<ResolvedToken>({ token: cliSettings.accessToken.value, source: "env" });
   }
 
   const stdin = yield* Stdin;
@@ -166,9 +166,9 @@ const browserOAuthFlow = Effect.fnUntraced(function* (flags: LoginFlags) {
     }
   }
 
-  const cliConfig = yield* CliConfig;
-  const apiUrl = cliConfig.apiUrl;
-  const dashboardUrl = cliConfig.dashboardUrl;
+  const cliSettings = yield* CliSettings;
+  const apiUrl = cliSettings.apiUrl;
+  const dashboardUrl = cliSettings.dashboardUrl;
 
   const { ecdh, publicKeyHex } = yield* crypto.generateKeyPair;
   const sessionId = yield* crypto.generateSessionId;

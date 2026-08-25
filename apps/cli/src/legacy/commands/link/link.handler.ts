@@ -4,7 +4,7 @@ import type { PlatformError } from "effect/PlatformError";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 import { LegacyPlatformApi } from "../../auth/legacy-platform-api.service.ts";
-import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
 import {
   LegacyProjectRefResolver,
   PROJECT_REF_PATTERN,
@@ -264,7 +264,7 @@ const resolveLegacyLinkBranchRef = Effect.fnUntraced(function* (value: string) {
 export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkFlags) {
   const output = yield* Output;
   const api = yield* LegacyPlatformApi;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
@@ -317,7 +317,7 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
 
     const ref = yield* resolver.resolveForLink(resolvedRefOrBranch);
     resolvedRef = ref;
-    const paths = legacyTempPaths(path, cliConfig.workdir);
+    const paths = legacyTempPaths(path, cliSettings.workdir);
 
     const writeTempFile: WriteTempFile = (filePath, content) =>
       fs
@@ -336,7 +336,7 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
           new LegacyProjectPausedError({
             message: "project is paused",
             suggestion: `An admin must unpause it from the Supabase dashboard at ${legacyDashboardUrl(
-              cliConfig.profile,
+              cliSettings.profile,
             )}/project/${ref}`,
           }),
         );
@@ -368,7 +368,7 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
       ref,
       serviceKey: serviceRole,
       skipPooler: flags.skipPooler,
-      workdir: cliConfig.workdir,
+      workdir: cliSettings.workdir,
     });
 
     // 4. Save project ref (mandatory — a write failure fails the command).

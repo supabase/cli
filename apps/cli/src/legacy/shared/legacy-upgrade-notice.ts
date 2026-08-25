@@ -194,7 +194,7 @@ async function writeCacheFileNoFollow(cacheFile: string, contents: string): Prom
 
 /**
  * The directory Go's relative `supabase/.temp` paths resolve against after
- * `ChangeWorkDir`, matching `legacy-cli-config.layer.ts`'s `resolveWorkdir`
+ * `ChangeWorkDir`, matching `legacy-cli-settings.layer.ts`'s `resolveWorkdir`
  * precedence. Not reused from there: that resolution lives inside a command's
  * own layer stack, and this hook also runs for `--help`/`--version`, which
  * never build one.

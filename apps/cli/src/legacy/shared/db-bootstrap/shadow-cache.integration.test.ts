@@ -12,8 +12,8 @@
 
 import { join } from "node:path";
 
-import type { ProjectConfig } from "@supabase/config";
-import { ProjectConfigSchema } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
+import { CliConfigSchema } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Option, Path, Schema } from "effect";
@@ -46,8 +46,8 @@ import {
 import { legacyRemoveShadowDatabase } from "./shadow-database.ts";
 import type { LegacyShadowDbSetupInput, LegacyShadowSetupInput } from "./shadow-database.ts";
 
-const decodeConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
-const defaultConfig: ProjectConfig = decodeConfig({});
+const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
+const defaultConfig: CliConfig = decodeConfig({});
 
 const tempRoot = useLegacyTempWorkdir("legacy-shadow-cache-");
 

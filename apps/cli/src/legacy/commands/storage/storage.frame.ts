@@ -1,8 +1,8 @@
 import {
-  loadProjectConfig,
-  type LoadProjectConfigOptions,
-  ProjectConfigSchema,
-  type ProjectConfig,
+  loadCliConfig,
+  type LoadCliConfigOptions,
+  CliConfigSchema,
+  type CliConfig,
 } from "@supabase/config/effect";
 import { Effect, Schema } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
@@ -30,10 +30,10 @@ import { LegacyStorageInvalidUrlError, LegacyStorageUrlParseError } from "./stor
  * `utils.Config` + `client.NewStorageAPI`.
  */
 
-const decodeDefaultProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
+const decodeDefaultCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
 interface LegacyLoadedStorageConfig {
-  readonly config: ProjectConfig;
+  readonly config: CliConfig;
   readonly document: Record<string, unknown> | undefined;
   readonly appliedRemote: string | undefined;
 }
@@ -49,11 +49,11 @@ export const legacyLoadStorageConfig = Effect.fnUntraced(function* (
   workdir: string,
   projectRef: string,
 ) {
-  const loadOptions: LoadProjectConfigOptions =
+  const loadOptions: LoadCliConfigOptions =
     projectRef !== "" ? { projectRef, goViperCompat: true } : { goViperCompat: true };
-  const loaded = yield* loadProjectConfig(workdir, loadOptions).pipe(
+  const loaded = yield* loadCliConfig(workdir, loadOptions).pipe(
     Effect.catchTag(
-      "ProjectConfigParseError",
+      "CliConfigParseError",
       (cause) =>
         new LegacyStorageConfigError({
           message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
@@ -62,7 +62,7 @@ export const legacyLoadStorageConfig = Effect.fnUntraced(function* (
   );
   if (loaded === null) {
     return {
-      config: decodeDefaultProjectConfig({}),
+      config: decodeDefaultCliConfig({}),
       document: undefined,
       appliedRemote: undefined,
     } satisfies LegacyLoadedStorageConfig;
@@ -89,7 +89,7 @@ export const legacyLoadStorageConfig = Effect.fnUntraced(function* (
  * from the fiber context when a gateway call executes.
  */
 export const legacyConnectStorageGateway = <E, R>(
-  opts: { readonly projectRef: string; readonly config: ProjectConfig; readonly userAgent: string },
+  opts: { readonly projectRef: string; readonly config: CliConfig; readonly userAgent: string },
   body: (gateway: LegacyStorageGateway) => Effect.Effect<void, E, R>,
 ) =>
   Effect.gen(function* () {

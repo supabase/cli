@@ -6,7 +6,7 @@ import {
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 import { PlatformApi } from "../auth/platform-api.service.ts";
-import { CliConfig } from "./cli-config.service.ts";
+import { CliSettings } from "./cli-settings.service.ts";
 import {
   ProjectLinkRemote,
   type AccessibleProject,
@@ -173,7 +173,7 @@ const fetchOptionalVersion = <Service extends Exclude<LinkedProjectVersionServic
   );
 
 const makeProjectLinkRemote = Effect.gen(function* () {
-  const cliConfig = yield* CliConfig;
+  const cliSettings = yield* CliSettings;
   const api = yield* PlatformApi;
   const httpClient = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
 
@@ -207,7 +207,7 @@ const makeProjectLinkRemote = Effect.gen(function* () {
         return yield* Effect.fail(new NoProjectApiKeyError({ projectRef }));
       }
 
-      const baseUrl = tenantBaseUrl(project.ref, cliConfig.projectHost);
+      const baseUrl = tenantBaseUrl(project.ref, cliSettings.projectHost);
       let versions: LinkedServiceVersions = { postgres: project.database.version };
       const unavailableServices: LinkedProjectVersionService[] = [];
 

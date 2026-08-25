@@ -12,7 +12,7 @@ import {
 } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyAqua, legacyBold } from "../../../shared/legacy-colors.ts";
 import {
@@ -399,7 +399,7 @@ const runSquash = Effect.fnUntraced(function* (
 ) {
   const output = yield* Output;
   const resolver = yield* LegacyDbConfigResolver;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -437,7 +437,7 @@ const runSquash = Effect.fnUntraced(function* (
       );
     }
 
-    const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
+    const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
     // squash defaults to `--local`, same as `up`/`down`.
     const connType = target.connType ?? "local";
 
@@ -463,7 +463,7 @@ const runSquash = Effect.fnUntraced(function* (
       linkedRef = yield* projectRefResolver.loadProjectRef(flags.projectRef);
       linkedRefForCache = linkedRef;
     }
-    const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef);
+    const toml = yield* legacyReadDbToml(fs, path, cliSettings.workdir, linkedRef);
     if (toml.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${toml.appliedRemote}]\n`, "stderr");
     }
@@ -473,7 +473,7 @@ const runSquash = Effect.fnUntraced(function* (
     // rationale: all config load/validation happens ahead of the actual connection resolution.
     const localInputs = yield* legacyBuildLocalDbContainerInputs(
       spawner,
-      cliConfig.workdir,
+      cliSettings.workdir,
       networkIdFlag,
       runtimeInfo.platform,
       debug,
@@ -498,7 +498,7 @@ const runSquash = Effect.fnUntraced(function* (
     // 6. The project `.env` loads after the
     // flag-group validation above — so a `SUPABASE_YES` set only in `supabase/.env` auto-confirms
     // the remote-baseline prompt, but a flag conflict still surfaces before any `.env` read.
-    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir);
     // Make an allowlisted `supabase/.env` registry override visible to the
     // synchronous `process.env` reader in `legacyGetRegistryImageUrl`, reverted
     // when this scope closes. The project `.env` is applied
@@ -532,7 +532,7 @@ const runSquash = Effect.fnUntraced(function* (
       spawner,
       fs,
       path,
-      cliConfig.workdir,
+      cliSettings.workdir,
       migrationsDir,
       version,
       localInputs,

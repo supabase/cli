@@ -7,7 +7,7 @@ import { status } from "./status.handler.ts";
 import {
   mockOutput,
   mockProjectLinkState,
-  mockProjectLocalServiceVersions,
+  mockCliProjectLocalServiceVersions,
 } from "../../../../tests/helpers/mocks.ts";
 import {
   makeRunningStackFixture,
@@ -31,7 +31,7 @@ describe("status handler", () => {
           fixture.baseLayer,
           out.layer,
           mockProjectLinkState(),
-          mockProjectLocalServiceVersions(),
+          mockCliProjectLocalServiceVersions(),
           BunServices.layer,
         );
         return status({ stack: fixture.stackName }).pipe(
@@ -86,7 +86,7 @@ describe("status handler", () => {
           fixture.baseLayer,
           out.layer,
           mockProjectLinkState(),
-          mockProjectLocalServiceVersions(),
+          mockCliProjectLocalServiceVersions(),
           BunServices.layer,
         );
         return status({ stack: fixture.stackName }).pipe(

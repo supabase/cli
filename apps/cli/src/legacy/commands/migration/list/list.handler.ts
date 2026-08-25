@@ -3,7 +3,7 @@ import { Effect, FileSystem, Option, Path } from "effect";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { renderGlamourTable } from "../../../output/legacy-glamour-table.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
@@ -31,7 +31,7 @@ const runList = Effect.fnUntraced(function* (
   const output = yield* Output;
   const resolver = yield* LegacyDbConfigResolver;
   const connection = yield* LegacyDbConnection;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
@@ -96,7 +96,7 @@ const runList = Effect.fnUntraced(function* (
     const local = yield* legacyLoadLocalVersions(
       fs,
       path,
-      path.join(cliConfig.workdir, "supabase", "migrations"),
+      path.join(cliSettings.workdir, "supabase", "migrations"),
     );
 
     const rows = legacyMakeMigrationListRows(remote, local);

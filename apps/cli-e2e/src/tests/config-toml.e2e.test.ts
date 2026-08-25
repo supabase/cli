@@ -8,7 +8,7 @@ import { testBehaviour } from "./test-context.ts";
 // that strictly decoded supabase/config.toml through an Effect schema. Any
 // non-string field written as env(VAR) — e.g. a port — was rejected before
 // env-resolution could run, crashing the CLI at boot with
-// ProjectConfigParseError. This test runs against every CLI_HARNESS_TARGET
+// CliConfigParseError. This test runs against every CLI_HARNESS_TARGET
 // (ts-legacy, ts-next) so the regression cannot return on any shell.
 //
 // A 401 is injected so the test does not need a real API fixture: pre-fix the
@@ -57,7 +57,7 @@ describe("env-in-config-toml", () => {
     });
 
     const output = `${result.stdout}\n${result.stderr}`;
-    expect(output).not.toContain("ProjectConfigParseError");
+    expect(output).not.toContain("CliConfigParseError");
     expect(output).not.toMatch(/Expected number.*env\(SUPABASE_/);
   });
 });

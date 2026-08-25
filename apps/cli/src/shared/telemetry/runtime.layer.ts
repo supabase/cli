@@ -1,6 +1,6 @@
 import { note } from "@clack/prompts";
 import { Effect, Layer, Option, Path } from "effect";
-import { CliConfig } from "../../next/config/cli-config.service.ts";
+import { CliSettings } from "../../next/config/cli-settings.service.ts";
 import { CLI_VERSION } from "../cli/version.ts";
 import { RuntimeInfo } from "../runtime/runtime-info.service.ts";
 import { Tty } from "../runtime/tty.service.ts";
@@ -32,7 +32,7 @@ function identityFromConfig(config: Option.Option<TelemetryConfig>) {
 export const telemetryRuntimeLayer = Layer.effect(
   TelemetryRuntime,
   Effect.gen(function* () {
-    const cliConfig = yield* CliConfig;
+    const cliSettings = yield* CliSettings;
     const path = yield* Path.Path;
     const configDir = yield* getConfigDir;
     const tracesDir = path.join(configDir, "traces");
@@ -59,8 +59,8 @@ export const telemetryRuntimeLayer = Layer.effect(
     }
 
     const showDebug =
-      (Option.isSome(cliConfig.debug) && cliConfig.debug.value === "1") ||
-      (Option.isSome(cliConfig.telemetryDebug) && cliConfig.telemetryDebug.value === "1");
+      (Option.isSome(cliSettings.debug) && cliSettings.debug.value === "1") ||
+      (Option.isSome(cliSettings.telemetryDebug) && cliSettings.telemetryDebug.value === "1");
 
     let isCi = false;
     for (const envVar of CI_ENV_VARS) {

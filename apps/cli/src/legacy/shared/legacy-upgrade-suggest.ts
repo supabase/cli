@@ -7,7 +7,7 @@ import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import type * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
-import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { resolveLegacyAccessToken } from "./legacy-resolve-token.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import {
@@ -98,7 +98,7 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
    * process-wide `CurrentProfile` — commands that reconcile a pflag-effective
    * profile differing from the config layer's (sso add/update, PR #5974
    * round 7) pass that profile's URL so the gate requests hit the same host
-   * as their main calls. Defaults to `LegacyCliConfig.apiUrl`.
+   * as their main calls. Defaults to `LegacyCliSettings.apiUrl`.
    */
   readonly apiUrl?: string;
   /**
@@ -124,7 +124,7 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
 
   const output = yield* Output;
   const analytics = yield* Analytics;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const httpClient = yield* HttpClient.HttpClient;
 
   let gate:
@@ -155,10 +155,10 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
       ? HttpClientRequest.bearerToken(tokenOpt.value)
       : (req) => req;
 
-    const apiUrl = opts.apiUrl ?? cliConfig.apiUrl;
+    const apiUrl = opts.apiUrl ?? cliSettings.apiUrl;
     const projectReq = HttpClientRequest.get(`${apiUrl}/v1/projects/${opts.projectRef}`).pipe(
       authHeader,
-      HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
+      HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
     );
     const projectResp = yield* httpClient.execute(projectReq).pipe(Effect.option);
     if (projectResp._tag === "None" || projectResp.value.status !== 200) {
@@ -175,7 +175,7 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
 
     const entReq = HttpClientRequest.get(`${apiUrl}/v1/organizations/${orgSlug}/entitlements`).pipe(
       authHeader,
-      HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
+      HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
     );
     const entResp = yield* httpClient.execute(entReq).pipe(Effect.option);
     if (entResp._tag === "None" || entResp.value.status !== 200) {
@@ -203,7 +203,7 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
     }
 
     gate = {
-      billingUrl: legacyBillingUrl(cliConfig.profile, orgSlug),
+      billingUrl: legacyBillingUrl(cliSettings.profile, orgSlug),
       feature: opts.featureKey,
       orgSlug,
     };

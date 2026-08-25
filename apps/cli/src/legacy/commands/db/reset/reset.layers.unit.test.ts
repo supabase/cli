@@ -34,7 +34,7 @@ import {
   mockTty,
 } from "../../../../../tests/helpers/mocks.ts";
 import {
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyCredentialsLayer,
   mockLegacyLinkedProjectCacheLayer,
   mockLegacyTelemetryStateLayer,
@@ -115,7 +115,7 @@ function ambientStubs() {
     mockTelemetryRuntime(),
     out.layer,
     flagLayers,
-    mockLegacyCliConfig({ workdir: "/tmp/reset-layers-test" }),
+    mockLegacyCliSettings({ workdir: "/tmp/reset-layers-test" }),
     mockLegacyCredentialsLayer,
     mockLegacyLinkedProjectCacheLayer,
     mockLegacyTelemetryStateLayer,

@@ -9,7 +9,7 @@
  * container spec once called.
  */
 
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
 import {
@@ -26,8 +26,8 @@ export interface LegacyRealtimeContainerSpecInput {
   readonly networkId: string;
   /** `utils.Config.Realtime.Image`, already resolved/pulled by the caller (`image-prepull.ts`). */
   readonly image: string;
-  readonly ipVersion: ProjectConfig["realtime"]["ip_version"];
-  readonly maxHeaderLength: ProjectConfig["realtime"]["max_header_length"];
+  readonly ipVersion: CliConfig["realtime"]["ip_version"];
+  readonly maxHeaderLength: CliConfig["realtime"]["max_header_length"];
   /** `LegacyLocalConfigValues.dbUrl` — reused, not recomputed, to derive the internal DB password. */
   readonly dbUrl: string;
   readonly jwtSecret: string;

@@ -18,7 +18,7 @@
  * declarative callers always want the plain full reset and call with no arguments.
  *
  * Resolves every service it needs (`LegacyDebugFlag`, `LegacyNetworkIdFlag`,
- * `RuntimeInfo`, `ChildProcessSpawner`, `FileSystem`, `Path`, `LegacyCliConfig`, the
+ * `RuntimeInfo`, `ChildProcessSpawner`, `FileSystem`, `Path`, `LegacyCliSettings`, the
  * project `.env` + `legacyResolveExperimentalWithProjectEnv` gate) itself via `yield*`,
  * exactly like `legacyDbReset` did inline before this extraction — so it is
  * self-contained and does not need `LegacyDbResetFlags`/`CliArgs`/
@@ -54,7 +54,7 @@ import {
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
 import { legacyAqua, legacyYellow } from "../legacy-colors.ts";
-import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
 import { legacyCheckDbToml, legacyLoadProjectEnv } from "../legacy-db-config.toml-read.ts";
 import { legacySeedBucketsRun } from "../legacy-seed-buckets.ts";
 import { legacyAwaitStorageReady } from "./await-storage-ready.ts";
@@ -104,7 +104,7 @@ export const legacyResetLocalDatabase = Effect.fnUntraced(function* (
   input: LegacyResetLocalDatabaseInput = PLAIN_FULL_RESET,
 ) {
   const output = yield* Output;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -117,7 +117,7 @@ export const legacyResetLocalDatabase = Effect.fnUntraced(function* (
   // `SetupLocalDatabase` (`db start` and `db reset`'s PG15 recreate).
   const debug = yield* LegacyDebugFlag;
 
-  const workdir = cliConfig.workdir;
+  const workdir = cliSettings.workdir;
   // Go's `ParseDatabaseConfig` runs `loadNestedEnv` (which `os.Setenv`s each project-.env key)
   // before `reset.Run` reads `viper.GetBool("EXPERIMENTAL")`, so a `SUPABASE_EXPERIMENTAL` set
   // only in `supabase/.env` is honored. Load the project env first and resolve against it, as
@@ -140,7 +140,7 @@ export const legacyResetLocalDatabase = Effect.fnUntraced(function* (
     fs,
     path,
     workdir,
-    Option.getOrUndefined(cliConfig.projectId),
+    Option.getOrUndefined(cliSettings.projectId),
   );
   if (!running) {
     return yield* Effect.fail(
@@ -216,7 +216,7 @@ export const legacyResetLocalDatabase = Effect.fnUntraced(function* (
     // `.env.<SUPABASE_ENV>.local`, `.env.local`, `.env.<SUPABASE_ENV>`, `.env`, across
     // both `supabase/` and the project root, `pkg/config/config.go:1220-1257`) — so
     // `legacySeedBucketsRun` never independently reloads config.toml through
-    // `@supabase/config`'s narrower `loadProjectConfig` → `loadProjectEnvironment`
+    // `@supabase/config`'s narrower `loadCliConfig` → `loadCliProjectEnvironment`
     // (`supabase/.env`/`.env.local` plus ambient env only,
     // `packages/config/src/project.ts:209-245`), which used to reject a config whose
     // `env(VAR)` reference is backed by e.g. `supabase/.env.development` — genuinely

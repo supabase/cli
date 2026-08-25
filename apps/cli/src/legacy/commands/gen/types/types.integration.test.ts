@@ -36,7 +36,7 @@ import {
 import {
   buildLegacyTestRuntime,
   LEGACY_VALID_REF,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApiService,
   mockLegacyTelemetryStateTracked,
@@ -344,7 +344,7 @@ function setup(
   const runtime = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig: mockLegacyCliConfig({
+    cliSettings: mockLegacyCliSettings({
       workdir,
       projectId: opts.projectId ?? Option.none(),
     }),

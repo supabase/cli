@@ -6,9 +6,9 @@ import { inject, test as vitestTest } from "vitest";
 
 import { makeTempHome, runSupabase } from "./cli.ts";
 import { LIVE_EXIT_TIMEOUT_MS } from "./live-env.ts";
-import type { LiveProjectEnvironment } from "./live-project.ts";
+import type { LiveCliProjectEnvironment } from "./live-project.ts";
 
-export type LiveProject = LiveProjectEnvironment["project"];
+export type LiveProject = LiveCliProjectEnvironment["project"];
 type RunOptions = NonNullable<Parameters<typeof runSupabase>[1]>;
 type RunResult = Awaited<ReturnType<typeof runSupabase>>;
 

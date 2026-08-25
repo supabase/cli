@@ -7,7 +7,7 @@ import {
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyBold } from "../../../shared/legacy-colors.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
@@ -32,7 +32,7 @@ const runFetch = Effect.fnUntraced(function* (
   const output = yield* Output;
   const resolver = yield* LegacyDbConfigResolver;
   const connection = yield* LegacyDbConnection;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
@@ -77,7 +77,7 @@ const runFetch = Effect.fnUntraced(function* (
   // SUPABASE_YES set only in supabase/.env auto-confirms, but a flag conflict still
   // surfaces before any .env read. Resolve --yes against the project env here, not
   // just process.env. Same ordering as `migration down`/`repair`.
-  const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+  const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir);
   const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
 
   // Linked fetch caches the project ref on success. The ref is
@@ -94,7 +94,7 @@ const runFetch = Effect.fnUntraced(function* (
       : undefined;
 
   const fetchBody = Effect.gen(function* () {
-    const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
+    const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
 
     // Create the migrations dir if missing, then prompt before overwriting a
     // non-empty migrations dir (default YES). Cancel → cancellation.

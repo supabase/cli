@@ -2,7 +2,7 @@ import { Effect, Option, Redacted, Result, Stdio } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import {
@@ -104,7 +104,7 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
   const output = yield* Output;
   const goOutputFlag = yield* LegacyOutputFlag;
   const httpClient = yield* HttpClient.HttpClient;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
@@ -179,7 +179,7 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
     // Reachable exactly where the scan and the parser disagree: in `sso add
     // --type saml --domains --profile alternate.yml` pflag hands `--profile`
     // to `--domains` and targets the env/default profile, while the Effect
-    // parser read `alternate.yml` as the profile and built `LegacyCliConfig`
+    // parser read `alternate.yml` as the profile and built `LegacyCliSettings`
     // from it — without this reconciliation the POST goes to an API host the
     // established behavior never contacts. Where the scan and the parser
     // agree, this resolves to `none` and the config layer's apiUrl below is
@@ -270,7 +270,7 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
     // The reconciled profile applies process-wide, so the POST, the
     // upgrade-gate fallback GETs, and the linked-project cache GET all
     // target the same host.
-    const apiUrl = Option.getOrElse(profileApiUrl, () => cliConfig.apiUrl);
+    const apiUrl = Option.getOrElse(profileApiUrl, () => cliSettings.apiUrl);
 
     yield* Effect.gen(function* () {
       // Permissive request body. We POST as raw JSON to preserve any
@@ -336,7 +336,7 @@ export const legacySsoAdd = Effect.fn("legacy.sso.add")(function* (flags: Legacy
         `${apiUrl}/v1/projects/${ref}/config/auth/sso/providers`,
       ).pipe(
         Option.isSome(tokenOpt) ? HttpClientRequest.bearerToken(tokenOpt.value) : (req) => req,
-        HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
+        HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
         // Body keys serialised in Go-struct order (alphabetical) so the
         // cli-e2e replay server's string-compare body match succeeds.
         HttpClientRequest.bodyText(encodeGoStructJsonBody(body), "application/json"),

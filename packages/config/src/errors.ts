@@ -1,7 +1,7 @@
 import { Data } from "effect";
 import type { ConfigFormat } from "./config-format.ts";
 
-export class ProjectConfigParseError extends Data.TaggedError("ProjectConfigParseError")<{
+export class CliConfigParseError extends Data.TaggedError("CliConfigParseError")<{
   readonly path: string;
   readonly format: ConfigFormat;
   readonly cause: unknown;
@@ -18,7 +18,7 @@ export class ProjectConfigParseError extends Data.TaggedError("ProjectConfigPars
    * `edge_runtime.secrets` when an unrelated field like `analytics.port` is
    * malformed) can re-decode this subtree against the full schema themselves.
    * Only `edge_runtime` is retained, not the whole document — several callers
-   * of `loadProjectConfig` don't catch `ProjectConfigParseError` at all, so
+   * of `loadCliConfig` don't catch `CliConfigParseError` at all, so
    * this error can propagate with whatever is attached here, and no caller
    * needs anything outside `edge_runtime` today. Every `edge_runtime.secrets`
    * value is wrapped in `Redacted` (mirroring `secret()`'s `x-secret`
@@ -33,7 +33,7 @@ export class ProjectConfigParseError extends Data.TaggedError("ProjectConfigPars
    * Name of the `[remotes.<name>]` block whose subtree was merged over the
    * base document before the decode that produced this error, when a
    * `projectRef` was supplied and one matched. Mirrors `appliedRemote` on
-   * {@link LoadedProjectConfig} for the success path. Go's `loadFromFile`
+   * {@link LoadedCliConfig} for the success path. Go's `loadFromFile`
    * prints `Loading config override: [remotes.<name>]` to stderr
    * unconditionally, *before* `mapstructure` decode ever runs
    * (`apps/cli-go/pkg/config/config.go:604-609`) — so the notice is still due
@@ -48,14 +48,12 @@ export class ProjectConfigParseError extends Data.TaggedError("ProjectConfigPars
   readonly appliedRemote?: string;
 }> {}
 
-export class ProjectEnvParseError extends Data.TaggedError("ProjectEnvParseError")<{
+export class CliProjectEnvParseError extends Data.TaggedError("CliProjectEnvParseError")<{
   readonly path: string;
   readonly line: number;
 }> {}
 
-export class MissingProjectConfigValueError extends Data.TaggedError(
-  "MissingProjectConfigValueError",
-)<{
+export class MissingCliConfigValueError extends Data.TaggedError("MissingCliConfigValueError")<{
   readonly configPath: string;
 }> {}
 

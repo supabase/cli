@@ -4,7 +4,7 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { WORKER_RUNTIMES, WORKER_SIZES } from "../../../../shared/workers/worker-runtimes.ts";
-import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
+import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
@@ -36,11 +36,11 @@ const config = {
 
 export type LegacyWorkersNewFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 
 /** Local-disk only: no Management API, so no platform stack is built. */
 const legacyWorkersNewRuntimeLayer = Layer.mergeAll(
-  cliConfig,
+  cliSettings,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["workers", "new"]),
 );

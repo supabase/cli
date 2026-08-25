@@ -118,4 +118,4 @@ coordination.
 
 - [CLI Code Structure](./code-structure.md)
 - [Service Versioning](../../../packages/stack/docs/service-versioning.md)
-- [Project Config Loading](../../../packages/config/docs/project-config-loading.md)
+- [CLI Config Loading](../../../packages/config/docs/cli-config-loading.md)
