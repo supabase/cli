@@ -9,7 +9,7 @@ export const createNodesV2: CreateNodesV2<TestPluginOptions> = [
   "{apps,packages}/*/vitest.config.ts",
   async (vitestConfigFiles, _options, context) => {
     return await createNodesFromFiles(
-      async (vitestConfigPath, _, context, idx) => {
+      async (vitestConfigPath, _, context) => {
         const projectRoot = dirname(vitestConfigPath);
         const project: ProjectConfiguration = {
           root: projectRoot,
@@ -26,7 +26,7 @@ export const createNodesV2: CreateNodesV2<TestPluginOptions> = [
         project.targets ??= {};
 
         const absoluteFilePath = join(context.workspaceRoot, vitestConfigPath);
-        const { resolveConfig } = await loadVitestDynamicImport();
+        const { resolveConfig } = await import("vitest/node");
         const vitestConfig = await resolveConfig({
           config: absoluteFilePath,
           mode: "development",
@@ -41,7 +41,15 @@ export const createNodesV2: CreateNodesV2<TestPluginOptions> = [
               const extraInputs =
                 projectRoot === "packages/stack" && targetName === "unit"
                   ? ["{workspaceRoot}/apps/cli-go/pkg/config/templates/Dockerfile"]
-                  : [];
+                  : // monorepo-import-contract.unit.test.ts scans every other
+                    // workspace's sources, so consumer-side edits must
+                    // invalidate this project's unit-test cache too.
+                    projectRoot === "packages/config" && targetName === "unit"
+                    ? [
+                        "{workspaceRoot}/apps/**/*.{ts,tsx}",
+                        "{workspaceRoot}/packages/**/*.{ts,tsx}",
+                      ]
+                    : [];
               project.targets = {
                 ...project.targets,
                 ...createTestTarget(
@@ -87,8 +95,4 @@ function createTestTarget(name: string = "", inputs: string[] = [], extraInputs:
       ],
     },
   };
-}
-
-function loadVitestDynamicImport() {
-  return Function('return import("vitest/node")')();
 }

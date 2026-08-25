@@ -239,6 +239,12 @@ type (
 		Functions    FunctionConfig `toml:"functions" json:"functions"`
 		Analytics    analytics      `toml:"analytics" json:"analytics"`
 		Experimental experimental   `toml:"experimental" json:"experimental"`
+		// Workers is parsed but never read here. The [workers] section is owned by
+		// the TS CLI; this field exists only so a config the TS schema accepts does
+		// not trip UnmarshalExact in the delegated Go child (`flags.LoadConfig`).
+		// The json tag is the one that matters: the decoder runs with
+		// dc.TagName = "json". Omitted from toml so Go never emits the section.
+		Workers map[string]any `toml:"-" json:"workers"`
 	}
 
 	config struct {

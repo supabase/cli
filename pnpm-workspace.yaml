@@ -4,8 +4,8 @@ packages:
   - "tools/*"
 
 allowBuilds:
-  '@parcel/watcher': true
-  '@launchql/protobufjs': true
+  "@parcel/watcher": true
+  "@launchql/protobufjs": true
   esbuild: true
   msgpackr-extract: true
   nx: true
@@ -67,4 +67,4 @@ supportedArchitectures:
     - win32
 
 patchedDependencies:
-  '@libpg-query/parser@17.6.10': patches/@libpg-query__parser@17.6.10.patch
+  "@libpg-query/parser@17.6.10": patches/@libpg-query__parser@17.6.10.patch

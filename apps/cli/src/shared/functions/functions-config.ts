@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import { Effect, type FileSystem, type Path } from "effect";
-import { loadProjectConfig, type LoadedProjectConfig } from "@supabase/config";
+import { loadProjectConfig, type LoadedProjectConfig } from "@supabase/config/effect";
 import { normalizeProjectId } from "./functions-docker.ts";
 
 /**

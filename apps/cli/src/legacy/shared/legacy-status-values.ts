@@ -284,9 +284,9 @@ export function legacyResolveStatusLocalState(
   config: ProjectConfig,
   hostname: string,
   workdir: string,
-  projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
+  projectEnvValues?: Readonly<Record<string, string>>,
   /** `LoadedProjectConfig.document` — see {@link legacyResolveLocalConfigValues}'s doc comment. */
-  document: Readonly<Record<string, unknown>> | undefined = undefined,
+  document?: Readonly<Record<string, unknown>>,
   /**
    * An already-resolved {@link legacyResolveLocalConfigValues} result to reuse
    * instead of re-deriving one. Callers that resolved `local` earlier in the
@@ -489,9 +489,9 @@ export function legacyStatusValues(
   excluded: ReadonlyArray<string>,
   overrides: ReadonlyMap<string, string>,
   workdir: string,
-  projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
+  projectEnvValues?: Readonly<Record<string, string>>,
   /** `LoadedProjectConfig.document` — see {@link legacyResolveLocalConfigValues}'s doc comment. */
-  document: Readonly<Record<string, unknown>> | undefined = undefined,
+  document?: Readonly<Record<string, unknown>>,
 ): LegacyStatusValuesResult {
   const localState = legacyResolveStatusLocalState(
     config,
