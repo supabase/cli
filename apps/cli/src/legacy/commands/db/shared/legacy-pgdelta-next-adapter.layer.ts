@@ -234,6 +234,27 @@ function legacyTryPgDeltaNext<Success>(
   });
 }
 
+function legacyIsLibraryDiagnostic<Subject>(
+  value: unknown,
+): value is LegacyPgDeltaNextLibraryDiagnostic<Subject> {
+  if (typeof value !== "object" || value === null) return false;
+  const severity = Reflect.get(value, "severity");
+  return (
+    typeof Reflect.get(value, "code") === "string" &&
+    typeof Reflect.get(value, "message") === "string" &&
+    (severity === "error" || severity === "warning" || severity === "info")
+  );
+}
+
+function legacyReadPlanDiagnostics<Subject>(
+  plan: unknown,
+): readonly LegacyPgDeltaNextLibraryDiagnostic<Subject>[] {
+  if (typeof plan !== "object" || plan === null) return [];
+  const diagnostics = Reflect.get(plan, "diagnostics");
+  if (!Array.isArray(diagnostics)) return [];
+  return diagnostics.filter((diagnostic) => legacyIsLibraryDiagnostic<Subject>(diagnostic));
+}
+
 function legacyNormalizePgDeltaNextDiagnostics<Subject>(
   diagnostics: readonly LegacyPgDeltaNextLibraryDiagnostic<Subject>[],
   origin: LegacyPgDeltaNextDiagnosticOrigin,
@@ -271,99 +292,6 @@ function legacySkippedStatementDiagnostics(
     message: `pg-delta could not load a declarative schema statement from ${entry.file}: ${entry.stmt}`,
     context: { file: entry.file, statement: entry.stmt },
   }));
-}
-
-function legacyIsPgDeltaNextParameterAclDiagnostic<Subject>(
-  diagnostic: LegacyPgDeltaNextLibraryDiagnostic<Subject>,
-): boolean {
-  return diagnostic.code === "unmodeled_kind" && diagnostic.context?.["kind"] === "parameter ACL";
-}
-
-/**
- * The parameter-ACL catalog is cluster-wide, so a co-located declarative shadow
- * observes Supabase platform grants too. Keep strict coverage for every ACL
- * other than the exact platform bootstrap grant while removing the aggregate
- * diagnostic when that bootstrap grant is the only observed parameter ACL.
- */
-export function legacyFilterPgDeltaNextPlatformParameterAclDiagnostics<Subject>(
-  diagnostics: readonly LegacyPgDeltaNextLibraryDiagnostic<Subject>[],
-  userOwnedParameterAcls: readonly string[],
-): LegacyPgDeltaNextLibraryDiagnostic<Subject>[] {
-  const names = [...new Set(userOwnedParameterAcls)].sort();
-  const filtered: LegacyPgDeltaNextLibraryDiagnostic<Subject>[] = [];
-  for (const diagnostic of diagnostics) {
-    if (!legacyIsPgDeltaNextParameterAclDiagnostic(diagnostic)) {
-      filtered.push(diagnostic);
-      continue;
-    }
-    if (names.length === 0) continue;
-    const samples = names.slice(0, 5);
-    const more = names.length > samples.length ? ", …" : "";
-    filtered.push({
-      ...diagnostic,
-      message:
-        `${names.length} unmodeled "parameter ACL" object${names.length === 1 ? "" : "s"} ` +
-        `not managed by this engine (e.g. ${samples.join(", ")}${more}) — ` +
-        "v1 detects but does not model this kind",
-      context: { kind: "parameter ACL", count: names.length, samples },
-    });
-  }
-  return filtered;
-}
-
-interface LegacyPgDeltaNextParameterAclGrant {
-  readonly name: string;
-  readonly grantee: string;
-  readonly privilege: string;
-}
-
-// Supabase's platform bootstrap grants these so privileged platform roles can
-// manage the setting and the Realtime owner can replay routines whose proconfig
-// contains `SET log_min_messages ...`. Parameter ACLs have cluster scope, so
-// the grants are also visible from sibling shadow DBs.
-const legacyPgDeltaNextPlatformParameterAcls = new Set([
-  "log_min_messages\u0000supabase_admin\u0000ALTER SYSTEM",
-  "log_min_messages\u0000supabase_admin\u0000SET",
-  "log_min_messages\u0000supabase_realtime_admin\u0000SET",
-]);
-
-function legacyPgDeltaNextParameterAclKey(grant: LegacyPgDeltaNextParameterAclGrant): string {
-  return `${grant.name}\u0000${grant.grantee}\u0000${grant.privilege}`;
-}
-
-export function legacyPgDeltaNextUserOwnedParameterAcls(
-  grants: readonly LegacyPgDeltaNextParameterAclGrant[],
-): string[] {
-  return [
-    ...new Set(
-      grants
-        .filter(
-          (grant) =>
-            !legacyPgDeltaNextPlatformParameterAcls.has(legacyPgDeltaNextParameterAclKey(grant)),
-        )
-        .map((grant) => grant.name),
-    ),
-  ].sort();
-}
-
-async function legacyFilterPgDeltaNextPlatformDiagnostics<Subject>(
-  pool: Pool,
-  diagnostics: readonly LegacyPgDeltaNextLibraryDiagnostic<Subject>[],
-): Promise<LegacyPgDeltaNextLibraryDiagnostic<Subject>[]> {
-  if (!diagnostics.some(legacyIsPgDeltaNextParameterAclDiagnostic)) return [...diagnostics];
-  const result = await pool.query<LegacyPgDeltaNextParameterAclGrant>(
-    `SELECT DISTINCT pa.parname AS name,
-                     COALESCE(grantee.rolname, 'PUBLIC') AS grantee,
-                     acl.privilege_type AS privilege
-       FROM pg_parameter_acl pa
-       CROSS JOIN LATERAL aclexplode(pa.paracl) acl
-       LEFT JOIN pg_roles grantee ON grantee.oid = acl.grantee
-      ORDER BY pa.parname, grantee, privilege`,
-  );
-  return legacyFilterPgDeltaNextPlatformParameterAclDiagnostics(
-    diagnostics,
-    legacyPgDeltaNextUserOwnedParameterAcls(result.rows),
-  );
 }
 
 function legacyNormalizePgDeltaNextRenderedFiles(
@@ -412,17 +340,22 @@ export function legacyPgDeltaNextProfile(
   return { ...supabaseProfile, policy };
 }
 
-const legacyPgDeltaNextHumanFormatOptions: SqlFormatOptions = {
-  keywordCase: "lower",
+/** Human-readable SQL when `[experimental.pgdelta] format_options` is omitted. */
+export const legacyPgDeltaNextDefaultFormatOptions = {
+  keywordCase: "upper",
+  indent: 2,
   maxWidth: 180,
-};
+  commaStyle: "trailing",
+  alignColumns: true,
+  alignKeyValues: true,
+} satisfies SqlFormatOptions;
 
 function legacyPgDeltaNextFormatOptions(raw: string | undefined): SqlFormatOptions | undefined {
-  if (raw === undefined || raw.trim().length === 0) return legacyPgDeltaNextHumanFormatOptions;
+  if (raw === undefined || raw.trim().length === 0) return legacyPgDeltaNextDefaultFormatOptions;
   const parsed: unknown = JSON.parse(raw);
   if (parsed === null) return undefined;
   if (typeof parsed !== "object" || Array.isArray(parsed)) {
-    return legacyPgDeltaNextHumanFormatOptions;
+    return legacyPgDeltaNextDefaultFormatOptions;
   }
   const value = (key: string): unknown => Reflect.get(parsed, key);
   const keywordCase = value("keywordCase");
@@ -435,7 +368,7 @@ function legacyPgDeltaNextFormatOptions(raw: string | undefined): SqlFormatOptio
   const preserveViewBodies = value("preserveViewBodies");
   const preserveRuleBodies = value("preserveRuleBodies");
   return {
-    ...legacyPgDeltaNextHumanFormatOptions,
+    ...legacyPgDeltaNextDefaultFormatOptions,
     ...(keywordCase === "upper" || keywordCase === "lower" || keywordCase === "preserve"
       ? { keywordCase }
       : {}),
@@ -455,6 +388,14 @@ function legacyTerminatePgDeltaNextStatement(sql: string): string {
   return trimmed.endsWith(";") ? trimmed : `${trimmed};`;
 }
 
+export function legacyFormatPgDeltaNextSql(
+  sql: string,
+  format: SqlFormatOptions | undefined,
+): string {
+  if (format === undefined) return sql;
+  return `${formatSqlStatements([sql], format).map(legacyTerminatePgDeltaNextStatement).join("\n\n")}\n`;
+}
+
 function legacyFormatPgDeltaNextRenderedFiles(
   files: readonly LegacyPgDeltaNextLibraryRenderedFile[],
   format: SqlFormatOptions | undefined,
@@ -462,9 +403,7 @@ function legacyFormatPgDeltaNextRenderedFiles(
   if (format === undefined) return files;
   return files.map((file) => ({
     ...file,
-    contents: `${formatSqlStatements([file.contents], format)
-      .map(legacyTerminatePgDeltaNextStatement)
-      .join("\n\n")}\n`,
+    contents: legacyFormatPgDeltaNextSql(file.contents, format),
   }));
 }
 
@@ -480,9 +419,15 @@ function legacyPgDeltaNextExportOptions(input: LegacyPgDeltaNextDeclarativeExpor
 function legacyPgDeltaNextPlanOptions(input: LegacyPgDeltaNextDeclarativePlanInput) {
   let manifest;
   if (input.manifest !== undefined) {
-    const { files, ...metadata } = input.manifest;
-    manifest = { ...metadata, ...(files !== undefined ? { files: [...files] } : {}) };
+    const { files, loadOrder, ...metadata } = input.manifest;
+    manifest = {
+      ...metadata,
+      ...(files !== undefined ? { files: [...files] } : {}),
+      ...(loadOrder !== undefined ? { loadOrder: [...loadOrder] } : {}),
+    };
   }
+  // Isolated load only. pg-delta's preflight derives scope/redactSecrets from
+  // the manifest and files — do not pin those here.
   return {
     profile: legacyPgDeltaNextProfile(input.schema),
     ...(manifest !== undefined ? { manifest } : {}),
@@ -491,6 +436,7 @@ function legacyPgDeltaNextPlanOptions(input: LegacyPgDeltaNextDeclarativePlanInp
     seedAssumedSchemas: false,
     strictDataStatements: true,
     reorder: true,
+    connectionReuse: "reconnect-on-stuck" as const,
   };
 }
 
@@ -518,6 +464,7 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
           allowDrops: input.allowDrops,
         });
         const renderedFiles = legacyFormatPgDeltaNextRenderedFiles(rendered.files, format);
+        const planDiagnostics = legacyReadPlanDiagnostics<Subject>(generatedPlan);
         const diagnostics = [
           ...legacyNormalizePgDeltaNextDiagnostics(
             source.diagnostics,
@@ -529,6 +476,11 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
             "desired",
             libraries.encodeSubject,
           ),
+          ...legacyNormalizePgDeltaNextDiagnostics(
+            planDiagnostics,
+            "plan",
+            libraries.encodeSubject,
+          ),
         ];
         return {
           changes: rendered.changes,
@@ -538,6 +490,7 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
           hazards: libraries.summarizeHazards(generatedPlan, [
             ...source.diagnostics,
             ...desired.diagnostics,
+            ...planDiagnostics,
           ]),
           ...(input.debug
             ? {
@@ -590,10 +543,12 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
           allowDrops: input.allowDrops,
         });
         const renderedFiles = legacyFormatPgDeltaNextRenderedFiles(rendered.files, format);
+        const planDiagnostics = legacyReadPlanDiagnostics<Subject>(result.plan);
         const libraryDiagnostics = [
           ...result.loadDiagnostics,
           ...result.targetDiagnostics,
           ...result.driftDiagnostics,
+          ...planDiagnostics,
         ];
         return {
           changes: rendered.changes,
@@ -613,6 +568,11 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
             ...legacyNormalizePgDeltaNextDiagnostics(
               result.driftDiagnostics,
               "declarativeDrift",
+              libraries.encodeSubject,
+            ),
+            ...legacyNormalizePgDeltaNextDiagnostics(
+              planDiagnostics,
+              "plan",
               libraries.encodeSubject,
             ),
             ...legacySkippedStatementDiagnostics(result.skipped),
@@ -652,56 +612,26 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
 }
 
 const legacyPgDeltaNextRealLibraries = {
-  resolveProfile: async (
+  resolveProfile: (
     pool: Pool,
     options: Parameters<typeof resolveProfile>[2],
     schema?: readonly string[],
-  ) => {
-    const resolved = await resolveProfile(pool, legacyPgDeltaNextProfile(schema), options);
-    return {
-      ...resolved,
-      extract: async (
-        extractPool: Pool,
-        extractOptions?: Parameters<typeof resolved.extract>[1],
-      ) => {
-        const result = await resolved.extract(extractPool, extractOptions);
-        return {
-          ...result,
-          diagnostics: await legacyFilterPgDeltaNextPlatformDiagnostics(
-            extractPool,
-            result.diagnostics,
-          ),
-        };
-      },
-    };
-  },
+  ) => resolveProfile(pool, legacyPgDeltaNextProfile(schema), options),
   plan,
   renderPlanFiles,
-  buildSchemaExport: async (pool: Pool, input: LegacyPgDeltaNextLibraryExportOptions) => {
-    const result = await buildSchemaExport(pool, input);
-    return {
-      ...result,
-      diagnostics: await legacyFilterPgDeltaNextPlatformDiagnostics(pool, result.diagnostics),
-    };
-  },
-  planSchemaFiles: async (
+  buildSchemaExport,
+  planSchemaFiles: (
     targetPool: Pool,
     shadowPool: Pool,
     files: readonly LegacyPgDeltaNextSqlFile[],
     input: LegacyPgDeltaNextLibraryPlanOptions,
-  ) => {
-    const result = await planSchemaFiles(
+  ) =>
+    planSchemaFiles(
       targetPool,
       shadowPool,
       files.map((file) => ({ name: file.name, sql: file.sql })),
       input,
-    );
-    const [loadDiagnostics, targetDiagnostics] = await Promise.all([
-      legacyFilterPgDeltaNextPlatformDiagnostics(shadowPool, result.loadDiagnostics),
-      legacyFilterPgDeltaNextPlatformDiagnostics(targetPool, result.targetDiagnostics),
-    ]);
-    return { ...result, loadDiagnostics, targetDiagnostics };
-  },
+    ),
   serializeSnapshot,
   serializePlan,
   summarizeRemovals: legacySummarizePgDeltaNextRemovals,

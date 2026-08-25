@@ -3,111 +3,46 @@ import { BinaryResolver } from "./BinaryResolver.ts";
 import { nativeReleaseForService } from "./ServiceCatalog.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
 
-const postgresVersion = DEFAULT_VERSIONS.postgres;
-const postgrestVersion = DEFAULT_VERSIONS.postgrest;
-const authVersion = DEFAULT_VERSIONS.auth;
-const authRcVersion = "2.188.0-rc.15";
-const edgeRuntimeVersion = DEFAULT_VERSIONS["edge-runtime"];
-
-describe("nativeReleaseForService", () => {
-  it("constructs postgres URL (appends -cli suffix for native binaries)", () => {
-    const release = nativeReleaseForService("postgres", postgresVersion, {
+describe("slim native release descriptors", () => {
+  it("uses the frozen slim-services archive, manifest, and checksum names", () => {
+    const release = nativeReleaseForService("postgrest", DEFAULT_VERSIONS.postgrest, {
       os: "darwin",
       arch: "arm64",
     });
-    expect(release?.downloadUrl).toBe(
-      `https://github.com/supabase/postgres/releases/download/v${postgresVersion}-cli/supabase-postgres-v${postgresVersion}-cli-darwin-arm64.tar.gz`,
-    );
-    expect(release?.checksumUrl).toBe(`${release?.downloadUrl}.sha256`);
-    expect(release?.stripComponents).toBe(true);
-  });
-
-  it("constructs postgrest URL", () => {
-    const release = nativeReleaseForService("postgrest", postgrestVersion, {
-      os: "darwin",
-      arch: "arm64",
+    expect(release).toMatchObject({
+      releaseTag: "postgrest-v16.1",
+      target: "darwin-arm64",
+      archive: "tar.zst",
+      downloadUrl:
+        "https://github.com/supabase/slim-services/releases/download/postgrest-v16.1/postgrest-v16.1-darwin-arm64.tar.zst",
+      manifestUrl:
+        "https://github.com/supabase/slim-services/releases/download/postgrest-v16.1/postgrest-v16.1-darwin-arm64.manifest.json",
+      checksumUrl:
+        "https://github.com/supabase/slim-services/releases/download/postgrest-v16.1/SHA256SUMS",
     });
-    expect(release?.downloadUrl).toBe(
-      `https://github.com/PostgREST/postgrest/releases/download/v${postgrestVersion}/postgrest-v${postgrestVersion}-macos-aarch64.tar.xz`,
-    );
   });
 
-  it("constructs postgrest Windows URL with .zip extension", () => {
-    const release = nativeReleaseForService("postgrest", postgrestVersion, {
-      os: "win32",
-      arch: "x64",
-    });
-    expect(release?.downloadUrl).toBe(
-      `https://github.com/PostgREST/postgrest/releases/download/v${postgrestVersion}/postgrest-v${postgrestVersion}-windows-x86-64.zip`,
-    );
-    expect(release?.archive).toBe("zip");
-  });
-
-  it("constructs auth URL for rc releases", () => {
-    const release = nativeReleaseForService("auth", authRcVersion, {
-      os: "linux",
-      arch: "arm64",
-    });
-    expect(release?.downloadUrl).toBe(
-      `https://github.com/supabase/auth/releases/download/rc${authRcVersion}/auth-v${authRcVersion}-arm64.tar.gz`,
-    );
-  });
-
-  it("constructs edge-runtime URL", () => {
-    const release = nativeReleaseForService("edge-runtime", edgeRuntimeVersion, {
-      os: "darwin",
-      arch: "arm64",
-    });
-    expect(release?.downloadUrl).toBe(
-      `https://github.com/supabase/edge-runtime/releases/download/v${edgeRuntimeVersion}/edge-runtime-v${edgeRuntimeVersion}-aarch64-darwin.tar.gz`,
-    );
-  });
-
-  it("returns no native release for unsupported platforms", () => {
+  it("only exposes the three supported native targets", () => {
     expect(
-      nativeReleaseForService("auth", authVersion, { os: "win32", arch: "arm64" }),
+      nativeReleaseForService("auth", DEFAULT_VERSIONS.auth, { os: "win32", arch: "x64" }),
     ).toBeUndefined();
+    expect(
+      nativeReleaseForService("auth", DEFAULT_VERSIONS.auth, { os: "linux", arch: "x64" })?.target,
+    ).toBe("linux-amd64");
   });
 });
 
 describe("BinaryResolver.cachePath", () => {
-  it("constructs cache path", () => {
+  it("includes service, release provider, version, and target identity", () => {
     const path = BinaryResolver.cachePath("/home/user/.supabase/bin", {
       service: "postgres",
-      provider: "github.com/supabase/postgres",
-      version: postgresVersion,
-      assetName: "darwin-arm64",
+      releaseSet: "slim-services",
+      version: DEFAULT_VERSIONS.postgres,
+      runtime: "native",
+      target: "linux-amd64",
     });
     expect(path).toBe(
-      `/home/user/.supabase/bin/postgres/github.com_supabase_postgres/${postgresVersion}/darwin-arm64`,
-    );
-  });
-});
-
-describe("BinaryResolver.legacyExecutablePath", () => {
-  it("recognizes the executable suffix used by Windows archives", () => {
-    expect(BinaryResolver.legacyExecutablePath("C:/cache/postgrest", "postgrest", "win32")).toBe(
-      "C:/cache/postgrest/postgrest.exe",
-    );
-  });
-
-  it("keeps Unix executable names unchanged", () => {
-    expect(BinaryResolver.legacyExecutablePath("/cache/postgrest", "postgrest", "linux")).toBe(
-      "/cache/postgrest/postgrest",
-    );
-  });
-});
-
-describe("BinaryResolver.legacyCacheRequiredPaths", () => {
-  it("requires the Postgres initialization payload as well as the executable", () => {
-    expect(BinaryResolver.legacyCacheRequiredPaths("/cache/postgres", "postgres", "linux")).toEqual(
-      [
-        "/cache/postgres/bin/postgres",
-        "/cache/postgres/bin/pg_isready",
-        "/cache/postgres/bin/psql",
-        "/cache/postgres/share/supabase-cli/bin/supabase-postgres-init.sh",
-        "/cache/postgres/lib",
-      ],
+      `/home/user/.supabase/bin/slim-services/postgres/${DEFAULT_VERSIONS.postgres}/native/linux-amd64`,
     );
   });
 });

@@ -1,13 +1,19 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { Context, Duration, Effect, FileSystem, Layer, Schedule, type PlatformError } from "effect";
+import {
+  Context,
+  Duration,
+  Effect,
+  FileSystem,
+  Layer,
+  Predicate,
+  Schedule,
+  type PlatformError,
+} from "effect";
 import { claimFileAtomically } from "./atomic-claim.ts";
-import { errorCode } from "./error-code.ts";
-import { asRaised, failsOnlyWith, failsWith } from "./failure.ts";
-import { assertManagedUuid, createManagedUuid } from "./ids.ts";
+import { failsOnlyWith } from "./failure.ts";
+import { createManagedUuidEffect, validateManagedUuid } from "./ids.ts";
 import { ensureGitCheckoutLocation, readGitCheckoutLocation } from "./identity.ts";
 import { decodeGitCheckoutIdentity } from "./git-identity.ts";
 import {
@@ -100,7 +106,8 @@ const unsupported = (
   Effect.fail(new UnsupportedGitWorkspaceError({ path, reason, workspaceCause }));
 
 const platformErrorPath = (error: PlatformError.PlatformError): string | undefined =>
-  error.reason._tag === "BadArgument" || typeof error.reason.pathOrDescriptor !== "string"
+  Predicate.isTagged(error.reason, "BadArgument") ||
+  typeof error.reason.pathOrDescriptor !== "string"
     ? undefined
     : error.reason.pathOrDescriptor;
 
@@ -111,7 +118,7 @@ const inaccessiblePlatformError = (
   const detail = error.reason.description === undefined ? error.message : error.reason.description;
   return unsupported(
     platformErrorPath(error) ?? fallbackPath,
-    `Git metadata is inaccessible (${error.reason._tag}): ${detail}`,
+    `Git metadata is inaccessible: ${detail}`,
     "metadata-inaccessible",
   );
 };
@@ -126,7 +133,7 @@ const readOptionalFile = (
   path: string,
 ): Effect.Effect<string | undefined, PlatformError.PlatformError> =>
   Effect.catch(fs.readFileString(path), (error) =>
-    error.reason._tag === "NotFound" ? Effect.succeed(undefined) : Effect.fail(error),
+    Predicate.isTagged(error.reason, "NotFound") ? Effect.succeed(undefined) : Effect.fail(error),
   );
 
 const realPathOrMalformed = (
@@ -137,7 +144,7 @@ const realPathOrMalformed = (
   Effect.catch(
     fs.realPath(path),
     (error): Effect.Effect<never, PlatformError.PlatformError | UnsupportedGitWorkspaceError> =>
-      error.reason._tag === "NotFound"
+      Predicate.isTagged(error.reason, "NotFound")
         ? unsupported(path, reason, "malformed-metadata")
         : Effect.fail(error),
   );
@@ -497,7 +504,7 @@ export const inspectWorkspace = (
       return inspection;
     }).pipe(
       Effect.catchTag("PlatformError", (error) =>
-        error.reason._tag === "BadArgument"
+        Predicate.isTagged(error.reason, "BadArgument")
           ? Effect.die(error)
           : inaccessiblePlatformError(workspacePath, error),
       ),
@@ -509,27 +516,28 @@ export interface GitConfigStoreShape {
   readonly getAll: (
     file: string,
     key: string,
-  ) => Effect.Effect<ReadonlyArray<string>, UnsupportedGitWorkspaceError>;
+  ) => Effect.Effect<ReadonlyArray<string>, UnsupportedGitWorkspaceError, FileSystem.FileSystem>;
   /** Read-only regexp query returning matching keys and values in file order. */
   readonly getRegexp: (
     file: string,
     regexp: string,
   ) => Effect.Effect<
     ReadonlyArray<{ readonly key: string; readonly value: string }>,
-    UnsupportedGitWorkspaceError
+    UnsupportedGitWorkspaceError,
+    FileSystem.FileSystem
   >;
   /** Appends a value to `key`, replacing nothing. */
   readonly add: (
     file: string,
     key: string,
     value: string,
-  ) => Effect.Effect<void, UnsupportedGitWorkspaceError>;
+  ) => Effect.Effect<void, UnsupportedGitWorkspaceError, FileSystem.FileSystem>;
   /** Collapses `key` to exactly `value`. */
   readonly replace: (
     file: string,
     key: string,
     value: string,
-  ) => Effect.Effect<void, UnsupportedGitWorkspaceError>;
+  ) => Effect.Effect<void, UnsupportedGitWorkspaceError, FileSystem.FileSystem>;
 }
 
 /**
@@ -551,51 +559,82 @@ const MISSING_KEY_EXIT_CODE = 1;
 type GitConfigResult =
   | { readonly kind: "answered"; readonly stdout: string }
   | { readonly kind: "unset" }
-  | { readonly kind: "retryable"; readonly detail: string }
-  | { readonly kind: "failed"; readonly detail: string; readonly status?: number };
+  | {
+      readonly kind: "failed";
+      readonly detail: string;
+      readonly status?: number;
+      readonly lockFilePresent: boolean;
+    };
 
 const runGitConfig = (
   args: ReadonlyArray<string>,
   tolerateUnset: boolean,
   file: string,
-): Promise<GitConfigResult> =>
-  new Promise((settle) => {
-    execFile("git", ["config", ...args], { encoding: "utf8" }, (error, stdout, stderr) => {
-      if (error === null) {
-        settle({ kind: "answered", stdout });
-        return;
-      }
-      // A non-zero exit reports the status as a number; a spawn failure reports an
-      // `errno` string instead, and is never something git decided.
-      const exitCode = error.code;
-      if (tolerateUnset && exitCode === MISSING_KEY_EXIT_CODE && stderr.trim().length === 0) {
-        settle({ kind: "unset" });
-        return;
-      }
-      const detail =
-        stderr.trim().length > 0
-          ? stderr.trim()
-          : typeof exitCode === "number"
-            ? `git config exited with status ${exitCode}`
-            : `git config could not be spawned (${String(exitCode)})`;
-      // A lock can disappear between git's refusal and this callback, so the
-      // concrete lock-file check is necessarily racy. Git's write statuses 4
-      // and 255 are also ambiguous (they can mean a transient lock or a host
-      // failure), but bounded retry preserves safe concurrent claims; any
-      // terminal result is still reported as generic metadata-inaccessible.
-      if (
-        (typeof exitCode === "number" && existsSync(`${file}.lock`)) ||
-        (typeof exitCode === "number" && (exitCode === 4 || exitCode === 255))
-      ) {
-        settle({ kind: "retryable", detail });
-      } else {
+): Effect.Effect<GitConfigResult, never, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const result = yield* Effect.callback<GitConfigResult>((resume) => {
+      let settled = false;
+      let child: ReturnType<typeof execFile> | undefined;
+      const settle = (value: GitConfigResult) => {
+        if (settled) return;
+        settled = true;
+        resume(Effect.succeed(value));
+      };
+      const onComplete = (
+        error: (Error & { readonly code?: number | string }) | null,
+        stdout: string,
+        stderr: string,
+      ) => {
+        if (error === null) {
+          settle({ kind: "answered", stdout });
+          return;
+        }
+        const exitCode = error.code;
+        if (tolerateUnset && exitCode === MISSING_KEY_EXIT_CODE && stderr.trim().length === 0) {
+          settle({ kind: "unset" });
+          return;
+        }
+        const detail =
+          stderr.trim().length > 0
+            ? stderr.trim()
+            : typeof exitCode === "number"
+              ? `git config exited with status ${exitCode}`
+              : `git config could not be spawned (${String(exitCode)})`;
         settle({
           kind: "failed",
           detail,
           status: typeof exitCode === "number" ? exitCode : undefined,
+          lockFilePresent: false,
+        });
+      };
+      try {
+        child = execFile("git", ["config", ...args], { encoding: "utf8" }, onComplete);
+      } catch (cause) {
+        settle({
+          kind: "failed",
+          detail: `git config could not be spawned (${String(cause)})`,
+          lockFilePresent: false,
         });
       }
+      return Effect.sync(() => {
+        if (!settled) {
+          settled = true;
+          try {
+            child?.kill("SIGTERM");
+          } catch {
+            // The process may have exited between interruption and cleanup.
+          }
+        }
+      });
     });
+    if (result.kind !== "failed" || result.status === undefined) return result;
+    const fs = yield* FileSystem.FileSystem;
+    return {
+      ...result,
+      lockFilePresent: yield* fs
+        .exists(`${file}.lock`)
+        .pipe(Effect.catchTag("PlatformError", () => Effect.succeed(false))),
+    };
   });
 
 const gitLockRetrySchedule = () =>
@@ -612,45 +651,49 @@ const gitConfig = (
   args: ReadonlyArray<string>,
   tolerateUnset: boolean,
   file: string,
-): Effect.Effect<string | undefined, UnsupportedGitWorkspaceError> =>
-  Effect.flatMap(
-    Effect.catch(
-      Effect.retry(
-        Effect.flatMap(
-          Effect.promise(() => runGitConfig(args, tolerateUnset, file)),
-          (result) => (result.kind === "retryable" ? Effect.fail(result) : Effect.succeed(result)),
-        ),
-        {
-          while: (error) => error.kind === "retryable",
-          schedule: gitLockRetrySchedule(),
-        },
-      ),
-      (error) =>
-        unsupported(file, `Git config is inaccessible (${error.detail})`, "metadata-inaccessible"),
-    ),
-    (result) => {
-      if (result.kind === "answered") return Effect.succeed(result.stdout);
-      if (result.kind === "unset") return Effect.succeed(undefined);
-      if (result.kind === "failed" && result.status === 128) {
-        return unsupported(
+): Effect.Effect<string | undefined, UnsupportedGitWorkspaceError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const attempt = Effect.flatMap(runGitConfig(args, tolerateUnset, file), (value) =>
+      value.kind === "failed" &&
+      value.status !== undefined &&
+      (value.lockFilePresent || value.status === 4 || value.status === 255)
+        ? Effect.fail(value)
+        : Effect.succeed(value),
+    );
+    const result = yield* Effect.retry(attempt, {
+      while: () => true,
+      schedule: gitLockRetrySchedule(),
+    }).pipe(
+      Effect.catch((error: GitConfigResult) =>
+        unsupported(
           file,
-          `Git config is malformed (${result.detail})`,
-          "malformed-metadata",
-        );
-      }
-      return unsupported(
+          `Git config is inaccessible (${error.kind === "failed" ? error.detail : "retry exhausted"})`,
+          "metadata-inaccessible",
+        ),
+      ),
+    );
+    if (result.kind === "answered") return result.stdout;
+    if (result.kind === "unset") return undefined;
+    if (result.status === 128) {
+      return yield* unsupported(
         file,
-        `Git config is inaccessible (${result.detail})`,
-        "metadata-inaccessible",
+        `Git config is malformed (${result.detail})`,
+        "malformed-metadata",
       );
-    },
-  );
+    }
+    return yield* unsupported(
+      file,
+      `Git config is inaccessible (${result.detail})`,
+      "metadata-inaccessible",
+    );
+  });
 
 /** A write refuses rather than tolerating an exit status of its own. */
 const gitConfigWrite = (
   args: ReadonlyArray<string>,
   file: string,
-): Effect.Effect<void, UnsupportedGitWorkspaceError> => Effect.asVoid(gitConfig(args, false, file));
+): Effect.Effect<void, UnsupportedGitWorkspaceError, FileSystem.FileSystem> =>
+  Effect.asVoid(gitConfig(args, false, file));
 
 export const gitConfigStoreLayer: Layer.Layer<GitConfigStore> = Layer.succeed(GitConfigStore, {
   getAll: (file, key) =>
@@ -678,20 +721,12 @@ export const gitConfigStoreLayer: Layer.Layer<GitConfigStore> = Layer.succeed(Gi
 const requireUuid = (
   value: string,
   label: string,
-): Effect.Effect<string, InvalidManagedIdentityError> =>
-  Effect.try({
-    try: () => assertManagedUuid(value, label),
-    catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
-  });
+): Effect.Effect<string, InvalidManagedIdentityError> => validateManagedUuid(value, label);
 
 const mintUuid = (
   idFactory: () => string,
   label: string,
-): Effect.Effect<string, InvalidManagedIdentityError> =>
-  Effect.try({
-    try: () => createManagedUuid(idFactory, label),
-    catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
-  });
+): Effect.Effect<string, InvalidManagedIdentityError> => createManagedUuidEffect(idFactory, label);
 
 /**
  * The value a config-stored identity has settled on.
@@ -710,7 +745,7 @@ const readConfigId = (
 ): Effect.Effect<
   string | undefined,
   InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
-  GitConfigStore
+  GitConfigStore | FileSystem.FileSystem
 > =>
   Effect.gen(function* () {
     const store = yield* GitConfigStore;
@@ -745,7 +780,7 @@ const ensureConfigId = (
 ): Effect.Effect<
   string,
   InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
-  GitConfigStore
+  GitConfigStore | FileSystem.FileSystem
 > =>
   Effect.gen(function* () {
     const store = yield* GitConfigStore;
@@ -774,92 +809,92 @@ const ensureConfigId = (
     return id;
   });
 
-const readCheckoutIdentity = async (
-  gitDirectory: string,
-): Promise<GitCheckoutIdentity | undefined> => {
-  try {
-    return decodeGitCheckoutIdentity(await readFile(gitCheckoutIdentityPath(gitDirectory), "utf8"));
-  } catch (error: unknown) {
-    if (errorCode(error) === "ENOENT") {
-      return undefined;
-    }
-    if (
-      error instanceof InvalidManagedIdentityError ||
-      error instanceof UnsupportedGitWorkspaceError
-    ) {
-      throw error;
-    }
-    throw new UnsupportedGitWorkspaceError({
-      path: gitCheckoutIdentityPath(gitDirectory),
-      reason: `Git checkout identity is inaccessible (${errorCode(error) ?? String(error)})`,
-      workspaceCause: "metadata-inaccessible",
-    });
-  }
-};
-
-/**
- * Claiming a checkout stays one `await` chain, for the reason
- * `ensureOrdinaryWorkspaceIdentity` does: reading the marker, publishing the
- * claim, and re-reading the marker a losing claimant must adopt are a single
- * indivisible protocol, and an interruption between those steps would leave the
- * caller with a checkout identity no git directory agreed to.
- *
- * The git directory always exists by the time this runs — inspection found it —
- * so the marker needs no directory created for it.
- */
 interface CheckoutIdentityClaim {
   readonly checkoutId: string;
   /** Whether this call published the marker, rather than adopting a winner's. */
   readonly created: boolean;
 }
 
-const ensureCheckoutIdentity = async (
+const readCheckoutIdentity = (
+  gitDirectory: string,
+): Effect.Effect<
+  GitCheckoutIdentity | undefined,
+  InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
+  FileSystem.FileSystem
+> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const content = yield* fs.readFileString(gitCheckoutIdentityPath(gitDirectory)).pipe(
+      Effect.catchTag("PlatformError", (error) =>
+        Predicate.isTagged(error.reason, "NotFound")
+          ? Effect.succeed<string | undefined>(undefined)
+          : Effect.fail(
+              new UnsupportedGitWorkspaceError({
+                path: gitCheckoutIdentityPath(gitDirectory),
+                reason: `Git checkout identity is inaccessible (${error.message})`,
+                workspaceCause: "metadata-inaccessible",
+              }),
+            ),
+      ),
+    );
+    return content === undefined ? undefined : yield* decodeGitCheckoutIdentity(content);
+  });
+
+const ensureCheckoutIdentity = (
   gitDirectory: string,
   idFactory: () => string,
-): Promise<CheckoutIdentityClaim> => {
-  const existing = await readCheckoutIdentity(gitDirectory);
-  if (existing !== undefined) {
-    return { checkoutId: existing.checkoutId, created: false };
-  }
+): Effect.Effect<
+  CheckoutIdentityClaim,
+  InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
+  FileSystem.FileSystem
+> =>
+  Effect.gen(function* () {
+    const existing = yield* readCheckoutIdentity(gitDirectory);
+    if (existing !== undefined) return { checkoutId: existing.checkoutId, created: false };
+    const markerPath = gitCheckoutIdentityPath(gitDirectory);
 
-  const identity: GitCheckoutIdentity = {
-    version: GIT_CHECKOUT_IDENTITY_VERSION,
-    checkoutId: createManagedUuid(idFactory, "checkoutId"),
-  };
-  let outcome: Awaited<ReturnType<typeof claimFileAtomically>>;
-  try {
-    outcome = await claimFileAtomically(
-      gitCheckoutIdentityPath(gitDirectory),
+    const identity: GitCheckoutIdentity = {
+      version: GIT_CHECKOUT_IDENTITY_VERSION,
+      checkoutId: yield* mintUuid(idFactory, "checkoutId"),
+    };
+    const outcome = yield* claimFileAtomically(
+      markerPath,
       `${JSON.stringify(identity, null, 2)}\n`,
-      {
-        mode: 0o600,
-      },
+      { mode: 0o600 },
+    ).pipe(
+      Effect.catchTag("AtomicClaimUnsupportedError", (error) =>
+        Effect.fail(
+          new UnsupportedGitWorkspaceError({
+            path: markerPath,
+            reason: error.message,
+            workspaceCause: "metadata-inaccessible",
+          }),
+        ),
+      ),
+      Effect.catchTag("PlatformError", (error) =>
+        Effect.fail(
+          new UnsupportedGitWorkspaceError({
+            path: gitCheckoutIdentityPath(gitDirectory),
+            reason: `Git checkout identity is inaccessible (${error.message})`,
+            workspaceCause: "metadata-inaccessible",
+          }),
+        ),
+      ),
     );
-  } catch (error: unknown) {
-    if (
-      error instanceof InvalidManagedIdentityError ||
-      error instanceof UnsupportedGitWorkspaceError
-    ) {
-      throw error;
+    if (outcome === "claimed") {
+      return { checkoutId: identity.checkoutId, created: true };
     }
-    throw new UnsupportedGitWorkspaceError({
-      path: gitCheckoutIdentityPath(gitDirectory),
-      reason: `Git checkout identity is inaccessible (${errorCode(error) ?? String(error)})`,
-      workspaceCause: "metadata-inaccessible",
-    });
-  }
-  if (outcome === "claimed") {
-    return { checkoutId: identity.checkoutId, created: true };
-  }
 
-  const winner = await readCheckoutIdentity(gitDirectory);
-  if (winner === undefined) {
-    throw new InvalidManagedIdentityError({
-      message: "Checkout identity publication raced without a winning marker",
-    });
-  }
-  return { checkoutId: winner.checkoutId, created: false };
-};
+    const winner = yield* readCheckoutIdentity(gitDirectory);
+    if (winner === undefined) {
+      return yield* Effect.fail(
+        new InvalidManagedIdentityError({
+          message: "Checkout identity publication raced without a winning marker",
+        }),
+      );
+    }
+    return { checkoutId: winner.checkoutId, created: false };
+  });
 
 export interface EnsureGitCheckoutIdentityResult {
   readonly workspaceId: string;
@@ -902,7 +937,7 @@ export const ensureGitCheckoutIdentity = (
 ): Effect.Effect<
   EnsureGitCheckoutIdentityResult,
   InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
-  GitConfigStore
+  GitConfigStore | FileSystem.FileSystem
 > =>
   failsWithIdentity(
     Effect.gen(function* () {
@@ -912,10 +947,7 @@ export const ensureGitCheckoutIdentity = (
         "workspaceId",
         idFactory,
       );
-      const checkoutClaim = yield* Effect.tryPromise({
-        try: () => ensureCheckoutIdentity(inspection.gitDirectory, idFactory),
-        catch: asRaised,
-      });
+      const checkoutClaim = yield* ensureCheckoutIdentity(inspection.gitDirectory, idFactory);
       yield* ensureGitCheckoutLocation(inspection.gitDirectory, inspection.workspaceRoot);
       return {
         workspaceId,
@@ -947,7 +979,7 @@ export const readGitCheckoutIdentityWithFileSystem = (
         .readFileString(gitCheckoutIdentityPath(inspection.gitDirectory))
         .pipe(
           Effect.catchTag("PlatformError", (error) =>
-            error.reason._tag === "NotFound"
+            Predicate.isTagged(error.reason, "NotFound")
               ? Effect.succeed(undefined)
               : Effect.fail(
                   new UnsupportedGitWorkspaceError({
@@ -959,12 +991,7 @@ export const readGitCheckoutIdentityWithFileSystem = (
           ),
         );
       const identity =
-        content === undefined
-          ? undefined
-          : yield* Effect.try({
-              try: () => decodeGitCheckoutIdentity(content),
-              catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
-            });
+        content === undefined ? undefined : yield* decodeGitCheckoutIdentity(content);
       const workspacePath = yield* readGitCheckoutLocation(inspection.gitDirectory);
       return {
         workspaceId,
@@ -997,7 +1024,7 @@ export const ensureBranchContextId = (
 ): Effect.Effect<
   string,
   InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
-  GitConfigStore
+  GitConfigStore | FileSystem.FileSystem
 > =>
   failsWithIdentity(
     Effect.flatMap(requireBranch(branch), (name) =>
@@ -1017,7 +1044,7 @@ export const readBranchContextId = (
 ): Effect.Effect<
   string | undefined,
   InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
-  GitConfigStore
+  GitConfigStore | FileSystem.FileSystem
 > =>
   failsWithIdentity(
     Effect.flatMap(requireBranch(branch), (name) =>

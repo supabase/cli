@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import {
   Cause,
+  Deferred,
   Duration,
   Effect,
   Exit,
@@ -268,16 +269,32 @@ function mockQueuedProcessControl() {
   };
 }
 
-function mockFileWatcher() {
+function mockFileWatcher(expectedPaths: ReadonlyArray<string> = []) {
   const pubsub = Effect.runSync(PubSub.unbounded<ReadonlyArray<FileWatchEvent>>({ replay: 8 }));
-  const watchCalls: Array<{ path: string; ignore?: ReadonlyArray<string> }> = [];
+  const expectedWatch = Effect.runSync(Deferred.make<void>());
+  const watchCalls: Array<{
+    path: string;
+    ignore?: ReadonlyArray<string>;
+    recursive?: boolean;
+  }> = [];
 
   return {
     layer: Layer.succeed(
       FileWatcher,
       FileWatcher.of({
         watch: (path, options) => {
-          watchCalls.push({ path, ignore: options?.ignore });
+          watchCalls.push({
+            path,
+            ignore: options?.ignore,
+            recursive: options?.recursive,
+          });
+          if (
+            expectedPaths.every((expectedPath) =>
+              watchCalls.some((call) => call.path === expectedPath),
+            )
+          ) {
+            Effect.runSync(Deferred.succeed(expectedWatch, undefined));
+          }
           return Stream.fromPubSub(pubsub);
         },
       }),
@@ -288,6 +305,7 @@ function mockFileWatcher() {
     get watchCalls() {
       return watchCalls;
     },
+    awaitExpectedWatch: Deferred.await(expectedWatch),
   };
 }
 
@@ -346,6 +364,7 @@ function mockDockerLogSpawner(behaviors: ReadonlyArray<LogProcessBehavior>) {
 
 interface SetupOptions {
   readonly debug?: boolean;
+  readonly workdir?: string;
   readonly networkId?: Option.Option<string>;
   readonly projectId?: Option.Option<string>;
   readonly processControl?:
@@ -356,10 +375,11 @@ interface SetupOptions {
 }
 
 function setupServe(options: SetupOptions = {}) {
+  const workdir = options.workdir ?? tempRoot.current;
   const out = mockOutput({ format: "text", interactive: false });
   const telemetry = mockLegacyTelemetryStateTracked();
   const cliConfig = mockLegacyCliConfig({
-    workdir: tempRoot.current,
+    workdir,
     projectId: options.projectId ?? Option.none(),
   });
   const api = mockLegacyPlatformApiService({ v1: {} });
@@ -374,8 +394,8 @@ function setupServe(options: SetupOptions = {}) {
       cliConfig,
       telemetry: telemetry.layer,
       runtimeInfo: mockRuntimeInfo({
-        cwd: tempRoot.current,
-        homeDir: tempRoot.current,
+        cwd: workdir,
+        homeDir: workdir,
         platform: "linux",
       }),
       processControl,
@@ -1308,6 +1328,139 @@ describe("legacy functions serve integration", () => {
             value.endsWith("/packages/shared/src/index.ts:ro"),
         ),
       ).toBe(true);
+    });
+  });
+
+  it.live("binds per-function deno.json scope targets outside a nested project repository", () => {
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && args[1] === "inspect") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "container" && args[1] === "rm") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "create" || args[0] === "cp" || args[0] === "start") {
+        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+      }
+      if (args[0] === "exec") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    const processControl = mockQueuedProcessControl();
+    const childSpawner = mockDockerLogSpawner([{ pending: true }]);
+
+    return Effect.gen(function* () {
+      const workspaceRoot = tempRoot.current;
+      const projectRoot = join(workspaceRoot, "infra", "my-project");
+      const rootDenoJson = join(workspaceRoot, "deno.json");
+      const libsDir = join(workspaceRoot, "libs");
+      const thingDir = join(libsDir, "thing");
+      const functionDir = join(projectRoot, "supabase", "functions", "hello");
+
+      yield* Effect.promise(() => mkdir(join(workspaceRoot, ".git"), { recursive: true }));
+      yield* Effect.promise(() => mkdir(join(projectRoot, "supabase"), { recursive: true }));
+      yield* Effect.promise(() => writeFile(join(projectRoot, ".git"), "gitdir: ignored\n"));
+      yield* Effect.promise(() =>
+        writeFile(
+          rootDenoJson,
+          JSON.stringify({
+            workspace: ["./libs/*", "./infra/*/supabase/functions/*"],
+            imports: { "@acme/thing": "./libs/thing/index.ts" },
+          }),
+        ),
+      );
+      yield* Effect.promise(() =>
+        writeFile(join(projectRoot, "supabase", "config.toml"), 'project_id = "test-project"\n'),
+      );
+      yield* Effect.promise(() => mkdir(thingDir, { recursive: true }));
+      yield* Effect.promise(() =>
+        writeFile(
+          join(thingDir, "deno.json"),
+          JSON.stringify({ name: "@acme/thing", version: "1.0.0", exports: "./index.ts" }),
+        ),
+      );
+      yield* Effect.promise(() =>
+        writeFile(join(thingDir, "index.ts"), "export const thing = 1\n"),
+      );
+      yield* Effect.promise(() => mkdir(functionDir, { recursive: true }));
+      yield* Effect.promise(() =>
+        writeFile(
+          join(functionDir, "index.ts"),
+          'import { thing } from "@acme/thing"\nDeno.serve(() => new Response(String(thing)))\n',
+        ),
+      );
+      const sharedDenoJson = JSON.stringify({
+        imports: { "@std/assert": "jsr:@std/assert@1" },
+        scopes: {
+          __local: {
+            __workspace: "../../../../../deno.json",
+            __libs: "../../../../../libs",
+          },
+        },
+      });
+      yield* Effect.promise(() => writeFile(join(functionDir, "deno.json"), sharedDenoJson));
+      const worldDir = join(projectRoot, "supabase", "functions", "world");
+      yield* Effect.promise(() => mkdir(worldDir, { recursive: true }));
+      yield* Effect.promise(() =>
+        writeFile(
+          join(worldDir, "index.ts"),
+          'import { thing } from "@acme/thing"\nDeno.serve(() => new Response(String(thing)))\n',
+        ),
+      );
+      yield* Effect.promise(() => writeFile(join(worldDir, "deno.json"), sharedDenoJson));
+
+      const resolvedWorkspaceRoot = realpathSync(workspaceRoot);
+      const resolvedLibsDir = realpathSync(libsDir);
+      const watchedFunctionsDir = join(projectRoot, "supabase", "functions");
+      const fileWatcher = mockFileWatcher([watchedFunctionsDir]);
+      const { layer, out } = setupServe({
+        childSpawner,
+        fileWatcher,
+        processControl,
+        workdir: projectRoot,
+      });
+      const fiber = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.forkChild({ startImmediately: true }),
+      );
+
+      yield* fileWatcher.awaitExpectedWatch;
+
+      const dockerRun = deployMockState.runCalls.find(
+        (call) => call.command === "docker" && call.args[0] === "create",
+      );
+      expect(dockerRun).toBeDefined();
+      if (dockerRun === undefined) {
+        throw new Error("expected docker create invocation");
+      }
+      const bindValues = extractFlagValues(dockerRun.args, "-v");
+      const resolvedRootDenoJson = realpathSync(rootDenoJson);
+      expect(bindValues).toContain(`${resolvedRootDenoJson}:${toDockerPath(rootDenoJson)}:ro`);
+      expect(bindValues).toContain(`${resolvedLibsDir}:${toDockerPath(libsDir)}:ro`);
+      const rootDenoJsonWarn = `WARN: Mounting import map scope target outside the project root: ${resolvedRootDenoJson}\n`;
+      const libsWarn = `WARN: Mounting import map scope target outside the project root: ${resolvedLibsDir}\n`;
+      expect(out.rawChunks.filter((chunk) => chunk.text === rootDenoJsonWarn)).toEqual([
+        { text: rootDenoJsonWarn, stream: "stderr" },
+      ]);
+      expect(out.rawChunks.filter((chunk) => chunk.text === libsWarn)).toEqual([
+        { text: libsWarn, stream: "stderr" },
+      ]);
+      const watchedPaths = fileWatcher.watchCalls.map((call) => call.path);
+      expect(watchedPaths).toContain(watchedFunctionsDir);
+      expect(watchedPaths).not.toContain(resolvedWorkspaceRoot);
+      expect(watchedPaths).not.toContain(resolvedLibsDir);
+      expect(fileWatcher.watchCalls).toContainEqual(
+        expect.objectContaining({ path: watchedFunctionsDir, recursive: true }),
+      );
+
+      processControl.signal("SIGINT");
+      const exit = yield* Fiber.await(fiber);
+      expect(Exit.isSuccess(exit)).toBe(true);
     });
   });
 

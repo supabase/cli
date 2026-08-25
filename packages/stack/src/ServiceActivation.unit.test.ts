@@ -7,6 +7,7 @@ import {
   lifecycleTargetsForService,
 } from "./ServiceActivation.ts";
 import { SERVICE_CATALOG, SERVICE_NAMES } from "./ServiceCatalog.ts";
+import { DEFAULT_SERVICE_POLICIES } from "./ServiceCatalog.ts";
 
 describe("service activation", () => {
   it("defines an access policy for every stack service", () => {
@@ -14,7 +15,7 @@ describe("service activation", () => {
   });
 
   it("starts direct endpoints eagerly", () => {
-    expect(eagerServices(SERVICE_NAMES)).toEqual([
+    expect(eagerServices(SERVICE_NAMES, DEFAULT_SERVICE_POLICIES)).toEqual([
       "postgres",
       "realtime",
       "mailpit",

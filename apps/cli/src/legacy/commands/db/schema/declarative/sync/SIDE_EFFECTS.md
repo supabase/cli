@@ -9,37 +9,42 @@ there is no automatic fallback. Coverage gaps warn; `--strict-coverage` makes
 them fatal, while `PGDELTA_DEBUG` writes diagnostic JSON under
 `supabase/.temp/pgdelta/v2/debug/<id>/`. Bundled output may use different SQL
 and ordered transaction-aware files but must apply and converge. `--no-cache`
-affects only the legacy opt-out. The bundled formatter defaults to lowercase SQL
+bypasses the bundled engine's shadow baseline cache and the legacy opt-out's
+catalog + snapshot caches. The bundled formatter defaults to lowercase SQL
 at width 180; config overrides it, and JSON `null` disables formatting without
 disabling safe compaction.
 
 ## Files Read
 
-| Path                                                            | Format     | When                                                                                       |
-| --------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------ |
-| `<workdir>/supabase/config.toml`                                | TOML       | always — pg-delta gate, format options                                                     |
-| `<workdir>/supabase/.temp/pgdelta-version`                      | plain text | loaded for compatibility; legacy opt-out only                                              |
-| `<workdir>/supabase/.temp/edge-runtime-version`                 | plain text | legacy opt-out's edge-runtime image tag                                                    |
-| `<workdir>/supabase/schemas/**/*.sql` (default declarative dir) | SQL        | always — must exist (else error)                                                           |
-| `<workdir>/supabase/migrations/*.sql`                           | SQL        | bundled engine applies them to a live shadow; legacy opt-out resolves a migrations catalog |
-| `<workdir>/supabase/roles.sql`                                  | SQL        | legacy migrations-catalog cache key (empty when absent)                                    |
-| `<workdir>/supabase/schemas/.pgdelta-export.json`               | JSON       | bundled export metadata, when present                                                      |
-| `<workdir>/supabase/.temp/pgdelta/*.json`                       | JSON       | legacy opt-out's migrations/declarative catalog cache                                      |
+| Path                                                                        | Format     | When                                                                                                                                                                                                                                                                                                                                                     |
+| --------------------------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                                            | TOML       | always — pg-delta gate, format options                                                                                                                                                                                                                                                                                                                   |
+| `<workdir>/supabase/.temp/pgdelta-version`                                  | plain text | loaded for compatibility; legacy opt-out only                                                                                                                                                                                                                                                                                                            |
+| `<workdir>/supabase/.temp/edge-runtime-version`                             | plain text | legacy opt-out's edge-runtime image tag                                                                                                                                                                                                                                                                                                                  |
+| `<workdir>/supabase/schemas/**/*.sql` (default declarative dir)             | SQL        | always — must exist (else error)                                                                                                                                                                                                                                                                                                                         |
+| `<workdir>/supabase/migrations/*.sql`                                       | SQL        | bundled engine applies them to a live shadow; legacy opt-out resolves a migrations catalog                                                                                                                                                                                                                                                               |
+| `<workdir>/supabase/roles.sql`                                              | SQL        | legacy migrations-catalog cache key (empty when absent); separately hashed into the shadow-baseline cache key on every cache-eligible acquire — bundled-engine shadows and the legacy opt-out's catalog miss alike, warm hits included — and applied to a cold shadow's baseline                                                                         |
+| `<workdir>/supabase/schemas/.pgdelta-export.json`                           | JSON       | bundled export metadata, when present                                                                                                                                                                                                                                                                                                                    |
+| `<workdir>/supabase/.temp/pgdelta/*.json`                                   | JSON       | legacy opt-out's migrations/declarative catalog cache                                                                                                                                                                                                                                                                                                    |
+| `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`               | tar        | warm shadow-cache hit — bundled-engine migrations/declarative shadows, and the legacy opt-out's catalog miss; every cache-eligible acquire (warm hit and successful cold export) also enumerates and `stat`s every `shadow-baseline-*.tar` for LRU keep-3 + 2-day mtime TTL and may delete other keys (`SUPABASE_HOME` overrides the `~/.supabase` root) |
+| `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar.<pid>.partial` | tar        | abandoned-partial sweep on every cache-eligible acquire (warm hit and cold export) — enumerated and `stat`ed, and removed when older than 5 minutes (a crashed/SIGKILLed earlier export's leftover)                                                                                                                                                      |
 
 ## Files Written
 
-| Path                                                               | Format | When                                              |
-| ------------------------------------------------------------------ | ------ | ------------------------------------------------- |
-| `<workdir>/supabase/migrations/<timestamp>_<name>[_<segment>].sql` | SQL    | changes; bundled engine may emit ordered segments |
-| `<workdir>/supabase/schemas/extension.sql`                         | SQL    | accepted legacy-extension repair                  |
-| `<workdir>/supabase/.temp/pgdelta/catalog-*.json`                  | JSON   | legacy opt-out's catalog cache                    |
-| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`            | JSON   | bundled engine with `PGDELTA_DEBUG`               |
+| Path                                                                        | Format | When                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| --------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/migrations/<timestamp>_<name>[_<segment>].sql`          | SQL    | changes; bundled engine may emit ordered segments                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `<workdir>/supabase/schemas/extension.sql`                                  | SQL    | accepted legacy-extension repair                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `<workdir>/supabase/.temp/pgdelta/catalog-*.json`                           | JSON   | legacy opt-out's catalog cache                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                     | JSON   | bundled engine with `PGDELTA_DEBUG`                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`               | tar    | cache-enabled COLD shadow provision creates the current key's snapshot — bundled-engine migrations/declarative shadows, and the legacy opt-out's catalog miss (a catalog hit provisions no shadow; `--no-cache` bypasses the snapshot cache entirely — neither read nor written); a warm hit `touch`es its mtime (LRU); every cache-eligible acquire may delete other keys under LRU keep-3 + 2-day mtime TTL — ~90MB (`SUPABASE_HOME` overrides the root) |
+| `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar.<pid>.partial` | tar    | during a cold export — the in-flight temp file, `rename`d into the tar above on success and removed on failure; only a crash/SIGKILL leaves it behind, and later cold exports / warm hits sweep leftovers older than 5 minutes                                                                                                                                                                                                                             |
 
 ## Subprocesses / Containers
 
 | What                                                                                                                                                                                                                         | When                                                              |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Two natively-provisioned shadows: migrated source and declarative target                                                                                                                                                     | bundled engine                                                    |
+| Two natively-provisioned shadows (migrated source + declarative target) via `legacyAcquireShadowDatabase` — ephemeral host ports, settings-keyed global baseline cache                                                       | bundled engine                                                    |
 | Natively-provisioned shadow Postgres container (`legacyCreateShadowDatabase`/`legacyPrepareShadowSource`) + native migrate; the catalog itself is exported via edge-runtime                                                  | legacy opt-out, migrations-catalog cache miss                     |
 | Natively-provisioned shadow Postgres container (platform-baseline setup via one-shot auth/storage/realtime migrate jobs, then the declarative directory applied via the pg-delta edge-runtime apply script) → catalog export | legacy opt-out, declarative-catalog cache miss                    |
 | Edge-runtime container running the pg-delta diff and, on a catalog cache miss, catalog-export/declarative-apply scripts                                                                                                      | legacy opt-out                                                    |
@@ -47,13 +52,15 @@ disabling safe compaction.
 
 ## Environment Variables
 
-| Variable                     | Purpose                                            | Required? |
-| ---------------------------- | -------------------------------------------------- | --------- |
-| `SUPABASE_USE_PG_DELTA_NEXT` | set to `false` for legacy edge-runtime pg-delta    | no        |
-| `PGDELTA_NPM_REGISTRY`       | legacy opt-out's private npm registry              | no        |
-| `PGDELTA_DEBUG`              | bundled-engine debug artifacts                     | no        |
-| `SUPABASE_SERVICES_HOSTNAME` | local DB host for the bootstrap generate           | no        |
-| `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback | no        |
+| Variable                     | Purpose                                                                                                                                                            | Required? |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
+| `SUPABASE_USE_PG_DELTA_NEXT` | set to `false` for legacy edge-runtime pg-delta                                                                                                                    | no        |
+| `PGDELTA_NPM_REGISTRY`       | legacy opt-out's private npm registry                                                                                                                              | no        |
+| `SUPABASE_HOME`              | overrides the `~/.supabase` root used for the shadow baseline cache (and other CLI state)                                                                          | no        |
+| `SUPABASE_SHADOW_CACHE`      | shadow baseline cache; opt-in (`1`/`true`); the shadow's post-baseline PGDATA is snapshotted to a tar and restored into the next run's fresh container (see Notes) | no        |
+| `PGDELTA_DEBUG`              | bundled-engine debug artifacts                                                                                                                                     | no        |
+| `SUPABASE_SERVICES_HOSTNAME` | local DB host for the bootstrap generate                                                                                                                           | no        |
+| `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback                                                                                                                 | no        |
 
 ## Exit Codes
 
@@ -130,3 +137,36 @@ existing SQL or creates an export manifest.
   shadows. Under the legacy opt-out, both catalog shadows are provisioned
   in-process using the same primitives as `db diff`; catalog export,
   declarative apply, and diff run through the edge-runtime pg-delta scripts.
+
+### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default OFF)
+
+The bundled (pg-delta next) engine provisions both plan shadows through
+`legacyAcquireShadowDatabase` (`legacy-pgdelta-next-shadow.layer.ts`): off unless
+`SUPABASE_SHADOW_CACHE` is set (ambient env or project dotenv); `--no-cache`
+bypasses restore and publish for that invocation. Next allocates an ephemeral host port per
+shadow; the cache key hashes the cluster recipe (including the effective Webhooks/`pg_net`
+policy), not the published port, so worktrees and repeated syncs with the same settings share
+a warm hit. The migrations shadow follows project config; the declarative shadow forces
+`pg_net` off — those are distinct keys when Webhooks are enabled. A warm hit skips the
+platform baseline on both shadows (`legacyMigrateNextShadowDatabase` /
+`legacySetupShadowDatabase` are baseline-state-aware). Artifact:
+`~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar` (~90MB; `SUPABASE_HOME` overrides
+the root), keyed by a hash of every input baked into the cluster (including the effective
+Webhooks/`pg_net` policy); shared across worktrees with the same settings; retention is LRU
+(keep 3) + 2-day mtime TTL (warm hits refresh mtime; sibling tars may be deleted). Container
+lifecycle is identical to the uncached path
+except a cold run drops `--rm` (still removed on release). A cache anomaly never fails the
+command — a warm-path anomaly cold-provisions instead, a cold export failure only warns and
+leaves the run uncached (one exception: a shadow that fails to come back up after the snapshot
+fails the run rather than reporting a false success). See `shared/db-bootstrap/shadow-cache.ts`.
+Session-semantics caveat on the cached paths: migrations run on a session opened after the
+platform baseline, so role-level defaults installed by `supabase/roles.sql`
+(`ALTER ROLE … SET …`) apply to migration execution; with the cache off, the single-session flow
+runs migrations before those defaults take effect.
+
+Under the legacy opt-out, every catalog-miss shadow (migrations, baseline, declarative) goes
+through `exportViaShadowCatalog` (`legacy-pgdelta.cache.ts`), the same
+`legacyWithShadowDatabase` seam `db diff`/`db pull` use. `--no-cache` bypasses that snapshot
+cache along with the catalog cache. Catalog provisioners wait with `legacyWaitForShadowReady`
+and thread baseline state through `legacySetupShadowDatabase` so a warm hit does not
+double-apply the baseline.

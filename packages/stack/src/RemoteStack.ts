@@ -1,9 +1,9 @@
 import { ServiceNotFoundError, ServiceReadyError, type LogEntry } from "@supabase/process-compose";
-import { Effect, Layer, Schema, Stream } from "effect";
+import { Effect, Layer, Predicate, Schema, Stream } from "effect";
 import * as Sse from "effect/unstable/encoding/Sse";
 import { HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 import { DaemonErrorResponseSchema } from "./DaemonProtocol.ts";
-import { StackBuildError, StackReadinessError } from "./errors.ts";
+import { StackBuildError, StackNotRunningError, StackReadinessError } from "./errors.ts";
 import { Stack, StackInfoSchema } from "./Stack.ts";
 import { inheritReadyOptions } from "./StackConfig.ts";
 import { StackServiceState, StackServiceStatusSchema } from "./StackServiceState.ts";
@@ -39,8 +39,6 @@ const StatusResponseSchema = Schema.Struct({
 
 const StatusServiceEventSchema = Schema.fromJsonString(StatusServiceSchema);
 const LogEntryEventSchema = Schema.fromJsonString(LogEntrySchema);
-const decodeStatusServiceEvent = Schema.decodeUnknownSync(StatusServiceEventSchema);
-const decodeLogEntryEvent = Schema.decodeUnknownSync(LogEntryEventSchema);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -57,28 +55,62 @@ const publicServicePath = (name: string): Effect.Effect<string, ServiceNotFoundE
     : Effect.succeed(encodeURIComponent(service));
 };
 
-function makeRequest(path: string, init?: RequestInit) {
+const decodeStatusServiceEvent = (
+  endpoint: ControlEndpoint,
+  path: string,
+  data: string,
+): Effect.Effect<StackServiceState, HttpTransportClientError> =>
+  Schema.decodeUnknownEffect(StatusServiceEventSchema)(data).pipe(
+    Effect.map(toServiceState),
+    Effect.mapError(
+      (cause) => new HttpTransportClientError({ endpoint, path, cause, reason: "protocol" }),
+    ),
+  );
+
+const decodeLogEntryEvent = (
+  endpoint: ControlEndpoint,
+  path: string,
+  data: string,
+): Effect.Effect<LogEntry, HttpTransportClientError> =>
+  Schema.decodeUnknownEffect(LogEntryEventSchema)(data).pipe(
+    Effect.mapError(
+      (cause) => new HttpTransportClientError({ endpoint, path, cause, reason: "protocol" }),
+    ),
+  );
+
+function makeRequest(
+  endpoint: ControlEndpoint,
+  path: string,
+  init?: RequestInit,
+): Effect.Effect<HttpClientRequest.HttpClientRequest, HttpTransportClientError> {
   const url = `http://localhost${path}`;
   const method = init?.method?.toUpperCase() ?? "GET";
   switch (method) {
     case "GET":
-      return HttpClientRequest.get(url, { headers: requestHeaders(init) });
+      return Effect.succeed(HttpClientRequest.get(url, { headers: requestHeaders(init) }));
     case "POST":
-      return HttpClientRequest.post(url, { headers: requestHeaders(init) });
+      return Effect.succeed(HttpClientRequest.post(url, { headers: requestHeaders(init) }));
     case "PUT":
-      return HttpClientRequest.put(url, { headers: requestHeaders(init) });
+      return Effect.succeed(HttpClientRequest.put(url, { headers: requestHeaders(init) }));
     case "PATCH":
-      return HttpClientRequest.patch(url, { headers: requestHeaders(init) });
+      return Effect.succeed(HttpClientRequest.patch(url, { headers: requestHeaders(init) }));
     case "DELETE":
-      return HttpClientRequest.delete(url, { headers: requestHeaders(init) });
+      return Effect.succeed(HttpClientRequest.delete(url, { headers: requestHeaders(init) }));
     case "HEAD":
-      return HttpClientRequest.head(url, { headers: requestHeaders(init) });
+      return Effect.succeed(HttpClientRequest.head(url, { headers: requestHeaders(init) }));
     case "OPTIONS":
-      return HttpClientRequest.options(url, { headers: requestHeaders(init) });
+      return Effect.succeed(HttpClientRequest.options(url, { headers: requestHeaders(init) }));
     case "TRACE":
-      return HttpClientRequest.trace(url, { headers: requestHeaders(init) });
+      return Effect.succeed(HttpClientRequest.trace(url, { headers: requestHeaders(init) }));
     default:
-      throw new Error(`Unsupported HTTP method: ${method}`);
+      return Effect.fail(
+        new HttpTransportClientError({
+          endpoint,
+          path,
+          cause: `Unsupported HTTP method: ${method}`,
+          reason: "protocol",
+        }),
+      );
   }
 }
 
@@ -88,10 +120,11 @@ function httpFetch(endpoint: ControlEndpoint, path: string, init?: RequestInit) 
 }
 
 function httpResponse(endpoint: ControlEndpoint, path: string, init?: RequestInit) {
-  const request = makeRequest(path, init);
-  return Effect.map(httpFetch(endpoint, path, init), (response) =>
-    HttpClientResponse.fromWeb(request, response),
-  );
+  return Effect.gen(function* () {
+    const request = yield* makeRequest(endpoint, path, init);
+    const response = yield* httpFetch(endpoint, path, init);
+    return HttpClientResponse.fromWeb(request, response);
+  });
 }
 
 /** Preserve daemon RPC identity when an HTTP status or body cannot be decoded. */
@@ -138,7 +171,11 @@ const failDaemonResponse = (
   fallbackName: string,
 ): Effect.Effect<
   never,
-  ServiceNotFoundError | ServiceReadyError | StackBuildError | StackReadinessError
+  | ServiceNotFoundError
+  | ServiceReadyError
+  | StackBuildError
+  | StackNotRunningError
+  | StackReadinessError
 > =>
   Effect.gen(function* () {
     const body = yield* dieOnBodyDecodeError(
@@ -166,6 +203,8 @@ const failDaemonResponse = (
           timeoutMs: body.timeoutMs ?? 0,
           detail: body.error,
         });
+      case "STACK_NOT_RUNNING":
+        return yield* new StackNotRunningError({ phase: body.phase ?? "unknown" });
     }
   });
 
@@ -177,6 +216,25 @@ const expectDaemonOk = (
 ): Effect.Effect<
   void,
   ServiceNotFoundError | ServiceReadyError | StackBuildError | StackReadinessError
+> =>
+  response.status >= 200 && response.status < 300
+    ? Effect.void
+    : failDaemonResponse(endpoint, path, response, fallbackName).pipe(
+        Effect.catchTag("StackNotRunningError", (error) => Effect.die(error)),
+      );
+
+const expectMutatingDaemonOk = (
+  endpoint: ControlEndpoint,
+  path: string,
+  response: HttpClientResponse.HttpClientResponse,
+  fallbackName: string,
+): Effect.Effect<
+  void,
+  | ServiceNotFoundError
+  | ServiceReadyError
+  | StackBuildError
+  | StackNotRunningError
+  | StackReadinessError
 > =>
   response.status >= 200 && response.status < 300
     ? Effect.void
@@ -234,7 +292,11 @@ function encodeSearchParams(
 }
 
 /** Convert a ReadableStream SSE body into an Effect Stream of parsed events. */
-function sseStream<A>(endpoint: ControlEndpoint, path: string, parse: (data: string) => A) {
+function sseStream<A>(
+  endpoint: ControlEndpoint,
+  path: string,
+  parse: (data: string) => Effect.Effect<A, HttpTransportClientError>,
+) {
   return Stream.unwrap(
     Effect.gen(function* () {
       const controller = new AbortController();
@@ -258,10 +320,10 @@ function sseStream<A>(endpoint: ControlEndpoint, path: string, parse: (data: str
       }
 
       // State shared across chunks — parser is stateful, accumulates partial events
-      const collected: A[] = [];
+      const collected: string[] = [];
       const parser = Sse.makeParser((event) => {
-        if (event._tag === "Event") {
-          collected.push(parse(event.data));
+        if (Predicate.isTagged(event, "Event")) {
+          collected.push(event.data);
         }
       });
 
@@ -271,15 +333,11 @@ function sseStream<A>(endpoint: ControlEndpoint, path: string, parse: (data: str
           new HttpTransportClientError({ endpoint, path, cause, reason: "transport" }),
       }).pipe(
         Stream.mapEffect((chunk: Uint8Array) =>
-          Effect.try({
-            try: () => {
-              collected.length = 0;
-              parser.feed(new TextDecoder().decode(chunk, { stream: true }));
-              return Array.from(collected);
-            },
-            catch: (cause) =>
-              new HttpTransportClientError({ endpoint, path, cause, reason: "protocol" }),
-          }),
+          Effect.sync(() => {
+            collected.length = 0;
+            parser.feed(new TextDecoder().decode(chunk, { stream: true }));
+            return Array.from(collected);
+          }).pipe(Effect.flatMap((events) => Effect.forEach(events, parse))),
         ),
         Stream.flatMap(Stream.fromIterable),
         Stream.ensuring(Effect.sync(() => controller.abort())),
@@ -334,6 +392,9 @@ export const RemoteStack = {
             Stream.provide(httpTransportClientLayer),
             Stream.catchTag("HttpTransportClientError", (error) => Stream.die(error)),
           );
+        const withLifecycleRequest = <A, E, R>(
+          request: (signal: AbortSignal) => Effect.Effect<A, E | HttpTransportClientError, R>,
+        ) => withHttpTransportClient(withAbortSignal(request));
 
         return {
           getInfo: () =>
@@ -342,10 +403,10 @@ export const RemoteStack = {
             ),
 
           start: () =>
-            withHttpTransportClient(
+            withLifecycleRequest((signal) =>
               Effect.gen(function* () {
                 const path = "/start";
-                const response = yield* httpResponse(endpoint, path, { method: "POST" });
+                const response = yield* httpResponse(endpoint, path, { method: "POST", signal });
                 yield* expectDaemonOk(endpoint, path, response, "stack").pipe(
                   Effect.catchTag("ServiceNotFoundError", (error) => Effect.die(error)),
                 );
@@ -353,10 +414,10 @@ export const RemoteStack = {
             ),
 
           stop: () =>
-            withHttpTransportClient(
+            withLifecycleRequest((signal) =>
               Effect.gen(function* () {
                 const path = "/stop";
-                const response = yield* httpResponse(endpoint, path, { method: "POST" });
+                const response = yield* httpResponse(endpoint, path, { method: "POST", signal });
                 yield* dieOnNonOkStatus(
                   endpoint,
                   path,
@@ -366,10 +427,10 @@ export const RemoteStack = {
             ),
 
           dispose: () =>
-            withHttpTransportClient(
+            withLifecycleRequest((signal) =>
               Effect.gen(function* () {
                 const path = "/stop";
-                const response = yield* httpResponse(endpoint, path, { method: "POST" });
+                const response = yield* httpResponse(endpoint, path, { method: "POST", signal });
                 yield* dieOnNonOkStatus(
                   endpoint,
                   path,
@@ -379,26 +440,28 @@ export const RemoteStack = {
             ),
 
           startService: (name: string) =>
-            withHttpTransportClient(
+            withLifecycleRequest((signal) =>
               Effect.gen(function* () {
                 const servicePath = yield* publicServicePath(name);
                 const path = `/services/${servicePath}/start`;
                 const response = yield* httpResponse(endpoint, path, {
                   method: "POST",
+                  signal,
                 });
-                yield* expectDaemonOk(endpoint, path, response, name);
+                yield* expectMutatingDaemonOk(endpoint, path, response, name);
               }),
             ),
 
           stopService: (name: string) =>
-            withHttpTransportClient(
+            withLifecycleRequest((signal) =>
               Effect.gen(function* () {
                 const servicePath = yield* publicServicePath(name);
                 const path = `/services/${servicePath}/stop`;
                 const response = yield* httpResponse(endpoint, path, {
                   method: "POST",
+                  signal,
                 });
-                yield* expectDaemonOk(endpoint, path, response, name).pipe(
+                yield* expectMutatingDaemonOk(endpoint, path, response, name).pipe(
                   Effect.catchTag("ServiceReadyError", (error) => Effect.die(error)),
                   Effect.catchTag("StackReadinessError", (error) => Effect.die(error)),
                 );
@@ -406,40 +469,43 @@ export const RemoteStack = {
             ),
 
           restartService: (name: string) =>
-            withHttpTransportClient(
+            withLifecycleRequest((signal) =>
               Effect.gen(function* () {
                 const servicePath = yield* publicServicePath(name);
                 const path = `/services/${servicePath}/restart`;
                 const response = yield* httpResponse(endpoint, path, {
                   method: "POST",
+                  signal,
                 });
-                yield* expectDaemonOk(endpoint, path, response, name);
+                yield* expectMutatingDaemonOk(endpoint, path, response, name);
               }),
             ),
 
           reloadFunctions: (opts) =>
-            withHttpTransportClient(
+            withLifecycleRequest((signal) =>
               Effect.gen(function* () {
                 const path = "/functions/reload";
                 const response = yield* httpResponse(endpoint, path, {
                   method: "POST",
+                  signal,
                   headers: { "content-type": "application/json" },
                   body: JSON.stringify(opts ?? {}),
                 });
-                yield* expectDaemonOk(endpoint, path, response, "edge-runtime");
+                yield* expectMutatingDaemonOk(endpoint, path, response, "edge-runtime");
               }),
             ),
 
           reloadEdgeRuntime: (opts) =>
-            withHttpTransportClient(
+            withLifecycleRequest((signal) =>
               Effect.gen(function* () {
                 const path = "/edge-runtime/reload";
                 const response = yield* httpResponse(endpoint, path, {
                   method: "POST",
+                  signal,
                   headers: { "content-type": "application/json" },
                   body: JSON.stringify(opts),
                 });
-                yield* expectDaemonOk(endpoint, path, response, "edge-runtime");
+                yield* expectMutatingDaemonOk(endpoint, path, response, "edge-runtime");
               }),
             ),
 
@@ -471,20 +537,18 @@ export const RemoteStack = {
                   return yield* new ServiceNotFoundError({ name });
                 }
                 return withHttpTransportClientStream(
-                  sseStream(endpoint, "/status/stream", (data) => {
-                    const raw = decodeStatusServiceEvent(data);
-                    return toServiceState(raw);
-                  }).pipe(Stream.filter((s) => s.name === name)),
+                  sseStream(endpoint, "/status/stream", (data) =>
+                    decodeStatusServiceEvent(endpoint, "/status/stream", data),
+                  ).pipe(Stream.filter((s) => s.name === name)),
                 );
               }),
             ),
 
           allStateChanges: () =>
             withHttpTransportClientStream(
-              sseStream(endpoint, "/status/stream", (data) => {
-                const raw = decodeStatusServiceEvent(data);
-                return toServiceState(raw);
-              }),
+              sseStream(endpoint, "/status/stream", (data) =>
+                decodeStatusServiceEvent(endpoint, "/status/stream", data),
+              ),
             ),
 
           waitReady: (name, opts) =>
@@ -525,14 +589,16 @@ export const RemoteStack = {
           subscribeLogs: (name: string) =>
             withHttpTransportClientStream(
               sseStream<LogEntry>(endpoint, `/logs/${encodeURIComponent(name)}`, (data) =>
-                decodeLogEntryEvent(data),
+                decodeLogEntryEvent(endpoint, `/logs/${encodeURIComponent(name)}`, data),
               ),
             ),
 
           subscribeAllLogs: (services) => {
             const query = encodeSearchParams({ service: services });
             return withHttpTransportClientStream(
-              sseStream<LogEntry>(endpoint, `/logs${query}`, (data) => decodeLogEntryEvent(data)),
+              sseStream<LogEntry>(endpoint, `/logs${query}`, (data) =>
+                decodeLogEntryEvent(endpoint, `/logs${query}`, data),
+              ),
             );
           },
 

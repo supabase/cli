@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
@@ -76,6 +76,7 @@ type RunResult = {
 };
 
 const DEFAULT_EXIT_TIMEOUT_MS = 60_000;
+const DEFAULT_LEGACY_STACK_CLEANUP_TIMEOUT_MS = 120_000;
 const OUTPUT_TAIL_LENGTH = 4_000;
 
 interface SpawnedSupabase {
@@ -84,7 +85,7 @@ interface SpawnedSupabase {
   readonly stdout: () => string;
   readonly stderr: () => string;
   readonly kill: (signal?: NodeJS.Signals) => void;
-  readonly waitForOutput: (pattern: RegExp, timeoutMs?: number) => Promise<void>;
+  readonly waitForOutput: (pattern: RegExp, timeoutMs?: number, startAt?: number) => Promise<void>;
   readonly waitForExit: (timeoutMs?: number) => Promise<RunResult>;
 }
 
@@ -130,6 +131,33 @@ function pickFreePort(): Promise<number> {
   });
 }
 
+/**
+ * Rewrites every active port assignment in an `init`-generated
+ * `supabase/config.toml` with a freshly allocated free port, so stacks started
+ * from default configs cannot collide on host ports with other e2e stacks on
+ * the same runner. Commented-out port lines are left untouched.
+ */
+export async function overrideStackPorts(projectDir: string) {
+  const configPath = path.join(projectDir, "supabase", "config.toml");
+  const config = await readFile(configPath, "utf8");
+  const assigned = new Set<number>();
+  const lines: string[] = [];
+  for (const line of config.split("\n")) {
+    const match = /^(\s*(?:port|smtp_port|pop3_port|inspector_port|shadow_port) = )\d+$/.exec(line);
+    if (match === null) {
+      lines.push(line);
+      continue;
+    }
+    let port = await pickFreePort();
+    while (assigned.has(port)) {
+      port = await pickFreePort();
+    }
+    assigned.add(port);
+    lines.push(`${match[1]}${port}`);
+  }
+  await writeFile(configPath, lines.join("\n"));
+}
+
 async function makeTempProject(prefix = "supabase-project-e2e-") {
   const projectDir = await mkdtemp(path.join(tmpdir(), prefix));
 
@@ -139,6 +167,51 @@ async function makeTempProject(prefix = "supabase-project-e2e-") {
       await rm(projectDir, { recursive: true, force: true });
     },
   };
+}
+
+/** Create an isolated CLI project without pre-allocating released ports. */
+export async function makeTempCliProject(prefix = "supabase-cli-e2e-") {
+  const project = await makeTempProject(prefix);
+  registerTempStackProject(project);
+  return project;
+}
+
+export async function makeTempLegacyStackProject(
+  prefix = "supabase-legacy-stack-e2e-",
+  cleanupTimeoutMs = DEFAULT_LEGACY_STACK_CLEANUP_TIMEOUT_MS,
+) {
+  const project = await makeTempProject(prefix);
+  const cleanup = async () => {
+    if (!existsSync(project.dir)) return;
+
+    // `init` can fail before creating a project config. There is no stack to
+    // stop in that case, so remove the exact owned directory directly.
+    if (!existsSync(path.join(project.dir, "supabase", "config.toml"))) {
+      await rm(project.dir, { recursive: true, force: true });
+      return;
+    }
+
+    const stopped = await runSupabase(["stop", "--no-backup"], {
+      entrypoint: "legacy",
+      cwd: project.dir,
+      exitTimeoutMs: cleanupTimeoutMs,
+    });
+    if (stopped.exitCode !== 0) {
+      throw new Error(
+        [
+          `Failed to stop legacy stack in ${project.dir} (exit code ${stopped.exitCode}).`,
+          `stdout:\n${stopped.stdout}`,
+          `stderr:\n${stopped.stderr}`,
+        ].join("\n"),
+      );
+    }
+
+    await rm(project.dir, { recursive: true, force: true });
+  };
+
+  const stackProject = { dir: project.dir, cleanup };
+  registerTempStackProject(stackProject);
+  return stackProject;
 }
 
 export async function makeTempStackProject(prefix = "supabase-stack-e2e-") {
@@ -254,6 +327,8 @@ export function spawnSupabase(
     SUPABASE_HOME: homeDir,
     SUPABASE_NO_KEYRING: "1",
     SUPABASE_TELEMETRY_DISABLED: "1",
+    // Isolate e2e from a developer/CI soak (`SUPABASE_SHADOW_CACHE=1`). Cache-subject tests opt in via `options.env`.
+    SUPABASE_SHADOW_CACHE: "0",
     ...options?.env,
   };
   if (entrypoint === "legacy") {
@@ -369,8 +444,9 @@ export function spawnSupabase(
         proc.kill(signal);
       } catch {}
     },
-    waitForOutput: async (pattern: RegExp, timeoutMs = 60_000) => {
-      if (pattern.test(stdout)) {
+    waitForOutput: async (pattern: RegExp, timeoutMs = 60_000, startAt = 0) => {
+      pattern.lastIndex = 0;
+      if (pattern.test(stdout.slice(startAt))) {
         return;
       }
       if (closeResult) {
@@ -402,7 +478,8 @@ export function spawnSupabase(
         }, timeoutMs);
 
         const onStdout = (_data: Buffer) => {
-          if (pattern.test(stdout)) {
+          pattern.lastIndex = 0;
+          if (pattern.test(stdout.slice(startAt))) {
             cleanup();
             resolve();
           }
@@ -472,4 +549,15 @@ export async function runSupabase(
 
   const result = await spawned.waitForExit();
   return { ...result, exitCode: killedByUntil ? 0 : result.exitCode };
+}
+
+export function requireCliSuccess(
+  result: { readonly exitCode: number; readonly stdout: string; readonly stderr: string },
+  command: string,
+): void {
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `${command} failed (exit ${result.exitCode})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    );
+  }
 }

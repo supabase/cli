@@ -1,3 +1,4 @@
+import { NodeFileSystem } from "@effect/platform-node";
 import { Effect } from "effect";
 import { createStack, type StackHandle } from "../../src/node.ts";
 import { reservePortSet } from "../../src/PortAllocator.ts";
@@ -37,7 +38,7 @@ const reserveEphemeralStackPorts = async (): Promise<EphemeralStackPorts> =>
           return { apiPort, dbPort };
         }),
       ),
-    ),
+    ).pipe(Effect.provide(NodeFileSystem.layer)),
   );
 
 /**

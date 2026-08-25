@@ -1,5 +1,5 @@
 import * as Net from "node:net";
-import { Duration, Effect, Ref, Schedule } from "effect";
+import { Duration, Effect, Match, Ref, Schedule } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { defaults, type HealthCheckConfig, type ProbeConfig } from "./ServiceDef.ts";
 
@@ -7,19 +7,20 @@ const executeProbe = (
   probe: ProbeConfig,
   timeoutSeconds: number,
 ): Effect.Effect<boolean, never, ChildProcessSpawner.ChildProcessSpawner> => {
-  switch (probe._tag) {
-    case "Http":
-      return Effect.tryPromise({
-        try: () =>
+  return Match.valueTags(probe, {
+    Http: (probe) =>
+      Effect.tryPromise({
+        try: (signal) =>
           fetch(`${probe.scheme}://${probe.host}:${probe.port}${probe.path}`, {
-            signal: AbortSignal.timeout(timeoutSeconds * 1000),
+            signal,
           }),
-        catch: () => false as never,
+        catch: (cause) => cause,
       }).pipe(
+        Effect.timeout(Duration.seconds(timeoutSeconds)),
         Effect.map((res) => res.ok),
         Effect.catch(() => Effect.succeed(false)),
-      );
-    case "Exec": {
+      ),
+    Exec: (probe) => {
       const cmd = ChildProcess.make(probe.command, probe.args, {
         env: probe.env,
         extendEnv: true,
@@ -31,9 +32,9 @@ const executeProbe = (
           Effect.map((opt) => opt ?? false),
         ),
       ).pipe(Effect.catch(() => Effect.succeed(false)));
-    }
-    case "Tcp":
-      return Effect.callback<boolean>((resume) => {
+    },
+    Tcp: (probe) =>
+      Effect.callback<boolean>((resume) => {
         const socket = Net.createConnection({ host: probe.host, port: probe.port });
         socket.once("connect", () => {
           socket.destroy();
@@ -48,8 +49,8 @@ const executeProbe = (
         Effect.timeout(Duration.seconds(timeoutSeconds)),
         Effect.map((opt) => opt ?? false),
         Effect.catch(() => Effect.succeed(false)),
-      );
-  }
+      ),
+  });
 };
 
 export interface HealthProbeCallbacks {
