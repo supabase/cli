@@ -97,7 +97,7 @@ export const LEGACY_CLI_PROJECT_LABEL = "com.supabase.cli.project";
 /**
  * TS-port-only Docker label (no Go equivalent — Go never stages secrets on host disk in
  * the first place, see `legacy-start-secrets-cleanup.ts`'s doc comment) recording the
- * absolute `LegacyCliConfig.workdir` a container was created under, set on every
+ * absolute `LegacyCliSettings.workdir` a container was created under, set on every
  * container `start` creates (`container-lifecycle.ts`'s `legacyCreateContainer`).
  *
  * Read back by `legacyListContainerIdsAndNames` (`legacy-docker-lifecycle.ts`) so a later

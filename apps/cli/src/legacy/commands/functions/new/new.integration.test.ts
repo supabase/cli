@@ -7,7 +7,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer } from "effect";
 
 import {
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -35,12 +35,12 @@ function setup(options: SetupOptions = {}) {
     promptConfirmResponses: options.promptConfirmResponses,
   });
   const telemetry = mockLegacyTelemetryStateTracked();
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const layer = Layer.mergeAll(
     BunServices.layer,
     out.layer,
     telemetry.layer,
-    cliConfig,
+    cliSettings,
     mockTty({
       stdinIsTty: options.stdinIsTty ?? false,
       stdoutIsTty: options.stdoutIsTty ?? false,

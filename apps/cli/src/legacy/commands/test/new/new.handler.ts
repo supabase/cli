@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { legacyBold } from "../../../shared/legacy-colors.ts";
@@ -14,7 +14,7 @@ const TEMPLATE_CONTENT: Record<"pgtap", string> = {
 
 export const legacyTestNew = Effect.fn("legacy.test.new")(function* (flags: LegacyTestNewFlags) {
   const output = yield* Output;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const telemetryState = yield* LegacyTelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -26,7 +26,7 @@ export const legacyTestNew = Effect.fn("legacy.test.new")(function* (flags: Lega
     // "supabase/tests") and that relative path is what gets printed; FS ops
     // are rooted at the resolved workdir.
     const relPath = path.join("supabase", "tests", `${flags.name}_test.sql`);
-    const target = path.join(cliConfig.workdir, relPath);
+    const target = path.join(cliSettings.workdir, relPath);
 
     const exists = yield* fs.exists(target).pipe(Effect.orElseSucceed(() => false));
     if (exists) {

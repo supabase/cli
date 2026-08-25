@@ -12,7 +12,7 @@ import {
   type LegacyApiResponse,
   type LegacyHttpMethod,
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -78,7 +78,7 @@ function setup(opts: SetupOpts = {}) {
       GET: { status: 200, body: ORGS },
     },
   });
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const tty = mockTty({
     stdinIsTty: opts.stdinIsTty ?? false,
     stdoutIsTty: opts.stdinIsTty ?? false,
@@ -88,7 +88,7 @@ function setup(opts: SetupOpts = {}) {
   const runtime = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     tty,
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,

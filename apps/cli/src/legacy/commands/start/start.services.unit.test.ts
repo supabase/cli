@@ -1,4 +1,4 @@
-import { ProjectConfigSchema, type ProjectConfig } from "@supabase/config";
+import { CliConfigSchema, type CliConfig } from "@supabase/config";
 import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -118,7 +118,7 @@ describe("legacyStartServiceMeta", () => {
  * config, so a future drift fails loudly here instead of silently.
  */
 describe("LEGACY_START_SERVICES enabledGate cross-check against start.gates.ts", () => {
-  const decodeConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
+  const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
   /** Every `config.toml` boolean atom referenced by a `LEGACY_START_SERVICES` `enabledGate` expression (the `"always"`/`"none"` sentinels aside). */
   const GATE_ATOMS = [
@@ -134,8 +134,8 @@ describe("LEGACY_START_SERVICES enabledGate cross-check against start.gates.ts",
     "edge_runtime.enabled",
   ] as const;
 
-  /** Builds a `ProjectConfig` with every {@link GATE_ATOMS} atom explicitly set true/false per `enabled` membership. */
-  function configWithEnabled(enabled: ReadonlySet<string>): ProjectConfig {
+  /** Builds a `CliConfig` with every {@link GATE_ATOMS} atom explicitly set true/false per `enabled` membership. */
+  function configWithEnabled(enabled: ReadonlySet<string>): CliConfig {
     const overrides: Record<string, unknown> = {};
     for (const atom of GATE_ATOMS) {
       const segments = atom.split(".");
@@ -150,7 +150,7 @@ describe("LEGACY_START_SERVICES enabledGate cross-check against start.gates.ts",
     return decodeConfig({ project_id: "start-services-gate-cross-check", ...overrides });
   }
 
-  function getPath(config: ProjectConfig, path: string): unknown {
+  function getPath(config: CliConfig, path: string): unknown {
     return path
       .split(".")
       .reduce<unknown>(
@@ -166,13 +166,13 @@ describe("LEGACY_START_SERVICES enabledGate cross-check against start.gates.ts",
    * ignores the `!excluded(...)` factor every real gate also ANDs in — the
    * caller isolates that by resolving with `excludedKeys` empty.
    */
-  function evaluateEnabledGate(expr: string, config: ProjectConfig): boolean {
+  function evaluateEnabledGate(expr: string, config: CliConfig): boolean {
     if (expr === "none") return true;
     return expr.split("&&").every((atom) => getPath(config, atom.trim()) === true);
   }
 
   /** Real gates for `config`, with the exclusion factor neutralized (nothing excluded). */
-  function realGatesFor(config: ProjectConfig): LegacyStartGates {
+  function realGatesFor(config: CliConfig): LegacyStartGates {
     return legacyResolveStartGates({
       config,
       projectEnvValues: undefined,
@@ -181,7 +181,7 @@ describe("LEGACY_START_SERVICES enabledGate cross-check against start.gates.ts",
     });
   }
 
-  function expectGatesMatchMetadata(config: ProjectConfig, label: string) {
+  function expectGatesMatchMetadata(config: CliConfig, label: string) {
     const realGates = realGatesFor(config);
     for (const service of Object.keys(realGates) as ReadonlyArray<keyof LegacyStartGates>) {
       const meta = legacyStartServiceMeta(service);

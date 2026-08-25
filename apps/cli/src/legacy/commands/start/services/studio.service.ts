@@ -44,7 +44,7 @@ export interface LegacyBuildStudioEnvInput {
   /** The db password — becomes `POSTGRES_PASSWORD`. */
   readonly dbPassword: string;
   /**
-   * `LegacyCliConfig.workdir`, the already-resolved absolute project root —
+   * `LegacyCliSettings.workdir`, the already-resolved absolute project root —
    * `EDGE_FUNCTIONS_MANAGEMENT_FOLDER` is resolved against it
    * (`<workdir>/supabase/functions`).
    */

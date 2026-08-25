@@ -155,7 +155,7 @@ auth.
 
 The routing model should fit into the new CLI architecture like this:
 
-- `CliConfig` resolves the effective platform endpoints
+- `CliSettings` resolves the effective platform endpoints
 - auth consumes a resolved platform identity
 - workspace link remains separate from platform selection
 - target selection remains `local` vs `remote`

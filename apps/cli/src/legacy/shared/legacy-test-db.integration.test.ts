@@ -6,7 +6,7 @@ import { Effect, Exit, Layer, Option } from "effect";
 
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import {
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../tests/helpers/legacy-mocks.ts";
@@ -224,7 +224,7 @@ function setup(opts: SetupOpts = {}) {
     resolver.layer,
     connection.layer,
     docker.layer,
-    mockLegacyCliConfig({ workdir: opts.workdir ?? "/work/project", projectId: Option.none() }),
+    mockLegacyCliSettings({ workdir: opts.workdir ?? "/work/project", projectId: Option.none() }),
     telemetry.layer,
     runtimeInfoLayer(opts.platform ?? "linux"),
     Layer.succeed(LegacyDebugFlag, opts.debug ?? false),

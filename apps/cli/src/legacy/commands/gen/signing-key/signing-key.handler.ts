@@ -3,7 +3,7 @@ import { styleText } from "node:util";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
 import { findGitRootPath } from "../../../../shared/git/git-root.ts";
 import { legacyLoadProjectEnv } from "../../../shared/legacy-db-config.toml-read.ts";
@@ -212,7 +212,7 @@ const isGitIgnored = Effect.fnUntraced(function* (filePath: string, searchFrom: 
 export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function* (
   flags: LegacyGenSigningKeyFlags,
 ) {
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const debugLogger = yield* LegacyDebugLogger;
   const telemetryState = yield* LegacyTelemetryState;
   const output = yield* Output;
@@ -229,11 +229,11 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
     // malformed/unreadable `.env` still flushes telemetry below — telemetry
     // must attach before the config load runs, so the capture still fires
     // even when that load fails.
-    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir);
     const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
     // The configured signing-keys file is validated before any key is
     // generated, so a broken config fails fast without doing throwaway crypto work.
-    const signingKeysConfig = yield* loadSigningKeysConfig(cliConfig.workdir);
+    const signingKeysConfig = yield* loadSigningKeysConfig(cliSettings.workdir);
     const key = yield* generatePrivateKey(flags.algorithm);
     const configured = signingKeysConfig.configured;
 
@@ -299,7 +299,7 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
     );
 
     if (nextKeys.length === 1) {
-      const ignored = yield* isGitIgnored(configured.value.actualPath, cliConfig.workdir).pipe(
+      const ignored = yield* isGitIgnored(configured.value.actualPath, cliSettings.workdir).pipe(
         Effect.tapError((cause) => debugLogger.debug(String(cause))),
         Effect.orElseSucceed(() => Option.none<boolean>()),
       );

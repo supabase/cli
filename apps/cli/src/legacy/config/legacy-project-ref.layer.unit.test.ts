@@ -11,15 +11,15 @@ import { afterEach, beforeEach } from "vitest";
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
 import { mockOutput, mockTty } from "../../../tests/helpers/mocks.ts";
-import { LegacyCliConfig } from "./legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "./legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "./legacy-project-ref.service.ts";
 import { legacyProjectRefLayer } from "./legacy-project-ref.layer.ts";
 
 const VALID_REF = "abcdefghijklmnopqrst";
 const ANOTHER_REF = "qrstuvwxyzabcdefghij";
 
-function mockCliConfig(opts: { workdir: string; projectId?: string }) {
-  return Layer.succeed(LegacyCliConfig, {
+function mockCliSettings(opts: { workdir: string; projectId?: string }) {
+  return Layer.succeed(LegacyCliSettings, {
     profile: "supabase",
     apiUrl: "https://api.supabase.com",
     projectHost: "supabase.co",
@@ -66,7 +66,7 @@ function makeLayer(opts: {
     promptSelectResponses: opts.promptSelectResponses,
   });
   const layer = legacyProjectRefLayer.pipe(
-    Layer.provide(mockCliConfig(opts)),
+    Layer.provide(mockCliSettings(opts)),
     Layer.provide(mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false })),
     Layer.provide(out.layer),
     Layer.provide(

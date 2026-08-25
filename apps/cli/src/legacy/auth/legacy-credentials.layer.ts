@@ -6,7 +6,7 @@ import {
   LegacyDebugLogger,
   type LegacyDebugLoggerShape,
 } from "../shared/legacy-debug-logger.service.ts";
-import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { legacySupabaseHome } from "../config/legacy-profile-file.ts";
 import { LEGACY_ACCESS_TOKEN_PATTERN, validateLegacyAccessToken } from "./legacy-access-token.ts";
 import { LegacyCredentials } from "./legacy-credentials.service.ts";
@@ -414,7 +414,7 @@ export const legacyAccessTokenForProfile = Effect.fnUntraced(function* (profileA
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runtimeInfo = yield* RuntimeInfo;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   // `serviceOption` keeps the logger optional (no-op outside the real CLI
   // tree), same as the sso pflag-reconcile module's optional services.
   const debugLogger: LegacyDebugLoggerShape = Option.getOrElse(
@@ -422,10 +422,10 @@ export const legacyAccessTokenForProfile = Effect.fnUntraced(function* (profileA
     () => ({ debug: () => Effect.void, http: () => Effect.void }),
   );
 
-  if (Option.isSome(cliConfig.accessToken)) {
+  if (Option.isSome(cliSettings.accessToken)) {
     yield* debugLogger.debug("Using access token from env var...");
-    yield* validateLegacyAccessToken(Redacted.value(cliConfig.accessToken.value));
-    return Option.some(cliConfig.accessToken.value);
+    yield* validateLegacyAccessToken(Redacted.value(cliSettings.accessToken.value));
+    return Option.some(cliSettings.accessToken.value);
   }
 
   const keyringModule = yield* loadKeyringModule(fs);
@@ -455,9 +455,9 @@ const makeLegacyCredentials = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runtimeInfo = yield* RuntimeInfo;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const debugLogger = yield* LegacyDebugLogger;
-  const profileAccount = cliConfig.profile;
+  const profileAccount = cliSettings.profile;
 
   // <SUPABASE_HOME or ~/.supabase>/access-token — fallback file path
   const fallbackDir = legacySupabaseHome(runtimeInfo.homeDir);
@@ -477,10 +477,10 @@ const makeLegacyCredentials = Effect.gen(function* () {
   return LegacyCredentials.of({
     getAccessToken: Effect.gen(function* () {
       // Env takes precedence (matches access_token.go:38).
-      if (Option.isSome(cliConfig.accessToken)) {
+      if (Option.isSome(cliSettings.accessToken)) {
         yield* debugLogger.debug("Using access token from env var...");
-        yield* validateLegacyAccessToken(Redacted.value(cliConfig.accessToken.value), "env");
-        return Option.some(cliConfig.accessToken.value);
+        yield* validateLegacyAccessToken(Redacted.value(cliSettings.accessToken.value), "env");
+        return Option.some(cliSettings.accessToken.value);
       }
 
       // Keyring (profile key, then legacy key). Skipped on WSL.

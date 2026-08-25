@@ -1,8 +1,8 @@
 import { Effect, FileSystem, Layer, Path } from "effect";
 
 import { legacyHttpClientLayer } from "../../../auth/legacy-http-debug.layer.ts";
-import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
 import { legacyLoadProjectEnv } from "../../../shared/legacy-db-config.toml-read.ts";
@@ -58,8 +58,8 @@ export const legacyPgDeltaEngineLayer = Layer.unwrap(
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const cliConfig = yield* LegacyCliConfig;
-    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+    const cliSettings = yield* LegacyCliSettings;
+    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir);
     const raw = legacyPgDeltaImplementationFlag(
       process.env[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
       projectEnv[LEGACY_PG_DELTA_NEXT_FLAG_NAME],
@@ -71,12 +71,12 @@ export const legacyPgDeltaEngineLayer = Layer.unwrap(
   }),
 );
 
-export const legacyPgDeltaCliConfigRuntimeLayer = legacyCliConfigLayer.pipe(
+export const legacyPgDeltaCliSettingsRuntimeLayer = legacyCliSettingsLayer.pipe(
   Layer.provide(legacyDebugLoggerLayer),
 );
 
 export const legacyPgDeltaDbConfigRuntimeLayer = legacyDbConfigLayer.pipe(
-  Layer.provide(legacyPgDeltaCliConfigRuntimeLayer),
+  Layer.provide(legacyPgDeltaCliSettingsRuntimeLayer),
   Layer.provide(legacyDbConnectionLayer),
   Layer.provide(legacyDebugLoggerLayer),
   Layer.provide(legacyIdentityStitchLayer),
@@ -84,11 +84,11 @@ export const legacyPgDeltaDbConfigRuntimeLayer = legacyDbConfigLayer.pipe(
 
 const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
   Layer.provide(legacyDockerRunLayer),
-  Layer.provide(legacyPgDeltaCliConfigRuntimeLayer),
+  Layer.provide(legacyPgDeltaCliSettingsRuntimeLayer),
 );
 const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const seam = legacyDeclarativeSeamLayer.pipe(
-  Layer.provide(legacyPgDeltaCliConfigRuntimeLayer),
+  Layer.provide(legacyPgDeltaCliSettingsRuntimeLayer),
   Layer.provide(legacyDbConnectionLayer),
   Layer.provide(legacyDockerRunLayer),
   Layer.provide(edgeRuntime),
@@ -101,7 +101,7 @@ const nextShadow = legacyPgDeltaNextShadowLayer.pipe(
   Layer.provide(httpClient),
 );
 const engine = legacyPgDeltaEngineLayer.pipe(
-  Layer.provide(legacyPgDeltaCliConfigRuntimeLayer),
+  Layer.provide(legacyPgDeltaCliSettingsRuntimeLayer),
   Layer.provide(legacyPgDeltaNextAdapterLayer),
   Layer.provide(nextShadow),
   Layer.provide(edgeRuntime),
@@ -121,5 +121,5 @@ export const legacyPgDeltaCommandRuntimeLayer = Layer.mergeAll(
   httpClient,
   seam,
   engine,
-  legacyPgDeltaCliConfigRuntimeLayer,
+  legacyPgDeltaCliSettingsRuntimeLayer,
 );

@@ -56,7 +56,7 @@ describe("legacyLoadLocalProjectContext", () => {
   it.effect(
     "prefers a matched [remotes.<ref>]'s project_id over a conflicting SUPABASE_PROJECT_ID",
     () => {
-      // Regression (review: PRRT_kwDOErm0O86XHGDL) — `loadProjectConfig`'s own remote merge
+      // Regression (review: PRRT_kwDOErm0O86XHGDL) — `loadCliConfig`'s own remote merge
       // (`packages/config/src/io.ts`) already installs the matched block's `project_id` at
       // Go's viper override tier before this reads it; letting an unrelated
       // `SUPABASE_PROJECT_ID` win here would resolve the WRONG project id for the shadow's

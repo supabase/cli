@@ -6,7 +6,7 @@ import {
   LEGACY_VALID_REF,
   LEGACY_VALID_TOKEN,
   legacyJsonResponse,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -276,7 +276,7 @@ function setup(opts: SetupOpts = {}) {
     },
   });
 
-  const cliConfig = mockLegacyCliConfig({
+  const cliSettings = mockLegacyCliSettings({
     workdir: "/tmp/advisors-int",
     accessToken: opts.loggedIn === false ? Option.none() : undefined,
   });
@@ -293,7 +293,7 @@ function setup(opts: SetupOpts = {}) {
     processControl.layer,
     projectRef.layer,
     cache.layer,
-    cliConfig,
+    cliSettings,
     credentials.layer,
     identityStitch.layer,
     api.httpClientLayer,

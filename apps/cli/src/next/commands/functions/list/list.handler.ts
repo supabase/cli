@@ -3,7 +3,7 @@ import { makeApiClient } from "@supabase/api/effect";
 import { Effect, Option, Redacted } from "effect";
 import { CommandRuntime } from "../../../../shared/runtime/command-runtime.service.ts";
 import { Credentials } from "../../../auth/credentials.service.ts";
-import { CliConfig } from "../../../config/cli-config.service.ts";
+import { CliSettings } from "../../../config/cli-settings.service.ts";
 import { ProjectLinkState } from "../../../config/project-link-state.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
@@ -109,7 +109,7 @@ function resolveToken(
 
 const loadRemoteInventory = Effect.fnUntraced(function* () {
   const projectLinkState = yield* ProjectLinkState;
-  const cliConfig = yield* CliConfig;
+  const cliSettings = yield* CliSettings;
   const credentials = yield* Credentials;
   const commandRuntime = yield* CommandRuntime;
 
@@ -123,7 +123,7 @@ const loadRemoteInventory = Effect.fnUntraced(function* () {
 
   const projectRef = maybeLinkState.value.project.ref;
   const storedToken = yield* credentials.getAccessToken;
-  const token = resolveToken(cliConfig.accessToken, storedToken);
+  const token = resolveToken(cliSettings.accessToken, storedToken);
   if (Option.isNone(token)) {
     return {
       source: { checked: false, project_ref: projectRef, reason: "not_authenticated" },
@@ -132,7 +132,7 @@ const loadRemoteInventory = Effect.fnUntraced(function* () {
   }
 
   const api = yield* makeApiClient({
-    baseUrl: cliConfig.apiUrl,
+    baseUrl: cliSettings.apiUrl,
     accessToken: token.value,
     userAgent: "@supabase/cli",
     headers: {

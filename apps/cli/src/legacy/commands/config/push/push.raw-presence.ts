@@ -10,7 +10,7 @@ import type { AuthPresence } from "./config-sync/auth.sync.ts";
  * `@supabase/config` decodes all three to a defaulted struct (e.g.
  * `{ enabled: false }`) whether or not the section appears, so their presence
  * can't be recovered from the decoded config. We therefore inspect the raw
- * config document (`LoadedProjectConfig.document`, with any matching `[remotes.*]`
+ * config document (`LoadedCliConfig.document`, with any matching `[remotes.*]`
  * override already merged in) and check key presence directly, matching Go's
  * nil-pointer skip semantics — including sections introduced by the remote block.
  */

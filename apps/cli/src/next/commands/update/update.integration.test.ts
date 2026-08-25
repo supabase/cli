@@ -9,7 +9,7 @@ import {
   mockOutput,
   mockProjectLinkState,
   mockProjectLinkRemote,
-  mockProjectLocalServiceVersions,
+  mockCliProjectLocalServiceVersions,
 } from "../../../../tests/helpers/mocks.ts";
 import {
   makeRunningStackFixture,
@@ -26,7 +26,7 @@ describe("update handler", () => {
           out.layer,
           mockProjectLinkState(),
           mockProjectLinkRemote(),
-          mockProjectLocalServiceVersions(),
+          mockCliProjectLocalServiceVersions(),
           BunServices.layer,
         );
         return update({ stack: fixture.stackName }).pipe(
@@ -72,7 +72,7 @@ describe("update handler", () => {
           out.layer,
           mockProjectLinkState(),
           mockProjectLinkRemote(),
-          mockProjectLocalServiceVersions(),
+          mockCliProjectLocalServiceVersions(),
           BunServices.layer,
         );
         return update({ stack: fixture.stackName }).pipe(

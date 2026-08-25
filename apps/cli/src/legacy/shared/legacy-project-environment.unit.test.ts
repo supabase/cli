@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import type { ProjectEnvironment } from "@supabase/config";
+import type { CliProjectEnvironment } from "@supabase/config";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { legacyResolveProjectEnvironmentValues } from "./legacy-project-environment.ts";
@@ -25,7 +25,7 @@ afterEach(() => {
 function fakeProjectEnv(
   values: Record<string, string> = {},
   sources: Record<string, "ambient" | ".env" | ".env.local"> = {},
-): ProjectEnvironment {
+): CliProjectEnvironment {
   return {
     paths: {
       projectRoot: root,
@@ -65,7 +65,7 @@ describe("legacyResolveProjectEnvironmentValues", () => {
   });
 
   it("lets already-resolved projectEnv.values win over anything discovered locally", () => {
-    // `projectEnv.values` already reflects loadProjectEnvironment's correct
+    // `projectEnv.values` already reflects loadCliProjectEnvironment's correct
     // ambient-wins-over-supabase/.env(.local) result; a redundant root .env
     // entry for the same key must never override it.
     writeFileSync(join(root, ".env"), "SUPABASE_PROJECT_ID=root-env-project\n");

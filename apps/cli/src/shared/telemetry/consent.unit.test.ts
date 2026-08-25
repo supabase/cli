@@ -4,9 +4,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Effect, Layer, Option } from "effect";
-import { cliConfigLayer } from "../../next/config/cli-config.layer.ts";
+import { cliSettingsLayer } from "../../next/config/cli-settings.layer.ts";
 import {
-  mockProjectContext,
+  mockCliProjectContext,
   mockRuntimeInfo,
   processEnvLayer,
 } from "../../../tests/helpers/mocks.ts";
@@ -24,23 +24,23 @@ function makeConfig(consent: TelemetryConfig["consent"]): TelemetryConfig {
 
 function withEnv(env: Record<string, string>) {
   const runtimeInfoLayer = mockRuntimeInfo();
-  const projectContextLayer = mockProjectContext();
+  const cliProjectContextLayer = mockCliProjectContext();
   return Layer.mergeAll(
     runtimeInfoLayer,
-    projectContextLayer,
+    cliProjectContextLayer,
     processEnvLayer(env),
-    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
+    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
   );
 }
 
 function emptyEnv() {
   const runtimeInfoLayer = mockRuntimeInfo();
-  const projectContextLayer = mockProjectContext();
+  const cliProjectContextLayer = mockCliProjectContext();
   return Layer.mergeAll(
     runtimeInfoLayer,
-    projectContextLayer,
+    cliProjectContextLayer,
     processEnvLayer(),
-    cliConfigLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(projectContextLayer)),
+    cliSettingsLayer.pipe(Layer.provide(runtimeInfoLayer), Layer.provide(cliProjectContextLayer)),
   );
 }
 

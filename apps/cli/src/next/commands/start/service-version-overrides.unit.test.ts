@@ -3,7 +3,7 @@ import { describe, expect, test } from "vitest";
 import { Effect, Layer } from "effect";
 import {
   mockProjectLinkState,
-  mockProjectLocalServiceVersions,
+  mockCliProjectLocalServiceVersions,
 } from "../../../../tests/helpers/mocks.ts";
 import {
   parseServiceVersionOverrides,
@@ -47,7 +47,7 @@ describe("service version overrides", () => {
           auth: "v2.187.0",
         },
       }),
-      mockProjectLocalServiceVersions({
+      mockCliProjectLocalServiceVersions({
         updatedAt: "2026-03-20T12:05:00.000Z",
         versions: {
           auth: "v2.180.0",

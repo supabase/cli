@@ -37,7 +37,7 @@ import type { LegacyContainerIdName } from "./legacy-docker-lifecycle.ts";
  * Each container's own directory is resolved as `<workdir>/supabase/.temp/
  * start-secrets/<name>`, where `workdir` is that container's own
  * `LEGACY_CLI_WORKDIR_LABEL` value (see that constant's doc comment) — NOT
- * necessarily `fallbackWorkdir` (the caller's own `LegacyCliConfig.workdir`).
+ * necessarily `fallbackWorkdir` (the caller's own `LegacyCliSettings.workdir`).
  * A caller tearing down containers by an explicit `--project-id`/`--all`
  * filter may be tearing down a DIFFERENT project's containers than the one
  * its own cwd/`--workdir` points at, so using the caller's workdir

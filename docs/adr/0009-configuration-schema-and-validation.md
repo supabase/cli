@@ -39,3 +39,25 @@ CLI-2231 resolves the "`@supabase/config` package architecture" bullet above (th
 ## See Also
 
 - [CLI-2231](https://linear.app/supabase/issue/CLI-2231) — refactor `@supabase/config` into the three-entrypoint (`.`/`./io`/`./effect`) contract decided above
+
+## Addendum (2026-08-25): `ProjectConfig`/`CliConfig` vocabulary rename (CLI-2235)
+
+CLI-2235 (PR #6328) renamed the symbols this ADR's Decision section names in present tense, to free `ProjectConfig` for the hosted-project subset ADR 0019 assigns it. Old → new:
+
+| Old                                                   | New                                 |
+| ----------------------------------------------------- | ----------------------------------- |
+| `ProjectConfigSchema`                                 | `CliConfigSchema`                   |
+| `encodeProjectConfigToJson`/`Toml`                    | `encodeCliConfigToJson`/`Toml`      |
+| `getDefaultProjectConfig`                             | `getDefaultCliConfig`               |
+| `subtractProjectConfig`                               | `subtractCliConfig`                 |
+| `loadProjectConfig`                                   | `loadCliConfig`                     |
+| `saveProjectConfig`                                   | `saveCliConfig`                     |
+| `loadProjectConfigFile`                               | `loadCliConfigFile`                 |
+| `ProjectConfigStore`                                  | `CliConfigStore`                    |
+| `projectConfigStoreLayer`                             | `cliConfigStoreLayer`               |
+| `"@supabase/config/ProjectConfigStore"` (service key) | `"@supabase/config/CliConfigStore"` |
+
+`omitDefaultValues` is unchanged. The three-entrypoint contract itself is unchanged by the rename;
+ADR 0018 carries the equivalent addendum for the sparse-subtraction symbols it also names. See
+[`packages/config/docs/cli-config-loading.md`](../../packages/config/docs/cli-config-loading.md)
+for the settled vocabulary going forward.

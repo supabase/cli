@@ -7,7 +7,7 @@ import {
   buildLegacyTestRuntime,
   legacyJsonResponse,
   legacyTransportFailure,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -31,7 +31,7 @@ function runtimeWith(opts: {
   return buildLegacyTestRuntime({
     out: opts.out,
     api: opts.api,
-    cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+    cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
     telemetry: opts.telemetry,
     linkedProjectCache: opts.linkedProjectCache,
     goOutput: opts.legacyOutput === undefined ? Option.none() : Option.some(opts.legacyOutput),

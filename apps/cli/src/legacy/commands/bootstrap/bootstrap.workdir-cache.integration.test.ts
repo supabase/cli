@@ -44,7 +44,7 @@ import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.t
 import { LegacyEdgeRuntimeScript } from "../../shared/legacy-edge-runtime-script.service.ts";
 import { legacyIdentityStitchLayer } from "../../shared/legacy-identity-stitch.ts";
 import { LegacyPgDeltaSslProbe } from "../../shared/legacy-pgdelta-ssl-probe.service.ts";
-import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
+import { legacyCliSettingsLayer } from "../../config/legacy-cli-settings.layer.ts";
 import { legacyLinkedProjectCacheLayer } from "../../telemetry/legacy-linked-project-cache.layer.ts";
 import { LegacyTemplateService } from "./bootstrap.templates.ts";
 import { legacyBootstrap } from "./bootstrap.handler.ts";
@@ -68,12 +68,12 @@ const HEALTHY = [{ name: "db", healthy: true, status: "ACTIVE_HEALTHY" }];
 // Drives the handler through the *prompt* workdir path (no `--workdir` flag and no
 // `SUPABASE_WORKDIR` env) with the real config + linked-project-cache layers. This is
 // the case the rest of the suite never covers: when the workdir comes from the prompt,
-// `cliConfig.workdir` (the cwd-walk result) diverges from the bootstrap workdir, and the
+// `cliSettings.workdir` (the cwd-walk result) diverges from the bootstrap workdir, and the
 // cache must follow the bootstrap workdir so `linked-project.json` lands beside
 // `project-ref` (matching the established config-load-after-chdir ordering).
 describe("legacy bootstrap linked-project cache location", () => {
   it.live(
-    "writes linked-project.json into the prompted bootstrap workdir, not cliConfig.workdir",
+    "writes linked-project.json into the prompted bootstrap workdir, not cliSettings.workdir",
     () => {
       const parent = mkdtempSync(join(tmpdir(), "bootstrap-cache-"));
       const subdir = "myproj";
@@ -82,7 +82,7 @@ describe("legacy bootstrap linked-project cache location", () => {
       // Pre-seed a migration file at the bootstrap workdir (before it even exists) so
       // the push step's migrations lookup is empirically provable: `legacyDbPushCore`
       // must find it via the `workdir` local variable — the prompted bootstrap
-      // workdir — never `cliConfig.workdir` (the cwd-walk result from `parent`, which
+      // workdir — never `cliSettings.workdir` (the cwd-walk result from `parent`, which
       // has no `supabase/migrations` of its own and would wrongly report "up to date").
       const migrationsDir = join(bootstrapWorkdir, "supabase", "migrations");
       mkdirSync(migrationsDir, { recursive: true });
@@ -201,7 +201,7 @@ describe("legacy bootstrap linked-project cache location", () => {
       const credentials = mockLegacyCredentialsTracked();
       const debugLoggerLayer = legacyDebugLoggerLayer.pipe(Layer.provide(flagsLayer));
 
-      const configLayer = legacyCliConfigLayer.pipe(
+      const configLayer = legacyCliSettingsLayer.pipe(
         Layer.provide(flagsLayer),
         Layer.provide(debugLoggerLayer),
         Layer.provide(runtime),
@@ -278,7 +278,7 @@ describe("legacy bootstrap linked-project cache location", () => {
         // just-created project (the `projectRef` bootstrap already holds in
         // memory, never re-resolved via `LegacyProjectRefResolver`) and finds the
         // pre-seeded migration under `<bootstrapWorkdir>/supabase/migrations` — the
-        // `workdir` local variable, not `cliConfig.workdir` (which cwd-walks from
+        // `workdir` local variable, not `cliSettings.workdir` (which cwd-walks from
         // `parent` and would find nothing, wrongly reporting "up to date"). The
         // direct db host is never reachable in-process, so `legacyResolveLinkedConn`
         // falls back to the IPv4 pooler (CLI-1953) — reading the saved

@@ -10,7 +10,7 @@ function toError(cause: unknown): Error {
 /**
  * Go-parity config resolution for the native `functions` Docker paths
  * (`deploy`/`download`/`serve`), injected into `functions-config.ts`'s
- * `loadFunctionsProjectConfig` so `shared/functions/` never imports
+ * `loadFunctionsCliConfig` so `shared/functions/` never imports
  * `legacy/`-specific validation directly (same isolation rationale as
  * `styleEmphasis`/`styleAqua`).
  *
@@ -42,7 +42,7 @@ export const legacyFunctionsGoConfigCompat: FunctionsGoConfigCompat = {
             // still beats a matched remote block's own `deno_version`, where
             // Go's OVERRIDE-tier `v.Set` would win — computing the keys here
             // needs `legacy-db-config.toml-read.ts`'s remote-resolution
-            // pipeline, which this `loadProjectConfig`-based path doesn't run
+            // pipeline, which this `loadCliConfig`-based path doesn't run
             // (review round on CLI-1963).
             undefined,
             projectRef,

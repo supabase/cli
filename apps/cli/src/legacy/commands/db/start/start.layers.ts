@@ -1,7 +1,7 @@
 import { Layer } from "effect";
 
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
-import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
+import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
 import { legacyHttpClientLayer } from "../../../auth/legacy-http-debug.layer.ts";
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
@@ -11,7 +11,7 @@ import { legacyPgDeltaSslProbeLayer } from "../../../shared/legacy-pgdelta-ssl-p
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 
 /**
- * Runtime layer for `supabase db start`. `LegacyCliConfig`/`ChildProcessSpawner`/
+ * Runtime layer for `supabase db start`. `LegacyCliSettings`/`ChildProcessSpawner`/
  * `FileSystem`/`Path` are ambient from the root runtime (`shared/cli/run.ts`), matching
  * `supabase start`'s own layer composition (`start.command.ts`).
  *
@@ -34,15 +34,15 @@ import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-s
  * `legacyTryCacheMigrationsCatalog` call) — the exact same pair `db push` already composes
  * for its own call to that function (`push.layers.ts`).
  */
-const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
   Layer.provide(legacyDockerRunLayer),
-  Layer.provide(cliConfig),
+  Layer.provide(cliSettings),
 );
 
 export const legacyDbStartRuntimeLayer = Layer.mergeAll(
-  cliConfig,
+  cliSettings,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["db", "start"]),
   legacyDockerRunLayer,

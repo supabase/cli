@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
-import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import {
   LegacyProjectRefResolver,
   PROJECT_REF_PATTERN,
@@ -93,7 +93,7 @@ function legacyClassifyParentCandidates(
  * Candidate order; the FIRST PRESENT candidate decides — valid resolves,
  * malformed hard-classifies as `"invalid"` (never silently skipped):
  *
- *   1. `SUPABASE_PROJECT_ID` (env, via `LegacyCliConfig`) — UNLESS it merely
+ *   1. `SUPABASE_PROJECT_ID` (env, via `LegacyCliSettings`) — UNLESS it merely
  *      RESTATES candidate 3's own value. A CI workflow commonly exports
  *      `SUPABASE_PROJECT_ID=<branch-ref>` right after `link <branch>`
  *      (mirroring what `project-ref` already holds) — that adds no parent
@@ -121,12 +121,12 @@ function legacyClassifyParentCandidates(
  * was never linked (`"absent"`).
  */
 export const legacyResolveLinkedParentRef = Effect.fnUntraced(function* () {
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const paths = legacyTempPaths(path, cliConfig.workdir);
+  const paths = legacyTempPaths(path, cliSettings.workdir);
 
-  const fileRef = yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir).pipe(
+  const fileRef = yield* legacyReadProjectRefFile(fs, path, cliSettings.workdir).pipe(
     Effect.orElseSucceed(() => Option.none<string>()),
   );
   const cachedRef = Option.isSome(fileRef)
@@ -142,12 +142,12 @@ export const legacyResolveLinkedParentRef = Effect.fnUntraced(function* () {
   // values so a garbage env that happens to equal a garbage file still
   // hard-classifies as invalid below instead of sneaking past to the cache.
   const envRef =
-    Option.isSome(cliConfig.projectId) &&
+    Option.isSome(cliSettings.projectId) &&
     Option.isSome(fileRef) &&
-    cliConfig.projectId.value === fileRef.value &&
-    PROJECT_REF_PATTERN.test(cliConfig.projectId.value)
+    cliSettings.projectId.value === fileRef.value &&
+    PROJECT_REF_PATTERN.test(cliSettings.projectId.value)
       ? Option.none<string>()
-      : cliConfig.projectId;
+      : cliSettings.projectId;
 
   return legacyClassifyParentCandidates([envRef, cachedRef, fileRef]);
 });

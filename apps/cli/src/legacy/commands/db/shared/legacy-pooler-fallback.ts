@@ -66,7 +66,7 @@ export const legacyRunWithPoolerFallback = Effect.fnUntraced(function* <E, RRun>
   /** The direct connection host that failed (`resolved.conn.host`). */
   readonly host: string;
   readonly isLocal: boolean;
-  /** `cliConfig.projectHost` — the direct-DB-host suffix (`supabase.co`/`.red`). */
+  /** `cliSettings.projectHost` — the direct-DB-host suffix (`supabase.co`/`.red`). */
   readonly projectHost: string;
   /**
    * Resolves the IPv4 pooler connection, already error-neutralised to `None` (the
