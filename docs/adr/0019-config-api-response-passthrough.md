@@ -39,12 +39,12 @@ API-sourced config values carry the raw response, governed by five rules:
    package — not just the package's own — cannot observe it by construction.
    It is not a declared field of any decode schema: file decoding can never
    produce it, and the API mapping attaches it only after decode. A
-   `_apiResponse` key found inside a config *file* is therefore ordinary
+   `_apiResponse` key found inside a config _file_ is therefore ordinary
    unknown input at struct positions and ordinary user data at dynamic
    record positions — presence remains a reliable API-provenance signal.
    Invisibility to serialization implies invisibility to generic copying:
    `{ ...config }`, `structuredClone`, and serializing state stores yield a
-   valid config value *without* the raw response, by design. Safety outranks
+   valid config value _without_ the raw response, by design. Safety outranks
    propagation here, and absence is already a defined state under this rule;
    the package exposes a read accessor and the mapping's attach step for
    consumers that must carry the raw across a copy boundary explicitly.
@@ -78,8 +78,8 @@ API-sourced config values carry the raw response, governed by five rules:
    enumerable, file-supplied key that merely spells a reserved name
    (`functions._apiResponse` as a function slug,
    `edge_runtime.secrets._TOKEN` as a secret name) is user data and flows
-   through every walk normally, because metadata status comes from *how the
-   property is attached*, never from how the key is spelled.
+   through every walk normally, because metadata status comes from _how the
+   property is attached_, never from how the key is spelled.
 4. **Divergent persistence policies.** The reserved names share walk
    invisibility but not a persistence rule. `$schema` is document metadata
    that must be written: `io.ts`'s `toConfigDocument` re-attaches it on
@@ -153,7 +153,7 @@ API-sourced config values carry the raw response, governed by five rules:
   rule 1 already defines.
 - The rule 5 secret carve-out exists because typed graduation and rule 3
   solve different problems: walk invisibility hides the raw copy, but a
-  graduated secret's *typed* value is an ordinary enumerable config field
+  graduated secret's _typed_ value is an ordinary enumerable config field
   and remains eligible for the normal encoder. Without the carve-out, an
   HMAC digest could reach `config.toml` through the typed field even though
   rule 4 successfully blocked the raw one.
