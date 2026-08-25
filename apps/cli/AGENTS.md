@@ -471,7 +471,7 @@ Read https://www.effect.solutions/testing for Effect testing patterns. Note that
 - `*.unit.test.ts` belongs to the `unit` Vitest project and is the default for unit-style and other fast in-process tests.
 - `*.integration.test.ts` belongs to the `integration` project and is for in-process integration tests that exercise real handler or service behavior with layered dependency replacement.
 - `*.e2e.test.ts` belongs to the `e2e` Vitest project and is for black-box CLI subprocess tests.
-- `*.live.test.ts` belongs to the `live` Vitest project and is for black-box CLI subprocess tests that run against a **real, running Supabase platform or local Docker stack** — see "Live tests" below.
+- `*.live.test.ts` belongs to the `live` Vitest project and is for black-box CLI subprocess tests whose asserted command reaches a real Supabase platform or project data plane — see "Live tests" below.
 
 ### Testing policy
 
@@ -489,19 +489,44 @@ Read https://www.effect.solutions/testing for Effect testing patterns. Note that
 
 ### Live tests (`*.live.test.ts`)
 
-Live tests are black-box CLI subprocess tests — like `*.e2e.test.ts`, but run against a **real backend** instead of local fakes/mocks: either the real Management API (a full [supabox](https://github.com/supabase/supabox) platform stack) or a real local Docker dev stack (`supabase start`'s actual containers). They are the highest-fidelity, most expensive tier — reserved for the small set of behaviors that only a genuinely running backend can prove (auth round-trips, real Docker label filtering, real container lifecycle), not for anything an integration test can already cover with mocks.
+Live tests are black-box CLI subprocess tests whose asserted command reaches a
+real Management API, its suite-owned project, or that project's data plane.
+They are serial, explicit, and expensive; keep them to one golden path per
+command. The file name selects the live Vitest project and the file imports one
+extended fixture as `test` from `tests/helpers/live.ts`:
 
-- **Where they run:** authored in this repo, but executed by the [`supabase/cli-e2e-ci`](https://github.com/supabase/cli-e2e-ci) harness, which builds this CLI, brings up a full supabox stack (and has a real Docker daemon, since that's how supabox itself runs), and invokes the `live` Vitest project (`nx run-many -t test:live`). They never run as part of the default unit/integration/e2e loop, and locally they no-op unless the live environment is configured (see below) — there is no need to stand up supabox yourself to develop other code.
-- **Add one whenever you add or change a command whose correctness genuinely depends on a real backend** — a new Management API command, or a change to `start`/`stop`/`status`'s real Docker interaction. Colocate it with the command, same as `*.e2e.test.ts`: `src/legacy/commands/<command>/[<subcommand>/]<subcommand>.live.test.ts`.
-- **Gating:** every live suite must be wrapped in one of `tests/helpers/live.ts`'s `describe.skipIf` gates so the file is inert (skipped, not failed) outside the cli-e2e-ci runner:
-  - `describeLive` — runs whenever `SUPABASE_ACCESS_TOKEN` is set (the live env is configured at all). Reuse this even for commands that don't call the Management API themselves (e.g. `stop`/`status`) — it doubles as the "we're in the full cli-e2e-ci runner, which also has a real Docker daemon" signal.
-  - `describeDockerLive` — the configured-live gate composed with a `docker info` probe; use for local-stack suites whose scenarios additionally need a reachable Docker daemon at collection time. It never runs on a machine that merely exposes Docker — `SUPABASE_ACCESS_TOKEN` must still be set, so the file stays inert outside the cli-e2e-ci runner like every other live suite.
-  - `describeLiveProject` — additionally requires a provisioned project (`SUPABASE_LIVE_PROJECT_REF`); use for project-scoped Management API commands (branches, functions, project-scoped db).
-  - `describeLiveDataPlane` — additionally requires the project's own Postgres instance to be `ACTIVE_HEALTHY`; use for commands that talk to the project's data plane (migration, db, storage).
-- **Invocation:** use `runSupabaseLive(args, options?)` (wraps `runSupabase` with the `legacy` entrypoint and the live profile/timeout defaults) rather than calling `runSupabase` directly, so every live test picks up the same environment plumbing.
-- **Local-dev-stack live tests** (`start`/`stop`/`status`, and anything else that manages real Docker containers rather than calling the Management API) follow the same file/gating convention but don't need `SUPABASE_PROFILE`/project-ref machinery. Pattern: `mkdtemp` a project dir, `runSupabaseLive(["init"], { cwd })` to generate a real `config.toml`, `runSupabaseLive(["start", ...])` to bring up (a lightweight subset of) the real stack, exercise the command under test, then clean up in `afterEach` (best-effort `stop --no-backup` + `rm` the temp dir) so a failed assertion never leaks containers onto the CI runner. See `commands/stop/stop.live.test.ts` and `commands/status/status.live.test.ts` for the canonical example.
-- **Keep the suite small and golden-path only** — same philosophy as `*.e2e.test.ts`, but even more so given the cost of a real backend. One or two scenarios per command is normal; branch-by-branch coverage belongs in `*.integration.test.ts`.
-- Timeouts are generous by default (`testTimeout`/`hookTimeout: 300_000` for the whole `live` project) because real platform/Docker operations are slow — pass an explicit per-`test()` timeout when a scenario needs less (or, for a real local-stack `start`, close to the full budget).
+```ts
+import { expect } from "vitest";
+import { test } from "../../../../../tests/helpers/live.ts";
+
+test("lists projects", async ({ cli, project }) => {
+  const result = await cli(["projects", "list", "--output-format", "json"]);
+  expect(result.exitCode, result.stderr).toBe(0);
+  expect(result.stdout).toContain(project.ref);
+});
+```
+
+Global setup requires `SUPABASE_LIVE_API_URL` and `SUPABASE_ACCESS_TOKEN`,
+provisions one disposable project through the typed Effect `@supabase/api`
+client, waits for `ACTIVE_HEALTHY`, resolves project wiring, writes a temporary
+YAML profile, and shares it across the serial suite. Teardown deletes exactly
+that project and the temporary profile. Supabox, a Docker-hosted API platform,
+and staging are interchangeable; changing the URL and token retargets the
+run. `SUPABASE_LIVE_KEEP_PROJECT=1` keeps the project for debugging.
+`SUPABASE_LIVE_API_URL` configures the Management API only; tenant data-plane
+URLs retain the profile contract `https://<ref>.<project_host>`, with
+`project_host` derived from the provisioned project's database host.
+
+Local Docker-stack lifecycle tests (`start`, `stop`, `status`, `db start`,
+`db diff`, declarative sync, and `functions dev`) are `*.e2e.test.ts`, use
+`runSupabase` plus the existing e2e stack cleanup, and require no platform
+credentials. `functions deploy` remains live because its assertion is remote
+deployment and invocation, even though Docker is a runner prerequisite.
+
+Setup/teardown may invoke other commands, but assertions stay focused on the
+one command named by the test. The live workflow runs one serial attempt with a
+20-minute bound, retains Docker preflight, and sweeps only projects owned by
+that run after crashes.
 
 ---
 

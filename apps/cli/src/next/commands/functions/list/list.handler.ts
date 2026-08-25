@@ -1,4 +1,4 @@
-import { inferFunctionsManifest, type ResolvedFunctionConfig } from "@supabase/config";
+import { inferFunctionsManifest, type ResolvedFunctionConfig } from "@supabase/config/effect";
 import { makeApiClient } from "@supabase/api/effect";
 import { Effect, Option, Redacted } from "effect";
 import { CommandRuntime } from "../../../../shared/runtime/command-runtime.service.ts";

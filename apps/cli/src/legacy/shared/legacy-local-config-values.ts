@@ -3017,7 +3017,7 @@ export function legacyResolveLocalConfigValues(
   config: ProjectConfig,
   hostname: string,
   workdir: string,
-  projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
+  projectEnvValues?: Readonly<Record<string, string>>,
   /**
    * `LoadedProjectConfig.document` (`packages/config/src/io.ts`) — the raw,
    * pre-schema-default TOML document `config` was decoded from. Lets checks
@@ -3028,7 +3028,7 @@ export function legacyResolveLocalConfigValues(
    * existing unit tests); those checks are then simply skipped rather than
    * guessed at.
    */
-  document: Readonly<Record<string, unknown>> | undefined = undefined,
+  document?: Readonly<Record<string, unknown>>,
   /**
    * Config keys a matched `[remotes.<ref>]` block contributed at override tier (applied ABOVE
    * the ambient env tier) — see
@@ -4081,7 +4081,7 @@ export async function legacyResolveLocalJwks(
   config: ProjectConfig,
   workdir: string,
   jwtSecret: string,
-  projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
+  projectEnvValues?: Readonly<Record<string, string>>,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): Promise<string> {
   const remoteWins = legacyMakeRemoteWins(remoteOverrideKeys);

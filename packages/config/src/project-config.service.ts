@@ -4,7 +4,7 @@ import type {
   LoadedProjectConfig,
   LoadProjectConfigOptions,
   SaveProjectConfigOptions,
-} from "./io.ts";
+} from "./config-document.ts";
 
 interface ProjectConfigStoreShape {
   readonly load: (

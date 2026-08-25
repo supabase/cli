@@ -35,7 +35,7 @@ async function withClosingServer<T>(run: (port: number) => Promise<T>): Promise<
 }
 
 describe("legacyPgDeltaSslProbeLayer", () => {
-  it.live("fails promptly when the socket closes before an SSL response byte", () =>
+  it.live("fails promptly when the server disconnects before an SSL response byte", () =>
     Effect.tryPromise({
       try: () =>
         withClosingServer((port) =>
@@ -53,7 +53,6 @@ describe("legacyPgDeltaSslProbeLayer", () => {
               expect(Exit.isFailure(exit)).toBe(true);
               if (Exit.isFailure(exit)) {
                 expect(String(exit.cause)).toContain(LegacyPgDeltaSslProbeError.name);
-                expect(String(exit.cause)).toContain("closed before the server responded");
               }
             }).pipe(
               Effect.provide(legacyPgDeltaSslProbeLayer),

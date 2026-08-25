@@ -24,7 +24,7 @@ import {
  * `authenticator`, Storage's `supabase_storage_admin`), so it is not hoisted
  * alongside `legacyStartInternalDbUrl`.
  */
-const LEGACY_REALTIME_DB_USER = "supabase_admin";
+export const LEGACY_REALTIME_DB_USER = "supabase_admin";
 
 /**
  * Go's `realtime.TenantId` default (`pkg/config/config.go:481`) — `toml:"-"`
@@ -37,7 +37,7 @@ const LEGACY_REALTIME_DB_USER = "supabase_admin";
 export const LEGACY_REALTIME_TENANT_ID = "realtime-dev";
 
 /** Go's `realtime.EncryptionKey` default (`pkg/config/config.go:482`) — `toml:"-"`, never configurable. */
-const LEGACY_REALTIME_ENCRYPTION_KEY = "supabaserealtime";
+export const LEGACY_REALTIME_ENCRYPTION_KEY = "supabaserealtime";
 
 /** Go's `realtime.SecretKeyBase` default (`pkg/config/config.go:483`) — `toml:"-"`, never configurable. */
 const LEGACY_REALTIME_SECRET_KEY_BASE =

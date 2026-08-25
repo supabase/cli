@@ -1,11 +1,11 @@
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, PlatformError } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, PlatformError, Predicate } from "effect";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect } from "vitest";
-import { managedStackDocumentPath, managedStackPaths } from "./managed/paths.ts";
+import { managedStackDocumentPathEffect, managedStackPathsEffect } from "./managed/paths.ts";
 import { makeStackStore } from "./managed/store.ts";
 import type { ManagedStackDocument } from "./managed/document.ts";
 
@@ -100,6 +100,7 @@ const document = (overrides: Partial<ManagedStackDocument> = {}): ManagedStackDo
     { key: "db.port", port: 54322, intent: "automatic" },
   ],
   lifecycle: "stopped",
+  launch: { mode: "native", versions: {} },
   createdAt: "2026-08-16T00:00:00.000Z",
   updatedAt: "2026-08-16T00:00:00.000Z",
   ...overrides,
@@ -108,9 +109,9 @@ const document = (overrides: Partial<ManagedStackDocument> = {}): ManagedStackDo
 const makeTempStackStore = (stateRoot = makeRoot()) => makeStackStore(stateRoot);
 
 const writeRawStackDocument = (stateRoot: string, stackId: string, content: string): void => {
-  const stackRoot = managedStackPaths(stateRoot, stackId).root;
+  const stackRoot = Effect.runSync(managedStackPathsEffect(stateRoot, stackId)).root;
   mkdirSync(stackRoot, { recursive: true });
-  writeFileSync(managedStackDocumentPath(stateRoot, stackId), content);
+  writeFileSync(Effect.runSync(managedStackDocumentPathEffect(stateRoot, stackId)), content);
 };
 
 describe("managed stack document store", () => {
@@ -139,6 +140,7 @@ describe("managed stack document store", () => {
         document({
           launch: {
             mode: "docker",
+            containerRuntime: "docker",
             versions: { postgres: "17.6.1" },
             excludedServices: ["studio", "analytics"],
             lastNotifiedUpdateFingerprint: "fingerprint",
@@ -147,10 +149,65 @@ describe("managed stack document store", () => {
       );
       expect((yield* store.read(STACK_ID))?.launch).toEqual({
         mode: "docker",
+        containerRuntime: "docker",
         versions: { postgres: "17.6.1" },
         excludedServices: ["studio", "analytics"],
         lastNotifiedUpdateFingerprint: "fingerprint",
       });
+    }).pipe(Effect.provide(filesystemLayer)),
+  );
+
+  it.live("rejects unknown launch modes as invalid managed documents", () =>
+    Effect.gen(function* () {
+      const store = yield* makeTempStackStore();
+      writeRawStackDocument(
+        store.stateRoot,
+        STACK_ID,
+        JSON.stringify({ ...document(), launch: { mode: "auto", versions: {} } }),
+      );
+
+      const exit = yield* store.read(STACK_ID).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(
+          Predicate.isTagged(Cause.squash(exit.cause), "InvalidManagedStackDocumentError"),
+        ).toBe(true);
+      }
+    }).pipe(Effect.provide(filesystemLayer)),
+  );
+
+  it.live("rejects managed documents without a concrete launch selection", () =>
+    Effect.gen(function* () {
+      const store = yield* makeTempStackStore();
+      const { launch: _launch, ...withoutLaunch } = document();
+      writeRawStackDocument(store.stateRoot, STACK_ID, JSON.stringify(withoutLaunch));
+
+      const exit = yield* store.read(STACK_ID).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(
+          Predicate.isTagged(Cause.squash(exit.cause), "InvalidManagedStackDocumentError"),
+        ).toBe(true);
+      }
+    }).pipe(Effect.provide(filesystemLayer)),
+  );
+
+  it.live("rejects an incomplete Docker launch as an invalid managed document", () =>
+    Effect.gen(function* () {
+      const store = yield* makeTempStackStore();
+      writeRawStackDocument(
+        store.stateRoot,
+        STACK_ID,
+        JSON.stringify({ ...document(), launch: { mode: "docker", versions: {} } }),
+      );
+
+      const exit = yield* store.read(STACK_ID).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(
+          Predicate.isTagged(Cause.squash(exit.cause), "InvalidManagedStackDocumentError"),
+        ).toBe(true);
+      }
     }).pipe(Effect.provide(filesystemLayer)),
   );
 
@@ -170,7 +227,8 @@ describe("managed stack document store", () => {
     Effect.gen(function* () {
       const store = yield* makeTempStackStore();
       yield* store.write(document({ id: HEALTHY_ID }));
-      mkdirSync(managedStackDocumentPath(store.stateRoot, CORRUPT_ID), { recursive: true });
+      const corruptPath = yield* managedStackDocumentPathEffect(store.stateRoot, CORRUPT_ID);
+      yield* Effect.sync(() => mkdirSync(corruptPath, { recursive: true }));
 
       const listings = yield* store.list();
       expect(listings).toEqual([

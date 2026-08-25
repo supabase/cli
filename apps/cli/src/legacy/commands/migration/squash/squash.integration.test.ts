@@ -15,6 +15,7 @@ import {
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyShadowContainerCliSpawner,
   mockLegacyTelemetryStateTracked,
+  useLegacyShadowCacheDisabled,
   useLegacyTempWorkdir,
   legacySequentialExecBatch,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -432,6 +433,7 @@ const failureTag = (exit: Exit.Exit<unknown, unknown>): string | undefined => {
 };
 
 const tmp = useLegacyTempWorkdir();
+useLegacyShadowCacheDisabled();
 
 describe("legacy migration squash", () => {
   describe("flag surface & ordering", () => {

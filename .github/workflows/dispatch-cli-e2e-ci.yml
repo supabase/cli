@@ -3,10 +3,11 @@ name: Dispatch cli-e2e-ci
 # Asks the supabase/cli-e2e-ci harness to run the cli `test:live` suite against
 # a full supabox stack, built from THIS PR's head commit (CLI-1825 / CLI-1831).
 #
-# This is distinct from `live-e2e.yml`, which runs the cli-e2e package against
-# real staging (api.supabase.green). Here the suite runs against a local supabox
-# stack stood up inside the private cli-e2e-ci repo; we only fire the trigger and
-# pass our head SHA — cli-e2e-ci checks that SHA out into its `cli` submodule.
+# This is distinct from `live-e2e.yml`, which runs the collocated live suite
+# against managed staging (api.supabase.green). Here the same `apps/cli` suite
+# runs against a local Supabox stack stood up inside the private cli-e2e-ci repo;
+# we only fire the trigger and pass our head SHA — cli-e2e-ci checks that SHA out
+# into its `cli` submodule.
 #
 # Opt-in by label to keep the expensive full-stack run off every PR: add the
 # `run-live-e2e-ci` label (re-dispatches on each subsequent push while labeled).

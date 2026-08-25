@@ -6,16 +6,16 @@ import { dockerForceRemove } from "../cleanup.ts";
 import { dockerContainerName } from "../StackIdentity.ts";
 import { SERVICE_NAMES } from "../ServiceCatalog.ts";
 import { HttpTransportClient, HttpTransportClientError } from "../HttpTransportClient.ts";
-import type { ManagedStackDocument } from "./document.ts";
+import type { ManagedStackDocument, ManagedStackLaunchUpdate } from "./document.ts";
 import {
   ManagedStackAttachedError,
   ManagedStackManager,
   ManagedWorkspaceRepairConflictError,
   workspaceRepairConflict,
   type ManagedStackManagerError,
-  type ManagedStackLaunchUpdate,
+  type ManagedStackLaunchUpdateRequest,
 } from "./manager.ts";
-import { ControlTransportError } from "./control.ts";
+import { ControlTransportError, isControlOwnership } from "./control.ts";
 import {
   ManagedStackNotStoppedError,
   type ManagedPortIntentDocument,
@@ -114,6 +114,8 @@ export const stopManagedStack = (
       const manager = yield* ManagedStackManager;
       const document = yield* resolveManagedDocument(input);
       const stackId = document.id;
+      const containerRuntime =
+        document.launch.mode === "docker" ? document.launch.containerRuntime : null;
       const acquisition = yield* manager.acquireControl(stackId);
       const revalidatedStackId = yield* stackIdForInput(manager, input);
       if (revalidatedStackId !== stackId) {
@@ -123,15 +125,18 @@ export const stopManagedStack = (
           }),
         );
       }
-      if (acquisition._tag === "Owned") {
+      if (isControlOwnership(acquisition)) {
         if (
           document.lifecycle === "running" ||
           document.lifecycle === "starting" ||
           document.lifecycle === "failed"
         ) {
-          yield* dockerForceRemove(
-            SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
-          );
+          if (containerRuntime !== null) {
+            yield* dockerForceRemove(
+              containerRuntime,
+              SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
+            );
+          }
           yield* manager.recordLifecycle(acquisition, { stackId, lifecycle: "stopped" });
         }
         yield* acquisition.close;
@@ -144,9 +149,12 @@ export const stopManagedStack = (
       const cleanupOwned = (owned: import("./control.ts").ControlOwnership) =>
         Effect.ensuring(
           Effect.gen(function* () {
-            yield* dockerForceRemove(
-              SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
-            );
+            if (containerRuntime !== null) {
+              yield* dockerForceRemove(
+                containerRuntime,
+                SERVICE_NAMES.map((service) => dockerContainerName(service, `id-${stackId}`)),
+              );
+            }
             yield* manager.recordLifecycle(owned, { stackId, lifecycle: "stopped" });
           }),
           owned.close,
@@ -208,7 +216,7 @@ export const stopManagedStack = (
       if (ready === "dead") {
         const released = yield* manager.acquireControl(stackId).pipe(
           Effect.flatMap((candidate) =>
-            candidate._tag === "Owned"
+            isControlOwnership(candidate)
               ? Effect.succeed(candidate)
               : Effect.fail(new ManagedStopPending()),
           ),
@@ -238,7 +246,7 @@ export const stopManagedStack = (
       );
       const released = yield* manager.acquireControl(stackId).pipe(
         Effect.flatMap((candidate) =>
-          candidate._tag === "Owned"
+          isControlOwnership(candidate)
             ? Effect.succeed(candidate)
             : Effect.fail(new ManagedStopPending()),
         ),
@@ -260,7 +268,7 @@ export const deleteManagedStack = (
       Effect.gen(function* () {
         const acquisition = yield* manager.acquireControl(stackId).pipe(
           Effect.flatMap((candidate) =>
-            candidate._tag === "Owned"
+            isControlOwnership(candidate)
               ? Effect.succeed(candidate)
               : Effect.fail(new ManagedDeletePending()),
           ),
@@ -285,7 +293,7 @@ export const deleteManagedStack = (
 
 /** Persist launch selections in the managed document, owner-gated. */
 export const updateManagedLaunch = (
-  input: ManagedLifecycleInput & { readonly launch: NonNullable<ManagedStackDocument["launch"]> },
+  input: ManagedLifecycleInput & { readonly launch: ManagedStackLaunchUpdate },
 ): Effect.Effect<
   ManagedStackDocument,
   NoRunningStackError | ManagedStackManagerError | HttpTransportClientError,
@@ -296,7 +304,7 @@ export const updateManagedLaunch = (
       const document = yield* resolveManagedDocument(input);
       const manager = yield* ManagedStackManager;
       const acquisition = yield* manager.acquireControl(document.id);
-      if (acquisition._tag !== "Owned") {
+      if (!isControlOwnership(acquisition)) {
         if (document.lifecycle !== "running" || document.runtime?.controlEndpoint === undefined) {
           return yield* Effect.fail(new ManagedStackAttachedError({ stackId: document.id }));
         }
@@ -313,7 +321,10 @@ export const updateManagedLaunch = (
         if (next === undefined) return yield* Effect.fail(noRunningStack(input));
         return next;
       }
-      const update: ManagedStackLaunchUpdate = { stackId: document.id, launch: input.launch };
+      const update: ManagedStackLaunchUpdateRequest = {
+        stackId: document.id,
+        launch: input.launch,
+      };
       return yield* Effect.ensuring(manager.updateLaunch(acquisition, update), acquisition.close);
     }),
   );

@@ -26,9 +26,9 @@ import { LegacyLinkedProjectCache } from "../../../../../telemetry/legacy-linked
 import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
 import {
   legacyListLocalMigrations,
-  legacyPgDeltaTempPath,
   legacyResolveSetupInputs,
 } from "../../../../../shared/legacy-pgdelta.cache.ts";
+import { legacyPgDeltaTempPath } from "../../../../../shared/legacy-pgdelta.paths.ts";
 import { LegacyPgDeltaEngine } from "../../../shared/legacy-pgdelta-engine.service.ts";
 import {
   legacyIsPgDeltaDebugEnabled,

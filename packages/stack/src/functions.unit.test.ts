@@ -1,11 +1,15 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
+import { NodeServices } from "@effect/platform-node";
 import { mkdtempSync, symlinkSync } from "node:fs";
 import { readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect, Schema } from "effect";
-import { resolveConfig } from "./StackConfigResolver.ts";
+import { Effect, Predicate, Schema } from "effect";
+import {
+  resolveConfig as resolveConfigEffect,
+  type ResolveConfigOptions,
+} from "./StackConfigResolver.ts";
+import type { PortSet } from "./PortCatalog.ts";
 import { defaultJwtSecret, generateJwt } from "./JwtGenerator.ts";
 import {
   clearFunctionsRuntimeConfig,
@@ -16,6 +20,37 @@ import {
   type ResolvedFunctionsBundle,
 } from "./functions.ts";
 import { verifyRequest } from "./services/edge-runtime-main.ts";
+
+const testPorts: PortSet = {
+  apiPort: 40_000,
+  dbPort: 40_001,
+  authPort: 40_002,
+  postgrestPort: 40_003,
+  postgrestAdminPort: 40_004,
+  edgeRuntimePort: 40_005,
+  edgeRuntimeInspectorPort: 40_006,
+  realtimePort: 40_007,
+  storagePort: 40_008,
+  imgproxyPort: 40_009,
+  mailpitPort: 40_010,
+  mailpitSmtpPort: 40_011,
+  mailpitPop3Port: 40_012,
+  pgmetaPort: 40_013,
+  studioPort: 40_014,
+  analyticsPort: 40_015,
+  poolerPort: 40_016,
+  poolerApiPort: 40_017,
+};
+
+const resolveConfig = (
+  config?: Parameters<typeof resolveConfigEffect>[0],
+  options?: Partial<ResolveConfigOptions>,
+) =>
+  Effect.runPromise(
+    resolveConfigEffect(config, { ...options, ports: options?.ports ?? testPorts }).pipe(
+      Effect.provide(NodeServices.layer),
+    ),
+  );
 
 function makeTempProject(): string {
   return mkdtempSync(join(tmpdir(), "supabase-stack-functions-"));
@@ -84,7 +119,14 @@ const authFailureCases = [
 describe("stack Functions runtime config", () => {
   it("projects an explicit bundle without project discovery", async () => {
     const root = makeTempProject();
-    const stackConfig = await resolveConfig({ projectDir: root, functions: makeBundle(root) });
+    const stackConfig = await resolveConfig(
+      {
+        mode: "docker",
+        projectDir: root,
+        functions: makeBundle(root),
+      },
+      { runtime: { mode: "docker", containerRuntime: "docker" } },
+    );
     const config = resolveFunctionsRuntimeConfig(
       stackConfig,
       { hostname: "127.0.0.1" },
@@ -99,6 +141,29 @@ describe("stack Functions runtime config", () => {
       staticFiles: [join(root, "functions", "hello-world", "assets", "*")],
       env: { SHARED: "function-value", FUNCTION_ONLY: "function-value" },
     });
+
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("rejects a function bundle when Edge Runtime is disabled", async () => {
+    const root = makeTempProject();
+
+    const error = await resolveConfig({
+      mode: "native",
+      projectDir: root,
+      functions: makeBundle(root),
+    }).then(
+      () => undefined,
+      (cause: unknown) => cause,
+    );
+
+    expect(Predicate.isTagged(error, "StackBuildError")).toBe(true);
+    if (Predicate.isTagged(error, "StackBuildError")) {
+      expect(error).toMatchObject({
+        reason: "invalid_config",
+        detail: "Edge Functions require Edge Runtime to be enabled",
+      });
+    }
 
     await rm(root, { recursive: true, force: true });
   });
@@ -212,7 +277,10 @@ describe("stack Functions runtime config", () => {
     return Effect.gen(function* () {
       const bundle = makeBundle(cwd);
       const stackConfig = yield* Effect.promise(() =>
-        resolveConfig({ projectDir: cwd, runtimeRoot: cwd, functions: bundle }),
+        resolveConfig(
+          { mode: "docker", projectDir: cwd, runtimeRoot: cwd, functions: bundle },
+          { runtime: { mode: "docker", containerRuntime: "docker" } },
+        ),
       );
       yield* configureFunctionsRuntime(stackConfig, { hostname: "127.0.0.1" }, bundle);
       const filePath = functionsRuntimeConfigPath(stackConfig.runtimeRoot);
@@ -229,7 +297,7 @@ describe("stack Functions runtime config", () => {
       yield* clearFunctionsRuntimeConfig(stackConfig.runtimeRoot);
       expect(yield* Effect.promise(() => readdir(join(cwd, "edge-runtime")))).toEqual([]);
     }).pipe(
-      Effect.provide(BunServices.layer),
+      Effect.provide(NodeServices.layer),
       Effect.ensuring(Effect.promise(() => rm(cwd, { recursive: true, force: true }))),
     );
   });

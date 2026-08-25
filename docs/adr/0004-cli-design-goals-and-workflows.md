@@ -57,25 +57,25 @@ Starting from `supabase dev` and working outward, these are the commands to buil
 
 **Subcommands that `dev` orchestrates** (build these first):
 
-| Command group | Subcommands | Purpose |
-|--------------|-------------|---------|
-| `supabase migrations` | `new`, `push`, `pull`, `list`, `diff` | Schema migration lifecycle |
-| `supabase functions` | `new`, `push`, `pull`, `list`, `serve` | Edge Function lifecycle |
-| `supabase config` | `push`, `pull`, `diff` | Project configuration sync |
-| `supabase env` | `pull`, `push`, `list`, `set`, `unset`, `seed` | Environment variable lifecycle |
-| `supabase gen types` | — | TypeScript type generation from schema |
+| Command group         | Subcommands                                    | Purpose                                |
+| --------------------- | ---------------------------------------------- | -------------------------------------- |
+| `supabase migrations` | `new`, `push`, `pull`, `list`, `diff`          | Schema migration lifecycle             |
+| `supabase functions`  | `new`, `push`, `pull`, `list`, `serve`         | Edge Function lifecycle                |
+| `supabase config`     | `push`, `pull`, `diff`                         | Project configuration sync             |
+| `supabase env`        | `pull`, `push`, `list`, `set`, `unset`, `seed` | Environment variable lifecycle         |
+| `supabase gen types`  | —                                              | TypeScript type generation from schema |
 
 **Supporting commands** (needed for the workflows to function):
 
-| Command | Purpose |
-|---------|---------|
-| `supabase login` / `supabase logout` | Authentication |
-| `supabase init` | Initialize a new project directory |
-| `supabase link` | Link directory to a Supabase project |
-| `supabase branches` (`create`, `switch`, `list`, `delete`) | Branch management for remote-first workflow |
-| `supabase push` / `supabase pull` | Global sync — runs all sub-syncs in parallel |
-| `supabase env` (`list-environments`, `create`, `delete`) | Environment CRUD — see [ADR 0006](0006-environment-management.md) |
-| `supabase orgs` / `supabase projects` | Organization and project management |
+| Command                                                    | Purpose                                                           |
+| ---------------------------------------------------------- | ----------------------------------------------------------------- |
+| `supabase login` / `supabase logout`                       | Authentication                                                    |
+| `supabase init`                                            | Initialize a new project directory                                |
+| `supabase link`                                            | Link directory to a Supabase project                              |
+| `supabase branches` (`create`, `switch`, `list`, `delete`) | Branch management for remote-first workflow                       |
+| `supabase push` / `supabase pull`                          | Global sync — runs all sub-syncs in parallel                      |
+| `supabase env` (`list-environments`, `create`, `delete`)   | Environment CRUD — see [ADR 0006](0006-environment-management.md) |
+| `supabase orgs` / `supabase projects`                      | Organization and project management                               |
 
 ### Safety Model
 

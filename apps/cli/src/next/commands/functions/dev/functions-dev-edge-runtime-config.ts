@@ -3,7 +3,7 @@ import {
   loadProjectEnvironment,
   resolveProjectSubtree,
   type ProjectConfig,
-} from "@supabase/config";
+} from "@supabase/config/effect";
 import type { EdgeRuntimeConfig } from "@supabase/stack/effect";
 import { Data, Effect, Redacted } from "effect";
 import { ProjectHome } from "../../../config/project-home.service.ts";

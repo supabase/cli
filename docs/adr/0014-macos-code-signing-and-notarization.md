@@ -5,7 +5,7 @@
 
 ## Problem Statement
 
-[ADR 0011](0011-cli-release-and-distribution-strategy.md) decided to ship the TypeScript CLI **unsigned**, matching the Go CLI, with macOS notarization listed as *contingent follow-up A* — to be activated only if validation showed Bun single-file executables (SFEs) were rejected by Gatekeeper/AMFI in a way the Go binaries were not.
+[ADR 0011](0011-cli-release-and-distribution-strategy.md) decided to ship the TypeScript CLI **unsigned**, matching the Go CLI, with macOS notarization listed as _contingent follow-up A_ — to be activated only if validation showed Bun single-file executables (SFEs) were rejected by Gatekeeper/AMFI in a way the Go binaries were not.
 
 **That trigger has fired.** On macOS 26/27, the released CLI is `SIGKILL`ed at launch ([CLI-1621](https://linear.app/supabase/issue/CLI-1621), [GitHub #5556](https://github.com/supabase/cli/issues/5556)). Inspecting the shipped `darwin-arm64` artifacts shows the cause: both the Bun SFE (`supabase`) and the Go sidecar (`supabase-go`) carry only a **linker-signed ad-hoc signature** — CodeDirectory flags `CS_ADHOC | CS_LINKER_SIGNED` (`0x20002`), identifier `a.out`, a single CodeDirectory blob, no RequirementSet, no CMS slot. This is the minimal signature a linker emits so an arm64 binary can load at all; macOS 26+ AMFI now refuses to execute it. Affected users confirmed that re-signing in place with `codesign --force -s -` fixes it — i.e. replacing the linker stub with a **full ad-hoc signature**.
 
@@ -17,20 +17,20 @@ Sign the macOS binaries **in the build pipeline**, on the existing Linux build r
 
 Roll out in two phases:
 
-| Phase | What | Secrets | Status |
-| --- | --- | --- | --- |
-| **1 — Full ad-hoc** | Replace the linker-signed signature with a complete ad-hoc signature (CodeDirectory + RequirementSet + empty CMS), the same shape `codesign --sign -` produces. Fixes the SIGKILL. | **None** | **Implemented** |
-| **2 — Developer ID + notarization** | Sign with an Apple Developer ID certificate + hardened runtime + entitlements + secure timestamp, then notarize via the App Store Connect API. | Apple cert + API key | Deferred (ops-gated) |
+| Phase                               | What                                                                                                                                                                               | Secrets              | Status               |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- | -------------------- |
+| **1 — Full ad-hoc**                 | Replace the linker-signed signature with a complete ad-hoc signature (CodeDirectory + RequirementSet + empty CMS), the same shape `codesign --sign -` produces. Fixes the SIGKILL. | **None**             | **Implemented**      |
+| **2 — Developer ID + notarization** | Sign with an Apple Developer ID certificate + hardened runtime + entitlements + secure timestamp, then notarize via the App Store Connect API.                                     | Apple cert + API key | Deferred (ops-gated) |
 
-| Concern | Choice |
-| --- | --- |
-| Signing tool | **`rcodesign`** — signs Mach-O from Linux; no macOS signing host, no pipeline split |
-| Where | Inside [`build.ts`](../../apps/cli/scripts/build.ts), after compile, before archive/checksums |
-| Binaries | `supabase` (always) and `supabase-go` (legacy shell), for `darwin-arm64` + `darwin-x64` |
-| Identifiers | `com.supabase.cli` (SFE), `com.supabase.cli-go` (sidecar) |
-| CI enforcement | `SUPABASE_CLI_REQUIRE_SIGNING=1` hard-fails the build if `rcodesign` is missing; local builds warn and skip |
-| Verification | macOS smoke-test runners (`macos-latest`, `macos-15-intel`): `codesign --verify --strict`, identifier check, not-linker-signed check, and actually running `supabase --version` (the real AMFI gate) |
-| Validation gate | A staged `dry_run` release must show the macOS smoke legs green before any real cut — see [release-process.md § Code signing](../../apps/cli/docs/release-process.md#code-signing-macos) |
+| Concern         | Choice                                                                                                                                                                                               |
+| --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Signing tool    | **`rcodesign`** — signs Mach-O from Linux; no macOS signing host, no pipeline split                                                                                                                  |
+| Where           | Inside [`build.ts`](../../apps/cli/scripts/build.ts), after compile, before archive/checksums                                                                                                        |
+| Binaries        | `supabase` (always) and `supabase-go` (legacy shell), for `darwin-arm64` + `darwin-x64`                                                                                                              |
+| Identifiers     | `com.supabase.cli` (SFE), `com.supabase.cli-go` (sidecar)                                                                                                                                            |
+| CI enforcement  | `SUPABASE_CLI_REQUIRE_SIGNING=1` hard-fails the build if `rcodesign` is missing; local builds warn and skip                                                                                          |
+| Verification    | macOS smoke-test runners (`macos-latest`, `macos-15-intel`): `codesign --verify --strict`, identifier check, not-linker-signed check, and actually running `supabase --version` (the real AMFI gate) |
+| Validation gate | A staged `dry_run` release must show the macOS smoke legs green before any real cut — see [release-process.md § Code signing](../../apps/cli/docs/release-process.md#code-signing-macos)             |
 
 This supersedes only the **"Artifact signing"** row and **contingent follow-up A** of ADR 0011. The rest of ADR 0011 (Bun SFE packaging, npm `optionalDependencies`, nfpm, channel layout) is unchanged.
 
@@ -38,7 +38,7 @@ This supersedes only the **"Artifact signing"** row and **contingent follow-up A
 
 ### Why ad-hoc fixes it without an Apple account
 
-There are three signature levels, not two: (1) **linker-signed ad-hoc** — the degenerate stub macOS 26+ rejects; (2) **full ad-hoc** (`codesign -s -`) — a complete, well-formed self-signature with no Apple *identity*; (3) **Developer ID + notarized**. The SIGKILL is caused by (1). Upgrading to (2) is sufficient because the channels that matter (Homebrew, npm, Scoop) fetch binaries without attaching the `com.apple.quarantine` xattr, so Gatekeeper never demands notarization — it only requires a *valid* signature, which a full ad-hoc signature is. This was confirmed empirically: re-signing the actual released binary with `rcodesign sign` turned `flags: ADHOC | LINKER_SIGNED` / `identifier: a.out` / 1 blob into `flags: ADHOC` / `identifier: com.supabase.cli` / 3 blobs (CodeDirectory + RequirementSet + CMS) — byte-shape identical to `codesign -s -`.
+There are three signature levels, not two: (1) **linker-signed ad-hoc** — the degenerate stub macOS 26+ rejects; (2) **full ad-hoc** (`codesign -s -`) — a complete, well-formed self-signature with no Apple _identity_; (3) **Developer ID + notarized**. The SIGKILL is caused by (1). Upgrading to (2) is sufficient because the channels that matter (Homebrew, npm, Scoop) fetch binaries without attaching the `com.apple.quarantine` xattr, so Gatekeeper never demands notarization — it only requires a _valid_ signature, which a full ad-hoc signature is. This was confirmed empirically: re-signing the actual released binary with `rcodesign sign` turned `flags: ADHOC | LINKER_SIGNED` / `identifier: a.out` / 1 blob into `flags: ADHOC` / `identifier: com.supabase.cli` / 3 blobs (CodeDirectory + RequirementSet + CMS) — byte-shape identical to `codesign -s -`.
 
 ### Why sign on Linux (no macOS job)
 

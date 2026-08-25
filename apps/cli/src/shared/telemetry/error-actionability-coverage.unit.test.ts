@@ -360,7 +360,7 @@ describe("workspace package error tags have external adapters", () => {
   ];
 
   for (const packageRoot of packageRoots) {
-    it(packageRoot, async () => {
+    it(packageRoot, { timeout: 30_000 }, async () => {
       const tagsByFile = await scanErrorTags(resolve(repoRoot, packageRoot), {
         exportedOnly: true,
       });

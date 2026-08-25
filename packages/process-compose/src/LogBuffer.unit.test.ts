@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Fiber, Stream } from "effect";
+import { Deferred, Duration, Effect, Fiber, Option, Stream } from "effect";
 import { LogBuffer } from "./LogBuffer.ts";
 
 const layer = LogBuffer.layer;
@@ -39,10 +39,7 @@ describe("LogBuffer", () => {
 
       // Start collecting 1 entry from the subscription in background
       const collectEffect = log.subscribe("svc").pipe(Stream.take(1), Stream.runCollect);
-      const fiber = yield* Effect.forkChild(collectEffect);
-
-      // Give the subscriber a moment to be registered
-      yield* Effect.yieldNow;
+      const fiber = yield* Effect.forkChild(collectEffect, { startImmediately: true });
 
       yield* log.append("svc", "stdout", "hello");
 
@@ -75,9 +72,7 @@ describe("LogBuffer", () => {
 
       // Collect 3 entries from the global subscription
       const collectEffect = log.subscribeAll().pipe(Stream.take(3), Stream.runCollect);
-      const fiber = yield* Effect.forkChild(collectEffect);
-
-      yield* Effect.yieldNow;
+      const fiber = yield* Effect.forkChild(collectEffect, { startImmediately: true });
 
       yield* log.append("svcA", "stdout", "from-a");
       yield* log.append("svcB", "stderr", "from-b");
@@ -111,6 +106,56 @@ describe("LogBuffer", () => {
       expect(entriesB.every((e) => e.service === "b")).toBe(true);
       expect(entriesB[0]?.line).toBe("line-b1");
       expect(entriesB[1]?.line).toBe("line-b2");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.live("does not block appends when a live subscriber is slow", () =>
+    Effect.gen(function* () {
+      const log = yield* LogBuffer;
+      const firstEntry = yield* Deferred.make<void>();
+      const releaseSubscriber = yield* Deferred.make<void>();
+      let first = true;
+      const subscriber = yield* Effect.forkChild(
+        log.subscribe("svc").pipe(
+          Stream.tap(() =>
+            first
+              ? Effect.sync(() => {
+                  first = false;
+                }).pipe(
+                  Effect.andThen(Deferred.succeed(firstEntry, void 0)),
+                  Effect.andThen(Deferred.await(releaseSubscriber)),
+                )
+              : Effect.void,
+          ),
+          Stream.runDrain,
+        ),
+        { startImmediately: true },
+      );
+      yield* log.append("svc", "stdout", "first");
+      yield* Deferred.await(firstEntry);
+      const result = yield* Effect.forEach(
+        Array.from({ length: 1_100 }, (_, index) => index + 1),
+        (index) => log.append("svc", "stdout", `line${index}`),
+        { concurrency: "unbounded", discard: true },
+      ).pipe(Effect.timeoutOption(Duration.seconds(2)));
+
+      expect(Option.isSome(result)).toBe(true);
+      yield* Deferred.succeed(releaseSubscriber, void 0);
+      yield* Fiber.interrupt(subscriber);
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.live("preserves entries when several writers initialize one service concurrently", () =>
+    Effect.gen(function* () {
+      const log = yield* LogBuffer;
+      yield* Effect.forEach(
+        Array.from({ length: 32 }, (_, index) => index),
+        (index) => log.append("svc", "stdout", `line${index}`),
+        { concurrency: "unbounded", discard: true },
+      );
+      const entries = yield* log.history("svc", 32);
+      expect(entries).toHaveLength(32);
+      expect(new Set(entries.map((entry) => entry.line)).size).toBe(32);
     }).pipe(Effect.provide(layer)),
   );
 

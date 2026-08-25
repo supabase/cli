@@ -140,6 +140,12 @@ For each requested definition, `Orchestrator` runs this sequence:
 The service keeps the same state stream across restart generations. Restart backoff is
 `min(30 seconds, 2^(restartCount - 1))`.
 
+All public lifecycle mutations (`start`, `startService`, `stop`, `stopService`, `restartService`,
+and `updateServiceDefinition`) share one semaphore. The semaphore serializes changes to the graph,
+desired-state refs, and `FiberMap`; state reads and lifecycle fibers remain concurrent. This keeps
+commands composable without allowing a concurrent stop or graph update to observe a half-applied
+mutation.
+
 A no-health-check, `restart: "no"` process is treated as one-shot work. A small isolated poll of
 `ChildProcessHandle.isRunning` compensates for adapters that can report process completion before
 their `exitCode` Effect becomes observable; it is not part of the general lifecycle loop.
@@ -170,6 +176,10 @@ generation has ever become healthy, `startupFailureThreshold` controls when it b
 all later failures use `failureThreshold`, including after an unhealthy-to-healthy recovery.
 Initial probe failures are therefore observable rather than leaving the service indefinitely in
 `Running`.
+
+HTTP probes pass the fiber cancellation signal to `fetch` and apply the configured timeout through
+Effect interruption. TCP probes use an Effect callback with socket cleanup, so cancellation closes
+the socket instead of leaving an in-flight connection behind.
 
 An unhealthy process uses the same pure restart-budget decision as a process exit. When restart is
 enabled and the budget is exhausted, the supervisor terminates the child and publishes `Failed`
@@ -242,6 +252,11 @@ supervisor:
 - applies graceful-then-forceful termination;
 - runs serializable orphan cleanup before it exits.
 
+Its coordination core is one scoped Effect program: child exit and owner-loss signals complete
+`Deferred`s, owner liveness is checked by a supervised fiber on a `Schedule`, and cleanup command
+timeouts use Effect interruption. The source-file and compiled self-dispatch functions are the
+only outer process adapters that call `Effect.runPromise`.
+
 This extra process is required for abrupt owner death: an Effect finalizer cannot run after its
 own process has already disappeared. Ordinary definitions avoid the extra process.
 
@@ -274,8 +289,12 @@ These contracts exist because compiled-child behavior caused two user-visible in
 ## Logs
 
 `LogBuffer` holds a bounded per-service history and a bounded merged history (10,000 entries each),
-plus live per-service and merged `PubSub` streams. `historyAll` can filter by service names.
-Streams contain new entries only; callers explicitly request history when they need replay.
+plus live per-service and merged sliding `PubSub` streams. `historyAll` can filter by service names.
+Streams contain new entries only; callers explicitly request history when they need replay. Live
+streams intentionally drop the oldest queued entries for a slow subscriber so process stdout and
+stderr draining cannot block; the bounded history refs remain the source of truth for recent
+output. Per-service stream and history initialization is serialized with a semaphore to make
+first-use concurrent appends deterministic.
 
 When a process exits unexpectedly or becomes unhealthy, the orchestrator appends recent buffered
 output to its diagnostics.
