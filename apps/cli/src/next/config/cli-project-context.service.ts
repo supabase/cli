@@ -8,5 +8,5 @@ interface CliProjectContextShape {
 }
 
 export class CliProjectContext extends Context.Service<CliProjectContext, CliProjectContextShape>()(
-  "supabase/config/CliProjectContext",
+  "supabase/cli/CliProjectContext",
 ) {}

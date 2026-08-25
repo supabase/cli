@@ -8,7 +8,7 @@ import {
   mockCredentials,
   mockOutput,
   mockProjectLinkState,
-  mockProjectLocalServiceVersions,
+  mockCliProjectLocalServiceVersions,
 } from "../../../../tests/helpers/mocks.ts";
 import { makeRunningStackFixture } from "../../../../tests/helpers/running-stack.ts";
 
@@ -24,7 +24,7 @@ describe("services handler", () => {
               fixture.baseLayer,
               out.layer,
               mockProjectLinkState(),
-              mockProjectLocalServiceVersions(),
+              mockCliProjectLocalServiceVersions(),
               mockCredentials().layer,
               Layer.succeed(CommandRuntime, {
                 commandPath: ["stack", "services"],

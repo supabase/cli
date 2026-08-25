@@ -14,8 +14,8 @@ import { Output } from "../output/output.service.ts";
 import { LegacyGoChildExitError } from "../legacy/legacy-go-child-exit.error.ts";
 import { GoProxyInvocation, goProxyInvocationLayer } from "../legacy/go-proxy-invocation.ts";
 import { cliSettingsLayer } from "../../next/config/cli-settings.layer.ts";
-import { projectHomeLayer } from "../../next/config/project-home.layer.ts";
-import { ProjectLocalServiceVersions } from "../../next/config/project-local-service-versions.service.ts";
+import { cliProjectHomeLayer } from "../../next/config/cli-project-home.layer.ts";
+import { CliProjectLocalServiceVersions } from "../../next/config/cli-project-local-service-versions.service.ts";
 import { cliProjectContextLayer } from "../../next/config/cli-project-context.layer.ts";
 import { projectLinkStateLayer } from "../../next/config/project-link-state.layer.ts";
 import { processControlLayer } from "../runtime/process-control.layer.ts";
@@ -652,8 +652,8 @@ function cliSettingsLayerFor(runtimeLayer: Layer.Layer<never>) {
   );
 }
 
-function projectHomeLayerFor(runtimeLayer: Layer.Layer<never>) {
-  return projectHomeLayer.pipe(
+function cliProjectHomeLayerFor(runtimeLayer: Layer.Layer<never>) {
+  return cliProjectHomeLayer.pipe(
     Layer.provide(cliSettingsLayerFor(runtimeLayer)),
     Layer.provide(cliProjectContextLayerFor(runtimeLayer)),
     Layer.provide(runtimeLayer),
@@ -705,13 +705,13 @@ function cliProgramFor(
       saveAccessToken: () => Effect.die("unexpected root credentials write"),
       deleteAccessToken: Effect.die("unexpected root credentials deletion"),
     }),
-    Layer.succeed(ProjectLocalServiceVersions, {
+    Layer.succeed(CliProjectLocalServiceVersions, {
       load: Effect.die("unexpected root project local service versions access"),
     }),
     Layer.succeed(CliConfigStore, {
-      load: () => Effect.die("unexpected root project config access"),
-      loadFile: () => Effect.die("unexpected root project config file access"),
-      save: () => Effect.die("unexpected root project config write"),
+      load: () => Effect.die("unexpected root cli-config access"),
+      loadFile: () => Effect.die("unexpected root cli-config file access"),
+      save: () => Effect.die("unexpected root cli-config write"),
     }),
     Layer.succeed(
       CommandRuntime,
@@ -730,7 +730,7 @@ function cliProgramFor(
     Effect.provide(tracingLayer),
     Effect.provide(telemetryRuntimeLayer),
     Effect.provide(cliSettingsLayerFor(runtimeLayer)),
-    Effect.provide(projectHomeLayerFor(runtimeLayer)),
+    Effect.provide(cliProjectHomeLayerFor(runtimeLayer)),
     Effect.provide(cliProjectContextLayerFor(runtimeLayer)),
     Effect.provide(projectLinkStateLayer),
     Effect.provide(runtimeLayer),
@@ -870,7 +870,7 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
     }).pipe(
       Effect.provide(outputLayerFor(outputFormat)),
       Effect.provide(telemetryRuntimeLayer),
-      Effect.provide(projectHomeLayerFor(handledRuntimeLayer)),
+      Effect.provide(cliProjectHomeLayerFor(handledRuntimeLayer)),
       Effect.provide(cliSettingsLayerFor(handledRuntimeLayer)),
       Effect.provide(cliProjectContextLayerFor(handledRuntimeLayer)),
       Effect.provide(processControlLayer),

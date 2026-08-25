@@ -3,8 +3,8 @@ import { loadCliConfig } from "@supabase/config/effect";
 import { Duration, Effect, FileSystem, Layer, Option, Stream } from "effect";
 import { join } from "node:path";
 import { CliSettings } from "../../../config/cli-settings.service.ts";
-import { ProjectHome } from "../../../config/project-home.service.ts";
-import { projectLocalServiceVersionsLayer } from "../../../config/project-local-service-versions.layer.ts";
+import { CliProjectHome } from "../../../config/cli-project-home.service.ts";
+import { cliProjectLocalServiceVersionsLayer } from "../../../config/cli-project-local-service-versions.layer.ts";
 import { projectLinkStateLayer } from "../../../config/project-link-state.layer.ts";
 import { resolveServiceVersionContext } from "../../../config/service-version-resolution.ts";
 import { managedPortIntents } from "../../../config/managed-port-intents.ts";
@@ -45,15 +45,15 @@ type StackService = typeof Stack.Service;
 
 const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptions) {
   const cliSettings = yield* CliSettings;
-  const projectHome = yield* ProjectHome;
+  const cliProjectHome = yield* CliProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
   const output = yield* Output;
 
   yield* output.info("No local stack is running. Starting the local Supabase stack...");
-  yield* ensureProjectStateIgnored(projectHome.projectRoot);
+  yield* ensureProjectStateIgnored(cliProjectHome.projectRoot);
 
   const serviceVersionContext = yield* resolveServiceVersionContext([], undefined);
-  const loadedCliConfig = yield* loadCliConfig(projectHome.projectRoot);
+  const loadedCliConfig = yield* loadCliConfig(cliProjectHome.projectRoot);
   const stackConfig = {
     ...withServiceVersions(toStartStackConfig([], "docker"), serviceVersionContext.runtimeVersions),
     // Functions dev explicitly requires Edge Runtime even when the project
@@ -64,7 +64,7 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
   const stackLayer = yield* daemonLayer({
     cacheRoot: cliSettings.supabaseHome,
     cwd: runtimeInfo.cwd,
-    projectDir: projectHome.projectRoot,
+    projectDir: cliProjectHome.projectRoot,
     name: opts.stack,
     edgeRuntime: opts.edgeRuntime,
     launch: {
@@ -84,13 +84,13 @@ export const connectOrStartFunctionsDevStack = Effect.fnUntraced(function* (
   opts: FunctionsDevStackOptions,
 ) {
   const cliSettings = yield* CliSettings;
-  const projectHome = yield* ProjectHome;
+  const cliProjectHome = yield* CliProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
 
   const existingLayer = yield* connectLayer({
     cwd: runtimeInfo.cwd,
     cacheRoot: cliSettings.supabaseHome,
-    projectDir: projectHome.projectRoot,
+    projectDir: cliProjectHome.projectRoot,
     name: opts.stack,
   }).pipe(
     Effect.map(Option.some),
@@ -120,8 +120,8 @@ function logEntryStream(stack: StackService) {
 
 const ensureFunctionsDirectory = Effect.fnUntraced(function* () {
   const fs = yield* FileSystem.FileSystem;
-  const projectHome = yield* ProjectHome;
-  yield* fs.makeDirectory(join(projectHome.supabaseDir, "functions"), { recursive: true });
+  const cliProjectHome = yield* CliProjectHome;
+  yield* fs.makeDirectory(join(cliProjectHome.supabaseDir, "functions"), { recursive: true });
 });
 
 function watchEventMatches(spec: FunctionsDevWatchPath, event: FileWatchEvent): boolean {
@@ -258,5 +258,5 @@ export const runFunctionsDevRuntime = Effect.fnUntraced(function* (
 
 export const functionsDevRuntimeLayer = Layer.mergeAll(
   projectLinkStateLayer,
-  projectLocalServiceVersionsLayer,
+  cliProjectLocalServiceVersionsLayer,
 );

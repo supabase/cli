@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { deleteManagedStackPersistence, stopDaemon } from "@supabase/stack/effect";
 import { CliSettings } from "../../config/cli-settings.service.ts";
-import { ProjectHome } from "../../config/project-home.service.ts";
+import { CliProjectHome } from "../../config/cli-project-home.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import type { StopFlags } from "./stop.command.ts";
@@ -9,7 +9,7 @@ import type { StopFlags } from "./stop.command.ts";
 export const stop = Effect.fnUntraced(function* (flags: StopFlags) {
   const output = yield* Output;
   const cliSettings = yield* CliSettings;
-  const projectHome = yield* ProjectHome;
+  const cliProjectHome = yield* CliProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
   const cwd = runtimeInfo.cwd;
 
@@ -20,7 +20,7 @@ export const stop = Effect.fnUntraced(function* (flags: StopFlags) {
     yield* stopDaemon({
       cwd,
       cacheRoot: cliSettings.supabaseHome,
-      projectDir: projectHome.projectRoot,
+      projectDir: cliProjectHome.projectRoot,
       name: flags.stack,
     }).pipe(
       Effect.catchTag("NoRunningStackError", () =>
@@ -32,7 +32,7 @@ export const stop = Effect.fnUntraced(function* (flags: StopFlags) {
     yield* deleteManagedStackPersistence({
       cwd,
       cacheRoot: cliSettings.supabaseHome,
-      projectDir: projectHome.projectRoot,
+      projectDir: cliProjectHome.projectRoot,
       name: flags.stack,
     }).pipe(
       Effect.catchTag("NoRunningStackError", (error) =>
@@ -48,7 +48,7 @@ export const stop = Effect.fnUntraced(function* (flags: StopFlags) {
   yield* stopDaemon({
     cwd,
     cacheRoot: cliSettings.supabaseHome,
-    projectDir: projectHome.projectRoot,
+    projectDir: cliProjectHome.projectRoot,
     name: flags.stack,
   });
 

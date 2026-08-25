@@ -15,7 +15,7 @@ import {
 } from "../../../../tests/helpers/mocks.ts";
 import { cliSettingsLayer } from "../../config/cli-settings.layer.ts";
 import { cliProjectContextLayer } from "../../config/cli-project-context.layer.ts";
-import { projectHomeLayer } from "../../config/project-home.layer.ts";
+import { cliProjectHomeLayer } from "../../config/cli-project-home.layer.ts";
 import { projectLinkStateLayer } from "../../config/project-link-state.layer.ts";
 import { ProjectLinkState } from "../../config/project-link-state.service.ts";
 import { NoAccessibleProjectsError, ProjectRefRequiredError } from "./link.errors.ts";
@@ -67,7 +67,7 @@ function buildLayer(opts: {
     Layer.provide(runtimeInfoLayer),
     Layer.provide(discoveredCliProjectContextLayer),
   );
-  const discoveredProjectHomeLayer = projectHomeLayer.pipe(
+  const discoveredCliProjectHomeLayer = cliProjectHomeLayer.pipe(
     Layer.provide(BunServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(discoveredCliProjectContextLayer),
@@ -75,7 +75,7 @@ function buildLayer(opts: {
   );
   const discoveredProjectLinkStateLayer = projectLinkStateLayer.pipe(
     Layer.provide(BunServices.layer),
-    Layer.provide(discoveredProjectHomeLayer),
+    Layer.provide(discoveredCliProjectHomeLayer),
   );
   const out = mockOutput({
     format: "text",
@@ -110,7 +110,7 @@ function buildLayer(opts: {
       envLayer,
       discoveredCliProjectContextLayer,
       discoveredCliSettingsLayer,
-      discoveredProjectHomeLayer,
+      discoveredCliProjectHomeLayer,
       discoveredProjectLinkStateLayer,
       out.layer,
       analytics.layer,

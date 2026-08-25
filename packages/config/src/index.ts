@@ -13,11 +13,11 @@ export {
   type CliConfigJson,
 } from "./base.ts";
 export {
+  CliConfigParseError,
+  CliProjectEnvParseError,
   DuplicateRemoteProjectIdError,
   InvalidRemoteProjectIdError,
   MissingCliConfigValueError,
-  CliConfigParseError,
-  CliProjectEnvParseError,
 } from "./errors.ts";
 export type { ConfigFormat } from "./config-format.ts";
 export {

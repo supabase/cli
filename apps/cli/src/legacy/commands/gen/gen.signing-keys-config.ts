@@ -502,7 +502,7 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
     catch: (cause) => onConfigParseError(`failed to read config: ${String(cause)}`),
   });
   const loaded = yield* loadCliConfig(cwd, {
-    projectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
+    cliProjectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
     goViperCompat: true,
     // `cwd` here is the ALREADY-resolved `LegacyCliSettings.workdir` (the
     // ancestor climb already ran once to produce it — see

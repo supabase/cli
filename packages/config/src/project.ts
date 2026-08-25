@@ -403,23 +403,23 @@ function redactValue(value: unknown, path: ReadonlyArray<string>, goViperCompat:
 
 function resolveCliConfigValueAtPath(
   value: unknown,
-  projectEnv: Pick<CliProjectEnvironment, "values">,
+  cliProjectEnv: Pick<CliProjectEnvironment, "values">,
   path: ReadonlyArray<string>,
   goViperCompat: boolean,
 ): unknown {
-  const interpolated = interpolateValue(value, projectEnv.values, goViperCompat);
+  const interpolated = interpolateValue(value, cliProjectEnv.values, goViperCompat);
   return redactValue(interpolated, path, goViperCompat);
 }
 
 /**
- * `projectEnv` only needs `.values` (`Pick<CliProjectEnvironment, "values">`) —
+ * `cliProjectEnv` only needs `.values` (`Pick<CliProjectEnvironment, "values">`) —
  * a caller that already has a project's env values but not the full
  * `CliProjectEnvironment` shape (e.g. `paths`/`loadedPaths`/`sources`) can pass
  * `{ values }` directly instead of threading through the whole loaded object.
  */
 export function resolveCliConfigValue<T>(
   value: T,
-  projectEnv: Pick<CliProjectEnvironment, "values">,
+  cliProjectEnv: Pick<CliProjectEnvironment, "values">,
   configPath: string,
   options?: ResolveCliConfigOptions,
 ): Effect.Effect<ResolvedCliConfigValue<T>> {
@@ -427,17 +427,17 @@ export function resolveCliConfigValue<T>(
     () =>
       resolveCliConfigValueAtPath(
         value,
-        projectEnv,
+        cliProjectEnv,
         toPathSegments(configPath),
         options?.goViperCompat ?? false,
       ) as ResolvedCliConfigValue<T>,
   );
 }
 
-/** See {@link resolveCliConfigValue}'s doc comment for why `projectEnv` only needs `.values`. */
+/** See {@link resolveCliConfigValue}'s doc comment for why `cliProjectEnv` only needs `.values`. */
 export function resolveCliConfigSubtree<T>(
   value: T,
-  projectEnv: Pick<CliProjectEnvironment, "values">,
+  cliProjectEnv: Pick<CliProjectEnvironment, "values">,
   pathPrefix: string,
   options?: ResolveCliConfigOptions,
 ): Effect.Effect<ResolvedCliConfigValue<T>> {
@@ -445,7 +445,7 @@ export function resolveCliConfigSubtree<T>(
     () =>
       resolveCliConfigValueAtPath(
         value,
-        projectEnv,
+        cliProjectEnv,
         toPathSegments(pathPrefix),
         options?.goViperCompat ?? false,
       ) as ResolvedCliConfigValue<T>,

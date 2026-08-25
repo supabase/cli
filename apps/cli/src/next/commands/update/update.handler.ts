@@ -7,7 +7,7 @@ import {
 } from "@supabase/stack/effect";
 import { ensureProjectStateIgnored } from "../../config/project-gitignore.ts";
 import { CliSettings } from "../../config/cli-settings.service.ts";
-import { ProjectHome } from "../../config/project-home.service.ts";
+import { CliProjectHome } from "../../config/cli-project-home.service.ts";
 import { refreshLinkedProjectSnapshot } from "../../config/project-link-refresh.ts";
 import {
   formatLinkedProjectLabel,
@@ -42,12 +42,12 @@ function diffCachedLinkedVersions(
 export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
   const output = yield* Output;
   const cliSettings = yield* CliSettings;
-  const projectHome = yield* ProjectHome;
+  const cliProjectHome = yield* CliProjectHome;
   const projectLinkState = yield* ProjectLinkState;
   const runtimeInfo = yield* RuntimeInfo;
 
   yield* output.intro("Update local Supabase stack versions");
-  yield* ensureProjectStateIgnored(projectHome.projectRoot);
+  yield* ensureProjectStateIgnored(cliProjectHome.projectRoot);
 
   const linkedState = yield* projectLinkState.load;
   if (Option.isSome(linkedState)) {
@@ -55,7 +55,7 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
       linkedState.value.project.ref,
       (yield* listStacks({
         cacheRoot: cliSettings.supabaseHome,
-        projectDir: projectHome.projectRoot,
+        projectDir: cliProjectHome.projectRoot,
       })).map((stack) => ({
         stackName: stack.name,
         services: fillServiceVersionManifest(stack.versions),
@@ -87,7 +87,7 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
 
   const existingSummary = yield* resolveStackSummary({
     cacheRoot: cliSettings.supabaseHome,
-    projectDir: projectHome.projectRoot,
+    projectDir: cliProjectHome.projectRoot,
     cwd: runtimeInfo.cwd,
     name: flags.stack,
   }).pipe(
@@ -106,7 +106,7 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
     yield* updateManagedLaunch({
       cacheRoot: cliSettings.supabaseHome,
       cwd: runtimeInfo.cwd,
-      workspacePath: projectHome.projectRoot,
+      workspacePath: cliProjectHome.projectRoot,
       stackName: flags.stack,
       launch: {
         versions: serviceVersionContext.candidateBaseline,

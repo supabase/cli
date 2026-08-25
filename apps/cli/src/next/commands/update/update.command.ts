@@ -6,10 +6,10 @@ import { credentialsLayer } from "../../auth/credentials.layer.ts";
 import { platformApiLayer } from "../../auth/platform-api.layer.ts";
 import { projectLinkRemoteLayer } from "../../config/project-link-remote.layer.ts";
 import { projectLinkStateLayer } from "../../config/project-link-state.layer.ts";
-import { projectLocalServiceVersionsLayer } from "../../config/project-local-service-versions.layer.ts";
+import { cliProjectLocalServiceVersionsLayer } from "../../config/cli-project-local-service-versions.layer.ts";
 import {
   discoveredCliSettingsLayer,
-  provideProjectCommandRuntime,
+  provideCliProjectCommandRuntime,
 } from "../../config/project-runtime.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
@@ -31,10 +31,10 @@ const updateProjectLinkRemoteLayer = projectLinkRemoteLayer.pipe(
   Layer.provide(discoveredCliSettingsLayer),
 );
 
-const updateRuntimeLayer = provideProjectCommandRuntime(
+const updateRuntimeLayer = provideCliProjectCommandRuntime(
   Layer.mergeAll(
     projectLinkStateLayer,
-    projectLocalServiceVersionsLayer,
+    cliProjectLocalServiceVersionsLayer,
     updateProjectLinkRemoteLayer,
     commandRuntimeLayer(["stack", "update"]),
   ),

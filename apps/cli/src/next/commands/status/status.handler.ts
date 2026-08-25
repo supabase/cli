@@ -8,7 +8,7 @@ import {
   type StackSummary,
 } from "@supabase/stack/effect";
 import { CliSettings } from "../../config/cli-settings.service.ts";
-import { ProjectHome } from "../../config/project-home.service.ts";
+import { CliProjectHome } from "../../config/cli-project-home.service.ts";
 import { resolveServiceVersionContext } from "../../config/service-version-resolution.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -80,7 +80,7 @@ const renderUpdateStatus = Effect.fnUntraced(function* (
 export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
   const output = yield* Output;
   const cliSettings = yield* CliSettings;
-  const projectHome = yield* ProjectHome;
+  const cliProjectHome = yield* CliProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
 
   yield* output.intro("Show local Supabase stack status");
@@ -88,7 +88,7 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
   const layer = yield* connectLayer({
     cwd: runtimeInfo.cwd,
     cacheRoot: cliSettings.supabaseHome,
-    projectDir: projectHome.projectRoot,
+    projectDir: cliProjectHome.projectRoot,
     name: _flags.stack,
   }).pipe(
     Effect.map(Option.some),
@@ -98,7 +98,7 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
   if (Option.isNone(layer)) {
     const summary = yield* resolveConfiguredSummary({
       cacheRoot: cliSettings.supabaseHome,
-      projectDir: projectHome.projectRoot,
+      projectDir: cliProjectHome.projectRoot,
       cwd: runtimeInfo.cwd,
       name: _flags.stack,
     }).pipe(
@@ -155,7 +155,7 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
 
   const summary = yield* resolveConfiguredSummary({
     cacheRoot: cliSettings.supabaseHome,
-    projectDir: projectHome.projectRoot,
+    projectDir: cliProjectHome.projectRoot,
     cwd: runtimeInfo.cwd,
     name: _flags.stack,
   });

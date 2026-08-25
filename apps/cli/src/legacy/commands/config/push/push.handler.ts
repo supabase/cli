@@ -124,7 +124,7 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     //
     // NOTE (CLI-1489): `config push` needs the fully decoded config (every
     // service subset), so it uses `loadCliConfig` rather than the tolerant
-    // `LegacyCliConfig` subtree reader. `loadCliConfig` raises
+    // `legacy-db-config.toml-read.ts` subtree reader. `loadCliConfig` raises
     // `CliConfigParseError` on `env(...)` refs over numeric/bool fields,
     // which Go resolves transparently. Switch to the fixed decoder once
     // CLI-1489 lands; until then this is the conscious tradeoff for this command.

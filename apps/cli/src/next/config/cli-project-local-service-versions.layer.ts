@@ -3,18 +3,18 @@ import {
   InvalidLocalServiceVersionsStateError,
   LocalServiceVersionsStateSchema,
   type LocalServiceVersionsState,
-  ProjectLocalServiceVersions,
-} from "./project-local-service-versions.service.ts";
-import { ProjectHome } from "./project-home.service.ts";
+  CliProjectLocalServiceVersions,
+} from "./cli-project-local-service-versions.service.ts";
+import { CliProjectHome } from "./cli-project-home.service.ts";
 
 const LocalServiceVersionsStateFileSchema = Schema.fromJsonString(LocalServiceVersionsStateSchema);
 const decodeLocalServiceVersionsState = Schema.decodeUnknownEffect(
   LocalServiceVersionsStateFileSchema,
 );
 
-const makeProjectLocalServiceVersions = Effect.gen(function* () {
+const makeCliProjectLocalServiceVersions = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
-  const projectHome = yield* ProjectHome;
+  const cliProjectHome = yield* CliProjectHome;
 
   const loadFromPath = (filePath: string) =>
     Effect.gen(function* () {
@@ -39,15 +39,15 @@ const makeProjectLocalServiceVersions = Effect.gen(function* () {
     });
 
   const load = Effect.gen(function* () {
-    return yield* loadFromPath(projectHome.projectLocalVersionsPath);
+    return yield* loadFromPath(cliProjectHome.projectLocalVersionsPath);
   });
 
-  return ProjectLocalServiceVersions.of({
+  return CliProjectLocalServiceVersions.of({
     load,
   });
 });
 
-export const projectLocalServiceVersionsLayer = Layer.effect(
-  ProjectLocalServiceVersions,
-  makeProjectLocalServiceVersions,
+export const cliProjectLocalServiceVersionsLayer = Layer.effect(
+  CliProjectLocalServiceVersions,
+  makeCliProjectLocalServiceVersions,
 );

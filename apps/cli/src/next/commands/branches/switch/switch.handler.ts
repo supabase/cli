@@ -3,7 +3,7 @@ import { loadCliConfig } from "@supabase/config/effect";
 import { Effect, Option } from "effect";
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
 import { CliSettings } from "../../../config/cli-settings.service.ts";
-import { ProjectHome } from "../../../config/project-home.service.ts";
+import { CliProjectHome } from "../../../config/cli-project-home.service.ts";
 import { managedPortIntents } from "../../../config/managed-port-intents.ts";
 import {
   ProjectLinkState,
@@ -28,7 +28,7 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
   const projectLinkState = yield* ProjectLinkState;
   const api = yield* PlatformApi;
   const cliSettings = yield* CliSettings;
-  const projectHome = yield* ProjectHome;
+  const cliProjectHome = yield* CliProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
 
   yield* output.intro("Switch branch");
@@ -119,7 +119,7 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
   const stackCheck = yield* resolveManagedStack({
     cacheRoot: cliSettings.supabaseHome,
     cwd: runtimeInfo.cwd,
-    projectDir: projectHome.projectRoot,
+    projectDir: cliProjectHome.projectRoot,
   }).pipe(
     Effect.map(Option.some),
     Effect.catchTag("NoRunningStackError", () => Effect.succeed(Option.none())),
@@ -137,7 +137,7 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
     yield* stopDaemon({
       cwd: runtimeInfo.cwd,
       cacheRoot: cliSettings.supabaseHome,
-      projectDir: projectHome.projectRoot,
+      projectDir: cliProjectHome.projectRoot,
       name: stackName,
     }).pipe(Effect.tapError(() => stopping.fail()));
     yield* stopping.clear();
@@ -155,12 +155,12 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
       ),
       launch.versions,
     );
-    const loadedCliConfig = yield* loadCliConfig(projectHome.projectRoot);
+    const loadedCliConfig = yield* loadCliConfig(cliProjectHome.projectRoot);
 
     const stackLayer = yield* daemonLayer({
       cacheRoot: cliSettings.supabaseHome,
       cwd: runtimeInfo.cwd,
-      projectDir: projectHome.projectRoot,
+      projectDir: cliProjectHome.projectRoot,
       name: stackName,
       portIntents: managedPortIntents(launchConfig, loadedCliConfig ?? undefined),
       launch,

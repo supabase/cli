@@ -16,7 +16,7 @@ import * as UrlParams from "effect/unstable/http/UrlParams";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { CliSettings } from "../../../config/cli-settings.service.ts";
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
-import { ProjectHome } from "../../../config/project-home.service.ts";
+import { CliProjectHome } from "../../../config/cli-project-home.service.ts";
 import type { ProjectLinkStateValue } from "../../../config/project-link-state.service.ts";
 import {
   ConflictingFunctionDeployFlagsError,
@@ -138,17 +138,17 @@ function cliSettingsLayer() {
   );
 }
 
-function mockProjectHome(projectRoot: string) {
+function mockCliProjectHome(projectRoot: string) {
   const projectHomeDir = join(projectRoot, ".supabase");
   return Layer.succeed(
-    ProjectHome,
-    ProjectHome.of({
+    CliProjectHome,
+    CliProjectHome.of({
       projectRoot,
       supabaseDir: join(projectRoot, "supabase"),
       projectHomeDir,
       projectLinkPath: join(projectHomeDir, "project.json"),
       projectLocalVersionsPath: join(projectHomeDir, "local-versions.json"),
-      ensureProjectHomeDir: Effect.void,
+      ensureCliProjectHomeDir: Effect.void,
     }),
   );
 }
@@ -460,7 +460,7 @@ function setup(
     api.layer,
     cliSettingsLayer(),
     mockRuntimeInfo({ cwd }),
-    mockProjectHome(opts.projectRoot ?? cwd),
+    mockCliProjectHome(opts.projectRoot ?? cwd),
     mockProjectLinkState(opts.linked === false ? undefined : LINK_STATE),
     Stdio.layerTest({
       args: Effect.succeed(opts.rawArgs ?? ["functions", "deploy"]),

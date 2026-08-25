@@ -54,7 +54,7 @@ describe("project discovery and lazy env resolution", () => {
     // Mirrors Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:238-257`):
     // an explicit workdir is used exactly as given, with no ancestor climb —
     // callers that already hold a Go-equivalent project root (e.g. the legacy
-    // `stop`/`status` ports' `cliConfig.workdir`) pass `search: false` to avoid
+    // `stop`/`status` ports' `cliSettings.workdir`) pass `search: false` to avoid
     // picking up an unrelated ancestor project.
     const cwd = makeTempProject();
     const repoRoot = join(cwd, "repo");

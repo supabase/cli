@@ -86,7 +86,7 @@ export interface LoadCliConfigOptions {
    * also reads `.env.<SUPABASE_ENV>` files) resolve it themselves and pass it in
    * so loading does not re-read those files or depend on `process.env` mutation.
    */
-  readonly projectEnv?: CliProjectEnvironment;
+  readonly cliProjectEnv?: CliProjectEnvironment;
   /** See {@link FindCliProjectPathsOptions.search}. */
   readonly search?: boolean;
   /**

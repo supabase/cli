@@ -6,7 +6,7 @@ import {
 } from "@supabase/config/effect";
 import type { EdgeRuntimeConfig } from "@supabase/stack/effect";
 import { Data, Effect, Redacted } from "effect";
-import { ProjectHome } from "../../../config/project-home.service.ts";
+import { CliProjectHome } from "../../../config/cli-project-home.service.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -92,8 +92,8 @@ function toStackEdgeRuntimeConfig(config: ResolvedProjectEdgeRuntimeConfig): Edg
 }
 
 export const resolveFunctionsDevEdgeRuntimeConfig = Effect.fnUntraced(function* () {
-  const projectHome = yield* ProjectHome;
-  const loadedConfig = yield* loadCliConfig(projectHome.projectRoot);
+  const cliProjectHome = yield* CliProjectHome;
+  const loadedConfig = yield* loadCliConfig(cliProjectHome.projectRoot);
 
   if (loadedConfig === null) {
     const config = {};
@@ -104,7 +104,7 @@ export const resolveFunctionsDevEdgeRuntimeConfig = Effect.fnUntraced(function* 
   }
 
   const projectEnv = yield* loadCliProjectEnvironment({
-    cwd: projectHome.projectRoot,
+    cwd: cliProjectHome.projectRoot,
     baseEnv: process.env,
   });
 

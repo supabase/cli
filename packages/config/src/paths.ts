@@ -56,7 +56,7 @@ export interface FindCliProjectPathsOptions {
    * (`getProjectRoot`, `internal/utils/misc.go:216-231`).
    *
    * Callers that already hold an authoritative, Go-equivalent project root
-   * (e.g. the legacy `stop`/`status` ports' `cliConfig.workdir`, which mirrors
+   * (e.g. the legacy `stop`/`status` ports' `cliSettings.workdir`, which mirrors
    * `ChangeWorkDir`'s own explicit-vs-default resolution) should pass `false`
    * here to avoid a second, un-Go-like ancestor search that could otherwise
    * pick up an unrelated ancestor project's config.

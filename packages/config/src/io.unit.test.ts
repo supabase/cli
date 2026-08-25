@@ -1467,7 +1467,7 @@ port = "env(REMOTE_DB_PORT)"
     try {
       const loaded = await runConfigEffect(loadCliConfig(localCwd));
       const envLoaded = await runConfigEffect(
-        loadCliConfig(envCwd, { projectEnv: injectedProjectEnv({ API_PORT: "6001" }) }),
+        loadCliConfig(envCwd, { cliProjectEnv: injectedProjectEnv({ API_PORT: "6001" }) }),
       );
       const remoteLoaded = await runConfigEffect(
         loadCliConfig(remoteCwd, { projectRef: PREVIEW_REF }),
@@ -1475,7 +1475,7 @@ port = "env(REMOTE_DB_PORT)"
       const remoteEnvLoaded = await runConfigEffect(
         loadCliConfig(remoteEnvCwd, {
           projectRef: PREVIEW_REF,
-          projectEnv: injectedProjectEnv({ REMOTE_DB_PORT: "6003" }),
+          cliProjectEnv: injectedProjectEnv({ REMOTE_DB_PORT: "6003" }),
         }),
       );
       const omittedLoaded = await runConfigEffect(loadCliConfig(omittedCwd));
@@ -1511,13 +1511,13 @@ schemas = ["env(REMOTE_SCHEMA)"]
     try {
       const localArrayLoaded = await runConfigEffect(
         loadCliConfig(localArrayCwd, {
-          projectEnv: injectedProjectEnv({ LOCAL_SCHEMA: "local_schema" }),
+          cliProjectEnv: injectedProjectEnv({ LOCAL_SCHEMA: "local_schema" }),
         }),
       );
       const remoteArrayLoaded = await runConfigEffect(
         loadCliConfig(remoteArrayCwd, {
           projectRef: PREVIEW_REF,
-          projectEnv: injectedProjectEnv({ REMOTE_SCHEMA: "remote_schema" }),
+          cliProjectEnv: injectedProjectEnv({ REMOTE_SCHEMA: "remote_schema" }),
         }),
       );
 

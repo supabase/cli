@@ -8,8 +8,8 @@ import { Effect, Layer, Option } from "effect";
 import { mockOutput, mockRuntimeInfo, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
 import { cliSettingsLayer } from "../../config/cli-settings.layer.ts";
 import { cliProjectContextLayer } from "../../config/cli-project-context.layer.ts";
-import { projectHomeLayer } from "../../config/project-home.layer.ts";
-import { ProjectHome } from "../../config/project-home.service.ts";
+import { cliProjectHomeLayer } from "../../config/cli-project-home.layer.ts";
+import { CliProjectHome } from "../../config/cli-project-home.service.ts";
 import { projectLinkStateLayer } from "../../config/project-link-state.layer.ts";
 import { ProjectLinkState } from "../../config/project-link-state.service.ts";
 import { unlink } from "./unlink.handler.ts";
@@ -33,7 +33,7 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string> }) {
     Layer.provide(runtimeInfoLayer),
     Layer.provide(discoveredCliProjectContextLayer),
   );
-  const discoveredProjectHomeLayer = projectHomeLayer.pipe(
+  const discoveredCliProjectHomeLayer = cliProjectHomeLayer.pipe(
     Layer.provide(BunServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(discoveredCliProjectContextLayer),
@@ -41,7 +41,7 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string> }) {
   );
   const discoveredProjectLinkStateLayer = projectLinkStateLayer.pipe(
     Layer.provide(BunServices.layer),
-    Layer.provide(discoveredProjectHomeLayer),
+    Layer.provide(discoveredCliProjectHomeLayer),
   );
   const out = mockOutput({ format: "text", interactive: false });
 
@@ -53,7 +53,7 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string> }) {
       envLayer,
       discoveredCliProjectContextLayer,
       discoveredCliSettingsLayer,
-      discoveredProjectHomeLayer,
+      discoveredCliProjectHomeLayer,
       discoveredProjectLinkStateLayer,
       out.layer,
     ),
@@ -78,14 +78,14 @@ describe("unlink handler", () => {
         cwd: projectRoot,
         env: { SUPABASE_HOME: supabaseHome },
       });
-      const { projectHome, linkState } = yield* Effect.gen(function* () {
+      const { cliProjectHome, linkState } = yield* Effect.gen(function* () {
         return {
-          projectHome: yield* ProjectHome,
+          cliProjectHome: yield* CliProjectHome,
           linkState: yield* ProjectLinkState,
         };
       }).pipe(Effect.provide(layer));
 
-      yield* projectHome.ensureProjectHomeDir;
+      yield* cliProjectHome.ensureCliProjectHomeDir;
       yield* linkState.save({
         project: {
           ref: projectRef,

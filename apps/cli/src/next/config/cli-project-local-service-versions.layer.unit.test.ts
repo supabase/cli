@@ -8,10 +8,10 @@ import { Effect, Layer, Option } from "effect";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import { cliSettingsLayer } from "./cli-settings.layer.ts";
 import { cliProjectContextLayer } from "./cli-project-context.layer.ts";
-import { projectHomeLayer } from "./project-home.layer.ts";
-import { projectLocalServiceVersionsLayer } from "./project-local-service-versions.layer.ts";
-import { ProjectHome } from "./project-home.service.ts";
-import { ProjectLocalServiceVersions } from "./project-local-service-versions.service.ts";
+import { cliProjectHomeLayer } from "./cli-project-home.layer.ts";
+import { cliProjectLocalServiceVersionsLayer } from "./cli-project-local-service-versions.layer.ts";
+import { CliProjectHome } from "./cli-project-home.service.ts";
+import { CliProjectLocalServiceVersions } from "./cli-project-local-service-versions.service.ts";
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "supabase-project-local-versions-"));
@@ -32,15 +32,15 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?:
     Layer.provide(runtimeInfoLayer),
     Layer.provide(discoveredCliProjectContextLayer),
   );
-  const discoveredProjectHomeLayer = projectHomeLayer.pipe(
+  const discoveredCliProjectHomeLayer = cliProjectHomeLayer.pipe(
     Layer.provide(BunServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(discoveredCliProjectContextLayer),
     Layer.provide(discoveredCliSettingsLayer),
   );
-  const discoveredProjectLocalServiceVersionsLayer = projectLocalServiceVersionsLayer.pipe(
+  const discoveredCliProjectLocalServiceVersionsLayer = cliProjectLocalServiceVersionsLayer.pipe(
     Layer.provide(BunServices.layer),
-    Layer.provide(discoveredProjectHomeLayer),
+    Layer.provide(discoveredCliProjectHomeLayer),
   );
 
   return Layer.mergeAll(
@@ -49,12 +49,12 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?:
     envLayer,
     discoveredCliProjectContextLayer,
     discoveredCliSettingsLayer,
-    discoveredProjectHomeLayer,
-    discoveredProjectLocalServiceVersionsLayer,
+    discoveredCliProjectHomeLayer,
+    discoveredCliProjectLocalServiceVersionsLayer,
   );
 }
 
-describe("projectLocalServiceVersionsLayer", () => {
+describe("cliProjectLocalServiceVersionsLayer", () => {
   it.live("loads local service version overrides from repo-local state", () => {
     const tempDir = makeTempDir();
     const projectRoot = join(tempDir, "repo");
@@ -65,17 +65,17 @@ describe("projectLocalServiceVersionsLayer", () => {
       yield* Effect.tryPromise(() => writeFile(join(projectRoot, "supabase", "config.toml"), ""));
 
       const layer = buildLayer({ cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
-      const { projectHome, localVersions } = yield* Effect.gen(function* () {
+      const { cliProjectHome, localVersions } = yield* Effect.gen(function* () {
         return {
-          projectHome: yield* ProjectHome,
-          localVersions: yield* ProjectLocalServiceVersions,
+          cliProjectHome: yield* CliProjectHome,
+          localVersions: yield* CliProjectLocalServiceVersions,
         };
       }).pipe(Effect.provide(layer));
 
-      yield* projectHome.ensureProjectHomeDir;
+      yield* cliProjectHome.ensureCliProjectHomeDir;
       yield* Effect.tryPromise(() =>
         writeFile(
-          projectHome.projectLocalVersionsPath,
+          cliProjectHome.projectLocalVersionsPath,
           JSON.stringify(
             {
               updatedAt: "2026-03-21T12:00:00.000Z",
@@ -114,7 +114,7 @@ describe("projectLocalServiceVersionsLayer", () => {
 
       const layer = buildLayer({ cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
       const localVersions = yield* Effect.gen(function* () {
-        return yield* ProjectLocalServiceVersions;
+        return yield* CliProjectLocalServiceVersions;
       }).pipe(Effect.provide(layer));
 
       const loaded = yield* localVersions.load;

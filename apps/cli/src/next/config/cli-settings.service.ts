@@ -17,5 +17,5 @@ interface CliSettingsShape {
 }
 
 export class CliSettings extends Context.Service<CliSettings, CliSettingsShape>()(
-  "supabase/config/CliSettings",
+  "supabase/cli/CliSettings",
 ) {}

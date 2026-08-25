@@ -71,5 +71,5 @@ interface ProjectLinkStateShape {
 }
 
 export class ProjectLinkState extends Context.Service<ProjectLinkState, ProjectLinkStateShape>()(
-  "supabase/config/ProjectLinkState",
+  "supabase/cli/ProjectLinkState",
 ) {}

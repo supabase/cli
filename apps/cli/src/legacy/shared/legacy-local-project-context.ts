@@ -166,7 +166,7 @@ export const legacyLoadLocalProjectContext = <E>(
     // via the workdir basename default. Only a malformed file (`loadCliConfig` failing rather
     // than returning `null`) is a hard error.
     const loaded = yield* loadCliConfig(workdir, {
-      projectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
+      cliProjectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
       search: false,
       // `NewPathBuilder`/`Config.Load` only ever resolves
       // `supabase/config.toml` — it has no concept of a JSON project config file. Without this, a

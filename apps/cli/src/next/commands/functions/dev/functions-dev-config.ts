@@ -8,7 +8,7 @@ import {
 import type { ResolvedFunctionsBundle } from "@supabase/stack/effect";
 import { Effect, Option, Redacted } from "effect";
 import { basename, dirname, join, resolve } from "node:path";
-import { ProjectHome } from "../../../config/project-home.service.ts";
+import { CliProjectHome } from "../../../config/cli-project-home.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 
 export interface FunctionsDevConfigOptions {
@@ -33,13 +33,13 @@ function absoluteProjectPath(supabaseDir: string, path: string): string {
 export const resolveFunctionsBundle = Effect.fnUntraced(function* (
   opts: FunctionsDevConfigOptions,
 ) {
-  const projectHome = yield* ProjectHome;
+  const cliProjectHome = yield* CliProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
   const cliProjectEnvironment = yield* loadCliProjectEnvironment({
-    cwd: projectHome.projectRoot,
+    cwd: cliProjectHome.projectRoot,
     baseEnv: process.env,
   });
-  const loadedConfig = yield* loadCliConfig(projectHome.projectRoot);
+  const loadedConfig = yield* loadCliConfig(cliProjectHome.projectRoot);
   const cliConfig =
     cliProjectEnvironment === null || loadedConfig === null
       ? undefined
@@ -67,11 +67,11 @@ export const resolveFunctionsBundle = Effect.fnUntraced(function* (
           ),
         };
   const manifest = yield* inferFunctionsManifest({
-    cwd: projectHome.projectRoot,
+    cwd: cliProjectHome.projectRoot,
     ...(cliConfig === undefined ? {} : { config: cliConfig }),
   });
   const envFilePath = Option.match(opts.envFile, {
-    onNone: () => join(projectHome.supabaseDir, "functions", ".env"),
+    onNone: () => join(cliProjectHome.supabaseDir, "functions", ".env"),
     onSome: (path) => resolve(runtimeInfo.cwd, path),
   });
 
@@ -82,13 +82,13 @@ export const resolveFunctionsBundle = Effect.fnUntraced(function* (
       .map(([name, config]) => ({
         name,
         verifyJWT: opts.noVerifyJwt ? false : config.verify_jwt,
-        entrypointPath: absoluteProjectPath(projectHome.supabaseDir, config.entrypoint),
+        entrypointPath: absoluteProjectPath(cliProjectHome.supabaseDir, config.entrypoint),
         importMapPath:
           config.import_map === ""
             ? null
-            : absoluteProjectPath(projectHome.supabaseDir, config.import_map),
+            : absoluteProjectPath(cliProjectHome.supabaseDir, config.import_map),
         staticFiles: config.static_files.map((path) =>
-          absoluteProjectPath(projectHome.supabaseDir, path),
+          absoluteProjectPath(cliProjectHome.supabaseDir, path),
         ),
         env: config.env,
       })),
@@ -96,12 +96,12 @@ export const resolveFunctionsBundle = Effect.fnUntraced(function* (
 });
 
 export const functionsDevWatchPaths = Effect.fnUntraced(function* (envFile: Option.Option<string>) {
-  const projectHome = yield* ProjectHome;
+  const cliProjectHome = yield* CliProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
 
   return [
     {
-      path: projectHome.supabaseDir,
+      path: cliProjectHome.supabaseDir,
       names: ["functions", "config.toml", "config.json"],
     },
     ...(Option.isSome(envFile)

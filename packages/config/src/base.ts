@@ -40,7 +40,7 @@ const baseCliConfigFields = {
   experimental,
 };
 
-const remoteProjectConfig = Schema.Struct({
+const remoteCliConfigBlock = Schema.Struct({
   project_id: remoteProjectId,
   analytics,
   api,
@@ -70,7 +70,7 @@ const remoteProjectConfig = Schema.Struct({
  * selection, rejecting configs Go accepts (e.g. an unselected
  * `[remotes.prod.auth.external.github] enabled = true` stub with no secret).
  */
-export const RemotesSchema = Schema.Record(Schema.String, remoteProjectConfig).annotate({
+export const RemotesSchema = Schema.Record(Schema.String, remoteCliConfigBlock).annotate({
   default: {},
   description: "Remote branch-specific project configuration.",
   tags: ["general"],

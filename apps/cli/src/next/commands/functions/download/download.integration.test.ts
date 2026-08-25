@@ -15,7 +15,7 @@ import {
   ProjectNotLinkedError,
   type ProjectLinkStateValue,
 } from "../../../config/project-link-state.service.ts";
-import { ProjectHome } from "../../../config/project-home.service.ts";
+import { CliProjectHome } from "../../../config/cli-project-home.service.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import {
@@ -304,7 +304,7 @@ function setup(
     proxy.layer,
     mockRuntimeInfo({ cwd }),
     mockProjectLinkState(opts.linked === false ? undefined : LINK_STATE),
-    mockProjectHome(opts.projectRoot ?? cwd),
+    mockCliProjectHome(opts.projectRoot ?? cwd),
     Stdio.layerTest({
       args: Effect.succeed(opts.rawArgs ?? ["functions", "download"]),
     }),
@@ -341,17 +341,17 @@ function mockLegacyGoProxy() {
   };
 }
 
-function mockProjectHome(projectRoot: string) {
+function mockCliProjectHome(projectRoot: string) {
   const projectHomeDir = join(projectRoot, ".supabase");
   return Layer.succeed(
-    ProjectHome,
-    ProjectHome.of({
+    CliProjectHome,
+    CliProjectHome.of({
       projectRoot,
       supabaseDir: join(projectRoot, "supabase"),
       projectHomeDir,
       projectLinkPath: join(projectHomeDir, "project.json"),
       projectLocalVersionsPath: join(projectHomeDir, "local-versions.json"),
-      ensureProjectHomeDir: Effect.void,
+      ensureCliProjectHomeDir: Effect.void,
     }),
   );
 }

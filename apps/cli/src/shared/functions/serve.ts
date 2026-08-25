@@ -723,7 +723,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   // package defaults (ancestor search, JSON preferred), unchanged.
   const loadedConfig = yield* loadCliConfig(projectRoot, {
     ...(projectRef === undefined ? {} : { projectRef }),
-    ...(projectEnv === null ? {} : { projectEnv }),
+    ...(projectEnv === null ? {} : { cliProjectEnv: projectEnv }),
     goViperCompat,
     ...(goConfigCompat === undefined ? {} : { search: false, tomlOnly: true }),
   });

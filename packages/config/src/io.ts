@@ -316,7 +316,7 @@ const DEPRECATED_EXTERNAL_PROVIDERS = ["linkedin", "slack"] as const;
  *  - any `remotes.*.auth.external.{linkedin,slack}` still present (only
  *    possible when no remote matched `projectRef`, so `applyRemoteOverride`
  *    left `remotes` in place) is also stripped, but never reported — purely
- *    so `remoteProjectConfig`'s eager, whole-map schema decode
+ *    so `remoteCliConfigBlock`'s eager, whole-map schema decode
  *    (`packages/config/src/base.ts`) doesn't reject an unselected remote's
  *    deprecated block over a field Go itself never struct-decodes at all for
  *    a remote that isn't in effect.
@@ -516,8 +516,8 @@ export const loadCliConfigFile = Effect.fnUntraced(function* (
   // walking two directories up gives us the project root that
   // `loadCliProjectEnvironment` expects.
   const projectRoot = path.dirname(path.dirname(filePath));
-  const projectEnv =
-    options?.projectEnv ??
+  const cliProjectEnv =
+    options?.cliProjectEnv ??
     (yield* loadCliProjectEnvironment({
       cwd: projectRoot,
       baseEnv: process.env,
@@ -528,7 +528,7 @@ export const loadCliConfigFile = Effect.fnUntraced(function* (
     document: unknown,
     onResolvedEnv?: (path: ReadonlyArray<string>) => void,
   ): unknown =>
-    interpolateEnvReferencesAgainstSchema(document, projectEnv?.values ?? {}, CliConfigSchema, {
+    interpolateEnvReferencesAgainstSchema(document, cliProjectEnv?.values ?? {}, CliConfigSchema, {
       goViperCompat,
       onResolvedEnv,
     });
