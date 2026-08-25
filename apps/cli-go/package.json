@@ -2,6 +2,8 @@
   "name": "@supabase/cli-go",
   "private": true,
   "scripts": {
-    "build": "go build -o supabase-go ."
+    "build": "go build -o supabase-go .",
+    "test:unit": "pnpm exec turbo run @supabase/cli-go#test:unit:run --",
+    "test:unit:run": "go test ./..."
   }
 }
