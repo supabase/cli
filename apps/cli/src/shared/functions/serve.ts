@@ -26,7 +26,18 @@ import { existsSync, watch } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { styleText } from "node:util";
-import { Cause, Duration, Effect, Layer, Option, Queue, Redacted, Schema, Stream } from "effect";
+import {
+  Cause,
+  Duration,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Queue,
+  Redacted,
+  Schema,
+  Stream,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   legacyDescribeContainerCliFailure,
@@ -1980,14 +1991,18 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
     return startedRuntime;
   }).pipe(
     // `startEdgeRuntimeContainer`'s own `Effect.onError` only reaches while it's still running —
-    // once it returns successfully, an interrupt here (e.g. mid-`reloadKong`) escapes that scope
-    // entirely, so this wrapper must also run the returned runtime's own staging-file cleanup,
-    // not just remove the container.
-    Effect.onInterrupt(() =>
-      Effect.all([
-        ownsRuntime ? bestEffortRemoveContainer(containerId) : Effect.void,
-        startedRuntime === undefined ? Effect.void : startedRuntime.cleanup,
-      ]).pipe(Effect.asVoid),
+    // once it returns successfully, a failure or interrupt here (e.g. mid-`reloadKong`) escapes
+    // that scope entirely, so this wrapper must also run the returned runtime's own staging-file
+    // cleanup, not just remove the container. Removal stays with this caller for bring-up
+    // failures too (`docker cp`/`docker start`), matching `docker run -d` behavior — the shared
+    // core never removes the container it created.
+    Effect.onExit((exit) =>
+      Exit.isFailure(exit)
+        ? Effect.all([
+            ownsRuntime ? bestEffortRemoveContainer(containerId) : Effect.void,
+            startedRuntime === undefined ? Effect.void : startedRuntime.cleanup,
+          ]).pipe(Effect.asVoid)
+        : Effect.void,
     ),
   );
 });
