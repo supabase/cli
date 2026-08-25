@@ -1,4 +1,4 @@
-import { Cause, Deferred, Effect, Exit, Fiber, Scope, Stream } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Predicate, Scope, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 import type { Stack } from "./Stack.ts";
 import { StackServiceState } from "./StackServiceState.ts";
@@ -224,5 +224,33 @@ describe("SupervisorSession", () => {
       expect(await Effect.runPromise(Deferred.isDone(stopAccepted))).toBe(true);
       await Effect.runPromise(Deferred.succeed(releaseTerminal, undefined));
       expect(Exit.isFailure(await Effect.runPromise(Fiber.await(run)))).toBe(true);
+    }));
+
+  it("reports unexpected runtime disposal as a tagged stack failure", () =>
+    withSession(async ({ controller }) => {
+      const running = Deferred.makeUnsafe<void>();
+      const disposed = Deferred.makeUnsafe<void>();
+      const run = Effect.runFork(
+        controller.run({
+          startup: () => Effect.succeed(makeStack([])),
+          stack: (runtime) => runtime,
+          awaitDisposed: () => Deferred.await(disposed),
+          onRunning: () => Deferred.succeed(running, undefined).pipe(Effect.asVoid),
+          onStopped: Effect.void,
+          onFailure: () => Effect.void,
+          closeOwner: Effect.void,
+          errorDetail: () => "failed",
+        }),
+      );
+
+      await Effect.runPromise(Deferred.await(running));
+      await Effect.runPromise(Deferred.succeed(disposed, undefined));
+      const exit = await Effect.runPromise(Fiber.await(run));
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Predicate.isTagged(Cause.squash(exit.cause), "StackUnavailableError")).toBe(true);
+      }
+      expect(await Effect.runPromise(controller.service.currentState)).toEqual({ phase: "closed" });
     }));
 });
