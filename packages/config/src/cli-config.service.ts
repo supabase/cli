@@ -15,7 +15,6 @@ interface CliConfigStoreShape {
   readonly save: (options: SaveCliConfigOptions) => Effect.Effect<LoadedCliConfig, unknown>;
 }
 
-export class CliConfigStore extends Context.Service<
-  CliConfigStore,
-  CliConfigStoreShape
->()("@supabase/config/CliConfigStore") {}
+export class CliConfigStore extends Context.Service<CliConfigStore, CliConfigStoreShape>()(
+  "@supabase/config/CliConfigStore",
+) {}

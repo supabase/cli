@@ -88,7 +88,9 @@ export const functionsNew = Effect.fnUntraced(function* (slugInput: Option.Optio
 
   const cliProjectPaths = yield* findCliProjectPaths(runtimeInfo.cwd);
   const projectRoot =
-    cliProjectPaths === null ? runtimeInfo.cwd : projectRootForConfigPath(cliProjectPaths.configPath);
+    cliProjectPaths === null
+      ? runtimeInfo.cwd
+      : projectRootForConfigPath(cliProjectPaths.configPath);
   const functionDir = path.join(projectRoot, "supabase", edgeFunctionsDirectoryName, slug);
   const entrypointPath = path.join(functionDir, edgeFunctionEntrypointFileName);
   const denoConfigPath = path.join(functionDir, edgeFunctionDenoConfigFileName);

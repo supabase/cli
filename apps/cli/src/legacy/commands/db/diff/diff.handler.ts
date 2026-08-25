@@ -823,7 +823,12 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         for (const unit of writtenUnits) writtenFiles.push(unit.path);
       } else {
         const timestamp = legacyFormatMigrationTimestamp(yield* Clock.currentTimeMillis);
-        const migrationPath = legacyGetMigrationPath(path, cliSettings.workdir, timestamp, fileName);
+        const migrationPath = legacyGetMigrationPath(
+          path,
+          cliSettings.workdir,
+          timestamp,
+          fileName,
+        );
         // Create parent dirs per written path, so a nested `--file snapshots/remote`
         // name creates `<ts>_snapshots/` first.
         yield* legacyMakeDir(fs, path.dirname(migrationPath)).pipe(

@@ -53,9 +53,7 @@ export class CliProjectEnvParseError extends Data.TaggedError("CliProjectEnvPars
   readonly line: number;
 }> {}
 
-export class MissingCliConfigValueError extends Data.TaggedError(
-  "MissingCliConfigValueError",
-)<{
+export class MissingCliConfigValueError extends Data.TaggedError("MissingCliConfigValueError")<{
   readonly configPath: string;
 }> {}
 

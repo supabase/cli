@@ -48,7 +48,10 @@ function failingFsLayer(op: "writeFileString" | "makeDirectory") {
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockLegacyTelemetryStateTracked();
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current, projectId: Option.none() });
+  const cliSettings = mockLegacyCliSettings({
+    workdir: tempRoot.current,
+    projectId: Option.none(),
+  });
   const layer = Layer.mergeAll(
     out.layer,
     cliSettings,

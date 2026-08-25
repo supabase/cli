@@ -154,7 +154,12 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
     const edgeRuntimeImage =
       tomlValues === null
         ? undefined
-        : yield* legacyResolveEdgeRuntimeImage(fs, path, cliSettings.workdir, tomlValues.denoVersion);
+        : yield* legacyResolveEdgeRuntimeImage(
+            fs,
+            path,
+            cliSettings.workdir,
+            tomlValues.denoVersion,
+          );
     const imageOverrides: LocalServiceImageOverrides = {};
     if (postgresImage !== undefined) {
       imageOverrides.postgres = postgresImage;

@@ -105,10 +105,16 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
               noCache,
               projectRef,
             })
-          : legacyExportDeclarativeCatalogRef(fs, path, cliSettings.workdir, cliSettings.projectId, {
-              noCache,
-              projectRef,
-            })
+          : legacyExportDeclarativeCatalogRef(
+              fs,
+              path,
+              cliSettings.workdir,
+              cliSettings.projectId,
+              {
+                noCache,
+                projectRef,
+              },
+            )
         ).pipe(
           Effect.provideContext(context),
           Effect.catch((cause) => Effect.fail(legacyToShadowDbError(cause))),

@@ -437,9 +437,7 @@ function parseCliConfig(
       // still runs either way, matching Go's unconditional `UnmarshalExact`
       // struct decode of every remote.
       const rawRemotes = isObject(document) ? document.remotes : undefined;
-      const config = decodeCliConfig(
-        isObject(document) ? { ...document, remotes: {} } : document,
-      );
+      const config = decodeCliConfig(isObject(document) ? { ...document, remotes: {} } : document);
       return { ...config, remotes: decodeRemotesWithoutChecks(rawRemotes ?? {}) };
     },
     // `document` always parsed successfully by this point (raw parse failures

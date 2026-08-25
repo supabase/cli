@@ -65,7 +65,10 @@ function setup(opts: SetupOpts = {}) {
     network: opts.network,
     byMethod: opts.byMethod ?? { DELETE: { status: 200, body: DELETED } },
   });
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current, projectId: Option.none() });
+  const cliSettings = mockLegacyCliSettings({
+    workdir: tempRoot.current,
+    projectId: Option.none(),
+  });
   const tty = mockTty({
     stdinIsTty: opts.stdinIsTty ?? false,
     stdoutIsTty: opts.stdinIsTty ?? false,

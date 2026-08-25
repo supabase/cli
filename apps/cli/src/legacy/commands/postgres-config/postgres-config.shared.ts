@@ -230,9 +230,9 @@ export const putPostgresConfig = <SerErr, NetErr, StatErr, UnmErr>(
     });
 
     const request = requestWithAuth(
-      HttpClientRequest.put(`${cliSettings.apiUrl}/v1/projects/${ref}/config/database/postgres`).pipe(
-        HttpClientRequest.bodyText(encodedBody, "application/json"),
-      ),
+      HttpClientRequest.put(
+        `${cliSettings.apiUrl}/v1/projects/${ref}/config/database/postgres`,
+      ).pipe(HttpClientRequest.bodyText(encodedBody, "application/json")),
       tokenOpt,
       cliSettings.userAgent,
     );

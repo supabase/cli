@@ -81,7 +81,10 @@ function setup(options: SetupOptions = {}) {
     promptConfirmResponses: options.promptConfirmResponses,
   });
   const api = mockLegacyPlatformApi();
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current, projectId: Option.none() });
+  const cliSettings = mockLegacyCliSettings({
+    workdir: tempRoot.current,
+    projectId: Option.none(),
+  });
   const tty = mockTty({
     stdinIsTty: options.stdinIsTty ?? false,
     stdoutIsTty: options.stdinIsTty ?? false,

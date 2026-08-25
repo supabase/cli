@@ -587,7 +587,9 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
         config.projectEnv,
         Object.keys(config.projectEnv).filter((key) => key !== "SUPABASE_DB_PASSWORD"),
       );
-      const projectId = Option.getOrElse(config.projectId, () => path.basename(cliSettings.workdir));
+      const projectId = Option.getOrElse(config.projectId, () =>
+        path.basename(cliSettings.workdir),
+      );
 
       const paths = legacyTempPaths(path, cliSettings.workdir);
       // Go resolves Config.Api.Image from the rest-version file only when

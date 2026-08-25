@@ -96,7 +96,10 @@ function setup(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 200, body: opts.response ?? [SAMPLE_BRANCH] },
     network: opts.network,
   });
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current, projectId: opts.projectId });
+  const cliSettings = mockLegacyCliSettings({
+    workdir: tempRoot.current,
+    projectId: opts.projectId,
+  });
   const layer = buildLegacyTestRuntime({
     out,
     api,

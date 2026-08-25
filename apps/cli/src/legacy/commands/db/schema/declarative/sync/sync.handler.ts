@@ -175,7 +175,11 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           // basename) — NOT `cliSettings.projectId` alone, which is env-only and resolves to
           // `""` for a project relying on config.toml's `project_id` or the workdir-basename
           // default, mounting the WRONG `supabase_edge_runtime_` Deno-cache volume.
-          projectId: legacyResolvePgDeltaProjectId(cliSettings.projectId, toml, cliSettings.workdir),
+          projectId: legacyResolvePgDeltaProjectId(
+            cliSettings.projectId,
+            toml,
+            cliSettings.workdir,
+          ),
           cwd: cliSettings.workdir,
           npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
           denoVersion: toml.denoVersion,

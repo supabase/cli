@@ -63,7 +63,10 @@ function setup(opts: SetupOpts = {}) {
   const telemetry = mockLegacyTelemetryStateTracked();
   const credentials = mockLegacyCredentialsTracked({ deleteFails: opts.deleteFails });
   const apiMock = mockLegacyPlatformApiService({ v1: {} });
-  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current, projectId: Option.none() });
+  const cliSettings = mockLegacyCliSettings({
+    workdir: tempRoot.current,
+    projectId: Option.none(),
+  });
   const layer = Layer.mergeAll(
     buildLegacyTestRuntime({
       out,

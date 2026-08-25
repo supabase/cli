@@ -333,9 +333,7 @@ describe("promise-facade rejection shapes", () => {
       await mkdir(join(cwd, "supabase"), { recursive: true });
       await writeFile(configPath, "this is not === valid toml\n");
 
-      await expect(loadCliConfigFile(configPath)).rejects.toBeInstanceOf(
-        CliConfigParseError,
-      );
+      await expect(loadCliConfigFile(configPath)).rejects.toBeInstanceOf(CliConfigParseError);
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

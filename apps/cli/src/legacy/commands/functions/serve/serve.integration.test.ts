@@ -454,9 +454,7 @@ describe("legacy functions serve integration", () => {
     const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "serve logs failed" }]);
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-      );
+      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
       yield* Effect.promise(() =>
         writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
       );
@@ -541,9 +539,7 @@ describe("legacy functions serve integration", () => {
     const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "serve logs failed" }]);
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-      );
+      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
       yield* Effect.promise(() =>
         writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
       );
@@ -601,9 +597,7 @@ describe("legacy functions serve integration", () => {
 
   it.live("fails before starting the runtime when a Function env file is malformed", () => {
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-      );
+      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
       yield* Effect.promise(() =>
         writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
       );
@@ -857,9 +851,7 @@ describe("legacy functions serve integration", () => {
     );
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-      );
+      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
       yield* Effect.promise(() =>
         writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
       );
@@ -970,9 +962,7 @@ describe("legacy functions serve integration", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.promise(() =>
-          writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-        );
+        yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
         yield* Effect.promise(() =>
           writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
         );
@@ -1014,9 +1004,7 @@ describe("legacy functions serve integration", () => {
 
   it.live("fails before startup when a multiline env name is not a shell identifier", () => {
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-      );
+      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
       yield* Effect.promise(() =>
         writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
       );
@@ -1048,9 +1036,7 @@ describe("legacy functions serve integration", () => {
 
   it.live("sanitizes dotenv parse failures from config env files", () => {
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-      );
+      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
       yield* Effect.promise(() => writeProjectFile(".env.development", "API-KEY=secret-value\n"));
       yield* Effect.promise(() =>
         writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
@@ -1479,9 +1465,7 @@ describe("legacy functions serve integration", () => {
     ]);
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-      );
+      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
       yield* Effect.promise(() =>
         writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
       );
@@ -1572,9 +1556,7 @@ describe("legacy functions serve integration", () => {
     const childSpawner = mockDockerLogSpawner([{ pending: true }]);
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-      );
+      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
       yield* Effect.promise(() =>
         writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
       );
@@ -1728,9 +1710,7 @@ describe("legacy functions serve integration", () => {
       );
 
       return Effect.gen(function* () {
-        yield* Effect.promise(() =>
-          writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-        );
+        yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
         yield* Effect.promise(() =>
           writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
         );
@@ -1792,9 +1772,7 @@ describe("legacy functions serve integration", () => {
     const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "inspect failed" }]);
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-      );
+      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
       yield* Effect.promise(() =>
         writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
       );
@@ -1859,9 +1837,7 @@ describe("legacy functions serve integration", () => {
     const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "template logs failed" }]);
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-      );
+      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
       yield* Effect.promise(() =>
         writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
       );
@@ -2644,9 +2620,7 @@ describe("legacy functions serve integration", () => {
     };
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-      );
+      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
       yield* Effect.promise(() =>
         writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
       );
@@ -2684,9 +2658,7 @@ describe("legacy functions serve integration", () => {
     };
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-      );
+      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
       yield* Effect.promise(() =>
         writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
       );
@@ -2742,9 +2714,7 @@ describe("legacy functions serve integration", () => {
     };
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-      );
+      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
       yield* Effect.promise(() =>
         writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
       );
@@ -3129,9 +3099,7 @@ describe("legacy functions serve integration", () => {
 
   it.live("fails when the explicit env file is missing", () => {
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-      );
+      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
       yield* Effect.promise(() =>
         writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
       );
@@ -3226,9 +3194,7 @@ describe("legacy functions serve integration", () => {
     };
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-      );
+      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
       yield* Effect.promise(() =>
         writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
       );
@@ -3489,9 +3455,7 @@ describe("legacy functions serve integration", () => {
           }),
         );
 
-        yield* Effect.promise(() =>
-          writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-        );
+        yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
         yield* Effect.promise(() =>
           writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
         );
@@ -3514,9 +3478,7 @@ describe("legacy functions serve integration", () => {
 
   it.live("surfaces the real filesystem error when the fallback env file is unreadable", () => {
     return Effect.gen(function* () {
-      yield* Effect.promise(() =>
-        writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-      );
+      yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
       yield* Effect.promise(() =>
         writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
       );
@@ -3548,9 +3510,7 @@ describe("legacy functions serve integration", () => {
     "surfaces the real filesystem error when the env staging dir cannot be created",
     () => {
       return Effect.gen(function* () {
-        yield* Effect.promise(() =>
-          writeCliConfig(['project_id = "test-project"', ""].join("\n")),
-        );
+        yield* Effect.promise(() => writeCliConfig(['project_id = "test-project"', ""].join("\n")));
         yield* Effect.promise(() =>
           writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
         );

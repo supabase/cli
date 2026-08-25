@@ -67,7 +67,7 @@ No Management API calls. Everything is local Docker + local `config.toml`.
 | Variable              | Purpose                                                                                            | Required?                                                         |
 | --------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
 | `SUPABASE_PROJECT_ID` | overrides the resolved local project id on the default path (env → config.toml → workdir basename) | no                                                                |
-| `SUPABASE_WORKDIR`    | resolves `LegacyCliSettings.workdir`, which locates `config.toml` on the default path                | no (falls back to walking up from cwd for `supabase/config.toml`) |
+| `SUPABASE_WORKDIR`    | resolves `LegacyCliSettings.workdir`, which locates `config.toml` on the default path              | no (falls back to walking up from cwd for `supabase/config.toml`) |
 
 `docker`/`podman` must be resolvable on `PATH` (or reachable via the configured Docker
 context) — `spawnContainerCli` tries `docker` first and falls back to `podman`. When

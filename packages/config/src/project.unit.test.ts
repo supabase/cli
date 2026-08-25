@@ -73,7 +73,9 @@ describe("project discovery and lazy env resolution", () => {
       const unsearched = await runConfigEffect(findCliProjectPaths(nestedCwd, { search: false }));
       expect(unsearched).toBeNull();
 
-      const configAtRepoRoot = await runConfigEffect(findCliProjectPaths(repoRoot, { search: false }));
+      const configAtRepoRoot = await runConfigEffect(
+        findCliProjectPaths(repoRoot, { search: false }),
+      );
       expect(configAtRepoRoot?.projectRoot).toBe(repoRoot);
 
       expect(await runConfigEffect(loadCliConfig(nestedCwd, { search: false }))).toBeNull();
@@ -264,7 +266,9 @@ describe("project discovery and lazy env resolution", () => {
       // Malformed — would normally throw CliProjectEnvParseError.
       await writeFile(join(cwd, "supabase", ".env.local"), "!!!not-a-valid-line\n");
 
-      const projectEnv = await runConfigEffect(loadCliProjectEnvironment({ cwd, skipEnvLocal: true }));
+      const projectEnv = await runConfigEffect(
+        loadCliProjectEnvironment({ cwd, skipEnvLocal: true }),
+      );
 
       expect(projectEnv).not.toBeNull();
       expect(projectEnv?.values.FROM_ENV).toBe("1");

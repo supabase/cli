@@ -75,9 +75,7 @@ export const inferFunctionsManifest = Effect.fnUntraced(function* (
   const projectRoot = cliProjectPaths?.projectRoot ?? options.cwd;
   const config =
     options.config ??
-    (yield* loadCliConfig(options.cwd).pipe(
-      Effect.map((loaded) => loaded?.config ?? emptyConfig),
-    ));
+    (yield* loadCliConfig(options.cwd).pipe(Effect.map((loaded) => loaded?.config ?? emptyConfig)));
   const functionsDir = path.join(projectRoot, "supabase", edgeFunctionsDirectoryName);
   const filesystemFunctions: Record<string, ResolvedFunctionConfig> = {};
 

@@ -68,7 +68,10 @@ const legacyResolveSoftLinkedRef = Effect.fnUntraced(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  if (Option.isSome(cliSettings.projectId) && PROJECT_REF_PATTERN.test(cliSettings.projectId.value)) {
+  if (
+    Option.isSome(cliSettings.projectId) &&
+    PROJECT_REF_PATTERN.test(cliSettings.projectId.value)
+  ) {
     return { ref: cliSettings.projectId, source: "env" as const };
   }
   const fileRef = yield* legacyReadProjectRefFile(fs, path, cliSettings.workdir).pipe(

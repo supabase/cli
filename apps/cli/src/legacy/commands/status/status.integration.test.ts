@@ -336,7 +336,10 @@ function setup(opts: SetupOpts = {}) {
     interactive: (opts.format ?? "text") === "text",
   });
   const telemetry = mockLegacyTelemetryStateTracked();
-  const cliSettings = mockLegacyCliSettings({ workdir, projectId: opts.projectId ?? Option.none() });
+  const cliSettings = mockLegacyCliSettings({
+    workdir,
+    projectId: opts.projectId ?? Option.none(),
+  });
   const child = mockRoutedContainerCliSpawner(opts.route ?? defaultRoute(), {
     dockerMissing: opts.dockerMissing,
     failSpawnFor: opts.failSpawnFor,

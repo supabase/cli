@@ -311,7 +311,9 @@ describe("legacyPlatformApiLayer", () => {
   it.effect("sends Go-style User-Agent and no X-Supabase-Command headers", () => {
     const http = captureRequests();
     const layer = legacyPlatformApiLayer.pipe(
-      Layer.provide(mockCliSettings({ accessToken: VALID_TOKEN, userAgent: "SupabaseCLI/1.123.4" })),
+      Layer.provide(
+        mockCliSettings({ accessToken: VALID_TOKEN, userAgent: "SupabaseCLI/1.123.4" }),
+      ),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
       withBaseDeps(),

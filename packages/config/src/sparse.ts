@@ -190,17 +190,11 @@ export function subtractValue(value: unknown, baseline: unknown): unknown {
  * 0018 for why the default-config baseline silently changes what the branch
  * resolves to.
  */
-export function subtractCliConfig(
-  config: BaseCliConfig,
-  baseline: BaseCliConfig,
-): SparseCliConfig;
+export function subtractCliConfig(config: BaseCliConfig, baseline: BaseCliConfig): SparseCliConfig;
 // The implementation signature stays untyped because TypeScript cannot verify
 // that a structural walk over `unknown` reconstructs a `DeepPartial` of its
 // input; the overload above is the contract, pinned by the unit tests.
-export function subtractCliConfig(
-  config: BaseCliConfig,
-  baseline: BaseCliConfig,
-): unknown {
+export function subtractCliConfig(config: BaseCliConfig, baseline: BaseCliConfig): unknown {
   const result = subtractValue(config, baseline);
   return isObject(result) ? result : {};
 }

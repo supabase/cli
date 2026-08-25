@@ -4,7 +4,7 @@
 
 | Path                                           | Format                    | When                                                                                                                               |
 | ---------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `LegacyCliSettings.profile`                                      |
+| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `LegacyCliSettings.profile`                                    |
 | keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                                                           |
 | `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                                                      |
 | `<workdir>/supabase/.temp/linked-project.json` | JSON (`ref` field)        | when `--project-ref` is unset, as the 2nd PARENT-ref candidate (CLI-2167 follow-up, TS-only — see `branches list/SIDE_EFFECTS.md`) |
