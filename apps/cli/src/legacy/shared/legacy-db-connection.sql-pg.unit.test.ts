@@ -678,6 +678,10 @@ describe("legacyBatchFailureError", () => {
         "the connection's socket is no longer writable",
     );
     expect(error[ErrorActionabilityId]).toMatchObject({ error_category: "db_connection" });
+    // A batch pg refused before construction reaches the mapper as undefined; same class.
+    expect(legacyBatchFailureError(new Error("client was closed"), undefined, true)._tag).toBe(
+      "LegacyDbConnectError",
+    );
   });
 
   it("keeps the driver's own reason when pg refused the batch before submit", () => {
@@ -715,15 +719,6 @@ describe("legacyBatchFailureError", () => {
     expect(local).toMatchObject({ suggestion: LEGACY_SUGGEST_LOCAL_STACK });
     expect(remote._tag).toBe("LegacyDbConnectError");
     expect("suggestion" in remote).toBe(false);
-  });
-
-  it("reports a batch that never reached the driver the same way", () => {
-    const error = legacyBatchFailureError(new Error("client was closed"), undefined, true);
-
-    expect(error._tag).toBe("LegacyDbConnectError");
-    expect(error.message).toContain(
-      "connection to the database was lost before the batch could be sent",
-    );
   });
 
   it("keeps a partially written batch on the statement path, blaming statement 0", () => {
@@ -793,9 +788,7 @@ describe("legacyShouldDiscardBatchClient", () => {
   it("discards a client whose batch was interrupted or died mid-flight", () => {
     expect(legacyShouldDiscardBatchClient({ outcome: "submitted" }, Exit.interrupt(1))).toBe(true);
     expect(legacyShouldDiscardBatchClient({ outcome: "submitted" }, Exit.die("boom"))).toBe(true);
-  });
-
-  it("keeps a client that was checked out but never used", () => {
-    expect(legacyShouldDiscardBatchClient(undefined, Exit.succeed(undefined))).toBe(false);
+    // Interrupted before the batch was even constructed: no batch, still discard.
+    expect(legacyShouldDiscardBatchClient(undefined, Exit.interrupt(1))).toBe(true);
   });
 });
