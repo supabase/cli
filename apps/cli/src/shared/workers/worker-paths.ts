@@ -139,8 +139,8 @@ export const confineWorkerPath = Effect.fnUntraced(function* (options: {
  * The resolved path is where the starter files land, so a value naming the
  * project root, `supabase/`, or anywhere outside the project is refused.
  * `source` is the key that may leave the workers directory, but not the project;
- * `functions/` and `migrations/` are refused for the same reason `[workers] root`
- * refuses them.
+ * `functions/` and `migrations/` are refused because the CLI already owns them,
+ * and a worker scaffolded on top would be read as a function or a migration.
  */
 export const resolveWorkerSource = Effect.fnUntraced(function* (options: {
   readonly projectRoot: string;
@@ -187,7 +187,7 @@ export function workerDir(projectRoot: string, name: string): string {
  * checkout carrying `source = "../../.."` or an absolute path would otherwise
  * have `push` package and upload a directory that has nothing to do with the
  * project. The default directory goes through the same guard so a symlinked
- * `[workers] root` cannot escape either.
+ * `supabase/workers` cannot escape either.
  */
 export const workerSourceDir = Effect.fnUntraced(function* (options: {
   readonly projectRoot: string;
@@ -206,7 +206,7 @@ export const workerSourceDir = Effect.fnUntraced(function* (options: {
       : `The default directory for "${options.name}"`,
     suggestion: recorded
       ? `Set [workers.${options.name}] source to a directory inside the project, relative to the project root.`
-      : "Point [workers] root at a directory inside supabase/.",
+      : `supabase/workers, or a directory above it, is a symlink leading outside the project. Replace it with a real directory, or record [workers.${options.name}] source as a directory inside the project.`,
   });
 });
 

@@ -40,13 +40,12 @@ import { legacyLoadWorkersProject } from "../workers.shared.ts";
 import type { LegacyWorkersNewFlags } from "./new.command.ts";
 
 /**
- * `supabase workers new [name]` — scaffold `supabase/<root>/<name>/` from the
+ * `supabase workers new <name>` — scaffold `supabase/workers/<name>/` from the
  * chosen runtime's starter files and record the choice in `config.toml`.
  * Nothing is deployed; this is entirely local-disk work.
  *
  * The runtime and size are resolved *before* anything is written, so a
- * cancelled prompt leaves nothing behind for this worker at all — including the
- * name, which is only generated once both questions have been answered.
+ * cancelled prompt leaves nothing behind for this worker at all.
  */
 
 /** `values`, with `defaultValue` first, so a prompt pre-selects what it shows first. */
@@ -186,7 +185,12 @@ export const legacyWorkersNew = Effect.fn("legacy.workers.new")(function* (
           projectRoot: project.projectRoot,
           target: join(project.workersDir, name),
           subject: `The default directory for "${name}"`,
-          suggestion: "Point [workers] root at a directory inside supabase/.",
+          // The default directory is `supabase/workers/<name>` with a validated
+          // name, so it cannot be the project root, `supabase/`, or a directory
+          // the CLI owns. A symlink escaping the project is the only way it
+          // reaches this failure, so that is what the suggestion names.
+          suggestion:
+            "supabase/workers, or a directory above it, is a symlink leading outside the project. Replace it with a real directory, or pass --source to scaffold somewhere else inside the project.",
         });
 
     // Nothing here replaces what is already on disk. Scaffolding over an
