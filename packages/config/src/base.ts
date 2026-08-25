@@ -10,6 +10,7 @@ import { inbucket } from "./inbucket.ts";
 import { realtime } from "./realtime.ts";
 import { storage } from "./storage.ts";
 import { studio } from "./studio.ts";
+import { workers } from "./workers.ts";
 
 const projectId = Schema.optionalKey(
   Schema.String.annotate({
@@ -37,6 +38,7 @@ const baseCliConfigFields = {
   realtime,
   storage,
   studio,
+  workers,
   experimental,
 };
 
@@ -52,6 +54,7 @@ const remoteCliConfigBlock = Schema.Struct({
   realtime,
   storage,
   studio,
+  workers,
   experimental,
 }).pipe(Schema.withDecodingDefault(Effect.succeed({})));
 

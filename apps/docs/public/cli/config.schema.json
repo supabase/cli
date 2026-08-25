@@ -20,12 +20,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -44,12 +39,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -82,12 +72,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -103,12 +88,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -148,12 +128,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -176,12 +151,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -206,25 +176,12 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
         "password_requirements": {
-          "type": "string",
-          "enum": [
-            "",
-            "letters_digits",
-            "lower_upper_letters_digits",
-            "lower_upper_letters_digits_symbols"
-          ],
-          "description": "Password character requirements.",
-          "default": ""
+          "$ref": "#/$defs/Union_1"
         },
         "publishable_key": {
           "type": "string",
@@ -291,12 +248,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -306,12 +258,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -326,12 +273,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -382,12 +324,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -397,12 +334,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -436,12 +368,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -451,12 +378,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -466,12 +388,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -509,12 +426,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         }
@@ -540,12 +452,7 @@
                   "type": "number"
                 },
                 {
-                  "type": "string",
-                  "enum": [
-                    "Infinity",
-                    "-Infinity",
-                    "NaN"
-                  ]
+                  "$ref": "#/$defs/Union_"
                 }
               ]
             }
@@ -583,12 +490,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -607,8 +509,64 @@
       },
       "additionalProperties": false
     },
+    "workers": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Objects_27"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "experimental": {
-      "$ref": "#/$defs/Objects_27"
+      "type": "object",
+      "properties": {
+        "orioledb_version": {
+          "type": "string",
+          "description": "Postgres storage engine version for OrioleDB."
+        },
+        "s3_host": {
+          "type": "string",
+          "description": "S3 bucket URL.",
+          "examples": [
+            "<bucket_name>.s3-<region>.amazonaws.com",
+            "env(S3_HOST)"
+          ]
+        },
+        "s3_region": {
+          "type": "string",
+          "description": "S3 bucket region.",
+          "examples": [
+            "us-east-1",
+            "env(S3_REGION)"
+          ]
+        },
+        "s3_access_key": {
+          "type": "string",
+          "description": "S3 access key.",
+          "examples": [
+            "env(S3_ACCESS_KEY)"
+          ]
+        },
+        "s3_secret_key": {
+          "type": "string",
+          "description": "S3 secret key.",
+          "examples": [
+            "env(S3_SECRET_KEY)"
+          ]
+        },
+        "webhooks": {
+          "$ref": "#/$defs/Objects_28"
+        },
+        "pgdelta": {
+          "$ref": "#/$defs/Objects_29"
+        },
+        "inspect": {
+          "$ref": "#/$defs/Objects_30"
+        }
+      },
+      "additionalProperties": false
     },
     "remotes": {
       "anyOf": [
@@ -638,12 +596,7 @@
                             "type": "number"
                           },
                           {
-                            "type": "string",
-                            "enum": [
-                              "Infinity",
-                              "-Infinity",
-                              "NaN"
-                            ]
+                            "$ref": "#/$defs/Union_"
                           }
                         ]
                       },
@@ -662,12 +615,7 @@
                             "type": "number"
                           },
                           {
-                            "type": "string",
-                            "enum": [
-                              "Infinity",
-                              "-Infinity",
-                              "NaN"
-                            ]
+                            "$ref": "#/$defs/Union_"
                           }
                         ]
                       },
@@ -700,12 +648,7 @@
                             "type": "number"
                           },
                           {
-                            "type": "string",
-                            "enum": [
-                              "Infinity",
-                              "-Infinity",
-                              "NaN"
-                            ]
+                            "$ref": "#/$defs/Union_"
                           }
                         ]
                       },
@@ -721,12 +664,7 @@
                             "type": "number"
                           },
                           {
-                            "type": "string",
-                            "enum": [
-                              "Infinity",
-                              "-Infinity",
-                              "NaN"
-                            ]
+                            "$ref": "#/$defs/Union_"
                           }
                         ]
                       },
@@ -766,12 +704,7 @@
                             "type": "number"
                           },
                           {
-                            "type": "string",
-                            "enum": [
-                              "Infinity",
-                              "-Infinity",
-                              "NaN"
-                            ]
+                            "$ref": "#/$defs/Union_"
                           }
                         ]
                       },
@@ -794,12 +727,7 @@
                             "type": "number"
                           },
                           {
-                            "type": "string",
-                            "enum": [
-                              "Infinity",
-                              "-Infinity",
-                              "NaN"
-                            ]
+                            "$ref": "#/$defs/Union_"
                           }
                         ]
                       },
@@ -824,25 +752,12 @@
                             "type": "number"
                           },
                           {
-                            "type": "string",
-                            "enum": [
-                              "Infinity",
-                              "-Infinity",
-                              "NaN"
-                            ]
+                            "$ref": "#/$defs/Union_"
                           }
                         ]
                       },
                       "password_requirements": {
-                        "type": "string",
-                        "enum": [
-                          "",
-                          "letters_digits",
-                          "lower_upper_letters_digits",
-                          "lower_upper_letters_digits_symbols"
-                        ],
-                        "description": "Password character requirements.",
-                        "default": ""
+                        "$ref": "#/$defs/Union_1"
                       },
                       "publishable_key": {
                         "type": "string",
@@ -909,12 +824,7 @@
                             "type": "number"
                           },
                           {
-                            "type": "string",
-                            "enum": [
-                              "Infinity",
-                              "-Infinity",
-                              "NaN"
-                            ]
+                            "$ref": "#/$defs/Union_"
                           }
                         ]
                       },
@@ -924,12 +834,7 @@
                             "type": "number"
                           },
                           {
-                            "type": "string",
-                            "enum": [
-                              "Infinity",
-                              "-Infinity",
-                              "NaN"
-                            ]
+                            "$ref": "#/$defs/Union_"
                           }
                         ]
                       },
@@ -944,12 +849,7 @@
                             "type": "number"
                           },
                           {
-                            "type": "string",
-                            "enum": [
-                              "Infinity",
-                              "-Infinity",
-                              "NaN"
-                            ]
+                            "$ref": "#/$defs/Union_"
                           }
                         ]
                       },
@@ -1000,12 +900,7 @@
                             "type": "number"
                           },
                           {
-                            "type": "string",
-                            "enum": [
-                              "Infinity",
-                              "-Infinity",
-                              "NaN"
-                            ]
+                            "$ref": "#/$defs/Union_"
                           }
                         ]
                       },
@@ -1015,12 +910,7 @@
                             "type": "number"
                           },
                           {
-                            "type": "string",
-                            "enum": [
-                              "Infinity",
-                              "-Infinity",
-                              "NaN"
-                            ]
+                            "$ref": "#/$defs/Union_"
                           }
                         ]
                       },
@@ -1054,12 +944,7 @@
                             "type": "number"
                           },
                           {
-                            "type": "string",
-                            "enum": [
-                              "Infinity",
-                              "-Infinity",
-                              "NaN"
-                            ]
+                            "$ref": "#/$defs/Union_"
                           }
                         ]
                       },
@@ -1069,12 +954,7 @@
                             "type": "number"
                           },
                           {
-                            "type": "string",
-                            "enum": [
-                              "Infinity",
-                              "-Infinity",
-                              "NaN"
-                            ]
+                            "$ref": "#/$defs/Union_"
                           }
                         ]
                       },
@@ -1084,12 +964,7 @@
                             "type": "number"
                           },
                           {
-                            "type": "string",
-                            "enum": [
-                              "Infinity",
-                              "-Infinity",
-                              "NaN"
-                            ]
+                            "$ref": "#/$defs/Union_"
                           }
                         ]
                       },
@@ -1127,12 +1002,7 @@
                             "type": "number"
                           },
                           {
-                            "type": "string",
-                            "enum": [
-                              "Infinity",
-                              "-Infinity",
-                              "NaN"
-                            ]
+                            "$ref": "#/$defs/Union_"
                           }
                         ]
                       }
@@ -1158,12 +1028,7 @@
                                 "type": "number"
                               },
                               {
-                                "type": "string",
-                                "enum": [
-                                  "Infinity",
-                                  "-Infinity",
-                                  "NaN"
-                                ]
+                                "$ref": "#/$defs/Union_"
                               }
                             ]
                           }
@@ -1201,12 +1066,7 @@
                             "type": "number"
                           },
                           {
-                            "type": "string",
-                            "enum": [
-                              "Infinity",
-                              "-Infinity",
-                              "NaN"
-                            ]
+                            "$ref": "#/$defs/Union_"
                           }
                         ]
                       },
@@ -1225,8 +1085,64 @@
                     },
                     "additionalProperties": false
                   },
+                  "workers": {
+                    "anyOf": [
+                      {
+                        "$ref": "#/$defs/Objects_27"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "experimental": {
-                    "$ref": "#/$defs/Objects_27"
+                    "type": "object",
+                    "properties": {
+                      "orioledb_version": {
+                        "type": "string",
+                        "description": "Postgres storage engine version for OrioleDB."
+                      },
+                      "s3_host": {
+                        "type": "string",
+                        "description": "S3 bucket URL.",
+                        "examples": [
+                          "<bucket_name>.s3-<region>.amazonaws.com",
+                          "env(S3_HOST)"
+                        ]
+                      },
+                      "s3_region": {
+                        "type": "string",
+                        "description": "S3 bucket region.",
+                        "examples": [
+                          "us-east-1",
+                          "env(S3_REGION)"
+                        ]
+                      },
+                      "s3_access_key": {
+                        "type": "string",
+                        "description": "S3 access key.",
+                        "examples": [
+                          "env(S3_ACCESS_KEY)"
+                        ]
+                      },
+                      "s3_secret_key": {
+                        "type": "string",
+                        "description": "S3 secret key.",
+                        "examples": [
+                          "env(S3_SECRET_KEY)"
+                        ]
+                      },
+                      "webhooks": {
+                        "$ref": "#/$defs/Objects_28"
+                      },
+                      "pgdelta": {
+                        "$ref": "#/$defs/Objects_29"
+                      },
+                      "inspect": {
+                        "$ref": "#/$defs/Objects_30"
+                      }
+                    },
+                    "additionalProperties": false
                   }
                 },
                 "additionalProperties": false
@@ -1247,6 +1163,14 @@
   },
   "additionalProperties": false,
   "$defs": {
+    "Union_": {
+      "type": "string",
+      "enum": [
+        "Infinity",
+        "-Infinity",
+        "NaN"
+      ]
+    },
     "Arrays_": {
       "type": "array",
       "items": {
@@ -1299,6 +1223,17 @@
         "https://127.0.0.1:3000"
       ]
     },
+    "Union_1": {
+      "type": "string",
+      "enum": [
+        "",
+        "letters_digits",
+        "lower_upper_letters_digits",
+        "lower_upper_letters_digits_symbols"
+      ],
+      "description": "Password character requirements.",
+      "default": ""
+    },
     "Objects_1": {
       "type": "object",
       "properties": {
@@ -1308,12 +1243,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -1323,12 +1253,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -1338,12 +1263,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -1353,12 +1273,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -1368,12 +1283,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -1383,12 +1293,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -1398,12 +1303,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         }
@@ -1591,12 +1491,7 @@
                   "type": "number"
                 },
                 {
-                  "type": "string",
-                  "enum": [
-                    "Infinity",
-                    "-Infinity",
-                    "NaN"
-                  ]
+                  "$ref": "#/$defs/Union_"
                 }
               ]
             },
@@ -1635,12 +1530,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         }
@@ -1696,12 +1586,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -1711,12 +1596,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -1738,12 +1618,7 @@
                   "type": "number"
                 },
                 {
-                  "type": "string",
-                  "enum": [
-                    "Infinity",
-                    "-Infinity",
-                    "NaN"
-                  ]
+                  "$ref": "#/$defs/Union_"
                 }
               ]
             },
@@ -2962,12 +2837,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -2986,12 +2856,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -3001,12 +2866,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         }
@@ -3055,6 +2915,16 @@
       },
       "additionalProperties": false
     },
+    "Union_2": {
+      "anyOf": [
+        {
+          "type": "number"
+        },
+        {
+          "$ref": "#/$defs/Union_"
+        }
+      ]
+    },
     "Objects_16": {
       "type": "object",
       "properties": {
@@ -3068,94 +2938,22 @@
           "type": "string"
         },
         "max_connections": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
-            }
-          ]
+          "$ref": "#/$defs/Union_2"
         },
         "max_locks_per_transaction": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
-            }
-          ]
+          "$ref": "#/$defs/Union_2"
         },
         "max_parallel_maintenance_workers": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
-            }
-          ]
+          "$ref": "#/$defs/Union_2"
         },
         "max_parallel_workers": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
-            }
-          ]
+          "$ref": "#/$defs/Union_2"
         },
         "max_parallel_workers_per_gather": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
-            }
-          ]
+          "$ref": "#/$defs/Union_2"
         },
         "max_replication_slots": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
-            }
-          ]
+          "$ref": "#/$defs/Union_2"
         },
         "max_slot_wal_keep_size": {
           "type": "string"
@@ -3170,34 +2968,10 @@
           "type": "string"
         },
         "max_wal_senders": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
-            }
-          ]
+          "$ref": "#/$defs/Union_2"
         },
         "max_worker_processes": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
-            }
-          ]
+          "$ref": "#/$defs/Union_2"
         },
         "session_replication_role": {
           "type": "string",
@@ -3389,12 +3163,7 @@
                         "type": "number"
                       },
                       {
-                        "type": "string",
-                        "enum": [
-                          "Infinity",
-                          "-Infinity",
-                          "NaN"
-                        ]
+                        "$ref": "#/$defs/Union_"
                       }
                     ]
                   }
@@ -3449,12 +3218,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -3464,12 +3228,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -3479,12 +3238,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -3534,12 +3288,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -3549,12 +3298,7 @@
               "type": "number"
             },
             {
-              "type": "string",
-              "enum": [
-                "Infinity",
-                "-Infinity",
-                "NaN"
-              ]
+              "$ref": "#/$defs/Union_"
             }
           ]
         },
@@ -3592,109 +3336,115 @@
     },
     "Objects_27": {
       "type": "object",
+      "patternProperties": {
+        "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$": {
+          "type": "object",
+          "properties": {
+            "runtime": {
+              "type": "string",
+              "description": "Runtime the worker is built on: `dockerfile` to build the directory's own\nDockerfile, or one of the catalog runtimes (`node`, `deno`). Guessed from\nmarker files when unset.",
+              "examples": [
+                "node"
+              ]
+            },
+            "size": {
+              "type": "string",
+              "description": "Instance size, denominated by memory. Each size implies its own vCPU count,\nso it is the one dial rather than two.",
+              "examples": [
+                "2gb"
+              ]
+            },
+            "instances": {
+              "type": "integer",
+              "allOf": [
+                {
+                  "minimum": 0,
+                  "description": "Number of instances to run. Every deploy sends a complete spec, so a count\nrecorded here is what keeps a scaled worker scaled; `--instances` overrides\nit for one deploy. Defaults to 1.",
+                  "examples": [
+                    3
+                  ]
+                }
+              ]
+            },
+            "source": {
+              "type": "string",
+              "description": "Directory holding the worker's code, relative to the project root, when it\ndoes not live at `supabase/workers/<name>/`.",
+              "examples": [
+                "packages/api"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "description": "Worker-specific configuration keyed by worker name.",
+      "default": {}
+    },
+    "Objects_28": {
+      "type": "object",
       "properties": {
-        "orioledb_version": {
-          "type": "string",
-          "description": "Postgres storage engine version for OrioleDB."
+        "enabled": {
+          "type": "boolean",
+          "description": "Enable experimental webhooks.",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "Objects_29": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Use pg-delta as the schema diff engine for db diff / db pull / db remote commit. Set false to fall back to the legacy migra engine.",
+          "default": false
         },
-        "s3_host": {
+        "declarative_schema_path": {
           "type": "string",
-          "description": "S3 bucket URL.",
+          "description": "Directory under supabase/ where declarative schema files are written.",
           "examples": [
-            "<bucket_name>.s3-<region>.amazonaws.com",
-            "env(S3_HOST)"
+            "./schemas"
           ]
         },
-        "s3_region": {
+        "format_options": {
           "type": "string",
-          "description": "S3 bucket region.",
+          "description": "JSON string passed through to pg-delta SQL formatting.",
           "examples": [
-            "us-east-1",
-            "env(S3_REGION)"
+            "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
           ]
-        },
-        "s3_access_key": {
-          "type": "string",
-          "description": "S3 access key.",
-          "examples": [
-            "env(S3_ACCESS_KEY)"
-          ]
-        },
-        "s3_secret_key": {
-          "type": "string",
-          "description": "S3 secret key.",
-          "examples": [
-            "env(S3_SECRET_KEY)"
-          ]
-        },
-        "webhooks": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean",
-              "description": "Enable experimental webhooks.",
-              "default": false
-            }
-          },
-          "additionalProperties": false
-        },
-        "pgdelta": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean",
-              "description": "Use pg-delta as the schema diff engine for db diff / db pull / db remote commit. Set false to fall back to the legacy migra engine.",
-              "default": false
-            },
-            "declarative_schema_path": {
-              "type": "string",
-              "description": "Directory under supabase/ where declarative schema files are written.",
-              "examples": [
-                "./schemas"
-              ]
-            },
-            "format_options": {
-              "type": "string",
-              "description": "JSON string passed through to pg-delta SQL formatting.",
-              "examples": [
-                "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
-              ]
-            }
-          },
-          "additionalProperties": false
-        },
-        "inspect": {
-          "type": "object",
-          "properties": {
-            "rules": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "query": {
-                    "type": "string",
-                    "description": "Inspection query."
-                  },
-                  "name": {
-                    "type": "string",
-                    "description": "Inspection rule name."
-                  },
-                  "pass": {
-                    "type": "string",
-                    "description": "Success message."
-                  },
-                  "fail": {
-                    "type": "string",
-                    "description": "Failure message."
-                  }
-                },
-                "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "Objects_30": {
+      "type": "object",
+      "properties": {
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "query": {
+                "type": "string",
+                "description": "Inspection query."
               },
-              "description": "Inspection rules.",
-              "default": []
-            }
+              "name": {
+                "type": "string",
+                "description": "Inspection rule name."
+              },
+              "pass": {
+                "type": "string",
+                "description": "Success message."
+              },
+              "fail": {
+                "type": "string",
+                "description": "Failure message."
+              }
+            },
+            "additionalProperties": false
           },
-          "additionalProperties": false
+          "description": "Inspection rules.",
+          "default": []
         }
       },
       "additionalProperties": false
