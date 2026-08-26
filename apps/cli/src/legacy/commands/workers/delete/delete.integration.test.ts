@@ -273,6 +273,49 @@ describe("legacy workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // `deleteWorker` already treats a DELETE 404 as done; the pre-flight GET used
+  // to contradict that, so a teardown script run twice failed the second time
+  // for a worker in exactly the state it asked for.
+  it.live("succeeds under --yes when the worker is already gone", () => {
+    const repo = project();
+    const { layer, out, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: { [getRoute]: { status: 404, body: { message: "worker not found" } } },
+      yes: true,
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersDelete({ name: "api", projectRef: Option.none() });
+
+      // Nothing to delete, so nothing is asked of the API beyond the lookup.
+      expect(http.routeKeys).toEqual([getRoute]);
+      expect(out.stdoutText).toContain("nothing to delete");
+      expect(out.stdoutText).not.toContain("Deleted Worker");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("emits the same payload shape for a no-op delete", () => {
+    const repo = project();
+    const { layer, out, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: { [getRoute]: { status: 404, body: { message: "worker not found" } } },
+      yes: true,
+      goOutput: "json",
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersDelete({ name: "api", projectRef: Option.none() });
+
+      const parsed: unknown = JSON.parse(out.stdoutText);
+      expect(parsed).toMatchObject({
+        worker_name: "api",
+        project_ref: WORKERS_PROJECT_REF,
+        kept_config_entry: true,
+      });
+      expect(http.routeKeys).toEqual([getRoute]);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("treats a delete that races another one as done", () => {
     const repo = project();
     const { layer, out } = setupLegacyWorkers({

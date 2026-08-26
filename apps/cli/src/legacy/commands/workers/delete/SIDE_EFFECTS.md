@@ -43,8 +43,9 @@ rather than deleting unasked.
 | Code | Condition                                                                 |
 | ---- | ------------------------------------------------------------------------- |
 | `0`  | success (a `404` on DELETE counts — it is already gone)                   |
+| `0`  | nothing deployed under that name, with `--yes` (teardown is idempotent)   |
 | `1`  | invalid worker name                                                       |
-| `1`  | nothing deployed under that name                                          |
+| `1`  | nothing deployed under that name, without `--yes`                         |
 | `1`  | the typed confirmation did not match the worker's name                    |
 | `1`  | confirmation needed but no interactive terminal to ask on, and no `--yes` |
 | `1`  | API error, or project not enrolled in the alpha                           |

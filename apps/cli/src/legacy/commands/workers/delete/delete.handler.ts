@@ -41,7 +41,8 @@ import type { LegacyWorkersDeleteFlags } from "./delete.command.ts";
  * deletion, rather than a bare y/n that is too easy to reflexively confirm.
  * `--yes`/`SUPABASE_YES` skips it for scripts, resolved through
  * `legacyResolveYes` like every other confirming command rather than through a
- * local flag that would shadow the root one.
+ * local flag that would shadow the root one. It also makes an already-absent
+ * worker a success: teardown run twice should not fail the second time.
  *
  * Without a terminal to prompt on there is no third option: `interactive` tracks
  * stdout, so merely redirecting output would otherwise delete unattended. This
@@ -84,18 +85,25 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
     );
     yield* fetching.clear();
 
-    if (Option.isNone(found)) {
+    const deployed = Option.getOrUndefined(found);
+    const machineOutput = yield* legacyWorkersMachineOutputRequested();
+
+    // `--yes` is the scripted path, and `deleteWorker` already treats a DELETE
+    // 404 as done — "a delete that races another one is still a delete that
+    // happened". The pre-flight GET contradicted that for teardown: a script run
+    // twice exited non-zero the second time, for a worker in exactly the state
+    // it asked for. Interactively the error stays: somebody typed this command
+    // and wants to hear the worker was not there.
+    if (deployed === undefined && !yes) {
       return yield* Effect.fail(
         new WorkerNotDeployedError({
           detail: `Nothing is deployed for "${name}" in project ${projectRef}.`,
-          suggestion: `Deploy it with \`supabase workers push ${name}\`.`,
+          suggestion: `Deploy it with \`supabase workers push ${name}${refSuffix}\`.`,
         }),
       );
     }
 
-    const machineOutput = yield* legacyWorkersMachineOutputRequested();
-
-    if (!yes) {
+    if (deployed !== undefined && !yes) {
       // `-o json` leaves `output.format` as `text`, so the format check alone
       // still let the warning and the prompt run — onto the stdout the user had
       // asked to carry a payload. A machine format is as non-interactive as a
@@ -113,8 +121,8 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
       // does not. `spec.instances` is the target, which for a worker still
       // provisioning differs from what is running — and a destructive prompt is
       // the wrong place to overstate.
-      const live = found.value.instances?.live;
-      const declared = found.value.spec.instances;
+      const live = deployed.instances?.live;
+      const declared = deployed.spec.instances;
       const terminating =
         live !== undefined
           ? live > 0
@@ -139,9 +147,14 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
       }
     }
 
-    const deleting = yield* output.task("Deleting worker...");
-    yield* deleteWorker(api, projectRef, name).pipe(Effect.tapError(() => deleting.fail()));
-    yield* deleting.clear();
+    // Skipped when the fetch already said there is nothing there: only `--yes`
+    // reaches this with `deployed` undefined, and a DELETE for a worker we never
+    // saw is a request with nothing to do.
+    if (deployed !== undefined) {
+      const deleting = yield* output.task("Deleting worker...");
+      yield* deleteWorker(api, projectRef, name).pipe(Effect.tapError(() => deleting.fail()));
+      yield* deleting.clear();
+    }
 
     // A worker deployed from another checkout has neither a local entry nor a
     // local directory, so there is nothing here that was kept.
@@ -169,6 +182,13 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
     }
 
     {
+      if (deployed === undefined) {
+        yield* output.raw(
+          `Nothing was deployed for ${legacyAqua(name, process.stdout)} in project ${projectRef}, so there was nothing to delete.\n`,
+        );
+        return;
+      }
+
       yield* output.raw(
         `Deleted Worker ${legacyAqua(name, process.stdout)} from project ${projectRef}\n`,
       );
