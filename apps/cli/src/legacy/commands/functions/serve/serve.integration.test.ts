@@ -1337,7 +1337,7 @@ describe("legacy functions serve integration", () => {
     };
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig('project_id = "test-project"\n'));
+      yield* Effect.promise(() => writeCliConfig('project_id = "test-project"\n'));
       yield* Effect.promise(() =>
         writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
       );
@@ -1378,7 +1378,7 @@ describe("legacy functions serve integration", () => {
     };
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProjectConfig('project_id = "test-project"\n'));
+      yield* Effect.promise(() => writeCliConfig('project_id = "test-project"\n'));
       yield* Effect.promise(() =>
         writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
       );
