@@ -493,28 +493,47 @@ from any reachable database, and it is not called out anywhere in the command do
 
 ### F1 — The export manifest's `loadOrder` is not a valid apply order (high)
 
-**Scenarios 1, 2, 3.** Export any schema where a table depends on a function — a column default
-calling one, or the near-universal `updated_at` trigger — and the generated
-`.pgdelta-export.json` lists the table file _before_ the function file, because functions are
-sorted last as a category.
+**Scenarios 1, 2, 3.** The ordering is dependency-aware for **object-level** relationships but
+ignores dependencies of statements emitted **inside** a table's file. Triggers, `CHECK`
+constraints, and column defaults are all written into `tables/<name>.sql`, and each can reference
+a function — but the ordering only considers the table object itself, so the function file lands
+after the table file and the replay fails.
 
-Minimal reproduction:
+Isolating both nested forms in one schema:
 
-```sh
-psql -c "CREATE FUNCTION public.gen_code() RETURNS text LANGUAGE sql IMMUTABLE AS \$\$ SELECT 'x' \$\$;"
-psql -c "CREATE TABLE public.items (id INT PRIMARY KEY, code TEXT NOT NULL DEFAULT public.gen_code());"
-supabase db schema declarative generate --db-url "$URL"
-# manifest loadOrder: public/schema.sql, public/tables/items.sql, public/functions/gen_code.sql
+```sql
+CREATE FUNCTION public.is_ok(t TEXT) RETURNS boolean LANGUAGE sql IMMUTABLE AS $$ SELECT length(t) > 1 $$;
+CREATE FUNCTION public.trg() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RETURN NEW; END $$;
+CREATE TABLE public.a (id INT PRIMARY KEY, name TEXT CONSTRAINT a_ok CHECK (public.is_ok(name)));
+CREATE TABLE public.b (id INT PRIMARY KEY);
+CREATE TRIGGER b_trg BEFORE UPDATE ON public.b FOR EACH ROW EXECUTE FUNCTION public.trg();
 ```
 
-Replaying the tree in its own declared `loadOrder` fails:
+```
+loadOrder: public/schema.sql, public/tables/a.sql, public/tables/b.sql,
+           public/functions/is_ok.sql, public/functions/trg.sql
+
+FAILED [public/tables/a.sql]  ERROR: function public.is_ok(text) does not exist
+FAILED [public/tables/b.sql]  ERROR: function public.trg() does not exist
+```
+
+A column default behaves the same way (`DEFAULT public.gen_code()` produces
+`ERROR: function public.gen_code() does not exist`), as does the near-universal `updated_at`
+trigger.
+
+**Object-level dependencies order correctly**, which is what makes the gap precise. A schema with
+a domain used by a table column, an event trigger calling a function, a materialized view over a
+table, a collation, and a partitioned table all replayed cleanly:
 
 ```
-FAILED [public/tables/items.sql]
-ERROR:  function public.gen_code() does not exist
+app/schema.sql -> public/schema.sql -> public/domains/email.sql -> public/collations/mycoll.sql
+-> app/tables/orders.sql -> app/tables/parted.sql -> app/materialized_views/order_totals.sql
+-> public/functions/evt.sql -> _cluster/publications.sql -> _cluster/event_triggers.sql
 ```
 
-The same happens with a trigger (`ERROR: function public.set_updated_at() does not exist`).
+`public/functions/evt.sql` is correctly placed before the event trigger that calls it, so the
+dependency graph works when the dependent object owns its own file. The gap is specifically
+statements nested inside another object's file.
 
 **Why it's bad:** `loadOrder` is published in the manifest as the tree's apply contract, and it is
 wrong for one of the most common Supabase patterns. Anything outside the CLI that trusts it — a
@@ -526,11 +545,13 @@ where `set_updated_at` comes from — breaks. It also makes the tree look untrus
 survives. That was not verifiable here (needs a shadow container), so this is reported as a
 manifest-contract defect, not as "sync is broken."
 
-**Suggestions:** make the emitted `loadOrder` a real topological order over cross-file
-dependencies rather than a fixed category order; failing that, either drop `loadOrder` from the
-manifest or document it explicitly as "informational, not an apply order — the tree must be
-loaded through pg-delta, which reorders." Add a test that replays every exported fixture tree in
-`loadOrder` against a clean database.
+**Suggestions:** extend the dependency graph that already orders object-level relationships to
+also walk the statements nested inside each file — trigger function references, `CHECK` constraint
+function references, and column-default function references. Add a test that replays every
+exported fixture tree in `loadOrder` against a clean database; the `updated_at`-trigger fixture
+alone would have caught this. If nested ordering is deliberately out of scope, say so in the
+manifest's own documentation ("`loadOrder` is informational; the tree must be loaded through
+pg-delta, which reorders") rather than publishing an order that does not work.
 
 ### F2 — Destructive plans are emitted with no warning and exit 0 (high)
 
@@ -877,8 +898,12 @@ Worth recording, because these are the load-bearing behaviors:
 - **Transaction-boundary awareness is real.** `ALTER TYPE ... ADD VALUE` was correctly placed in
   its own unit, ahead of the `ADD COLUMN ... DEFAULT 'ecstatic'::public.mood` that depends on it.
   `psql -1` failing on the flattened form (F4) is the proof the split was necessary.
-- **Object coverage is broad.** Enums, `security_invoker` views, trigger functions, RLS enable +
-  policy, partial indexes, comments, sequence ownership and grants were all rendered.
+- **Object coverage is broad, and broader than the docs claim.** Enums, `security_invoker` views,
+  trigger functions, RLS enable + policy, partial indexes, comments, sequence ownership and grants
+  were all rendered. A second pass over deliberately exotic objects — domains with `CHECK`,
+  materialized views, publications, event triggers, collations, partitioned tables with a
+  partition, and a non-`public` schema — was also fully rendered **and converged**. Publications
+  are on `db/diff.md`'s "known to fail" list; pg-delta handled them (see F16).
 - **Pruning works.** Dropping a function from the database and re-exporting removed its file.
 - **`_custom/` is respected** exactly as documented — never written, never pruned.
 - **The former-default warning is a model error message.** It names what was found, what changed,
