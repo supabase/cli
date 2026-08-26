@@ -520,8 +520,9 @@ URLs retain the profile contract `https://<ref>.<project_host>`, with
 Local Docker-stack lifecycle tests (`start`, `stop`, `status`, `db start`,
 `db diff`, declarative sync, and `functions dev`) are `*.e2e.test.ts`, use
 `runSupabase` plus the existing e2e stack cleanup, and require no platform
-credentials. `functions deploy` remains live because its assertion is remote
-deployment and invocation, even though Docker is a runner prerequisite.
+credentials. `functions deploy` and `functions download` remain live because
+their assertions are remote deployment, invocation, and artifact round trips,
+even though Docker is a runner prerequisite.
 
 Setup/teardown may invoke other commands, but assertions stay focused on the
 one command named by the test. The live workflow runs one serial attempt with a
