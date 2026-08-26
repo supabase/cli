@@ -107,9 +107,20 @@ function leafPaths(
 }
 
 const restrictedDrift = leafPaths(overlay).filter(isComparableProjectConfigPath);
-// e.g. [["api", "schemas"], ["api", "max_rows"], ["auth", "site_url"]] — the fields `local` and
-// `remote` genuinely disagree on, restricted to what `fromApiProjectConfig` can actually speak for.
+// e.g. [["api", "schemas"], ["api", "max_rows"], ["auth", "site_url"]] — the fields `local`
+// DECLARES that `remote` doesn't already agree with, restricted to what `fromApiProjectConfig`
+// can actually speak for.
 ```
+
+This example computes **one direction** of a drift check: values the local document declares that
+differ from the remote. It does not surface remote-only settings — a field the API maps
+unconditionally (e.g. `auth.email.smtp.enabled`) where the local document never declared the
+subsection produces no leaf in this overlay at all. Finding those needs the reverse subtraction
+(`subtractCliConfig(remote, local)`) intersected with the paths the document-side operand actually
+declares, per the comparison contract on the `ProjectConfig` docstring — the comparable-path set
+only says which paths the API mapper can represent, not which ones a given document spoke for. A
+complete two-sided drift computation is `config diff`'s job (CLI-2156); this example is its
+building block, not a substitute.
 
 ## Usage
 

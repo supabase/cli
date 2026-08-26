@@ -1390,3 +1390,69 @@ describe("review round: oauth_server rows, known-empty pruning, DAG walk (CLI-22
     expect(Object.hasOwn(unknown, "auth")).toBe(false);
   });
 });
+
+describe("review round: pre-decode depth guard, caller-misuse reason, readonly metadata (CLI-2230)", () => {
+  test("a pathologically deep value under auth throws typed before schema decode", () => {
+    let node: Record<string, unknown> = { leaf: true };
+    for (let level = 0; level < 200; level++) {
+      node = { nested: node };
+    }
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({ auth: { some_future_key: node } });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+  });
+
+  test("a null dispatcher source throws the typed caller-misuse error, not a TypeError", () => {
+    let thrown: unknown;
+    try {
+      toProjectConfig(null as unknown as Parameters<typeof toProjectConfig>[0]);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
+    expect((thrown as ProjectConfigParseError).suggestion).toBeUndefined();
+  });
+
+  test("neither/both dispatcher sources carry the caller-misuse reason without the upgrade suggestion", () => {
+    for (const source of [{}, { cliConfig: {}, apiResponse: {} }]) {
+      let thrown: unknown;
+      try {
+        toProjectConfig(source as unknown as Parameters<typeof toProjectConfig>[0]);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+      expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
+      expect((thrown as ProjectConfigParseError).suggestion).toBeUndefined();
+    }
+  });
+
+  test("malformed API payloads keep the api_response semantics (no caller-misuse reason)", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig(42);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).reason).toBeUndefined();
+    expect((thrown as ProjectConfigParseError).suggestion).toBeDefined();
+  });
+
+  test("_apiResponse is readonly at compile time and frozen at runtime", () => {
+    const result = fromApiProjectConfig({ api: { max_rows: 5 } });
+    const metadata = result._apiResponse;
+    expect(metadata).toBeDefined();
+    expect(Object.isFrozen(metadata)).toBe(true);
+    expect(() => {
+      // @ts-expect-error — the frozen metadata must not be assignable; the
+      // runtime counterpart is the strict-mode TypeError asserted here.
+      metadata["foo"] = "bar";
+    }).toThrow(TypeError);
+  });
+});

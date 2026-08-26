@@ -944,13 +944,20 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   // construction site, so `has_suggestion` flips to true here to match —
   // `RerunDebug` is the closest existing bucket (same idiom as
   // `internalPanic`/`impossibleState` below), there being no dedicated
-  // "upgrade the CLI" suggestion type in the closed vocabulary.
-  ProjectConfigParseError: () => ({
-    ...actionability.apiStatus,
-    has_suggestion: true,
-    suggestion_type: CliSuggestionType.RerunDebug,
-    fingerprint_suffix: "api_response",
-  }),
+  // "upgrade the CLI" suggestion type in the closed vocabulary. The
+  // `caller_misuse` reason (a `toProjectConfig`/`attachApiResponse` argument
+  // error — the producer's typed field, never message text) is a programming
+  // error, not an external platform failure: bucketing it as `api_status`
+  // would corrupt the external-failure KPI with caller bugs.
+  ProjectConfigParseError: (error) =>
+    error.reason === "caller_misuse"
+      ? { ...actionability.invalidInput, fingerprint_suffix: "request_input" }
+      : {
+          ...actionability.apiStatus,
+          has_suggestion: true,
+          suggestion_type: CliSuggestionType.RerunDebug,
+          fingerprint_suffix: "api_response",
+        },
 
   // @supabase/api — client construction failed before any request (missing
   // access token / bad configuration); remediation is the token env var.

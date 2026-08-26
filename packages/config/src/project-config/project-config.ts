@@ -91,7 +91,12 @@ type HostedSectionKey = (typeof HOSTED_SECTION_KEYS)[number];
  * actually speak for, rather than hand-maintaining an equivalent field list.
  */
 export type ProjectConfig = DeepPartial<Pick<CliConfig, HostedSectionKey>> & {
-  readonly _apiResponse?: Record<string, unknown>;
+  // Readonly index: the runtime value is deep-frozen (attachFrozenApiResponse),
+  // so a compile-permitted `config._apiResponse.foo = v` would throw a
+  // TypeError in this ESM package. Nested values are `unknown` — mutating
+  // deeper requires the consumer's own narrowing, which is where that
+  // responsibility belongs.
+  readonly _apiResponse?: { readonly [key: string]: unknown };
 };
 
 /**
@@ -594,6 +599,12 @@ export function fromApiProjectConfig(input: unknown): ProjectConfig;
 // is the contract, pinned by the unit tests.
 export function fromApiProjectConfig(input: unknown): unknown {
   const rawAttributes = unwrapApiResponse(input);
+  // Depth/work-bound the raw structure BEFORE schema decoding: the mirror's
+  // `auth` record is `Schema.Json`, whose decode recurses through arbitrary
+  // nesting, so a pathologically deep auth value would overflow with a raw
+  // RangeError inside the decode — ahead of the bound `attachFrozenApiResponse`
+  // applies later — escaping the typed-error contract.
+  assertRawAttributesDepthWithinBound(rawAttributes);
   const decodedAttributes = decodeAttributes(rawAttributes);
 
   const output: Record<string, unknown> = {};
@@ -629,12 +640,14 @@ export function attachApiResponse(
   rawAttributes: Record<string, unknown>,
 ): unknown {
   if (!isObject(config)) {
-    const detail = `expected an object for "config", got ${nonObjectDescription(config)}`;
-    throw new ProjectConfigParseError({
-      message: formatProjectConfigParseErrorMessage(detail),
-      cause: new Error(detail),
-      suggestion: PROJECT_CONFIG_PARSE_ERROR_SUGGESTION,
-    });
+    throw callerMisuseError(
+      `attachApiResponse "config" must be an object, got ${nonObjectDescription(config)}`,
+    );
+  }
+  if (!isObject(rawAttributes)) {
+    throw callerMisuseError(
+      `attachApiResponse "rawAttributes" must be an object, got ${nonObjectDescription(rawAttributes)}`,
+    );
   }
   return attachFrozenApiResponse(config, rawAttributes);
 }
@@ -662,11 +675,18 @@ function hasCliConfig(
   return Object.hasOwn(source, "cliConfig");
 }
 
-function ambiguousSourceError(detail: string): ProjectConfigParseError {
+/**
+ * Caller misuse — a programming error in the consumer, not a malformed
+ * platform response: the message is plain (no "Management API response"
+ * framing), the upgrade `suggestion` is omitted (upgrading fixes nothing),
+ * and `reason: "caller_misuse"` lets apps/cli's error-actionability adapter
+ * bucket it as invalid input instead of an external `api_status` failure.
+ */
+function callerMisuseError(detail: string): ProjectConfigParseError {
   return new ProjectConfigParseError({
-    message: formatProjectConfigParseErrorMessage(detail),
+    message: detail,
     cause: new Error(detail),
-    suggestion: PROJECT_CONFIG_PARSE_ERROR_SUGGESTION,
+    reason: "caller_misuse",
   });
 }
 
@@ -682,10 +702,19 @@ function ambiguousSourceError(detail: string): ProjectConfigParseError {
  * `TypeError` from reaching into a property that isn't there.
  */
 export function toProjectConfig(source: ToProjectConfigSource): ProjectConfig {
+  // A JavaScript caller can hand this public dispatcher null/undefined
+  // despite the compile-time type; guarding before the own-property
+  // predicates keeps the failure inside the documented typed-error contract
+  // instead of a native TypeError from Object.hasOwn.
+  if (!isObject(source)) {
+    throw callerMisuseError(
+      `toProjectConfig source must be an object carrying exactly one of "cliConfig" or "apiResponse", got ${nonObjectDescription(source)}`,
+    );
+  }
   if (hasApiResponse(source)) {
     if (hasCliConfig(source)) {
-      throw ambiguousSourceError(
-        'expected exactly one of an own "cliConfig" or "apiResponse" property, got both',
+      throw callerMisuseError(
+        'toProjectConfig source must carry exactly one of an own "cliConfig" or "apiResponse" property, got both',
       );
     }
     return fromApiProjectConfig(source.apiResponse);
@@ -693,8 +722,8 @@ export function toProjectConfig(source: ToProjectConfigSource): ProjectConfig {
   if (hasCliConfig(source)) {
     return fromConfigDocument(source.cliConfig);
   }
-  throw ambiguousSourceError(
-    'expected exactly one of an own "cliConfig" or "apiResponse" property, got neither',
+  throw callerMisuseError(
+    'toProjectConfig source must carry exactly one of an own "cliConfig" or "apiResponse" property, got neither',
   );
 }
 

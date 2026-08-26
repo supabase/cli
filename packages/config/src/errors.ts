@@ -108,6 +108,17 @@ export const PROJECT_CONFIG_PARSE_ERROR_SUGGESTION =
 export class ProjectConfigParseError extends Data.TaggedError("ProjectConfigParseError")<{
   readonly message: string;
   /**
+   * What actually went wrong, as a closed union telemetry can branch on:
+   * `"api_response"` (the default when absent) — the Management API payload
+   * itself failed to decode or map; `"caller_misuse"` — the CALLER handed
+   * this package's own API an invalid argument (a `toProjectConfig` source
+   * carrying neither/both keys or not an object at all, a non-object
+   * `attachApiResponse` operand). Misuse is a programming error in the
+   * consumer: the upgrade `suggestion` does not apply to it, and it must not
+   * be reported as an external platform failure.
+   */
+  readonly reason?: "api_response" | "caller_misuse";
+  /**
    * Path under v2 `data.attributes` of the offending value; `undefined` when
    * the response envelope/attributes shape itself failed to decode.
    */
