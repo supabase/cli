@@ -22,6 +22,7 @@ import {
   type ControlStopIntent,
   type ControlStopRequest,
   isControlSupervisorStatus,
+  matchesControlSession,
 } from "../DaemonProtocol.ts";
 import { StopTimeout } from "../errors.ts";
 
@@ -181,7 +182,6 @@ export interface ControlOwnership {
   readonly [controlOwnershipBrand]: true;
   readonly ownershipId: string;
   readonly endpoint: ControlEndpoint;
-  readonly ownerStatus: Effect.Effect<ControlOwnerStatus>;
   readonly close: Effect.Effect<void>;
 }
 
@@ -617,7 +617,6 @@ const makeOwned = (
   endpoint: ControlEndpoint,
   ownershipId: string,
   listener: ControlListener,
-  statusRef: Ref.Ref<ControlOwnerStatus>,
 ): Effect.Effect<ControlOwnership> => {
   let closed = false;
   const close = Effect.suspend(() => {
@@ -630,7 +629,6 @@ const makeOwned = (
     [controlOwnershipBrand]: true,
     ownershipId,
     endpoint,
-    ownerStatus: Ref.get(statusRef),
     close,
   });
 };
@@ -677,7 +675,6 @@ const acquireAtCandidates = (
   | ControlAddressConflictError,
   import("effect/Scope").Scope
 > => {
-  const statusRef = Ref.makeUnsafe(status);
   const attempt: Effect.Effect<
     ControlAcquisition,
     | ControlBindError
@@ -702,24 +699,20 @@ const acquireAtCandidates = (
       const bound = yield* transport
         .bind(
           endpoint,
-          () => Ref.getUnsafe(statusRef),
+          () => status,
           (request) => {
             if (request === undefined) return "invalid";
-            const current = Ref.getUnsafe(statusRef);
-            if (
-              request.ownershipId !== ownershipId ||
-              request.ownerSessionId !== current.ownerSessionId
-            ) {
+            if (!matchesControlSession(request, status)) {
               return "conflict";
             }
-            if (!isControlSupervisorStatus(current)) return "busy";
+            if (!isControlSupervisorStatus(status)) return "busy";
             return "accepted";
           },
           application,
         )
         .pipe(Effect.result);
       if (Result.isSuccess(bound)) {
-        const owned = yield* makeOwned(endpoint, ownershipId, bound.success, statusRef);
+        const owned = yield* makeOwned(endpoint, ownershipId, bound.success);
         yield* Effect.addFinalizer(() => owned.close);
         return owned;
       }

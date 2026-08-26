@@ -10,43 +10,20 @@ import {
 } from "effect/unstable/http";
 import type { PlatformFactory } from "./createStack.ts";
 import { readControlOwner } from "./ControlHttpReader.ts";
+import { requestControlStop } from "./ControlStopClient.ts";
+import { errorCode } from "./error-code.ts";
 import { STACK_RPC_PATH } from "./StackRpc.ts";
 import {
   CONTROL_STATUS_PATH,
   CONTROL_STOP_PATH,
   ControlStopRequestSchema,
   ControlBindError,
-  ControlStopConflictError,
-  ControlMaintenanceBusyError,
   ControlTransport,
-  ControlTransportError,
   type ControlOwnerStatus,
   type ControlStopRequest,
   type ControlEndpoint,
   type ControlApplication,
 } from "./managed/control.ts";
-const errorCode = (cause: unknown): string | undefined => {
-  if (typeof cause !== "object" || cause === null) return undefined;
-  if ("code" in cause && typeof cause.code === "string") return cause.code;
-  if ("cause" in cause) return errorCode(cause.cause);
-  return undefined;
-};
-
-const isDefinitivelyUnreachable = (cause: unknown): boolean => {
-  const code = errorCode(cause);
-  return code === "ECONNREFUSED" || code === "ConnectionRefused";
-};
-
-const consumeControlResponse = (
-  endpoint: ControlEndpoint,
-  response: Response,
-): Effect.Effect<void, ControlTransportError> =>
-  Effect.tryPromise({
-    try: () =>
-      (response.body === null ? Promise.resolve() : response.arrayBuffer()).then(() => undefined),
-    catch: (cause) => new ControlTransportError({ endpoint, reason: "transport", cause }),
-  });
-
 const controlTransport: ControlTransport["Service"] = {
   bind: (
     endpoint: ControlEndpoint,
@@ -250,50 +227,7 @@ const controlTransport: ControlTransport["Service"] = {
       }),
     ),
   read: readControlOwner,
-  requestStop: (endpoint: ControlEndpoint, stopRequest: ControlStopRequest) =>
-    Effect.tryPromise({
-      try: (signal) =>
-        fetch(`http://${endpoint.hostname}:${endpoint.port}${CONTROL_STOP_PATH}`, {
-          method: "POST",
-          signal: AbortSignal.any([signal, AbortSignal.timeout(500)]),
-          headers: {
-            connection: "close",
-            "content-type": "application/json",
-          },
-          body: JSON.stringify(stopRequest),
-        }),
-      catch: (cause) =>
-        new ControlTransportError({
-          endpoint,
-          reason: isDefinitivelyUnreachable(cause) ? "unreachable" : "transport",
-          cause,
-        }),
-    }).pipe(
-      Effect.flatMap((response) =>
-        consumeControlResponse(endpoint, response).pipe(Effect.as(response)),
-      ),
-      Effect.flatMap(
-        (
-          response,
-        ): Effect.Effect<
-          void,
-          ControlStopConflictError | ControlMaintenanceBusyError | ControlTransportError
-        > => {
-          if (response.ok) return Effect.void;
-          if (response.status === 409)
-            return Effect.fail(new ControlStopConflictError({ endpoint }));
-          if (response.status === 423)
-            return Effect.fail(new ControlMaintenanceBusyError({ endpoint }));
-          return Effect.fail(
-            new ControlTransportError({
-              endpoint,
-              reason: "transport",
-              cause: new Error(`Control stop request returned ${response.status}`),
-            }),
-          );
-        },
-      ),
-    ),
+  requestStop: requestControlStop,
 };
 
 export const controlTransportLayer = Layer.succeed(ControlTransport, controlTransport);

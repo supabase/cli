@@ -11,6 +11,7 @@ import { StackInfoSchema } from "./Stack.ts";
 import { StackServiceStatusSchema } from "./StackServiceState.ts";
 import { ResolvedFunctionsBundleSchema } from "./functions.ts";
 import { ReadyOptionsSchema } from "./StackConfig.ts";
+import { matchesControlSession, type ControlSessionFence } from "./DaemonProtocol.ts";
 
 /** Headers that fence same-version RPC calls to one observed supervisor session. */
 const STACK_RPC_FENCE_HEADERS = {
@@ -18,10 +19,7 @@ const STACK_RPC_FENCE_HEADERS = {
   ownerSessionId: "x-supabase-stack-owner-session-id",
 } as const;
 
-export interface StackRpcFence {
-  readonly ownershipId: string;
-  readonly ownerSessionId: string;
-}
+export type StackRpcFence = ControlSessionFence;
 
 export const stackRpcFenceHeaders = (fence: StackRpcFence): Readonly<Record<string, string>> => ({
   [STACK_RPC_FENCE_HEADERS.ownershipId]: fence.ownershipId,
@@ -32,11 +30,16 @@ export const matchesStackRpcFence = (
   headers: Readonly<Record<string, string>>,
   expected: StackRpcFence,
 ): boolean =>
-  headers[STACK_RPC_FENCE_HEADERS.ownershipId] === expected.ownershipId &&
-  headers[STACK_RPC_FENCE_HEADERS.ownerSessionId] === expected.ownerSessionId;
+  matchesControlSession(
+    {
+      ownershipId: headers[STACK_RPC_FENCE_HEADERS.ownershipId] ?? "",
+      ownerSessionId: headers[STACK_RPC_FENCE_HEADERS.ownerSessionId] ?? "",
+    },
+    expected,
+  );
 
 const StackUnavailableErrorSchema = Schema.TaggedStruct("StackUnavailableError", {
-  phase: Schema.Literals(["starting", "stopping", "failed", "deleting"]),
+  phase: Schema.Literals(["starting", "stopping", "failed"]),
   detail: Schema.optionalKey(Schema.String),
 }).pipe(
   Schema.decodeTo(

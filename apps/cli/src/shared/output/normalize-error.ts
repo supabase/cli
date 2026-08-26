@@ -81,9 +81,7 @@ const mappedError = (
             ? "The local Supabase stack is still stopping."
             : phase === "failed"
               ? "The local Supabase stack failed to start."
-              : phase === "deleting"
-                ? "The local Supabase stack is being deleted."
-                : "The local Supabase stack is unavailable.";
+              : "The local Supabase stack is unavailable.";
       const suggestion =
         phase === "starting"
           ? "Wait for `supabase start` to finish, then try again."
@@ -91,9 +89,7 @@ const mappedError = (
             ? "Wait for the current stop operation to finish, then try again."
             : phase === "failed"
               ? "Run `supabase start` again to recreate the local stack."
-              : phase === "deleting"
-                ? "Wait for the current delete operation to finish, then try again."
-                : "Run `supabase start`, then retry the command.";
+              : "Run `supabase start`, then retry the command.";
       return {
         code: tag,
         message,

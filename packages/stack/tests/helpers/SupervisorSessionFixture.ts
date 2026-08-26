@@ -39,7 +39,7 @@ export const makeSupervisorSessionFixture = (input: {
       setClose: (close: Effect.Effect<void, unknown>) => Ref.set(closeRef, close),
       disposeRuntime: Deferred.succeed(disposed, undefined).pipe(Effect.asVoid),
       requestShutdown: (_reason?: "stop" | "signal" | "startup-failure" | "dispose") =>
-        controller.service.submitShutdown.pipe(Effect.andThen(awaitShutdown)),
+        controller.service.submitShutdownWithIntent("explicit").pipe(Effect.andThen(awaitShutdown)),
       awaitShutdown,
     };
   });

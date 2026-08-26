@@ -24,32 +24,30 @@ const testStackState = new StackServiceState({
   error: null,
 });
 
-export const makeTestStack = (
-  options: {
-    readonly stop?: () => Effect.Effect<void>;
-    readonly dispose?: () => Effect.Effect<void>;
-  } = {},
-): Stack["Service"] => ({
-  getInfo: () => Effect.succeed(testStackInfo),
-  start: () => Effect.void,
-  stop: options.stop ?? (() => Effect.void),
-  dispose: options.dispose ?? (() => Effect.void),
-  startService: () => Effect.void,
-  stopService: () => Effect.void,
-  restartService: () => Effect.void,
-  reloadFunctions: () => Effect.void,
-  reloadEdgeRuntime: () => Effect.void,
-  getState: () => Effect.succeed(testStackState),
-  getAllStates: () => Effect.succeed([testStackState]),
-  stateChanges: () => Effect.succeed(Stream.empty),
-  allStateChanges: () => Stream.empty,
-  waitReady: () => Effect.void,
-  waitAllReady: () => Effect.void,
-  subscribeLogs: () => Stream.empty,
-  subscribeAllLogs: () => Stream.empty,
-  logHistory: () => Effect.succeed([]),
-  logHistoryAll: () => Effect.succeed([]),
-});
+export const makeTestStack = (overrides: Partial<Stack["Service"]> = {}): Stack["Service"] => {
+  const defaults: Stack["Service"] = {
+    getInfo: () => Effect.succeed(testStackInfo),
+    start: () => Effect.void,
+    stop: () => Effect.void,
+    dispose: () => Effect.void,
+    startService: () => Effect.void,
+    stopService: () => Effect.void,
+    restartService: () => Effect.void,
+    reloadFunctions: () => Effect.void,
+    reloadEdgeRuntime: () => Effect.void,
+    getState: () => Effect.succeed(testStackState),
+    getAllStates: () => Effect.succeed([testStackState]),
+    stateChanges: () => Effect.succeed(Stream.empty),
+    allStateChanges: () => Stream.empty,
+    waitReady: () => Effect.void,
+    waitAllReady: () => Effect.void,
+    subscribeLogs: () => Stream.empty,
+    subscribeAllLogs: () => Stream.empty,
+    logHistory: () => Effect.succeed([]),
+    logHistoryAll: () => Effect.succeed([]),
+  };
+  return { ...defaults, ...overrides };
+};
 
 export { HttpTransportClient } from "./HttpTransportClient.ts";
 export { makeSupervisorControlApplication } from "./SupervisorControlServer.ts";

@@ -23,7 +23,7 @@ import {
 } from "./managed/control.ts";
 import { controlTransportLayer } from "./platform-node.ts";
 import { Stack } from "./Stack.ts";
-import { SupervisorControlServer } from "./SupervisorControlServer.ts";
+import { makeSupervisorControlApplication } from "./SupervisorControlServer.ts";
 import { makeSupervisorSessionFixture } from "../tests/helpers/SupervisorSessionFixture.ts";
 
 const STACK_ID = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -73,7 +73,7 @@ const makeStaticOwner = (stackId: string, stack: Stack["Service"]) =>
       close: Effect.void,
     });
     const application = {
-      app: yield* SupervisorControlServer.make(lifecycle),
+      app: yield* makeSupervisorControlApplication(lifecycle),
     };
     const owner = yield* acquireControl({
       stackId,
@@ -255,7 +255,7 @@ describe("managed control endpoint", () => {
               close: Effect.void,
             });
             const application = {
-              app: yield* SupervisorControlServer.make(lifecycle),
+              app: yield* makeSupervisorControlApplication(lifecycle),
             };
             const owner = yield* acquireControl({
               stackId: STACK_ID,
@@ -323,7 +323,7 @@ describe("managed control endpoint", () => {
             stackId: STACK_ID,
             maintenanceOperation: "update",
           });
-          expect(isControlAttached(contender)).toBe(true);
+          if (!isControlAttached(contender)) throw new Error("expected attached control");
           expect(yield* contender.ownerStatus).toMatchObject({
             controlProtocolVersion: 1,
             state: "running",
@@ -726,6 +726,7 @@ describe("managed control endpoint", () => {
       };
       const replacementStatus = { ...status, ownerSessionId: "replacement-session" };
       let reads = 0;
+      const secondRead = yield* Deferred.make<void>();
       const transport: ControlTransportShape = {
         bind: () => Effect.die("unused"),
         read: (readEndpoint) => {
@@ -746,7 +747,7 @@ describe("managed control endpoint", () => {
                       ),
                     ),
                   )
-                : Effect.succeed(replacementStatus),
+                : Deferred.succeed(secondRead, void 0).pipe(Effect.as(replacementStatus)),
             ),
           );
         },
@@ -760,12 +761,8 @@ describe("managed control endpoint", () => {
       ).pipe(Effect.forkChild({ startImmediately: true }));
       yield* Deferred.await(readStarted);
       yield* Effect.yieldNow;
-      yield* Effect.yieldNow;
-      yield* Effect.yieldNow;
-      for (let attempt = 0; attempt < 8 && reads < 2; attempt += 1) {
-        yield* TestClock.adjust("1 second");
-        yield* Effect.yieldNow;
-      }
+      yield* TestClock.adjust("25 millis");
+      yield* Deferred.await(secondRead);
       const result = yield* Fiber.join(pending).pipe(Effect.result);
       expect(Result.isSuccess(result)).toBe(true);
       expect(reads).toBe(2);

@@ -11,6 +11,7 @@ import {
   type ControlClientTransport,
   type ControlEndpoint,
 } from "./managed/control.ts";
+import { errorCode } from "./error-code.ts";
 
 export class HttpTransportClientError extends Data.TaggedError("HttpTransportClientError")<{
   readonly endpoint: ControlEndpoint;
@@ -47,13 +48,6 @@ export const httpTransportClientLayer = Layer.succeed(HttpTransportClient, {
 });
 
 const CONTROL_REQUEST_TIMEOUT_MS = 500;
-
-const errorCode = (cause: unknown): string | undefined => {
-  if (typeof cause !== "object" || cause === null) return undefined;
-  if ("code" in cause && typeof cause.code === "string") return cause.code;
-  if ("cause" in cause) return errorCode(cause.cause);
-  return undefined;
-};
 
 const controlTransportError = (
   endpoint: ControlEndpoint,

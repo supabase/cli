@@ -12,7 +12,7 @@ import { controlTransportLayer } from "./platform-node.ts";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
 import { managedStackDocumentPathEffect, managedStackPathsEffect } from "./managed/paths.ts";
 import { Stack } from "./Stack.ts";
-import { SupervisorControlServer } from "./SupervisorControlServer.ts";
+import { makeSupervisorControlApplication } from "./SupervisorControlServer.ts";
 import { makeSupervisorSessionFixture } from "../tests/helpers/SupervisorSessionFixture.ts";
 import {
   connectManagedStack,
@@ -159,7 +159,7 @@ describe("managed stack lifecycle journeys", () => {
           close: Effect.void,
         });
         const application = {
-          app: yield* SupervisorControlServer.make(lifecycle),
+          app: yield* makeSupervisorControlApplication(lifecycle),
         };
         const owner = yield* acquireControl({
           stackId,
@@ -252,7 +252,7 @@ describe("managed stack lifecycle journeys", () => {
         const owner = yield* acquireControl({
           stackId,
           initialStatus: yield* lifecycle.currentStatus,
-          application: { app: yield* SupervisorControlServer.make(lifecycle) },
+          application: { app: yield* makeSupervisorControlApplication(lifecycle) },
         });
         if (!isControlOwnership(owner)) throw new Error("expected static owner");
         const started = yield* startManagedStack(manager, {

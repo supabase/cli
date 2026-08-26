@@ -14,7 +14,7 @@ import {
 } from "effect";
 import * as TestClock from "effect/testing/TestClock";
 import { ServiceNotFoundError, ServiceReadyError } from "@supabase/process-compose";
-import { createServer, type Server } from "node:http";
+import { createServer, type RequestListener, type Server } from "node:http";
 import { expect } from "vitest";
 import { Stack, type StackInfo } from "./Stack.ts";
 import { StackServiceState } from "./StackServiceState.ts";
@@ -83,7 +83,7 @@ const remoteLayer = (
 const live = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.provide(controlTransportLayer));
 
-const startMalformedServer = (frame: string) =>
+const startStubServer = (handler: RequestListener) =>
   Effect.acquireRelease(
     Effect.callback<
       {
@@ -96,36 +96,14 @@ const startMalformedServer = (frame: string) =>
       },
       Error
     >((resume) => {
-      const server = createServer((request, response) => {
-        if (request.url === "/owner") {
-          response.writeHead(200, { "content-type": "application/json", connection: "close" });
-          response.end(
-            JSON.stringify({
-              controlProtocol: "supabase-stack-control",
-              controlProtocolVersion: 1,
-              ownershipId: ownerId,
-              ownerSessionId: "malformed-session",
-              kind: "supervisor",
-              state: "running",
-              ready: true,
-              daemonCliVersion: "test",
-            }),
-          );
-          return;
-        }
-        if (request.url === "/rpc") {
-          response.writeHead(200, { "content-type": "application/x-ndjson", connection: "close" });
-          response.end(frame);
-          return;
-        }
-        response.writeHead(404, { connection: "close" });
-        response.end();
-      });
-      server.once("error", (error) => resume(Effect.fail(error)));
+      const server = createServer(handler);
+      const onError = (error: Error) => resume(Effect.fail(error));
+      server.once("error", onError);
       server.listen(0, "127.0.0.1", () => {
+        server.off("error", onError);
         const address = server.address();
         if (address === null || typeof address === "string") {
-          resume(Effect.fail(new Error("malformed RPC test server did not expose an address")));
+          resume(Effect.fail(new Error("test server did not expose a TCP address")));
           return;
         }
         resume(
@@ -140,7 +118,9 @@ const startMalformedServer = (frame: string) =>
         );
       });
       return Effect.sync(() => {
+        server.off("error", onError);
         if (server.listening) server.close();
+        else server.once("listening", () => server.close());
       });
     }),
     ({ server }) =>
@@ -154,141 +134,80 @@ const startMalformedServer = (frame: string) =>
       }),
   );
 
-const startBusyServer = Effect.acquireRelease(
-  Effect.callback<
-    {
-      readonly server: Server;
-      readonly endpoint: {
-        readonly hostname: string;
-        readonly port: number;
-        readonly url: string;
-      };
-    },
-    Error
-  >((resume) => {
-    const server = createServer((request, response) => {
-      if (request.url === "/owner") {
-        response.writeHead(200, { "content-type": "application/json", connection: "close" });
-        response.end(JSON.stringify(remoteOwner("busy-session")));
-        return;
-      }
-      if (request.url === "/stop") {
-        response.writeHead(423, { "content-type": "application/json", connection: "close" });
-        response.end(JSON.stringify({ error: "busy" }));
-        return;
-      }
-      response.writeHead(404, { connection: "close" });
-      response.end();
-    });
-    server.once("error", (error) => resume(Effect.fail(error)));
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      if (address === null || typeof address === "string") {
-        resume(Effect.fail(new Error("busy control test server did not expose an address")));
-        return;
-      }
-      resume(
-        Effect.succeed({
-          server,
-          endpoint: {
-            hostname: "127.0.0.1",
-            port: address.port,
-            url: `http://127.0.0.1:${address.port}`,
-          },
+const startMalformedServer = (frame: string) =>
+  startStubServer((request, response) => {
+    if (request.url === "/owner") {
+      response.writeHead(200, { "content-type": "application/json", connection: "close" });
+      response.end(
+        JSON.stringify({
+          controlProtocol: "supabase-stack-control",
+          controlProtocolVersion: 1,
+          ownershipId: ownerId,
+          ownerSessionId: "malformed-session",
+          kind: "supervisor",
+          state: "running",
+          ready: true,
+          daemonCliVersion: "test",
         }),
       );
-    });
-    return Effect.sync(() => {
-      if (server.listening) server.close();
-    });
-  }),
-  ({ server }) =>
-    Effect.callback<void>((resume) => {
-      if (!server.listening) {
-        resume(Effect.void);
-        return Effect.void;
-      }
-      server.close(() => resume(Effect.void));
-      return Effect.void;
-    }),
-);
+      return;
+    }
+    if (request.url === "/rpc") {
+      response.writeHead(200, { "content-type": "application/x-ndjson", connection: "close" });
+      response.end(frame);
+      return;
+    }
+    response.writeHead(404, { connection: "close" });
+    response.end();
+  });
+
+const startBusyServer = startStubServer((request, response) => {
+  if (request.url === "/owner") {
+    response.writeHead(200, { "content-type": "application/json", connection: "close" });
+    response.end(JSON.stringify(remoteOwner("busy-session")));
+    return;
+  }
+  if (request.url === "/stop") {
+    response.writeHead(423, { "content-type": "application/json", connection: "close" });
+    response.end(JSON.stringify({ error: "busy" }));
+    return;
+  }
+  response.writeHead(404, { connection: "close" });
+  response.end();
+});
 
 const startDisconnectServer = (
   requestStarted: Deferred.Deferred<void>,
   requestClosed: Deferred.Deferred<void>,
 ) =>
-  Effect.acquireRelease(
-    Effect.callback<
-      {
-        readonly server: Server;
-        readonly endpoint: {
-          readonly hostname: string;
-          readonly port: number;
-          readonly url: string;
-        };
-      },
-      Error
-    >((resume) => {
-      const server = createServer((request, response) => {
-        if (request.url === "/owner") {
-          response.writeHead(200, { "content-type": "application/json", connection: "close" });
-          response.end(
-            JSON.stringify({
-              controlProtocol: "supabase-stack-control",
-              controlProtocolVersion: 1,
-              ownershipId: ownerId,
-              ownerSessionId: "disconnect-session",
-              kind: "supervisor",
-              state: "running",
-              ready: true,
-              daemonCliVersion: "test",
-            }),
-          );
-          return;
-        }
-        if (request.url === "/rpc") {
-          Deferred.doneUnsafe(requestStarted, Effect.void);
-          request.once("close", () => {
-            Deferred.doneUnsafe(requestClosed, Effect.void);
-            response.destroy();
-          });
-          return;
-        }
-        response.writeHead(404, { connection: "close" });
-        response.end();
+  startStubServer((request, response) => {
+    if (request.url === "/owner") {
+      response.writeHead(200, { "content-type": "application/json", connection: "close" });
+      response.end(
+        JSON.stringify({
+          controlProtocol: "supabase-stack-control",
+          controlProtocolVersion: 1,
+          ownershipId: ownerId,
+          ownerSessionId: "disconnect-session",
+          kind: "supervisor",
+          state: "running",
+          ready: true,
+          daemonCliVersion: "test",
+        }),
+      );
+      return;
+    }
+    if (request.url === "/rpc") {
+      Deferred.doneUnsafe(requestStarted, Effect.void);
+      request.once("close", () => {
+        Deferred.doneUnsafe(requestClosed, Effect.void);
+        response.destroy();
       });
-      server.once("error", (error) => resume(Effect.fail(error)));
-      server.listen(0, "127.0.0.1", () => {
-        const address = server.address();
-        if (address === null || typeof address === "string") {
-          resume(Effect.fail(new Error("disconnect RPC test server did not expose an address")));
-          return;
-        }
-        resume(
-          Effect.succeed({
-            server,
-            endpoint: {
-              hostname: "127.0.0.1",
-              port: address.port,
-              url: `http://127.0.0.1:${address.port}`,
-            },
-          }),
-        );
-      });
-      return Effect.sync(() => {
-        if (server.listening) server.close();
-      });
-    }),
-    ({ server }) =>
-      Effect.callback<void>((resume) => {
-        if (!server.listening) {
-          resume(Effect.void);
-          return Effect.void;
-        }
-        server.close(() => resume(Effect.void));
-        return Effect.void;
-      }),
-  );
+      return;
+    }
+    response.writeHead(404, { connection: "close" });
+    response.end();
+  });
 
 it.live("executes every Stack operation over the same-version RPC endpoint", () =>
   live(
@@ -300,6 +219,7 @@ it.live("executes every Stack operation over the same-version RPC endpoint", () 
           daemonCliVersion: "test",
         });
         let calls = 0;
+        const readyCalls: Array<{ readonly name?: string; readonly options?: unknown }> = [];
         const logReleased = Deferred.makeUnsafe<void>();
         const activeLogStarted = Deferred.makeUnsafe<void>();
         const activeLogReleased = Deferred.makeUnsafe<void>();
@@ -323,20 +243,15 @@ it.live("executes every Stack operation over the same-version RPC endpoint", () 
           serviceEndpoints: {},
         };
         const logs = [{ timestamp: 1, service: "auth", stream: "stdout" as const, line: "ready" }];
-        const stack: Stack["Service"] = {
+        const counted = () =>
+          Effect.sync(() => {
+            calls += 1;
+          });
+        const stack: Stack["Service"] = makeTestStack({
           getInfo: () => Effect.succeed(info),
-          start: () =>
-            Effect.sync(() => {
-              calls += 1;
-            }),
-          stop: () =>
-            Effect.sync(() => {
-              calls += 1;
-            }),
-          dispose: () =>
-            Effect.sync(() => {
-              calls += 1;
-            }),
+          start: counted,
+          stop: counted,
+          dispose: counted,
           startService: (name) => {
             switch (name) {
               case "unavailable":
@@ -360,27 +275,13 @@ it.live("executes every Stack operation over the same-version RPC endpoint", () 
                   new StackReadinessError({ target: "auth", timeoutMs: 1234, detail: "timed out" }),
                 );
               default:
-                return Effect.sync(() => {
-                  calls += 1;
-                });
+                return counted();
             }
           },
-          stopService: () =>
-            Effect.sync(() => {
-              calls += 1;
-            }),
-          restartService: () =>
-            Effect.sync(() => {
-              calls += 1;
-            }),
-          reloadFunctions: () =>
-            Effect.sync(() => {
-              calls += 1;
-            }),
-          reloadEdgeRuntime: () =>
-            Effect.sync(() => {
-              calls += 1;
-            }),
+          stopService: counted,
+          restartService: counted,
+          reloadFunctions: counted,
+          reloadEdgeRuntime: counted,
           getState: (name) =>
             name === "missing"
               ? Effect.fail(new ServiceNotFoundError({ name }))
@@ -388,13 +289,15 @@ it.live("executes every Stack operation over the same-version RPC endpoint", () 
           getAllStates: () => Effect.succeed([serviceState]),
           stateChanges: () => Effect.succeed(Stream.fromIterable([serviceState])),
           allStateChanges: () => Stream.fromIterable([serviceState]),
-          waitReady: () =>
+          waitReady: (name, options) =>
             Effect.sync(() => {
               calls += 1;
+              readyCalls.push({ name, options });
             }),
-          waitAllReady: () =>
+          waitAllReady: (options) =>
             Effect.sync(() => {
               calls += 1;
+              readyCalls.push({ options });
             }),
           subscribeLogs: () => {
             const active = logSubscriptions++ > 0;
@@ -414,7 +317,7 @@ it.live("executes every Stack operation over the same-version RPC endpoint", () 
           subscribeAllLogs: () => Stream.fromIterable(logs),
           logHistory: () => Effect.succeed(logs),
           logHistoryAll: () => Effect.succeed(logs),
-        };
+        });
         yield* lifecycle.publishStack(stack);
         const application = {
           app: yield* makeSupervisorControlApplication(lifecycle),
@@ -426,7 +329,7 @@ it.live("executes every Stack operation over the same-version RPC endpoint", () 
         });
         if (!isControlOwnership(owner)) throw new Error("expected ownership");
         yield* lifecycle.setClose(owner.close);
-        const ownerStatus = supervisorStatus(yield* owner.ownerStatus);
+        const ownerStatus = supervisorStatus(yield* lifecycle.currentStatus);
         const rpcPaths: Array<string> = [];
         const recordingTransportLayer = Layer.effect(
           HttpTransportClient,
@@ -543,6 +446,15 @@ it.live("executes every Stack operation over the same-version RPC endpoint", () 
           expect(yield* Stream.runCollect(remote.allStateChanges())).toEqual([serviceState]);
           yield* remote.waitReady("auth");
           yield* remote.waitAllReady();
+          const finiteReady = { mode: "finite" as const, timeoutMs: 1234 };
+          yield* remote.waitReady("auth", finiteReady);
+          yield* remote.waitAllReady(finiteReady);
+          expect(readyCalls).toEqual([
+            { name: "auth", options: { mode: "inherit" } },
+            { options: { mode: "inherit" } },
+            { name: "auth", options: finiteReady },
+            { options: finiteReady },
+          ]);
           expect(yield* remote.logHistory("auth")).toEqual(logs);
           expect(yield* remote.logHistoryAll()).toEqual(logs);
           expect(
@@ -638,7 +550,7 @@ it.live("fences stale RPC clients after deterministic endpoint replacement", () 
           });
 
         const first = yield* makeOwner(sessionA, "test");
-        const firstStatus = supervisorStatus(yield* first.owner.ownerStatus);
+        const firstStatus = supervisorStatus(yield* first.lifecycle.currentStatus);
         const staleLayer = RemoteStack.layer(first.owner.endpoint, {
           cliVersion: "test",
           owner: {
@@ -662,7 +574,7 @@ it.live("fences stale RPC clients after deterministic endpoint replacement", () 
         }
         expect(handlerCalls).toBe(1);
 
-        const replacementStatus = supervisorStatus(yield* replacement.owner.ownerStatus);
+        const replacementStatus = supervisorStatus(yield* replacement.lifecycle.currentStatus);
         const replacementLayer = RemoteStack.layer(replacement.owner.endpoint, {
           cliVersion: "test",
           owner: {
@@ -1425,7 +1337,7 @@ it.live("interrupts the real RPC handler fiber when the client request is cancel
         });
         if (!isControlOwnership(owner)) throw new Error("expected ownership");
         yield* lifecycle.setClose(owner.close);
-        const ownerStatus = supervisorStatus(yield* owner.ownerStatus);
+        const ownerStatus = supervisorStatus(yield* lifecycle.currentStatus);
         const layer = RemoteStack.layer(owner.endpoint, {
           cliVersion: "test",
           owner: {

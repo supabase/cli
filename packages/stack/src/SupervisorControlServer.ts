@@ -2,7 +2,7 @@ import { Effect, Layer } from "effect";
 import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
 import * as RpcServer from "effect/unstable/rpc/RpcServer";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import { ControlStopRequestSchema } from "./DaemonProtocol.ts";
+import { ControlStopRequestSchema, matchesControlSession } from "./DaemonProtocol.ts";
 import { matchesStackRpcFence, StackRpc } from "./StackRpc.ts";
 import {
   StackLaunchUpdater,
@@ -60,10 +60,7 @@ export const makeSupervisorControlApplication = (
         Effect.gen(function* () {
           const request = yield* HttpServerRequest.schemaBodyJson(ControlStopRequestSchema);
           const status = yield* session.currentStatus;
-          if (
-            request.ownershipId !== status.ownershipId ||
-            request.ownerSessionId !== status.ownerSessionId
-          ) {
+          if (!matchesControlSession(request, status)) {
             return HttpServerResponse.jsonUnsafe({ error: "conflict" }, { status: 409 });
           }
           // Submit ownership of the stop transaction before returning 202. The
@@ -84,7 +81,3 @@ export const makeSupervisorControlApplication = (
     const application = yield* HttpRouter.toHttpEffect(HttpRouter.addAll(routes));
     return application.pipe(Effect.orDie);
   });
-
-export const SupervisorControlServer = {
-  make: makeSupervisorControlApplication,
-};

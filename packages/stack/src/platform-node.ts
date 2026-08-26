@@ -1,12 +1,13 @@
 import { NodeServices } from "@effect/platform-node";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-import { createServer } from "node:http";
-import * as Http from "node:http";
+import { createServer, type Server } from "node:http";
 import { fileURLToPath } from "node:url";
 import { Effect, Layer, Scope, Schema } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import type { PlatformFactory } from "./createStack.ts";
 import { readControlOwner } from "./ControlHttpReader.ts";
+import { requestControlStop } from "./ControlStopClient.ts";
+import { errorCode } from "./error-code.ts";
 import { STACK_RPC_PATH } from "./StackRpc.ts";
 import {
   CONTROL_STATUS_PATH,
@@ -14,29 +15,14 @@ import {
   ControlStopRequestSchema,
   type ControlStopRequest,
   ControlBindError,
-  ControlStopConflictError,
-  ControlMaintenanceBusyError,
   ControlTransport,
-  ControlTransportError,
   type ControlOwnerStatus,
   type ControlEndpoint,
   type ControlApplication,
 } from "./managed/control.ts";
 
-const errorCode = (cause: unknown): string | undefined => {
-  if (typeof cause !== "object" || cause === null) return undefined;
-  if ("code" in cause && typeof cause.code === "string") return cause.code;
-  if ("cause" in cause) return errorCode(cause.cause);
-  return undefined;
-};
-
-const isDefinitivelyUnreachable = (cause: unknown): boolean => {
-  const code = errorCode(cause);
-  return code === "ECONNREFUSED";
-};
-
 const closeControlServer = (
-  server: Http.Server,
+  server: Server,
   interruptRpcRequests: () => void = () => {},
 ): Effect.Effect<void> =>
   Effect.callback<void>((resume) => {
@@ -189,113 +175,7 @@ const controlTransport: ControlTransport["Service"] = {
     );
   },
   read: readControlOwner,
-  requestStop: (endpoint: ControlEndpoint, stopRequest: ControlStopRequest) =>
-    Effect.callback<void, unknown>((resume) => {
-      let response: Http.IncomingMessage | undefined;
-      let onEnd: (() => void) | undefined;
-      let onResponseError: ((cause: Error) => void) | undefined;
-      let onResponseAborted: (() => void) | undefined;
-      let onResponseClose: (() => void) | undefined;
-      let settled = false;
-      let cleanup = () => {};
-      let dispose = () => {};
-      const finish = (effect: Effect.Effect<void, unknown>, shouldDispose = false) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        if (shouldDispose) dispose();
-        resume(effect);
-      };
-      const onRequestError = (cause: Error) => finish(Effect.fail(cause), true);
-      const request = Http.request(
-        {
-          host: endpoint.hostname,
-          port: endpoint.port,
-          path: CONTROL_STOP_PATH,
-          method: "POST",
-          agent: false,
-        },
-        (incoming) => {
-          response = incoming;
-          let ended = false;
-          let responseAborted = false;
-          onEnd = () => {
-            ended = true;
-            const status = incoming.statusCode ?? 500;
-            if (status >= 200 && status < 300) {
-              finish(Effect.void);
-            } else if (status === 409) {
-              finish(Effect.fail(new ControlStopConflictError({ endpoint })), true);
-            } else if (status === 423) {
-              finish(Effect.fail(new ControlMaintenanceBusyError({ endpoint })), true);
-            } else {
-              finish(Effect.fail(new Error(`Control stop request returned ${status}`)), true);
-            }
-          };
-          onResponseError = (cause) => finish(Effect.fail(cause), true);
-          onResponseAborted = () => {
-            responseAborted = true;
-          };
-          onResponseClose = () => {
-            if (responseAborted || !ended) {
-              finish(Effect.fail(new Error("Control stop response closed before end")), true);
-            }
-          };
-          incoming.once("end", onEnd);
-          incoming.once("error", onResponseError);
-          incoming.once("aborted", onResponseAborted);
-          incoming.once("close", onResponseClose);
-          incoming.resume();
-        },
-      );
-      dispose = () => {
-        response?.destroy();
-        request.destroy();
-      };
-      cleanup = () => {
-        request.removeListener("error", onRequestError);
-        if (response !== undefined) {
-          if (onEnd !== undefined) response.removeListener("end", onEnd);
-          if (onResponseError !== undefined) response.removeListener("error", onResponseError);
-          if (onResponseAborted !== undefined) {
-            response.removeListener("aborted", onResponseAborted);
-          }
-          if (onResponseClose !== undefined) response.removeListener("close", onResponseClose);
-        }
-      };
-      request.once("error", onRequestError);
-      const body = JSON.stringify(stopRequest);
-      request.setHeader("content-type", "application/json");
-      request.setHeader("content-length", Buffer.byteLength(body));
-      request.end(body);
-      return Effect.callback<void>((resumeCancellation) => {
-        const onClose = () => {
-          cleanup();
-          resumeCancellation(Effect.void);
-        };
-        settled = true;
-        request.once("close", onClose);
-        dispose();
-        return Effect.sync(() => {
-          request.removeListener("close", onClose);
-          cleanup();
-        });
-      });
-    }).pipe(
-      Effect.timeoutOrElse({
-        duration: 500,
-        orElse: () => Effect.fail(new Error("Control stop request timed out")),
-      }),
-      Effect.mapError((cause) =>
-        cause instanceof ControlStopConflictError || cause instanceof ControlMaintenanceBusyError
-          ? cause
-          : new ControlTransportError({
-              endpoint,
-              reason: isDefinitivelyUnreachable(cause) ? "unreachable" : "transport",
-              cause,
-            }),
-      ),
-    ),
+  requestStop: requestControlStop,
 };
 
 export const controlTransportLayer = Layer.succeed(ControlTransport, controlTransport);

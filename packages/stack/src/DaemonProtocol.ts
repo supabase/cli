@@ -64,3 +64,14 @@ export const ControlStopRequestSchema = Schema.Struct({
 
 export type ControlStopRequest = typeof ControlStopRequestSchema.Type;
 export type ControlStopIntent = ControlStopRequest["intent"];
+
+export interface ControlSessionFence {
+  readonly ownershipId: string;
+  readonly ownerSessionId: string;
+}
+
+export const matchesControlSession = (
+  actual: ControlSessionFence,
+  expected: ControlSessionFence,
+): boolean =>
+  actual.ownershipId === expected.ownershipId && actual.ownerSessionId === expected.ownerSessionId;

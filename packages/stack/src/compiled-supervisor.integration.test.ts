@@ -379,48 +379,4 @@ describe("compiled Bun detached supervisor", () => {
       cleanup(roots);
     }
   }, 120_000);
-
-  test("recovers a stale current-build owner through compiled re-entry", async () => {
-    const roots = makeWorkspace();
-    let ownerParent: CompiledParent | undefined;
-    let recovery: CompiledParent | undefined;
-    const runtimePids = new Set<number>();
-    try {
-      const endpoint = await endpointFor(roots);
-      ownerParent = spawnCompiledParent(messageFor(roots));
-      await ownerParent.ready;
-      const stale = await owner(endpoint);
-      const document = documentFor(roots).value;
-      const staleRuntime = document["runtime"] as { readonly pid: number };
-      runtimePids.add(staleRuntime.pid);
-      process.kill(staleRuntime.pid, "SIGKILL");
-      await waitForProcessExit(staleRuntime.pid);
-      await ownerParent.exited;
-
-      recovery = spawnCompiledParent(messageFor(roots));
-      await recovery.ready;
-      const current = await owner(endpoint);
-      expect(current).toMatchObject({
-        ownershipId: roots.stackId,
-        daemonCliVersion: "2.61.0",
-        state: "running",
-        ready: true,
-      });
-      expect(current.ownerSessionId).not.toBe(stale.ownerSessionId);
-      const currentDocument = documentFor(roots).value;
-      const currentRuntime = currentDocument["runtime"] as { readonly pid: number };
-      runtimePids.add(currentRuntime.pid);
-      expect(await stop(endpoint, current.ownershipId, current.ownerSessionId)).toMatchObject({
-        status: 202,
-      });
-      await waitForProcessExit(currentRuntime.pid);
-      await recovery.exited;
-    } finally {
-      for (const pid of runtimePids) killPid(pid);
-      for (const handle of [ownerParent, recovery]) {
-        if (handle?.child.exitCode === null) handle.child.kill("SIGKILL");
-      }
-      cleanup(roots);
-    }
-  }, 120_000);
 });

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Stack } from "./Stack.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 import { SupervisorSession } from "./SupervisorSession.ts";
+import { makeTestStack } from "./testing.ts";
 
 const state = new StackServiceState({
   name: "auth",
@@ -14,27 +15,14 @@ const state = new StackServiceState({
   error: null,
 });
 
-const makeStack = (events: Array<string>): Stack["Service"] => ({
-  getInfo: () => Effect.die("unused"),
-  start: () => Effect.void,
-  stop: () => Effect.sync(() => events.push("stop")),
-  dispose: () => Effect.sync(() => events.push("dispose")),
-  startService: () => Effect.void,
-  stopService: () => Effect.void,
-  restartService: () => Effect.void,
-  reloadFunctions: () => Effect.void,
-  reloadEdgeRuntime: () => Effect.void,
-  getState: () => Effect.succeed(state),
-  getAllStates: () => Effect.succeed([state]),
-  stateChanges: () => Effect.succeed(Stream.empty),
-  allStateChanges: () => Stream.empty,
-  waitReady: () => Effect.void,
-  waitAllReady: () => Effect.void,
-  subscribeLogs: () => Stream.empty,
-  subscribeAllLogs: () => Stream.empty,
-  logHistory: () => Effect.succeed([]),
-  logHistoryAll: () => Effect.succeed([]),
-});
+const makeStack = (events: Array<string>): Stack["Service"] =>
+  makeTestStack({
+    getInfo: () => Effect.die("unused"),
+    stop: () => Effect.sync(() => events.push("stop")),
+    dispose: () => Effect.sync(() => events.push("dispose")),
+    getState: () => Effect.succeed(state),
+    getAllStates: () => Effect.succeed([state]),
+  });
 
 const withSession = <A>(
   use: (session: Awaited<ReturnType<typeof makeSession>>) => Promise<A>,
@@ -89,7 +77,6 @@ describe("SupervisorSession", () => {
       await Effect.runPromise(Deferred.await(startupEntered));
       await Effect.runPromise(Fiber.interrupt(run));
       expect(events).toEqual(["stopped:explicit", "close-owner"]);
-      expect(await Effect.runPromise(controller.service.currentState)).toEqual({ phase: "closed" });
     }));
 
   it("runs explicit cleanup when the session is externally interrupted while running", () =>
@@ -115,33 +102,7 @@ describe("SupervisorSession", () => {
       expect(events).toEqual(["stop", "dispose", "stopped:explicit", "close-owner"]);
     }));
 
-  it("acknowledges stop after publishing stopping and closes ownership last", () =>
-    withSession(async ({ controller }) => {
-      const events: Array<string> = [];
-      const startup = Deferred.makeUnsafe<Stack["Service"]>();
-      const run = Effect.runFork(
-        controller.run({
-          startup: () => Deferred.await(startup),
-          stack: (stack) => stack,
-          awaitDisposed: () => Effect.never,
-          onRunning: () => Effect.void,
-          onStopped: () => Effect.sync(() => events.push("persist-stopped")),
-          onFailure: () => Effect.void,
-          closeOwner: Effect.sync(() => events.push("close-owner")),
-          errorDetail: () => "failed",
-        }),
-      );
-
-      await Effect.runPromise(controller.service.submitShutdown);
-      expect(await Effect.runPromise(controller.service.currentStatus)).toMatchObject({
-        state: "stopping",
-        ready: false,
-      });
-      await Effect.runPromise(Fiber.join(run));
-      expect(events).toEqual(["persist-stopped", "close-owner"]);
-    }));
-
-  it("waits for interrupted startup finalizers before closing ownership", () =>
+  it("acknowledges stopping before waiting for startup finalizers and closes ownership last", () =>
     withSession(async ({ controller }) => {
       const events: Array<string> = [];
       const startupEntered = Deferred.makeUnsafe<void>();
@@ -170,11 +131,12 @@ describe("SupervisorSession", () => {
       );
 
       await Effect.runPromise(Deferred.await(startupEntered));
-      await Effect.runPromise(controller.service.submitShutdown);
+      await Effect.runPromise(controller.service.submitShutdownWithIntent("explicit"));
       await Effect.runPromise(Deferred.await(finalizerEntered));
       expect(events).toEqual(["startup-finalizer"]);
       expect(await Effect.runPromise(controller.service.currentStatus)).toMatchObject({
         state: "stopping",
+        ready: false,
       });
       await Effect.runPromise(Deferred.succeed(releaseFinalizer, undefined));
       await Effect.runPromise(Fiber.join(run));
@@ -234,7 +196,7 @@ describe("SupervisorSession", () => {
       );
 
       await Effect.runPromise(Deferred.await(running));
-      await Effect.runPromise(controller.service.submitShutdown);
+      await Effect.runPromise(controller.service.submitShutdownWithIntent("explicit"));
       const exit = await Effect.runPromise(Fiber.await(run));
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(events).toEqual(["stop", "dispose", "persist-stopped", "close-owner"]);
@@ -290,9 +252,9 @@ describe("SupervisorSession", () => {
       await Effect.runPromise(Deferred.await(terminalEntered));
       const stopAccepted = Deferred.makeUnsafe<void>();
       Effect.runFork(
-        controller.service.submitShutdown.pipe(
-          Effect.andThen(Deferred.succeed(stopAccepted, undefined)),
-        ),
+        controller.service
+          .submitShutdownWithIntent("explicit")
+          .pipe(Effect.andThen(Deferred.succeed(stopAccepted, undefined))),
       );
       await Effect.runPromise(Effect.yieldNow);
       expect(await Effect.runPromise(Deferred.isDone(stopAccepted))).toBe(true);
@@ -325,7 +287,6 @@ describe("SupervisorSession", () => {
       if (Exit.isFailure(exit)) {
         expect(Predicate.isTagged(Cause.squash(exit.cause), "StackUnavailableError")).toBe(true);
       }
-      expect(await Effect.runPromise(controller.service.currentState)).toEqual({ phase: "closed" });
       const unavailable = await Effect.runPromise(Effect.flip(controller.service.runtimeStack));
       expect(Predicate.isTagged(unavailable, "StackUnavailableError")).toBe(true);
       if (Predicate.isTagged(unavailable, "StackUnavailableError")) {

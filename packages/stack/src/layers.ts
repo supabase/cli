@@ -201,14 +201,11 @@ const launchManagedSupervisor = (
     );
   });
 
-const managedSupervisorLayer = (input: ManagedDaemonConfigInput, daemonEntryPoint: string) =>
+/** Fork the unified supervisor and return a RemoteStack layer connected to it. */
+export const daemonLayer = (input: ManagedDaemonConfigInput, daemonEntryPoint: string) =>
   managedSupervisorStartMessage(input).pipe(
     Effect.flatMap(({ message }) => launchManagedSupervisor(message, daemonEntryPoint)),
   );
-
-/** Fork the unified supervisor and return a RemoteStack layer connected to it. */
-export const daemonLayer = (input: ManagedDaemonConfigInput, daemonEntryPoint: string) =>
-  managedSupervisorLayer(input, daemonEntryPoint);
 
 /** Explicitly authorize a full stop/start when the current owner is incompatible. */
 export const restartManagedStackForUpgrade = (

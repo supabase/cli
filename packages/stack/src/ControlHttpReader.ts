@@ -7,15 +7,9 @@ import {
   type ControlEndpoint,
   type ControlOwnerReader,
 } from "./managed/control.ts";
+import { errorCode } from "./error-code.ts";
 
 const MAX_CONTROL_RESPONSE_BYTES = 64 * 1024;
-
-const errorCode = (cause: unknown): string | undefined => {
-  if (typeof cause !== "object" || cause === null) return undefined;
-  if ("code" in cause && typeof cause.code === "string") return cause.code;
-  if ("cause" in cause) return errorCode(cause.cause);
-  return undefined;
-};
 
 const readError = (
   endpoint: ControlEndpoint,

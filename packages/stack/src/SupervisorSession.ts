@@ -20,11 +20,11 @@ import {
 import type { Stack } from "./Stack.ts";
 import { StackUnavailableError } from "./errors.ts";
 
-export type SupervisorSessionState =
+type SupervisorSessionState =
   | { readonly phase: "starting" }
   | { readonly phase: "running"; readonly stack: Stack["Service"] }
-  | { readonly phase: "stopping"; readonly stack?: Stack["Service"] }
-  | { readonly phase: "failed"; readonly detail: string; readonly stack?: Stack["Service"] }
+  | { readonly phase: "stopping" }
+  | { readonly phase: "failed"; readonly detail: string }
   | { readonly phase: "closed" };
 
 type SessionCommand =
@@ -63,7 +63,6 @@ const cleanupFailures = (
 export class SupervisorSession extends Context.Service<
   SupervisorSession,
   {
-    readonly currentState: Effect.Effect<SupervisorSessionState>;
     readonly currentStatus: Effect.Effect<ControlSupervisorStatus>;
     readonly runtimeStack: Effect.Effect<Stack["Service"], StackUnavailableError>;
     readonly interruptWhenStopping: <A, E, R>(
@@ -72,7 +71,6 @@ export class SupervisorSession extends Context.Service<
     readonly interruptStreamWhenStopping: <A, E, R>(
       stream: Stream.Stream<A, E, R>,
     ) => Stream.Stream<A, E | StackUnavailableError, R>;
-    readonly submitShutdown: Effect.Effect<void, never>;
     readonly submitShutdownWithIntent: (intent: ControlStopIntent) => Effect.Effect<void, never>;
   }
 >()("stack/SupervisorSession") {
@@ -101,7 +99,6 @@ export class SupervisorSession extends Context.Service<
         daemonCliVersion: input.daemonCliVersion,
       });
       const service: SupervisorSession["Service"] = {
-        currentState: Ref.get(stateRef),
         currentStatus: Ref.get(stateRef).pipe(Effect.map(status)),
         runtimeStack: Ref.get(stateRef).pipe(
           Effect.flatMap((state) =>
@@ -128,9 +125,6 @@ export class SupervisorSession extends Context.Service<
               Deferred.await(terminalSignal).pipe(Effect.flatMap((error) => Effect.fail(error))),
             ),
           ),
-        submitShutdown: Queue.offer(commands, { _tag: "StopRequested", intent: "explicit" }).pipe(
-          Effect.andThen(Deferred.await(terminalSignal).pipe(Effect.asVoid)),
-        ),
         submitShutdownWithIntent: (intent) =>
           Queue.offer(commands, { _tag: "StopRequested", intent }).pipe(
             Effect.andThen(Deferred.await(terminalSignal).pipe(Effect.asVoid)),
@@ -260,11 +254,7 @@ export class SupervisorSession extends Context.Service<
                       const runningExit = yield* Effect.exit(runInput.onRunning(runtime));
                       if (Exit.isFailure(runningExit)) {
                         const detail = runInput.errorDetail(runningExit.cause);
-                        yield* Ref.set(stateRef, {
-                          phase: "failed",
-                          detail,
-                          stack: runInput.stack(runtime),
-                        });
+                        yield* Ref.set(stateRef, { phase: "failed", detail });
                         yield* cleanup({
                           terminal: runInput.onFailure(detail),
                           reason: new StackUnavailableError({ phase: "failed", detail }),
@@ -282,12 +272,7 @@ export class SupervisorSession extends Context.Service<
                     }),
                   StopRequested: (command) =>
                     Effect.gen(function* () {
-                      const current = yield* Ref.get(stateRef);
-                      const stack = current.phase === "running" ? current.stack : undefined;
-                      yield* Ref.set(stateRef, {
-                        phase: "stopping",
-                        ...(stack === undefined ? {} : { stack }),
-                      });
+                      yield* Ref.set(stateRef, { phase: "stopping" });
                       yield* cleanup({
                         terminal: runInput.onStopped(command.intent),
                         reason: new StackUnavailableError({ phase: "stopping" }),
@@ -297,12 +282,7 @@ export class SupervisorSession extends Context.Service<
                   RuntimeDisposed: () =>
                     Effect.gen(function* () {
                       const detail = "Local stack disposed unexpectedly";
-                      const stack = runtime === undefined ? undefined : runInput.stack(runtime);
-                      yield* Ref.set(stateRef, {
-                        phase: "failed",
-                        detail,
-                        ...(stack === undefined ? {} : { stack }),
-                      });
+                      yield* Ref.set(stateRef, { phase: "failed", detail });
                       yield* cleanup({
                         terminal: runInput.onFailure(detail),
                         reason: new StackUnavailableError({ phase: "failed", detail }),

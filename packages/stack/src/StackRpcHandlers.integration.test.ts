@@ -24,6 +24,7 @@ import { makeSupervisorSessionFixture } from "../tests/helpers/SupervisorSession
 import { StackServiceState } from "./StackServiceState.ts";
 import { stackRpcFenceHeaders } from "./StackRpc.ts";
 import { isControlSupervisorStatus, type ControlOwnerStatus } from "./DaemonProtocol.ts";
+import { makeTestStack } from "./testing.ts";
 
 const OWNER_ID = "e".repeat(64);
 
@@ -52,7 +53,7 @@ const logs = [
   { timestamp: 6, service: "storage", stream: "stdout" as const, line: "storage ready" },
 ];
 
-const stack: Stack["Service"] = {
+const stack: Stack["Service"] = makeTestStack({
   getInfo: () =>
     Effect.succeed({
       url: "http://127.0.0.1:54321",
@@ -63,12 +64,6 @@ const stack: Stack["Service"] = {
       serviceRoleJwt: "role",
       serviceEndpoints: {},
     }),
-  start: () => Effect.void,
-  stop: () => Effect.void,
-  dispose: () => Effect.void,
-  startService: () => Effect.void,
-  stopService: () => Effect.void,
-  restartService: () => Effect.void,
   reloadFunctions: () =>
     Effect.fail(
       new StackBuildError({
@@ -76,7 +71,6 @@ const stack: Stack["Service"] = {
         reason: "invalid_config",
       }),
     ),
-  reloadEdgeRuntime: () => Effect.void,
   getState: (name) =>
     name === "postgres" || name === "auth"
       ? Effect.succeed(serviceState(name))
@@ -84,8 +78,6 @@ const stack: Stack["Service"] = {
   getAllStates: () => Effect.succeed([serviceState("postgres"), serviceState("auth")]),
   stateChanges: (name) => Effect.succeed(Stream.fromIterable([serviceState(name)])),
   allStateChanges: () => Stream.fromIterable([serviceState("postgres"), serviceState("auth")]),
-  waitReady: () => Effect.void,
-  waitAllReady: () => Effect.void,
   subscribeLogs: (name) => Stream.fromIterable(logs.filter((entry) => entry.service === name)),
   subscribeAllLogs: (services) =>
     Stream.fromIterable(
@@ -102,7 +94,7 @@ const stack: Stack["Service"] = {
         : logs.filter((entry) => services.includes(entry.service))
       ).slice(-(limit ?? 100)),
     ),
-};
+});
 
 it.live("serves handler behavior over the RPC boundary", () =>
   Effect.scoped(
@@ -122,7 +114,7 @@ it.live("serves handler behavior over the RPC boundary", () =>
       });
       if (!isControlOwnership(owner)) throw new Error("expected control ownership");
       yield* lifecycle.setClose(owner.close);
-      const status = supervisorStatus(yield* owner.ownerStatus);
+      const status = supervisorStatus(yield* lifecycle.currentStatus);
       const layer = RemoteStack.layer(owner.endpoint, {
         cliVersion: "test",
         owner: {
@@ -220,7 +212,7 @@ it.live("rejects launch updates after supervisor shutdown begins", () =>
       });
       if (!isControlOwnership(owner)) throw new Error("expected control ownership");
       yield* lifecycle.setClose(owner.close);
-      const status = supervisorStatus(yield* owner.ownerStatus);
+      const status = supervisorStatus(yield* lifecycle.currentStatus);
       const stopStarted = yield* Deferred.make<void>();
       const releaseStop = yield* Deferred.make<void>();
       yield* lifecycle.publishStack({
@@ -232,7 +224,7 @@ it.live("rejects launch updates after supervisor shutdown begins", () =>
       });
 
       yield* Effect.gen(function* () {
-        yield* lifecycle.submitShutdown;
+        yield* lifecycle.submitShutdownWithIntent("explicit");
         yield* Deferred.await(stopStarted);
         const unavailable = yield* Effect.flip(
           updateRemoteLaunch(
@@ -290,7 +282,7 @@ it.live("propagates a failure terminal reason to an active state stream", () =>
       });
       if (!isControlOwnership(owner)) throw new Error("expected control ownership");
       yield* lifecycle.setClose(owner.close);
-      const status = supervisorStatus(yield* owner.ownerStatus);
+      const status = supervisorStatus(yield* lifecycle.currentStatus);
       const layer = RemoteStack.layer(owner.endpoint, {
         cliVersion: "test",
         owner: {
@@ -364,7 +356,7 @@ it.live("interrupts an in-flight runtime mutation before stopping the stack", ()
       });
       if (!isControlOwnership(owner)) throw new Error("expected control ownership");
       yield* lifecycle.setClose(owner.close);
-      const status = supervisorStatus(yield* owner.ownerStatus);
+      const status = supervisorStatus(yield* lifecycle.currentStatus);
       const layer = RemoteStack.layer(owner.endpoint, {
         cliVersion: "test",
         owner: {

@@ -83,7 +83,7 @@ export class StackBuildError extends Data.TaggedError("StackBuildError")<{
 
 /** Runtime RPC is unavailable until the supervisor publishes a running stack. */
 export class StackUnavailableError extends Data.TaggedError("StackUnavailableError")<{
-  readonly phase: "starting" | "stopping" | "failed" | "deleting";
+  readonly phase: "starting" | "stopping" | "failed";
   readonly detail?: string;
 }> {}
 

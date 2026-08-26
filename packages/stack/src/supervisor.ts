@@ -527,16 +527,7 @@ const makeRunManagedExecution = (
           }),
         );
       }
-      const discovery = yield* manager.ensureWorkspace(input.workspacePath);
-      const stackId = deriveStackId(discovery.identity, input.stackName);
-      if (stackId !== input.stackId) {
-        return yield* Effect.fail(
-          new SupervisorStartError({
-            message: "Workspace identity changed before supervisor attach",
-          }),
-        );
-      }
-      const existing = yield* manager.inspectStack(stackId);
+      const existing = yield* manager.inspectStack(input.stackId);
       const persistedRuntime: StackRuntimeSelection | undefined =
         existing === undefined ? undefined : runtimeSelectionForLaunch(existing.launch);
       if (
@@ -553,7 +544,7 @@ const makeRunManagedExecution = (
       if (attachedStatus.daemonCliVersion !== input.cliVersion) {
         return yield* Effect.fail(
           new DaemonUpgradeRequired({
-            stackId,
+            stackId: input.stackId,
             oldCliVersion: attachedStatus.daemonCliVersion,
             newCliVersion: input.cliVersion,
             state: attachedStatus.state,
@@ -562,7 +553,7 @@ const makeRunManagedExecution = (
         );
       } else {
         const reacquireInitialAcquisition = () =>
-          reacquireAfterDeath(stackId).pipe(
+          reacquireAfterDeath(input.stackId).pipe(
             Effect.tap((next) =>
               Effect.sync(() => {
                 initialAcquisition = next;

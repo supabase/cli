@@ -237,6 +237,18 @@ const callRpc = <A, E extends StackRpcFailure, R>(
     ),
   );
 
+const fastCall = <A, E extends StackRpcFailure, R>(
+  endpoint: ControlEndpoint,
+  procedure: string,
+  effect: Effect.Effect<A, E, R>,
+) =>
+  callRpc(endpoint, procedure, effect).pipe(
+    Effect.timeout("30 seconds"),
+    Effect.catchTag("TimeoutError", (cause) =>
+      Effect.fail(transportError(endpoint, procedure, cause)),
+    ),
+  );
+
 const streamRpc = <A, E extends StackRpcFailure, R>(
   endpoint: ControlEndpoint,
   procedure: string,
@@ -284,16 +296,6 @@ export const RemoteStack = {
           procedure: string,
           effect: Effect.Effect<A, E, R>,
         ) => callRpc(endpoint, procedure, effect);
-        const fastCall = <A, E extends StackRpcFailure, R>(
-          procedure: string,
-          effect: Effect.Effect<A, E, R>,
-        ) =>
-          call(procedure, effect).pipe(
-            Effect.timeout("30 seconds"),
-            Effect.catchTag("TimeoutError", (cause) =>
-              Effect.fail(transportError(endpoint, procedure, cause)),
-            ),
-          );
         const requestStop = () => {
           const owner = options.owner;
           // Observe foreign finalizer failures so they cannot suppress the
@@ -304,7 +306,7 @@ export const RemoteStack = {
           );
         };
         return {
-          getInfo: () => fastCall("GetInfo", client.GetInfo(undefined)),
+          getInfo: () => fastCall(endpoint, "GetInfo", client.GetInfo(undefined)),
           start: () => call("StartStack", client.StartStack(undefined)),
           stop: () => requestStop(),
           dispose: () => requestStop(),
@@ -318,15 +320,15 @@ export const RemoteStack = {
             ),
           reloadEdgeRuntime: (opts) => call("ReloadEdgeRuntime", client.ReloadEdgeRuntime(opts)),
           getState: (name: string) =>
-            fastCall("GetServiceState", client.GetServiceState({ name })).pipe(
+            fastCall(endpoint, "GetServiceState", client.GetServiceState({ name })).pipe(
               Effect.map((state) => new StackServiceState(state)),
             ),
           getAllStates: () =>
-            fastCall("GetAllServiceStates", client.GetAllServiceStates(undefined)).pipe(
+            fastCall(endpoint, "GetAllServiceStates", client.GetAllServiceStates(undefined)).pipe(
               Effect.map((states) => states.map((state) => new StackServiceState(state))),
             ),
           stateChanges: (name: string) =>
-            fastCall("GetServiceState", client.GetServiceState({ name })).pipe(
+            fastCall(endpoint, "GetServiceState", client.GetServiceState({ name })).pipe(
               Effect.as(
                 scopedRpcStream(
                   streamRpc(endpoint, "WatchServiceStates", client.WatchServiceStates({ name })),
@@ -359,11 +361,13 @@ export const RemoteStack = {
             ),
           logHistory: (name: string, limit?: number) =>
             fastCall(
+              endpoint,
               "GetLogHistory",
               client.GetLogHistory(limit === undefined ? { name } : { name, limit }),
             ),
           logHistoryAll: (limit?: number, services?: ReadonlyArray<string>) =>
             fastCall(
+              endpoint,
               "GetLogHistory",
               client.GetLogHistory({
                 ...(limit === undefined ? {} : { limit }),
@@ -392,12 +396,7 @@ export const updateRemoteLaunch = (
   Effect.scoped(
     makeRemoteRpcClient(endpoint, options).pipe(
       Effect.flatMap(({ client }) =>
-        callRpc(endpoint, "UpdateLaunch", client.UpdateLaunch({ stackId, launch })).pipe(
-          Effect.timeout("30 seconds"),
-          Effect.catchTag("TimeoutError", (cause) =>
-            Effect.fail(transportError(endpoint, "UpdateLaunch", cause)),
-          ),
-        ),
+        fastCall(endpoint, "UpdateLaunch", client.UpdateLaunch({ stackId, launch })),
       ),
     ),
   );

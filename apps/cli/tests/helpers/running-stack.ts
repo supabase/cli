@@ -106,7 +106,7 @@ function cliProjectHome(projectRoot: string): CliProjectHome["Service"] {
   });
 }
 
-export async function makeManagedStackFixture(
+async function makeManagedStackFixture(
   options: {
     running?: boolean;
     stackName?: string;
