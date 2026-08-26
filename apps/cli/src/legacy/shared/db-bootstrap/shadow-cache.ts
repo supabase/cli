@@ -136,8 +136,8 @@ export interface LegacyShadowCacheKeyInputs {
   readonly storageTargetMigration: string;
   readonly dbSettings: CliConfig["db"]["settings"];
   /**
-   * `api.auto_expose_new_tables` as config carries it. Hashed as the effective
-   * two-state behavior — see {@link legacyEffectiveShadowApiGrantsKept}.
+   * `api.auto_expose_new_tables` as config carries it (tri-state). Hashed as the
+   * effective two-state behavior — see {@link legacyEffectiveShadowApiGrantsKept}.
    */
   readonly autoExposeNewTables: Option.Option<boolean>;
   /**
@@ -214,13 +214,14 @@ function legacyCanonicalJson(value: unknown): string {
 
 /**
  * The two-state behavior `legacyApplyApiPrivileges` (`db-setup.ts`) actually derives from
- * `api.auto_expose_new_tables`' tri-state: it returns early ONLY for an explicit `true`, so unset
- * and explicit `false` both exec {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL} and bake the exact
- * same cluster. Hashing the raw tri-state would split those two into different keys and force a
- * spurious ~90MB re-snapshot for a config edit that changes nothing on disk.
+ * `api.auto_expose_new_tables`' tri-state: unset and explicit `true` both keep the grants and bake
+ * the exact same cluster; only an explicit `false` execs
+ * {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL}. Hashing the raw tri-state would split unset from
+ * `true` into different keys and force a spurious ~90MB re-snapshot for a config edit that changes
+ * nothing on disk.
  */
 const legacyEffectiveShadowApiGrantsKept = (value: Option.Option<boolean>): boolean =>
-  Option.getOrElse(value, () => false);
+  Option.getOrElse(value, () => true);
 
 /**
  * The cache key: a 16-hex-char (64-bit) sha256 prefix over a fixed field order. 64 bits is
