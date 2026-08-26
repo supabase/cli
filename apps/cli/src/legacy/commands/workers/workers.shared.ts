@@ -136,6 +136,14 @@ export interface LegacyResolvedWorker {
    * paths need that difference before they state one as fact.
    */
   readonly sourceExists: boolean;
+  /**
+   * Whether {@link sourceDir} is the path the project actually names.
+   *
+   * False only when resolution failed and the default directory stood in for a
+   * `source` the entry does name — reporting that fallback as the worker's
+   * source states a path the project never mentioned.
+   */
+  readonly sourceResolved: boolean;
 }
 
 /**
@@ -165,13 +173,16 @@ export const legacyDescribeWorkerForReporting = Effect.fnUntraced(function* (
     return described.value;
   }
   // The path is unusable, which for reporting purposes reads the same as having
-  // nothing local at all.
+  // nothing local at all. `sourceResolved: false` keeps callers from printing
+  // this stand-in as the source the entry names — it is the default directory,
+  // not the path that failed.
   return {
     name,
     entry: project.section.workers[name],
     defaultDir: workerDir(project.projectRoot, name),
     sourceDir: workerDir(project.projectRoot, name),
     sourceExists: false,
+    sourceResolved: false,
   } satisfies LegacyResolvedWorker;
 });
 
@@ -196,6 +207,7 @@ export const legacyDescribeWorker = Effect.fnUntraced(function* (
     defaultDir,
     sourceDir,
     sourceExists: Option.isSome(info) && info.value.type === "Directory",
+    sourceResolved: true,
   } satisfies LegacyResolvedWorker;
 });
 

@@ -302,6 +302,31 @@ describe("legacy workers status", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // A `source` that escapes the project cannot be resolved, so the describe
+  // falls back to the default directory. Printing that named a path the entry
+  // does not, presenting a guess as established local state.
+  it.live("omits the source when the configured one cannot be resolved", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsource = "../../elsewhere"\n`,
+    });
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [getRoute]: {
+          status: 200,
+          body: { data: workerResource({ name: "api", runtime: "node" }) },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("active");
+      expect(out.stdoutText).not.toContain("Source");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("emits the same facts as structured data in json mode", () => {
     const repo = project();
     const { layer, out } = setupLegacyWorkers({

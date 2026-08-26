@@ -79,8 +79,12 @@ export const legacyWorkersStatus = Effect.fn("legacy.workers.status")(function* 
     // Reported only when an entry or the directory establishes it. With neither,
     // the path is an inference about a worker that may have been deployed from
     // another checkout.
+    //
+    // `sourceResolved` matters for the entry half: when the configured `source`
+    // could not be resolved, `sourceDir` is the *default* directory standing in
+    // for it, and printing that would name a path the entry does not.
     const sourceDisplay =
-      worker.entry !== undefined || worker.sourceExists
+      (worker.entry !== undefined && worker.sourceResolved) || worker.sourceExists
         ? displayPath(project.projectRoot, worker.sourceDir)
         : undefined;
 

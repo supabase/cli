@@ -170,16 +170,32 @@ export const legacyWorkersList = Effect.fn("legacy.workers.list")(function* (
 
     yield* output.raw(renderGlamourTable([...HEADERS], rows.map(toCells)));
 
-    // Deployed *and* unconfigured: a bare local directory is also unconfigured,
-    // and has not been deployed at all.
-    const orphans = rows
-      .filter((row) => row.deployed !== undefined && !row.configured)
+    // Two different problems, and they need different advice. A worker with a
+    // local directory but no entry can be pushed — the runtime is the only
+    // unknown. One with nothing local at all cannot: `deployOneWorker` checks
+    // the source directory *before* inferring a runtime and fails with
+    // `WorkerSourceMissingError`, so telling that user about runtime guessing
+    // points them at the wrong prerequisite.
+    const unconfigured = rows
+      .filter((row) => row.deployed !== undefined && !row.configured && row.local)
       .map((row) => row.name);
-    if (orphans.length > 0) {
+    if (unconfigured.length > 0) {
       yield* output.raw(
-        `${orphans.join(", ")} ${
-          orphans.length === 1 ? "is" : "are"
+        `${unconfigured.join(", ")} ${
+          unconfigured.length === 1 ? "is" : "are"
         } deployed but absent from supabase/config.toml: pushing from here would have to guess the runtime.\n`,
+        "stderr",
+      );
+    }
+
+    const remoteOnly = rows
+      .filter((row) => row.deployed !== undefined && !row.local)
+      .map((row) => row.name);
+    if (remoteOnly.length > 0) {
+      yield* output.raw(
+        `${remoteOnly.join(", ")} ${
+          remoteOnly.length === 1 ? "is" : "are"
+        } deployed but ${remoteOnly.length === 1 ? "has" : "have"} no source in this project: scaffold or restore it before pushing from here.\n`,
         "stderr",
       );
     }

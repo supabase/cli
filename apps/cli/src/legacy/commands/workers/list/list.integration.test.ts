@@ -93,8 +93,17 @@ describe("legacy workers list", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // A local directory with no `[workers.<name>]` entry: pushable, and the
+  // runtime is the only thing a push would have to work out for itself.
   it.live("calls out a deployed worker that config.toml does not know about", () => {
-    const repo = project(`project_id = "demo"\n`);
+    const created = makeWorkersProject({
+      "supabase/config.toml": `project_id = "demo"\n`,
+      "supabase/workers/stray/index.js": "export default {};\n",
+    });
+    const repo = {
+      dir: created.dir,
+      cleanup: () => rmSync(created.dir, { recursive: true, force: true }),
+    };
     const { layer, out } = setupLegacyWorkers({
       workdir: repo.dir,
       routes: {
@@ -110,6 +119,29 @@ describe("legacy workers list", () => {
 
       expect(out.stderrText).toContain("stray");
       expect(out.stderrText).toContain("guess the runtime");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Nothing local at all: `deployOneWorker` checks the source directory before
+  // it ever infers a runtime, so "would have to guess the runtime" named the
+  // wrong prerequisite for this one.
+  it.live("tells a worker with no local source to restore it, not to expect a guess", () => {
+    const repo = project(`project_id = "demo"\n`);
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [listRoute]: {
+          status: 200,
+          body: { data: [workerResource({ name: "stray", runtime: "node" })] },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersList({ projectRef: Option.none() });
+
+      expect(out.stderrText).toContain("no source in this project");
+      expect(out.stderrText).not.toContain("guess the runtime");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
