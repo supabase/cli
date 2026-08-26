@@ -48,9 +48,18 @@ export const legacyLoadWorkersProject = Effect.fnUntraced(function* () {
   // `config.json`, which the default loader lists in `ignoredPaths`. That is a
   // known gap: workers are TOML-only until config writing is overhauled.
   //
+  // `search: false`: `settings.workdir` is already an authoritative project
+  // root — `--workdir`/`SUPABASE_WORKDIR` as given, else the one ancestor walk
+  // Go's `getProjectRoot` performs — so letting the loader climb again resolves
+  // `configPath` to an *ancestor* project while every path derived from
+  // `projectRoot` stays put. `workers new api --workdir ./bare-dir` inside
+  // another project is the case in point: the entry lands in the ancestor's
+  // `config.toml` recording `source = "supabase/workers/api"`, which resolves
+  // against the ancestor root to a directory the scaffold never created.
+  //
   // `loadCliConfig` returns null when the directory holds no project yet,
   // which is what lets `workers new` scaffold into a bare one.
-  const loaded = yield* loadCliConfig(projectRoot, { tomlOnly: true });
+  const loaded = yield* loadCliConfig(projectRoot, { tomlOnly: true, search: false });
   const section = readWorkersSection(loaded?.config.workers);
 
   return {

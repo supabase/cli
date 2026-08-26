@@ -320,6 +320,32 @@ describe("legacy workers new", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // `settings.workdir` is already an authoritative project root, so the config
+  // loader must not climb out of it. Without `search: false` it does: the entry
+  // is appended to the *ancestor's* config.toml recording `source =
+  // "supabase/workers/api"`, which resolves against the ancestor root to a
+  // directory the scaffold never created, while the scaffold itself lands under
+  // the workdir. Both sides have to name the same project.
+  it.live("records the worker in --workdir's own project, not an ancestor's", () => {
+    const repo = project({ "bare-dir/.keep": "" });
+    const workdir = join(repo.dir, "bare-dir");
+    const { layer } = setupLegacyWorkers({ workdir });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersNew(flags({ name: "api", runtime: Option.some("node") }));
+
+      // The ancestor project is untouched.
+      expect(repo.config()).toBe(CONFIG_WITH_COMMENTS);
+      expect(existsSync(join(repo.dir, "supabase", "workers", "api"))).toBe(false);
+
+      // The workdir got both the entry and the scaffold it points at.
+      expect(readFileSync(join(workdir, "supabase", "config.toml"), "utf8")).toBe(
+        '[workers.api]\nruntime = "node"\nsize = "2gb"\n',
+      );
+      expect(existsSync(join(workdir, "supabase", "workers", "api", "index.mjs"))).toBe(true);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   // A sealed inline `[workers]` cannot be extended by appending a table, and
   // the name is absent from the decoded section, so the already-configured
   // check does not fire. Parsing the plan is what refuses it — before the
