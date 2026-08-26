@@ -2012,3 +2012,16 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
     expect(apiWithSmtp.auth?.rate_limit).toEqual({ email_sent: 30 });
   });
 });
+
+describe("review round: oauth_server disabled sentinel (CLI-2230)", () => {
+  test("a disabled OAuth server projects only its toggle on both arms", () => {
+    const api = fromApiProjectConfig({
+      auth: { oauth_server_enabled: false, oauth_server_authorization_path: "/stale" },
+    });
+    expect(api.auth?.oauth_server).toEqual({ enabled: false });
+    const doc = fromConfigDocument({
+      auth: { oauth_server: { enabled: false, authorization_url_path: "/stale" } },
+    });
+    expect(doc.auth?.oauth_server).toEqual({ enabled: false });
+  });
+});

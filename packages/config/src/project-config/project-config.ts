@@ -320,6 +320,14 @@ const DISABLED_SENTINEL_PRUNES: ReadonlyArray<{
     dropKeys: ["host", "port", "user", "pass", "admin_email", "sender_name"],
   },
   { containerPath: ["auth", "captcha"], dropKeys: ["provider", "secret"] },
+  // No push precedent (the section postdates the legacy mappers) — gated for
+  // family consistency: every other enabled-flagged container prunes its
+  // unmanaged siblings, and a platform-retained authorization path behind a
+  // disabled OAuth server is the same phantom-drift shape.
+  {
+    containerPath: ["auth", "oauth_server"],
+    dropKeys: ["allow_dynamic_registration", "authorization_url_path"],
+  },
   {
     containerPath: ["storage", "analytics"],
     dropKeys: ["max_namespaces", "max_tables", "max_catalogs"],
