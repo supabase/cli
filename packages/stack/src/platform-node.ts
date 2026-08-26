@@ -124,45 +124,51 @@ const controlTransport: ControlTransport["Service"] = {
           }
         });
         rawServer.on("request", handler);
-        yield* Effect.callback<void, Error>((resume) => {
-          const onError = (cause: Error) => {
-            rawServer.off("error", onError);
-            resume(Effect.fail(cause));
-          };
-          rawServer.once("error", onError);
-          rawServer.listen({ host: endpoint.hostname, port: endpoint.port }, () => {
-            rawServer.off("error", onError);
-            resume(Effect.void);
-          });
-          return Effect.sync(() => {
-            rawServer.off("error", onError);
-            if (rawServer.listening) rawServer.close();
-            else rawServer.once("listening", () => rawServer.close());
-          });
-        }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new ControlBindError({
-                endpoint,
-                reason: errorCode(cause) === "EADDRINUSE" ? "in-use" : "failed",
-                cause,
+        return yield* Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            yield* restore(
+              Effect.callback<void, Error>((resume) => {
+                const onError = (cause: Error) => {
+                  rawServer.off("error", onError);
+                  resume(Effect.fail(cause));
+                };
+                rawServer.once("error", onError);
+                rawServer.listen({ host: endpoint.hostname, port: endpoint.port }, () => {
+                  rawServer.off("error", onError);
+                  resume(Effect.void);
+                });
+                return Effect.sync(() => {
+                  rawServer.off("error", onError);
+                  if (rawServer.listening) rawServer.close();
+                  else rawServer.once("listening", () => rawServer.close());
+                });
               }),
-          ),
+            ).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ControlBindError({
+                    endpoint,
+                    reason: errorCode(cause) === "EADDRINUSE" ? "in-use" : "failed",
+                    cause,
+                  }),
+              ),
+            );
+            const boundAddress = rawServer.address();
+            const server = HttpServer.make({
+              address: {
+                _tag: "TcpAddress",
+                hostname: endpoint.hostname,
+                port:
+                  typeof boundAddress === "object" && boundAddress !== null
+                    ? boundAddress.port
+                    : endpoint.port,
+              },
+              serve: () => Effect.void,
+            });
+            yield* Scope.addFinalizer(scope, close);
+            return { server, close };
+          }),
         );
-        const boundAddress = rawServer.address();
-        const server = HttpServer.make({
-          address: {
-            _tag: "TcpAddress",
-            hostname: endpoint.hostname,
-            port:
-              typeof boundAddress === "object" && boundAddress !== null
-                ? boundAddress.port
-                : endpoint.port,
-          },
-          serve: () => Effect.void,
-        });
-        yield* Scope.addFinalizer(scope, close);
-        return { server, close };
       });
     }
     return NodeHttpServer.make(() => rawServer, {
