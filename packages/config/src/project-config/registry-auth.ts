@@ -367,7 +367,10 @@ function uintRow(configPath: ReadonlyArray<string>, apiKey: string): ProjectConf
  * Integer seconds (API) → Go duration string (config), e.g. `"5s"`. Every
  * call site is one of the five duration rows CLI-2230's finding names, so
  * `normalizeDocument` is wired unconditionally here rather than per call
- * site.
+ * site. Narrowed with `expectInteger`, not `expectNumber`: the generated
+ * contract declares all three `*_max_frequency` fields `isInt()`, so a
+ * fractional value is a malformed platform response — only the session-hour
+ * rows below are genuinely fractional.
  */
 function secondsDurationRow(
   configPath: ReadonlyArray<string>,
@@ -378,7 +381,7 @@ function secondsDurationRow(
     configPath,
     apiPath,
     transform: (value) =>
-      value === null ? undefined : secondsToDurationString(expectNumber(value, apiPath)),
+      value === null ? undefined : secondsToDurationString(expectInteger(value, apiPath)),
     normalizeDocument: canonicalizeDurationString,
     unit: "seconds → duration string",
   };
@@ -716,8 +719,15 @@ const smsProviderSelectionRows: ReadonlyArray<ProjectConfigMappingRow> = SMS_PRO
   (provider) => ({
     configPath: ["auth", "sms", provider, "enabled"],
     apiPath: ["auth", "sms_provider"],
-    transform: (value) =>
-      typeof value === "string" && value.length > 0 ? value === provider : undefined,
+    // Null/empty → omit all five (no provider named); a present non-string
+    // is a malformed platform response and throws, like every other mapped
+    // auth field — silently omitting would also hide it from
+    // `unmappedApiFields`, since this shared path is consumed.
+    transform: (value) => {
+      if (value === null) return undefined;
+      const named = expectString(value, ["auth", "sms_provider"]);
+      return named.length > 0 ? named === provider : undefined;
+    },
   }),
 );
 

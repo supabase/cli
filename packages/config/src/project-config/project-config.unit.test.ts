@@ -14,6 +14,7 @@ import {
   toProjectConfig,
   unmappedApiFields,
   type ProjectConfig,
+  type ReadonlyJsonValue,
 } from "./project-config.ts";
 
 const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
@@ -1454,5 +1455,48 @@ describe("review round: pre-decode depth guard, caller-misuse reason, readonly m
       // runtime counterpart is the strict-mode TypeError asserted here.
       metadata["foo"] = "bar";
     }).toThrow(TypeError);
+  });
+});
+
+describe("review round: deep-readonly metadata, integer frequencies, provider narrowing (CLI-2230)", () => {
+  test("nested _apiResponse arrays are readonly under a readonly-preserving guard and frozen at runtime", () => {
+    // The lib's own Array.isArray narrows to a MUTABLE any[] view
+    // (microsoft/TypeScript#17002) — the type's docstring directs consumers
+    // to a readonly-preserving guard like this one, under which mutation
+    // does not compile. Runtime deep-freeze backstops the lib-guard path.
+    const isReadonlyJsonArray = (
+      value: ReadonlyJsonValue | undefined,
+    ): value is ReadonlyArray<ReadonlyJsonValue> => Array.isArray(value);
+
+    const result = fromApiProjectConfig({ some_new_top: ["a", "b"] });
+    const nested = result._apiResponse?.["some_new_top"];
+    if (!isReadonlyJsonArray(nested)) {
+      throw new Error("expected some_new_top to narrow to a readonly array");
+    }
+    expect(Object.isFrozen(nested)).toBe(true);
+    // @ts-expect-error — a readonly-narrowed nested array has no push.
+    expect(() => nested.push("c")).toThrow(TypeError);
+  });
+
+  test("a fractional *_max_frequency throws (the contract types it isInt)", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({ auth: { smtp_max_frequency: 1.5 } });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).apiPath).toEqual(["auth", "smtp_max_frequency"]);
+  });
+
+  test("a non-string sms_provider throws with its apiPath", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({ auth: { sms_provider: 7 } });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).apiPath).toEqual(["auth", "sms_provider"]);
   });
 });

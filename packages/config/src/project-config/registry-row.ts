@@ -119,9 +119,11 @@ export function expectNumber(value: unknown, apiPath: ReadonlyArray<string>): nu
  * `isInt`; the lenient mirror deliberately drops that check so API-ahead skew
  * never fails the decode (ADR 0019 rule 2), so the rows for integer-typed
  * config fields re-assert it here — a fractional value on an integer field is
- * a malformed platform response, not tolerable skew. Duration-valued numbers
- * (session hours, frequency seconds) stay on {@link expectNumber}: fractional
- * values are meaningful there and the duration renderer handles them.
+ * a malformed platform response, not tolerable skew. Only the session-hour
+ * durations stay on {@link expectNumber}: the contract types them as plain
+ * numbers and fractional hours are meaningful (the renderer rounds); every
+ * other numeric field — including the `*_max_frequency` seconds — is
+ * `isInt()` in the contract and narrows here.
  */
 export function expectInteger(value: unknown, apiPath: ReadonlyArray<string>): number {
   const numeric = expectNumber(value, apiPath);

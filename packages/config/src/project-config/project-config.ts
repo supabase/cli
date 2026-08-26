@@ -90,13 +90,37 @@ type HostedSectionKey = (typeof HOSTED_SECTION_KEYS)[number];
  * to restrict a comparison to exactly the fields `fromApiProjectConfig` can
  * actually speak for, rather than hand-maintaining an equivalent field list.
  */
+/**
+ * A deeply-readonly JSON value — the shape of everything under
+ * `_apiResponse`, which holds (a clone of) a parsed Management API JSON
+ * payload and is recursively frozen at attach time. Typed recursively
+ * readonly so no narrowing path reaches a mutable view: with plain `unknown`
+ * values, `Array.isArray(...)` would narrow to a mutable array whose
+ * `.push` compiles and then throws against the frozen runtime value. (A
+ * programmatic `attachApiResponse` caller can technically hand over
+ * non-JSON structured-cloneable values — Dates, Maps; those step outside
+ * this type by their own choice, exactly like any other consumer-side
+ * assertion.) One narrowing caveat no user-space type can close: the lib's
+ * own `Array.isArray` guard is typed `arg is any[]`, so narrowing through it
+ * yields a MUTABLE array view (microsoft/TypeScript#17002) whose `.push`
+ * compiles and then throws against the frozen value — narrow with a
+ * readonly-preserving guard (`(v): v is ReadonlyArray<ReadonlyJsonValue> =>
+ * Array.isArray(v)`) instead.
+ */
+export type ReadonlyJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ReadonlyArray<ReadonlyJsonValue>
+  | { readonly [key: string]: ReadonlyJsonValue };
+
 export type ProjectConfig = DeepPartial<Pick<CliConfig, HostedSectionKey>> & {
-  // Readonly index: the runtime value is deep-frozen (attachFrozenApiResponse),
-  // so a compile-permitted `config._apiResponse.foo = v` would throw a
-  // TypeError in this ESM package. Nested values are `unknown` — mutating
-  // deeper requires the consumer's own narrowing, which is where that
-  // responsibility belongs.
-  readonly _apiResponse?: { readonly [key: string]: unknown };
+  // Readonly, recursively: the runtime value is deep-frozen
+  // (attachFrozenApiResponse), so any compile-permitted mutation — a
+  // top-level assignment or a `.push` on a narrowed nested array — would
+  // throw a TypeError in this ESM package.
+  readonly _apiResponse?: { readonly [key: string]: ReadonlyJsonValue };
 };
 
 /**
