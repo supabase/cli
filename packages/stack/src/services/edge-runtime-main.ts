@@ -171,11 +171,8 @@ function fileUrl(path: string) {
   return new URL(`file://${path}`).href;
 }
 
-async function serveFunction(req: Request, config: any, functionName: string, functionConfig: any) {
-  const authError = await verifyRequest(req, config, functionConfig);
-  if (authError) return authError;
-
-  const envVars = Object.entries({
+export function buildFunctionEnv(config: any, functionConfig: any, functionName: string) {
+  return {
     ...config.env,
     ...functionConfig.env,
     SUPABASE_URL: config.supabaseUrl,
@@ -184,7 +181,15 @@ async function serveFunction(req: Request, config: any, functionName: string, fu
     SUPABASE_DB_URL: config.dbUrl,
     SUPABASE_PUBLISHABLE_KEYS: JSON.stringify({ default: config.publishableKey }),
     SUPABASE_SECRET_KEYS: JSON.stringify({ default: config.secretKey }),
-  });
+    SUPABASE_FUNCTION_SLUG: functionName,
+  };
+}
+
+async function serveFunction(req: Request, config: any, functionName: string, functionConfig: any) {
+  const authError = await verifyRequest(req, config, functionConfig);
+  if (authError) return authError;
+
+  const envVars = Object.entries(buildFunctionEnv(config, functionConfig, functionName));
 
   try {
     const worker = await EdgeRuntime.userWorkers.create({

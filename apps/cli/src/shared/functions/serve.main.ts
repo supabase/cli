@@ -331,6 +331,8 @@ Deno.serve({
           ([name, _]) => !name.startsWith("SUPABASE_"),
         ),
       ),
+      // Listed after the spreads so neither the container env nor function config can shadow it
+      SUPABASE_FUNCTION_SLUG: functionName,
     };
     if (SUPABASE_PUBLISHABLE_KEY) {
       envVarsObj["SUPABASE_PUBLISHABLE_KEYS"] = JSON.stringify({
