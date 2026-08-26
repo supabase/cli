@@ -13,6 +13,7 @@ import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.t
 import { classifyWorkerDir } from "../../../../shared/workers/worker-classify.ts";
 import { formatBytes, packageWorkerDirectory } from "../../../../shared/workers/worker-package.ts";
 import { displayPath } from "../../../../shared/workers/worker-paths.ts";
+import type { WorkerEntry } from "../../../../shared/workers/worker-config.ts";
 import {
   apiSizeFor,
   DEFAULT_WORKER_INSTANCES,
@@ -132,6 +133,31 @@ function resolveInstances(options: {
 }
 
 /**
+ * What to do about a worker whose source directory is not there at all.
+ *
+ * `supabase workers new` is only an answer for a name the config has never
+ * heard of — `new` refuses any name already under `[workers.<name>]`, so
+ * offering it to a configured worker would answer with a second error. A
+ * configured worker is missing a directory, not a config entry, and when the
+ * entry pins an explicit `source` the path itself is as likely to be the
+ * mistake as the absent directory.
+ */
+function missingSourceSuggestion(input: {
+  readonly name: string;
+  readonly sourceDisplay: string;
+  readonly configPath: string;
+  readonly entry: WorkerEntry | undefined;
+}): string {
+  if (input.entry === undefined) {
+    return `Scaffold it with \`supabase workers new ${input.name}\`.`;
+  }
+  if (input.entry.source !== undefined) {
+    return `Create ${input.sourceDisplay}, or correct \`source\` under [workers.${input.name}] in ${input.configPath}.`;
+  }
+  return `Create ${input.sourceDisplay} and add your worker's code, then run this command again.`;
+}
+
+/**
  * What to do about a source directory that exists but holds nothing to deploy.
  *
  * Deliberately does not point at `supabase workers new`. That command refuses
@@ -172,7 +198,12 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
   {
     const sourceMissing = new WorkerSourceMissingError({
       detail: `There is no worker source at ${sourceDisplay}.`,
-      suggestion: `Scaffold it with \`supabase workers new ${name}\`.`,
+      suggestion: missingSourceSuggestion({
+        name,
+        sourceDisplay,
+        configPath: displayPath(project.projectRoot, project.configPath),
+        entry: worker.entry,
+      }),
     });
     // Only "no such path" means the worker was never scaffolded. A permission
     // or I/O error on the directory is a different problem with a different

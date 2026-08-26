@@ -418,7 +418,12 @@ describe("legacy workers push", () => {
       const error = yield* push().pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerSourceMissingError);
-      expect((error as WorkerSourceMissingError).suggestion).toContain("supabase workers new api");
+      // `api` is under `[workers.api]`, and `new` refuses a name the config
+      // already carries — so the answer is the absent directory, not a scaffold.
+      expect((error as WorkerSourceMissingError).suggestion).not.toContain("workers new");
+      expect((error as WorkerSourceMissingError).suggestion).toContain(
+        "supabase/workers/api and add your worker's code",
+      );
       expect(http.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
@@ -438,6 +443,46 @@ describe("legacy workers push", () => {
       // that names it would answer with a second error instead of a fix.
       expect((error as WorkerSourceMissingError).suggestion).not.toContain("--force");
       expect((error as WorkerSourceMissingError).suggestion).not.toContain("workers new");
+      expect(http.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The one case `workers new` really does answer: a name that reached `push`
+  // from argv alone, with no `[workers.<name>]` entry and nothing on disk.
+  // Names are only validated as DNS labels before dispatch, so this is
+  // reachable — a typo, or a worker nobody has scaffolded yet.
+  it.live("offers to scaffold a worker the config has never heard of", () => {
+    const repo = project({ "supabase/config.toml": 'project_id = "demo"\n' });
+    rmSync(join(repo.dir, "supabase", "workers", "api"), { recursive: true, force: true });
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      const error = yield* push().pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerSourceMissingError);
+      expect((error as WorkerSourceMissingError).suggestion).toContain("supabase workers new api");
+      expect(http.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // A worker whose `source` points somewhere that is not there: the path in
+  // config is as likely to be the mistake as the absent directory, so the
+  // suggestion names both.
+  it.live("points at the config entry when a configured source is missing", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsource = "./services/api"\n`,
+    });
+    rmSync(join(repo.dir, "supabase", "workers", "api"), { recursive: true, force: true });
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      const error = yield* push().pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerSourceMissingError);
+      const failure = error as WorkerSourceMissingError;
+      expect(failure.suggestion).not.toContain("workers new");
+      expect(failure.suggestion).toContain("[workers.api]");
+      expect(failure.suggestion).toContain("source");
       expect(http.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
