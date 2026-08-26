@@ -8,6 +8,14 @@
  * server only ever untars what we send, so producing the bytes here keeps the
  * upload identical on every platform and keeps packaging out of the process
  * table.
+ *
+ * `Bun.Archive` — which this repo already uses to build the pgdata baseline
+ * marker, `legacyPgDataBaselineMarkerTar` — is not the same tool. It builds
+ * from path-to-contents pairs and exposes no per-entry metadata: every entry
+ * comes out as a regular file with mode `0644` and the current wall-clock time,
+ * so a symlink cannot be stored at all, an executable loses its bit, and the
+ * same tree packages to different bytes on every run. A single-file marker
+ * needs none of that; a build context needs all of it.
  */
 
 import {
