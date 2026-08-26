@@ -109,7 +109,8 @@ const ignoredDirNames = new Set([
 const dockerLogRetryDelay = Duration.millis(400);
 const dockerLogDiagnosticTailLength = 4_096;
 const defaultSupabaseEnv = "development";
-const serveMainContainerPath = "/root/index.ts";
+const slimServeMainDir = "/tmp";
+const dockerIoServeMainDir = "/root";
 const shellVariableNamePattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 let cachedLegacyFunctionsServeMainTemplate: string | undefined;
 const watchIgnoreGlobs = [
@@ -1759,16 +1760,18 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       });
 
       const labels = dockerProjectLabels(projectId);
+      const slimEdgeRuntime = usesSlimImageRuntime(input.image);
+      const serveMainDir = slimEdgeRuntime ? slimServeMainDir : dockerIoServeMainDir;
+      const serveMainFile = `${serveMainDir}/index.ts`;
       const runtimeCommand = [
         "edge-runtime",
         "start",
-        "--main-service=/root",
+        `--main-service=${serveMainDir}`,
         `--port=${dockerRuntimeServerPort}`,
         `--policy=${input.config.edgeRuntimePolicy}`,
         ...buildFunctionsServeInspectArgs(input.inspectMode, input.inspectMain),
         ...(input.debug ? ["--verbose"] : []),
       ];
-      const slimEdgeRuntime = usesSlimImageRuntime(input.image);
       if (slimEdgeRuntime && dockerMultilineEnvScript !== undefined) {
         return yield* Effect.fail(
           new Error(
@@ -1781,7 +1784,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       // `sh -c` argv hits Windows ENAMETOOLONG (#5711), and a single-file host bind mounts as
       // an empty directory on daemons that cannot see this host's filesystem (#6254, #4190).
       const serveMainArchive = yield* Effect.tryPromise({
-        try: () => containerArchiveBytes({ [serveMainContainerPath]: serveMainTemplate }),
+        try: () => containerArchiveBytes({ [serveMainFile]: serveMainTemplate }),
         catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
       });
       const containerProjectRoot = toDockerPath(input.projectRoot);

@@ -400,6 +400,59 @@ describe("legacyStartSetupLocalDatabase", () => {
     );
 
     it.effect(
+      "slim storage: grants postgres SUPERUSER and creates the vector extension after initSchema",
+      () => {
+        vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+        const workdir = makeWorkdir();
+        const { session, calls } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun();
+        return run(
+          baseInput(workdir, session, {
+            majorVersion: 15,
+            images: {
+              realtime: "ghcr.io/supabase/cli/realtime:v2.129.3",
+              storage: "ghcr.io/supabase/cli/storage:v1.70.3",
+              auth: "ghcr.io/supabase/cli/auth:v2.196.0",
+            },
+          }),
+          out,
+          docker,
+        ).pipe(
+          Effect.map(() => {
+            const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
+            expect(execSql.some((sql) => sql.includes("ALTER ROLE postgres WITH SUPERUSER"))).toBe(
+              true,
+            );
+            expect(
+              execSql.some((sql) => sql.includes("CREATE EXTENSION IF NOT EXISTS vector")),
+            ).toBe(true);
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        );
+      },
+    );
+
+    it.effect("docker.io storage: does not grant postgres SUPERUSER for vector", () => {
+      const workdir = makeWorkdir();
+      const { session, calls } = fakeSession();
+      const out = mockOutput();
+      const docker = mockDockerRun();
+      return run(baseInput(workdir, session, { majorVersion: 15 }), out, docker).pipe(
+        Effect.map(() => {
+          const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
+          expect(execSql.some((sql) => sql.includes("ALTER ROLE postgres WITH SUPERUSER"))).toBe(
+            false,
+          );
+          expect(execSql.some((sql) => sql.includes("CREATE EXTENSION IF NOT EXISTS vector"))).toBe(
+            false,
+          );
+          rmSync(workdir, { recursive: true, force: true });
+        }),
+      );
+    });
+
+    it.effect(
       "labels every one-shot job with the project's Docker labels, matching Go's DockerStart (review: Codex, PR #6022)",
       () => {
         const workdir = makeWorkdir();

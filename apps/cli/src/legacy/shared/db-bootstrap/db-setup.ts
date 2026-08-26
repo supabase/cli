@@ -34,6 +34,11 @@
  *        `STORAGE_S3_REGION`, no JWKS) — built locally, not reused.
  *      - `initAuthJob` (`start.go:319-332`) — ditto, a minimal env distinct from
  *        `gotrue.service.ts`'s full container builder.
+ *      After `initSchema`, slim Storage execs
+ *      {@link LEGACY_START_SLIM_STORAGE_VECTOR_SQL}: slim postgres leaves the
+ *      `postgres` role as a non-superuser, and storage-api's vector-bucket
+ *      migrations `CREATE EXTENSION vector` as that role. Docker.io postgres
+ *      already grants SUPERUSER, so this is slim-only.
  * 2. **Database Webhooks activation** — installs `pg_net` when the user opted
  *    into `experimental.webhooks`, unless the setup caller disables user extension
  *    activation. Legacy callers may explicitly request the historical `pg_net`
@@ -190,6 +195,16 @@ alter default privileges for role postgres in schema public
   revoke usage, select on sequences from anon, authenticated, service_role;
 alter default privileges for role postgres in schema public
   revoke execute on functions from anon, authenticated, service_role;
+`;
+
+/**
+ * Slim postgres leaves the `postgres` role as a non-superuser. Storage-api's
+ * vector-bucket migrations run as that role and `CREATE EXTENSION vector`, which
+ * docker.io postgres allows because `postgres` is a superuser there.
+ */
+export const LEGACY_START_SLIM_STORAGE_VECTOR_SQL = `
+ALTER ROLE postgres WITH SUPERUSER;
+CREATE EXTENSION IF NOT EXISTS vector;
 `;
 
 /**
@@ -1096,6 +1111,16 @@ export const legacySetupDatabase = (
           );
         const requiresPg14WebhooksCleanup = input.majorVersion === 14;
         yield* legacyStartInitSchema(spawner, input, tmpDir);
+        if (input.config.storage.enabled && legacyUsesSlimRuntime(input.images.storage)) {
+          yield* legacyExecSqlConstant(
+            session,
+            fs,
+            path,
+            tmpDir,
+            "slim-storage-vector.sql",
+            LEGACY_START_SLIM_STORAGE_VECTOR_SQL,
+          );
+        }
         if (requiresPg14WebhooksCleanup) {
           yield* legacyRemoveDatabaseWebhooks(session, fs, path, tmpDir);
         }

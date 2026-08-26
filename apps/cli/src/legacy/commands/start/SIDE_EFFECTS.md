@@ -32,7 +32,9 @@ after Postgres's own health check passes, before "Starting containers..." prints
 before any other service starts. Opens a direct `LegacyDbConnection` session to the
 host-facing Postgres address (PG<=14: execs schema/globals/API-privileges SQL over that
 session; PG>=15: runs three one-shot `LegacyDockerRun` jobs instead, gated independently on
-`realtime.enabled`/`storage.enabled`/`auth.enabled`). Also upserts `[db.vault]` secrets and
+`realtime.enabled`/`storage.enabled`/`auth.enabled`; slim refs skip the Realtime and Storage
+jobs and run Auth as `migrate`. Slim Storage then grants `postgres` SUPERUSER and creates
+the `vector` extension so storage-api's vector-bucket migrations can run). Also upserts `[db.vault]` secrets and
 seeds `supabase/roles.sql`: the `Seeding globals from roles.sql...` stderr line always
 prints first, whether or not the file exists — a missing file is silently tolerated (no SQL
 runs), any other read/exec error still fails the run. Finally runs every pending migration +
@@ -113,7 +115,12 @@ image has no shell-based entrypoint override. Distroless slim services with no `
 (auth, storage, studio, pg-meta) omit Docker healthchecks — `docker create --health-cmd` is
 always `CMD-SHELL` — and `legacyCheckContainerReady` treats `Running` as ready. Realtime and
 analytics keep a busybox `wget --spider` probe; slim Edge Runtime is started without
-`--entrypoint sh` (the wrapped binary has no shell).
+`--entrypoint sh` (the wrapped binary has no shell) and the main-service template is
+copied to `/tmp/index.ts` (`--main-service=/tmp`) because the image runs as uid 65532
+and cannot read `/root`. After schema init, slim Storage also execs
+`ALTER ROLE postgres WITH SUPERUSER` plus `CREATE EXTENSION vector` — slim postgres
+leaves `postgres` as a non-superuser, and storage-api's vector-bucket migrations create
+that extension as that role.
 Kong's `kong.yml`/TLS cert/TLS key, Postgres's `pgsodium_root.key`, and Supavisor's
 `pooler_tenant.exs` DO carry secret content (a service-role-key-derived bearer/query
 key, TLS private key material, and the DB password respectively). Since
@@ -148,7 +155,8 @@ recreates its own subdirectory fresh on every call (self-healing), so a
 shrinking env set never leaves stale files behind. The bootstrap `index.ts` template
 carries no secret content and, as of supabase/cli#6254, never touches host disk at all:
 it is streamed via `docker cp` straight into the created (not yet started) Edge Runtime
-container — a single-file host bind mount materializes as an empty directory on daemons
+container at `/root/index.ts` (docker.io) or `/tmp/index.ts` (slim, uid 65532 cannot
+read `/root`) — a single-file host bind mount materializes as an empty directory on daemons
 that cannot see the client's filesystem (remote `DOCKER_HOST`/Docker-context daemons,
 podman machines), which broke `start` with edge-runtime's "failed to determine
 entrypoint". Only the bootstrap template is daemon-independent: user function
