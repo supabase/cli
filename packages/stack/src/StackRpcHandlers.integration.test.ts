@@ -2,6 +2,7 @@ import { ServiceNotFoundError } from "@supabase/process-compose";
 import { it } from "@effect/vitest";
 import {
   Context,
+  Cause,
   Deferred,
   Effect,
   Exit,
@@ -15,7 +16,7 @@ import { expect } from "vitest";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
 import { RemoteStack, updateRemoteLaunch } from "./RemoteStack.ts";
 import { Stack } from "./Stack.ts";
-import { StackBuildError } from "./errors.ts";
+import { StackBuildError, StackUnavailableError } from "./errors.ts";
 import { acquireControl, isControlOwnership } from "./managed/control.ts";
 import { controlTransportLayer } from "./platform-node.ts";
 import { makeSupervisorControlApplication } from "./SupervisorControlServer.ts";
@@ -257,6 +258,76 @@ it.live("rejects launch updates after supervisor shutdown begins", () =>
       }).pipe(Effect.ensuring(Deferred.succeed(releaseStop, undefined).pipe(Effect.asVoid)));
       yield* lifecycle.awaitShutdown;
     }).pipe(Effect.provide(controlTransportLayer), Effect.provide(httpTransportClientLayer)),
+  ),
+);
+
+it.live("propagates a failure terminal reason to an active state stream", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const streamStarted = Deferred.makeUnsafe<void>();
+      const releaseStop = Deferred.makeUnsafe<void>();
+      const lifecycle = yield* makeSupervisorSessionFixture({
+        ownershipId: OWNER_ID,
+        ownerSessionId: "failure-stream-session",
+        daemonCliVersion: "test",
+      });
+      yield* lifecycle.publishStack({
+        ...stack,
+        stop: () => Deferred.await(releaseStop),
+        allStateChanges: () =>
+          Stream.concat(
+            Stream.succeed(serviceState("auth")).pipe(
+              Stream.tap(() => Deferred.succeed(streamStarted, undefined).pipe(Effect.asVoid)),
+            ),
+            Stream.never,
+          ),
+      });
+      const application = { app: yield* makeSupervisorControlApplication(lifecycle) };
+      const owner = yield* acquireControl({
+        stackId: OWNER_ID,
+        initialStatus: yield* lifecycle.currentStatus,
+        application,
+      });
+      if (!isControlOwnership(owner)) throw new Error("expected control ownership");
+      yield* lifecycle.setClose(owner.close);
+      const status = supervisorStatus(yield* owner.ownerStatus);
+      const layer = RemoteStack.layer(owner.endpoint, {
+        cliVersion: "test",
+        owner: {
+          ownershipId: OWNER_ID,
+          ownerSessionId: status.ownerSessionId,
+          controlProtocolVersion: status.controlProtocolVersion,
+          daemonCliVersion: status.daemonCliVersion,
+        },
+      }).pipe(Layer.provide(httpTransportClientLayer));
+
+      const streamExit = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const remote = yield* Stack;
+          const active = yield* Effect.forkChild(Stream.runDrain(remote.allStateChanges()), {
+            startImmediately: true,
+          });
+          yield* Deferred.await(streamStarted);
+          yield* lifecycle.disposeRuntime;
+          const exit = yield* Fiber.await(active);
+          yield* Deferred.succeed(releaseStop, undefined);
+          yield* lifecycle.awaitShutdown.pipe(Effect.exit);
+          return exit;
+        }).pipe(Effect.provide(layer)),
+      );
+
+      expect(Exit.isFailure(streamExit)).toBe(true);
+      if (Exit.isFailure(streamExit)) {
+        const error = Cause.squash(streamExit.cause);
+        expect(Predicate.isTagged(error, "StackUnavailableError")).toBe(true);
+        if (Predicate.isTagged(error, "StackUnavailableError")) {
+          expect(error).toMatchObject({
+            phase: "failed",
+            detail: "Local stack disposed unexpectedly",
+          } satisfies Pick<StackUnavailableError, "phase" | "detail">);
+        }
+      }
+    }).pipe(Effect.provide(controlTransportLayer)),
   ),
 );
 

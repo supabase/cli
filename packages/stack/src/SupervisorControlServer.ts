@@ -2,7 +2,6 @@ import { Effect, Layer } from "effect";
 import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
 import * as RpcServer from "effect/unstable/rpc/RpcServer";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
-import * as HttpServerRespondable from "effect/unstable/http/HttpServerRespondable";
 import { ControlStopRequestSchema } from "./DaemonProtocol.ts";
 import { matchesStackRpcFence, StackRpc } from "./StackRpc.ts";
 import {
@@ -83,7 +82,7 @@ export const makeSupervisorControlApplication = (
       HttpRouter.route("POST", "/rpc", fencedRpc),
     ];
     const application = yield* HttpRouter.toHttpEffect(HttpRouter.addAll(routes));
-    return application.pipe(Effect.catchTag("HttpServerError", HttpServerRespondable.toResponse));
+    return application.pipe(Effect.orDie);
   });
 
 export const SupervisorControlServer = {

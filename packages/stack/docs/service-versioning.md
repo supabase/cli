@@ -42,6 +42,12 @@ is stale and can be reclaimed by the next lifecycle operation. `/owner` distingu
 supervisor ownership from unversioned maintenance ownership, and `/stop` distinguishes an explicit
 user stop from an authorized upgrade replacement.
 
+### Stable control protocol evolution
+
+Once a control wire shape has shipped, any incompatible change to `/owner` or `/stop` requires a
+`CONTROL_PROTOCOL_VERSION` bump. Same-build `/rpc` compatibility is identified by the immutable
+CLI version and is not a substitute for versioning the stable control endpoints.
+
 ## Built-in defaults and remote versions
 
 `ServiceCatalog.ts` defines `DEFAULT_VERSIONS` for the services in a CLI release. These defaults

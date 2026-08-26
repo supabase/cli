@@ -326,5 +326,26 @@ describe("SupervisorSession", () => {
         expect(Predicate.isTagged(Cause.squash(exit.cause), "StackUnavailableError")).toBe(true);
       }
       expect(await Effect.runPromise(controller.service.currentState)).toEqual({ phase: "closed" });
+      const unavailable = await Effect.runPromise(Effect.flip(controller.service.runtimeStack));
+      expect(Predicate.isTagged(unavailable, "StackUnavailableError")).toBe(true);
+      if (Predicate.isTagged(unavailable, "StackUnavailableError")) {
+        expect(unavailable).toMatchObject({
+          phase: "failed",
+          detail: "Local stack disposed unexpectedly",
+        });
+      }
+      const streamExit = await Effect.runPromise(
+        controller.service
+          .interruptStreamWhenStopping(Stream.never)
+          .pipe(Stream.runDrain, Effect.exit),
+      );
+      expect(Exit.isFailure(streamExit)).toBe(true);
+      if (Exit.isFailure(streamExit)) {
+        const error = Cause.squash(streamExit.cause);
+        expect(Predicate.isTagged(error, "StackUnavailableError")).toBe(true);
+        if (Predicate.isTagged(error, "StackUnavailableError")) {
+          expect(error).toMatchObject({ phase: "failed" });
+        }
+      }
     }));
 });

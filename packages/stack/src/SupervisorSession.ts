@@ -71,7 +71,7 @@ export class SupervisorSession extends Context.Service<
     ) => Effect.Effect<A, E | StackUnavailableError, R>;
     readonly interruptStreamWhenStopping: <A, E, R>(
       stream: Stream.Stream<A, E, R>,
-    ) => Stream.Stream<A, E, R>;
+    ) => Stream.Stream<A, E | StackUnavailableError, R>;
     readonly submitShutdown: Effect.Effect<void, never>;
     readonly submitShutdownWithIntent: (intent: ControlStopIntent) => Effect.Effect<void, never>;
   }
@@ -85,7 +85,11 @@ export class SupervisorSession extends Context.Service<
       const sessionScope = yield* Effect.scope;
       const stateRef = Ref.makeUnsafe<SupervisorSessionState>({ phase: "starting" });
       const commands = yield* Queue.unbounded<SessionCommand>();
-      const stopAccepted = Deferred.makeUnsafe<void>();
+      // The terminal signal is completed before teardown begins. Its value is
+      // retained for every later caller, including streams subscribed after
+      // the session has already closed, so they observe the actual terminal
+      // reason instead of a generic "stopping" state.
+      const terminalSignal = Deferred.makeUnsafe<StackUnavailableError>();
       const status = (state: SupervisorSessionState): ControlSupervisorStatus => ({
         controlProtocol: CONTROL_PROTOCOL,
         controlProtocolVersion: CONTROL_PROTOCOL_VERSION,
@@ -103,29 +107,33 @@ export class SupervisorSession extends Context.Service<
           Effect.flatMap((state) =>
             state.phase === "running"
               ? Effect.succeed(state.stack)
-              : Effect.fail(
-                  new StackUnavailableError({
-                    phase: state.phase === "closed" ? "stopping" : state.phase,
-                    ...(state.phase === "failed" ? { detail: state.detail } : {}),
-                  }),
-                ),
+              : state.phase === "closed"
+                ? Deferred.await(terminalSignal).pipe(Effect.flatMap((error) => Effect.fail(error)))
+                : Effect.fail(
+                    new StackUnavailableError({
+                      phase: state.phase,
+                      ...(state.phase === "failed" ? { detail: state.detail } : {}),
+                    }),
+                  ),
           ),
         ),
         interruptWhenStopping: (effect) =>
           Effect.raceFirst(
             effect,
-            Deferred.await(stopAccepted).pipe(
-              Effect.andThen(Effect.fail(new StackUnavailableError({ phase: "stopping" }))),
-            ),
+            Deferred.await(terminalSignal).pipe(Effect.flatMap((error) => Effect.fail(error))),
           ),
         interruptStreamWhenStopping: (stream) =>
-          stream.pipe(Stream.interruptWhen(Deferred.await(stopAccepted))),
+          stream.pipe(
+            Stream.interruptWhen(
+              Deferred.await(terminalSignal).pipe(Effect.flatMap((error) => Effect.fail(error))),
+            ),
+          ),
         submitShutdown: Queue.offer(commands, { _tag: "StopRequested", intent: "explicit" }).pipe(
-          Effect.andThen(Deferred.await(stopAccepted)),
+          Effect.andThen(Deferred.await(terminalSignal).pipe(Effect.asVoid)),
         ),
         submitShutdownWithIntent: (intent) =>
           Queue.offer(commands, { _tag: "StopRequested", intent }).pipe(
-            Effect.andThen(Deferred.await(stopAccepted)),
+            Effect.andThen(Deferred.await(terminalSignal).pipe(Effect.asVoid)),
           ),
       };
       const run = <A, E, R>(
@@ -149,7 +157,10 @@ export class SupervisorSession extends Context.Service<
             let runtime: A | undefined;
             let started = false;
 
-            type CleanupRequest = Effect.Effect<void, unknown>;
+            type CleanupRequest = {
+              readonly terminal: Effect.Effect<void, unknown>;
+              readonly reason: StackUnavailableError;
+            };
             const cleanupResult = Deferred.makeUnsafe<Exit.Exit<void, never>>();
             let cleanupStarted = false;
             let cleanupRequest: CleanupRequest | undefined;
@@ -168,7 +179,10 @@ export class SupervisorSession extends Context.Service<
                   cleanupStarted = true;
                   cleanupRequest = request;
                   return Effect.gen(function* () {
-                    yield* Deferred.succeed(stopAccepted, undefined);
+                    // Publish the terminal reason before interrupting startup
+                    // or disposing the runtime so all in-flight and future
+                    // RPC calls are fenced to the same outcome.
+                    yield* Deferred.succeed(terminalSignal, request.reason);
                     // The startup fiber may have built a runtime without yet
                     // publishing StartupFinished. Interrupt and join it before
                     // deriving the stack so every cleanup path owns the value.
@@ -183,7 +197,7 @@ export class SupervisorSession extends Context.Service<
                     const disposeExit =
                       stack === undefined ? Exit.void : yield* Effect.exit(stack.dispose());
                     const scopeExit = yield* Effect.exit(Scope.close(runtimeScope, Exit.void));
-                    const terminalExit = yield* Effect.exit(request);
+                    const terminalExit = yield* Effect.exit(request.terminal);
                     const closeExit = yield* Effect.exit(runInput.closeOwner);
                     yield* Ref.set(stateRef, { phase: "closed" });
                     yield* Queue.shutdown(commands);
@@ -212,7 +226,14 @@ export class SupervisorSession extends Context.Service<
 
             yield* Scope.addFinalizer(
               sessionScope,
-              Effect.suspend(() => cleanup(cleanupRequest ?? runInput.onStopped("explicit"))),
+              Effect.suspend(() =>
+                cleanup(
+                  cleanupRequest ?? {
+                    terminal: runInput.onStopped("explicit"),
+                    reason: new StackUnavailableError({ phase: "stopping" }),
+                  },
+                ),
+              ),
             );
 
             const runLoop = Effect.gen(function* () {
@@ -225,7 +246,10 @@ export class SupervisorSession extends Context.Service<
                       if (Exit.isFailure(exit)) {
                         const detail = runInput.errorDetail(exit.cause);
                         yield* Ref.set(stateRef, { phase: "failed", detail });
-                        yield* cleanup(runInput.onFailure(detail));
+                        yield* cleanup({
+                          terminal: runInput.onFailure(detail),
+                          reason: new StackUnavailableError({ phase: "failed", detail }),
+                        });
                         return yield* Effect.failCause(exit.cause);
                       }
                       runtime = exit.value;
@@ -241,7 +265,10 @@ export class SupervisorSession extends Context.Service<
                           detail,
                           stack: runInput.stack(runtime),
                         });
-                        yield* cleanup(runInput.onFailure(detail));
+                        yield* cleanup({
+                          terminal: runInput.onFailure(detail),
+                          reason: new StackUnavailableError({ phase: "failed", detail }),
+                        });
                         return yield* Effect.failCause(runningExit.cause);
                       }
                       started = true;
@@ -261,7 +288,10 @@ export class SupervisorSession extends Context.Service<
                         phase: "stopping",
                         ...(stack === undefined ? {} : { stack }),
                       });
-                      yield* cleanup(runInput.onStopped(command.intent));
+                      yield* cleanup({
+                        terminal: runInput.onStopped(command.intent),
+                        reason: new StackUnavailableError({ phase: "stopping" }),
+                      });
                       return { started };
                     }),
                   RuntimeDisposed: () =>
@@ -273,7 +303,10 @@ export class SupervisorSession extends Context.Service<
                         detail,
                         ...(stack === undefined ? {} : { stack }),
                       });
-                      yield* cleanup(runInput.onFailure(detail));
+                      yield* cleanup({
+                        terminal: runInput.onFailure(detail),
+                        reason: new StackUnavailableError({ phase: "failed", detail }),
+                      });
                       return yield* Effect.fail(
                         new StackUnavailableError({ phase: "failed", detail }),
                       );
@@ -289,8 +322,17 @@ export class SupervisorSession extends Context.Service<
                 const activeCleanup = cleanupRequest;
                 if (activeCleanup !== undefined) return cleanup(activeCleanup);
                 const request: CleanupRequest = Cause.hasInterruptsOnly(exit.cause)
-                  ? runInput.onStopped("explicit")
-                  : runInput.onFailure(runInput.errorDetail(exit.cause));
+                  ? {
+                      terminal: runInput.onStopped("explicit"),
+                      reason: new StackUnavailableError({ phase: "stopping" }),
+                    }
+                  : (() => {
+                      const detail = runInput.errorDetail(exit.cause);
+                      return {
+                        terminal: runInput.onFailure(detail),
+                        reason: new StackUnavailableError({ phase: "failed", detail }),
+                      };
+                    })();
                 return cleanup(request);
               }),
             );

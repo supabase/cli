@@ -1,6 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import { makeTestStack } from "@supabase/stack/testing";
-import { Stack, StackRpcProtocolError } from "@supabase/stack/effect";
+import { Stack, StackRpcProtocolError, StackUnavailableError } from "@supabase/stack/effect";
 import { Cause, Context, Deferred, Effect, Fiber, Layer, Stream, SubscriptionRef } from "effect";
 import { StartDashboardState } from "./dashboard-state.ts";
 
@@ -85,6 +85,44 @@ it.live("keeps genuine state-stream errors as failed", () =>
       yield* Fiber.join(failed);
       expect(yield* SubscriptionRef.get(state.phaseRef)).toBe("failed");
       expect(yield* SubscriptionRef.get(state.errorRef)).toContain("StackRpcProtocolError");
+    }),
+  ),
+);
+
+it.live("renders a failure terminal reason as failed", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const subscribed = Deferred.makeUnsafe<void>();
+      const stack = {
+        ...makeTestStack(),
+        allStateChanges: () =>
+          Stream.unwrap(
+            Deferred.succeed(subscribed, undefined).pipe(
+              Effect.as(
+                Stream.fail(
+                  new StackUnavailableError({
+                    phase: "failed",
+                    detail: "Local stack disposed unexpectedly",
+                  }),
+                ),
+              ),
+            ),
+          ),
+      };
+      const context = yield* Layer.build(
+        StartDashboardState.live.pipe(Layer.provide(Layer.succeed(Stack, stack))),
+      );
+      const state = Context.get(context, StartDashboardState);
+      const failed = yield* SubscriptionRef.changes(state.phaseRef).pipe(
+        Stream.filter((phase) => phase === "failed"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+
+      yield* Deferred.await(subscribed);
+      yield* Fiber.join(failed);
+      expect(yield* SubscriptionRef.get(state.phaseRef)).toBe("failed");
+      expect(yield* SubscriptionRef.get(state.errorRef)).toContain("StackUnavailableError");
     }),
   ),
 );

@@ -1,12 +1,15 @@
 import { fork, type ChildProcess } from "node:child_process";
+import { join } from "node:path";
 import {
   Cause,
   Context,
   Data,
   Duration,
   Effect,
+  FileSystem,
   Fiber,
   Layer,
+  Logger,
   Predicate,
   Queue,
   Schedule,
@@ -626,6 +629,14 @@ const makeRunManagedExecution = (
     }
     const ownership = acquisition;
     owner = ownership;
+    const managedPaths = yield* managedStackPathsEffect(input.stateRoot, input.stackId);
+    const fileSystem = yield* FileSystem.FileSystem;
+    yield* fileSystem.makeDirectory(managedPaths.logs, { recursive: true, mode: 0o700 });
+    const supervisorLogger = yield* Logger.toFile(
+      Logger.formatLogFmt,
+      join(managedPaths.logs, "supervisor.log"),
+      { flag: "a", mode: 0o600 },
+    );
     let claimedStack = false;
     const startup = (runtimeScope: Scope.Scope) =>
       Effect.gen(function* () {
@@ -741,68 +752,70 @@ const makeRunManagedExecution = (
         });
         return { started, built };
       });
-    const result = yield* sessionController.run({
-      startup,
-      stack: (runtime) => runtime.built.stack,
-      awaitDisposed: (runtime) => runtime.built.localLifecycle.awaitDisposed,
-      onRunning: (runtime) =>
-        manager
-          .recordLifecycle(ownership, {
-            stackId: runtime.started.stack.id,
-            lifecycle: "running",
-            runtime: {
-              pid: process.pid,
-              controlEndpoint: ownership.endpoint.url,
-              protocolVersion: CONTROL_PROTOCOL_VERSION,
-            },
-          })
-          .pipe(
-            Effect.andThen(session.currentStatus),
-            Effect.flatMap((status) =>
-              sendMessage({
-                type: "started",
-                endpoint: ownership.endpoint,
-                owner: startedOwnerDescriptor({ ...status, state: "running", ready: true }),
-                attached: false,
-              }),
+    const result = yield* sessionController
+      .run({
+        startup,
+        stack: (runtime) => runtime.built.stack,
+        awaitDisposed: (runtime) => runtime.built.localLifecycle.awaitDisposed,
+        onRunning: (runtime) =>
+          manager
+            .recordLifecycle(ownership, {
+              stackId: runtime.started.stack.id,
+              lifecycle: "running",
+              runtime: {
+                pid: process.pid,
+                controlEndpoint: ownership.endpoint.url,
+                protocolVersion: CONTROL_PROTOCOL_VERSION,
+              },
+            })
+            .pipe(
+              Effect.andThen(session.currentStatus),
+              Effect.flatMap((status) =>
+                sendMessage({
+                  type: "started",
+                  endpoint: ownership.endpoint,
+                  owner: startedOwnerDescriptor({ ...status, state: "running", ready: true }),
+                  attached: false,
+                }),
+              ),
+              Effect.tap(() => Effect.sync(() => process.disconnect?.())),
             ),
-            Effect.tap(() => Effect.sync(() => process.disconnect?.())),
-          ),
-      onStopped: (intent) =>
-        Effect.gen(function* () {
-          const current = yield* manager.inspectStack(input.stackId);
-          if (current?.lifecycle !== "starting" && current?.lifecycle !== "running") return;
-          yield* manager
-            .recordLifecycle(ownership, {
-              stackId: input.stackId,
-              lifecycle: "stopped",
-              ...(intent === "explicit" ? { stopIntent: "explicit" as const } : {}),
-            })
-            .pipe(Effect.asVoid);
-        }),
-      onFailure: () =>
-        Effect.gen(function* () {
-          const current = yield* manager.inspectStack(input.stackId);
-          if (
-            current === undefined ||
-            current.lifecycle === "deleting" ||
-            (!claimedStack &&
-              current.lifecycle !== "starting" &&
-              current.lifecycle !== "running" &&
-              current.lifecycle !== "failed")
-          ) {
-            return;
-          }
-          yield* manager
-            .recordLifecycle(ownership, {
-              stackId: input.stackId,
-              lifecycle: "failed",
-            })
-            .pipe(Effect.asVoid);
-        }),
-      closeOwner: ownership.close,
-      errorDetail: (cause) => causeMessage(Cause.squash(cause)),
-    });
+        onStopped: (intent) =>
+          Effect.gen(function* () {
+            const current = yield* manager.inspectStack(input.stackId);
+            if (current?.lifecycle !== "starting" && current?.lifecycle !== "running") return;
+            yield* manager
+              .recordLifecycle(ownership, {
+                stackId: input.stackId,
+                lifecycle: "stopped",
+                ...(intent === "explicit" ? { stopIntent: "explicit" as const } : {}),
+              })
+              .pipe(Effect.asVoid);
+          }),
+        onFailure: () =>
+          Effect.gen(function* () {
+            const current = yield* manager.inspectStack(input.stackId);
+            if (
+              current === undefined ||
+              current.lifecycle === "deleting" ||
+              (!claimedStack &&
+                current.lifecycle !== "starting" &&
+                current.lifecycle !== "running" &&
+                current.lifecycle !== "failed")
+            ) {
+              return;
+            }
+            yield* manager
+              .recordLifecycle(ownership, {
+                stackId: input.stackId,
+                lifecycle: "failed",
+              })
+              .pipe(Effect.asVoid);
+          }),
+        closeOwner: ownership.close,
+        errorDetail: (cause) => causeMessage(Cause.squash(cause)),
+      })
+      .pipe(Effect.provide(Logger.layer([supervisorLogger])));
     if (!result.started) {
       yield* sendMessage({ type: "error", message: STACK_STOPPED_DURING_STARTUP });
     }
@@ -830,7 +843,19 @@ export const runSupervisor = (
       const input = yield* receiveStartMessage();
       const execution = Effect.raceFirst(
         runManaged(input, platform),
-        waitForSignal().pipe(Effect.andThen(Effect.interrupt)),
+        waitForSignal().pipe(
+          // Preserve the actionable startup diagnostic before interrupting the
+          // managed run. Parent IPC may already be disconnected by the time a
+          // signal arrives, so that failure is deliberately ignored; the
+          // session actor still observes the interruption and performs its
+          // explicit-stop cleanup transaction.
+          Effect.andThen(
+            sendMessage({ type: "error", message: STACK_STOPPED_DURING_STARTUP }).pipe(
+              Effect.catchTag("SupervisorStartError", () => Effect.void),
+            ),
+          ),
+          Effect.andThen(Effect.interrupt),
+        ),
       );
       yield* Effect.matchCauseEffect(execution, {
         onFailure: (cause) =>

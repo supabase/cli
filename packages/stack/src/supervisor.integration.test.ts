@@ -572,6 +572,11 @@ const listenOwnerSequence = (
       const state = states[Math.min(reads, states.length - 1)] ?? "starting";
       reads += 1;
       onRead(state);
+      // Stop accepting the next probe before publishing the final response.
+      // Closing from the response callback leaves a window where the child can
+      // open another connection after observing this response but before the
+      // test server processes its callback under load.
+      if (closeAfterSequence && reads >= states.length) server.close();
       response.writeHead(200, { "content-type": "application/json" });
       response.end(
         JSON.stringify({
@@ -584,9 +589,6 @@ const listenOwnerSequence = (
           ready: false,
           daemonCliVersion: "test",
         }),
-        () => {
-          if (closeAfterSequence && reads >= states.length) server.close();
-        },
       );
     });
     return server;
@@ -1780,6 +1782,52 @@ describe("detached supervisor child journeys", () => {
       ]);
       const stopped = await waitForStackDocument(roots, "stopped");
       expect(stopped.lifecycle).toBe("stopped");
+    } finally {
+      if (child.child.exitCode === null) await kill(child.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("reports the actionable startup message when signaled during startup", async () => {
+    const roots = await workspace();
+    const releaseFile = join(roots.root, "release-start");
+    const child = spawnChild(messageFor(roots), {
+      testMode: "hold-start",
+      environment: { SUPABASE_STACK_TEST_START_RELEASE_FILE: releaseFile },
+    });
+    void child.started.catch(() => undefined);
+    try {
+      await waitForStackDocument(roots, "starting");
+      child.child.kill("SIGTERM");
+      await expect(child.error).resolves.toMatchObject({
+        type: "error",
+        message: "Stack was stopped during startup",
+      });
+      await waitForExit(child.child);
+    } finally {
+      if (child.child.exitCode === null) await kill(child.child);
+      cleanupRoots(roots);
+    }
+  });
+
+  test("persists explicit-stop cleanup anomalies in the supervisor log", async () => {
+    const roots = await workspace();
+    const child = spawnChild(messageFor(roots));
+    try {
+      const started = await child.started;
+      const documentPath = Effect.runSync(
+        managedStackDocumentPathEffect(roots.stateRoot, roots.stackId),
+      );
+      rmSync(documentPath);
+      mkdirSync(documentPath);
+
+      const response = await requestOwnerStop(started.endpoint);
+      expect(response.status).toBe(202);
+      await waitForExit(child.child);
+
+      const logPath = join(roots.stateRoot, "stacks", roots.stackId, "logs", "supervisor.log");
+      await waitForFile(logPath);
+      expect(readFileSync(logPath, "utf8")).toContain("Supervisor cleanup failed");
     } finally {
       if (child.child.exitCode === null) await kill(child.child);
       cleanupRoots(roots);

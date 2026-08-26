@@ -34,14 +34,14 @@ const localStream = <A, E>(
     E | StackRpcTransportError | StackRpcProtocolError
   >,
 ): Stream.Stream<A, E | StackUnavailableError> =>
-  session
-    .interruptStreamWhenStopping(
-      Stream.unwrap(session.runtimeStack.pipe(Effect.flatMap(operation))),
-    )
-    .pipe(
-      Stream.catchTag("StackRpcTransportError", (error) => Stream.die(error)),
-      Stream.catchTag("StackRpcProtocolError", (error) => Stream.die(error)),
-    );
+  Stream.unwrap(
+    session
+      .interruptWhenStopping(session.runtimeStack.pipe(Effect.flatMap(operation)))
+      .pipe(Effect.map(session.interruptStreamWhenStopping)),
+  ).pipe(
+    Stream.catchTag("StackRpcTransportError", (error) => Stream.die(error)),
+    Stream.catchTag("StackRpcProtocolError", (error) => Stream.die(error)),
+  );
 
 export interface StackLaunchUpdater {
   readonly update: (

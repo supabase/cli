@@ -907,7 +907,7 @@ it.live("closes an owner while another client still consumes an RPC stream", () 
   ),
 );
 
-it.live("finishes an active stream when a fenced stop is accepted", () =>
+it.live("terminates an active stream with the stopping reason", () =>
   live(
     Effect.scoped(
       Effect.gen(function* () {
@@ -982,7 +982,14 @@ it.live("finishes an active stream when a fenced stop is accepted", () =>
             return streamExit;
           }).pipe(Effect.provide(layer)),
         );
-        expect(Exit.isSuccess(outcome)).toBe(true);
+        expect(Exit.isFailure(outcome)).toBe(true);
+        if (Exit.isFailure(outcome)) {
+          const error = Cause.squash(outcome.cause);
+          expect(Predicate.isTagged(error, "StackUnavailableError")).toBe(true);
+          if (Predicate.isTagged(error, "StackUnavailableError")) {
+            expect(error).toMatchObject({ phase: "stopping" });
+          }
+        }
       }),
     ),
   ),

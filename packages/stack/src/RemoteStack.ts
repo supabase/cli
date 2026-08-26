@@ -1,4 +1,4 @@
-import { Effect, Exit, Layer, Match, Scope, Stream } from "effect";
+import { Effect, Exit, Fiber, Layer, Match, Scope, Stream } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -266,12 +266,17 @@ export const RemoteStack = {
         const { client } = yield* makeRemoteRpcClient(endpoint, options).pipe(
           Scope.provide(rpcScope),
         );
-        // Scope.close marks the scope closed before its finalizers complete,
-        // while Effect.cached memoizes every Exit. Keep the first close
-        // uninterruptible so cancellation cannot strand unfinished finalizers
-        // behind a permanently cached interruption.
-        const closeRpcScope = yield* Effect.cached(
-          Effect.uninterruptible(Scope.close(rpcScope, Exit.void)),
+        // Cache only creation of a detached cleanup fiber, never the cleanup
+        // completion itself. Scope.close marks the scope closed before its
+        // finalizers complete, and callers must be able to interrupt their
+        // wait without interrupting shared cleanup. The detached fiber is
+        // intentionally owned by the process-wide scope; every later
+        // stop/dispose caller observes its completion by joining the same
+        // cached fiber.
+        const closeRpcScopeFiber = yield* Effect.cached(
+          Effect.uninterruptible(
+            Effect.forkDetach(Scope.close(rpcScope, Exit.void), { uninterruptible: true }),
+          ),
         );
         const scopedRpcStream = <A, E, R>(stream: Stream.Stream<A, E, R>) =>
           stream.pipe(Stream.provideService(Scope.Scope, rpcScope));
@@ -294,12 +299,8 @@ export const RemoteStack = {
           // Observe foreign finalizer failures so they cannot suppress the
           // fenced control-plane stop. The network request remains
           // interruptible and bounded by the control client.
-          return Effect.uninterruptibleMask((restore) =>
-            Effect.exit(closeRpcScope).pipe(
-              Effect.andThen(
-                restore(control.stopSession(endpoint, owner.ownershipId, owner.ownerSessionId)),
-              ),
-            ),
+          return Effect.exit(closeRpcScopeFiber.pipe(Effect.flatMap(Fiber.join))).pipe(
+            Effect.andThen(control.stopSession(endpoint, owner.ownershipId, owner.ownerSessionId)),
           );
         };
         return {

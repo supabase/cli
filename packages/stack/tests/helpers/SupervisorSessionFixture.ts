@@ -14,12 +14,13 @@ export const makeSupervisorSessionFixture = (input: {
     const controller = yield* SupervisorSession.make(input);
     const startup = Deferred.makeUnsafe<Stack["Service"]>();
     const running = Deferred.makeUnsafe<void>();
+    const disposed = Deferred.makeUnsafe<void>();
     const closeRef = Ref.makeUnsafe<Effect.Effect<void, unknown>>(input.close ?? Effect.void);
     const runFiber = yield* controller
       .run({
         startup: () => Deferred.await(startup),
         stack: (stack) => stack,
-        awaitDisposed: () => Effect.never,
+        awaitDisposed: () => Deferred.await(disposed),
         onRunning: () => Deferred.succeed(running, undefined).pipe(Effect.asVoid),
         onStopped: () => Effect.void,
         onFailure: () => Effect.void,
@@ -36,6 +37,7 @@ export const makeSupervisorSessionFixture = (input: {
           Effect.asVoid,
         ),
       setClose: (close: Effect.Effect<void, unknown>) => Ref.set(closeRef, close),
+      disposeRuntime: Deferred.succeed(disposed, undefined).pipe(Effect.asVoid),
       requestShutdown: (_reason?: "stop" | "signal" | "startup-failure" | "dispose") =>
         controller.service.submitShutdown.pipe(Effect.andThen(awaitShutdown)),
       awaitShutdown,
