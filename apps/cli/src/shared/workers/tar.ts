@@ -50,13 +50,18 @@ const MAX_OCTAL_FIELD = 8 ** 11 - 1;
  * size — corruption no reader can detect. Real tars switch to base-256 here;
  * this writer refuses instead, because a build context carrying an 8 GiB file is
  * already a mistake worth naming rather than silently mangling.
+ *
+ * The range is checked, not just the rendered width, because the width check
+ * alone does not catch a value that is not a whole non-negative number:
+ * `(-1).toString(8)` is `"-1"` and `NaN.toString(8)` is `"NaN"`, both of which
+ * pad to exactly `length - 1` characters and slip through while writing a field
+ * no tar can parse.
  */
 function writeOctal(block: Uint8Array, offset: number, length: number, value: number): void {
-  const text = Math.floor(value)
-    .toString(8)
-    .padStart(length - 1, "0");
-  if (text.length > length - 1) {
-    throw new TarFieldTooLargeError(value);
+  const digits = Math.floor(value);
+  const text = digits.toString(8).padStart(length - 1, "0");
+  if (digits < 0 || !Number.isSafeInteger(digits) || text.length > length - 1) {
+    throw new TarFieldOutOfRangeError(value);
   }
   writeAscii(block, offset, text);
 }
@@ -122,14 +127,14 @@ export class TarPathTooLongError extends Error {
  * Untagged for the same reason as {@link TarPathTooLongError}: `createTar` is a
  * pure function, and the caller's error channel is where this surfaces.
  */
-export class TarFieldTooLargeError extends Error {
-  static readonly [ErrorActionabilityFingerprintId] = "TarFieldTooLargeError";
+export class TarFieldOutOfRangeError extends Error {
+  static readonly [ErrorActionabilityFingerprintId] = "TarFieldOutOfRangeError";
 
   constructor(value: number) {
     super(
-      `${value} is too large for a tar header field (the limit is ${MAX_OCTAL_FIELD} bytes per file)`,
+      `${value} cannot be written to a tar header field (values must be whole numbers from 0 to ${MAX_OCTAL_FIELD})`,
     );
-    this.name = "TarFieldTooLargeError";
+    this.name = "TarFieldOutOfRangeError";
   }
 
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

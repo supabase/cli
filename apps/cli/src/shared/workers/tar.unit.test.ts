@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { createTar, TarFieldTooLargeError, TarPathTooLongError } from "./tar.ts";
+import { createTar, TarFieldOutOfRangeError, TarPathTooLongError } from "./tar.ts";
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
@@ -101,11 +101,31 @@ describe("createTar", () => {
     // the next field and read back as a plausible but wrong number.
     expect(() =>
       createTar([{ path: "a.txt", contents: new Uint8Array(1), mtime: 8 ** 11 }]),
-    ).toThrow(TarFieldTooLargeError);
+    ).toThrow(TarFieldOutOfRangeError);
 
     expect(() =>
       createTar([{ path: "a.txt", contents: new Uint8Array(1), mtime: 8 ** 11 - 1 }]),
     ).not.toThrow();
+  });
+
+  // Each of these renders to exactly the field width once padded, so the width
+  // check alone waves it through and the header goes out unparseable: GNU tar
+  // rejects the whole archive, which surfaces server-side after the upload
+  // rather than here.
+  test.each([
+    ["a pre-epoch mtime", -1],
+    ["an mtime from an invalid date", Number.NaN],
+    ["an infinite mtime", Number.POSITIVE_INFINITY],
+  ])("refuses %s rather than writing a field no tar can parse", (_label, mtime) => {
+    expect(() => createTar([{ path: "a.txt", contents: new Uint8Array(1), mtime }])).toThrow(
+      TarFieldOutOfRangeError,
+    );
+  });
+
+  test("refuses a negative mode rather than writing a field no tar can parse", () => {
+    expect(() => createTar([{ path: "a.txt", contents: new Uint8Array(1), mode: -1 }])).toThrow(
+      TarFieldOutOfRangeError,
+    );
   });
 
   test("refuses a path component too long to represent", () => {

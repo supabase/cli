@@ -6,7 +6,9 @@ import {
   mkdtempSync,
   readdirSync,
   rmSync,
+  statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -42,12 +44,14 @@ function listableAsCurrentUser(path: string): boolean {
   }
 }
 
-/** Entry paths and their USTAR typeflags, read back out of the archive. */
-function readEntries(archive: Uint8Array): Array<{ path: string; type: string; link: string }> {
+/** Entry paths, USTAR typeflags and mtimes, read back out of the archive. */
+function readEntries(
+  archive: Uint8Array,
+): Array<{ path: string; type: string; link: string; mtime: string }> {
   const raw = new Uint8Array(gunzipSync(archive));
   const decoder = new TextDecoder();
   const trim = (value: string) => value.split("\u0000")[0] ?? "";
-  const entries: Array<{ path: string; type: string; link: string }> = [];
+  const entries: Array<{ path: string; type: string; link: string; mtime: string }> = [];
 
   for (let offset = 0; offset + 512 <= raw.length;) {
     const name = trim(decoder.decode(raw.subarray(offset, offset + 100)));
@@ -59,10 +63,18 @@ function readEntries(archive: Uint8Array): Array<{ path: string; type: string; l
       path: name,
       type: decoder.decode(raw.subarray(offset + 156, offset + 157)),
       link: trim(decoder.decode(raw.subarray(offset + 157, offset + 257))),
+      mtime: trim(decoder.decode(raw.subarray(offset + 136, offset + 148))),
     });
     offset += 512 + Math.ceil(size / 512) * 512;
   }
   return entries;
+}
+
+/** The 11-digit octal a tar header carries for `mtimeMs`. */
+function expectedOctalMtime(mtimeMs: number): string {
+  return Math.floor(mtimeMs / 1000)
+    .toString(8)
+    .padStart(11, "0");
 }
 
 describe("packageWorkerDirectory", () => {
@@ -127,6 +139,26 @@ describe("packageWorkerDirectory", () => {
 
     expect(entries.map((entry) => entry.path).sort()).toEqual(["keep.txt", "sub/", "sub/up"]);
     expect(entries.find((entry) => entry.path === "sub/up")?.type).toBe("2");
+  });
+
+  // A pre-1970 mtime is negative, and a negative number is not representable in
+  // a USTAR octal field: `(-1).toString(8)` renders to exactly the field width,
+  // so it would sail past the width check and ship a header GNU tar rejects
+  // after the upload. A botched `touch` is not worth failing a deploy over, so
+  // the timestamp collapses to the epoch instead.
+  test("packages a file with a pre-epoch mtime, timestamped at the epoch", async () => {
+    const file = join(dir, "a.txt");
+    writeFileSync(file, "a");
+    utimesSync(file, new Date(-86_400_000), new Date(-86_400_000));
+
+    const result = await pack(dir);
+
+    const entry = readEntries(result.archive).find((candidate) => candidate.path === "a.txt");
+    // Some filesystems refuse a pre-epoch timestamp and clamp it on the way in,
+    // in which case there is nothing to collapse — either way the field has to
+    // be a plain octal number the archive can carry.
+    const stored = statSync(file).mtimeMs;
+    expect(entry?.mtime).toBe(stored < 0 ? "00000000000" : expectedOctalMtime(stored));
   });
 
   test("packages an empty directory to an archive with no entries", async () => {

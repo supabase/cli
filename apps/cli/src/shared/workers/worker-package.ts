@@ -22,6 +22,23 @@ interface PackagedWorker {
 }
 
 /**
+ * Seconds since the epoch, as a USTAR octal field can hold them.
+ *
+ * A filesystem timestamp is not always a sane one. A pre-1970 mtime is negative
+ * — a botched `touch` and some archive extractors both produce them — and a
+ * corrupt one decodes to an `Invalid Date` whose `getTime()` is `NaN`. Neither
+ * is representable, and neither is worth failing a deploy over, so both collapse
+ * to the epoch rather than reaching `writeOctal`'s range check.
+ */
+function tarMtime(modified: Option.Option<Date>): number {
+  if (Option.isNone(modified)) {
+    return 0;
+  }
+  const seconds = Math.floor(modified.value.getTime() / 1000);
+  return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : 0;
+}
+
+/**
  * Every entry under `root`, as tar entries.
  *
  * Filesystem errors propagate rather than being skipped: an entry missing from
@@ -64,8 +81,7 @@ const collectEntries = (
 
       const info = yield* fs.stat(absolutePath);
 
-      const modified = info.mtime;
-      const mtime = Option.isSome(modified) ? Math.floor(modified.value.getTime() / 1000) : 0;
+      const mtime = tarMtime(info.mtime);
 
       if (info.type === "Directory") {
         entries.push({ path: `${relativePath}/`, contents: new Uint8Array(0), mode: 0o755, mtime });
