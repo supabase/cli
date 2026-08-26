@@ -137,8 +137,9 @@ text itself being rewritten in place.
 CLI-2230's implementation surfaced the prefix rule's one deliberate exception. The operand type of
 the sparse comparison core (`subtractCliConfig`/`omitDefaultValues`) accepts both families — the
 `CliConfig` document and the sparse `ProjectConfig` overlay — so either prefix would misdescribe
-it. It is named `EffectiveConfig` (`DeepPartial<Omit<CliConfig, "remotes">>`, exported from the
-pure entrypoint), replacing the earlier `BaseCliConfig`, whose `Cli*` name wrongly claimed the
-local-checkout side for a type that `ProjectConfig` values must also satisfy. The general rule: a
-symbol that genuinely spans both families takes a family-neutral name rather than a misleading
-prefix. Ruled on CLI-2230 (2026-08-26); ADR 0018 gains a sibling addendum in that work.
+it. CLI-2230 (in flight) names it `EffectiveConfig` (`DeepPartial<Omit<CliConfig, "remotes">>`,
+exported from the pure entrypoint) and deletes today's `BaseCliConfig` export, whose `Cli*` name
+wrongly claims the local-checkout side for a type that `ProjectConfig` values must also satisfy;
+until that lands, `BaseCliConfig` remains the export on `develop`. The general rule: a symbol that
+genuinely spans both families takes a family-neutral name rather than a misleading prefix. Ruled
+on CLI-2230 (2026-08-26); ADR 0018 gains a sibling addendum in that work.
