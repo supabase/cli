@@ -469,7 +469,26 @@ const MAX_UNMAPPED_WALK_DEPTH = 64;
  * deterministically, well before either function's own recursion could
  * overflow the stack.
  */
-function assertRawAttributesDepthWithinBound(value: unknown, depth = 0): void {
+/**
+ * Total node visits the raw-attributes validation walk tolerates before
+ * declaring the structure pathological. A real project-config response holds
+ * a few hundred nodes; this bound exists for programmatic callers handing
+ * `attachApiResponse` a shared-reference DAG, where ~40 objects arranged
+ * with two properties each pointing at the same next node cost ~2^40 visits
+ * while staying inside the depth bound — bounding *work* (not memoizing
+ * subtrees) keeps the rejection typed and also keeps the later
+ * path-dependent {@link walkUnmapped} safe, since any structure that passes
+ * here costs `walkUnmapped` at most the same bounded number of visits.
+ * (JSON parsed off a real network response can never share references, so
+ * nothing legitimate is anywhere near this bound.)
+ */
+const MAX_RAW_ATTRIBUTES_NODE_VISITS = 100_000;
+
+function assertRawAttributesDepthWithinBound(
+  value: unknown,
+  depth = 0,
+  visits: { count: number } = { count: 0 },
+): void {
   if (depth > MAX_UNMAPPED_WALK_DEPTH) {
     const detail = `pathological nesting: exceeded ${MAX_UNMAPPED_WALK_DEPTH} levels while validating the raw API response`;
     throw new ProjectConfigParseError({
@@ -478,15 +497,24 @@ function assertRawAttributesDepthWithinBound(value: unknown, depth = 0): void {
       suggestion: PROJECT_CONFIG_PARSE_ERROR_SUGGESTION,
     });
   }
+  visits.count += 1;
+  if (visits.count > MAX_RAW_ATTRIBUTES_NODE_VISITS) {
+    const detail = `pathological structure: exceeded ${MAX_RAW_ATTRIBUTES_NODE_VISITS} node visits while validating the raw API response`;
+    throw new ProjectConfigParseError({
+      message: formatProjectConfigParseErrorMessage(detail),
+      cause: new Error(detail),
+      suggestion: PROJECT_CONFIG_PARSE_ERROR_SUGGESTION,
+    });
+  }
   if (Array.isArray(value)) {
     for (const child of value) {
-      assertRawAttributesDepthWithinBound(child, depth + 1);
+      assertRawAttributesDepthWithinBound(child, depth + 1, visits);
     }
     return;
   }
   if (isObject(value)) {
     for (const child of Object.values(value)) {
-      assertRawAttributesDepthWithinBound(child, depth + 1);
+      assertRawAttributesDepthWithinBound(child, depth + 1, visits);
     }
   }
 }
@@ -707,6 +735,36 @@ const consumedApiPathKeys: ReadonlySet<string> = (() => {
   return keys;
 })();
 
+/**
+ * Every PROPER prefix of a consumed path, plus the six top-level sections the
+ * mirror schema declares — the containers this registry version already
+ * "knows". {@link walkUnmapped} prunes a known container that is empty in the
+ * raw response (an empty `postgres_settings`/`auth` carries nothing unknown
+ * to report), while an empty object at an UNKNOWN path survives as drift
+ * signal — a newly introduced, not-yet-populated API section.
+ */
+const knownApiContainerKeys: ReadonlySet<string> = (() => {
+  const keys = new Set<string>();
+  const addPrefixes = (path: ReadonlyArray<string>): void => {
+    for (let length = 1; length < path.length; length++) {
+      keys.add(pathKey(path.slice(0, length)));
+    }
+  };
+  for (const row of projectConfigMappingRows) {
+    addPrefixes(row.apiPath);
+    for (const alsoPath of row.alsoConsumes ?? []) {
+      addPrefixes(alsoPath);
+    }
+  }
+  for (const secretPath of unmappedSecretApiPaths) {
+    addPrefixes(secretPath);
+  }
+  for (const section of ["database", "pooler", "auth", "api", "realtime", "storage"]) {
+    keys.add(pathKey([section]));
+  }
+  return keys;
+})();
+
 function walkUnmapped(value: unknown, path: ReadonlyArray<string>, depth = 0): unknown {
   if (depth > MAX_UNMAPPED_WALK_DEPTH) {
     const detail = `pathological nesting: exceeded ${MAX_UNMAPPED_WALK_DEPTH} levels while walking for unmapped fields`;
@@ -722,12 +780,14 @@ function walkUnmapped(value: unknown, path: ReadonlyArray<string>, depth = 0): u
   if (!isObject(value)) {
     return value;
   }
-  // An empty object in the raw response is itself information — a newly
+  // An empty object at an UNKNOWN path is itself information — a newly
   // introduced, not-yet-populated section would otherwise vanish here and
-  // make the response look fully mapped. Only containers emptied by
-  // consumption are pruned (the final return below).
+  // make the response look fully mapped. A KNOWN container that happens to
+  // be empty (`postgres_settings: {}`, `auth: {}`) is pruned instead: there
+  // is nothing unknown in it to report, and preserving it would fabricate
+  // drift for perfectly ordinary responses.
   if (Object.keys(value).length === 0) {
-    return {};
+    return knownApiContainerKeys.has(pathKey(path)) ? undefined : {};
   }
 
   const result: Record<string, unknown> = {};

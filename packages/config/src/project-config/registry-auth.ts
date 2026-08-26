@@ -618,15 +618,38 @@ const mfaRows: ReadonlyArray<ProjectConfigMappingRow> = [
 const captchaRows: ReadonlyArray<ProjectConfigMappingRow> = [
   boolRow(["auth", "captcha", "enabled"], "security_captcha_enabled"),
   {
-    // Guarded to the schema enum (../auth/captcha.ts: "hcaptcha" | "turnstile");
-    // any other value (including "" or null) omits the field rather than
-    // throwing — auth.sync.ts:1309 has no such guard because it merges into a
-    // local document instead of producing a standalone sparse one.
+    // Guarded to the schema enum (../auth/captcha.ts: "hcaptcha" | "turnstile"):
+    // an unrecognized STRING (including "") omits the field — an enum member
+    // this version doesn't model, tolerable API-ahead skew — and `null` keeps
+    // the no-value-omits convention, but a present non-string is a malformed
+    // platform response and throws like every other mapped auth field.
+    // auth.sync.ts:1309 has no guard at all because it merges into a local
+    // document instead of producing a standalone sparse one.
     configPath: ["auth", "captcha", "provider"],
     apiPath: ["auth", "security_captcha_provider"],
-    transform: (value) => (value === "hcaptcha" || value === "turnstile" ? value : undefined),
+    transform: (value) => {
+      if (value === null) return undefined;
+      const provider = expectString(value, ["auth", "security_captcha_provider"]);
+      return provider === "hcaptcha" || provider === "turnstile" ? provider : undefined;
+    },
   },
   secretRow(["auth", "captcha", "secret"], "security_captcha_secret"),
+];
+
+// OAUTH SERVER — no sync precedent (the section postdates the legacy
+// mappers); name-matched against the generated contract
+// (packages/api/src/generated/contracts.ts:3462-3464) and the config schema
+// (../auth/index.ts:180-200). Note the rename: the GoTrue key is
+// `oauth_server_authorization_path`, the config field
+// `authorization_url_path`.
+
+const oauthServerRows: ReadonlyArray<ProjectConfigMappingRow> = [
+  boolRow(["auth", "oauth_server", "enabled"], "oauth_server_enabled"),
+  boolRow(
+    ["auth", "oauth_server", "allow_dynamic_registration"],
+    "oauth_server_allow_dynamic_registration",
+  ),
+  stringRow(["auth", "oauth_server", "authorization_url_path"], "oauth_server_authorization_path"),
 ];
 
 // WEB3 (auth.sync.ts:1695-1704)
@@ -648,12 +671,16 @@ const smsBaseRows: ReadonlyArray<ProjectConfigMappingRow> = [
   stringRow(["auth", "sms", "template"], "sms_template"),
   secondsDurationRow(["auth", "sms", "max_frequency"], "sms_max_frequency"),
   {
-    // auth.sync.ts:1679, 1736-1747 (envToMap). Empty/null/unparsed → omit.
+    // auth.sync.ts:1679, 1736-1747 (envToMap). Null/empty/unparsed → omit;
+    // a present non-string is a malformed platform response and throws like
+    // every other mapped auth field.
     configPath: ["auth", "sms", "test_otp"],
     apiPath: ["auth", "sms_test_otp"],
     transform: (value) => {
-      if (typeof value !== "string" || value.length === 0) return undefined;
-      const map = envToMap(value);
+      if (value === null) return undefined;
+      const encoded = expectString(value, ["auth", "sms_test_otp"]);
+      if (encoded.length === 0) return undefined;
+      const map = envToMap(encoded);
       return Object.keys(map).length > 0 ? map : undefined;
     },
   },
@@ -850,6 +877,7 @@ export const authMappingRows: ReadonlyArray<ProjectConfigMappingRow> = [
   ...notificationRows,
   ...mfaRows,
   ...captchaRows,
+  ...oauthServerRows,
   ...web3Rows,
   ...smsBaseRows,
   ...smsProviderSelectionRows,

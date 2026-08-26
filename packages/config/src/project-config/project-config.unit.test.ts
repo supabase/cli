@@ -1327,3 +1327,66 @@ describe("review round: aliasing, unknown-empty sections, path encoding (CLI-223
     expect(unmappedApiFields(result)).toEqual({});
   });
 });
+
+describe("review round: oauth_server rows, known-empty pruning, DAG walk (CLI-2230)", () => {
+  test("oauth_server settings map, including the authorization path rename", () => {
+    const result = fromApiProjectConfig({
+      auth: {
+        oauth_server_enabled: true,
+        oauth_server_allow_dynamic_registration: false,
+        oauth_server_authorization_path: "/oauth/authorize",
+      },
+    });
+    expect(result.auth?.oauth_server).toEqual({
+      enabled: true,
+      allow_dynamic_registration: false,
+      authorization_url_path: "/oauth/authorize",
+    });
+  });
+
+  test("known-but-empty containers are pruned from unmappedApiFields", () => {
+    const result = fromApiProjectConfig({ database: { postgres_settings: {} }, auth: {} });
+    expect(unmappedApiFields(result)).toEqual({});
+  });
+
+  test("a shared-reference DAG is rejected in bounded time with a typed error", () => {
+    // ~40 shared levels × 2 properties = ~2^41 tree paths within the depth
+    // bound — the visit cap must reject it as pathological (typed, fast)
+    // instead of hanging. Real JSON off the network can never share
+    // references, so nothing legitimate hits this.
+    let node: Record<string, unknown> = { leaf: true };
+    for (let level = 0; level < 40; level++) {
+      node = { a: node, b: node };
+    }
+    const startedAt = performance.now();
+    expect(() => fromApiProjectConfig({ shared_dag: node })).toThrow(ProjectConfigParseError);
+    expect(performance.now() - startedAt).toBeLessThan(5_000);
+  });
+
+  test("a non-string sms_test_otp throws with its apiPath", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({ auth: { sms_test_otp: 123 } });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).apiPath).toEqual(["auth", "sms_test_otp"]);
+  });
+
+  test("a non-string captcha provider throws; a recognized one maps; an unknown string omits", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({ auth: { security_captcha_provider: 7 } });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+
+    const recognized = fromApiProjectConfig({ auth: { security_captcha_provider: "hcaptcha" } });
+    expect(recognized.auth?.captcha?.provider).toBe("hcaptcha");
+
+    const unknown = fromApiProjectConfig({ auth: { security_captcha_provider: "novelcaptcha" } });
+    expect(Object.hasOwn(unknown, "auth")).toBe(false);
+  });
+});
