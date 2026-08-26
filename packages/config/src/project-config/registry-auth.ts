@@ -108,16 +108,20 @@ function durationString(ns: number): string {
 }
 
 /**
- * The canonical-duration domain is bounded by float64 integer precision, not
- * Go's int64 range: past `Number.MAX_SAFE_INTEGER` nanoseconds (~104 days)
- * accumulation silently rounds small components away, so {@link
- * parseDuration} rejects such values and the API-side row bounds below stay
- * INSIDE that domain — every duration the API side can emit is one the
- * document-side canonicalizer can also re-parse, keeping the two spellings
- * convergent. This is the same bound in whole seconds, for the
- * `*_max_frequency` rows.
+ * Go's maximum time.Duration (max int64 nanoseconds, ~292 years); 2^63 is
+ * the nearest exactly-representable float64, one nanosecond above it — an
+ * approximate guard whose only job is keeping values inside Go's domain.
  */
-const MAX_CANONICAL_DURATION_SECONDS = 9_007_199;
+const MAX_GO_DURATION_NS = 2 ** 63;
+
+/**
+ * Go's maximum duration in whole seconds, for the `*_max_frequency` rows.
+ * Values this large are single whole-unit components, which stay float-exact
+ * at any magnitude inside Go's range (see {@link parseDuration}'s
+ * precision rule) — only MIXED or FRACTIONAL components past
+ * `Number.MAX_SAFE_INTEGER` nanoseconds lose precision.
+ */
+const MAX_CANONICAL_DURATION_SECONDS = 9_223_372_036;
 
 const NS_PER_SECOND = 1_000_000_000;
 const NS_PER_MINUTE = 60 * NS_PER_SECOND;
@@ -137,6 +141,8 @@ function parseDuration(s: string): number {
   const orig = s;
   let neg = false;
   let total = 0;
+  let componentCount = 0;
+  let fractionUsed = false;
 
   if (s.startsWith("-") || s.startsWith("+")) {
     neg = s.startsWith("-");
@@ -221,12 +227,22 @@ function parseDuration(s: string): number {
     // (frac / post) * unitNs rounds to 259299.99999999997 and truncates a
     // nanosecond short.
     total += n * unitNs + Math.trunc(frac * (unitNs / post));
-    // Stricter than Go's int64 range check: past Number.MAX_SAFE_INTEGER
-    // nanoseconds (~104 days) the float accumulation silently rounds smaller
-    // components away ("2502h1ns" would lose its 1ns and canonicalize to
-    // "2502h0m0s", changing the configured value), so the canonicalizer must
-    // treat such durations as unparsable and leave them verbatim.
-    if (!Number.isFinite(total) || total > Number.MAX_SAFE_INTEGER) {
+    componentCount += 1;
+    if (post > 1) {
+      fractionUsed = true;
+    }
+    // Two bounds: Go's own int64 range, and — stricter, but only for MIXED
+    // or FRACTIONAL durations — float64 integer precision: past
+    // Number.MAX_SAFE_INTEGER nanoseconds the accumulation silently rounds
+    // smaller components away ("2502h1ns" would lose its 1ns), so such
+    // values stay verbatim. A SINGLE whole-unit component ("8760h", the push
+    // parser's own output range) stays exact at any magnitude inside Go's
+    // range and parses fine.
+    if (
+      !Number.isFinite(total) ||
+      total > MAX_GO_DURATION_NS ||
+      (total > Number.MAX_SAFE_INTEGER && (componentCount > 1 || fractionUsed))
+    ) {
       throw new Error(`time: invalid duration "${orig}" (value out of range)`);
     }
   }
@@ -483,16 +499,14 @@ function secondsDurationRow(
  * site.
  */
 /**
- * Bound for the session-hour fields — the same canonical-duration domain as
- * {@link MAX_CANONICAL_DURATION_SECONDS}, expressed exactly in (fractional)
- * hours rather than rounded down to a whole hour, so a legitimate fractional
- * value like `2501.5` hours (inside the safe-nanosecond range) still maps:
- * the contract only requires these finite, but values past this bound
- * overflow the formatter ("InfinityhNaNmNaNs", exponent notation) or land
- * past the precision bound the document-side canonicalizer re-parses.
+ * Bound for the session-hour fields: Go's maximum duration expressed in
+ * (fractional) hours — a valid year-long "8760h" session bound pushes as
+ * 8760 and must map back, so the ceiling is Go's range, not float precision
+ * (whole-hour products stay exact at any magnitude inside it). Values past
+ * it overflow the formatter ("InfinityhNaNmNaNs", exponent notation).
  * Negative session bounds are meaningless, so 0 is the floor.
  */
-const MAX_SESSION_DURATION_HOURS = Number.MAX_SAFE_INTEGER / NS_PER_HOUR;
+const MAX_SESSION_DURATION_HOURS = MAX_GO_DURATION_NS / NS_PER_HOUR;
 
 function hoursDurationRow(
   configPath: ReadonlyArray<string>,
@@ -637,17 +651,50 @@ const smtpRows: ReadonlyArray<ProjectConfigMappingRow> = [
     // auth.sync.ts:1420-1425: the API reports smtp_port as a string. `null`
     // omits the field; a non-string throws via `expectString`; a string that
     // fails `parseUint16` (out of range, non-digits) still omits, per the
-    // legacy pull direction's own tolerance for an unparsable port.
+    // legacy pull direction's own tolerance for an unparsable port. Gated on
+    // an enabled SMTP host (validation first), like the sibling rows below.
     configPath: ["auth", "email", "smtp", "port"],
     apiPath: smtpPortPath,
-    transform: (value) =>
-      value === null ? undefined : parseUint16(expectString(value, smtpPortPath)),
+    transform: (value, attributes) => {
+      if (value === null) return undefined;
+      const port = parseUint16(expectString(value, smtpPortPath));
+      return smtpEnabledInAttributes(attributes) ? port : undefined;
+    },
   },
-  stringRow(["auth", "email", "smtp", "user"], "smtp_user"),
-  stringRow(["auth", "email", "smtp", "admin_email"], "smtp_admin_email"),
-  stringRow(["auth", "email", "smtp", "sender_name"], "smtp_sender_name"),
+  smtpSiblingStringRow(["auth", "email", "smtp", "user"], "smtp_user"),
+  smtpSiblingStringRow(["auth", "email", "smtp", "admin_email"], "smtp_admin_email"),
+  smtpSiblingStringRow(["auth", "email", "smtp", "sender_name"], "smtp_sender_name"),
   secretRow(["auth", "email", "smtp", "pass"], "smtp_pass"),
 ];
+
+/**
+ * Whether the reported `smtp_host` signals SMTP enabled (non-null, non-empty)
+ * — the sibling settings (`smtp_user`, `smtp_admin_email`, …) are stale noise
+ * while SMTP is off: the push direction writes ONLY `smtp_host: ""` when
+ * disabling (auth.sync.ts:2384-2397), so reporting retained siblings on a
+ * disabled section would fabricate drift.
+ */
+function smtpEnabledInAttributes(attributes: Record<string, unknown>): boolean {
+  const host = readAuthAttribute(attributes, "smtp_host");
+  return typeof host === "string" && host.length > 0;
+}
+
+/** A {@link stringRow} gated on {@link smtpEnabledInAttributes} — validation still runs first. */
+function smtpSiblingStringRow(
+  configPath: ReadonlyArray<string>,
+  apiKey: string,
+): ProjectConfigMappingRow {
+  const apiPath = ["auth", apiKey];
+  return {
+    configPath,
+    apiPath,
+    transform: (value, attributes) => {
+      if (value === null) return undefined;
+      const narrowed = expectString(value, apiPath);
+      return smtpEnabledInAttributes(attributes) ? narrowed : undefined;
+    },
+  };
+}
 
 // Email templates ×6 (auth.sync.ts:1439-1461; content_path has no API key)
 

@@ -282,33 +282,68 @@ export function fromConfigDocument(config: EffectiveConfig): unknown {
     }
   }
   applyDocumentNormalizations(result);
-  // Disabled-sentinel symmetry with the API arm: when the document declares
-  // api.enabled = false, its schemas/extra_search_path/max_rows are values
-  // the disabled service ignores (usually schema-filled defaults), and the
-  // API arm deliberately emits only { enabled: false } for the db_schema: ""
-  // sentinel (api.sync.ts:84-96; :130-145 pushes only db_schema: "" when
-  // disabled) — projecting them would fabricate drift between two
-  // representations of the same disabled state.
-  const apiSection = result["api"];
-  if (isObject(apiSection) && apiSection["enabled"] === false) {
-    for (const disabledKey of ["schemas", "extra_search_path", "max_rows"]) {
-      delete apiSection[disabledKey];
-    }
-  }
-  // Same sentinel symmetry for network restrictions: the legacy push skips
-  // the entire read/diff/apply flow when the section is disabled
-  // (db.sync.ts:148-150), so a disabled document's schema-filled allowlists
-  // are unmanaged noise that would fabricate drift.
-  const dbSection = result["db"];
-  if (isObject(dbSection)) {
-    const networkRestrictions = dbSection["network_restrictions"];
-    if (isObject(networkRestrictions) && networkRestrictions["enabled"] === false) {
-      for (const disabledKey of ["allowed_cidrs", "allowed_cidrs_v6"]) {
-        delete networkRestrictions[disabledKey];
+  applyDisabledSentinels(result);
+  return result;
+}
+
+/**
+ * Containers whose `enabled: false` makes their sibling fields unmanaged
+ * noise: the legacy push writes only the disable sentinel for each of these
+ * (Data API: only `db_schema: ""`, api.sync.ts:130-145; network
+ * restrictions: whole flow skipped, db.sync.ts:148-150; SMTP: only
+ * `smtp_host: ""`, auth.sync.ts:2384-2397; storage Iceberg/Vector: whole
+ * feature omitted, storage.sync.ts:287-299), so projecting the (usually
+ * schema-filled) siblings would fabricate drift between two representations
+ * of the same disabled state. The API arm mirrors each of these with its own
+ * sentinel gating.
+ */
+const DISABLED_SENTINEL_PRUNES: ReadonlyArray<{
+  readonly containerPath: ReadonlyArray<string>;
+  readonly dropKeys: ReadonlyArray<string>;
+}> = [
+  { containerPath: ["api"], dropKeys: ["schemas", "extra_search_path", "max_rows"] },
+  {
+    containerPath: ["db", "network_restrictions"],
+    dropKeys: ["allowed_cidrs", "allowed_cidrs_v6"],
+  },
+  {
+    containerPath: ["auth", "email", "smtp"],
+    dropKeys: ["host", "port", "user", "pass", "admin_email", "sender_name"],
+  },
+  {
+    containerPath: ["storage", "analytics"],
+    dropKeys: ["max_namespaces", "max_tables", "max_catalogs"],
+  },
+  { containerPath: ["storage", "vector"], dropKeys: ["max_buckets", "max_indexes"] },
+];
+
+function applyDisabledSentinels(result: Record<string, unknown>): void {
+  for (const rule of DISABLED_SENTINEL_PRUNES) {
+    const container = readPath(result, rule.containerPath);
+    if (isObject(container) && container["enabled"] === false) {
+      for (const dropKey of rule.dropKeys) {
+        delete container[dropKey];
       }
     }
   }
-  return result;
+  // Disabled EXTERNAL PROVIDERS keep only their `enabled: false`: the push
+  // sends nothing but the flag for a disabled provider
+  // (auth.sync.ts:2575-2589), while a decoded document materializes every
+  // provider with default-empty credentials — reporting those against a
+  // platform that retains an old client ID would be pure phantom drift.
+  const authSection = result["auth"];
+  const external = isObject(authSection) ? authSection["external"] : undefined;
+  if (isObject(external)) {
+    for (const provider of Object.values(external)) {
+      if (isObject(provider) && provider["enabled"] === false) {
+        for (const key of Object.keys(provider)) {
+          if (key !== "enabled") {
+            delete provider[key];
+          }
+        }
+      }
+    }
+  }
 }
 
 /**

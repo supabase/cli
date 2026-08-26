@@ -796,9 +796,17 @@ describe("fromApiProjectConfig — auth section", () => {
     expect(result.auth?.email?.smtp).toEqual({ enabled: true, host: "smtp.example.com" });
   });
 
-  test("smtp_port parses a numeric string", () => {
-    const result = fromApiProjectConfig({ auth: { smtp_port: "2500" } });
-    expect(result.auth?.email?.smtp).toEqual({ port: 2500 });
+  test("smtp_port parses a numeric string (when SMTP is enabled)", () => {
+    // The port is gated on an enabled smtp_host like every SMTP sibling —
+    // the push writes only smtp_host: "" when disabling.
+    const result = fromApiProjectConfig({
+      auth: { smtp_host: "smtp.example.com", smtp_port: "2500" },
+    });
+    expect(result.auth?.email?.smtp).toEqual({
+      enabled: true,
+      host: "smtp.example.com",
+      port: 2500,
+    });
   });
 
   test("an unparsable smtp_port is omitted", () => {
@@ -1894,5 +1902,54 @@ describe("review round: Go fraction order, mu units, realms, disabled-gate valid
     }
     expect(thrown).toBeInstanceOf(ProjectConfigParseError);
     expect((thrown as ProjectConfigParseError).apiPath).toEqual(["api", "max_rows"]);
+  });
+});
+
+describe("review round: Go-range sessions, SMTP/provider/storage disabled sentinels (CLI-2230)", () => {
+  test("year-scale whole-hour durations parse and map inside Go's range", () => {
+    // "8760h" is a valid push-side value (sent as 8760 hours); the earlier
+    // float-precision ceiling wrongly rejected it. Single whole-unit
+    // components stay exact at any magnitude inside Go's range.
+    const projected = fromConfigDocument({ auth: { sessions: { timebox: "8760h" } } });
+    expect(projected.auth?.sessions?.timebox).toBe("8760h0m0s");
+    const mapped = fromApiProjectConfig({ auth: { sessions_timebox: 8760 } });
+    expect(mapped.auth?.sessions?.timebox).toBe("8760h0m0s");
+  });
+
+  test("SMTP siblings are omitted when the host reports SMTP disabled", () => {
+    const disabled = fromApiProjectConfig({
+      auth: { smtp_host: "", smtp_user: "stale", smtp_admin_email: "old@x.co" },
+    });
+    expect(disabled.auth?.email?.smtp).toEqual({ enabled: false });
+    const enabled = fromApiProjectConfig({
+      auth: { smtp_host: "smtp.example.com", smtp_user: "user" },
+    });
+    expect(enabled.auth?.email?.smtp).toEqual({
+      enabled: true,
+      host: "smtp.example.com",
+      user: "user",
+    });
+    // Validation still runs before the gate.
+    expect(() => fromApiProjectConfig({ auth: { smtp_host: "", smtp_user: 5 } })).toThrow(
+      ProjectConfigParseError,
+    );
+  });
+
+  test("disabled storage features project only their toggle", () => {
+    const projected = fromConfigDocument({
+      storage: { analytics: { enabled: false, max_tables: 10 } },
+    });
+    expect(projected.storage?.analytics).toEqual({ enabled: false });
+  });
+
+  test("disabled external providers project only their toggle", () => {
+    const projected = fromConfigDocument({
+      auth: { external: { github: { enabled: false, client_id: "retired" } } },
+    });
+    expect(projected.auth?.external?.github).toEqual({ enabled: false });
+    const enabled = fromConfigDocument({
+      auth: { external: { github: { enabled: true, client_id: "live" } } },
+    });
+    expect(enabled.auth?.external?.github).toEqual({ enabled: true, client_id: "live" });
   });
 });
