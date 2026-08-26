@@ -352,6 +352,30 @@ describe("legacy workers status", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // `state_reason`, `image_version`, `deleting` and `instances_error` are all
+  // optional, so a healthy worker's payload is mostly holes. Pins that they are
+  // omitted rather than rendered.
+  it.live("encodes TOML for a worker whose optional fields are absent", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      goOutput: "toml",
+      routes: {
+        [getRoute]: {
+          status: 200,
+          body: { data: workerResource({ name: "api", runtime: "node", exposure: "private" }) },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("worker_name = ");
+      expect(out.stdoutText).not.toContain("undefined");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("refuses -o env before making any request at all", () => {
     const repo = project();
     const { layer, http } = setupLegacyWorkers({

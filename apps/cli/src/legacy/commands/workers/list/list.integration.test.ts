@@ -328,6 +328,32 @@ describe("legacy workers list", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // An undeployed worker has no `size`/`instances` and a private one no `url`,
+  // so a realistic inventory hands the encoder a payload full of holes. Pins
+  // that they are omitted rather than rendered or thrown on.
+  it.live("encodes TOML for an inventory holding undeployed and private workers", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      goOutput: "toml",
+      routes: {
+        [listRoute]: {
+          status: 200,
+          body: {
+            data: [workerResource({ name: "api", runtime: "node", exposure: "private" })],
+          },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersList({ projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("project_ref = ");
+      expect(out.stdoutText).not.toContain("undefined");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   // `pretty` is the human default; `table` and `csv` are accepted by the global
   // flag for `db query`'s benefit, and every resource command is meant to ignore
   // them and render text. All three used to fall through to the TOML encoder,
