@@ -72,7 +72,6 @@
     "esbuild": "^0.28.2",
     "ink": "^7.1.1",
     "ink-spinner": "^5.0.0",
-    "knip": "catalog:",
     "pg": "^8.23.0",
     "pg-copy-streams": "^7.0.0",
     "posthog-node": "^5.49.1",
@@ -108,38 +107,6 @@
     "plugins": [
       "@semantic-release/commit-analyzer",
       "@semantic-release/release-notes-generator"
-    ]
-  },
-  "knip": {
-    "entry": [
-      "src/shared/cli/bin.ts",
-      "src/**/*.test.ts",
-      "src/**/*.e2e.test.ts",
-      "src/**/*.live.test.ts"
-    ],
-    "ignore": [
-      "scripts/*.ts",
-      "tests/**/*.ts",
-      "src/shared/telemetry/event-catalog.ts"
-    ],
-    "ignoreBinaries": [
-      "nx",
-      "mkfifo"
-    ],
-    "ignoreDependencies": [
-      "@parcel/watcher-darwin-arm64",
-      "@parcel/watcher-darwin-x64",
-      "@parcel/watcher-linux-arm64-glibc",
-      "@parcel/watcher-linux-arm64-musl",
-      "@parcel/watcher-linux-x64-glibc",
-      "@parcel/watcher-linux-x64-musl",
-      "@parcel/watcher-win32-arm64",
-      "@parcel/watcher-win32-x64",
-      "prettier",
-      "semantic-release",
-      "@anthropic-ai/claude-agent-sdk",
-      "@anthropic-ai/sdk",
-      "@modelcontextprotocol/sdk"
     ]
   },
   "nx": {

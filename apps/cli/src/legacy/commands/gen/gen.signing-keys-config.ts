@@ -1,4 +1,4 @@
-import { loadProjectConfig, loadProjectEnvironment } from "@supabase/config";
+import { loadCliConfig, loadCliProjectEnvironment } from "@supabase/config/effect";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { legacyAssertDecodableJwkAlgorithm } from "../../shared/legacy-go-jwt.ts";
 import { legacyGoJsonKindName } from "../../shared/legacy-go-json.ts";
@@ -479,9 +479,9 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
   // The dotenv cascade must run BEFORE `loadFromFile` ever decodes `env(...)`
   // TOML references — and that cascade reaches `.env.<SUPABASE_ENV>[.local]`
   // files AND the project-root directory (`<workdir>/.env`), not just
-  // `supabase/.env`/`.env.local`. `loadProjectConfig`'s OWN internal env
+  // `supabase/.env`/`.env.local`. `loadCliConfig`'s OWN internal env
   // resolution (used whenever `options.projectEnv` is omitted,
-  // `@supabase/config`'s `loadProjectEnvironment`) only covers that narrower
+  // `@supabase/config`'s `loadCliProjectEnvironment`) only covers that narrower
   // `supabase/`-dir, env-agnostic half — so `[auth].signing_keys_path =
   // "env(KEYS_PATH)"` with `KEYS_PATH` set only in
   // `.env.development`/`<workdir>/.env` would otherwise stay literally
@@ -489,7 +489,7 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
   // with it fine. Fills the exact same gap `legacy-local-project-context.ts`'s
   // `legacyLoadLocalProjectContext` already fills for `stop`/`status`, via the
   // same two-step resolution.
-  const projectEnv = yield* loadProjectEnvironment({
+  const projectEnv = yield* loadCliProjectEnvironment({
     cwd,
     baseEnv: process.env,
     search: false,
@@ -501,12 +501,12 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
     try: () => legacyResolveProjectEnvironmentValues(projectEnv, cwd),
     catch: (cause) => onConfigParseError(`failed to read config: ${String(cause)}`),
   });
-  const loaded = yield* loadProjectConfig(cwd, {
-    projectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
+  const loaded = yield* loadCliConfig(cwd, {
+    cliProjectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
     goViperCompat: true,
-    // `cwd` here is the ALREADY-resolved `LegacyCliConfig.workdir` (the
+    // `cwd` here is the ALREADY-resolved `LegacyCliSettings.workdir` (the
     // ancestor climb already ran once to produce it — see
-    // `legacy-cli-config.layer.ts`'s `resolveWorkdir`). Without `search: false`, this
+    // `legacy-cli-settings.layer.ts`'s `resolveWorkdir`). Without `search: false`, this
     // call would climb AGAIN from `cwd`, which diverges from the established
     // behavior whenever an explicit `--workdir` points at a subdirectory
     // below another project's root: the established behavior changes
@@ -522,7 +522,7 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
     search: false,
     tomlOnly: true,
   }).pipe(
-    Effect.catchTag("ProjectConfigParseError", (cause) =>
+    Effect.catchTag("CliConfigParseError", (cause) =>
       Effect.fail(onConfigParseError(`failed to parse ${cause.path}: ${String(cause.cause)}`)),
     ),
   );

@@ -2,7 +2,7 @@ import { Effect, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import {
   LegacyLoginApi,
   type LegacyLoginSessionResponse,
@@ -29,14 +29,14 @@ export const legacyLoginApiLayer = Layer.effect(
   LegacyLoginApi,
   Effect.gen(function* () {
     const httpClient = yield* HttpClient.HttpClient;
-    const cliConfig = yield* LegacyCliConfig;
+    const cliSettings = yield* LegacyCliSettings;
 
     return LegacyLoginApi.of({
       fetchLoginSession: (apiHost: string, sessionId: string, deviceCode: string) =>
         Effect.gen(function* () {
           const url = `${apiHost}/platform/cli/login/${sessionId}?device_code=${deviceCode}`;
           const request = HttpClientRequest.get(url).pipe(
-            HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
+            HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
           );
           const response = yield* httpClient.execute(request);
           if (response.status !== 200) {
@@ -90,7 +90,7 @@ export const legacyLoginApiLayer = Layer.effect(
         Effect.gen(function* () {
           const request = HttpClientRequest.get(`${apiHost}/v1/profile`).pipe(
             HttpClientRequest.setHeader("Authorization", `Bearer ${token}`),
-            HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
+            HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
           );
           const response = yield* httpClient.execute(request);
           if (response.status !== 200) return Option.none<string>();

@@ -9,7 +9,7 @@ import { vi } from "vitest";
 
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../tests/helpers/legacy-mocks.ts";
@@ -67,7 +67,7 @@ type RouteResult = {
  * separately-formatted `docker ps` call — which would cost an extra real Docker Engine
  * API request. `stdout` for a `ps` route response is one `<id>\t<name>`
  * line per container (no third, workdir column — every test here exercises the
- * `cliConfig.workdir` fallback path); `defaultRoute` below tab-joins each configured id
+ * `cliSettings.workdir` fallback path); `defaultRoute` below tab-joins each configured id
  * with itself.
  */
 function mockRoutedContainerCliSpawner(
@@ -199,7 +199,7 @@ function setup(opts: SetupOpts = {}) {
     interactive: (opts.format ?? "text") === "text",
   });
   const telemetry = mockLegacyTelemetryStateTracked();
-  const cliConfig = mockLegacyCliConfig({ workdir, projectId: Option.none() });
+  const cliSettings = mockLegacyCliSettings({ workdir, projectId: Option.none() });
   const child = mockRoutedContainerCliSpawner(opts.route ?? defaultRoute(), {
     dockerMissing: opts.dockerMissing,
     failSpawnFor: opts.failSpawnFor,
@@ -208,7 +208,7 @@ function setup(opts: SetupOpts = {}) {
   const layer = Layer.mergeAll(
     BunServices.layer,
     out.layer,
-    cliConfig,
+    cliSettings,
     telemetry.layer,
     child.layer,
     Layer.succeed(LegacyDebugFlag, opts.debug ?? false),
@@ -265,7 +265,7 @@ describe("legacy stop integration", () => {
       // delete of the whole start-secrets/ parent (see that function's doc
       // comment for why). `defaultRoute`'s `ps` stdout carries no third
       // (workdir-label) column, so this also exercises the backward-compatible
-      // fallback to `cliConfig.workdir` for a container with no
+      // fallback to `cliSettings.workdir` for a container with no
       // `com.supabase.cli.workdir` label (created before that label existed).
       const { layer, workdir } = setup({
         configuredProjectId: "demo",
@@ -293,7 +293,7 @@ describe("legacy stop integration", () => {
       // than the one this invocation's own cwd/`--workdir` points at. Each container's own
       // `com.supabase.cli.workdir` label (read back via the widened `docker ps --format`, see
       // `legacyListContainerIdsAndNames`) must be used to locate its staged-secret directory —
-      // never this invocation's `cliConfig.workdir` unconditionally, which would look in the
+      // never this invocation's `cliSettings.workdir` unconditionally, which would look in the
       // wrong place and silently orphan the other project's secrets forever.
       const workdir = tempRoot.current;
       const otherProjectWorkdir = join(workdir, "other-project-root");
@@ -315,7 +315,7 @@ describe("legacy stop integration", () => {
         "supabase_kong_other",
       );
       // Same container name, but rooted at THIS invocation's own workdir — must survive, proving
-      // cleanup never falls back to `cliConfig.workdir` while a real label is present.
+      // cleanup never falls back to `cliSettings.workdir` while a real label is present.
       const wrongDir = join(workdir, "supabase", ".temp", "start-secrets", "supabase_kong_other");
       mkdirSync(correctDir, { recursive: true });
       writeFileSync(join(correctDir, "secret-0"), "kong.yml contents");
@@ -500,7 +500,7 @@ describe("legacy stop integration", () => {
       // ancestor search — mirrored
       // here by `search: false`. A workdir with no supabase/config.toml of its
       // own must fall back to defaults (workdir-basename project id), not an
-      // ancestor project's config.toml, even though `cliConfig.workdir` sits
+      // ancestor project's config.toml, even though `cliSettings.workdir` sits
       // right inside one.
       const nestedWorkdir = join(tempRoot.current, "nested");
       mkdirSync(nestedWorkdir, { recursive: true });

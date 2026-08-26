@@ -1,5 +1,5 @@
-import type { ProjectConfig } from "@supabase/config";
-import { ProjectConfigSchema } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
+import { CliConfigSchema } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Fiber, Layer, Option, Path, Schema, Sink, Stream } from "effect";
@@ -31,8 +31,8 @@ import {
   type LegacyShadowDbSetupInput,
 } from "./shadow-database.ts";
 
-const decodeConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
-const defaultConfig: ProjectConfig = decodeConfig({});
+const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
+const defaultConfig: CliConfig = decodeConfig({});
 const PG_NET_CREATE_FINGERPRINT = "create extension if not exists pg_net schema extensions";
 
 const tempRoot = useLegacyTempWorkdir("legacy-shadow-database-");

@@ -67,7 +67,7 @@ No Management API calls. Everything is local Docker + local `config.toml`.
 | Variable              | Purpose                                                                                            | Required?                                                         |
 | --------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
 | `SUPABASE_PROJECT_ID` | overrides the resolved local project id on the default path (env → config.toml → workdir basename) | no                                                                |
-| `SUPABASE_WORKDIR`    | resolves `LegacyCliConfig.workdir`, which locates `config.toml` on the default path                | no (falls back to walking up from cwd for `supabase/config.toml`) |
+| `SUPABASE_WORKDIR`    | resolves `LegacyCliSettings.workdir`, which locates `config.toml` on the default path              | no (falls back to walking up from cwd for `supabase/config.toml`) |
 
 `docker`/`podman` must be resolvable on `PATH` (or reachable via the configured Docker
 context) — `spawnContainerCli` tries `docker` first and falls back to `podman`. When
@@ -130,7 +130,7 @@ Same payload as `json`, delivered as a `result` NDJSON event.
 
 - `--project-id` and `--all` are **directory-independent** pure Docker-label filters —
   neither reads `config.toml`. Only the no-flags default path resolves the project id
-  from `LegacyCliConfig.workdir` (env → config.toml `project_id` → workdir basename).
+  from `LegacyCliSettings.workdir` (env → config.toml `project_id` → workdir basename).
 - The hidden `--backup` flag exists only for CLI surface parity with the old Go CLI — it
   has **no effect**. The old Go CLI declared it but never wired its value into anything,
   so it always deleted volumes based on `!noBackup` regardless of `--backup`. The TS port

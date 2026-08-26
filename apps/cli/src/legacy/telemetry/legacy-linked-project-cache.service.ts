@@ -8,9 +8,9 @@ interface LegacyLinkedProjectCacheShape {
    *
    * `workdir` overrides the directory the cache resolves against. Callers that have
    * already changed the working directory (e.g. `bootstrap`, whose target workdir can
-   * come from an interactive prompt rather than `cliConfig.workdir`) pass their resolved
+   * come from an interactive prompt rather than `cliSettings.workdir`) pass their resolved
    * workdir so the cache lands beside the other `supabase/.temp/` files. When omitted it
-   * falls back to `cliConfig.workdir` (the cwd-walk result), matching every other caller.
+   * falls back to `cliSettings.workdir` (the cwd-walk result), matching every other caller.
    *
    * Best-effort. Never fails the calling effect — auth errors, network errors,
    * and write errors are all swallowed (matches Go's `ensureProjectGroupsCached`
@@ -20,7 +20,7 @@ interface LegacyLinkedProjectCacheShape {
    * Go's `ensureProjectGroupsCached` goes through `GetSupabase()` and the
    * process-wide `CurrentProfile` — commands that reconcile a pflag-effective
    * profile differing from the config layer's (sso add/update, PR #5974
-   * round 7) pass that profile's URL. Defaults to `cliConfig.apiUrl`.
+   * round 7) pass that profile's URL. Defaults to `cliSettings.apiUrl`.
    *
    * `accessToken` complements `apiUrl`: Go resolves credentials for the same
    * process-wide reconciled profile (`access_token.go:43`), so a reconciled

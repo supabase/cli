@@ -6,10 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
-import { cliConfigLayer } from "./cli-config.layer.ts";
-import { projectContextLayer } from "./project-context.layer.ts";
-import { projectHomeLayer } from "./project-home.layer.ts";
-import { ProjectHome } from "./project-home.service.ts";
+import { cliSettingsLayer } from "./cli-settings.layer.ts";
+import { cliProjectContextLayer } from "./cli-project-context.layer.ts";
+import { cliProjectHomeLayer } from "./cli-project-home.layer.ts";
+import { CliProjectHome } from "./cli-project-home.service.ts";
 import { projectLinkStateLayer } from "./project-link-state.layer.ts";
 import {
   InvalidProjectLinkStateError,
@@ -27,33 +27,33 @@ function buildLayer(opts: { cwd: string; env?: Record<string, string>; homeDir?:
     homeDir: opts.homeDir ?? join(opts.cwd, ".home"),
   });
   const envLayer = processEnvLayer(opts.env ?? {});
-  const discoveredProjectContextLayer = projectContextLayer.pipe(
+  const discoveredCliProjectContextLayer = cliProjectContextLayer.pipe(
     Layer.provide(BunServices.layer),
     Layer.provide(runtimeInfoLayer),
     Layer.provide(envLayer),
   );
-  const discoveredCliConfigLayer = cliConfigLayer.pipe(
+  const discoveredCliSettingsLayer = cliSettingsLayer.pipe(
     Layer.provide(runtimeInfoLayer),
-    Layer.provide(discoveredProjectContextLayer),
+    Layer.provide(discoveredCliProjectContextLayer),
   );
-  const discoveredProjectHomeLayer = projectHomeLayer.pipe(
+  const discoveredCliProjectHomeLayer = cliProjectHomeLayer.pipe(
     Layer.provide(BunServices.layer),
     Layer.provide(runtimeInfoLayer),
-    Layer.provide(discoveredProjectContextLayer),
-    Layer.provide(discoveredCliConfigLayer),
+    Layer.provide(discoveredCliProjectContextLayer),
+    Layer.provide(discoveredCliSettingsLayer),
   );
   const discoveredProjectLinkStateLayer = projectLinkStateLayer.pipe(
     Layer.provide(BunServices.layer),
-    Layer.provide(discoveredProjectHomeLayer),
+    Layer.provide(discoveredCliProjectHomeLayer),
   );
 
   return Layer.mergeAll(
     BunServices.layer,
     runtimeInfoLayer,
     envLayer,
-    discoveredProjectContextLayer,
-    discoveredCliConfigLayer,
-    discoveredProjectHomeLayer,
+    discoveredCliProjectContextLayer,
+    discoveredCliSettingsLayer,
+    discoveredCliProjectHomeLayer,
     discoveredProjectLinkStateLayer,
   );
 }
@@ -92,8 +92,8 @@ describe("projectLinkStateLayer", () => {
       );
 
       const layer = buildLayer({ cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
-      const projectHome = yield* Effect.gen(function* () {
-        return yield* ProjectHome;
+      const cliProjectHome = yield* Effect.gen(function* () {
+        return yield* CliProjectHome;
       }).pipe(Effect.provide(layer));
       const linkState = yield* Effect.gen(function* () {
         return yield* ProjectLinkState;
@@ -107,7 +107,9 @@ describe("projectLinkStateLayer", () => {
         expect(loaded.value).toEqual(SAMPLE_STATE);
       }
 
-      const rawFile = yield* Effect.tryPromise(() => readFile(projectHome.projectLinkPath, "utf8"));
+      const rawFile = yield* Effect.tryPromise(() =>
+        readFile(cliProjectHome.projectLinkPath, "utf8"),
+      );
       expect(rawFile).toContain('"project":');
       expect(rawFile).toContain('"active_branch":');
       const raw = JSON.parse(rawFile) as typeof SAMPLE_STATE;
@@ -129,8 +131,8 @@ describe("projectLinkStateLayer", () => {
       );
 
       const layer = buildLayer({ cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
-      const projectHome = yield* Effect.gen(function* () {
-        return yield* ProjectHome;
+      const cliProjectHome = yield* Effect.gen(function* () {
+        return yield* CliProjectHome;
       }).pipe(Effect.provide(layer));
       const linkState = yield* Effect.gen(function* () {
         return yield* ProjectLinkState;
@@ -141,7 +143,7 @@ describe("projectLinkStateLayer", () => {
 
       const loaded = yield* linkState.load;
       expect(Option.isNone(loaded)).toBe(true);
-      yield* Effect.tryPromise(() => readFile(projectHome.projectLinkPath, "utf8")).pipe(
+      yield* Effect.tryPromise(() => readFile(cliProjectHome.projectLinkPath, "utf8")).pipe(
         Effect.flip,
         Effect.asVoid,
       );
@@ -159,14 +161,14 @@ describe("projectLinkStateLayer", () => {
       yield* Effect.tryPromise(() => mkdir(join(projectRoot, ".supabase"), { recursive: true }));
 
       const layer = buildLayer({ cwd: projectRoot, env: { SUPABASE_HOME: supabaseHome } });
-      const { projectHome, linkState } = yield* Effect.gen(function* () {
+      const { cliProjectHome, linkState } = yield* Effect.gen(function* () {
         return {
-          projectHome: yield* ProjectHome,
+          cliProjectHome: yield* CliProjectHome,
           linkState: yield* ProjectLinkState,
         };
       }).pipe(Effect.provide(layer));
 
-      yield* Effect.tryPromise(() => writeFile(projectHome.projectLinkPath, "{not-json"));
+      yield* Effect.tryPromise(() => writeFile(cliProjectHome.projectLinkPath, "{not-json"));
 
       const exit = yield* linkState.load.pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);

@@ -18,7 +18,7 @@ import {
 // `PersistentPreRunE` immediately BEFORE
 // `ChangeWorkDir` — so a profile Go cannot load aborts before the workdir
 // check, `ValidateRequiredFlags`, `ValidateFlagGroups`, and `RunE`, with no
-// API call ever made. Raised by `legacyCliConfigLayer` on every command's
+// API call ever made. Raised by `legacyCliSettingsLayer` on every command's
 // profile resolution (supabase/cli#6091) and by the sso pflag reconciliation
 // (PR #5974 round 7). Message byte-matches Go for the deterministic failure
 // classes.

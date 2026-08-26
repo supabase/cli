@@ -1,4 +1,4 @@
-import { ProjectConfigSchema, type ProjectConfig } from "@supabase/config";
+import { CliConfigSchema, type CliConfig } from "@supabase/config";
 import { Schema } from "effect";
 import { describe, expect, it } from "vitest";
 
@@ -9,9 +9,9 @@ import {
   type LegacyStatusContainerIds,
 } from "./legacy-status-values.ts";
 
-const decodeConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
+const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
-function baseConfig(overrides: Record<string, unknown> = {}): ProjectConfig {
+function baseConfig(overrides: Record<string, unknown> = {}): CliConfig {
   return decodeConfig({ project_id: "test", ...overrides });
 }
 

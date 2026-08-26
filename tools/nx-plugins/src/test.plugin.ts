@@ -41,7 +41,15 @@ export const createNodesV2: CreateNodesV2<TestPluginOptions> = [
               const extraInputs =
                 projectRoot === "packages/stack" && targetName === "unit"
                   ? ["{workspaceRoot}/apps/cli-go/pkg/config/templates/Dockerfile"]
-                  : [];
+                  : // monorepo-import-contract.unit.test.ts scans every other
+                    // workspace's sources, so consumer-side edits must
+                    // invalidate this project's unit-test cache too.
+                    projectRoot === "packages/config" && targetName === "unit"
+                    ? [
+                        "{workspaceRoot}/apps/**/*.{ts,tsx}",
+                        "{workspaceRoot}/packages/**/*.{ts,tsx}",
+                      ]
+                    : [];
               project.targets = {
                 ...project.targets,
                 ...createTestTarget(

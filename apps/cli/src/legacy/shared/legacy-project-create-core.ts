@@ -2,7 +2,7 @@ import { type V1CreateAProjectInput, operationDefinitions } from "@supabase/api/
 import { Effect, Option } from "effect";
 
 import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
-import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { LegacyOutputFlag } from "../../shared/legacy/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import { encodeEnv, encodeGoJson } from "./legacy-go-output.encoders.ts";
@@ -87,7 +87,7 @@ export const legacyProjectCreateCore = Effect.fnUntraced(function* (
   const output = yield* Output;
   const goOutputFlag = yield* LegacyOutputFlag;
   const api = yield* LegacyPlatformApi;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
 
   let name = input.name;
   let orgId = input.orgId;
@@ -165,7 +165,7 @@ export const legacyProjectCreateCore = Effect.fnUntraced(function* (
   const id = readProjectField(created, "id");
 
   // Go prints this to stderr for every output format (`create.go:33-34`).
-  const projectUrl = `${dashboardUrlForProfile(cliConfig.profile)}/project/${id}`;
+  const projectUrl = `${dashboardUrlForProfile(cliSettings.profile)}/project/${id}`;
   yield* output.raw(`Created a new project at ${projectUrl}\n`, "stderr");
 
   const goFmt = Option.getOrUndefined(goOutputFlag);

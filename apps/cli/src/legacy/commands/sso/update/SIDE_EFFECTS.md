@@ -2,14 +2,14 @@
 
 ## Files Read
 
-| Path                                           | Format                    | When                                                                                          |
-| ---------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
-| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `LegacyCliConfig.profile` |
-| keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
-| `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always — `linkedProjectCache` reads to decide whether to write                                |
-| `<metadata-file>`                              | XML (UTF-8)               | when `--metadata-file` is provided                                                            |
-| `<attribute-mapping-file>`                     | JSON                      | when `--attribute-mapping-file` is provided                                                   |
+| Path                                           | Format                    | When                                                                                            |
+| ---------------------------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------- |
+| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `LegacyCliSettings.profile` |
+| keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                        |
+| `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                   |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | always — `linkedProjectCache` reads to decide whether to write                                  |
+| `<metadata-file>`                              | XML (UTF-8)               | when `--metadata-file` is provided                                                              |
+| `<attribute-mapping-file>`                     | JSON                      | when `--attribute-mapping-file` is provided                                                     |
 
 ## Files Written
 

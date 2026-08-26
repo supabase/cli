@@ -5,10 +5,10 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, FileSystem, Path, Schema } from "effect";
-import { ProjectConfigSchema } from "./base.ts";
+import { CliConfigSchema } from "./base.ts";
 import { inferFunctionsManifest } from "./functions-manifest.ts";
 
-const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
+const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
 function makeTempProject(): string {
   return mkdtempSync(join(tmpdir(), "supabase-functions-manifest-"));
@@ -81,7 +81,7 @@ describe("functions manifest", () => {
 
   test("applies config-only custom functions", async () => {
     const cwd = makeTempProject();
-    const config = decodeProjectConfig({
+    const config = decodeCliConfig({
       functions: {
         "custom-entrypoint": {
           entrypoint: "./functions/custom-entrypoint/main.ts",
@@ -114,7 +114,7 @@ describe("functions manifest", () => {
 
   test("uses slug defaults for config-only functions with non-path overrides", async () => {
     const cwd = makeTempProject();
-    const config = decodeProjectConfig({
+    const config = decodeCliConfig({
       functions: {
         "hello-world": {
           verify_jwt: false,
@@ -140,7 +140,7 @@ describe("functions manifest", () => {
 
   test("keeps disabled filesystem functions in the inferred manifest", async () => {
     const cwd = makeTempProject();
-    const config = decodeProjectConfig({
+    const config = decodeCliConfig({
       functions: {
         "hello-world": {
           enabled: false,

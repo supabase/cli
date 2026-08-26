@@ -16,8 +16,8 @@ import {
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import { legacyDebugLoggerLayer } from "../shared/legacy-debug-logger.layer.ts";
 import { LegacyProfileLoadError } from "../shared/legacy-profile-load.ts";
-import { legacyCliConfigLayer } from "./legacy-cli-config.layer.ts";
-import { LegacyCliConfig } from "./legacy-cli-config.service.ts";
+import { legacyCliSettingsLayer } from "./legacy-cli-settings.layer.ts";
+import { LegacyCliSettings } from "./legacy-cli-settings.service.ts";
 
 function makeLayer(opts: {
   profileFlag?: string;
@@ -31,7 +31,7 @@ function makeLayer(opts: {
 }) {
   const profileFlag = opts.profileFlag ?? "supabase";
   const workdirFlag = opts.workdirFlag ?? Option.none<string>();
-  return legacyCliConfigLayer.pipe(
+  return legacyCliSettingsLayer.pipe(
     Layer.provide(legacyDebugLoggerLayer),
     Layer.provide(Layer.succeed(LegacyDebugFlag, opts.debug ?? false)),
     Layer.provide(Layer.succeed(LegacyProfileFlag, profileFlag)),
@@ -54,7 +54,7 @@ function makeLayer(opts: {
 // Profile load failures surface as layer-build failures (Go: PersistentPreRunE).
 function configExit(opts: Parameters<typeof makeLayer>[0]) {
   return Effect.gen(function* () {
-    return yield* LegacyCliConfig;
+    return yield* LegacyCliSettings;
   }).pipe(Effect.provide(makeLayer(opts)), Effect.exit);
 }
 
@@ -74,17 +74,17 @@ function expectProfileLoadFailure(exit: Exit.Exit<unknown, unknown>, ...fragment
 let tempRoot: string;
 
 beforeEach(() => {
-  tempRoot = mkdtempSync(join(tmpdir(), "supabase-legacy-cli-config-"));
+  tempRoot = mkdtempSync(join(tmpdir(), "supabase-legacy-cli-settings-"));
 });
 
 afterEach(() => {
   rmSync(tempRoot, { recursive: true, force: true });
 });
 
-describe("legacyCliConfigLayer", () => {
+describe("legacyCliSettingsLayer", () => {
   it.effect("defaults to supabase profile and api.supabase.com when no flags or env", () =>
     Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(config.profile).toBe("supabase");
       expect(config.apiUrl).toBe("https://api.supabase.com");
       expect(config.projectHost).toBe("supabase.co");
@@ -95,7 +95,7 @@ describe("legacyCliConfigLayer", () => {
 
   it.effect("uses SUPABASE_PROFILE env when the flag is left at default", () =>
     Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(config.profile).toBe("supabase-staging");
       expect(config.apiUrl).toBe("https://api.supabase.green");
       expect(config.projectHost).toBe("supabase.red");
@@ -107,14 +107,14 @@ describe("legacyCliConfigLayer", () => {
 
   it.effect("uses supabase-local profile and localhost API URL", () =>
     Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(config.apiUrl).toBe("http://localhost:8080");
     }).pipe(Effect.provide(makeLayer({ profileFlag: "supabase-local", cwd: tempRoot }))),
   );
 
   it.effect("resolves the snap profile API URL and project host", () =>
     Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(config.apiUrl).toBe("https://cloudapi.snap.com");
       expect(config.projectHost).toBe("snapcloud.dev");
     }).pipe(Effect.provide(makeLayer({ profileFlag: "snap", cwd: tempRoot }))),
@@ -125,7 +125,7 @@ describe("legacyCliConfigLayer", () => {
     mkdirSync(join(home, ".supabase"), { recursive: true });
     writeFileSync(join(home, ".supabase", "profile"), "supabase-staging\n");
     return Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(config.profile).toBe("supabase-staging");
     }).pipe(Effect.provide(makeLayer({ home, cwd: tempRoot })));
   });
@@ -136,7 +136,7 @@ describe("legacyCliConfigLayer", () => {
     mkdirSync(supabaseHome, { recursive: true });
     writeFileSync(join(supabaseHome, "profile"), "supabase-staging\n");
     return Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(config.profile).toBe("supabase-staging");
     }).pipe(
       Effect.provide(makeLayer({ home, cwd: tempRoot, env: { SUPABASE_HOME: supabaseHome } })),
@@ -150,7 +150,7 @@ describe("legacyCliConfigLayer", () => {
     writeFileSync(profilePath, "supabase-staging\n");
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     return Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(config.profile).toBe("supabase-staging");
       expect(stderr.mock.calls.map(([chunk]) => String(chunk)).join("")).toContain(
         `Loading profile from file: ${profilePath}\n`,
@@ -166,7 +166,7 @@ describe("legacyCliConfigLayer", () => {
     mkdirSync(join(home, ".supabase"), { recursive: true });
     writeFileSync(join(home, ".supabase", "profile"), "supabase-staging");
     return Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       // SUPABASE_PROFILE wins over the file.
       expect(config.profile).toBe("supabase-local");
     }).pipe(
@@ -199,7 +199,7 @@ describe("legacyCliConfigLayer", () => {
 
   it.effect("matches built-in profile names case-insensitively — Go strings.EqualFold", () =>
     Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(config.profile).toBe("supabase-staging");
       expect(config.apiUrl).toBe("https://api.supabase.green");
     }).pipe(Effect.provide(makeLayer({ profileFlag: "SUPABASE-STAGING", cwd: tempRoot }))),
@@ -210,7 +210,7 @@ describe("legacyCliConfigLayer", () => {
     "explicit --profile supabase shadows an unloadable SUPABASE_PROFILE — pflag Changed",
     () =>
       Effect.gen(function* () {
-        const config = yield* LegacyCliConfig;
+        const config = yield* LegacyCliSettings;
         expect(config.profile).toBe("supabase");
         expect(config.apiUrl).toBe("https://api.supabase.com");
       }).pipe(
@@ -227,7 +227,7 @@ describe("legacyCliConfigLayer", () => {
   it.effect("resolves repeated --profile occurrences last-wins — pflag parity", () =>
     Effect.gen(function* () {
       // The Effect parser is first-wins ("rogue-profile"); pflag keeps the last.
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(config.profile).toBe("supabase");
     }).pipe(
       Effect.provide(
@@ -256,7 +256,7 @@ describe("legacyCliConfigLayer", () => {
     mkdirSync(join(home, ".supabase"), { recursive: true });
     writeFileSync(join(home, ".supabase", "profile"), "resms\n");
     return Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(config.profile).toBe("supabase");
     }).pipe(
       Effect.provide(makeLayer({ argv: ["login", "--profile=supabase"], home, cwd: tempRoot })),
@@ -276,7 +276,7 @@ describe("legacyCliConfigLayer", () => {
       ].join("\n"),
     );
     return Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(config.profile).toBe("cli-e2e");
       expect(config.apiUrl).toBe("http://127.0.0.1:9999");
       expect(config.projectHost).toBe("localhost");
@@ -299,7 +299,7 @@ describe("legacyCliConfigLayer", () => {
       ].join("\n"),
     );
     return Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(config.projectHost).toBe("localhost");
       // An absent pooler_host disables the MITM domain assertion rather
       // than falling back to supabase.com.
@@ -354,7 +354,7 @@ describe("legacyCliConfigLayer", () => {
 
   it.effect("ignores SUPABASE_API_URL — Go parity", () =>
     Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(config.apiUrl).toBe("https://api.supabase.com");
     }).pipe(
       Effect.provide(
@@ -365,7 +365,7 @@ describe("legacyCliConfigLayer", () => {
 
   it.effect("captures SUPABASE_ACCESS_TOKEN as a Redacted value", () =>
     Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(Option.isSome(config.accessToken)).toBe(true);
       if (Option.isSome(config.accessToken)) {
         expect(Redacted.value(config.accessToken.value)).toBe("sbp_test");
@@ -377,7 +377,7 @@ describe("legacyCliConfigLayer", () => {
 
   it.effect("captures SUPABASE_PROJECT_ID env", () =>
     Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(Option.getOrUndefined(config.projectId)).toBe("myrefabcdefghijklmno");
     }).pipe(
       Effect.provide(
@@ -388,7 +388,7 @@ describe("legacyCliConfigLayer", () => {
 
   it.effect("prefers --workdir flag over env and walk-up", () =>
     Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(config.workdir).toBe("/flag/workdir");
     }).pipe(
       Effect.provide(
@@ -403,7 +403,7 @@ describe("legacyCliConfigLayer", () => {
 
   it.effect("uses SUPABASE_WORKDIR env when flag is unset", () =>
     Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(config.workdir).toBe("/env/workdir");
     }).pipe(
       Effect.provide(makeLayer({ env: { SUPABASE_WORKDIR: "/env/workdir" }, cwd: tempRoot })),
@@ -418,28 +418,28 @@ describe("legacyCliConfigLayer", () => {
   // project id).
   it.effect("resolves a relative --workdir flag against the real cwd", () =>
     Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(config.workdir).toBe(tempRoot);
     }).pipe(Effect.provide(makeLayer({ workdirFlag: Option.some("."), cwd: tempRoot }))),
   );
 
   it.effect("resolves a relative --workdir flag with a subdirectory against the real cwd", () =>
     Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(config.workdir).toBe(join(tempRoot, "sub"));
     }).pipe(Effect.provide(makeLayer({ workdirFlag: Option.some("sub"), cwd: tempRoot }))),
   );
 
   it.effect("resolves a relative SUPABASE_WORKDIR env value against the real cwd", () =>
     Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(config.workdir).toBe(tempRoot);
     }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_WORKDIR: "." }, cwd: tempRoot }))),
   );
 
   it.effect("keeps an absolute --workdir flag unchanged", () =>
     Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(config.workdir).toBe("/flag/workdir");
     }).pipe(
       Effect.provide(makeLayer({ workdirFlag: Option.some("/flag/workdir"), cwd: tempRoot })),
@@ -454,21 +454,21 @@ describe("legacyCliConfigLayer", () => {
     writeFileSync(join(projectRoot, "supabase", "config.toml"), 'project_id = "x"\n');
 
     return Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(config.workdir).toBe(projectRoot);
     }).pipe(Effect.provide(makeLayer({ cwd: nested })));
   });
 
   it.effect("falls back to CWD when no supabase/config.toml found", () =>
     Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       expect(config.workdir).toBe(tempRoot);
     }).pipe(Effect.provide(makeLayer({ cwd: tempRoot }))),
   );
 
   it.effect("populates userAgent from CLI_VERSION", () =>
     Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
+      const config = yield* LegacyCliSettings;
       // The sentinel `0.0.0-dev` value applies when SUPABASE_CLI_VERSION is unset (tests).
       expect(config.userAgent).toMatch(/^SupabaseCLI\//);
     }).pipe(Effect.provide(makeLayer({ cwd: tempRoot }))),

@@ -11,7 +11,7 @@ import {
 import {
   inferFunctionsManifest,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
-} from "@supabase/config";
+} from "@supabase/config/effect";
 import { Duration, Effect, Option, Schema } from "effect";
 import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
@@ -53,7 +53,7 @@ import {
   toDockerPath,
   toSlash,
 } from "./functions-docker.ts";
-import { loadFunctionsProjectConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
+import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
 import { FunctionsApiStatusError, FunctionsApiTransportError } from "./functions-api.errors.ts";
 
 const COMPRESSED_ESZIP_MAGIC = "EZBR";
@@ -2341,7 +2341,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
     // slug (`deploy.go:22-28`), so this must precede the loop below too — an
     // invalid `config.toml` is reported ahead of a malformed slug when both
     // are wrong (review round on CLI-1963).
-    const context = yield* loadFunctionsProjectConfig({
+    const context = yield* loadFunctionsCliConfig({
       projectRoot: dependencies.projectRoot,
       projectRef,
       goConfigCompat: dependencies.goConfigCompat,

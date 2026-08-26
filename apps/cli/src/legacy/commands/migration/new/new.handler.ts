@@ -2,7 +2,7 @@ import { Clock, Effect, FileSystem, Path, Stream } from "effect";
 
 import { Output } from "../../../../shared/output/output.service.ts";
 import { Stdin } from "../../../../shared/runtime/stdin.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { legacyBold } from "../../../shared/legacy-colors.ts";
 import {
   legacyFormatMigrationTimestamp,
@@ -21,7 +21,7 @@ export const legacyMigrationNew = Effect.fn("legacy.migration.new")(function* (
   flags: LegacyMigrationNewFlags,
 ) {
   const output = yield* Output;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const stdin = yield* Stdin;
   const telemetryState = yield* LegacyTelemetryState;
   const fs = yield* FileSystem.FileSystem;
@@ -31,7 +31,7 @@ export const legacyMigrationNew = Effect.fn("legacy.migration.new")(function* (
     const timestamp = legacyFormatMigrationTimestamp(yield* Clock.currentTimeMillis);
     const migrationPath = legacyGetMigrationPath(
       path,
-      cliConfig.workdir,
+      cliSettings.workdir,
       timestamp,
       flags.migrationName,
     );
@@ -43,7 +43,7 @@ export const legacyMigrationNew = Effect.fn("legacy.migration.new")(function* (
     // identifiers, so containing the write to `supabase/migrations` is
     // parity-neutral for legitimate input while closing the arbitrary-write
     // vector — the same TS-only hardening `migration fetch` applies to remote rows.
-    const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
+    const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
     if (!migrationPath.startsWith(migrationsDir + path.sep)) {
       return yield* Effect.fail(
         new LegacyMigrationNewWriteError({

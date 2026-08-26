@@ -34,7 +34,7 @@
  * `s3ProtocolEnabled`/`vectorBucketsEnabled` in.
  */
 
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
 import { ramInBytes } from "../../../shared/legacy-size-units.ts";
@@ -107,7 +107,7 @@ export interface LegacyStorageEnvInput {
   /** See `legacyStartInternalDbPassword` (`../../../shared/db-bootstrap/internal-db-connection.ts`). */
   readonly dbPassword: string;
   /** `config.storage.file_size_limit`, e.g. `"50MiB"` — converted to a byte count via `ramInBytes`. */
-  readonly fileSizeLimit: ProjectConfig["storage"]["file_size_limit"];
+  readonly fileSizeLimit: CliConfig["storage"]["file_size_limit"];
   /** `LegacyLocalConfigValues.storageS3Region`. */
   readonly s3Region: string;
   /** `LegacyLocalConfigValues.storageS3AccessKeyId`. */
@@ -178,7 +178,7 @@ export interface LegacyStorageContainerSpecInput {
   /** `utils.Config.Storage.Image`, already resolved/pulled by the caller (`image-prepull.ts`). */
   readonly image: string;
   readonly targetMigration: string;
-  readonly fileSizeLimit: ProjectConfig["storage"]["file_size_limit"];
+  readonly fileSizeLimit: CliConfig["storage"]["file_size_limit"];
   readonly s3Region: string;
   readonly s3AccessKeyId: string;
   readonly s3SecretAccessKey: string;

@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -63,7 +63,7 @@ const toOpenFileError = (cause: { readonly message: string }) =>
 export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: LegacyDbDumpFlags) {
   const output = yield* Output;
   const resolver = yield* LegacyDbConfigResolver;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const telemetryState = yield* LegacyTelemetryState;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const fs = yield* FileSystem.FileSystem;
@@ -80,7 +80,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // image), reverted when this scope closes. The pure `legacyLoadProjectEnv` does
     // not apply the env as a side effect of `resolveDbPassword`, so `db dump` opts
     // in explicitly here.
-    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir);
     yield* legacyApplyProjectEnv(projectEnv);
 
     // The grouped boolean flags are modelled as `Option` (presence = explicitly
@@ -198,7 +198,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // dry-run print. The merged config is validated even for `--dry-run`, so an
     // invalid merged config (e.g. an unsupported remote `db.major_version` or a
     // malformed remote `project_id`) fails rather than silently printing a script.
-    const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef);
+    const tomlValues = yield* legacyReadDbToml(fs, path, cliSettings.workdir, linkedRef);
 
     // 4. Pick the mode-specific script + env (pure builders, `legacy-pg-dump.env.ts`).
     //    --schema/-s and --exclude/-x are CSV string-slice values, CSV-parsed at
@@ -243,7 +243,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
       // same stderr line here WITHOUT creating/truncating the file. Resolve
       // the path like the real path (absolute, relative to the workdir).
       if (Option.isSome(fileFlag)) {
-        const dryRunFile = path.resolve(cliConfig.workdir, fileFlag.value);
+        const dryRunFile = path.resolve(cliSettings.workdir, fileFlag.value);
         yield* output.raw(`Dumped schema to ${legacyBold(dryRunFile)}.\n`, "stderr");
       }
       return;
@@ -256,7 +256,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     const image = yield* legacyResolveDbImage(
       fs,
       path,
-      cliConfig.workdir,
+      cliSettings.workdir,
       tomlValues.majorVersion,
       Option.getOrUndefined(tomlValues.orioledbVersion),
     );
@@ -264,7 +264,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // Resolve a relative `--file` against the workdir, so `--workdir /repo db
     // dump -f out.sql` writes `/repo/out.sql`. `path.resolve` leaves absolute
     // paths unchanged.
-    const resolvedFile = Option.map(fileFlag, (file) => path.resolve(cliConfig.workdir, file));
+    const resolvedFile = Option.map(fileFlag, (file) => path.resolve(cliSettings.workdir, file));
 
     // Open (create + truncate) the output file up front so an unwritable
     // `--file` path fails before the dump runs.
@@ -335,7 +335,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
       connType,
       host: conn.host,
       isLocal,
-      projectHost: cliConfig.projectHost,
+      projectHost: cliSettings.projectHost,
       resolvePooler: () =>
         resolver
           .resolvePoolerFallback({

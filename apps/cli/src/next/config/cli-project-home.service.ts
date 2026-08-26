@@ -6,7 +6,9 @@ import {
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 
-export class ProjectHomeNotDirectoryError extends Data.TaggedError("ProjectHomeNotDirectoryError")<{
+export class CliProjectHomeNotDirectoryError extends Data.TaggedError(
+  "CliProjectHomeNotDirectoryError",
+)<{
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
@@ -14,15 +16,15 @@ export class ProjectHomeNotDirectoryError extends Data.TaggedError("ProjectHomeN
   }
 }
 
-interface ProjectHomeShape {
+interface CliProjectHomeShape {
   readonly projectRoot: string;
   readonly supabaseDir: string;
   readonly projectHomeDir: string;
   readonly projectLinkPath: string;
   readonly projectLocalVersionsPath: string;
-  readonly ensureProjectHomeDir: Effect.Effect<void>;
+  readonly ensureCliProjectHomeDir: Effect.Effect<void>;
 }
 
-export class ProjectHome extends Context.Service<ProjectHome, ProjectHomeShape>()(
-  "supabase/config/ProjectHome",
+export class CliProjectHome extends Context.Service<CliProjectHome, CliProjectHomeShape>()(
+  "supabase/cli/CliProjectHome",
 ) {}

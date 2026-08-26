@@ -9,7 +9,7 @@ import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -107,7 +107,7 @@ function setup(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 200, body: opts.response ?? [SAMPLE_PROJECT] },
     network: opts.network,
   });
-  const cliConfig = mockLegacyCliConfig({
+  const cliSettings = mockLegacyCliSettings({
     workdir: tempRoot.current,
     projectId:
       opts.projectId ?? (opts.linked === false ? Option.none() : Option.some(LEGACY_VALID_REF)),
@@ -115,7 +115,7 @@ function setup(opts: SetupOpts = {}) {
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
   });
   return { layer, out, api, workdir: tempRoot.current };
@@ -127,7 +127,7 @@ function setupTracked(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 200, body: opts.response ?? [SAMPLE_PROJECT] },
     network: opts.network,
   });
-  const cliConfig = mockLegacyCliConfig({
+  const cliSettings = mockLegacyCliSettings({
     workdir: tempRoot.current,
     projectId: opts.linked === false ? Option.none() : Option.some(LEGACY_VALID_REF),
   });
@@ -136,7 +136,7 @@ function setupTracked(opts: SetupOpts = {}) {
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
   });

@@ -4,7 +4,7 @@ import { legacyCredentialsLayer } from "../../auth/legacy-credentials.layer.ts";
 import { legacyHttpClientLayer } from "../../auth/legacy-http-debug.layer.ts";
 import { legacyPlatformApiFactoryFromApiLayer } from "../../auth/legacy-platform-api-factory.layer.ts";
 import { legacyPlatformApiLayer } from "../../auth/legacy-platform-api.layer.ts";
-import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
+import { legacyCliSettingsLayer } from "../../config/legacy-cli-settings.layer.ts";
 import { legacyProjectRefLayer } from "../../config/legacy-project-ref.layer.ts";
 import { legacyDbConnectionLayer } from "../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
@@ -25,7 +25,7 @@ import { legacyTemplateServiceLayer } from "./bootstrap.templates.ts";
 // (create / api-keys / link cores), the browser-login stack (ensure-login), and
 // the GitHub template service. `Layer.provide` does not share to siblings inside
 // a `Layer.mergeAll` (legacy CLAUDE.md item 5), so every sub-layer that requires
-// `LegacyCliConfig` / `HttpClient` / `LegacyCredentials` is fed those explicitly.
+// `LegacyCliSettings` / `HttpClient` / `LegacyCredentials` is fed those explicitly.
 // Shared sub-layers are memoised by reference so the merge reuses one keyring
 // reader / one debug-logging HTTP wrapper / one config loader.
 //
@@ -33,18 +33,18 @@ import { legacyTemplateServiceLayer } from "./bootstrap.templates.ts";
 // `BunServices` (`FileSystem` / `Path` / `ChildProcessSpawner`) come from the root
 // layer (`legacy/cli/root.ts` + `runCli`). `LegacyDebugLogger` is
 // NOT provided by the root, so every base layer that reads it for `--debug` traces
-// (`legacyCliConfigLayer`, `legacyHttpClientLayer`, `legacyCredentialsLayer`,
+// (`legacyCliSettingsLayer`, `legacyHttpClientLayer`, `legacyCredentialsLayer`,
 // `legacyPlatformApiLayer`) is fed `legacyDebugLoggerLayer` here — matching `login.layers.ts`.
 const debugLogger = legacyDebugLoggerLayer;
-const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(debugLogger));
+const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(debugLogger));
 const httpClient = legacyHttpClientLayer.pipe(Layer.provide(debugLogger));
 const credentials = legacyCredentialsLayer.pipe(
-  Layer.provide(cliConfig),
+  Layer.provide(cliSettings),
   Layer.provide(debugLogger),
 );
 const platformApi = legacyPlatformApiLayer.pipe(
   Layer.provide(credentials),
-  Layer.provide(cliConfig),
+  Layer.provide(cliSettings),
   Layer.provide(httpClient),
   Layer.provide(debugLogger),
   Layer.provide(legacyIdentityStitchLayer),
@@ -53,10 +53,10 @@ const platformApiFactory = legacyPlatformApiFactoryFromApiLayer.pipe(Layer.provi
 // `legacyDbPushCore` (the native push step, CLI-1953) needs a Postgres connection
 // and the edge-runtime/pg-delta stack for its best-effort migrations-catalog cache
 // — same sub-layers `db push` itself composes (`push.layers.ts`), reusing this
-// file's own `cliConfig` reference rather than a second parallel one.
+// file's own `cliSettings` reference rather than a second parallel one.
 const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
   Layer.provide(legacyDockerRunLayer),
-  Layer.provide(cliConfig),
+  Layer.provide(cliSettings),
 );
 
 export const legacyBootstrapRuntimeLayer = Layer.mergeAll(
@@ -64,11 +64,11 @@ export const legacyBootstrapRuntimeLayer = Layer.mergeAll(
   platformApiFactory,
   httpClient,
   credentials,
-  cliConfig,
-  legacyProjectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliConfig)),
+  cliSettings,
+  legacyProjectRefLayer.pipe(Layer.provide(platformApiFactory), Layer.provide(cliSettings)),
   legacyLinkedProjectCacheLayer.pipe(
     Layer.provide(credentials),
-    Layer.provide(cliConfig),
+    Layer.provide(cliSettings),
     Layer.provide(httpClient),
     Layer.provide(legacyIdentityStitchLayer),
   ),
@@ -89,7 +89,7 @@ export const legacyBootstrapRuntimeLayer = Layer.mergeAll(
   // aliasing/persisting at most once. Its Analytics / TelemetryRuntime /
   // FileSystem / Path deps are ambient (root runtime). Mirrors advisors.layers.ts.
   legacyIdentityStitchLayer,
-  legacyLoginApiLayer.pipe(Layer.provide(httpClient), Layer.provide(cliConfig)),
+  legacyLoginApiLayer.pipe(Layer.provide(httpClient), Layer.provide(cliSettings)),
   legacyLoginCryptoLayer,
   legacyTemplateServiceLayer.pipe(Layer.provide(httpClient)),
   browserLayer,

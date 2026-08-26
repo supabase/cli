@@ -29,7 +29,7 @@ import {
 } from "../../../tests/helpers/mocks.ts";
 import {
   legacyIsolatedHomeLayer,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyTelemetryStateLayer,
   useLegacyTempWorkdir,
 } from "../../../tests/helpers/legacy-mocks.ts";
@@ -60,7 +60,7 @@ function ambientStubs() {
   const analytics = mockAnalytics();
   const out = mockOutput();
 
-  // Flag services consumed via legacyCliConfigLayer / legacyDebugLoggerLayer.
+  // Flag services consumed via legacyCliSettingsLayer / legacyDebugLoggerLayer.
   const flagLayers = Layer.mergeAll(
     Layer.succeed(LegacyDebugFlag, false),
     Layer.succeed(LegacyProfileFlag, "supabase"),
@@ -85,7 +85,7 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
-    // The runtime layer under test builds the REAL legacyCliConfigLayer against
+    // The runtime layer under test builds the REAL legacyCliSettingsLayer against
     // the real filesystem — see legacyIsolatedHomeLayer's docs.
     legacyIsolatedHomeLayer(tempRoot.current),
     mockTty(),
@@ -94,7 +94,7 @@ function ambientStubs() {
     mockTelemetryRuntime(),
     out.layer,
     flagLayers,
-    mockLegacyCliConfig({ workdir: "/tmp/test-db-layers-test" }),
+    mockLegacyCliSettings({ workdir: "/tmp/test-db-layers-test" }),
     mockLegacyTelemetryStateLayer,
     heavyServiceStubs,
   );

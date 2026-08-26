@@ -1,31 +1,22 @@
 import { Effect, FileSystem, Path, Schema } from "effect";
-import { ProjectConfigSchema, type ProjectConfig } from "./base.ts";
-import { loadProjectConfig } from "./io.ts";
-import { findProjectPaths } from "./paths.ts";
+import { CliConfigSchema, type CliConfig } from "./base.ts";
+import {
+  edgeFunctionDenoConfigFileName,
+  edgeFunctionEntrypointFileName,
+  edgeFunctionsDirectoryName,
+  type ResolvedFunctionConfig,
+} from "./functions-manifest-model.ts";
+import { loadCliConfig } from "./io.ts";
+import { findCliProjectPaths } from "./paths.ts";
 
 const functionSlugPattern = /^[a-zA-Z0-9_-]+$/;
-const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
-const emptyConfig = decodeProjectConfig({});
-
-export const edgeFunctionsDirectoryName = "functions";
-export const edgeFunctionEntrypointFileName = "index.ts";
-export const edgeFunctionDenoConfigFileName = "deno.json";
-
-export interface ResolvedFunctionConfig {
-  readonly enabled: boolean;
-  readonly verify_jwt: boolean;
-  readonly import_map: string;
-  readonly entrypoint: string;
-  readonly static_files: ReadonlyArray<string>;
-  readonly env: Readonly<Record<string, string>>;
-}
-
-export type FunctionsManifest = Readonly<Record<string, ResolvedFunctionConfig>>;
+const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
+const emptyConfig = decodeCliConfig({});
 
 interface InferFunctionsManifestOptions {
   readonly cwd: string;
-  readonly config?: ProjectConfig;
-  /** Forwarded to {@link findProjectPaths}'s own `search` option — see its doc comment. */
+  readonly config?: CliConfig;
+  /** Forwarded to {@link findCliProjectPaths}'s own `search` option — see its doc comment. */
   readonly search?: boolean;
 }
 
@@ -80,13 +71,11 @@ export const inferFunctionsManifest = Effect.fnUntraced(function* (
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const projectPaths = yield* findProjectPaths(options.cwd, { search: options.search });
-  const projectRoot = projectPaths?.projectRoot ?? options.cwd;
+  const cliProjectPaths = yield* findCliProjectPaths(options.cwd, { search: options.search });
+  const projectRoot = cliProjectPaths?.projectRoot ?? options.cwd;
   const config =
     options.config ??
-    (yield* loadProjectConfig(options.cwd).pipe(
-      Effect.map((loaded) => loaded?.config ?? emptyConfig),
-    ));
+    (yield* loadCliConfig(options.cwd).pipe(Effect.map((loaded) => loaded?.config ?? emptyConfig)));
   const functionsDir = path.join(projectRoot, "supabase", edgeFunctionsDirectoryName);
   const filesystemFunctions: Record<string, ResolvedFunctionConfig> = {};
 

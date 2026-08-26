@@ -1,4 +1,4 @@
-import { loadProjectConfig } from "@supabase/config";
+import { loadCliConfig } from "@supabase/config/effect";
 import { defaultPublishableKey } from "@supabase/stack/effect";
 import { Effect, FileSystem, Option, Path } from "effect";
 
@@ -11,7 +11,7 @@ import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
 import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../shared/runtime/tty.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { legacyBold } from "../../../shared/legacy-colors.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import type { LegacyFunctionsNewFlags } from "./new.command.ts";
@@ -91,7 +91,7 @@ const listExistingFunctionSlugs = Effect.fnUntraced(function* (workdir: string) 
 });
 
 const resolveTemplateInputs = Effect.fnUntraced(function* (workdir: string, slug: string) {
-  const loaded = yield* loadProjectConfig(workdir, { goViperCompat: true }).pipe(
+  const loaded = yield* loadCliConfig(workdir, { goViperCompat: true }).pipe(
     Effect.orElseSucceed(() => null),
   );
   const port = loaded?.config.api.port ?? DEFAULT_LOCAL_API_PORT;
@@ -170,7 +170,7 @@ export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
   flags: LegacyFunctionsNewFlags,
 ) {
   const output = yield* Output;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const telemetryState = yield* LegacyTelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -187,14 +187,14 @@ export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
       );
     }
 
-    const existingSlugs = yield* listExistingFunctionSlugs(cliConfig.workdir);
+    const existingSlugs = yield* listExistingFunctionSlugs(cliSettings.workdir);
     const isFirstFunction = existingSlugs.size === 0;
     const authMode: LegacyFunctionsNewAuthMode = flags.auth;
 
     const relFunctionDir = path.join("supabase", "functions", flags.functionName);
     const relEntrypoint = path.join(relFunctionDir, "index.ts");
-    const functionDir = path.join(cliConfig.workdir, relFunctionDir);
-    const entrypointPath = path.join(cliConfig.workdir, relEntrypoint);
+    const functionDir = path.join(cliSettings.workdir, relFunctionDir);
+    const entrypointPath = path.join(cliSettings.workdir, relEntrypoint);
 
     yield* fs.makeDirectory(functionDir, { recursive: true }).pipe(
       Effect.mapError(
@@ -219,7 +219,7 @@ export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
       );
     }
 
-    const templateInputs = yield* resolveTemplateInputs(cliConfig.workdir, flags.functionName);
+    const templateInputs = yield* resolveTemplateInputs(cliSettings.workdir, flags.functionName);
     yield* fs
       .writeFileString(entrypointPath, renderLegacyFunctionsNewEntrypoint(authMode, templateInputs))
       .pipe(
@@ -232,7 +232,7 @@ export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
         ),
       );
 
-    yield* appendFunctionConfig(cliConfig.workdir, flags.functionName, authMode === "user");
+    yield* appendFunctionConfig(cliSettings.workdir, flags.functionName, authMode === "user");
 
     yield* fs
       .writeFileString(path.join(functionDir, "deno.json"), LEGACY_FUNCTIONS_NEW_DENO_JSON)
@@ -264,7 +264,7 @@ export const legacyFunctionsNew = Effect.fn("legacy.functions.new")(function* (
     // IDE scaffolding is a human-facing nicety: only offer it in text mode so json /
     // stream-json runs stay payload-only and never write IDE files as an undisclosed side effect.
     if (isFirstFunction && output.format === "text") {
-      yield* promptForIdeSettings(cliConfig.workdir);
+      yield* promptForIdeSettings(cliSettings.workdir);
     }
 
     if (output.format === "json" || output.format === "stream-json") {

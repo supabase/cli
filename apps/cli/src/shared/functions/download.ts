@@ -27,7 +27,7 @@ import {
   resolveFunctionsDockerImage,
   runChildProcess,
 } from "./functions-docker.ts";
-import { loadFunctionsProjectConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
+import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
 import {
   edgeRuntimeImage,
   FUNCTIONS_BUNDLER_MUTEX_GROUP,
@@ -943,14 +943,14 @@ function withDockerStepFailure(step: string, slug: string, styleAqua?: (text: st
 // project's configured/default tag (`resolveEdgeRuntimeVersion`, shared with
 // `deploy.ts`). Resolved once per invocation by the caller
 // (`downloadFunctions`), not once per slug — Go's `Config` is likewise loaded
-// once, before any per-function work. `loadFunctionsProjectConfig` (legacy
+// once, before any per-function work. `loadFunctionsCliConfig` (legacy
 // shell only) runs the same `Config.Validate`/dotenv/env-override pipeline
 // `start`/`stop`/`status` already go through — see `functions-config.ts`.
 const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
   dependencies: EdgeRuntimeImageDependencies,
   projectRef: string,
 ) {
-  const context = yield* loadFunctionsProjectConfig({
+  const context = yield* loadFunctionsCliConfig({
     projectRoot: dependencies.projectRoot,
     projectRef,
     goConfigCompat: dependencies.goConfigCompat,

@@ -11,7 +11,7 @@ import {
   type LegacyHttpMethod,
   LEGACY_VALID_REF,
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -65,7 +65,10 @@ function setup(opts: SetupOpts = {}) {
     network: opts.network,
     byMethod: opts.byMethod ?? { DELETE: { status: 200, body: DELETED } },
   });
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current, projectId: Option.none() });
+  const cliSettings = mockLegacyCliSettings({
+    workdir: tempRoot.current,
+    projectId: Option.none(),
+  });
   const tty = mockTty({
     stdinIsTty: opts.stdinIsTty ?? false,
     stdoutIsTty: opts.stdinIsTty ?? false,
@@ -76,7 +79,7 @@ function setup(opts: SetupOpts = {}) {
     buildLegacyTestRuntime({
       out,
       api,
-      cliConfig,
+      cliSettings,
       tty,
       stdin: mockStdin(opts.stdinIsTty ?? false, opts.stdinInput),
       telemetry: telemetry.layer,

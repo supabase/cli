@@ -4,7 +4,7 @@ import { Duration, Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { CliArgs } from "../../shared/cli/cli-args.service.ts";
-import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import {
   LegacyProjectRefResolver,
   PROJECT_REF_PATTERN,
@@ -202,7 +202,7 @@ const poolerConfigFrom = Effect.fnUntraced(function* (
 // Resolve the DB password with viper's precedence: `--password` flag →
 // `SUPABASE_DB_PASSWORD` shell env → project `.env*` value. `legacyLoadProjectEnv`
 // already excludes shell-set keys, so the shell value still wins over the file.
-// `workdir` is an explicit parameter (never `LegacyCliConfig.workdir`) so callers
+// `workdir` is an explicit parameter (never `LegacyCliSettings.workdir`) so callers
 // whose real workdir has diverged from that cwd-walked value (e.g. `bootstrap`,
 // after its own `process.chdir`) still resolve against the correct directory.
 const resolveDbPassword = Effect.fnUntraced(function* (
@@ -308,14 +308,14 @@ const resolvePoolerConn = Effect.fnUntraced(function* (
  * pooler (`flags.NewDbConfigWithPassword`).
  *
  * `workdir`/`projectHost`/`poolerHost` are explicit parameters rather than read
- * from `LegacyCliConfig` so this is safely callable from a context whose real
- * workdir has diverged from `LegacyCliConfig.workdir`'s cwd-walked value — e.g.
+ * from `LegacyCliSettings` so this is safely callable from a context whose real
+ * workdir has diverged from `LegacyCliSettings.workdir`'s cwd-walked value — e.g.
  * `bootstrap`, whose own `process.chdir` happens after that layer is built (see
  * `bootstrap.handler.ts`'s workdir comments). Exported as `legacyResolveLinkedConn`
  * so `bootstrap` can call it directly with its own local `workdir`/`projectRef`/
  * `created.dbPassword`, without going through `LegacyDbConfigResolver`/
  * `LegacyProjectRefResolver` (both keyed off the ambient, potentially-stale
- * `LegacyCliConfig.workdir`).
+ * `LegacyCliSettings.workdir`).
  */
 export const legacyResolveLinkedConn = Effect.fnUntraced(function* (
   ref: string,
@@ -404,7 +404,7 @@ export const legacyResolveLinkedConn = Effect.fnUntraced(function* (
 export const legacyDbConfigLayer = Layer.effect(
   LegacyDbConfigResolver,
   Effect.gen(function* () {
-    const cliConfig = yield* LegacyCliConfig;
+    const cliSettings = yield* LegacyCliSettings;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const debug = yield* LegacyDebugLogger;
@@ -431,8 +431,8 @@ export const legacyDbConfigLayer = Layer.effect(
     // and attach it to every resolved connection so the driver layer can render Go's
     // hint on a refused/auth/IPv6 connect error.
     const suggestionContext: LegacyConnectSuggestionContext = {
-      dashboardUrl: cliConfig.dashboardUrl,
-      profileName: cliConfig.profile,
+      dashboardUrl: cliSettings.dashboardUrl,
+      profileName: cliSettings.profile,
     };
 
     // Capture the ambient services the Management API stack needs, so the
@@ -462,7 +462,7 @@ export const legacyDbConfigLayer = Layer.effect(
       // `sync.Once`). Provided to this layer by each command runtime.
       Layer.succeed(LegacyIdentityStitch, yield* LegacyIdentityStitch),
       // Optional (absent in handler tests): the lazy rebuild of
-      // `legacyCliConfigLayer` reads it for explicit `--profile` detection, so
+      // `legacyCliSettingsLayer` reads it for explicit `--profile` detection, so
       // the nested resolution matches the outer layer's.
       Option.match(yield* Effect.serviceOption(CliArgs), {
         onNone: () => Layer.empty,
@@ -498,7 +498,7 @@ export const legacyDbConfigLayer = Layer.effect(
 
         // --db-url (direct) takes precedence.
         if (flags.connType === "db-url" && Option.isSome(flags.dbUrl)) {
-          const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir, undefined, {
+          const tomlValues = yield* legacyReadDbToml(fs, path, cliSettings.workdir, undefined, {
             resolveVaultSecrets,
           });
           // Go's direct path runs `LoadConfig` before `pgconn.ParseConfig`,
@@ -506,7 +506,7 @@ export const legacyDbConfigLayer = Layer.effect(
           // populate the environment that the libpq `PG*` fallbacks read. Layer the
           // project env under the shell env (`legacyLoadProjectEnv` already excludes
           // shell-set keys, so the shell still wins) and feed it to the parser.
-          const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+          const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir);
           const conn = parseLegacyConnectionString(
             flags.dbUrl.value,
             legacyLayeredParseEnv(projectEnv),
@@ -566,14 +566,14 @@ export const legacyDbConfigLayer = Layer.effect(
             // validate the merged config here, before `resolveLinked`'s TCP probe /
             // pooler / temp-role Management API calls, rather than letting those mask
             // (or run side effects ahead of) the real config error.
-            yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref, {
+            yield* legacyReadDbToml(fs, path, cliSettings.workdir, ref, {
               resolveVaultSecrets,
             });
             const resolved = yield* legacyResolveLinkedConn(
               ref,
-              cliConfig.workdir,
-              cliConfig.projectHost,
-              cliConfig.poolerHost,
+              cliSettings.workdir,
+              cliSettings.projectHost,
+              cliSettings.poolerHost,
               flags.dnsResolver,
               flags.password ?? Option.none(),
               {
@@ -609,7 +609,7 @@ export const legacyDbConfigLayer = Layer.effect(
         }
 
         // --local (default).
-        const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir, undefined, {
+        const tomlValues = yield* legacyReadDbToml(fs, path, cliSettings.workdir, undefined, {
           resolveVaultSecrets,
         });
         return {
@@ -644,13 +644,13 @@ export const legacyDbConfigLayer = Layer.effect(
           const adHocProjectRef = flags.adHocProjectRef ?? false;
           const password = adHocProjectRef
             ? (Option.getOrUndefined(flags.password ?? Option.none()) ?? "")
-            : yield* resolveDbPassword(flags.password ?? Option.none(), cliConfig.workdir);
+            : yield* resolveDbPassword(flags.password ?? Option.none(), cliSettings.workdir);
           // Container-fallback: fetch the primary pooler config from the Management API
           // when no `.temp/pooler-url` is saved (`ResolvePoolerConfigForFallback`).
           return yield* resolvePoolerConn(
             ref,
-            cliConfig.workdir,
-            cliConfig.poolerHost,
+            cliSettings.workdir,
+            cliSettings.poolerHost,
             flags.dnsResolver,
             password,
             true,

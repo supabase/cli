@@ -1,5 +1,5 @@
 import { dirname } from "node:path";
-import { findProjectRoot, loadProjectConfig } from "@supabase/config";
+import { findCliProjectRoot, loadCliConfig } from "@supabase/config/effect";
 import { Effect, FileSystem, Path } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
@@ -97,10 +97,10 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   // the confirmation prompt reads the yes flag, so a `SUPABASE_YES` set only
   // in `supabase/.env` auto-confirms. Resolve against the project env, not
   // just the flag + shell env. Load it from the resolved project root
-  // (walking up, same as `loadProjectConfig` below and the workdir change
+  // (walking up, same as `loadCliConfig` below and the workdir change
   // before config load), so a push from a subdirectory still reads the
   // project root's `supabase/.env`.
-  const projectRoot = (yield* findProjectRoot(runtimeInfo.cwd)) ?? runtimeInfo.cwd;
+  const projectRoot = (yield* findCliProjectRoot(runtimeInfo.cwd)) ?? runtimeInfo.cwd;
   const projectEnv = yield* legacyLoadProjectEnv(fs, path, projectRoot);
   const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
   // dotenvx private keys for decrypting `encrypted:` secrets, from the shell
@@ -123,20 +123,20 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // 1. Load config.toml (TOML parse error aborts before any network call).
     //
     // NOTE (CLI-1489): `config push` needs the fully decoded config (every
-    // service subset), so it uses `loadProjectConfig` rather than the tolerant
-    // `LegacyProjectConfig` subtree reader. `loadProjectConfig` raises
-    // `ProjectConfigParseError` on `env(...)` refs over numeric/bool fields,
+    // service subset), so it uses `loadCliConfig` rather than the tolerant
+    // `legacy-db-config.toml-read.ts` subtree reader. `loadCliConfig` raises
+    // `CliConfigParseError` on `env(...)` refs over numeric/bool fields,
     // which Go resolves transparently. Switch to the fixed decoder once
     // CLI-1489 lands; until then this is the conscious tradeoff for this command.
     // Pass `ref` so a matching `[remotes.*]` block is merged over the base
     // config before decode. A duplicate `project_id` across remotes surfaces
     // an established error message.
-    const loaded = yield* loadProjectConfig(runtimeInfo.cwd, {
+    const loaded = yield* loadCliConfig(runtimeInfo.cwd, {
       projectRef: ref,
       goViperCompat: true,
     }).pipe(
       Effect.catchTag(
-        "ProjectConfigParseError",
+        "CliConfigParseError",
         (cause) =>
           new LegacyConfigPushLoadConfigError({
             message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,

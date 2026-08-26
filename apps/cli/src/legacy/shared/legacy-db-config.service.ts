@@ -52,7 +52,7 @@ export type LegacyDbConfigError =
   // effect — not a layer-build channel. `--linked --password` skips `make`
   // entirely and never raises these (`NewDbConfigWithPassword`).
   | LegacyPlatformApiFactoryError
-  // The lazy linked runtime rebuilds `legacyCliConfigLayer`, whose strict
+  // The lazy linked runtime rebuilds `legacyCliSettingsLayer`, whose strict
   // profile resolution can fail inside the resolver effect the same way.
   | LegacyProfileLoadError;
 

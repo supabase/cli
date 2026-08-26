@@ -2,7 +2,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { ProjectConfigSchema, type ProjectConfig } from "@supabase/config";
+import { CliConfigSchema, type CliConfig } from "@supabase/config";
 import { Schema } from "effect";
 import { importJWK, jwtVerify } from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -42,10 +42,10 @@ import {
   legacyResolveLocalJwks,
 } from "./legacy-local-config-values.ts";
 
-const decodeConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
+const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
 const WORKDIR = "/tmp/legacy-local-config-values-test";
 
-function baseConfig(overrides: Record<string, unknown> = {}): ProjectConfig {
+function baseConfig(overrides: Record<string, unknown> = {}): CliConfig {
   return decodeConfig({ project_id: "test", ...overrides });
 }
 
@@ -237,7 +237,7 @@ describe("legacyResolveLocalConfigValues", () => {
   });
 
   it("does not reject an absent project_id when the workdir basename sanitizes to a non-empty value", () => {
-    const config = Schema.decodeUnknownSync(ProjectConfigSchema)({});
+    const config = Schema.decodeUnknownSync(CliConfigSchema)({});
     expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
   });
 
@@ -247,14 +247,14 @@ describe("legacyResolveLocalConfigValues", () => {
     // so `c.ProjectId` is never Go's zero value by the time `Validate` runs. A workdir whose
     // basename sanitizes to `""` (every character invalid, e.g. `!!!`) therefore still fails
     // config loading in Go even with no `project_id` key in the file at all.
-    const config = Schema.decodeUnknownSync(ProjectConfigSchema)({});
+    const config = Schema.decodeUnknownSync(CliConfigSchema)({});
     expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", "/tmp/!!!")).toThrow(
       "Missing required field in config: project_id",
     );
   });
 
   it("lets SUPABASE_PROJECT_ID override an absent project_id whose basename sanitizes to empty", () => {
-    const config = Schema.decodeUnknownSync(ProjectConfigSchema)({});
+    const config = Schema.decodeUnknownSync(CliConfigSchema)({});
     expect(() =>
       legacyResolveLocalConfigValues(config, "127.0.0.1", "/tmp/!!!", {
         SUPABASE_PROJECT_ID: "env-project",
@@ -887,7 +887,7 @@ describe("legacyResolveLocalConfigValues", () => {
     // a check `legacyValidateResolvedConfig` itself owns.
     it("does not throw a present [experimental.webhooks] section without enabled when no document is provided", () => {
       // No `document` (5th param) at all — e.g. a caller that hasn't threaded
-      // `LoadedProjectConfig.document` through yet. The presence-only check
+      // `LoadedCliConfig.document` through yet. The presence-only check
       // can't run without it, so it's skipped rather than guessed at; this
       // also covers every pre-existing call site/test in this file that
       // doesn't pass a 5th argument.
@@ -3496,11 +3496,11 @@ describe("legacyResolveLocalConfigValues", () => {
       // provisioning calls (`legacyBuildLocalDbContainerInputs` -> `legacyResolveLocalConfigValues`
       // -> `validateAuthSmsProviders` -> `legacyResolveAuthSms`), not just the standalone resolver.
       // Built by spreading an already-decoded `baseConfig()` (not re-decoding through
-      // `ProjectConfigSchema` via `baseConfig({...})`'s shallow-merge overrides) so `vonage`'s
+      // `CliConfigSchema` via `baseConfig({...})`'s shallow-merge overrides) so `vonage`'s
       // other schema-required fields (`from`, etc.) keep their valid decoded defaults.
       process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = "not-a-bool";
       const base = baseConfig();
-      const config: ProjectConfig = {
+      const config: CliConfig = {
         ...base,
         auth: {
           ...base.auth,

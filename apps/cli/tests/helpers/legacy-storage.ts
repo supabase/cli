@@ -18,7 +18,7 @@ import {
   LEGACY_VALID_REF,
   legacyJsonResponse,
   legacyTransportFailure,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApiService,
   mockLegacyTelemetryStateTracked,
@@ -207,7 +207,7 @@ export function setupLegacyStorage(workdir: string, opts: SetupLegacyStorageOpti
     httpLayer,
     telemetry.layer,
     linkedCache.layer,
-    mockLegacyCliConfig({ workdir }),
+    mockLegacyCliSettings({ workdir }),
     BunServices.layer,
     projectRefLayer,
     Layer.succeed(LegacyPlatformApiFactory, {

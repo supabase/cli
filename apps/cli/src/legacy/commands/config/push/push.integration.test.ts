@@ -10,7 +10,7 @@ import {
   buildLegacyTestRuntime,
   legacyJsonResponse,
   legacyTransportFailure,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyPlatformApiService,
@@ -141,7 +141,7 @@ function setup(opts: {
     buildLegacyTestRuntime({
       out,
       api,
-      cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+      cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       runtimeInfo: mockRuntimeInfo({ cwd: opts.runtimeCwd ?? tempRoot.current }),
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,
@@ -413,7 +413,7 @@ project_id = "abcdefghijklmnopqrst"
   it.live("loads config-push env from the project root when run from a subdirectory", () => {
     // The workdir change moves to the project root before config load, so a
     // SUPABASE_YES in <root>/supabase/.env auto-confirms even when invoked
-    // from a subdir. The env load must walk up like loadProjectConfig, not
+    // from a subdir. The env load must walk up like loadCliConfig, not
     // use the raw cwd.
     const prev = process.env["SUPABASE_YES"];
     delete process.env["SUPABASE_YES"];
@@ -524,7 +524,7 @@ file_size_limit = "50MiB"
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       }),
       mockStdin(true),
@@ -592,7 +592,7 @@ function setupService(opts: {
     buildLegacyTestRuntime({
       out,
       api: { layer: apiMock.layer, httpClientLayer: addonsHttpLayer() },
-      cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+      cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       runtimeInfo: mockRuntimeInfo({ cwd: opts.runtimeCwd ?? tempRoot.current }),
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,

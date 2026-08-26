@@ -1,8 +1,14 @@
 import { describe, expect, test } from "vitest";
 import { Cause } from "effect";
 import { CliError, Command } from "effect/unstable/cli";
+import {
+  CliConfigParseError,
+  CliProjectEnvParseError,
+  MissingCliConfigValueError,
+} from "@supabase/config";
 import { legacyBranchesCommand } from "../../legacy/commands/branches/branches.command.ts";
 import { legacyNetworkRestrictionsCommand } from "../../legacy/commands/network-restrictions/network-restrictions.command.ts";
+import { CliProjectHomeNotDirectoryError } from "../../next/config/cli-project-home.service.ts";
 import { formatCliError, normalizeCause, normalizeCliError } from "./normalize-error.ts";
 
 const testRoot = Command.make("supabase").pipe(
@@ -38,6 +44,61 @@ describe("normalizeCliError", () => {
       code: "ExampleError",
       message: "Something went wrong",
       suggestion: "Try again",
+    });
+  });
+
+  // Pinning tests for CLI-2235: `@supabase/config`'s tagged errors carry no
+  // `message`/`detail` field, so `normalizeCliError`'s generic fallback
+  // surfaces the bare `_tag` verbatim as both the JSON `code` and the
+  // displayed `message` — this is the exact string a script matching on
+  // `--output-format json` error output, or a user reading stderr, sees. A
+  // future rename of these tags (as happened with the
+  // ProjectConfigParseError -> CliConfigParseError rename) must fail a test,
+  // not sail through silently.
+  test("CliConfigParseError falls back to its bare tag as both code and message", () => {
+    const error = new CliConfigParseError({
+      path: "supabase/config.toml",
+      format: "toml",
+      cause: new Error("unexpected token"),
+    });
+
+    expect(normalizeCliError(error)).toEqual({
+      code: "CliConfigParseError",
+      message: "CliConfigParseError",
+    });
+  });
+
+  test("CliProjectEnvParseError falls back to its bare tag as both code and message", () => {
+    const error = new CliProjectEnvParseError({
+      path: "supabase/.env.local",
+      line: 3,
+    });
+
+    expect(normalizeCliError(error)).toEqual({
+      code: "CliProjectEnvParseError",
+      message: "CliProjectEnvParseError",
+    });
+  });
+
+  test("MissingCliConfigValueError falls back to its bare tag as both code and message", () => {
+    const error = new MissingCliConfigValueError({
+      configPath: "project_id",
+    });
+
+    expect(normalizeCliError(error)).toEqual({
+      code: "MissingCliConfigValueError",
+      message: "MissingCliConfigValueError",
+    });
+  });
+
+  test("CliProjectHomeNotDirectoryError surfaces its tag as code with its own message", () => {
+    const error = new CliProjectHomeNotDirectoryError({
+      message: ".supabase could not be created: a file exists at that path",
+    });
+
+    expect(normalizeCliError(error)).toEqual({
+      code: "CliProjectHomeNotDirectoryError",
+      message: ".supabase could not be created: a file exists at that path",
     });
   });
 

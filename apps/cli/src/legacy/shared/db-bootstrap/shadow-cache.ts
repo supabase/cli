@@ -7,7 +7,7 @@
 
 import { createHash, scryptSync } from "node:crypto";
 
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 import { Clock, Effect, Match, Option, Predicate, Result, type FileSystem } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
@@ -134,7 +134,7 @@ export interface LegacyShadowCacheKeyInputs {
    * storage is enabled and `majorVersion >= 15`.
    */
   readonly storageTargetMigration: string;
-  readonly dbSettings: ProjectConfig["db"]["settings"];
+  readonly dbSettings: CliConfig["db"]["settings"];
   /**
    * `api.auto_expose_new_tables` as config carries it. Hashed as the effective
    * two-state behavior — see {@link legacyEffectiveShadowApiGrantsKept}.

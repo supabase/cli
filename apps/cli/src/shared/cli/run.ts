@@ -1,5 +1,5 @@
 import { BunServices } from "@effect/platform-bun";
-import { ProjectConfigStore } from "@supabase/config";
+import { CliConfigStore } from "@supabase/config/effect";
 import { httpTransportClientLayer } from "@supabase/stack/effect";
 import { Cause, Console, Effect, Exit, Fiber, Layer, Runtime, Stdio } from "effect";
 import { CliError, CliOutput, Command } from "effect/unstable/cli";
@@ -13,10 +13,10 @@ import type { OutputFormat } from "../output/types.ts";
 import { Output } from "../output/output.service.ts";
 import { LegacyGoChildExitError } from "../legacy/legacy-go-child-exit.error.ts";
 import { GoProxyInvocation, goProxyInvocationLayer } from "../legacy/go-proxy-invocation.ts";
-import { cliConfigLayer } from "../../next/config/cli-config.layer.ts";
-import { projectHomeLayer } from "../../next/config/project-home.layer.ts";
-import { ProjectLocalServiceVersions } from "../../next/config/project-local-service-versions.service.ts";
-import { projectContextLayer } from "../../next/config/project-context.layer.ts";
+import { cliSettingsLayer } from "../../next/config/cli-settings.layer.ts";
+import { cliProjectHomeLayer } from "../../next/config/cli-project-home.layer.ts";
+import { CliProjectLocalServiceVersions } from "../../next/config/cli-project-local-service-versions.service.ts";
+import { cliProjectContextLayer } from "../../next/config/cli-project-context.layer.ts";
 import { projectLinkStateLayer } from "../../next/config/project-link-state.layer.ts";
 import { processControlLayer } from "../runtime/process-control.layer.ts";
 import { runtimeInfoLayer } from "../runtime/runtime-info.layer.ts";
@@ -591,9 +591,9 @@ export function classifyParseErrorConsoleOutput(
  * handler, not just the parse phase that can actually raise `ShowHelp`: no
  * command handler in this codebase writes through `effect`'s `Console`
  * service directly (they go through the `Output` service instead). One
- * indirect exception is known — `@supabase/config`'s `loadProjectConfigFile`
+ * indirect exception is known — `@supabase/config`'s `loadCliConfigFile`
  * emits its deprecated-config-section warnings via `Console.error`, and is
- * reachable from handlers through `ProjectConfigStore`/`loadProjectConfig` —
+ * reachable from handlers through `CliConfigStore`/`loadCliConfig` —
  * so it pins itself to the real console (`Effect.provideService(Console.Console,
  * globalThis.console)`) rather than relying on whatever `Console.Console` is
  * ambient here; see CLI-1901 and that package's `io.ts` for why (a
@@ -641,21 +641,21 @@ export function withoutParseErrorHelpDump<A, E, R>(
   });
 }
 
-function projectContextLayerFor(runtimeLayer: Layer.Layer<never>) {
-  return projectContextLayer.pipe(Layer.provide(runtimeLayer), Layer.provide(BunServices.layer));
+function cliProjectContextLayerFor(runtimeLayer: Layer.Layer<never>) {
+  return cliProjectContextLayer.pipe(Layer.provide(runtimeLayer), Layer.provide(BunServices.layer));
 }
 
-function cliConfigLayerFor(runtimeLayer: Layer.Layer<never>) {
-  return cliConfigLayer.pipe(
-    Layer.provide(projectContextLayerFor(runtimeLayer)),
+function cliSettingsLayerFor(runtimeLayer: Layer.Layer<never>) {
+  return cliSettingsLayer.pipe(
+    Layer.provide(cliProjectContextLayerFor(runtimeLayer)),
     Layer.provide(runtimeLayer),
   );
 }
 
-function projectHomeLayerFor(runtimeLayer: Layer.Layer<never>) {
-  return projectHomeLayer.pipe(
-    Layer.provide(cliConfigLayerFor(runtimeLayer)),
-    Layer.provide(projectContextLayerFor(runtimeLayer)),
+function cliProjectHomeLayerFor(runtimeLayer: Layer.Layer<never>) {
+  return cliProjectHomeLayer.pipe(
+    Layer.provide(cliSettingsLayerFor(runtimeLayer)),
+    Layer.provide(cliProjectContextLayerFor(runtimeLayer)),
     Layer.provide(runtimeLayer),
     Layer.provide(BunServices.layer),
   );
@@ -705,13 +705,13 @@ function cliProgramFor(
       saveAccessToken: () => Effect.die("unexpected root credentials write"),
       deleteAccessToken: Effect.die("unexpected root credentials deletion"),
     }),
-    Layer.succeed(ProjectLocalServiceVersions, {
+    Layer.succeed(CliProjectLocalServiceVersions, {
       load: Effect.die("unexpected root project local service versions access"),
     }),
-    Layer.succeed(ProjectConfigStore, {
-      load: () => Effect.die("unexpected root project config access"),
-      loadFile: () => Effect.die("unexpected root project config file access"),
-      save: () => Effect.die("unexpected root project config write"),
+    Layer.succeed(CliConfigStore, {
+      load: () => Effect.die("unexpected root cli-config access"),
+      loadFile: () => Effect.die("unexpected root cli-config file access"),
+      save: () => Effect.die("unexpected root cli-config write"),
     }),
     Layer.succeed(
       CommandRuntime,
@@ -729,9 +729,9 @@ function cliProgramFor(
     Effect.provide(options.analyticsLayer),
     Effect.provide(tracingLayer),
     Effect.provide(telemetryRuntimeLayer),
-    Effect.provide(cliConfigLayerFor(runtimeLayer)),
-    Effect.provide(projectHomeLayerFor(runtimeLayer)),
-    Effect.provide(projectContextLayerFor(runtimeLayer)),
+    Effect.provide(cliSettingsLayerFor(runtimeLayer)),
+    Effect.provide(cliProjectHomeLayerFor(runtimeLayer)),
+    Effect.provide(cliProjectContextLayerFor(runtimeLayer)),
     Effect.provide(projectLinkStateLayer),
     Effect.provide(runtimeLayer),
     Effect.provide(httpTransportClientLayer),
@@ -870,9 +870,9 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
     }).pipe(
       Effect.provide(outputLayerFor(outputFormat)),
       Effect.provide(telemetryRuntimeLayer),
-      Effect.provide(projectHomeLayerFor(handledRuntimeLayer)),
-      Effect.provide(cliConfigLayerFor(handledRuntimeLayer)),
-      Effect.provide(projectContextLayerFor(handledRuntimeLayer)),
+      Effect.provide(cliProjectHomeLayerFor(handledRuntimeLayer)),
+      Effect.provide(cliSettingsLayerFor(handledRuntimeLayer)),
+      Effect.provide(cliProjectContextLayerFor(handledRuntimeLayer)),
       Effect.provide(processControlLayer),
       Effect.provide(runtimeInfoLayer),
       Effect.provide(ttyLayer),

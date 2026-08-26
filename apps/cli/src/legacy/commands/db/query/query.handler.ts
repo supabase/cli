@@ -2,7 +2,7 @@ import { Effect, FileSystem, Option, Path, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyCredentials } from "../../../auth/legacy-credentials.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
@@ -71,7 +71,7 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
   const stdin = yield* Stdin;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const random = yield* Random;
   const agentFlag = yield* LegacyAgentFlag;
   const outputFlag = yield* LegacyOutputFlag;
@@ -184,14 +184,14 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     token: Redacted.Redacted<string>,
   ) =>
     Effect.gen(function* () {
-      const cliConfig = yield* LegacyCliConfig;
+      const cliSettings = yield* LegacyCliSettings;
       const httpClient = yield* HttpClient.HttpClient;
 
       const request = HttpClientRequest.post(
-        `${cliConfig.apiUrl}/v1/projects/${ref}/database/query`,
+        `${cliSettings.apiUrl}/v1/projects/${ref}/database/query`,
       ).pipe(
         HttpClientRequest.setHeader("Authorization", `Bearer ${Redacted.value(token)}`),
-        HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
+        HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent),
         HttpClientRequest.bodyJsonUnsafe({ query: sql }),
       );
       const { status, body } = yield* Effect.gen(function* () {
@@ -351,7 +351,7 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       if (Option.isSome(flags.file)) {
         // A relative `--file` path resolves against the workdir, not the
         // original cwd. `path.resolve` leaves absolute paths unchanged.
-        const filePath = path.resolve(cliConfig.workdir, flags.file.value);
+        const filePath = path.resolve(cliSettings.workdir, flags.file.value);
         return yield* fs.readFileString(filePath).pipe(
           Effect.mapError(
             (cause) =>

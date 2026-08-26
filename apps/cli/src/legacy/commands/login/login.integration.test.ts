@@ -18,7 +18,7 @@ import { LegacyProfileFlag } from "../../../shared/legacy/global-flags.ts";
 import {
   LEGACY_VALID_TOKEN,
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyCredentialsTracked,
   mockLegacyLoginApi,
   mockLegacyLoginCrypto,
@@ -82,7 +82,7 @@ function setupLegacyLogin(opts: SetupOpts = {}) {
     profileFails: opts.profileFails,
   });
   const analytics = mockAnalytics();
-  const cliConfig = mockLegacyCliConfig({
+  const cliSettings = mockLegacyCliSettings({
     workdir: tempRoot.current,
     accessToken:
       opts.accessTokenEnv !== undefined
@@ -97,7 +97,7 @@ function setupLegacyLogin(opts: SetupOpts = {}) {
         layer: mockLegacyPlatformApiService({ v1: {} }).layer,
         httpClientLayer: noopHttpClient,
       },
-      cliConfig,
+      cliSettings,
       analytics,
       telemetry: telemetry.layer,
       tty,

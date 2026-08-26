@@ -13,6 +13,7 @@
     "cli-release": "bun tools/release/local-release.ts"
   },
   "devDependencies": {
+    "knip": "catalog:",
     "nx": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
@@ -32,16 +33,22 @@
     "includedScripts": [],
     "targets": {
       "lint:check": {
-        "command": "oxlint"
+        "command": "oxlint --config .oxlintrc.json"
       },
       "lint:fix": {
-        "command": "oxlint --fix"
+        "command": "oxlint --config .oxlintrc.json --fix"
       },
       "fmt:check": {
-        "command": "oxfmt --check"
+        "command": "oxfmt --config .oxfmtrc.json --check"
       },
       "fmt:fix": {
-        "command": "oxfmt"
+        "command": "oxfmt --config .oxfmtrc.json"
+      },
+      "knip:check": {
+        "command": "knip-bun"
+      },
+      "knip:fix": {
+        "command": "knip-bun --fix"
       }
     }
   }

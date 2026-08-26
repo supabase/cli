@@ -3,7 +3,7 @@ import { Layer } from "effect";
 import { legacyCredentialsLayer } from "../../../auth/legacy-credentials.layer.ts";
 import { legacyHttpClientLayer } from "../../../auth/legacy-http-debug.layer.ts";
 import { legacyPlatformApiFactoryLayer } from "../../../auth/legacy-platform-api-factory.layer.ts";
-import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
+import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
 import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.ts";
 import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
@@ -27,10 +27,10 @@ import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.
  * connection, but the resolver still needs `LegacyDbConnection` for the linked
  * pooler temp-role probe.
  */
-const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const credentials = legacyCredentialsLayer.pipe(
-  Layer.provide(cliConfig),
+  Layer.provide(cliSettings),
   Layer.provide(legacyDebugLoggerLayer),
 );
 
@@ -40,7 +40,7 @@ const credentials = legacyCredentialsLayer.pipe(
 // (`push.layers.ts:26-31`).
 const platformApiFactory = legacyPlatformApiFactoryLayer.pipe(
   Layer.provide(credentials),
-  Layer.provide(cliConfig),
+  Layer.provide(cliSettings),
   Layer.provide(legacyDebugLoggerLayer),
   Layer.provide(legacyIdentityStitchLayer),
 );
@@ -49,20 +49,20 @@ const platformApiFactory = legacyPlatformApiFactoryLayer.pipe(
 // before the linked-project-cache finalizer ever sees it.
 const projectRef = legacyProjectRefLayer.pipe(
   Layer.provide(platformApiFactory),
-  Layer.provide(cliConfig),
+  Layer.provide(cliSettings),
 );
 
 // Exposed so the handler can cache the linked project (GET /v1/projects/{ref})
 // in its post-run finalizer. Shares the single `legacyIdentityStitchLayer`.
 const linkedProjectCache = legacyLinkedProjectCacheLayer.pipe(
   Layer.provide(credentials),
-  Layer.provide(cliConfig),
+  Layer.provide(cliSettings),
   Layer.provide(httpClient),
   Layer.provide(legacyIdentityStitchLayer),
 );
 
 const dbConfig = legacyDbConfigLayer.pipe(
-  Layer.provide(cliConfig),
+  Layer.provide(cliSettings),
   Layer.provide(legacyDbConnectionLayer),
   Layer.provide(legacyDebugLoggerLayer),
   // The linked db-config resolver snapshots `LegacyIdentityStitch` (shared with
@@ -77,7 +77,7 @@ export const legacyDbDumpRuntimeLayer = Layer.mergeAll(
   dbConfig,
   legacyDbConnectionLayer,
   legacyDockerRunLayer,
-  cliConfig,
+  cliSettings,
   projectRef,
   linkedProjectCache,
   legacyIdentityStitchLayer,
