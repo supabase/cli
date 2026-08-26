@@ -1,7 +1,7 @@
 import { chmodSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option, Schedule } from "effect";
+import { Effect, Option, Predicate, Schedule } from "effect";
 import {
   makeWorkersProject,
   setupLegacyWorkers,
@@ -11,9 +11,11 @@ import {
   type WorkersHttpRoutes,
 } from "../../../../../tests/helpers/legacy-workers.ts";
 import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
+import { LegacyWorkersEnvNotSupportedError } from "../workers.errors.ts";
 import {
   NoWorkersToDeployError,
   WorkerBuildFailedError,
+  WorkerBuildTimeoutError,
   WorkerProjectNotFoundError,
   WorkersUnavailableError,
   WorkerSourceMissingError,
@@ -78,16 +80,6 @@ function routes(overrides: WorkersHttpRoutes = {}): WorkersHttpRoutes {
     },
     ...overrides,
   };
-}
-
-/**
- * The `_tag` of a failure, for a channel that also carries plain `Error`
- * subclasses — `TarPathTooLongError` has no tag.
- */
-function tagOf(error: unknown): string | undefined {
-  return typeof error === "object" && error !== null && "_tag" in error
-    ? String((error as { _tag: unknown })._tag)
-    : undefined;
 }
 
 /**
@@ -324,7 +316,7 @@ describe("legacy workers push", () => {
         Effect.flip,
       );
 
-      expect(tagOf(error)).toBe("WorkerBuildTimeoutError");
+      expect(error).toBeInstanceOf(WorkerBuildTimeoutError);
       expect((error as { suggestion: string }).suggestion).toContain("supabase workers status api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
@@ -527,7 +519,7 @@ describe("legacy workers push", () => {
       const error = yield* push().pipe(Effect.flip);
 
       expect(error).not.toBeInstanceOf(WorkerSourceMissingError);
-      expect(tagOf(error)).toBe("PlatformError");
+      expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
       expect(http.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
@@ -538,18 +530,24 @@ describe("legacy workers push", () => {
     const repo = project({});
     const source = join(repo.dir, "supabase", "workers", "api");
     chmodSync(source, 0o000);
+    // Probed before the run, not inside it: root ignores the permission bits, so
+    // the deploy would succeed, and `Effect.flip` turns a success into a failure
+    // — the branch below would never be reached to handle that case.
+    const unreadable = !listableAsCurrentUser(source);
     const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
+      if (!unreadable) {
+        yield* push();
+        expect(http.requests.length).toBeGreaterThan(0);
+        return;
+      }
+
       const error = yield* push().pipe(Effect.flip);
 
-      if (listableAsCurrentUser(source)) {
-        expect(http.requests.length).toBeGreaterThan(0);
-      } else {
-        expect(error).not.toBeInstanceOf(WorkerSourceMissingError);
-        expect(tagOf(error)).toBe("PlatformError");
-        expect(http.requests).toHaveLength(0);
-      }
+      expect(error).not.toBeInstanceOf(WorkerSourceMissingError);
+      expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
+      expect(http.requests).toHaveLength(0);
     }).pipe(
       Effect.provide(layer),
       Effect.ensuring(
@@ -728,7 +726,7 @@ describe("legacy workers push", () => {
     return Effect.gen(function* () {
       const error = yield* push().pipe(Effect.flip);
 
-      expect(tagOf(error)).toBe("LegacyWorkersEnvNotSupportedError");
+      expect(error).toBeInstanceOf(LegacyWorkersEnvNotSupportedError);
       expect(http.routeKeys).toEqual([]);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
