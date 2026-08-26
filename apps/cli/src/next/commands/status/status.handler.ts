@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Option, Predicate } from "effect";
-import { loadProjectConfig } from "@supabase/config/effect";
+import { loadCliConfig } from "@supabase/config/effect";
 import {
   connectLayer,
   fillServiceVersionManifest,
@@ -7,8 +7,8 @@ import {
   Stack,
   type StackSummary,
 } from "@supabase/stack/effect";
-import { CliConfig } from "../../config/cli-config.service.ts";
-import { ProjectHome } from "../../config/project-home.service.ts";
+import { CliSettings } from "../../config/cli-settings.service.ts";
+import { CliProjectHome } from "../../config/cli-project-home.service.ts";
 import { resolveServiceVersionContext } from "../../config/service-version-resolution.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
@@ -87,7 +87,7 @@ const resolveConfiguredSummary = Effect.fnUntraced(function* (input: {
   readonly name: string;
 }) {
   const current = yield* resolveStackSummary(input);
-  const loaded = yield* loadProjectConfig(input.projectDir);
+  const loaded = yield* loadCliConfig(input.projectDir);
   const excluded = (current.launch.excludedServices ?? []).filter(isExcludedStackService);
   const mode = current.launch.mode;
   return yield* resolveStackSummary({
@@ -128,23 +128,23 @@ const renderUpdateStatus = Effect.fnUntraced(function* (
 
 export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
   const output = yield* Output;
-  const cliConfig = yield* CliConfig;
-  const projectHome = yield* ProjectHome;
+  const cliSettings = yield* CliSettings;
+  const cliProjectHome = yield* CliProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
 
   yield* output.intro("Show local Supabase stack status");
 
   const summaryInput = {
-    cacheRoot: cliConfig.supabaseHome,
-    projectDir: projectHome.projectRoot,
+    cacheRoot: cliSettings.supabaseHome,
+    projectDir: cliProjectHome.projectRoot,
     cwd: runtimeInfo.cwd,
     name: _flags.stack,
   };
   const layerResult = yield* connectLayer({
     cliVersion: CLI_VERSION,
     cwd: runtimeInfo.cwd,
-    cacheRoot: cliConfig.supabaseHome,
-    projectDir: projectHome.projectRoot,
+    cacheRoot: cliSettings.supabaseHome,
+    projectDir: cliProjectHome.projectRoot,
     name: _flags.stack,
   }).pipe(
     Effect.map((layer) => ({ _tag: "live" as const, layer })),

@@ -16,7 +16,7 @@ import {
 } from "../../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
@@ -81,14 +81,17 @@ function setup(options: SetupOptions = {}) {
     promptConfirmResponses: options.promptConfirmResponses,
   });
   const api = mockLegacyPlatformApi();
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current, projectId: Option.none() });
+  const cliSettings = mockLegacyCliSettings({
+    workdir: tempRoot.current,
+    projectId: Option.none(),
+  });
   const tty = mockTty({
     stdinIsTty: options.stdinIsTty ?? false,
     stdoutIsTty: options.stdinIsTty ?? false,
   });
   const telemetry = options.trackTelemetry ? mockLegacyTelemetryStateTracked() : undefined;
   const layer = Layer.mergeAll(
-    buildLegacyTestRuntime({ out, api, cliConfig, tty, telemetry: telemetry?.layer }),
+    buildLegacyTestRuntime({ out, api, cliSettings, tty, telemetry: telemetry?.layer }),
     Layer.succeed(LegacyYesFlag, options.yes ?? false),
     Layer.succeed(CliArgs, { args: options.cliArgs ?? [] }),
     mockStdin(options.stdinIsTty ?? false, options.pipedAnswer),
@@ -210,7 +213,7 @@ describe("legacy gen signing-key integration", () => {
         // Config loading has no concept of a JSON project config file — a
         // stray `supabase/config.json` with no `config.toml` present must be
         // treated exactly like no config at all, never as a substitute config source
-        // (`gen.signing-keys-config.ts`'s `loadProjectConfig(..., { tomlOnly: true })`).
+        // (`gen.signing-keys-config.ts`'s `loadCliConfig(..., { tomlOnly: true })`).
         // The CWD-relative `supabase/config.toml` is printed in this
         // "absent config" case; the hint must stay relative and must never leak the absolute
         // temp-dir path either.

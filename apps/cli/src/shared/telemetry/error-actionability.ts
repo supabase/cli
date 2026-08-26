@@ -937,9 +937,9 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   BadArgument: () => ({ ...actionability.impossibleState, fingerprint_suffix: "bad_argument" }),
 
   // @supabase/config
-  ProjectConfigParseError: () => actionability.invalidConfig,
-  ProjectEnvParseError: () => actionability.invalidConfig,
-  MissingProjectConfigValueError: () => actionability.invalidConfig,
+  CliConfigParseError: () => actionability.invalidConfig,
+  CliProjectEnvParseError: () => actionability.invalidConfig,
+  MissingCliConfigValueError: () => actionability.invalidConfig,
   DuplicateRemoteProjectIdError: () => actionability.invalidConfig,
   InvalidRemoteProjectIdError: () => actionability.invalidConfig,
 
@@ -1227,7 +1227,7 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
   // @supabase/stack wrapper errors preserve the underlying tagged failure in
   // `cause`; classify it when it is more specific than the wrapper (e.g. a
   // daemon-down DockerPullError inside an asset-preparation StackBuildError,
-  // or a user's ProjectConfigParseError inside a reason-less StackBuildError).
+  // or a user's CliConfigParseError inside a reason-less StackBuildError).
   // Explicit `invalid_config` StackBuildErrors are deliberate user-facing
   // config verdicts and are never overridden by their cause.
   if (

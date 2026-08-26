@@ -918,10 +918,10 @@ describe("classifyCliErrorActionability", () => {
     const result = classifyCliErrorActionability({
       _tag: "StackBuildError",
       detail: "Failed to configure Edge Functions",
-      cause: { _tag: "ProjectConfigParseError", path: "supabase/config.toml" },
+      cause: { _tag: "CliConfigParseError", path: "supabase/config.toml" },
     });
     expect(result.error_category).toBe("invalid_config");
-    expect(result.error_fingerprint).toBe("tag:ProjectConfigParseError");
+    expect(result.error_fingerprint).toBe("tag:CliConfigParseError");
   });
 
   it("keeps a local stack schema failure in the invalid-config bucket", () => {

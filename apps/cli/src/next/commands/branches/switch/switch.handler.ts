@@ -5,11 +5,11 @@ import {
   Stack,
   stopDaemon,
 } from "@supabase/stack/effect";
-import { loadProjectConfig } from "@supabase/config/effect";
+import { loadCliConfig } from "@supabase/config/effect";
 import { Effect, Option } from "effect";
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
-import { CliConfig } from "../../../config/cli-config.service.ts";
-import { ProjectHome } from "../../../config/project-home.service.ts";
+import { CliSettings } from "../../../config/cli-settings.service.ts";
+import { CliProjectHome } from "../../../config/cli-project-home.service.ts";
 import { managedPortIntents } from "../../../config/managed-port-intents.ts";
 import {
   ProjectLinkState,
@@ -34,8 +34,8 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
   const output = yield* Output;
   const projectLinkState = yield* ProjectLinkState;
   const api = yield* PlatformApi;
-  const cliConfig = yield* CliConfig;
-  const projectHome = yield* ProjectHome;
+  const cliSettings = yield* CliSettings;
+  const cliProjectHome = yield* CliProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
 
   yield* output.intro("Switch branch");
@@ -106,9 +106,9 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
 
   // If a local stack is running, stop and restart it against the new branch.
   const stackCheck = yield* resolveManagedStack({
-    cacheRoot: cliConfig.supabaseHome,
+    cacheRoot: cliSettings.supabaseHome,
     cwd: runtimeInfo.cwd,
-    projectDir: projectHome.projectRoot,
+    projectDir: cliProjectHome.projectRoot,
   }).pipe(
     Effect.map(Option.some),
     Effect.catchTag("NoRunningStackError", () => Effect.succeed(Option.none())),
@@ -128,8 +128,8 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
     const existingLayer = yield* connectLayer({
       cliVersion: CLI_VERSION,
       cwd: runtimeInfo.cwd,
-      cacheRoot: cliConfig.supabaseHome,
-      projectDir: projectHome.projectRoot,
+      cacheRoot: cliSettings.supabaseHome,
+      projectDir: cliProjectHome.projectRoot,
       name: stackName,
     }).pipe(
       Effect.map(Option.some),
@@ -151,8 +151,8 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
       const stopping = yield* output.task("Stopping local stack...");
       yield* stopDaemon({
         cwd: runtimeInfo.cwd,
-        cacheRoot: cliConfig.supabaseHome,
-        projectDir: projectHome.projectRoot,
+        cacheRoot: cliSettings.supabaseHome,
+        projectDir: cliProjectHome.projectRoot,
         name: stackName,
       }).pipe(Effect.tapError(() => stopping.fail()));
       yield* stopping.clear();
@@ -171,15 +171,15 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
       ),
       launch.versions,
     );
-    const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
+    const loadedCliConfig = yield* loadCliConfig(cliProjectHome.projectRoot);
 
     const stackLayer = yield* daemonLayer({
       cliVersion: CLI_VERSION,
-      cacheRoot: cliConfig.supabaseHome,
+      cacheRoot: cliSettings.supabaseHome,
       cwd: runtimeInfo.cwd,
-      projectDir: projectHome.projectRoot,
+      projectDir: cliProjectHome.projectRoot,
       name: stackName,
-      portIntents: managedPortIntents(launchConfig, loadedProjectConfig ?? undefined),
+      portIntents: managedPortIntents(launchConfig, loadedCliConfig ?? undefined),
       launch,
       ...launchConfig,
     });

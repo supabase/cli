@@ -32,8 +32,8 @@ import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ServiceNotFoundError } from "@supabase/process-compose";
-import { CliConfig } from "../../src/next/config/cli-config.service.ts";
-import { ProjectHome } from "../../src/next/config/project-home.service.ts";
+import { CliSettings } from "../../src/next/config/cli-settings.service.ts";
+import { CliProjectHome } from "../../src/next/config/cli-project-home.service.ts";
 import { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
 import { CLI_VERSION } from "../../src/shared/cli/version.ts";
 
@@ -94,15 +94,15 @@ const stackService = (info: StackInfo, onStop: Effect.Effect<void>): Stack["Serv
   logHistoryAll: (limit?: number) => Effect.succeed(history.slice(-(limit ?? 100))),
 });
 
-function projectHome(projectRoot: string): ProjectHome["Service"] {
+function cliProjectHome(projectRoot: string): CliProjectHome["Service"] {
   const projectHomeDir = join(projectRoot, ".supabase");
-  return ProjectHome.of({
+  return CliProjectHome.of({
     projectRoot,
     supabaseDir: join(projectRoot, "supabase"),
     projectHomeDir,
     projectLinkPath: join(projectHomeDir, "project.json"),
     projectLocalVersionsPath: join(projectHomeDir, "local-versions.json"),
-    ensureProjectHomeDir: Effect.void,
+    ensureCliProjectHomeDir: Effect.void,
   });
 }
 
@@ -123,7 +123,7 @@ export async function makeManagedStackFixture(
   const running = options.running ?? true;
   const cliVersion = options.cliVersion ?? CLI_VERSION;
   const ownerState = options.ownerState;
-  const project = projectHome(projectRoot);
+  const project = cliProjectHome(projectRoot);
   const managerRuntime = ManagedRuntime.make(
     Layer.mergeAll(managedStackManagerLayer({ stateRoot }), controlTransportLayer),
   );
@@ -234,10 +234,10 @@ export async function makeManagedStackFixture(
     BunServices.layer,
     controlTransportLayer,
     httpTransportClientLayer,
-    Layer.succeed(ProjectHome, project),
+    Layer.succeed(CliProjectHome, project),
     Layer.succeed(
-      CliConfig,
-      CliConfig.of({
+      CliSettings,
+      CliSettings.of({
         apiUrl: "https://api.supabase.com",
         dashboardUrl: "https://supabase.com/dashboard",
         projectHost: "supabase.co",

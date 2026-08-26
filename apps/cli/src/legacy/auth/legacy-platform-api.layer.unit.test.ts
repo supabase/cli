@@ -13,7 +13,7 @@ import { LegacyDebugFlag, LegacyDnsResolverFlag } from "../../shared/legacy/glob
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { TelemetryRuntime } from "../../shared/telemetry/runtime.service.ts";
 import { makeTelemetryIdentity } from "../../shared/telemetry/identity.ts";
-import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { legacyDebugLoggerLayer } from "../shared/legacy-debug-logger.layer.ts";
 import { legacyIdentityStitchLayer } from "../shared/legacy-identity-stitch.ts";
 import { LegacyCredentials } from "./legacy-credentials.service.ts";
@@ -25,14 +25,14 @@ import { LegacyPlatformApi } from "./legacy-platform-api.service.ts";
 const VALID_TOKEN = "sbp_" + "a".repeat(40);
 const SESSION_LAST_ACTIVE = 1_777_200_000_000;
 
-function mockCliConfig(opts: {
+function mockCliSettings(opts: {
   accessToken?: string;
   apiUrl?: string;
   userAgent?: string;
   profile?: string;
   projectHost?: string;
 }) {
-  return Layer.succeed(LegacyCliConfig, {
+  return Layer.succeed(LegacyCliSettings, {
     profile: opts.profile ?? "supabase",
     apiUrl: opts.apiUrl ?? "https://api.supabase.com",
     projectHost: opts.projectHost ?? "supabase.co",
@@ -225,7 +225,7 @@ describe("legacyPlatformApiLayer", () => {
   it.effect("uses env access token over keyring-stored token", () => {
     const http = captureRequests();
     const layer = legacyPlatformApiLayer.pipe(
-      Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
+      Layer.provide(mockCliSettings({ accessToken: VALID_TOKEN })),
       Layer.provide(mockCredentials(Option.some("sbp_" + "9".repeat(40)))),
       Layer.provide(http.layer),
       withBaseDeps(),
@@ -241,7 +241,7 @@ describe("legacyPlatformApiLayer", () => {
   it.effect("uses LegacyCredentials.getAccessToken when env is unset", () => {
     const http = captureRequests();
     const layer = legacyPlatformApiLayer.pipe(
-      Layer.provide(mockCliConfig({})),
+      Layer.provide(mockCliSettings({})),
       Layer.provide(mockCredentials(Option.some(VALID_TOKEN))),
       Layer.provide(http.layer),
       withBaseDeps(),
@@ -256,7 +256,7 @@ describe("legacyPlatformApiLayer", () => {
   it.effect("fails with LegacyPlatformAuthRequiredError when no token is configured", () => {
     const http = captureRequests();
     const layer = legacyPlatformApiLayer.pipe(
-      Layer.provide(mockCliConfig({})),
+      Layer.provide(mockCliSettings({})),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
       withBaseDeps(),
@@ -285,7 +285,7 @@ describe("legacyPlatformApiLayer", () => {
       // invalid-token error, not be sent to the API.
       const http = captureRequests();
       const layer = legacyPlatformApiLayer.pipe(
-        Layer.provide(mockCliConfig({ accessToken: "sbp_not_a_valid_token" })),
+        Layer.provide(mockCliSettings({ accessToken: "sbp_not_a_valid_token" })),
         Layer.provide(mockCredentials(Option.none())),
         Layer.provide(http.layer),
         withBaseDeps(),
@@ -311,7 +311,9 @@ describe("legacyPlatformApiLayer", () => {
   it.effect("sends Go-style User-Agent and no X-Supabase-Command headers", () => {
     const http = captureRequests();
     const layer = legacyPlatformApiLayer.pipe(
-      Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN, userAgent: "SupabaseCLI/1.123.4" })),
+      Layer.provide(
+        mockCliSettings({ accessToken: VALID_TOKEN, userAgent: "SupabaseCLI/1.123.4" }),
+      ),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
       withBaseDeps(),
@@ -329,7 +331,7 @@ describe("legacyPlatformApiLayer", () => {
     const http = captureRequests();
     const layer = legacyPlatformApiLayer.pipe(
       Layer.provide(
-        mockCliConfig({ accessToken: VALID_TOKEN, apiUrl: "https://api.supabase.green" }),
+        mockCliSettings({ accessToken: VALID_TOKEN, apiUrl: "https://api.supabase.green" }),
       ),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
@@ -347,7 +349,7 @@ describe("legacyPlatformApiLayer", () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     const layer = legacyPlatformApiLayer.pipe(
       Layer.provide(
-        mockCliConfig({
+        mockCliSettings({
           accessToken: VALID_TOKEN,
           apiUrl: "https://api.supabase.green",
           profile: "supabase-staging",
@@ -376,7 +378,7 @@ describe("legacyPlatformApiLayer", () => {
     const analytics = mockAnalytics();
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = legacyPlatformApiLayer.pipe(
-      Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
+      Layer.provide(mockCliSettings({ accessToken: VALID_TOKEN })),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
       withBaseDeps({ analytics, configDir }),
@@ -404,7 +406,7 @@ describe("legacyPlatformApiLayer", () => {
     const analytics = mockAnalytics();
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = legacyPlatformApiLayer.pipe(
-      Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
+      Layer.provide(mockCliSettings({ accessToken: VALID_TOKEN })),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
       withBaseDeps({ analytics, configDir, isCi: true }),
@@ -429,7 +431,7 @@ describe("legacyPlatformApiLayer", () => {
     const analytics = mockAnalytics();
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = legacyPlatformApiLayer.pipe(
-      Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
+      Layer.provide(mockCliSettings({ accessToken: VALID_TOKEN })),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
       withBaseDeps({ analytics, configDir, isFirstRun: true, isTty: false }),
@@ -454,7 +456,7 @@ describe("legacyPlatformApiLayer", () => {
     const analytics = mockAnalytics();
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = legacyPlatformApiLayer.pipe(
-      Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
+      Layer.provide(mockCliSettings({ accessToken: VALID_TOKEN })),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
       withBaseDeps({ analytics, configDir, isFirstRun: true, isTty: true }),
@@ -479,7 +481,7 @@ describe("legacyPlatformApiLayer", () => {
     const analytics = mockAnalytics();
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = legacyPlatformApiLayer.pipe(
-      Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
+      Layer.provide(mockCliSettings({ accessToken: VALID_TOKEN })),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
       withBaseDeps({ analytics, configDir, distinctId: "existing-user" }),
@@ -504,7 +506,7 @@ describe("legacyPlatformApiLayer", () => {
     const analytics = mockAnalytics();
     const http = captureRequests({ "X-Gotrue-Id": "user-123" });
     const layer = legacyPlatformApiLayer.pipe(
-      Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
+      Layer.provide(mockCliSettings({ accessToken: VALID_TOKEN })),
       Layer.provide(mockCredentials(Option.none())),
       Layer.provide(http.layer),
       withBaseDeps({ analytics, configDir }),
@@ -535,7 +537,7 @@ describe("legacyPlatformApiLayer", () => {
 describe("legacyPlatformApiFactoryLayer (lazy token)", () => {
   it.effect("builds without resolving an access token even when none is configured", () => {
     const layer = legacyPlatformApiFactoryLayer.pipe(
-      Layer.provide(mockCliConfig({})),
+      Layer.provide(mockCliSettings({})),
       Layer.provide(mockCredentials(Option.none())),
       withBaseDeps(),
     );
@@ -550,7 +552,7 @@ describe("legacyPlatformApiFactoryLayer (lazy token)", () => {
 
   it.effect("make fails with LegacyPlatformAuthRequiredError when no token is configured", () => {
     const layer = legacyPlatformApiFactoryLayer.pipe(
-      Layer.provide(mockCliConfig({})),
+      Layer.provide(mockCliSettings({})),
       Layer.provide(mockCredentials(Option.none())),
       withBaseDeps(),
     );
@@ -568,7 +570,7 @@ describe("legacyPlatformApiFactoryLayer (lazy token)", () => {
 
   it.effect("make resolves a single cached client when a token is configured", () => {
     const layer = legacyPlatformApiFactoryLayer.pipe(
-      Layer.provide(mockCliConfig({ accessToken: VALID_TOKEN })),
+      Layer.provide(mockCliSettings({ accessToken: VALID_TOKEN })),
       Layer.provide(mockCredentials(Option.none())),
       withBaseDeps(),
     );

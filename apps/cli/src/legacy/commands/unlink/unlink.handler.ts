@@ -2,7 +2,7 @@ import { Effect, FileSystem, Path, Result } from "effect";
 
 import { LegacyCredentials } from "../../auth/legacy-credentials.service.ts";
 import { LegacyCredentialDeleteError } from "../../auth/legacy-errors.ts";
-import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectNotLinkedError } from "../../config/legacy-project-ref.errors.ts";
 import { PROJECT_NOT_LINKED_MESSAGE } from "../../config/legacy-project-ref.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
@@ -12,13 +12,13 @@ import { LegacyUnlinkRefReadError, LegacyUnlinkTempRemovalError } from "./unlink
 
 export const legacyUnlink = Effect.fn("legacy.unlink")(function* () {
   const output = yield* Output;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const credentials = yield* LegacyCredentials;
   const telemetryState = yield* LegacyTelemetryState;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const paths = legacyTempPaths(path, cliConfig.workdir);
+  const paths = legacyTempPaths(path, cliSettings.workdir);
 
   yield* Effect.gen(function* () {
     // 1. Load the linked project ref. An absent file is `ErrNotLinked`; any other

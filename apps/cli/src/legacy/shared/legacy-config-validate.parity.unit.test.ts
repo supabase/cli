@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { ProjectConfigSchema, type ProjectConfig } from "@supabase/config";
+import { CliConfigSchema, type CliConfig } from "@supabase/config";
 import { Effect, Exit, FileSystem, Path, Schema } from "effect";
 
 import { legacyReadDbToml } from "./legacy-db-config.toml-read.ts";
@@ -50,10 +50,10 @@ function failsWithD(tomlLines: ReadonlyArray<string>, message: string) {
   });
 }
 
-const decodeConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
+const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
 const WORKDIR = "/tmp/legacy-config-validate-parity-test";
 
-function baseConfig(overrides: Record<string, unknown> = {}): ProjectConfig {
+function baseConfig(overrides: Record<string, unknown> = {}): CliConfig {
   return decodeConfig({ project_id: "test", ...overrides });
 }
 

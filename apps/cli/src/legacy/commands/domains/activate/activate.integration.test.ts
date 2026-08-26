@@ -5,7 +5,7 @@ import { Effect, Exit, Option } from "effect";
 import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -50,13 +50,13 @@ function setup(opts: SetupOpts = {}) {
     response: { status: opts.status ?? 201, body: opts.response ?? HOSTNAME_RESPONSE },
     network: opts.network,
   });
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const telemetry = mockLegacyTelemetryStateTracked();
   const linkedProjectCache = mockLegacyLinkedProjectCacheTracked();
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     analytics,
     telemetry: telemetry.layer,
     linkedProjectCache: linkedProjectCache.layer,

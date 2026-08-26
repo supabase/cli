@@ -70,7 +70,7 @@ export interface LegacyEdgeRuntimeBringUpInput {
   /** `utils.Config.EdgeRuntime.Image`, already resolved/pulled by the caller (`image-prepull.ts`/`legacyResolveEdgeRuntimeImage`). */
   readonly image: string;
   /**
-   * `cliConfig.workdir` in `start.handler.ts` — used as `functions serve`'s
+   * `cliSettings.workdir` in `start.handler.ts` — used as `functions serve`'s
    * `projectRoot`/`flagCwd` (no separate "flag cwd" exists for `start`) and
    * to derive `supabaseDir` (`<workdir>/supabase`).
    */

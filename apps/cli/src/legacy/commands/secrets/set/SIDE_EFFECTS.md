@@ -2,17 +2,17 @@
 
 ## Files Read
 
-| Path                                      | Format                    | When                                                                                                                                                         |
-| ----------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `/proc/sys/kernel/osrelease` (Linux)      | plain text                | once on layer init — disables keyring on WSL (`WSL` / `Microsoft` substring match)                                                                           |
-| keyring `"Supabase CLI"` / `<profile>`    | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `LegacyCliConfig.profile`                                                                |
-| keyring `"Supabase CLI"` / `access-token` | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                                                                                     |
-| `~/.supabase/access-token`                | plain text (token string) | last-resort fallback after env + keyring miss                                                                                                                |
-| `<workdir>/supabase/.temp/project-ref`    | plain text                | when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset                                                                                                |
-| `<workdir>/supabase/config.toml`          | TOML                      | always (for `[edge_runtime.secrets]`) — via `@supabase/config`'s `loadProjectConfig`; a parse failure is logged to the debug logger and tolerated, not fatal |
-| `<workdir>/.env`                          | dotenv                    | always — context for `env(VAR)` interpolation in `[edge_runtime.secrets]` values                                                                             |
-| `<workdir>/.env.local`                    | dotenv                    | always — overrides `.env` for `env(VAR)` interpolation context                                                                                               |
-| `<env-file>` (absolute or CWD-relative)   | dotenv                    | when `--env-file` flag is provided                                                                                                                           |
+| Path                                      | Format                    | When                                                                                                                                                     |
+| ----------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/proc/sys/kernel/osrelease` (Linux)      | plain text                | once on layer init — disables keyring on WSL (`WSL` / `Microsoft` substring match)                                                                       |
+| keyring `"Supabase CLI"` / `<profile>`    | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `LegacyCliSettings.profile`                                                          |
+| keyring `"Supabase CLI"` / `access-token` | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                                                                                 |
+| `~/.supabase/access-token`                | plain text (token string) | last-resort fallback after env + keyring miss                                                                                                            |
+| `<workdir>/supabase/.temp/project-ref`    | plain text                | when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset                                                                                            |
+| `<workdir>/supabase/config.toml`          | TOML                      | always (for `[edge_runtime.secrets]`) — via `@supabase/config`'s `loadCliConfig`; a parse failure is logged to the debug logger and tolerated, not fatal |
+| `<workdir>/.env`                          | dotenv                    | always — context for `env(VAR)` interpolation in `[edge_runtime.secrets]` values                                                                         |
+| `<workdir>/.env.local`                    | dotenv                    | always — overrides `.env` for `env(VAR)` interpolation context                                                                                           |
+| `<env-file>` (absolute or CWD-relative)   | dotenv                    | when `--env-file` flag is provided                                                                                                                       |
 
 ## Files Written
 
@@ -80,6 +80,6 @@ One `result` NDJSON event on success containing `{project_ref, count}`.
 
 - Source order for merging entries: `[edge_runtime.secrets]` from `config.toml` (only resolved entries — see below) → `--env-file` (overrides config) → CLI args (overrides env-file).
 - `SUPABASE_`-prefixed entries are skipped post-merge with a stderr warning.
-- `[edge_runtime.secrets]` from config.toml is read via `@supabase/config`'s `loadProjectConfig` + `resolveProjectSubtree`. Resolved secret values arrive wrapped in `Redacted<string>`; unresolved `env(VAR)` literals (env var unset) stay as plain strings and are filtered out at the handler (secrets whose value never resolved past the literal `env(VAR)` form are dropped).
+- `[edge_runtime.secrets]` from config.toml is read via `@supabase/config`'s `loadCliConfig` + `resolveCliConfigSubtree`. Resolved secret values arrive wrapped in `Redacted<string>`; unresolved `env(VAR)` literals (env var unset) stay as plain strings and are filtered out at the handler (secrets whose value never resolved past the literal `env(VAR)` form are dropped).
 - A malformed `config.toml` does **not** abort the command — the error is logged to the debug logger and the command proceeds. `--env-file` and positional `NAME=VALUE` secrets always still apply. What happens to config-declared secrets depends on the failure class: a raw TOML/JSON syntax error drops everything (no `EdgeRuntime.Secrets`), but a schema-type error on an _unrelated_ field (e.g. `analytics.port` being a string) still leaves a valid `[edge_runtime.secrets]` section usable — the handler recovers it by re-decoding just that subtree. Pass `--debug` to see the logged parse error.
 - Sends `User-Agent: SupabaseCLI/<version>` and Bearer auth. No `X-Supabase-Command` headers.

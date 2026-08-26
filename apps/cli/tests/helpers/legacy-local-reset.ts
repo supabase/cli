@@ -101,7 +101,7 @@ function fakeContainerId(name: string): string {
 /**
  * A happy-path Docker CLI route for `legacyResetLocalDatabase`'s PG15+
  * container-recreate — everything succeeds (running, healthy, no restart
- * failures) unless overridden. `projectId` must match the `LegacyCliConfig`
+ * failures) unless overridden. `projectId` must match the `LegacyCliSettings`
  * mock's own `projectId` (both default to `"test"`), since container names are
  * derived from it (`supabase_db_<project>`, `supabase_kong_<project>`,
  * `supabase_storage_<project>`).

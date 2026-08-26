@@ -4,7 +4,7 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
-import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
+import { legacyCliSettingsLayer } from "../../config/legacy-cli-settings.layer.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
 import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
@@ -45,10 +45,10 @@ export type LegacyStopFlags = CliCommand.Command.Config.Infer<typeof config>;
 // it provides only the services the handler + instrumentation consume.
 // `ChildProcessSpawner` is not listed here: it comes from `BunServices` in the root
 // runtime (`shared/cli/run.ts`), the same way `gen types`/`unlink` rely on it.
-const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 
 const legacyStopRuntimeLayer = Layer.mergeAll(
-  cliConfig,
+  cliSettings,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["stop"]),
 );

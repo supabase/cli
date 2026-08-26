@@ -45,7 +45,7 @@ import { daemonLayer, connectLayer, stopDaemon } from "@supabase/stack/effect";
 const runtime =
   yield *
   daemonLayer({
-    cacheRoot: cliConfig.supabaseHome,
+    cacheRoot: cliSettings.supabaseHome,
     projectDir: projectRoot,
     name: "default",
     portIntents,

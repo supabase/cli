@@ -4,7 +4,7 @@ import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.
 import { legacyCredentialsLayer } from "../../../auth/legacy-credentials.layer.ts";
 import { legacyHttpClientLayer } from "../../../auth/legacy-http-debug.layer.ts";
 import { legacyPlatformApiFactoryLayer } from "../../../auth/legacy-platform-api-factory.layer.ts";
-import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
+import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
 import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.ts";
 import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
@@ -30,7 +30,7 @@ import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-s
  * the **lazy** `legacyPlatformApiFactoryLayer`; the linked lint path resolves the
  * ref via the non-prompting `loadProjectRef`, which never forces the factory.
  *
- * `legacyCliConfigLayer` is provided to each consumer that needs it (item 5:
+ * `legacyCliSettingsLayer` is provided to each consumer that needs it (item 5:
  * `Layer.provide` does not share to merge siblings); layers are memoised by
  * reference so the config / credentials / HTTP instances are reused.
  *
@@ -40,34 +40,34 @@ import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-s
  * `stitchAttempted` guard. The db-config resolver snapshots that instance
  * into its lazy linked stack's ambient layer.
  */
-const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const credentials = legacyCredentialsLayer.pipe(
-  Layer.provide(cliConfig),
+  Layer.provide(cliSettings),
   Layer.provide(legacyDebugLoggerLayer),
 );
 
 const platformApiFactory = legacyPlatformApiFactoryLayer.pipe(
   Layer.provide(credentials),
-  Layer.provide(cliConfig),
+  Layer.provide(cliSettings),
   Layer.provide(legacyDebugLoggerLayer),
   Layer.provide(legacyIdentityStitchLayer),
 );
 
 const projectRef = legacyProjectRefLayer.pipe(
   Layer.provide(platformApiFactory),
-  Layer.provide(cliConfig),
+  Layer.provide(cliSettings),
 );
 
 const linkedProjectCache = legacyLinkedProjectCacheLayer.pipe(
   Layer.provide(credentials),
-  Layer.provide(cliConfig),
+  Layer.provide(cliSettings),
   Layer.provide(httpClient),
   Layer.provide(legacyIdentityStitchLayer),
 );
 
 const dbConfig = legacyDbConfigLayer.pipe(
-  Layer.provide(cliConfig),
+  Layer.provide(cliSettings),
   Layer.provide(legacyDbConnectionLayer),
   Layer.provide(legacyDebugLoggerLayer),
   Layer.provide(legacyIdentityStitchLayer),
@@ -76,7 +76,7 @@ const dbConfig = legacyDbConfigLayer.pipe(
 export const legacyDbLintRuntimeLayer = Layer.mergeAll(
   dbConfig,
   legacyDbConnectionLayer,
-  cliConfig,
+  cliSettings,
   httpClient,
   credentials,
   projectRef,

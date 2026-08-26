@@ -1,11 +1,11 @@
 import { connectLayer, daemonLayer, Stack, type EdgeRuntimeConfig } from "@supabase/stack/effect";
 import { Context, Duration, Effect, FileSystem, Layer, Option, Stream } from "effect";
-import { loadProjectConfig } from "@supabase/config/effect";
+import { loadCliConfig } from "@supabase/config/effect";
 import { join } from "node:path";
 import { CLI_VERSION } from "../../../../shared/cli/version.ts";
-import { CliConfig } from "../../../config/cli-config.service.ts";
-import { ProjectHome } from "../../../config/project-home.service.ts";
-import { projectLocalServiceVersionsLayer } from "../../../config/project-local-service-versions.layer.ts";
+import { CliSettings } from "../../../config/cli-settings.service.ts";
+import { CliProjectHome } from "../../../config/cli-project-home.service.ts";
+import { cliProjectLocalServiceVersionsLayer } from "../../../config/cli-project-local-service-versions.layer.ts";
 import { projectLinkStateLayer } from "../../../config/project-link-state.layer.ts";
 import { resolveServiceVersionContext } from "../../../config/service-version-resolution.ts";
 import { managedPortIntents } from "../../../config/managed-port-intents.ts";
@@ -39,22 +39,22 @@ interface FunctionsDevStackOptions extends FunctionsDevRuntimeOptions {
 }
 
 interface FunctionsDevWatchChange {
-  readonly touchesProjectConfig: boolean;
+  readonly touchesCliConfig: boolean;
 }
 
 type StackService = typeof Stack.Service;
 
 const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptions) {
-  const cliConfig = yield* CliConfig;
-  const projectHome = yield* ProjectHome;
+  const cliSettings = yield* CliSettings;
+  const cliProjectHome = yield* CliProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
   const output = yield* Output;
 
   yield* output.info("No local stack is running. Starting the local Supabase stack...");
-  yield* ensureProjectStateIgnored(projectHome.projectRoot);
+  yield* ensureProjectStateIgnored(cliProjectHome.projectRoot);
 
   const serviceVersionContext = yield* resolveServiceVersionContext([], undefined);
-  const loadedProjectConfig = yield* loadProjectConfig(projectHome.projectRoot);
+  const loadedCliConfig = yield* loadCliConfig(cliProjectHome.projectRoot);
   const stackConfig = {
     ...withServiceVersions(toStartStackConfig([], "docker"), serviceVersionContext.runtimeVersions),
     // Functions dev explicitly requires Edge Runtime even when the project
@@ -64,9 +64,9 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
   };
   const stackLayer = yield* daemonLayer({
     cliVersion: CLI_VERSION,
-    cacheRoot: cliConfig.supabaseHome,
+    cacheRoot: cliSettings.supabaseHome,
     cwd: runtimeInfo.cwd,
-    projectDir: projectHome.projectRoot,
+    projectDir: cliProjectHome.projectRoot,
     name: opts.stack,
     edgeRuntime: opts.edgeRuntime,
     launch: {
@@ -74,7 +74,7 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
       excludedServices: [],
     },
     ...stackConfig,
-    portIntents: managedPortIntents(stackConfig, loadedProjectConfig ?? undefined),
+    portIntents: managedPortIntents(stackConfig, loadedCliConfig ?? undefined),
   });
   const context = yield* Layer.build(stackLayer);
   const stack = Context.get(context, Stack);
@@ -86,15 +86,15 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
 export const connectOrStartFunctionsDevStack = Effect.fnUntraced(function* (
   opts: FunctionsDevStackOptions,
 ) {
-  const cliConfig = yield* CliConfig;
-  const projectHome = yield* ProjectHome;
+  const cliSettings = yield* CliSettings;
+  const cliProjectHome = yield* CliProjectHome;
   const runtimeInfo = yield* RuntimeInfo;
 
   const existingLayer = yield* connectLayer({
     cliVersion: CLI_VERSION,
     cwd: runtimeInfo.cwd,
-    cacheRoot: cliConfig.supabaseHome,
-    projectDir: projectHome.projectRoot,
+    cacheRoot: cliSettings.supabaseHome,
+    projectDir: cliProjectHome.projectRoot,
     name: opts.stack,
   }).pipe(
     Effect.map(Option.some),
@@ -125,8 +125,8 @@ function logEntryStream(stack: StackService) {
 
 const ensureFunctionsDirectory = Effect.fnUntraced(function* () {
   const fs = yield* FileSystem.FileSystem;
-  const projectHome = yield* ProjectHome;
-  yield* fs.makeDirectory(join(projectHome.supabaseDir, "functions"), { recursive: true });
+  const cliProjectHome = yield* CliProjectHome;
+  yield* fs.makeDirectory(join(cliProjectHome.supabaseDir, "functions"), { recursive: true });
 });
 
 function watchEventMatches(spec: FunctionsDevWatchPath, event: FileWatchEvent): boolean {
@@ -137,7 +137,7 @@ function watchEventMatches(spec: FunctionsDevWatchPath, event: FileWatchEvent): 
   return spec.names.some((name) => segments.includes(name));
 }
 
-function isProjectConfigEvent(event: FileWatchEvent): boolean {
+function isCliConfigEvent(event: FileWatchEvent): boolean {
   const segments = event.path.replaceAll("\\", "/").split("/");
   return segments.includes("config.toml") || segments.includes("config.json");
 }
@@ -150,7 +150,7 @@ export function watchPaths(paths: ReadonlyArray<FunctionsDevWatchPath>) {
         fileWatcher.watch(spec.path).pipe(
           Stream.filter((events) => events.some((event) => watchEventMatches(spec, event))),
           Stream.map((events) => ({
-            touchesProjectConfig: events.some(isProjectConfigEvent),
+            touchesCliConfig: events.some(isCliConfigEvent),
           })),
         ),
       );
@@ -177,7 +177,7 @@ function applyWatchedChange(
   change: FunctionsDevWatchChange,
 ) {
   return Effect.gen(function* () {
-    if (!change.touchesProjectConfig) {
+    if (!change.touchesCliConfig) {
       return {
         state: currentEdgeRuntimeState,
         action: "functions" as const,
@@ -263,5 +263,5 @@ export const runFunctionsDevRuntime = Effect.fnUntraced(function* (
 
 export const functionsDevRuntimeLayer = Layer.mergeAll(
   projectLinkStateLayer,
-  projectLocalServiceVersionsLayer,
+  cliProjectLocalServiceVersionsLayer,
 );

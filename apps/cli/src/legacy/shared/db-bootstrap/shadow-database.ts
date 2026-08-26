@@ -451,7 +451,7 @@ export function legacyMemoizeSuccess<A, E>(effect: Effect.Effect<A, E>): Effect.
  * On `db diff --linked`/`db pull` (linked), the caller passes its own resolved ref straight
  * through to `legacyBuildLocalDbContainerInputs` (its own `projectRef` parameter — see
  * that function's doc comment), which threads it into `legacyLoadLocalProjectContext` ->
- * `loadProjectConfig({ projectRef })`. So the shadow's OWN container config (image, JWT
+ * `loadCliConfig({ projectRef })`. So the shadow's OWN container config (image, JWT
  * secret, root key, `db.settings`, service enabled-for-setup flags, sourced from
  * `localInputs.context.config`/`postgresSpecBase`) reflects the matching `[remotes.<ref>]`
  * override, same as `toml` (the caller's own `legacyReadDbToml(..., linkedRef)` result,

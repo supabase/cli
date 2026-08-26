@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { ProjectConfigSchema, type ProjectConfig } from "./base.ts";
+import { CliConfigSchema, type CliConfig } from "./base.ts";
 
 /**
  * Sparse config subtraction — see `docs/adr/0018-sparse-config-subtraction.md`.
@@ -22,26 +22,26 @@ type DeepPartial<T> =
       ? { readonly [K in keyof T]?: DeepPartial<T[K]> }
       : T;
 
-export type SparseProjectConfig = DeepPartial<ProjectConfig>;
+export type SparseCliConfig = DeepPartial<CliConfig>;
 
 /**
- * The root-scope fields of a {@link ProjectConfig}, without the nested
+ * The root-scope fields of a {@link CliConfig}, without the nested
  * `remotes` record. Subtraction accepts this shape to keep `remotes` out of
  * its contract: the operands are root-scope *effective* configs — e.g. the
  * merged base config, or a branch's effective config translated from the
  * Management API, which has no `remotes` of its own — so neither operand has
  * to fabricate a `remotes` field to type-check.
  */
-export type BaseProjectConfig = Omit<ProjectConfig, "remotes">;
+export type BaseCliConfig = Omit<CliConfig, "remotes">;
 
-const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
+const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
-let defaultProjectConfig: ProjectConfig | undefined;
+let defaultCliConfig: CliConfig | undefined;
 
 /**
- * The default config: a {@link ProjectConfig} in which every value carries its
+ * The default config: a {@link CliConfig} in which every value carries its
  * schema-declared default. Derived by decoding `{}` through
- * {@link ProjectConfigSchema} — the schema's `default` annotations and decoding
+ * {@link CliConfigSchema} — the schema's `default` annotations and decoding
  * defaults are the single source of truth, so there is no hand-maintained
  * defaults table to drift. Fields declared `optionalKey` without a default
  * (e.g. `project_id`, `api.external_url`) are absent.
@@ -52,9 +52,9 @@ let defaultProjectConfig: ProjectConfig | undefined;
  * subtraction baseline, so a caller mutation would silently corrupt every
  * later {@link omitDefaultValues} result.
  */
-export function getDefaultProjectConfig(): ProjectConfig {
-  defaultProjectConfig ??= deepFreeze(decodeProjectConfig({}));
-  return defaultProjectConfig;
+export function getDefaultCliConfig(): CliConfig {
+  defaultCliConfig ??= deepFreeze(decodeCliConfig({}));
+  return defaultCliConfig;
 }
 
 function deepFreeze<T>(value: T): T {
@@ -136,7 +136,7 @@ function isEqualValue(left: unknown, right: unknown): boolean {
  *
  * Shared with `io.ts`, which subtracts *encoded* documents before writing
  * minimal config files; the typed entry points below operate on decoded
- * {@link ProjectConfig} values, the only shape where "equals the default" is
+ * {@link CliConfig} values, the only shape where "equals the default" is
  * well-defined.
  */
 export function subtractValue(value: unknown, baseline: unknown): unknown {
@@ -190,24 +190,18 @@ export function subtractValue(value: unknown, baseline: unknown): unknown {
  * 0018 for why the default-config baseline silently changes what the branch
  * resolves to.
  */
-export function subtractProjectConfig(
-  config: BaseProjectConfig,
-  baseline: BaseProjectConfig,
-): SparseProjectConfig;
+export function subtractCliConfig(config: BaseCliConfig, baseline: BaseCliConfig): SparseCliConfig;
 // The implementation signature stays untyped because TypeScript cannot verify
 // that a structural walk over `unknown` reconstructs a `DeepPartial` of its
 // input; the overload above is the contract, pinned by the unit tests.
-export function subtractProjectConfig(
-  config: BaseProjectConfig,
-  baseline: BaseProjectConfig,
-): unknown {
+export function subtractCliConfig(config: BaseCliConfig, baseline: BaseCliConfig): unknown {
   const result = subtractValue(config, baseline);
   return isObject(result) ? result : {};
 }
 
 /**
  * Returns the sparse config `config − default config`: only the values that
- * differ from their schema defaults, per {@link subtractProjectConfig}'s
+ * differ from their schema defaults, per {@link subtractCliConfig}'s
  * semantics. The result is itself a valid config document — re-decoding
  * refills the removed defaults, yielding the same effective config. `remotes`
  * blocks (per-persistent-branch overrides) pass through untouched (the
@@ -224,6 +218,6 @@ export function subtractProjectConfig(
  * is the merged base config (ADR 0018); for function entries, `io.ts`'s
  * `stripFunctionRecordDefaults` is the encoded-path precedent.
  */
-export function omitDefaultValues(config: BaseProjectConfig): SparseProjectConfig {
-  return subtractProjectConfig(config, getDefaultProjectConfig());
+export function omitDefaultValues(config: BaseCliConfig): SparseCliConfig {
+  return subtractCliConfig(config, getDefaultCliConfig());
 }

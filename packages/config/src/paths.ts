@@ -1,7 +1,7 @@
 import { Effect, FileSystem, Path } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 
-export interface ProjectPaths {
+export interface CliProjectPaths {
   readonly projectRoot: string;
   readonly supabaseDir: string;
   readonly configPath: string;
@@ -41,10 +41,10 @@ const findConfigInRoot = Effect.fnUntraced(function* (root: string) {
     configPath: jsonExists ? jsonPath : tomlPath,
     envPath: path.join(supabaseDir, ".env"),
     envLocalPath: path.join(supabaseDir, ".env.local"),
-  } satisfies ProjectPaths;
+  } satisfies CliProjectPaths;
 });
 
-export interface FindProjectPathsOptions {
+export interface FindCliProjectPathsOptions {
   /**
    * When `false`, only `cwd` itself is checked for `supabase/config.{json,toml}` —
    * no ancestor climb. Go's own resolution never searches twice: an explicit
@@ -56,7 +56,7 @@ export interface FindProjectPathsOptions {
    * (`getProjectRoot`, `internal/utils/misc.go:216-231`).
    *
    * Callers that already hold an authoritative, Go-equivalent project root
-   * (e.g. the legacy `stop`/`status` ports' `cliConfig.workdir`, which mirrors
+   * (e.g. the legacy `stop`/`status` ports' `cliSettings.workdir`, which mirrors
    * `ChangeWorkDir`'s own explicit-vs-default resolution) should pass `false`
    * here to avoid a second, un-Go-like ancestor search that could otherwise
    * pick up an unrelated ancestor project's config.
@@ -67,9 +67,9 @@ export interface FindProjectPathsOptions {
   readonly search?: boolean;
 }
 
-export const findProjectPaths = Effect.fnUntraced(function* (
+export const findCliProjectPaths = Effect.fnUntraced(function* (
   cwd: string,
-  options?: FindProjectPathsOptions,
+  options?: FindCliProjectPathsOptions,
 ) {
   const path = yield* Path.Path;
   const start = path.resolve(cwd);
@@ -96,7 +96,7 @@ export const findProjectPaths = Effect.fnUntraced(function* (
   }
 });
 
-export const findProjectRoot = Effect.fnUntraced(function* (cwd: string) {
-  const paths = yield* findProjectPaths(cwd);
+export const findCliProjectRoot = Effect.fnUntraced(function* (cwd: string) {
+  const paths = yield* findCliProjectPaths(cwd);
   return paths?.projectRoot ?? null;
 });

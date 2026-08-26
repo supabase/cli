@@ -21,7 +21,7 @@
  * of its own batched pre-pull before bring-up — same caller-supplied-`Effect` treatment).
  */
 
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 import { Effect, type FileSystem, type Path } from "effect";
 
 import type { LocalServiceVersionOverrides } from "../../../shared/services/services.shared.ts";
@@ -41,7 +41,7 @@ import { ramInBytes } from "../legacy-size-units.ts";
 import { legacyTempPaths } from "../legacy-temp-paths.ts";
 
 export interface LegacyDbBootstrapConfigInput {
-  readonly config: ProjectConfig;
+  readonly config: CliConfig;
   readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
   readonly workdir: string;
   /**
@@ -71,7 +71,7 @@ export interface LegacyDbBootstrapConfig {
   readonly authEnabledForSetup: boolean;
   readonly realtimeIpVersion: "IPv4" | "IPv6";
   readonly realtimeMaxHeaderLength: number;
-  readonly storageFileSizeLimit: ProjectConfig["storage"]["file_size_limit"];
+  readonly storageFileSizeLimit: CliConfig["storage"]["file_size_limit"];
   /** Pre-registry-resolution image reference (`utils.Config.Db.Image`) — the caller still resolves the registry candidate itself, see this module's header. */
   readonly postgresImage: string;
   readonly serviceVersionOverrides: LocalServiceVersionOverrides;

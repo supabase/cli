@@ -21,7 +21,7 @@ import {
   LegacyWorkdirFlag,
 } from "../../shared/legacy/global-flags.ts";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
-import { legacyCliConfigLayer } from "../config/legacy-cli-config.layer.ts";
+import { legacyCliSettingsLayer } from "../config/legacy-cli-settings.layer.ts";
 import { legacyDebugLoggerLayer } from "../shared/legacy-debug-logger.layer.ts";
 import { legacyCredentialsLayer } from "./legacy-credentials.layer.ts";
 import { LegacyCredentials } from "./legacy-credentials.service.ts";
@@ -126,7 +126,7 @@ function makeLayer(
     cwd: home,
     platform: opts.platform,
   });
-  const cliConfigLayer = legacyCliConfigLayer.pipe(
+  const cliSettingsLayer = legacyCliSettingsLayer.pipe(
     Layer.provide(legacyDebugLoggerLayer),
     Layer.provide(Layer.succeed(LegacyDebugFlag, opts.debug ?? false)),
     Layer.provide(Layer.succeed(LegacyProfileFlag, "supabase")),
@@ -136,7 +136,7 @@ function makeLayer(
     Layer.provide(processEnvLayer(env)),
   );
   return legacyCredentialsLayer.pipe(
-    Layer.provide(cliConfigLayer),
+    Layer.provide(cliSettingsLayer),
     Layer.provide(legacyDebugLoggerLayer),
     Layer.provide(Layer.succeed(LegacyDebugFlag, opts.debug ?? false)),
     Layer.provide(runtimeInfoLayer),
@@ -516,7 +516,7 @@ describe("legacyCredentialsLayer.deleteAccessToken", () => {
             ),
         }),
       );
-      const cliConfigLayer = legacyCliConfigLayer.pipe(
+      const cliSettingsLayer = legacyCliSettingsLayer.pipe(
         Layer.provide(legacyDebugLoggerLayer),
         Layer.provide(Layer.succeed(LegacyDebugFlag, false)),
         Layer.provide(Layer.succeed(LegacyProfileFlag, "supabase")),
@@ -526,7 +526,7 @@ describe("legacyCredentialsLayer.deleteAccessToken", () => {
         Layer.provide(processEnvLayer(env)),
       );
       const layer = legacyCredentialsLayer.pipe(
-        Layer.provide(cliConfigLayer),
+        Layer.provide(cliSettingsLayer),
         Layer.provide(legacyDebugLoggerLayer),
         Layer.provide(Layer.succeed(LegacyDebugFlag, false)),
         Layer.provide(runtimeInfoLayer),

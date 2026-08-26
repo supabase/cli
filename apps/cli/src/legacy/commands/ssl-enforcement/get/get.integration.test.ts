@@ -11,7 +11,7 @@ import { mockOutput, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -55,7 +55,7 @@ function setup(opts: SetupOpts = {}) {
     apiUrl: opts.apiUrl,
     userAgent: opts.userAgent,
   });
-  const cliConfig = mockLegacyCliConfig({
+  const cliSettings = mockLegacyCliSettings({
     workdir: tempRoot.current,
     apiUrl: opts.apiUrl,
     userAgent: opts.userAgent,
@@ -63,7 +63,7 @@ function setup(opts: SetupOpts = {}) {
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     tty: mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
   });
@@ -189,7 +189,7 @@ describe("legacy ssl-enforcement get integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("uses --project-ref flag value over LegacyCliConfig.projectId", () => {
+  it.live("uses --project-ref flag value over LegacyCliSettings.projectId", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup({ response: SSL_ENFORCED });
     return Effect.gen(function* () {
@@ -209,11 +209,11 @@ describe("legacy ssl-enforcement get integration", () => {
 
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
-    const cliConfig = mockLegacyCliConfig({
+    const cliSettings = mockLegacyCliSettings({
       workdir: localTempRoot,
       projectId: Option.none(),
     });
-    const layer = buildLegacyTestRuntime({ out, api, cliConfig });
+    const layer = buildLegacyTestRuntime({ out, api, cliSettings });
 
     return Effect.gen(function* () {
       yield* legacySslEnforcementGet({ projectRef: Option.none() });
@@ -228,11 +228,11 @@ describe("legacy ssl-enforcement get integration", () => {
     const localTempRoot = mkdtempSync(join(tmpdir(), "supabase-ssl-get-int-no-ref-"));
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
-    const cliConfig = mockLegacyCliConfig({
+    const cliSettings = mockLegacyCliSettings({
       workdir: localTempRoot,
       projectId: Option.none(),
     });
-    const layer = buildLegacyTestRuntime({ out, api, cliConfig });
+    const layer = buildLegacyTestRuntime({ out, api, cliSettings });
 
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -299,11 +299,11 @@ describe("legacy ssl-enforcement get integration", () => {
     const cache = mockLegacyLinkedProjectCacheTracked();
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
-    const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+    const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
     const layer = buildLegacyTestRuntime({
       out,
       api,
-      cliConfig,
+      cliSettings,
       telemetry: telemetry.layer,
       linkedProjectCache: cache.layer,
     });
@@ -322,14 +322,14 @@ describe("legacy ssl-enforcement get integration", () => {
     const cache = mockLegacyLinkedProjectCacheTracked();
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({ response: { status: 200, body: SSL_ENFORCED } });
-    const cliConfig = mockLegacyCliConfig({
+    const cliSettings = mockLegacyCliSettings({
       workdir: localTempRoot,
       projectId: Option.none(),
     });
     const layer = buildLegacyTestRuntime({
       out,
       api,
-      cliConfig,
+      cliSettings,
       telemetry: telemetry.layer,
       linkedProjectCache: cache.layer,
     });

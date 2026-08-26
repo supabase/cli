@@ -7,7 +7,7 @@ import {
   INTELLIJ_DENO_TEMPLATE,
   VSCODE_EXTENSIONS_TEMPLATE,
   VSCODE_SETTINGS_TEMPLATE,
-  renderProjectConfigTemplate,
+  renderCliConfigTemplate,
 } from "./project-init.templates.ts";
 import { InitParseSettingsError } from "./project-init.errors.ts";
 
@@ -317,7 +317,7 @@ export const initProject = Effect.fnUntraced(function* (options: ProjectInitOpti
   yield* fs.makeDirectory(supabaseDir, { recursive: true, mode: INIT_DIR_MODE });
   yield* fs.writeFileString(
     configTomlPath,
-    renderProjectConfigTemplate(projectId, options.useOrioledb),
+    renderCliConfigTemplate(projectId, options.useOrioledb),
     { mode: INIT_FILE_MODE },
   );
   yield* ensureSupabaseGitignore(options.cwd);
