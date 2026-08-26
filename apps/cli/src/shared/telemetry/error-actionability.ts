@@ -1063,7 +1063,7 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
     fingerprint_suffix: "managed_control_bind",
   }),
   ControlTransportError: () => ({
-    ...actionability.externalNetwork,
+    ...actionability.startStack,
     fingerprint_suffix: "managed_control_transport",
   }),
   ControlProtocolError: () => ({

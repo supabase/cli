@@ -521,6 +521,24 @@ describe("classifyCliErrorActionability", () => {
     expect(JSON.stringify(result)).not.toContain("127.0.0.1");
   });
 
+  it("classifies loopback control transport failures as local stack failures", () => {
+    const result = classifyCliErrorActionability({
+      _tag: "ControlTransportError",
+      endpoint: "http://127.0.0.1:54321",
+      reason: "unreachable",
+    });
+
+    expect(result).toEqual({
+      error_kind: "user_actionable",
+      error_category: "invalid_config",
+      error_fingerprint: "tag:ControlTransportError:managed_control_transport",
+      has_suggestion: true,
+      suggestion_type: "run_command",
+      suggested_command: "supabase start",
+    });
+    expect(JSON.stringify(result)).not.toContain("127.0.0.1");
+  });
+
   it("splits docker pull failures from a stopped docker daemon", () => {
     const daemonDown = classifyCliErrorActionability({
       _tag: "DockerPullError",
