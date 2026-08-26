@@ -100,6 +100,9 @@ function durationString(ns: number): string {
   return result;
 }
 
+/** Go's maximum time.Duration (max int64 nanoseconds, ~292 years). */
+const MAX_GO_DURATION_NS = 9_223_372_036_854_775_807;
+
 const NS_PER_SECOND = 1_000_000_000;
 const NS_PER_MINUTE = 60 * NS_PER_SECOND;
 const NS_PER_HOUR = 60 * NS_PER_MINUTE;
@@ -184,6 +187,13 @@ function parseDuration(s: string): number {
     }
 
     total += n * unitNs + Math.round((frac / post) * unitNs);
+    // Go errors past int64 nanoseconds ("value out of range"); the JS float
+    // total additionally loses formatter validity there (exponent notation,
+    // then Infinity). The comparison is approximate in float64 — fine for a
+    // guard whose only job is keeping the formatter inside its domain.
+    if (!Number.isFinite(total) || total > MAX_GO_DURATION_NS) {
+      throw new Error(`time: invalid duration "${orig}" (value out of range)`);
+    }
   }
 
   return neg ? -total : total;
@@ -464,7 +474,12 @@ const coreRows: ReadonlyArray<ProjectConfigMappingRow> = [
       if (value === null) return undefined;
       const characters = expectString(value, ["auth", "password_required_characters"]);
       if (characters === "") return "";
-      return CHAR_TO_PASSWORD_REQUIREMENTS[characters];
+      // Own entries only: the key is API-controlled, and a bare lookup with
+      // e.g. "constructor" would return the inherited function instead of
+      // omitting the unrecognized charset.
+      return Object.hasOwn(CHAR_TO_PASSWORD_REQUIREMENTS, characters)
+        ? CHAR_TO_PASSWORD_REQUIREMENTS[characters]
+        : undefined;
     },
   },
 ];
@@ -841,17 +856,21 @@ function providerClientIdRow(id: string): ProjectConfigMappingRow {
     apiPath,
     alsoConsumes: [additionalApiPath],
     transform: (value, attributes) => {
-      // Null keeps the row's no-value-omits convention; any other non-string
-      // is a malformed platform response and throws like every other
-      // registry-mapped field — silently omitting here would let
-      // `unmappedApiFields` hide the malformed value too, since both paths
-      // are marked consumed.
+      // The sibling is validated FIRST, even when the main ID is null: both
+      // paths are marked consumed, so a malformed additional value behind a
+      // null anchor would otherwise be hidden from `unmappedApiFields` too.
+      // Null keeps the no-value-omits convention for either key; any other
+      // non-string throws like every registry-mapped field.
+      const additional = readAuthAttribute(attributes, additionalKey);
+      const additionalIds =
+        additional === undefined || additional === null
+          ? undefined
+          : expectString(additional, additionalApiPath);
       if (value === null) return undefined;
       const clientId = expectString(value, apiPath);
-      const additional = readAuthAttribute(attributes, additionalKey);
-      if (additional === undefined || additional === null) return clientId;
-      const additionalIds = expectString(additional, additionalApiPath);
-      return additionalIds.length > 0 ? `${clientId},${additionalIds}` : clientId;
+      return additionalIds !== undefined && additionalIds.length > 0
+        ? `${clientId},${additionalIds}`
+        : clientId;
     },
   };
 }

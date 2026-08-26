@@ -429,7 +429,14 @@ function ramInBytes(sizeStr: string): number {
   if (sfx.length === 3 && sfx.slice(1) !== "ib") {
     throw new Error(`invalid suffix: '${sfx}'`);
   }
-  return Math.trunc(size * mul);
+  const bytes = size * mul;
+  // A finite numeric component can still overflow through the suffix
+  // multiplier (e.g. "1e308KiB") — bytesSize(Infinity) would render
+  // "InfinityYiB" instead of leaving the unrepresentable input verbatim.
+  if (!Number.isFinite(bytes)) {
+    throw new Error(`invalid size: '${sizeStr}'`);
+  }
+  return Math.trunc(bytes);
 }
 
 /**

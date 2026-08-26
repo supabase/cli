@@ -107,7 +107,7 @@ export function expectString(value: unknown, apiPath: ReadonlyArray<string>): st
  * so the generic "a number" wording used to render the nonsensical "expected
  * a number, got number".
  */
-export function expectNumber(value: unknown, apiPath: ReadonlyArray<string>): number {
+function expectNumber(value: unknown, apiPath: ReadonlyArray<string>): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw parseErrorFor("a finite number", value, apiPath);
   }

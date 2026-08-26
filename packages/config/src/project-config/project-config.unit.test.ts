@@ -1547,3 +1547,45 @@ describe("review round: operand guards, empty-entry preservation, duration bound
     expect(result.auth?.sessions?.timebox).toBe("24h0m0s");
   });
 });
+
+describe("review round: sibling validation, formatter overflow, prototype lookups (CLI-2230)", () => {
+  test("a malformed additional_client_ids throws even when the main client id is null", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({
+        auth: { external_apple_client_id: null, external_apple_additional_client_ids: 5 },
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).apiPath).toEqual([
+      "auth",
+      "external_apple_additional_client_ids",
+    ]);
+    // A null anchor with a VALID sibling still omits the field entirely.
+    const omitted = fromApiProjectConfig({
+      auth: { external_apple_client_id: null, external_apple_additional_client_ids: "b,c" },
+    });
+    expect(Object.hasOwn(omitted, "auth")).toBe(false);
+  });
+
+  test("a document duration too large for the formatter stays verbatim", () => {
+    const projected = fromConfigDocument({
+      auth: { sessions: { timebox: "1000000000000000000000h" } },
+    });
+    expect(projected.auth?.sessions?.timebox).toBe("1000000000000000000000h");
+  });
+
+  test("prototype-inherited charset keys are omitted, not resolved", () => {
+    for (const key of ["constructor", "__proto__", "toString"]) {
+      const result = fromApiProjectConfig({ auth: { password_required_characters: key } });
+      expect(Object.hasOwn(result, "auth")).toBe(false);
+    }
+  });
+
+  test("a document file_size_limit that overflows through its suffix stays verbatim", () => {
+    const projected = fromConfigDocument({ storage: { file_size_limit: "1e308KiB" } });
+    expect(projected.storage?.file_size_limit).toBe("1e308KiB");
+  });
+});
