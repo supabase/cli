@@ -53,6 +53,9 @@ export class SupervisorSession extends Context.Service<
     readonly currentState: Effect.Effect<SupervisorSessionState>;
     readonly currentStatus: Effect.Effect<ControlSupervisorStatus>;
     readonly runtimeStack: Effect.Effect<Stack["Service"], StackUnavailableError>;
+    readonly interruptWhenStopping: <A, E, R>(
+      effect: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E | StackUnavailableError, R>;
     readonly submitShutdown: Effect.Effect<void, never>;
     readonly submitShutdownWithIntent: (intent: ControlStopIntent) => Effect.Effect<void, never>;
   }
@@ -92,6 +95,13 @@ export class SupervisorSession extends Context.Service<
                 ),
           ),
         ),
+        interruptWhenStopping: (effect) =>
+          Effect.raceFirst(
+            effect,
+            Deferred.await(stopAccepted).pipe(
+              Effect.andThen(Effect.fail(new StackUnavailableError({ phase: "stopping" }))),
+            ),
+          ),
         submitShutdown: Queue.offer(commands, { _tag: "StopRequested", intent: "explicit" }).pipe(
           Effect.andThen(Deferred.await(stopAccepted)),
         ),

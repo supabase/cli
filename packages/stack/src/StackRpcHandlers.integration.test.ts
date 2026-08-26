@@ -1,6 +1,16 @@
 import { ServiceNotFoundError } from "@supabase/process-compose";
 import { it } from "@effect/vitest";
-import { Context, Deferred, Effect, Layer, Predicate, Stream } from "effect";
+import {
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Predicate,
+  Semaphore,
+  Stream,
+} from "effect";
 import { expect } from "vitest";
 import { httpTransportClientLayer } from "./HttpTransportClient.ts";
 import { RemoteStack, updateRemoteLaunch } from "./RemoteStack.ts";
@@ -247,5 +257,77 @@ it.live("rejects launch updates after supervisor shutdown begins", () =>
       }).pipe(Effect.ensuring(Deferred.succeed(releaseStop, undefined).pipe(Effect.asVoid)));
       yield* lifecycle.awaitShutdown;
     }).pipe(Effect.provide(controlTransportLayer), Effect.provide(httpTransportClientLayer)),
+  ),
+);
+
+it.live("interrupts an in-flight runtime mutation before stopping the stack", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const lifecycle = yield* makeSupervisorSessionFixture({
+        ownershipId: OWNER_ID,
+        ownerSessionId: "mutation-stop-session",
+        daemonCliVersion: "test",
+      });
+      const operationLock = Semaphore.makeUnsafe(1);
+      const mutationStarted = Deferred.makeUnsafe<void>();
+      const mutationReleased = Deferred.makeUnsafe<void>();
+      const stopStarted = Deferred.makeUnsafe<void>();
+      yield* lifecycle.publishStack({
+        ...stack,
+        reloadEdgeRuntime: () =>
+          Deferred.succeed(mutationStarted, undefined).pipe(
+            Effect.andThen(Effect.never),
+            Effect.ensuring(Deferred.succeed(mutationReleased, undefined)),
+            operationLock.withPermit,
+          ),
+        stop: () =>
+          Deferred.succeed(stopStarted, undefined).pipe(Effect.asVoid, operationLock.withPermit),
+      });
+      const application = {
+        app: yield* makeSupervisorControlApplication(lifecycle),
+      };
+      const owner = yield* acquireControl({
+        stackId: OWNER_ID,
+        initialStatus: yield* lifecycle.currentStatus,
+        application,
+      });
+      if (!isControlOwnership(owner)) throw new Error("expected control ownership");
+      yield* lifecycle.setClose(owner.close);
+      const status = supervisorStatus(yield* owner.ownerStatus);
+      const layer = RemoteStack.layer(owner.endpoint, {
+        cliVersion: "test",
+        owner: {
+          ownershipId: OWNER_ID,
+          ownerSessionId: status.ownerSessionId,
+          controlProtocolVersion: status.controlProtocolVersion,
+          daemonCliVersion: status.daemonCliVersion,
+        },
+      }).pipe(Layer.provide(httpTransportClientLayer));
+      const remote = yield* Layer.build(layer).pipe(
+        Effect.map((context) => Context.get(context, Stack)),
+      );
+
+      const mutation = yield* remote
+        .reloadEdgeRuntime({ edgeRuntime: { enabled: true } })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(mutationStarted);
+      const response = yield* Effect.promise(() =>
+        fetch(`${owner.endpoint.url}/stop`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            ownershipId: status.ownershipId,
+            ownerSessionId: status.ownerSessionId,
+            intent: "explicit",
+          }),
+        }),
+      );
+
+      expect(response.status).toBe(202);
+      yield* Deferred.await(mutationReleased);
+      yield* Deferred.await(stopStarted);
+      expect(Exit.isFailure(yield* Fiber.await(mutation))).toBe(true);
+      yield* lifecycle.awaitShutdown;
+    }).pipe(Effect.provide(controlTransportLayer)),
   ),
 );

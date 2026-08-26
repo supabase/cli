@@ -20,7 +20,7 @@ const local = <A, E>(
   ) => Effect.Effect<A, E | StackRpcTransportError | StackRpcProtocolError>,
 ): Effect.Effect<A, E | StackUnavailableError> =>
   session.runtimeStack.pipe(
-    Effect.flatMap(operation),
+    Effect.flatMap((stack) => session.interruptWhenStopping(operation(stack))),
     Effect.catchTag("StackRpcTransportError", (error) => Effect.die(error)),
     Effect.catchTag("StackRpcProtocolError", (error) => Effect.die(error)),
   );
