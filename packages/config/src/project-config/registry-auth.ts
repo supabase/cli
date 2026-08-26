@@ -243,6 +243,25 @@ function canonicalizeDurationString(value: unknown): unknown {
 }
 
 /**
+ * {@link canonicalizeDurationString}, additionally floored to whole seconds —
+ * for the `*_max_frequency` rows, whose legacy push wrapper floors to integer
+ * seconds (auth.sync.ts:2611-2616): the hosted value can only ever be whole
+ * seconds, so the document spelling converges on what a push would actually
+ * produce. Unparsable values stay verbatim, like the base canonicalizer.
+ */
+function canonicalizeWholeSecondsDurationString(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+  try {
+    const wholeSeconds = Math.floor(parseDuration(value) / NS_PER_SECOND);
+    return durationString(wholeSeconds * NS_PER_SECOND);
+  } catch {
+    return value;
+  }
+}
+
+/**
  * Seconds (integer, as reported by the API) → Go duration string. Used for
  * `email.max_frequency`, `mfa.phone.max_frequency`, and `sms.max_frequency`,
  * mirroring `secondsToDurationString` in `config-sync.duration.ts:161-167`.
@@ -261,7 +280,11 @@ function secondsToDurationString(seconds: number): string {
  * round-trip (which converts back to fractional hours), and hide real drift.
  */
 function hoursToDurationString(hours: number): string {
-  return durationString(hours * 3_600_000_000_000);
+  // Go durations are integer nanoseconds by definition; a sub-nanosecond
+  // fractional remainder (e.g. sessions_timebox: 1e-20 hours) would
+  // otherwise fall through durationString's floor decomposition untouched
+  // and render exponent-notation "3.6e-8ns" that no duration parser reads.
+  return durationString(Math.trunc(hours * 3_600_000_000_000));
 }
 
 /**
@@ -425,7 +448,12 @@ function secondsDurationRow(
               MAX_CANONICAL_DURATION_SECONDS,
             ),
           ),
-    normalizeDocument: canonicalizeDurationString,
+    // Whole-second quantization, not just respelling: the legacy push
+    // wrapper floors these three durations to integer seconds
+    // (auth.sync.ts:2611-2616), so the hosted value can only ever be whole
+    // seconds — a document "1.5s" pushes as 1s, and canonicalizing it to
+    // "1s" makes the two sides converge on the value that actually exists.
+    normalizeDocument: canonicalizeWholeSecondsDurationString,
     unit: "seconds → duration string",
   };
 }

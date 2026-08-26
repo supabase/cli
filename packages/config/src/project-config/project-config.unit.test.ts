@@ -515,10 +515,11 @@ describe("fromApiProjectConfig — api section", () => {
     expect(result.api?.max_rows).toBe(0);
   });
 
-  // A non-finite number's `typeof` is already `"number"`, so the mismatch
-  // message must say "a finite number", not the generic "a number" — the
-  // latter would render the nonsensical "expected a number, got number".
-  test("a non-finite max_rows throws with an 'expected a finite number' message, not the nonsensical 'expected a number, got number'", () => {
+  // JSON cannot encode NaN/Infinity, so a non-finite number in the raw
+  // response can only be programmatic input — the pre-decode walk rejects it
+  // with the caller-misuse reason before any row's narrowing runs (the
+  // expect*-level finite check remains as defense in depth).
+  test("a non-finite max_rows is rejected pre-decode as a non-JSON primitive", () => {
     let thrown: unknown;
     try {
       fromApiProjectConfig({ api: { max_rows: Number.NaN } });
@@ -526,9 +527,8 @@ describe("fromApiProjectConfig — api section", () => {
       thrown = error;
     }
     expect(thrown).toBeInstanceOf(ProjectConfigParseError);
-    expect((thrown as ProjectConfigParseError).message).toContain(
-      "expected a finite number, got number",
-    );
+    expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
+    expect((thrown as ProjectConfigParseError).message).toContain("non-JSON primitive");
   });
 });
 
@@ -1768,5 +1768,60 @@ describe("review round: safe integers, Go truncation, bigint, fractional-hour bo
   test("fractional session hours inside the safe range map instead of tripping a whole-hour ceiling", () => {
     const result = fromApiProjectConfig({ auth: { sessions_timebox: 2501.5 } });
     expect(result.auth?.sessions?.timebox).toBe("2501h30m0s");
+  });
+});
+
+describe("review round: non-JSON primitives, tiny hours, readonly report, whole-second frequencies, disabled sentinel (CLI-2230)", () => {
+  test("undefined and non-finite raw values throw the typed caller-misuse error", () => {
+    for (const bad of [{ x: undefined }, { x: Number.NaN }, { x: Number.POSITIVE_INFINITY }]) {
+      let thrown: unknown;
+      try {
+        attachApiResponse({}, bad);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+      expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
+    }
+  });
+
+  test("a sub-nanosecond session-hour value truncates to 0s instead of exponent notation", () => {
+    const result = fromApiProjectConfig({ auth: { sessions_timebox: 1e-20 } });
+    expect(result.auth?.sessions?.timebox).toBe("0s");
+  });
+
+  test("the unmapped report is readonly at compile time and its leaf arrays stay frozen", () => {
+    const result = fromApiProjectConfig({ brand_new: ["a"] });
+    const report = unmappedApiFields(result);
+    const leaf = report["brand_new"];
+    expect(Array.isArray(leaf)).toBe(true);
+    expect(Object.isFrozen(leaf)).toBe(true);
+    expect(() => {
+      // @ts-expect-error — the report's index is readonly.
+      report["brand_new"] = null;
+      // The rebuilt top-level container is NOT frozen, so pin the compile
+      // error via the runtime no-op-or-throw distinction: assignment on the
+      // fresh record succeeds at runtime, which is why the compile-level
+      // readonly matters. Throw manually to keep the expectation uniform.
+      throw new TypeError("compile-only guard");
+    }).toThrow(TypeError);
+  });
+
+  test("document frequency durations quantize to whole seconds like the legacy push", () => {
+    const projected = fromConfigDocument({ auth: { email: { max_frequency: "1.5s" } } });
+    // auth.sync.ts:2611-2616 floors to integer seconds on push — the hosted
+    // value can only ever be whole seconds, so the document converges on it.
+    expect(projected.auth?.email?.max_frequency).toBe("1s");
+    // Sessions durations are NOT quantized (fractional seconds are pushable
+    // as fractional hours).
+    const sessions = fromConfigDocument({ auth: { sessions: { timebox: "1h0.5s" } } });
+    expect(sessions.auth?.sessions?.timebox).toBe("1h0m0.5s");
+  });
+
+  test("a document with the Data API disabled projects only the enabled sentinel", () => {
+    const projected = fromConfigDocument({
+      api: { enabled: false, schemas: ["public"], extra_search_path: ["public"], max_rows: 500 },
+    });
+    expect(projected.api).toEqual({ enabled: false });
   });
 });

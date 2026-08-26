@@ -282,6 +282,19 @@ export function fromConfigDocument(config: EffectiveConfig): unknown {
     }
   }
   applyDocumentNormalizations(result);
+  // Disabled-sentinel symmetry with the API arm: when the document declares
+  // api.enabled = false, its schemas/extra_search_path/max_rows are values
+  // the disabled service ignores (usually schema-filled defaults), and the
+  // API arm deliberately emits only { enabled: false } for the db_schema: ""
+  // sentinel (api.sync.ts:84-96; :130-145 pushes only db_schema: "" when
+  // disabled) — projecting them would fabricate drift between two
+  // representations of the same disabled state.
+  const apiSection = result["api"];
+  if (isObject(apiSection) && apiSection["enabled"] === false) {
+    for (const disabledKey of ["schemas", "extra_search_path", "max_rows"]) {
+      delete apiSection[disabledKey];
+    }
+  }
   return result;
 }
 
@@ -596,10 +609,17 @@ function assertRawAttributesDepthWithinBound(
   // land under a ReadonlyJsonValue-typed _apiResponse and blow up the first
   // JSON.stringify a consumer runs on an unmappedApiFields report. Parsed
   // JSON never produces one; programmatic caller input.
-  if (typeof value === "bigint") {
+  // NaN/Infinity silently stringify to null and an undefined-valued key
+  // silently vanishes under JSON.stringify — same non-JSON-primitive class.
+  if (
+    typeof value === "bigint" ||
+    value === undefined ||
+    (typeof value === "number" && !Number.isFinite(value))
+  ) {
     throw new ProjectConfigParseError({
-      message: "raw attributes hold a bigint — raw attributes must be plain parsed JSON",
-      cause: new Error(`bigint at depth ${depth}`),
+      message:
+        "raw attributes hold a non-JSON primitive (a bigint, undefined, or a non-finite number) — raw attributes must be plain parsed JSON",
+      cause: new Error(`non-JSON primitive at depth ${depth}`),
       reason: "caller_misuse",
     });
   }
@@ -983,7 +1003,15 @@ function walkUnmapped(value: unknown, path: ReadonlyArray<string>, depth = 0): u
  * {@link ProjectConfigParseError} if `_apiResponse` is nested more than 64
  * levels deep.
  */
-export function unmappedApiFields(config: ProjectConfig): Record<string, unknown> {
+export function unmappedApiFields(config: ProjectConfig): {
+  readonly [key: string]: ReadonlyJsonValue;
+};
+// The report's containers are rebuilt fresh, but leaf arrays/objects are
+// shared BY REFERENCE with the deep-frozen `_apiResponse` — a mutable return
+// type would compile `.push(...)` that throws at runtime. Same typed-overload
+// pattern as the normalizers above: the implementation stays untyped because
+// TypeScript cannot verify the structural walk.
+export function unmappedApiFields(config: ProjectConfig): unknown {
   const rawAttributes = config._apiResponse;
   if (rawAttributes === undefined) {
     return {};
