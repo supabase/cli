@@ -1,4 +1,8 @@
-import { ProjectConfigParseError } from "../errors.ts";
+import {
+  formatProjectConfigParseErrorMessage,
+  PROJECT_CONFIG_PARSE_ERROR_SUGGESTION,
+  ProjectConfigParseError,
+} from "../errors.ts";
 
 /**
  * Registry-driven mapping between the Management API v2 project-config
@@ -44,6 +48,19 @@ export interface ProjectConfigMappingRow {
    */
   readonly alsoConsumes?: ReadonlyArray<ReadonlyArray<string>>;
   /**
+   * Canonicalizes a DOCUMENT-sourced value at `configPath` so a value pulled
+   * from the API and the same logical value spelled locally converge on one
+   * representation (CLI-2230's duration/byte-size finding) — e.g. a document
+   * duration of `"24h"` and an API-derived `"24h0m0s"` denote the same
+   * duration but compare unequal textually unless one side is normalized.
+   * Applied by `fromConfigDocument` only, at `configPath`, after the
+   * secret-omitting copy; never applied by `fromApiProjectConfig` (its output
+   * is already canonical). Must return the canonical value, or the input
+   * verbatim when it cannot be parsed — a document value has already passed
+   * schema validation, so this must never throw.
+   */
+  readonly normalizeDocument?: (value: unknown) => unknown;
+  /**
    * Push-direction inverse (config value → API body value). Unused by
    * `toProjectConfig` — carried so a future push mapper can derive from this
    * registry instead of a second hand-maintained table. Absence does NOT mean
@@ -51,8 +68,9 @@ export interface ProjectConfigMappingRow {
    * duration row, since `"1m0s"` must push as `60`; `BytesSize` strings;
    * `email.smtp.port`'s number→string; `sms.test_otp`'s record→env string;
    * the SMS provider selection rows). Absence means "not derived for this row
-   * yet" — a push mapper must treat a missing `inverse` as unsupported for
-   * that row, never fall back to identity.
+   * yet" — zero rows currently define one; a push mapper must treat a missing
+   * `inverse` as unsupported for that row, never fall back to identity. Push
+   * derivation lands with the push-mapper work (CLI-2230 follow-up).
    */
   readonly inverse?: (value: unknown) => unknown;
   /**
@@ -77,21 +95,22 @@ export interface ProjectConfigMappingRow {
  */
 export function expectString(value: unknown, apiPath: ReadonlyArray<string>): string {
   if (typeof value !== "string") {
-    throw new ProjectConfigParseError({ apiPath, cause: typeMismatch("a string", value) });
+    throw parseErrorFor("a string", value, apiPath);
   }
   return value;
 }
 
+/** Also rejects non-finite numbers (`NaN`, `Infinity`, `-Infinity`) — no registry row expects one. */
 export function expectNumber(value: unknown, apiPath: ReadonlyArray<string>): number {
-  if (typeof value !== "number" || Number.isNaN(value)) {
-    throw new ProjectConfigParseError({ apiPath, cause: typeMismatch("a number", value) });
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw parseErrorFor("a number", value, apiPath);
   }
   return value;
 }
 
 export function expectBoolean(value: unknown, apiPath: ReadonlyArray<string>): boolean {
   if (typeof value !== "boolean") {
-    throw new ProjectConfigParseError({ apiPath, cause: typeMismatch("a boolean", value) });
+    throw parseErrorFor("a boolean", value, apiPath);
   }
   return value;
 }
@@ -122,6 +141,20 @@ export function splitCommaSeparated(value: string): ReadonlyArray<string> {
   return value.split(",").map((entry) => entry.trim());
 }
 
-function typeMismatch(expected: string, value: unknown): Error {
-  return new Error(`expected ${expected}, got ${value === null ? "null" : typeof value}`);
+function typeMismatchDetail(expected: string, value: unknown): string {
+  return `expected ${expected}, got ${value === null ? "null" : typeof value}`;
+}
+
+function parseErrorFor(
+  expected: string,
+  value: unknown,
+  apiPath: ReadonlyArray<string>,
+): ProjectConfigParseError {
+  const detail = typeMismatchDetail(expected, value);
+  return new ProjectConfigParseError({
+    apiPath,
+    cause: new Error(detail),
+    message: formatProjectConfigParseErrorMessage(detail, apiPath),
+    suggestion: PROJECT_CONFIG_PARSE_ERROR_SUGGESTION,
+  });
 }

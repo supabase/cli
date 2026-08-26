@@ -112,3 +112,7 @@ it is about wrong _present_ values, not about partiality. `BaseCliConfig` had no
 beyond these two signatures and was deleted rather than kept alongside. The general naming rule
 this instantiates — cross-family symbols take family-neutral names — is recorded in ADR 0020
 (`0020-config-naming-vocabulary.md`, landing separately with CLI-2238 / supabase/cli#6335).
+One further consequence: the widening removes the static every-section guarantee the prior
+fully-materialized operand gave for free, so an accidentally-empty operand (e.g. a caller that
+passes `{}` where it meant a real config) now type-checks without complaint — callers own operand
+completeness themselves.

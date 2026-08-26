@@ -63,7 +63,14 @@ export function getDefaultCliConfig(): CliConfig {
   return defaultCliConfig;
 }
 
-function deepFreeze<T>(value: T): T {
+/**
+ * Recursively freezes `value` and returns it. Exported (not re-exported from
+ * `./index.ts` — this stays an internal cross-module helper, per CLI-2230's
+ * `_apiResponse` clone-and-freeze finding) so `./project-config/
+ * project-config.ts` can freeze the cloned raw attributes it attaches, using
+ * the same freezing behavior {@link getDefaultCliConfig}'s memo relies on.
+ */
+export function deepFreeze<T>(value: T): T {
   if (typeof value === "object" && value !== null) {
     for (const child of Object.values(value)) {
       deepFreeze(child);

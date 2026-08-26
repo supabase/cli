@@ -36,22 +36,48 @@ The hosted-project subset — `ProjectConfig` — and its normalizers live on th
 (`@supabase/config`), so the CLI and Studio share one implementation:
 
 - `toProjectConfig(source)` — thin dispatcher over the two normalizers; pass `{ cliConfig }`
-  or `{ apiResponse }`.
+  or `{ apiResponse }`. Throws `ProjectConfigParseError` when `source` carries neither own key
+  or both.
 - `fromConfigDocument(cliConfig)` — projection of a `CliConfig` document (or any
   `EffectiveConfig`): keeps the hosted sections (`api`, `auth`, `db`, `realtime`, `storage`,
-  `workers`, `experimental`), drops local-only ones.
+  `workers`, `experimental`), drops local-only ones. Hosted sections are copied at field
+  granularity, omitting every `x-secret` leaf, and every duration/byte-size field a mapping
+  row canonicalizes (e.g. a document's `"24h"` becomes `"24h0m0s"`, matching what the API side
+  would emit for the same logical value) — parity with `fromApiProjectConfig`'s own secret
+  omission and canonical spellings.
 - `fromApiProjectConfig(input)` — translation of a Management API v2 project-config response
   (the full envelope, its `data` object, or bare `data.attributes`): registry-driven renames, boolean inversions, and
   unit conversions; lenient toward API keys this package version doesn't know; secret fields
-  omitted (the API reports HMAC digests, never plaintext). Attaches the raw attributes as a
-  non-enumerable `_apiResponse` — invisible to encodes and structural walks, never persisted
-  (ADR 0019).
+  omitted (the API reports HMAC digests, never plaintext). Attaches a deep-cloned, deep-frozen
+  copy of the raw attributes as a non-enumerable `_apiResponse` — invisible to encodes and
+  structural walks, never persisted (ADR 0019). Both normalizers throw `ProjectConfigParseError`
+  on malformed API input (a bad envelope, a mapped field of the wrong type, or an unparseable
+  schema-decode failure).
 - `unmappedApiFields(projectConfig)` — the API fields this package version doesn't map,
   derived from the same mapping registry.
+- `attachApiResponse(projectConfig, rawAttributes)` — re-attaches `_apiResponse` after a
+  spread/`structuredClone`/state-store round-trip already dropped it.
+- `comparableProjectConfigPaths` / `isComparableProjectConfigPath(path)` — the registry-derived
+  field paths `fromApiProjectConfig` can actually speak for, so a diff consumer restricts its
+  comparison instead of hand-maintaining an equivalent field list.
 
 `ProjectConfig` is sparse by design: it carries only what its source actually said, so it
 composes with `subtractCliConfig`/`omitDefaultValues` (operand type `EffectiveConfig`) without
 fabricating drift from schema defaults.
+
+```ts
+import {
+  subtractCliConfig,
+  toProjectConfig,
+  isComparableProjectConfigPath,
+} from "@supabase/config";
+
+const remote = toProjectConfig({ apiResponse }); // or { cliConfig } for a local document
+const overlay = subtractCliConfig(remote, remote);
+const restrictedDrift = Object.fromEntries(
+  Object.entries(overlay).filter(([key]) => isComparableProjectConfigPath([key])),
+);
+```
 
 ## Usage
 

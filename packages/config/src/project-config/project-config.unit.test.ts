@@ -5,8 +5,11 @@ import { getDefaultCliConfig, omitDefaultValues, subtractCliConfig } from "../sp
 import type { EffectiveConfig } from "../sparse.ts";
 import { Schema } from "effect";
 import {
+  attachApiResponse,
+  comparableProjectConfigPaths,
   fromApiProjectConfig,
   fromConfigDocument,
+  isComparableProjectConfigPath,
   toProjectConfig,
   unmappedApiFields,
   type ProjectConfig,
@@ -95,7 +98,7 @@ const fullAttributesFixture: Record<string, unknown> = {
       vector_buckets: { enabled: true, max_buckets: 3, max_indexes: 4 },
     },
     capabilities: { list_v2: true, iceberg_catalog: false },
-    upstream_target: "s3",
+    upstream_target: "main",
     migration_version: "v1",
     database_pool_mode: "transaction",
   },
@@ -192,10 +195,70 @@ describe("fromConfigDocument", () => {
     expect(omitDefaultValues(fromConfigDocument(decodeCliConfig({})))).toEqual({});
   });
 
-  test("shares the subtree reference rather than deep-cloning", () => {
+  test("deep-copies rather than sharing the subtree reference", () => {
     const config = getDefaultCliConfig();
     const projected = fromConfigDocument(config);
-    expect(projected.api).toBe(config.api);
+    expect(projected.api).not.toBe(config.api);
+    expect(projected.api).toEqual(config.api);
+    expect(projected.auth?.captcha).not.toBe(config.auth.captcha);
+    expect(projected.auth?.captcha).toEqual(config.auth.captcha);
+  });
+
+  test("omits every x-secret leaf from the projected sections", () => {
+    const withSecrets = decodeCliConfig({
+      auth: {
+        captcha: { enabled: true, provider: "hcaptcha", secret: "captcha-secret" },
+        email: {
+          smtp: {
+            enabled: true,
+            host: "smtp.example.com",
+            port: 587,
+            user: "smtp-user",
+            pass: "smtp-secret",
+            admin_email: "admin@example.com",
+          },
+        },
+        external: { github: { enabled: true, client_id: "id", secret: "github-secret" } },
+      },
+      experimental: { s3_access_key: "access-key", s3_secret_key: "s3-secret" },
+    });
+
+    const projected = fromConfigDocument(withSecrets);
+
+    expect(projected.auth?.captcha?.secret).toBeUndefined();
+    expect(projected.auth?.captcha?.provider).toBe("hcaptcha");
+    expect(projected.auth?.email?.smtp?.pass).toBeUndefined();
+    expect(projected.auth?.email?.smtp?.host).toBe("smtp.example.com");
+    expect(projected.auth?.external?.github?.secret).toBeUndefined();
+    expect(projected.auth?.external?.github?.client_id).toBe("id");
+    // Both experimental S3 fields are `secret()`-annotated (`../experimental.ts`),
+    // not just `s3_secret_key`.
+    expect(projected.experimental?.s3_secret_key).toBeUndefined();
+    expect(projected.experimental?.s3_access_key).toBeUndefined();
+
+    // Never merely enumerable-hidden — genuinely absent, own or otherwise.
+    expect(Object.hasOwn(projected.auth?.captcha ?? {}, "secret")).toBe(false);
+  });
+
+  test("canonicalizes duration and byte-size document spellings to match the API side's canonical form", () => {
+    const document = decodeCliConfig({
+      auth: {
+        sessions: { timebox: "24h", inactivity_timeout: "1h" },
+        email: { max_frequency: "60s" },
+        mfa: { phone: { max_frequency: "5s" } },
+        sms: { max_frequency: "5s" },
+      },
+      storage: { file_size_limit: "52428800" },
+    });
+
+    const projected = fromConfigDocument(document);
+
+    expect(projected.auth?.sessions?.timebox).toBe("24h0m0s");
+    expect(projected.auth?.sessions?.inactivity_timeout).toBe("1h0m0s");
+    expect(projected.auth?.email?.max_frequency).toBe("1m0s");
+    expect(projected.auth?.mfa?.phone?.max_frequency).toBe("5s");
+    expect(projected.auth?.sms?.max_frequency).toBe("5s");
+    expect(projected.storage?.file_size_limit).toBe("50MiB");
   });
 });
 
@@ -215,11 +278,37 @@ describe("fromApiProjectConfig — envelope unwrapping", () => {
     expect(fromBareAttributes).toEqual(fromEnvelope);
   });
 
-  test.each([null, "x", 42])("throws ProjectConfigParseError for non-object input %p", (input) => {
-    expect(() => fromApiProjectConfig(input)).toThrow(ProjectConfigParseError);
+  test.each([
+    [null, "null"],
+    ["x", "string"],
+    [42, "number"],
+  ])("throws ProjectConfigParseError for non-object input %p", (input, description) => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig(input);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).message).toBe(
+      `Could not read the project config from the Management API response: expected an object, got ${description}`,
+    );
   });
 
-  test("throws ProjectConfigParseError with a cause for a known-key type mismatch", () => {
+  test("throws ProjectConfigParseError for a non-object array input", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig([]);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).message).toBe(
+      "Could not read the project config from the Management API response: expected an object, got an array",
+    );
+  });
+
+  test("throws ProjectConfigParseError with a cause and a message naming the offending path for a known-key type mismatch", () => {
     let thrown: unknown;
     try {
       fromApiProjectConfig({ api: { max_rows: "high" } });
@@ -227,18 +316,38 @@ describe("fromApiProjectConfig — envelope unwrapping", () => {
       thrown = error;
     }
     expect(thrown).toBeInstanceOf(ProjectConfigParseError);
-    expect((thrown as ProjectConfigParseError).cause).toBeDefined();
+    const error = thrown as ProjectConfigParseError;
+    expect(error.cause).toBeDefined();
+    // `api.max_rows` is schema-concrete (mapped), so this fails at the
+    // lenient-schema decode itself — before any registry `transform` runs —
+    // and the message is built from the v4 schema-error formatter, not the
+    // registry's own `expectNumber` wording.
+    expect(error.apiPath).toEqual(["api", "max_rows"]);
+    expect(error.message).toContain(
+      "Could not read the project config from the Management API response: at data.attributes.api.max_rows:",
+    );
+    expect(error.detail).toBeDefined();
   });
 
   // A malformed envelope must throw rather than silently fall through to
   // "bare attributes" — see unwrapApiResponse's docstring in
   // `./project-config.ts`.
-  test.each([{ data: { attributes: 5 } }, { data: 5 }, { attributes: "x" }])(
-    "throws ProjectConfigParseError for a malformed envelope %j",
-    (input) => {
-      expect(() => fromApiProjectConfig(input)).toThrow(ProjectConfigParseError);
-    },
-  );
+  test.each([
+    [{ data: { attributes: 5 } }, "data.attributes is not an object"],
+    [{ data: 5 }, "data is not an object"],
+    [{ attributes: "x" }, "attributes is not an object"],
+  ])("throws ProjectConfigParseError for a malformed envelope %j", (input, detail) => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig(input);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).message).toBe(
+      `Could not read the project config from the Management API response: malformed envelope — ${detail}`,
+    );
+  });
 });
 
 describe("fromApiProjectConfig — api section", () => {
@@ -263,6 +372,26 @@ describe("fromApiProjectConfig — api section", () => {
   test("max_rows is clamped to zero when negative", () => {
     const result = fromApiProjectConfig({ api: { max_rows: -5 } });
     expect(result.api?.max_rows).toBe(0);
+  });
+});
+
+describe("fromApiProjectConfig — schema decode failure message", () => {
+  test("a struct-typed field failing the lenient schema itself names the offending path and carries a fuller detail", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({ database: { major_version: "not-a-number" } });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    const error = thrown as ProjectConfigParseError;
+    expect(error.apiPath).toEqual(["database", "major_version"]);
+    expect(error.message).toContain(
+      "Could not read the project config from the Management API response: at data.attributes.database.major_version:",
+    );
+    expect(error.detail).toBeDefined();
+    expect(error.detail).toContain("major_version");
+    expect(error.suggestion).toContain("upgrading the Supabase CLI");
   });
 });
 
@@ -308,6 +437,22 @@ describe("fromApiProjectConfig — db section", () => {
       allowed_cidrs_v6: ["::/0"],
     });
   });
+
+  test.each([
+    ["missing address", { type: "v4" }],
+    ["missing type", { address: "1.2.3.4/32" }],
+    ["unrecognized type", { address: "1.2.3.4/32", type: "v5" }],
+    ["a bare string entry", "1.2.3.4/32"],
+  ])(
+    "throws ProjectConfigParseError rather than silently dropping a malformed allowed_cidrs entry (%s)",
+    (_description, entry) => {
+      expect(() =>
+        fromApiProjectConfig({
+          database: { network_restrictions: { allowed_cidrs: [entry] } },
+        }),
+      ).toThrow(ProjectConfigParseError);
+    },
+  );
 
   test("pool_mode 'transaction' is mapped onto db.pooler.pool_mode", () => {
     const result = fromApiProjectConfig({ pooler: { pool_mode: "transaction" } });
@@ -422,7 +567,12 @@ describe("fromApiProjectConfig — auth section", () => {
       thrown = error;
     }
     expect(thrown).toBeInstanceOf(ProjectConfigParseError);
-    expect((thrown as ProjectConfigParseError).apiPath).toEqual(["auth", "disable_signup"]);
+    const boolMismatch = thrown as ProjectConfigParseError;
+    expect(boolMismatch.apiPath).toEqual(["auth", "disable_signup"]);
+    expect(boolMismatch.message).toBe(
+      "Could not read the project config from the Management API response: at data.attributes.auth.disable_signup: expected a boolean, got string",
+    );
+    expect(boolMismatch.suggestion).toContain("upgrading the Supabase CLI");
   });
 
   test("a string-typed GoTrue key with a number throws with the apiPath", () => {
@@ -433,7 +583,11 @@ describe("fromApiProjectConfig — auth section", () => {
       thrown = error;
     }
     expect(thrown).toBeInstanceOf(ProjectConfigParseError);
-    expect((thrown as ProjectConfigParseError).apiPath).toEqual(["auth", "site_url"]);
+    const stringMismatch = thrown as ProjectConfigParseError;
+    expect(stringMismatch.apiPath).toEqual(["auth", "site_url"]);
+    expect(stringMismatch.message).toBe(
+      "Could not read the project config from the Management API response: at data.attributes.auth.site_url: expected a string, got number",
+    );
   });
 
   test("disable_signup inverts to auth.enable_signup", () => {
@@ -494,6 +648,15 @@ describe("fromApiProjectConfig — auth section", () => {
     const result = fromApiProjectConfig({ auth: { smtp_port: "notaport" } });
     expect(result.auth).toBeUndefined();
   });
+
+  test.each(["smtp_host", "smtp_port"] as const)(
+    "a non-string, non-null %s throws rather than silently reporting a default",
+    (apiKey) => {
+      expect(() => fromApiProjectConfig({ auth: { [apiKey]: 12345 } })).toThrow(
+        ProjectConfigParseError,
+      );
+    },
+  );
 
   test("password_required_characters maps the letters_digits charset literal", () => {
     const result = fromApiProjectConfig({
@@ -562,6 +725,18 @@ describe("fromApiProjectConfig — secrets (ADR 0019 rule 5)", () => {
       });
     },
   );
+
+  // `figma` has no row at all (no config-schema counterpart), so it would
+  // otherwise leak its HMAC digest into `unmappedApiFields` — the
+  // `unmappedSecretApiPaths` orphan list (`./registry-auth.ts`) treats it as
+  // consumed anyway.
+  test("a secret-shaped GoTrue key with no registry row (external_figma_secret) is still absent from unmappedApiFields", () => {
+    const result = fromApiProjectConfig({ auth: { external_figma_secret: "figma-secret" } });
+    expect(unmappedApiFields(result)).toEqual({});
+    expect((result._apiResponse as Record<string, unknown>).auth).toEqual({
+      external_figma_secret: "figma-secret",
+    });
+  });
 });
 
 describe("fromApiProjectConfig — null convention", () => {
@@ -605,27 +780,63 @@ describe("fromApiProjectConfig — unknown/API-ahead fields", () => {
 });
 
 describe("fromApiProjectConfig — _apiResponse (ADR 0019 rules 1/3/4)", () => {
-  test("is an own, non-enumerable property strictly equal to the unwrapped attributes", () => {
+  test("is an own, non-enumerable, frozen deep clone of the unwrapped attributes", () => {
     const attributes = { api: { max_rows: 5 } };
     const result = fromApiProjectConfig(apiEnvelope(attributes));
 
     expect(Object.getOwnPropertyNames(result)).toContain("_apiResponse");
     expect(Object.keys(result)).not.toContain("_apiResponse");
-    expect(result._apiResponse).toBe(attributes);
+    expect(result._apiResponse).toEqual(attributes);
+    expect(result._apiResponse).not.toBe(attributes);
+    expect(result._apiResponse?.api).not.toBe(attributes.api);
+    expect(Object.isFrozen(result._apiResponse)).toBe(true);
+    expect(Object.isFrozen(result._apiResponse?.api)).toBe(true);
   });
 
-  test("is invisible to JSON.stringify and object spread", () => {
+  test("mutating the caller's input after the call does not affect the attached _apiResponse", () => {
+    const attributes: { api: { max_rows: number } } = { api: { max_rows: 5 } };
+    const result = fromApiProjectConfig(attributes);
+    attributes.api.max_rows = 999;
+    expect(result._apiResponse).toEqual({ api: { max_rows: 5 } });
+  });
+
+  test("is invisible to JSON.stringify, object spread, and Object.assign", () => {
     const result = fromApiProjectConfig({ api: { max_rows: 5 } });
 
     expect(JSON.stringify(result)).not.toContain("_apiResponse");
     const spread = { ...result };
     expect(Object.hasOwn(spread, "_apiResponse")).toBe(false);
+    const assigned = Object.assign({}, result);
+    expect(Object.hasOwn(assigned, "_apiResponse")).toBe(false);
   });
 
   test("subtractCliConfig never surfaces _apiResponse in its result", () => {
     const result = fromApiProjectConfig({ api: { max_rows: 5 } });
     const overlay = subtractCliConfig(result, {});
     expect(Object.getOwnPropertyNames(overlay)).not.toContain("_apiResponse");
+  });
+});
+
+describe("attachApiResponse", () => {
+  test("restores _apiResponse lost across a spread, as a new object", () => {
+    const result = fromApiProjectConfig({ api: { max_rows: 5 } });
+    const spread: ProjectConfig = { ...result };
+    expect(spread._apiResponse).toBeUndefined();
+
+    const restored = attachApiResponse(spread, { api: { max_rows: 5 } });
+    expect(restored).not.toBe(spread);
+    expect(restored.api).toEqual({ max_rows: 5 });
+    expect(restored._apiResponse).toEqual({ api: { max_rows: 5 } });
+    expect(unmappedApiFields(restored)).toEqual({});
+  });
+
+  test("restores _apiResponse lost across structuredClone", () => {
+    const result = fromApiProjectConfig({ api: { max_rows: 5 }, new_field: "x" });
+    const cloned: ProjectConfig = structuredClone(result);
+    expect(cloned._apiResponse).toBeUndefined();
+
+    const restored = attachApiResponse(cloned, { api: { max_rows: 5 }, new_field: "x" });
+    expect(unmappedApiFields(restored)).toEqual({ new_field: "x" });
   });
 });
 
@@ -646,6 +857,35 @@ describe("fromApiProjectConfig — composition with the sparse core", () => {
   });
 });
 
+describe("document/API duration and byte-size convergence", () => {
+  test("a document spelling and the equivalent API encoding converge on identical strings and subtract to {} for those fields", () => {
+    const documentSide = fromConfigDocument(
+      decodeCliConfig({
+        auth: { sessions: { timebox: "24h" }, email: { max_frequency: "60s" } },
+        storage: { file_size_limit: "52428800" },
+      }),
+    );
+    const apiSide = fromApiProjectConfig({
+      auth: { sessions_timebox: 24, smtp_max_frequency: 60 },
+      storage: { file_size_limit: 52428800 },
+    });
+
+    expect(documentSide.auth?.sessions?.timebox).toBe(apiSide.auth?.sessions?.timebox);
+    expect(documentSide.auth?.email?.max_frequency).toBe(apiSide.auth?.email?.max_frequency);
+    expect(documentSide.storage?.file_size_limit).toBe(apiSide.storage?.file_size_limit);
+
+    const isolate = (config: ProjectConfig) => ({
+      auth: {
+        sessions: { timebox: config.auth?.sessions?.timebox },
+        email: { max_frequency: config.auth?.email?.max_frequency },
+      },
+      storage: { file_size_limit: config.storage?.file_size_limit },
+    });
+    expect(subtractCliConfig(isolate(documentSide), isolate(apiSide))).toEqual({});
+    expect(subtractCliConfig(isolate(apiSide), isolate(documentSide))).toEqual({});
+  });
+});
+
 describe("toProjectConfig", () => {
   test("the { cliConfig } arm dispatches to fromConfigDocument", () => {
     const config = getDefaultCliConfig();
@@ -656,6 +896,67 @@ describe("toProjectConfig", () => {
     expect(toProjectConfig({ apiResponse: fullAttributesFixture })).toEqual(
       fromApiProjectConfig(fullAttributesFixture),
     );
+  });
+
+  test("throws ProjectConfigParseError rather than a raw TypeError when neither own key is present", () => {
+    let thrown: unknown;
+    try {
+      // @ts-expect-error — exercising the runtime guard against a source with neither own key.
+      toProjectConfig({});
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).message).toContain("got neither");
+  });
+
+  test("throws ProjectConfigParseError when both own keys are present", () => {
+    let thrown: unknown;
+    try {
+      toProjectConfig({ cliConfig: getDefaultCliConfig(), apiResponse: fullAttributesFixture });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).message).toContain("got both");
+  });
+});
+
+describe("comparableProjectConfigPaths / isComparableProjectConfigPath", () => {
+  test("contains representative mapped paths and excludes secret rows and realtime", () => {
+    const hasPath = (target: ReadonlyArray<string>) =>
+      comparableProjectConfigPaths.some(
+        (path) =>
+          path.length === target.length && path.every((segment, i) => segment === target[i]),
+      );
+
+    expect(hasPath(["api", "max_rows"])).toBe(true);
+    expect(hasPath(["auth", "enable_signup"])).toBe(true);
+    expect(hasPath(["auth", "captcha", "secret"])).toBe(false);
+    expect(hasPath(["auth", "email", "smtp", "pass"])).toBe(false);
+    expect(comparableProjectConfigPaths.some((path) => path[0] === "realtime")).toBe(false);
+  });
+
+  test("isComparableProjectConfigPath agrees with comparableProjectConfigPaths' membership", () => {
+    expect(isComparableProjectConfigPath(["api", "max_rows"])).toBe(true);
+    expect(isComparableProjectConfigPath(["auth", "enable_signup"])).toBe(true);
+    expect(isComparableProjectConfigPath(["auth", "captcha", "secret"])).toBe(false);
+    expect(isComparableProjectConfigPath(["realtime", "enabled"])).toBe(false);
+    expect(isComparableProjectConfigPath(["not", "a", "real", "path"])).toBe(false);
+  });
+
+  test("a diff restricted to comparableProjectConfigPaths ignores the phantom drift of unconditionally-mapped fields", () => {
+    // The API side maps `email.smtp.enabled` unconditionally even when the
+    // local document never declared `[auth.email.smtp]` at all (CLI-2230's
+    // granularity finding) — an unrestricted diff would report that as
+    // drift; restricting to comparableProjectConfigPaths lets a consumer
+    // choose to ignore it, but the field itself is still genuinely present
+    // on both sides in a way a documented baseline can pin.
+    const apiSide = fromApiProjectConfig({ auth: { smtp_host: "" } });
+    const documentSide = fromConfigDocument(getDefaultCliConfig());
+    expect(isComparableProjectConfigPath(["auth", "email", "smtp", "enabled"])).toBe(true);
+    expect(apiSide.auth?.email?.smtp?.enabled).toBe(false);
+    expect(documentSide.auth?.email?.smtp?.enabled).toBe(false);
   });
 });
 
@@ -674,7 +975,7 @@ describe("unmappedApiFields", () => {
     expect(unmapped.pooler).toMatchObject({ server_lifetime: 3600 });
     expect(unmapped.storage).toMatchObject({
       capabilities: { list_v2: true },
-      upstream_target: "s3",
+      upstream_target: "main",
     });
     expect(unmapped.database).toMatchObject({ postgres_settings: { log_checkpoints: true } });
     expect(unmapped.realtime).toBeDefined();
@@ -698,5 +999,14 @@ describe("unmappedApiFields", () => {
   test("returns {} when every field in _apiResponse is fully mapped", () => {
     const result = fromApiProjectConfig({ api: { max_rows: 5 } });
     expect(unmappedApiFields(result)).toEqual({});
+  });
+
+  test("throws ProjectConfigParseError (not an uncaught RangeError) on pathologically deep nesting", () => {
+    let deeplyNested: Record<string, unknown> = { leaf: "value" };
+    for (let i = 0; i < 100; i += 1) {
+      deeplyNested = { nested: deeplyNested };
+    }
+    const result = fromApiProjectConfig({ new_service: deeplyNested });
+    expect(() => unmappedApiFields(result)).toThrow(ProjectConfigParseError);
   });
 });

@@ -58,8 +58,11 @@ export { ENV_CAPTURE_REGEX } from "./lib/env.ts";
 export {
   type ProjectConfig,
   type ToProjectConfigSource,
+  attachApiResponse,
+  comparableProjectConfigPaths,
   fromApiProjectConfig,
   fromConfigDocument,
+  isComparableProjectConfigPath,
   toProjectConfig,
   unmappedApiFields,
 } from "./project-config/project-config.ts";

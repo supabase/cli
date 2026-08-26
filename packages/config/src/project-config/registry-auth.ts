@@ -1,4 +1,5 @@
 import { isObject } from "../config-document.ts";
+import { setOwnProperty } from "../sparse.ts";
 import {
   clampToUint,
   expectBoolean,
@@ -98,6 +99,107 @@ function durationString(ns: number): string {
   return result;
 }
 
+const NS_PER_SECOND = 1_000_000_000;
+const NS_PER_MINUTE = 60 * NS_PER_SECOND;
+const NS_PER_HOUR = 60 * NS_PER_MINUTE;
+const NS_PER_MS = 1_000_000;
+const NS_PER_US = 1_000;
+
+/**
+ * Port of Go `time.ParseDuration`, replicated verbatim from
+ * `apps/cli/src/legacy/commands/config/push/config-sync/config-sync.duration.ts:95-159`
+ * (the same file `durationString` above is ported from). Returns nanoseconds;
+ * throws on invalid input — used only by {@link canonicalizeDurationString},
+ * which never lets this throw escape.
+ */
+function parseDuration(s: string): number {
+  if (s === "0") return 0;
+  const orig = s;
+  let neg = false;
+  let total = 0;
+
+  if (s.startsWith("-") || s.startsWith("+")) {
+    neg = s.startsWith("-");
+    s = s.slice(1);
+  }
+  if (s === "0") return 0;
+  if (s.length === 0) throw new Error(`time: invalid duration "${orig}"`);
+
+  while (s.length > 0) {
+    // consume leading integer/fractional digits
+    let n = 0;
+    let frac = 0;
+    let post = 1;
+    let i = 0;
+    while (i < s.length && s.charAt(i) >= "0" && s.charAt(i) <= "9") {
+      n = n * 10 + parseInt(s.charAt(i), 10);
+      i++;
+    }
+    if (i < s.length && s.charAt(i) === ".") {
+      i++;
+      while (i < s.length && s.charAt(i) >= "0" && s.charAt(i) <= "9") {
+        frac = frac * 10 + parseInt(s.charAt(i), 10);
+        post *= 10;
+        i++;
+      }
+    }
+    s = s.slice(i);
+    if (s.length === 0) throw new Error(`time: missing unit in duration "${orig}"`);
+
+    // consume unit
+    let unitNs: number;
+    if (s.startsWith("ns")) {
+      unitNs = 1;
+      s = s.slice(2);
+    } else if (s.startsWith("us") || s.startsWith("µs")) {
+      // Both "us" and "µs" (U+00B5, the only micro sign Go accepts) are 2 JS
+      // code units, so slice(2) advances past either.
+      unitNs = NS_PER_US;
+      s = s.slice(2);
+    } else if (s.startsWith("ms")) {
+      unitNs = NS_PER_MS;
+      s = s.slice(2);
+    } else if (s.startsWith("s")) {
+      unitNs = NS_PER_SECOND;
+      s = s.slice(1);
+    } else if (s.startsWith("m")) {
+      unitNs = NS_PER_MINUTE;
+      s = s.slice(1);
+    } else if (s.startsWith("h")) {
+      unitNs = NS_PER_HOUR;
+      s = s.slice(1);
+    } else {
+      throw new Error(`time: unknown unit in duration "${orig}"`);
+    }
+
+    total += n * unitNs + Math.round((frac / post) * unitNs);
+  }
+
+  return neg ? -total : total;
+}
+
+/**
+ * DOCUMENT-side duration canonicalization (CLI-2230's duration/byte-size
+ * finding): a config document legally spells a duration as `"1m"`, `"24h"`,
+ * or `"60s"` (the schema keeps every duration field a plain `Schema.String`),
+ * while {@link secondsToDurationString}/{@link hoursToDurationString} always
+ * emit the canonical Go form (`"1m0s"`). Reparsing and re-emitting through
+ * `durationString`/`parseDuration` makes both sides converge on one spelling
+ * for one logical duration. Never throws: a document value has already
+ * passed schema validation, so an unparsable value (which should not occur)
+ * is returned verbatim rather than failing `fromConfigDocument`.
+ */
+function canonicalizeDurationString(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+  try {
+    return durationString(parseDuration(value));
+  } catch {
+    return value;
+  }
+}
+
 /**
  * Seconds (integer, as reported by the API) → Go duration string. Used for
  * `email.max_frequency`, `mfa.phone.max_frequency`, and `sms.max_frequency`,
@@ -146,7 +248,7 @@ function envToMap(input: string): Record<string, string> {
   for (const entry of entries) {
     const eqIdx = entry.indexOf("=");
     if (eqIdx > 0) {
-      result[entry.slice(0, eqIdx)] = entry.slice(eqIdx + 1);
+      setOwnProperty(result, entry.slice(0, eqIdx), entry.slice(eqIdx + 1));
     }
   }
   return result;
@@ -236,7 +338,6 @@ function invertedBoolRow(
     configPath,
     apiPath,
     transform: (value) => (value === null ? undefined : !expectBoolean(value, apiPath)),
-    inverse: (value) => !value,
     unit: "inverted boolean",
   };
 }
@@ -251,7 +352,12 @@ function uintRow(configPath: ReadonlyArray<string>, apiKey: string): ProjectConf
   };
 }
 
-/** Integer seconds (API) → Go duration string (config), e.g. `"5s"`. */
+/**
+ * Integer seconds (API) → Go duration string (config), e.g. `"5s"`. Every
+ * call site is one of the five duration rows CLI-2230's finding names, so
+ * `normalizeDocument` is wired unconditionally here rather than per call
+ * site.
+ */
 function secondsDurationRow(
   configPath: ReadonlyArray<string>,
   apiKey: string,
@@ -262,11 +368,17 @@ function secondsDurationRow(
     apiPath,
     transform: (value) =>
       value === null ? undefined : secondsToDurationString(expectNumber(value, apiPath)),
+    normalizeDocument: canonicalizeDurationString,
     unit: "seconds → duration string",
   };
 }
 
-/** Float hours (API) → Go duration string (config), e.g. `"1h0m0s"`. */
+/**
+ * Float hours (API) → Go duration string (config), e.g. `"1h0m0s"`. Every
+ * call site is one of the five duration rows CLI-2230's finding names, so
+ * `normalizeDocument` is wired unconditionally here rather than per call
+ * site.
+ */
 function hoursDurationRow(
   configPath: ReadonlyArray<string>,
   apiKey: string,
@@ -277,9 +389,19 @@ function hoursDurationRow(
     apiPath,
     transform: (value) =>
       value === null ? undefined : hoursToDurationString(expectNumber(value, apiPath)),
+    normalizeDocument: canonicalizeDurationString,
     unit: "hours → duration string",
   };
 }
+
+// Legacy-handled but deliberately unmapped: the 4 passkey/webauthn keys
+// (auth.sync.ts:281-285) — `passkey_enabled`, `webauthn_rp_display_name`,
+// `webauthn_rp_id`, `webauthn_rp_origins`. `RemoteAuthConfig` carries them
+// (the legacy shell's own `authSubsetFromConfig` sets its `passkey`/
+// `webauthn` subset fields to `undefined` unconditionally, auth.sync.ts:
+// 918-920, "not in @supabase/config schema"), but there is no
+// `../auth/*.ts` section for passkey/WebAuthn at all, so no row can target
+// either side. Still reachable via `_apiResponse`.
 
 // CORE (auth.sync.ts:1263-1276, applyRemoteAuthConfig's base scalar fields)
 
@@ -292,7 +414,6 @@ const coreRows: ReadonlyArray<ProjectConfigMappingRow> = [
       value === null
         ? undefined
         : splitCommaSeparated(expectString(value, ["auth", "uri_allow_list"])),
-    inverse: (value) => (Array.isArray(value) ? value.join(",") : value),
     unit: "csv → string[]",
   },
   uintRow(["auth", "jwt_expiry"], "jwt_exp"),
@@ -313,11 +434,6 @@ const coreRows: ReadonlyArray<ProjectConfigMappingRow> = [
       if (typeof value !== "string") return undefined;
       if (value === "") return "";
       return CHAR_TO_PASSWORD_REQUIREMENTS[value];
-    },
-    // auth.sync.ts:2302 (authToUpdateBody), the forward map.
-    inverse: (value) => {
-      if (typeof value !== "string" || value === "") return value;
-      return PASSWORD_REQUIREMENTS_TO_CHAR[value];
     },
   },
 ];
@@ -361,27 +477,44 @@ const emailBaseRows: ReadonlyArray<ProjectConfigMappingRow> = [
 
 // SMTP (auth.sync.ts:1410-1435; enabled/host share the smtp_host key)
 
+const smtpHostPath = ["auth", "smtp_host"];
+const smtpPortPath = ["auth", "smtp_port"];
+
 const smtpRows: ReadonlyArray<ProjectConfigMappingRow> = [
   {
     // auth.sync.ts:1433 derives enabled from `smtp_host != null` (any non-null
     // host, including ""). This sparse mapping instead treats a non-empty
     // host as the signal, matching the push direction's own disable sentinel
     // (`body["smtp_host"] = ""` at auth.sync.ts:2387) so "" round-trips to
-    // disabled on both sides of this registry.
+    // disabled on both sides of this registry. `null` keeps meaning
+    // "disabled"; any other non-string throws via `expectString` rather than
+    // silently reporting `enabled: false` for a value GoTrue never actually
+    // sends.
     configPath: ["auth", "email", "smtp", "enabled"],
-    apiPath: ["auth", "smtp_host"],
-    transform: (value) => typeof value === "string" && value.length > 0,
+    apiPath: smtpHostPath,
+    transform: (value) => (value === null ? false : expectString(value, smtpHostPath).length > 0),
   },
   {
+    // Same null/non-string handling as `enabled` above — `null`/`""` omit the
+    // field (host is meaningless while SMTP is off), any other non-string
+    // throws.
     configPath: ["auth", "email", "smtp", "host"],
-    apiPath: ["auth", "smtp_host"],
-    transform: (value) => (typeof value === "string" && value.length > 0 ? value : undefined),
+    apiPath: smtpHostPath,
+    transform: (value) => {
+      if (value === null) return undefined;
+      const host = expectString(value, smtpHostPath);
+      return host.length > 0 ? host : undefined;
+    },
   },
   {
-    // auth.sync.ts:1420-1425: the API reports smtp_port as a string.
+    // auth.sync.ts:1420-1425: the API reports smtp_port as a string. `null`
+    // omits the field; a non-string throws via `expectString`; a string that
+    // fails `parseUint16` (out of range, non-digits) still omits, per the
+    // legacy pull direction's own tolerance for an unparsable port.
     configPath: ["auth", "email", "smtp", "port"],
-    apiPath: ["auth", "smtp_port"],
-    transform: (value) => (typeof value === "string" ? parseUint16(value) : undefined),
+    apiPath: smtpPortPath,
+    transform: (value) =>
+      value === null ? undefined : parseUint16(expectString(value, smtpPortPath)),
   },
   stringRow(["auth", "email", "smtp", "user"], "smtp_user"),
   stringRow(["auth", "email", "smtp", "admin_email"], "smtp_admin_email"),
@@ -428,6 +561,26 @@ const notificationRows: ReadonlyArray<ProjectConfigMappingRow> = EMAIL_NOTIFICAT
     ),
   ],
 );
+
+// Legacy-handled but deliberately unmapped: the 13 mailer template/
+// notification CONTENT keys (as opposed to the SUBJECT keys mapped above) —
+// `mailer_templates_invite_content`, `mailer_templates_confirmation_content`,
+// `mailer_templates_recovery_content`, `mailer_templates_magic_link_content`,
+// `mailer_templates_email_change_content`,
+// `mailer_templates_reauthentication_content` (the 6 templates, auth.sync.ts:
+// 339-349), and `mailer_templates_password_changed_notification_content`,
+// `mailer_templates_email_changed_notification_content`,
+// `mailer_templates_phone_changed_notification_content`,
+// `mailer_templates_identity_linked_notification_content`,
+// `mailer_templates_identity_unlinked_notification_content`,
+// `mailer_templates_mfa_factor_enrolled_notification_content`,
+// `mailer_templates_mfa_factor_unenrolled_notification_content` (the 7
+// notifications, auth.sync.ts:353-371). The config schema stores
+// `content_path` (a filesystem path to the template body, `../auth/email.ts`)
+// for each of these, never the rendered `content` itself, so there is no
+// config-side field a row could target — `content` only exists on the
+// GoTrue/API side, loaded from `content_path` at push time
+// (`authSubsetFromConfig`'s `emailContent` parameter, auth.sync.ts:989-999).
 
 // MFA (auth.sync.ts:1381-1398)
 
@@ -499,6 +652,20 @@ const smsBaseRows: ReadonlyArray<ProjectConfigMappingRow> = [
 // has no local document to consult for "already enabled", so it reconciles
 // unconditionally, for the same reason as the rate_limit.email_sent row
 // above.
+//
+// An unrecognized `sms_provider` value (one that matches none of the five
+// `=== provider` comparisons below) maps every provider's `enabled` to
+// `false` — legacy-faithful (auth.sync.ts's switch is exactly these five
+// `===` comparisons, with no fallback branch), not a bug. Unlike
+// `pool_mode`'s `"statement"` case (`../registry.ts`), there is no single
+// omitted field to point at: "phone auth is enabled with a provider this
+// package version doesn't model" is invisible in the typed output entirely —
+// every provider reading `false` looks identical to "no provider recognized"
+// and to "phone auth genuinely uses none of these five". The raw string is
+// still reachable at `_apiResponse.auth.sms_provider` — same bucket as
+// `pool_mode`'s omitted enum member. A future report of unmapped/
+// unrepresentable *values* (as opposed to unmapped *fields*, which
+// `unmappedApiFields` already covers) would need to special-case this row.
 
 const SMS_PROVIDERS = ["twilio", "twilio_verify", "messagebird", "textlocal", "vonage"] as const;
 
@@ -667,4 +834,30 @@ export const authMappingRows: ReadonlyArray<ProjectConfigMappingRow> = [
   ...hookRows,
   ...externalProviderRows,
   googleSkipNonceCheckRow,
+];
+
+/**
+ * API-side GoTrue keys shaped like a secret (suffix `_secret`, `_secrets`,
+ * `_auth_token`, `_api_secret`, `_access_key`, or `_api_key`) that have no
+ * registry row at all, grepped exhaustively against `auth.sync.ts`'s
+ * `RemoteAuthConfig` interface (CLI-2230's `unmappedApiFields` secret-leak
+ * finding). Every OTHER secret-shaped GoTrue key already has an `isSecret`
+ * row above and is therefore already excluded from `unmappedApiFields` on
+ * its own merit; this list exists only for the ones that don't, so an HMAC
+ * digest can't leak into that report just because this registry hasn't grown
+ * a row for the field yet. `walkUnmapped` (`./project-config.ts`) treats
+ * every path here as consumed, same as a row's `apiPath`/`alsoConsumes`.
+ *
+ * `sms_vonage_api_key` is deliberately excluded despite the `_api_key`
+ * suffix: it is NOT `x-secret` on the config side (`../auth/sms.ts:286-292`
+ * has no `secret()` wrapper on it — `smsCredentialRows`'s comment) and
+ * already has an ordinary `stringRow`.
+ *
+ * `external_figma_secret` is the only orphan found: `figma` is a GoTrue
+ * provider with no config-schema counterpart at all
+ * (`externalProviderRows`'s comment above), so it never gets a row of its
+ * own, secret or otherwise.
+ */
+export const unmappedSecretApiPaths: ReadonlyArray<ReadonlyArray<string>> = [
+  ["auth", "external_figma_secret"],
 ];

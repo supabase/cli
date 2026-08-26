@@ -1,5 +1,9 @@
 import { isObject } from "../config-document.ts";
-import { ProjectConfigParseError } from "../errors.ts";
+import {
+  formatProjectConfigParseErrorMessage,
+  PROJECT_CONFIG_PARSE_ERROR_SUGGESTION,
+  ProjectConfigParseError,
+} from "../errors.ts";
 import { authMappingRows } from "./registry-auth.ts";
 import {
   clampToUint,
@@ -58,7 +62,6 @@ const apiSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
       remoteDataApiDisabled(attributes)
         ? undefined
         : splitCommaSeparated(expectString(value, apiDbSchemaPath)),
-    inverse: (value) => (Array.isArray(value) ? value.join(",") : value),
     unit: "csv → string[]",
   },
   {
@@ -77,7 +80,6 @@ const apiSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
       remoteDataApiDisabled(attributes)
         ? undefined
         : splitCommaSeparated(expectString(value, apiExtraSearchPathPath)),
-    inverse: (value) => (Array.isArray(value) ? value.join(",") : value),
     unit: "csv → string[]",
   },
   {
@@ -183,6 +185,12 @@ const networkRestrictionsAllowedCidrsPath = ["database", "network_restrictions",
  * response shaped that way already. Both `allowed_cidrs`/`allowed_cidrs_v6`
  * rows below read this same `apiPath` and filter by `type` to reconstruct
  * that split.
+ *
+ * Throws rather than silently dropping a malformed entry: this field is a
+ * security allowlist, so a partially-filtered result (e.g. one malformed
+ * entry silently excluded from `allowed_cidrs`) would misreport "the remote
+ * removed your restrictions" — loud beats silent here, unlike the rest of
+ * this registry's lenient-toward-unknown-shapes default.
  */
 function filterCidrAddresses(
   value: unknown,
@@ -190,25 +198,53 @@ function filterCidrAddresses(
   ipVersion: "v4" | "v6",
 ): ReadonlyArray<string> {
   if (!Array.isArray(value)) {
-    throw new ProjectConfigParseError({
-      apiPath,
-      cause: new Error(`expected an array, got ${typeof value}`),
-    });
+    throw cidrParseError("an array", value, apiPath);
   }
   const addresses: Array<string> = [];
   for (const entry of value) {
-    if (isObject(entry) && entry["type"] === ipVersion && typeof entry["address"] === "string") {
+    if (
+      !isObject(entry) ||
+      typeof entry["address"] !== "string" ||
+      (entry["type"] !== "v4" && entry["type"] !== "v6")
+    ) {
+      throw cidrParseError('{"address": string, "type": "v4" | "v6"}', entry, apiPath);
+    }
+    if (entry["type"] === ipVersion) {
       addresses.push(entry["address"]);
     }
   }
   return addresses;
 }
 
+function cidrParseError(
+  expected: string,
+  value: unknown,
+  apiPath: ReadonlyArray<string>,
+): ProjectConfigParseError {
+  const detail = `expected ${expected}, got ${value === null ? "null" : typeof value}`;
+  return new ProjectConfigParseError({
+    apiPath,
+    cause: new Error(detail),
+    message: formatProjectConfigParseErrorMessage(detail, apiPath),
+    suggestion: PROJECT_CONFIG_PARSE_ERROR_SUGGESTION,
+  });
+}
+
 const poolerPoolModePath = ["pooler", "pool_mode"];
+
+const dbMajorVersionPath = ["database", "major_version"];
+const poolerDefaultPoolSizePath = ["pooler", "default_pool_size"];
+const poolerMaxClientConnPath = ["pooler", "max_client_conn"];
 
 const dbSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
   // No sync precedent — exact name+type match against `../db.ts:88-94`.
-  { configPath: ["db", "major_version"], apiPath: ["database", "major_version"] },
+  // `null` has no counterpart row, so it's already omitted before this
+  // narrows; narrowing here guards a non-`null` non-number value.
+  {
+    configPath: ["db", "major_version"],
+    apiPath: dbMajorVersionPath,
+    transform: (value) => (value === null ? undefined : expectNumber(value, dbMajorVersionPath)),
+  },
   // v2 flattens what v1 nested under `currentConfig.database`
   // (db.sync.ts:241 `applyRemoteSslEnforcement`).
   {
@@ -228,8 +264,12 @@ const dbSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     transform: (value) => filterCidrAddresses(value, networkRestrictionsAllowedCidrsPath, "v6"),
     unit: "type-tagged {address,type}[] → filtered string[] (v6)",
   },
-  // Deliberately unmapped (no faithful counterpart):
-  // database.network_restrictions.{enabled,entitlement,status}.
+  // Deliberately unmapped (no faithful counterpart): database.
+  // network_restrictions.{entitlement,status,updated_at,applied_at}. (There
+  // is no `network_restrictions.enabled` on the v2 contract at all — the
+  // config-side `db.network_restrictions.enabled` toggle, `../db.ts:167-172`,
+  // is a purely local management switch with no API-side counterpart to
+  // read from, not an unmapped API field.)
   //
   // Pooler — no sync precedent, name-matched to `../db.ts:95-126`.
   {
@@ -244,8 +284,18 @@ const dbSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
       return mode === "transaction" || mode === "session" ? mode : undefined;
     },
   },
-  { configPath: ["db", "pooler", "default_pool_size"], apiPath: ["pooler", "default_pool_size"] },
-  { configPath: ["db", "pooler", "max_client_conn"], apiPath: ["pooler", "max_client_conn"] },
+  {
+    configPath: ["db", "pooler", "default_pool_size"],
+    apiPath: poolerDefaultPoolSizePath,
+    transform: (value) =>
+      value === null ? undefined : expectNumber(value, poolerDefaultPoolSizePath),
+  },
+  {
+    configPath: ["db", "pooler", "max_client_conn"],
+    apiPath: poolerMaxClientConnPath,
+    transform: (value) =>
+      value === null ? undefined : expectNumber(value, poolerMaxClientConnPath),
+  },
   // Deliberately unmapped (no faithful counterpart): pooler.
   // ignore_startup_parameters, server_idle_timeout, server_lifetime,
   // query_wait_timeout, reserve_pool_size.
@@ -308,6 +358,102 @@ function bytesSize(size: number): string {
   return `${formatSignificantDigits(value)}${BINARY_ABBRS[unitIndex]}`;
 }
 
+const BINARY_MAP: Readonly<Record<string, number>> = {
+  k: 1024,
+  m: 1024 ** 2,
+  g: 1024 ** 3,
+  t: 1024 ** 4,
+  p: 1024 ** 5,
+};
+
+const DIGIT_OR_DOT_OR_SPACE = "0123456789. ";
+
+/**
+ * Port of `units.RAMInBytes`, replicated verbatim from
+ * `apps/cli/src/legacy/shared/legacy-size-units.ts:32-102` — parses a
+ * human-readable RAM size (1024-based, case-insensitive, optional trailing
+ * `b`) OR a bare decimal byte count (both spellings `../storage.ts:35-46`'s
+ * `fileSizeLimit` schema accepts) into bytes. Throws on an unparseable
+ * string; used only by {@link canonicalizeFileSizeLimit}, which never lets
+ * this throw escape.
+ */
+function ramInBytes(sizeStr: string): number {
+  let sep = -1;
+  for (let i = 0; i < sizeStr.length; i++) {
+    if (DIGIT_OR_DOT_OR_SPACE.includes(sizeStr[i] as string)) sep = i;
+  }
+  if (sep === -1) {
+    throw new Error(`invalid size: '${sizeStr}'`);
+  }
+  let num: string;
+  let sfx: string;
+  if (sizeStr[sep] !== " ") {
+    num = sizeStr.slice(0, sep + 1);
+    sfx = sizeStr.slice(sep + 1);
+  } else {
+    num = sizeStr.slice(0, sep);
+    sfx = sizeStr.slice(sep + 1);
+  }
+  if (
+    !/^[+-]?(?:\d(?:_?\d)*(?:\.(?:\d(?:_?\d)*)?)?|\.\d(?:_?\d)*)([eE][+-]?\d(?:_?\d)*)?$/.test(num)
+  ) {
+    throw new Error(`invalid size: '${sizeStr}'`);
+  }
+  const size = Number.parseFloat(num.replace(/_/g, ""));
+  if (!Number.isFinite(size)) {
+    throw new Error(`invalid size: '${sizeStr}'`);
+  }
+  if (size < 0) {
+    throw new Error(`invalid size: '${sizeStr}'`);
+  }
+  if (sfx.length === 0) {
+    return Math.trunc(size);
+  }
+  if (sfx.length > 3) {
+    throw new Error(`invalid suffix: '${sfx}'`);
+  }
+  sfx = sfx.toLowerCase();
+  if (sfx[0] === "b") {
+    if (sfx.length > 1) {
+      throw new Error(`invalid suffix: '${sfx}'`);
+    }
+    return Math.trunc(size);
+  }
+  const mul = BINARY_MAP[sfx[0] as string];
+  if (mul === undefined) {
+    throw new Error(`invalid suffix: '${sfx}'`);
+  }
+  if (sfx.length === 2 && sfx[1] !== "b") {
+    throw new Error(`invalid suffix: '${sfx}'`);
+  }
+  if (sfx.length === 3 && sfx.slice(1) !== "ib") {
+    throw new Error(`invalid suffix: '${sfx}'`);
+  }
+  return Math.trunc(size * mul);
+}
+
+/**
+ * DOCUMENT-side byte-size canonicalization (CLI-2230's duration/byte-size
+ * finding): a document spells `storage.file_size_limit` as either a
+ * `BytesSize` string (`"50MiB"`) or a bare decimal byte count
+ * (`"52428800"`, `../storage.ts:35-46`), while {@link bytesSize} always
+ * emits the `BytesSize` spelling. Reparsing via `ramInBytes` and
+ * re-formatting via `bytesSize` makes both sides converge on one spelling
+ * for one logical limit. Never throws: a document value has already passed
+ * schema validation, so an unparsable value (which should not occur) is
+ * returned verbatim rather than failing `fromConfigDocument`.
+ */
+function canonicalizeFileSizeLimit(value: unknown): unknown {
+  if (typeof value !== "string") {
+    return value;
+  }
+  try {
+    return bytesSize(ramInBytes(value));
+  } catch {
+    return value;
+  }
+}
+
 const storageFileSizeLimitPath = ["storage", "file_size_limit"];
 
 const storageSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
@@ -315,6 +461,7 @@ const storageSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     configPath: ["storage", "file_size_limit"],
     apiPath: storageFileSizeLimitPath,
     transform: (value) => bytesSize(expectNumber(value, storageFileSizeLimitPath)),
+    normalizeDocument: canonicalizeFileSizeLimit,
     unit: 'bytes → BytesSize string (e.g. "50MiB")',
   },
   {
