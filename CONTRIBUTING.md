@@ -97,8 +97,7 @@ That pulls `.repos/effect/`, which is the local source of truth for Effect v4 AP
 |   |-- process-compose/      # Effect-based process orchestration library
 |   |-- stack/                # Programmatic local Supabase stack runtime
 |   `-- cli-*/                # Platform-specific CLI binary packages
-|-- tools/
-|   `-- nx-plugins/           # Local Nx Go inference plugin
+|-- tools/                    # Repository tooling (release scripts, etc.)
 |-- docs/                     # ADRs, design notes, and implementation docs
 `-- .repos/effect/            # Effect v4 reference source
 ```
@@ -340,12 +339,18 @@ supabase --version
 | `npm` / `pnpm` tries to fetch from `localhost:4873` when no registry is running | Stale global registry override left behind by an older version of `local-registry.ts` (the current script never modifies global config). Run `npm config delete registry` and `pnpm config delete registry`. Note that pnpm stores the override in its own global config (`~/Library/Preferences/pnpm/auth.ini` on macOS, `~/.config/pnpm/` on Linux), not `~/.npmrc` — check there if the delete command fails |
 | `npx` resolves from npm instead of local                                        | Pass `--registry http://localhost:4873` explicitly to `npx` / `npm install`                                                                                                                                                                                                                                                                                                                                     |
 
-## Using Turbo and Nx
+## Using Turbo
 
-Turbo owns repository build and generation orchestration. Quality checks are
-root-owned `check:all`/`fix:all` scripts orchestrated with Turbo, while ordinary
-unit, integration, and e2e tests remain package-local scripts; see [Standard
-package scripts](#standard-package-scripts).
+Turbo owns repository task execution and dependency graph orchestration. Quality
+checks are root-owned `check:all`/`fix:all` scripts orchestrated with Turbo,
+while ordinary unit, integration, and e2e tests remain package-local scripts;
+see [Standard package scripts](#standard-package-scripts).
+
+Inspect a task's dependency graph with Turbo's JSON dry-run output:
+
+```sh
+pnpm exec turbo run <task> --dry=json
+```
 
 **Build all migrated workspaces:**
 
@@ -378,12 +383,9 @@ starts; use Turbo for cacheable build outputs.
 pnpm run test:live
 ```
 
-Use `nx show project supabase` to inspect remaining Nx dependency metadata.
-Do not use Nx affected mode for quality checks; run `pnpm run check:all` or
-`pnpm run fix:all` from the repository root instead. Package-local checks use
-`pnpm types:check` plus the package's test scripts. See
-[`docs/nx-inference-plugins.md`](docs/nx-inference-plugins.md) for the retained
-Go plugin used by the Nx dependency graph.
+Run `pnpm run check:all` or `pnpm run fix:all` from the repository root for
+repo-wide quality checks. Package-local checks use `pnpm types:check` plus the
+package's test scripts.
 
 ## Documentation
 

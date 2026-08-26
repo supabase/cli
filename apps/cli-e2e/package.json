@@ -21,11 +21,5 @@
     "@vitest/coverage-istanbul": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
-  },
-  "nx": {
-    "implicitDependencies": [
-      "cli-go",
-      "supabase"
-    ]
   }
 }
