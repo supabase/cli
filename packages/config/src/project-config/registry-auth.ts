@@ -100,8 +100,13 @@ function durationString(ns: number): string {
   return result;
 }
 
-/** Go's maximum time.Duration (max int64 nanoseconds, ~292 years). */
-const MAX_GO_DURATION_NS = 9_223_372_036_854_775_807;
+/**
+ * Go's maximum time.Duration is max int64 nanoseconds (~292 years); 2^63 is
+ * the nearest exactly-representable float64 (one ns above it). The guard
+ * below is approximate by design — its only job is keeping the formatter
+ * inside its usable domain.
+ */
+const MAX_GO_DURATION_NS = 2 ** 63;
 
 const NS_PER_SECOND = 1_000_000_000;
 const NS_PER_MINUTE = 60 * NS_PER_SECOND;
