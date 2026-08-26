@@ -79,6 +79,30 @@ describe("legacy workers delete", () => {
   // The refusal used to live at emit time, which on this command is *after* the
   // DELETE: `--yes -o env` removed the worker and then exited non-zero with no
   // payload, which a script reads as "the delete failed" and may retry.
+  // Deletion never touches local files, so a malformed local config has no
+  // business standing between the user and a worker they named explicitly.
+  it.live("deletes a remote worker despite an unparseable local config", () => {
+    const repo = project("project_id = [unclosed\n");
+    const otherRef = "qrstuvwxyzabcdefghij";
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      yes: true,
+      routes: {
+        [`GET /v2/projects/${otherRef}/workers/api`]: {
+          status: 200,
+          body: { data: workerResource({ name: "api" }) },
+        },
+        [`DELETE /v2/projects/${otherRef}/workers/api`]: { status: 204 },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersDelete({ name: "api", projectRef: Option.some(otherRef) });
+
+      expect(http.routeKeys).toContain(`DELETE /v2/projects/${otherRef}/workers/api`);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("refuses -o env before deleting anything", () => {
     const repo = project();
     const { layer, http } = setupLegacyWorkers({

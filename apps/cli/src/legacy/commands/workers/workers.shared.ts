@@ -88,6 +88,38 @@ export const legacyLoadWorkersProject = () => loadWorkersProject({ tomlOnly: fal
  */
 export const legacyLoadWorkersProjectForEntryWrite = () => loadWorkersProject({ tomlOnly: true });
 
+/**
+ * As {@link legacyLoadWorkersProject}, but never failing on the project config.
+ *
+ * For commands that only *report* on local state — `status` and `delete` —
+ * which act on the remote worker and consult the project purely to add the
+ * optional source detail. Making it a prerequisite stranded a deployed worker
+ * behind an unrelated local parse error, even when `--project-ref` named the
+ * project explicitly and nothing local was going to be touched.
+ *
+ * A config that will not load reads the same as a project with no
+ * `[workers.*]` entries: no entry, no configured source, so no source row.
+ * Same degrade-rather-than-fail shape as
+ * {@link legacyDescribeWorkerForReporting}, which does it for the source path.
+ */
+export const legacyLoadWorkersProjectForReporting = Effect.fnUntraced(function* () {
+  const loaded = yield* legacyLoadWorkersProject().pipe(Effect.option);
+  if (Option.isSome(loaded)) {
+    return loaded.value;
+  }
+
+  const settings = yield* LegacyCliSettings;
+  const projectRoot = settings.workdir;
+  const supabaseDir = join(projectRoot, "supabase");
+  return {
+    projectRoot,
+    supabaseDir,
+    configPath: join(supabaseDir, "config.toml"),
+    section: readWorkersSection(undefined),
+    workersDir: workersDir(projectRoot),
+  } satisfies LegacyWorkersProject;
+});
+
 export interface LegacyResolvedWorker {
   readonly name: string;
   readonly entry: WorkerEntry | undefined;

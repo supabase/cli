@@ -260,7 +260,8 @@ describe("legacy workers status", () => {
       }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerNotDeployedError);
-      expect((error as WorkerNotDeployedError).suggestion).toContain("supabase workers push api");
+      const suggestion = error instanceof WorkerNotDeployedError ? error.suggestion : "";
+      expect(suggestion).toContain("supabase workers push api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -433,6 +434,30 @@ describe("legacy workers status", () => {
 
       expect(out.stdoutText).toContain("worker_name = ");
       expect(out.stdoutText).not.toContain("undefined");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The project is consulted only for the optional Source row, so an unrelated
+  // local parse error should not stand between the user and a remote worker
+  // they named explicitly.
+  it.live("inspects a remote worker despite an unparseable local config", () => {
+    const repo = project({ "supabase/config.toml": "project_id = [unclosed\n" });
+    const otherRef = "qrstuvwxyzabcdefghij";
+    const { layer, out, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [`GET /v2/projects/${otherRef}/workers/api`]: {
+          status: 200,
+          body: { data: workerResource({ name: "api", runtime: "node" }) },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersStatus({ name: "api", projectRef: Option.some(otherRef) });
+
+      expect(http.routeKeys).toEqual([`GET /v2/projects/${otherRef}/workers/api`]);
+      expect(out.stdoutText).toContain("active");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 

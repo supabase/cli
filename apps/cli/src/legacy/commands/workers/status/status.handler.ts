@@ -18,7 +18,7 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import {
   legacyDescribeWorkerForReporting,
-  legacyLoadWorkersProject,
+  legacyLoadWorkersProjectForReporting,
   legacyValidateWorkerName,
 } from "../workers.shared.ts";
 import type { LegacyWorkersStatusFlags } from "./status.command.ts";
@@ -48,7 +48,7 @@ export const legacyWorkersStatus = Effect.fn("legacy.workers.status")(function* 
   const refSuffix = legacyWorkersProjectRefSuffix(flags.projectRef);
 
   yield* Effect.gen(function* () {
-    const project = yield* legacyLoadWorkersProject();
+    const project = yield* legacyLoadWorkersProjectForReporting();
     const name = yield* legacyValidateWorkerName(flags.name);
     const worker = yield* legacyDescribeWorkerForReporting(project, name);
 
