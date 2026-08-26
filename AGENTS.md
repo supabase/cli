@@ -241,8 +241,8 @@ This repo uses pnpm and Turbo for root-owned quality checks and ordinary unit,
 integration, and e2e tests. Package scripts are the source of truth for those
 workflows; package-local quality work is limited to `types:check` and the
 declared test scripts.
-Nx remains scoped to live and auxiliary workflows and dependency inspection.
-Turbo owns the repository build and generation workflows.
+Nx remains scoped to dependency inspection. Turbo owns repository build,
+generation, quality, live, and auxiliary workflows.
 
 ### Exploring the workspace
 
@@ -257,7 +257,7 @@ nx show project <name> --json
 nx graph
 ```
 
-### Running build/live workflows
+### Running repository workflows
 
 ```sh
 # Build all migrated workspaces and their dependencies
@@ -270,14 +270,15 @@ pnpm run generate
 pnpm exec turbo run supabase#build
 
 # Run the live CLI suite
-nx run supabase:test:live
+pnpm run test:live
 ```
 
-Use `nx show project <name> --json` to inspect retained live/auxiliary targets,
-dependencies, and outputs before running them — do not guess target names. Run
-repo-wide quality checks from the repository root (`pnpm check:all`,
-`pnpm fix:all`), which delegate quality orchestration to Turbo; run ordinary
-tests with the relevant package's declared `pnpm test` scripts.
+Use `nx show project <name> --json` to inspect remaining Nx targets,
+dependencies, and outputs — do not guess target names. Run live and auxiliary
+workflows through their root Turbo entrypoints, and run ordinary tests with the
+relevant package's declared `pnpm test` scripts. Repo-wide quality checks use
+the repository-root `pnpm check:all` and `pnpm fix:all` scripts, which delegate
+orchestration to Turbo.
 
 ## Pull Requests
 

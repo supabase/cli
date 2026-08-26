@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun run generate && next dev",
+    "dev": "next dev",
     "generate": "bun ../../apps/cli/scripts/generate-docs.ts",
     "build": "next build",
     "types:check": "pnpm exec fumadocs-mdx source.config.ts .source && tsc --noEmit --incremental false"
@@ -47,13 +47,6 @@
         "outputs": [
           "{projectRoot}/.source"
         ]
-      },
-      "dev": {
-        "executor": "nx:run-commands",
-        "options": {
-          "command": "pnpm run dev",
-          "cwd": "{projectRoot}"
-        }
       }
     }
   }

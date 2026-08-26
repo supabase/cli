@@ -120,15 +120,5 @@
       "@semantic-release/commit-analyzer",
       "@semantic-release/release-notes-generator"
     ]
-  },
-  "nx": {
-    "targets": {
-      "test:smoke": {
-        "cache": false
-      }
-    },
-    "implicitDependencies": [
-      "cli-go"
-    ]
   }
 }

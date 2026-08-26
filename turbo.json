@@ -94,6 +94,25 @@
       ],
       "outputs": [".next/**"]
     },
+    "supabase#test:live": {
+      "cache": false,
+      "dependsOn": ["supabase#build"],
+      "passThroughEnv": ["*"]
+    },
+    "@supabase/cli-e2e#record": {
+      "cache": false,
+      "dependsOn": ["supabase#build"],
+      "passThroughEnv": ["*"]
+    },
+    "supabase#test:smoke": {
+      "cache": false,
+      "passThroughEnv": ["*"]
+    },
+    "@supabase/docs#dev": {
+      "cache": false,
+      "dependsOn": ["@supabase/docs#generate"],
+      "persistent": true
+    },
     "supabase#test:e2e:run": {
       "cache": false,
       "passThroughEnv": ["*"],

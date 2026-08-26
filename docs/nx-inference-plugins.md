@@ -2,8 +2,8 @@
 
 This repository keeps one local Nx inference plugin for the Go CLI sidecar.
 TypeScript workspaces declare their `types:check` scripts explicitly, and
-Turbo orchestrates repository build, generation, and quality checks. Nx is
-retained for live and auxiliary workflows and dependency inspection.
+Turbo orchestrates repository build, generation, quality, live, and auxiliary
+workflows. Nx is retained for dependency-graph inspection.
 
 ## Current plugin
 
@@ -22,9 +22,8 @@ default binary output is `supabase-go`.
 | `lint:fix`   | `golangci-lint run --fix`        | No     |
 
 These are the plugin's inferred defaults. The explicit package scripts take
-precedence in the final Nx target configuration, and the retained Nx build
-bridge is uncached so live runs always prepare fresh artifacts. Turbo's cache
-policy for ordinary builds is defined in `turbo.json`.
+precedence in the final Nx target configuration. Turbo's cache policy for
+ordinary builds and task workflows is defined in `turbo.json`.
 
 The same Go lint commands are also declared in `apps/cli-go/package.json` so
 they can be invoked directly and by Turbo quality workflows.
@@ -37,12 +36,13 @@ To see the Go project's inferred Nx targets and their configuration:
 nx show project cli-go
 ```
 
-Use Turbo for builds and generation; use Nx for the retained live workflow:
+Use Turbo for task execution; use Nx only to inspect the dependency graph:
 
 ```sh
-pnpm exec turbo run @supabase/cli-go#build
-pnpm exec turbo run supabase#build
-nx run supabase:test:live
+pnpm run build
+pnpm run generate
+pnpm run test:live
+nx show project supabase
 ```
 
 Type checks are explicit package scripts, while formatting, linting, and
@@ -108,5 +108,5 @@ export const createNodesV2: CreateNodesV2 = [
   inputs.
 - Include external tool dependencies in `inputs` when the inferred target is
   cached.
-- Keep Nx plugins focused on build/live graph concerns; declare routine package
+- Keep Nx plugins focused on dependency-graph inference and inspection; declare routine package
   scripts directly when pnpm and Turbo are the consuming interfaces.
