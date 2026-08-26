@@ -354,8 +354,11 @@ Nx is the task runner for this repo. It handles caching, parallelism, and cross-
 
 ```sh
 nx run @supabase/api:types:check
-nx run supabase:test
 ```
+
+Ordinary unit, integration, and e2e tests are package-local scripts orchestrated
+from the workspace root with pnpm and Turbo; see [Standard package scripts](#standard-package-scripts).
+The live suite remains an Nx target documented below.
 
 **Run a target across all projects:**
 
@@ -364,10 +367,9 @@ nx run-many -t types:check
 nx run-many -t lint:check fmt:check types:check knip:check
 ```
 
-**Run only affected projects** (compared to `main`):
+**Run only affected projects** (compared to `main`) for quality targets:
 
 ```sh
-nx affected -t test
 nx affected -t types:check
 ```
 
