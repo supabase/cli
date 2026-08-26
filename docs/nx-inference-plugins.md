@@ -1,117 +1,110 @@
 # Nx Inference Plugins
 
-Some tasks are repetitive to configure: every package that type-checks needs the same executor, command, inputs, and caching settings. Instead of duplicating that configuration across every `package.json`, this repo uses local Nx inference plugins to derive tasks automatically from the packages that need them.
+This repository keeps one local Nx inference plugin for the Go CLI sidecar.
+TypeScript workspaces declare their `types:check` scripts explicitly, and
+Turbo orchestrates the repository quality checks. Nx is retained for the CLI
+build and live-test graph.
 
-## What inference plugins do
+## Current plugin
 
-An inference plugin is a TypeScript file under `tools/nx-plugins/src/` that exports a `createNodesV2` function. Nx calls this function during project graph construction and merges the returned targets into each matching project's configuration. Targets that come from a plugin are called _inferred targets_ — they don't live in any project file, but they show up in `nx show project` output and work exactly like explicitly declared targets.
+### `go.plugin.ts`
 
-The plugin decides which projects get which targets by reading each project's `package.json` and checking for a signal — in the case of TypeScript, the presence of a `typescript` devDependency. Projects that don't match the signal are simply skipped.
+**Source:** `tools/nx-plugins/src/go.plugin.ts`
 
-## Current plugins
+The plugin matches `apps/*/go.mod` and adds the Go sidecar's build and lint
+targets to the Nx project graph. The default project name is `cli-go` and the
+default binary output is `supabase-go`.
 
-### `typescript.plugin.ts`
+| Target       | Command                          | Cached |
+| ------------ | -------------------------------- | ------ |
+| `build`      | `go build -o supabase-go .`      | Yes    |
+| `lint:check` | `golangci-lint run --timeout 5m` | Yes    |
+| `lint:fix`   | `golangci-lint run --fix`        | No     |
 
-**Source:** `tools/nx-plugins/src/typescript.plugin.ts`
+These are the plugin's inferred defaults. The explicit package scripts take
+precedence in the final Nx target configuration; Turbo's cache policy is
+defined in `turbo.json`.
 
-Infers a `types:check` target for any workspace package that has `typescript` in its `devDependencies`.
-
-**Detection signal:** `package.json` must have `"typescript"` under `devDependencies`.
-
-**No per-project config** — the command is always `tsc --noEmit`.
-
-**Inferred targets:**
-
-| Target        | Command        | Cached | Inputs                                  |
-| ------------- | -------------- | ------ | --------------------------------------- |
-| `types:check` | `tsc --noEmit` | Yes    | `default`, `typescript` package version |
+The same Go lint commands are also declared in `apps/cli-go/package.json` so
+they can be invoked directly and by Turbo quality workflows.
 
 ## How to discover inferred targets
 
-To see all targets for a project, including inferred ones:
+To see the Go project's inferred Nx targets and their configuration:
 
 ```sh
-nx show project @supabase/api
+nx show project cli-go
 ```
 
-The inferred target (`types:check`) will appear in the output under the **Checks** target group even though it is not declared anywhere in `packages/api/package.json`.
-
-To run inferred targets the same way you would any other:
+Build and live workflows can invoke the inferred targets through Nx:
 
 ```sh
-nx run @supabase/api:types:check
-nx run-many -t types:check
+nx run cli-go:build
+nx run supabase:test:live
 ```
 
-Linting (`oxlint`), formatting (`oxfmt`), and unused-code analysis (`knip`) are not inferred per package: they run repo-wide as `lint:*`/`fmt:*`/`knip:*` targets declared on the `@supabase/root` project in the root `package.json`, configured by `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root.
+Type checks are explicit package scripts, while formatting, linting, and
+unused-code analysis are root-owned scripts. Run all repository quality checks
+with Turbo from the root:
+
+```sh
+pnpm run check:all
+pnpm run fix:all
+```
 
 ## Adding a new inference plugin
 
-1. Create a new file at `tools/nx-plugins/src/<name>.plugin.ts`
-2. Export a `createNodesV2` function typed as `CreateNodesV2` from `@nx/devkit`
-3. Choose a glob pattern for the files that signal a project should receive the target (usually `{apps,packages}/*/package.json` filtered by content)
-4. Return an array of `[configFilePath, { projects: { [projectRoot]: { targets } } }]` tuples for each matching file
-5. Register the plugin in `nx.json` under the `"plugins"` array
+1. Create a new file at `tools/nx-plugins/src/<name>.plugin.ts`.
+2. Export a `createNodesV2` function typed as `CreateNodesV2` from `@nx/devkit`.
+3. Choose a glob pattern for files that signal a project should receive the
+   target.
+4. Return `[configFilePath, { projects: { [projectRoot]: { targets } } }]`
+   tuples for each matching file.
+5. Register the plugin in `nx.json` under the `plugins` array.
 
 ```typescript
 import type { CreateNodesV2 } from "@nx/devkit";
 import { dirname } from "node:path";
-import { readPkgJson } from "./parse-pkg-json";
 
 export const createNodesV2: CreateNodesV2 = [
-  "{apps,packages}/*/package.json",
-  (packageJsonFiles, _options, context) => {
-    return packageJsonFiles.flatMap((packageJsonPath) => {
-      const pkgJson = readPkgJson(context.workspaceRoot, packageJsonPath);
-
-      // Check for a signal that this project needs the target
-      if (!pkgJson.myTool) return [];
-
-      const projectRoot = dirname(packageJsonPath);
+  "apps/*/tool.config",
+  (configFiles, _options, _context) =>
+    configFiles.map((configPath) => {
+      const projectRoot = dirname(configPath);
 
       return [
-        [
-          packageJsonPath,
-          {
-            projects: {
-              [projectRoot]: {
-                targets: {
-                  "my-tool:check": {
-                    command: "my-tool-binary",
-                    options: { cwd: "{projectRoot}" },
-                    cache: true,
-                    inputs: ["default", "sharedGlobals", { externalDependencies: ["my-tool"] }],
-                  },
+        configPath,
+        {
+          projects: {
+            [projectRoot]: {
+              targets: {
+                "tool:check": {
+                  command: "tool check",
+                  options: { cwd: "{projectRoot}" },
                 },
               },
             },
           },
-        ],
+        },
       ];
-    });
-  },
+    }),
 ];
 ```
 
 ```json
 // nx.json
 {
-  "plugins": [
-    "./tools/nx-plugins/src/typescript.plugin.ts",
-    "./tools/nx-plugins/src/my-tool.plugin.ts"
-  ]
+  "plugins": ["./tools/nx-plugins/src/go.plugin.ts", "./tools/nx-plugins/src/my-tool.plugin.ts"]
 }
 ```
 
 ### Design notes
 
-- **Use the package's existing config as the detection signal.** Avoid introducing a separate marker file — the tool's own configuration object in `package.json` is the canonical indicator.
-- **Prefer fine-grained inputs.** Read the tool's entry/include patterns from the config object and use them as inputs directly. This avoids false cache misses.
-- **Include `externalDependencies`.** Always include `{ externalDependencies: ['<tool-package-name>'] }` in inputs so the cache invalidates when the tool version changes.
-- **Commands, not scripts.** Hardcode the binary name (e.g. `tsc`) rather than delegating to a `pnpm run` script. This keeps the target self-contained and allows removing the corresponding script from `package.json#scripts`.
-
-## How TypeScript plugins are loaded
-
-With Node 24 and Nx 23.1, Nx loads ESM `.ts` plugins using Node's native TypeScript type-stripping. This is the sole supported plugin loader path. Keep plugins strip-safe (no syntax that requires a transform) and use explicit `.ts` extensions on relative imports.
-
-TypeScript 7 is the workspace's sole TypeScript dependency. Inferred type checks invoke its `tsc` executable directly.
+- Use the package's existing configuration as the detection signal. Avoid
+  introducing a separate marker file when the tool's own config is available.
+- Prefer fine-grained inputs so cache invalidation follows the tool's actual
+  inputs.
+- Include external tool dependencies in `inputs` when the inferred target is
+  cached.
+- Keep Nx plugins focused on build/live graph concerns; declare routine package
+  scripts directly when pnpm and Turbo are the consuming interfaces.

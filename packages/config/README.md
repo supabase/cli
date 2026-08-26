@@ -82,9 +82,17 @@ When both `supabase/config.json` and `supabase/config.toml` exist in one project
 
 ## Development
 
+Repo-wide quality checks run from the repository root:
+
 ```sh
-pnpm run check:all   # Run all quality checks in parallel
-pnpm run fix:all     # Auto-fix lint, format, and unused exports in parallel
+pnpm check:all
+pnpm fix:all
+```
+
+Package-local checks and development commands run from `packages/config`:
+
+```sh
+pnpm types:check
 pnpm run test        # Run tests
 pnpm run build       # Generate dist/schema.json
 ```

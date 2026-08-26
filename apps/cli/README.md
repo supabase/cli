@@ -135,11 +135,17 @@ Useful companion docs:
 
 ## Development
 
-From `apps/cli`:
+Repo-wide quality checks run from the repository root:
 
 ```sh
 pnpm check:all
 pnpm fix:all
+```
+
+Package-local checks and tests run from `apps/cli`:
+
+```sh
+pnpm types:check
 pnpm test
 ```
 

@@ -12,8 +12,7 @@
     "test:unit:run": "bun --bun vitest run --project unit --coverage.reportsDirectory=coverage/unit",
     "test:integration": "pnpm exec turbo run @supabase/process-compose#test:integration:run --",
     "test:integration:run": "bun --bun vitest run --project integration --coverage.reportsDirectory=coverage/integration",
-    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name,@supabase/root",
-    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name,@supabase/root"
+    "types:check": "tsc --noEmit"
   },
   "dependencies": {
     "effect": "catalog:"

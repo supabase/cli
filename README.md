@@ -124,10 +124,12 @@ This repository is a pnpm monorepo. The published package lives in `apps/cli`.
 
 ```sh
 pnpm install
+pnpm check:all
+
 cd apps/cli
 
+pnpm types:check
 pnpm dev:next -- --help
-pnpm check:all
 pnpm run test:unit && pnpm run test:integration
 ```
 
@@ -153,11 +155,22 @@ We love focused pull requests with a clear problem, a small surface area, and te
 
 Open an issue first and wait for a maintainer to add the `open-for-contribution` label before starting work — external pull requests that don't link a labeled, open issue are closed automatically. See [CONTRIBUTING.md](./CONTRIBUTING.md#contribution-workflow) for the full workflow.
 
-Before opening a PR, run the checks for the workspace you touched.
+Before opening a PR, run repo-wide quality checks from the repository root,
+then run the relevant package tests from each workspace you touched. For each
+touched TypeScript workspace (or any workspace that declares it), also run its
+`pnpm types:check` script. For example:
 
 ```sh
+# From the repository root:
 pnpm check:all
+
+# From apps/cli (a touched TypeScript workspace):
+cd apps/cli
+pnpm types:check
 pnpm run test:unit && pnpm run test:integration
+
+# Repeat the relevant package tests for every touched workspace; run
+# pnpm types:check there too when that workspace declares the script.
 ```
 
 PR titles must use conventional commits, for example:

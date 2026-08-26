@@ -2,7 +2,7 @@
   "$schema": "./node_modules/nx/schemas/nx-schema.json",
   "analytics": false,
   "parallel": 6,
-  "plugins": ["./tools/nx-plugins/src/typescript.plugin.ts", "./tools/nx-plugins/src/go.plugin.ts"],
+  "plugins": ["./tools/nx-plugins/src/go.plugin.ts"],
   "namedInputs": {
     "sharedGlobals": ["{workspaceRoot}/package.json", "{workspaceRoot}/pnpm-workspace.yaml"],
     "default": ["{projectRoot}/**/*", "sharedGlobals"],
