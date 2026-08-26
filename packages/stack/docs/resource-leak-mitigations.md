@@ -28,10 +28,11 @@ all join that serialized state machine.
 The application is assembled before the deterministic listener binds and has
 only three routes:
 
-- `GET /owner` projects the lifecycle state, readiness, owner session, and
-  daemon CLI version;
-- `POST /stop` accepts an ownership id and exact owner session id, returns a
-  flushed `202`, and lets the caller wait for that session to end; and
+- `GET /owner` projects either a supervisor lifecycle/version or a maintenance
+  operation;
+- `POST /stop` accepts an ownership id, exact owner session id, and explicit or
+  replacement intent, returns a flushed `202` for a supervisor and `423` for a
+  maintenance lease, and lets the caller wait for that session to end; and
 - `POST /rpc` serves same-version Effect RPC over framed NDJSON when
   `SupervisorSession.runtimeStack` has published the runtime. Requests carry
   the expected ownership id and owner session; a stale session fence is
@@ -43,7 +44,8 @@ waits for the targeted owner session and document transition, then lets the
 owner dispose the runtime before releasing control. A stale delayed stop gets
 `409` from the new owner and cannot tear it down.
 
-Every shutdown source submits to one session actor. Once accepted, the actor
+Every shutdown source submits to one session actor. The first accepted intent
+wins. Once accepted, the actor
 publishes `stopping`, interrupts and joins startup, attempts runtime stop and
 disposal, closes the runtime scope, persists terminal state, and closes the
 ownership listener last, even when an earlier step fails. It preserves the
@@ -51,6 +53,8 @@ first cleanup failure and its exact `Cause` after all steps have run. Node and
 Bun close listeners gracefully after flushing the
 accepted `202`; the stable client drains that response and then polls the exact
 session fence, so listener shutdown cannot be stranded by an unread body.
+Explicit stop intent is persisted before listener release; replacement intent
+keeps the stopped document eligible for the authorized upgrade start.
 
 If the owner is gone, the next lifecycle operation acquires control for the
 stack id, force-removes deterministic Docker containers, reconciles persisted

@@ -38,7 +38,7 @@ const acquireIsolatedCollisionOwner = () =>
     for (let attempt = 0; attempt < 32; attempt += 1) {
       const stackId = randomBytes(32).toString("hex");
       const collidingStackId = `${stackId.slice(0, 10)}${randomBytes(27).toString("hex")}`;
-      const acquisition = yield* acquireControl({ stackId }).pipe(
+      const acquisition = yield* acquireControl({ stackId, maintenanceOperation: "update" }).pipe(
         Effect.timeout("5 seconds"),
         Effect.exit,
       );
@@ -55,7 +55,7 @@ const acquireIsolatedStackOwner = (workspacePath: string) =>
     for (let attempt = 0; attempt < 32; attempt += 1) {
       const stackName = `test-${randomBytes(8).toString("hex")}`;
       const stackId = deriveStackId(environment.identity, stackName);
-      const acquisition = yield* acquireControl({ stackId }).pipe(
+      const acquisition = yield* acquireControl({ stackId, maintenanceOperation: "update" }).pipe(
         Effect.timeout("5 seconds"),
         Effect.exit,
       );
@@ -131,7 +131,7 @@ describe("managed stack recovery journeys", () => {
         const environment = yield* ensureEnvironment(workspace);
         cpSync(workspace, copied, { recursive: true });
         const stackId = deriveStackId(environment.identity, "default");
-        const ownership = yield* acquireControl({ stackId });
+        const ownership = yield* acquireControl({ stackId, maintenanceOperation: "update" });
         if (!isControlOwnership(ownership)) throw new Error("expected stack control ownership");
 
         const readFiber = yield* Effect.forkScoped(
@@ -190,6 +190,7 @@ describe("managed stack recovery journeys", () => {
                 controlProtocolVersion: 1 as const,
                 ownershipId: ownerId,
                 ownerSessionId: "repair-session",
+                kind: "supervisor" as const,
                 state: "running" as const,
                 ready: true,
                 daemonCliVersion: "test",
@@ -204,7 +205,10 @@ describe("managed stack recovery journeys", () => {
           const manager = yield* ManagedStackManager;
           const environment = yield* ensureEnvironment(workspace);
           repairId = deriveRepairOwnershipId(environment.identity);
-          const repairOwner = yield* acquireControl({ stackId: repairId });
+          const repairOwner = yield* acquireControl({
+            stackId: repairId,
+            maintenanceOperation: "repair",
+          });
           if (!isControlOwnership(repairOwner)) throw new Error("expected repair ownership");
           repairEndpointUrl = repairOwner.endpoint.url;
           const stackOwner = yield* acquireIsolatedStackOwner(workspace);

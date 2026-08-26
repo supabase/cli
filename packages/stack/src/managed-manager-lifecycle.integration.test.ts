@@ -49,7 +49,7 @@ describe("managed stack lifecycle journeys", () => {
         const portDocument = exactCoreDocument(apiPort, dbPort);
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
-        const owner = yield* acquireControl({ stackId });
+        const owner = yield* acquireControl({ stackId, maintenanceOperation: "update" });
         if (!isControlOwnership(owner)) throw new Error("expected stack control ownership");
         const started = yield* startManagedStack(manager, {
           workspacePath: workspace,
@@ -99,7 +99,7 @@ describe("managed stack lifecycle journeys", () => {
         }
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
-        const owner = yield* acquireControl({ stackId });
+        const owner = yield* acquireControl({ stackId, maintenanceOperation: "update" });
         if (!isControlOwnership(owner)) throw new Error("expected stack control ownership");
         const started = yield* startManagedStack(manager, {
           workspacePath: workspace,
@@ -168,6 +168,7 @@ describe("managed stack lifecycle journeys", () => {
             controlProtocolVersion: 1,
             ownershipId: stackId,
             ownerSessionId,
+            kind: "supervisor",
             state: "starting",
             ready: false,
             daemonCliVersion: "test",
@@ -193,6 +194,38 @@ describe("managed stack lifecycle journeys", () => {
         yield* Fiber.join(stopFiber);
         expect(stopped.value).toBe(true);
         expect((yield* manager.inspectStack(stackId))?.lifecycle).toBe("stopped");
+      }),
+    ).pipe(
+      Effect.provide(layer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+      Effect.provide(httpTransportClientLayer),
+    );
+  });
+
+  it.live("does not rewrite an in-progress delete during stop cleanup", () => {
+    const { layer, workspace } = setup();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const manager = yield* ManagedStackManager;
+        const environment = yield* ensureEnvironment(workspace);
+        const stackId = deriveStackId(environment.identity, "default");
+        const owner = yield* acquireControl({ stackId, maintenanceOperation: "update" });
+        if (!isControlOwnership(owner)) throw new Error("expected stack control ownership");
+        const started = yield* startManagedStack(manager, {
+          workspacePath: workspace,
+          stackName: "default",
+          portDocument: automaticDocument(),
+          ownership: owner,
+          lifecycle: "running",
+        });
+        yield* releaseLease(started);
+        yield* manager.recordLifecycle(owner, { stackId, lifecycle: "deleting" });
+        yield* owner.close;
+        yield* stopManagedStack({ workspacePath: workspace });
+        expect((yield* manager.inspectStack(stackId))?.lifecycle).toBe("deleting");
       }),
     ).pipe(
       Effect.provide(layer),
@@ -300,7 +333,7 @@ describe("managed stack lifecycle journeys", () => {
         const manager = yield* ManagedStackManager;
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
-        const owner = yield* acquireControl({ stackId });
+        const owner = yield* acquireControl({ stackId, maintenanceOperation: "update" });
         if (!isControlOwnership(owner)) throw new Error("expected ownership");
         const initial = yield* startManagedStack(manager, {
           workspacePath: workspace,
@@ -352,7 +385,7 @@ describe("managed stack lifecycle journeys", () => {
         const manager = yield* ManagedStackManager;
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
-        const previousOwner = yield* acquireControl({ stackId });
+        const previousOwner = yield* acquireControl({ stackId, maintenanceOperation: "update" });
         if (!isControlOwnership(previousOwner)) throw new Error("expected ownership");
         const starting = yield* startManagedStack(manager, {
           workspacePath: workspace,
@@ -362,7 +395,7 @@ describe("managed stack lifecycle journeys", () => {
         });
         yield* releaseLease(starting);
         yield* previousOwner.close;
-        const nextOwner = yield* acquireControl({ stackId });
+        const nextOwner = yield* acquireControl({ stackId, maintenanceOperation: "update" });
         if (!isControlOwnership(nextOwner)) throw new Error("expected reattached ownership");
         const recovered = yield* startManagedStack(manager, {
           workspacePath: workspace,
@@ -394,7 +427,7 @@ describe("managed stack lifecycle journeys", () => {
         const manager = yield* ManagedStackManager;
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
-        const owner = yield* acquireControl({ stackId });
+        const owner = yield* acquireControl({ stackId, maintenanceOperation: "update" });
         if (!isControlOwnership(owner)) throw new Error("expected ownership");
         const running = yield* startManagedStack(manager, {
           workspacePath: workspace,
@@ -453,7 +486,7 @@ describe("managed stack lifecycle journeys", () => {
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
         documentPath = yield* managedStackDocumentPathEffect(stateRoot, stackId);
-        const owner = yield* acquireControl({ stackId });
+        const owner = yield* acquireControl({ stackId, maintenanceOperation: "update" });
         if (!isControlOwnership(owner)) throw new Error("expected ownership");
         const started = yield* startManagedStack(manager, {
           workspacePath: workspace,
@@ -477,13 +510,14 @@ describe("managed stack lifecycle journeys", () => {
             body: JSON.stringify({
               ownershipId: stackId,
               ownerSessionId: probe.status.ownerSessionId,
+              intent: "explicit",
             }),
           }),
         );
-        expect(response.status).toBe(202);
+        expect(response.status).toBe(423);
         yield* Effect.promise(() => response.arrayBuffer());
 
-        const replacement = yield* manager.acquireControl(stackId);
+        const replacement = yield* manager.acquireControl(stackId, "update");
         expect(isControlOwnership(replacement)).toBe(false);
 
         yield* Deferred.succeed(release, void 0);
@@ -534,7 +568,10 @@ describe("managed stack lifecycle journeys", () => {
           const manager = yield* ManagedStackManager;
           const originalEnvironment = yield* ensureEnvironment(workspace);
           const originalStackId = deriveStackId(originalEnvironment.identity, "default");
-          const originalOwner = yield* acquireControl({ stackId: originalStackId });
+          const originalOwner = yield* acquireControl({
+            stackId: originalStackId,
+            maintenanceOperation: "update",
+          });
           if (!isControlOwnership(originalOwner)) throw new Error("expected original ownership");
           const original = yield* startManagedStack(manager, {
             workspacePath: workspace,
@@ -548,7 +585,10 @@ describe("managed stack lifecycle journeys", () => {
           mkdirSync(copied);
           const copiedEnvironment = yield* ensureEnvironment(copied);
           const copiedStackId = deriveStackId(copiedEnvironment.identity, "default");
-          const copiedOwner = yield* acquireControl({ stackId: copiedStackId });
+          const copiedOwner = yield* acquireControl({
+            stackId: copiedStackId,
+            maintenanceOperation: "update",
+          });
           if (!isControlOwnership(copiedOwner)) throw new Error("expected copied ownership");
           const copiedStack = yield* startManagedStack(manager, {
             workspacePath: copied,
@@ -614,7 +654,10 @@ describe("managed stack lifecycle journeys", () => {
         const manager = yield* ManagedStackManager;
         const originalEnvironment = yield* ensureEnvironment(workspace);
         const originalStackId = deriveStackId(originalEnvironment.identity, "default");
-        const originalOwner = yield* acquireControl({ stackId: originalStackId });
+        const originalOwner = yield* acquireControl({
+          stackId: originalStackId,
+          maintenanceOperation: "update",
+        });
         if (!isControlOwnership(originalOwner)) throw new Error("expected original ownership");
         const original = yield* startManagedStack(manager, {
           workspacePath: workspace,
@@ -628,7 +671,10 @@ describe("managed stack lifecycle journeys", () => {
         mkdirSync(copied);
         const copiedEnvironment = yield* ensureEnvironment(copied);
         const copiedStackId = deriveStackId(copiedEnvironment.identity, "default");
-        const copiedOwner = yield* acquireControl({ stackId: copiedStackId });
+        const copiedOwner = yield* acquireControl({
+          stackId: copiedStackId,
+          maintenanceOperation: "update",
+        });
         if (!isControlOwnership(copiedOwner)) throw new Error("expected copied ownership");
         const copiedStack = yield* startManagedStack(manager, {
           workspacePath: copied,
@@ -668,7 +714,7 @@ describe("managed stack lifecycle journeys", () => {
         const manager = yield* ManagedStackManager;
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
-        const owner = yield* acquireControl({ stackId });
+        const owner = yield* acquireControl({ stackId, maintenanceOperation: "update" });
         if (!isControlOwnership(owner)) throw new Error("expected ownership");
         const started = yield* startManagedStack(manager, {
           workspacePath: workspace,
@@ -712,7 +758,7 @@ describe("managed stack lifecycle journeys", () => {
         const portDocument = exactCoreDocument(apiPort, dbPort);
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
-        const previousOwner = yield* acquireControl({ stackId });
+        const previousOwner = yield* acquireControl({ stackId, maintenanceOperation: "update" });
         if (!isControlOwnership(previousOwner)) throw new Error("expected ownership");
         const previous = yield* startManagedStack(manager, {
           workspacePath: workspace,
@@ -727,7 +773,7 @@ describe("managed stack lifecycle journeys", () => {
         yield* manager.recordLifecycle(previousOwner, { stackId, lifecycle: "deleting" });
         yield* previousOwner.close;
 
-        const nextOwner = yield* acquireControl({ stackId });
+        const nextOwner = yield* acquireControl({ stackId, maintenanceOperation: "update" });
         if (!isControlOwnership(nextOwner)) throw new Error("expected recovered ownership");
         const restarted = yield* startManagedStack(manager, {
           workspacePath: workspace,

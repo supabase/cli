@@ -76,7 +76,11 @@ describe("SupervisorControlServer", () => {
               fetch(`http://127.0.0.1:${address.port}/stop`, {
                 method: "POST",
                 headers: { "content-type": "application/json" },
-                body: JSON.stringify({ ownershipId: "stack", ownerSessionId: "session" }),
+                body: JSON.stringify({
+                  ownershipId: "stack",
+                  ownerSessionId: "session",
+                  intent: "explicit",
+                }),
               }),
             );
             const body = yield* Effect.promise(() => response.text());

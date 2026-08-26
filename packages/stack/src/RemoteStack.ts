@@ -35,7 +35,11 @@ import {
   type StackRpcFence,
 } from "./StackRpc.ts";
 import { StackServiceState } from "./StackServiceState.ts";
-import { CONTROL_PROTOCOL_VERSION, ControlOwnerStatusSchema } from "./DaemonProtocol.ts";
+import {
+  CONTROL_PROTOCOL_VERSION,
+  isControlSupervisorStatus,
+  type ControlSupervisorStatus,
+} from "./DaemonProtocol.ts";
 
 interface RemoteOwnerDescriptor {
   readonly ownershipId: string;
@@ -159,7 +163,7 @@ const makeRemoteRpcClient = (
   endpoint: ControlEndpoint,
   options: RemoteStackOptions,
 ): Effect.Effect<
-  { readonly client: GeneratedRpcClient; readonly owner: typeof ControlOwnerStatusSchema.Type },
+  { readonly client: GeneratedRpcClient; readonly owner: ControlSupervisorStatus },
   DaemonUpgradeRequired | StackRpcTransportError | StackRpcProtocolError,
   HttpTransportClient | ScopeType
 > =>
@@ -170,6 +174,11 @@ const makeRemoteRpcClient = (
     const ownerStatus = yield* control
       .readOwner(endpoint, expectedOwner.ownershipId)
       .pipe(Effect.mapError((error) => controlErrorToRpc(endpoint, "owner", error)));
+    if (!isControlSupervisorStatus(ownerStatus)) {
+      return yield* Effect.fail(
+        protocolError(endpoint, "owner", `Managed stack is busy with ${ownerStatus.operation}`),
+      );
+    }
     if (options.cliVersion !== ownerStatus.daemonCliVersion)
       return yield* Effect.fail(
         new DaemonUpgradeRequired({
@@ -278,14 +287,19 @@ export const RemoteStack = {
           const owner = options.owner;
           // Closing the RPC scope is best-effort cleanup. The control-plane
           // stop is fenced to the session captured during the owner handshake
-          // and must still be sent when a stream/client finalizer fails. Keep
-          // the handoff uninterruptible so an interrupted scope close cannot
-          // skip the stop; the fenced stop remains the observable operation
-          // and its typed failure is preserved for callers.
+          // and must still be sent when a stream/client finalizer fails. The
+          // cleanup handoff is best-effort and interruptible so cancellation
+          // cannot pin the caller behind the control-plane stop timeout.
           return Effect.uninterruptibleMask((restore) =>
             Effect.exit(restore(closeRpcScope)).pipe(
               Effect.andThen(
-                control.stopSession(endpoint, owner.ownershipId, owner.ownerSessionId),
+                restore(
+                  control.stopSession(endpoint, owner.ownershipId, owner.ownerSessionId),
+                ).pipe(
+                  Effect.catchTag("ControlMaintenanceBusyError", (error) =>
+                    Effect.fail(new ControlProtocolError({ endpoint, cause: error })),
+                  ),
+                ),
               ),
             ),
           );

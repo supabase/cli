@@ -65,7 +65,10 @@ stable cross-build control protocol is `GET /owner` plus session-fenced
 `POST /stop`; runtime operations use same-version Effect RPC over framed NDJSON
 at `POST /rpc`. The complete application is installed before the listener
 binds, and runtime RPC is available only after the supervisor publishes a
-running lifecycle state.
+running lifecycle state. Owner discovery distinguishes a versioned supervisor
+from an unversioned maintenance lease. Stop requests carry either explicit-user
+or upgrade-replacement intent so a user stop cannot be undone by a delayed
+replacement child.
 
 The CLI version must exactly match the daemon CLI version before a remote
 runtime client is constructed. Released and preview CLI versions are immutable

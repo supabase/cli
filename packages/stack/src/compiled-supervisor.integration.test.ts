@@ -175,11 +175,12 @@ const stop = async (
   endpoint: ControlEndpoint,
   ownershipId: string,
   ownerSessionId: string,
+  intent: "explicit" | "replacement" = "explicit",
 ): Promise<Response> =>
   fetch(`${endpoint.url}/stop`, {
     method: "POST",
     headers: { "content-type": "application/json", connection: "close" },
-    body: JSON.stringify({ ownershipId, ownerSessionId }),
+    body: JSON.stringify({ ownershipId, ownerSessionId, intent }),
   });
 
 const waitForProcessExit = (pid: number): Promise<void> => {
@@ -330,9 +331,9 @@ describe("compiled Bun detached supervisor", () => {
       const oldPorts = oldDocument["ports"];
       writeFileSync(sentinel, "upgrade-restart-preserve");
 
-      expect(await stop(endpoint, oldOwner.ownershipId, oldOwner.ownerSessionId)).toMatchObject({
-        status: 202,
-      });
+      expect(
+        await stop(endpoint, oldOwner.ownershipId, oldOwner.ownerSessionId, "replacement"),
+      ).toMatchObject({ status: 202 });
       await waitForProcessExit(oldRuntime.pid);
       await first.exited;
       await waitForEndpointUnavailable(endpoint);

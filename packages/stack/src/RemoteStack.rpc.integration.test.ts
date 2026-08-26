@@ -32,11 +32,17 @@ import {
   StackUnavailableError,
 } from "./errors.ts";
 import { acquireControl, ControlTransport, isControlOwnership } from "./managed/control.ts";
+import { isControlSupervisorStatus, type ControlOwnerStatus } from "./DaemonProtocol.ts";
 import { makeSupervisorControlApplication } from "./SupervisorControlServer.ts";
 import { makeSupervisorSessionFixture } from "../tests/helpers/SupervisorSessionFixture.ts";
 import { makeTestStack } from "./testing.ts";
 
 const ownerId = "b".repeat(64);
+
+const supervisorStatus = (status: ControlOwnerStatus) => {
+  if (!isControlSupervisorStatus(status)) throw new Error("expected supervisor status");
+  return status;
+};
 
 const controlTransportLayer =
   typeof Bun === "undefined"
@@ -48,6 +54,7 @@ const remoteOwner = (ownerSessionId: string) => ({
   controlProtocolVersion: 1 as const,
   ownershipId: ownerId,
   ownerSessionId,
+  kind: "supervisor" as const,
   state: "running" as const,
   ready: true,
   daemonCliVersion: "test",
@@ -93,6 +100,7 @@ const startMalformedServer = (frame: string) =>
               controlProtocolVersion: 1,
               ownershipId: ownerId,
               ownerSessionId: "malformed-session",
+              kind: "supervisor",
               state: "running",
               ready: true,
               daemonCliVersion: "test",
@@ -166,6 +174,7 @@ const startDisconnectServer = (
               controlProtocolVersion: 1,
               ownershipId: ownerId,
               ownerSessionId: "disconnect-session",
+              kind: "supervisor",
               state: "running",
               ready: true,
               daemonCliVersion: "test",
@@ -353,7 +362,7 @@ it.live("executes every Stack operation over the same-version RPC endpoint", () 
         });
         if (!isControlOwnership(owner)) throw new Error("expected ownership");
         yield* lifecycle.setClose(owner.close);
-        const ownerStatus = yield* owner.ownerStatus;
+        const ownerStatus = supervisorStatus(yield* owner.ownerStatus);
         const rpcPaths: Array<string> = [];
         const recordingTransportLayer = Layer.effect(
           HttpTransportClient,
@@ -532,7 +541,7 @@ it.live("fences stale RPC clients after deterministic endpoint replacement", () 
           });
 
         const first = yield* makeOwner(sessionA, "test");
-        const firstStatus = yield* first.owner.ownerStatus;
+        const firstStatus = supervisorStatus(yield* first.owner.ownerStatus);
         const staleLayer = RemoteStack.layer(first.owner.endpoint, {
           cliVersion: "test",
           owner: {
@@ -556,7 +565,7 @@ it.live("fences stale RPC clients after deterministic endpoint replacement", () 
         }
         expect(handlerCalls).toBe(1);
 
-        const replacementStatus = yield* replacement.owner.ownerStatus;
+        const replacementStatus = supervisorStatus(yield* replacement.owner.ownerStatus);
         const replacementLayer = RemoteStack.layer(replacement.owner.endpoint, {
           cliVersion: "test",
           owner: {
@@ -696,6 +705,42 @@ it.live("interrupts an owned server RPC request when the client disconnects", ()
   ).pipe(Effect.provide(controlTransportLayer)),
 );
 
+it.effect("interrupts a remote stop after the cleanup handoff", () =>
+  Effect.gen(function* () {
+    const endpoint = { hostname: "127.0.0.1", port: 12353, url: "http://127.0.0.1:12353" };
+    const stopStarted = yield* Deferred.make<void>();
+    const transport = Layer.succeed(HttpTransportClient, {
+      request: (_requestEndpoint, path) => {
+        if (path === "/owner") return Effect.succeed(Response.json(remoteOwner("stop-session")));
+        if (path === "/stop") {
+          return Deferred.succeed(stopStarted, undefined).pipe(Effect.andThen(Effect.never));
+        }
+        return Effect.die(`unexpected request ${path}`);
+      },
+    });
+    const layer = RemoteStack.layer(endpoint, {
+      cliVersion: "test",
+      owner: {
+        ownershipId: ownerId,
+        ownerSessionId: "stop-session",
+        controlProtocolVersion: 1,
+        daemonCliVersion: "test",
+      },
+    }).pipe(Layer.provide(transport));
+    const request = yield* Effect.forkChild(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const remote = yield* Stack;
+          yield* remote.stop();
+        }).pipe(Effect.provide(layer)),
+      ),
+    );
+    yield* Deferred.await(stopStarted);
+    yield* Fiber.interrupt(request);
+    expect(request.pollUnsafe()).not.toBeUndefined();
+  }),
+);
+
 it.live("closes an owner while another client still consumes an RPC stream", () =>
   live(
     Effect.scoped(
@@ -753,6 +798,7 @@ it.live("closes an owner while another client still consumes an RPC stream", () 
             yield* transport.requestStop(owner.endpoint, {
               ownershipId: owner.ownershipId,
               ownerSessionId,
+              intent: "explicit",
             });
             return yield* lifecycle.awaitShutdown.pipe(Effect.timeout("2 seconds"), Effect.exit);
           }).pipe(Effect.provide(layer)),
@@ -778,6 +824,7 @@ it.effect("times out a hung fast unary RPC with endpoint and procedure context",
                   controlProtocolVersion: 1,
                   ownershipId: ownerId,
                   ownerSessionId: "hung-session",
+                  kind: "supervisor",
                   state: "running",
                   ready: true,
                   daemonCliVersion: "test",
@@ -839,6 +886,7 @@ it.effect("does not apply the fast timeout to a long-running StartStack RPC", ()
                   controlProtocolVersion: 1,
                   ownershipId: ownerId,
                   ownerSessionId: "long-start-session",
+                  kind: "supervisor",
                   state: "running",
                   ready: true,
                   daemonCliVersion: "test",
@@ -887,6 +935,7 @@ it.effect("does not apply the fast timeout to a long-running StopService RPC", (
                   controlProtocolVersion: 1,
                   ownershipId: ownerId,
                   ownerSessionId: "long-stop-service-session",
+                  kind: "supervisor",
                   state: "running",
                   ready: true,
                   daemonCliVersion: "test",
@@ -1112,6 +1161,7 @@ it.effect("finishes a fenced stop when another stack rebinds the endpoint", () =
       controlProtocolVersion: 1,
       ownershipId: ownerId,
       ownerSessionId: "stop-session",
+      kind: "supervisor",
       state: "running",
       ready: true,
       daemonCliVersion: "test",
@@ -1190,7 +1240,7 @@ it.live("interrupts the real RPC handler fiber when the client request is cancel
         });
         if (!isControlOwnership(owner)) throw new Error("expected ownership");
         yield* lifecycle.setClose(owner.close);
-        const ownerStatus = yield* owner.ownerStatus;
+        const ownerStatus = supervisorStatus(yield* owner.ownerStatus);
         const layer = RemoteStack.layer(owner.endpoint, {
           cliVersion: "test",
           owner: {

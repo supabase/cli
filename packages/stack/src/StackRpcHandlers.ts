@@ -116,9 +116,7 @@ export const StackRpcHandlers = StackRpc.toLayer(
       }) =>
         name === undefined
           ? local(session, (stack) => stack.logHistoryAll(limit, services))
-          : local(session, (stack) =>
-              stack.getState(name).pipe(Effect.flatMap(() => stack.logHistory(name, limit))),
-            ),
+          : local(session, (stack) => stack.logHistory(name, limit)),
       WatchLogs: ({
         name,
         services,
@@ -127,14 +125,8 @@ export const StackRpcHandlers = StackRpc.toLayer(
         readonly services?: ReadonlyArray<string>;
       }) =>
         name === undefined
-          ? localStream(session, (stack) =>
-              Effect.forEach(services ?? [], (service) => stack.getState(service), {
-                discard: true,
-              }).pipe(Effect.as(stack.subscribeAllLogs(services))),
-            )
-          : localStream(session, (stack) =>
-              stack.getState(name).pipe(Effect.as(stack.subscribeLogs(name))),
-            ),
+          ? localStream(session, (stack) => Effect.succeed(stack.subscribeAllLogs(services)))
+          : localStream(session, (stack) => Effect.succeed(stack.subscribeLogs(name))),
     };
   }),
 );

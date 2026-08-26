@@ -16,7 +16,7 @@ import {
   type ManagedStackLaunchUpdateRequest,
 } from "./manager.ts";
 import { acquireControl, ControlTransport, isControlOwnership } from "./control.ts";
-import { CONTROL_PROTOCOL, CONTROL_PROTOCOL_VERSION } from "../DaemonProtocol.ts";
+import { isControlSupervisorStatus } from "../DaemonProtocol.ts";
 import {
   DaemonUpgradeRequired,
   StackBuildError,
@@ -103,6 +103,9 @@ export const connectManagedStack = (
     if (probe === undefined) {
       return yield* Effect.fail(noRunningStack(input));
     }
+    if (!isControlSupervisorStatus(probe.status)) {
+      return yield* Effect.fail(new ManagedStackAttachedError({ stackId: document.id }));
+    }
     if (probe.status.daemonCliVersion !== input.cliVersion) {
       return yield* Effect.fail(
         new DaemonUpgradeRequired({
@@ -164,6 +167,7 @@ export const stopManagedStack = (
             }
             if (
               current !== undefined &&
+              current.lifecycle !== "deleting" &&
               (current.lifecycle !== "stopped" || current.stopIntent !== "explicit")
             ) {
               yield* manager.recordLifecycle(owned, {
@@ -185,7 +189,7 @@ export const stopManagedStack = (
       const stopCurrentOwner = Effect.gen(function* () {
         const current = yield* manager.inspectStack(stackId);
         if (current === undefined) return;
-        const acquisition = yield* manager.acquireControl(stackId);
+        const acquisition = yield* manager.acquireControl(stackId, "stop");
         const currentStackId = yield* stackIdForInput(manager, input);
         if (currentStackId !== stackId) {
           return yield* Effect.fail(
@@ -198,7 +202,11 @@ export const stopManagedStack = (
           yield* cleanupOwned(acquisition);
           return;
         }
-        yield* acquisition.requestStop;
+        yield* acquisition.requestStop.pipe(
+          Effect.catchTag("ControlMaintenanceBusyError", () =>
+            Effect.fail(new ManagedStackAttachedError({ stackId })),
+          ),
+        );
         return yield* Effect.fail(new ManagedStopPending());
       }).pipe(
         Effect.retry({
@@ -226,18 +234,9 @@ export const deleteManagedStack = (
     const stackId = yield* stackIdForInput(manager, input);
     yield* Effect.scoped(
       Effect.gen(function* () {
-        const ownerSessionId = crypto.randomUUID();
         const acquisition = yield* acquireControl({
           stackId,
-          initialStatus: {
-            controlProtocol: CONTROL_PROTOCOL,
-            controlProtocolVersion: CONTROL_PROTOCOL_VERSION,
-            ownershipId: stackId,
-            ownerSessionId,
-            state: "deleting",
-            ready: false,
-            daemonCliVersion: "managed",
-          },
+          maintenanceOperation: "delete",
         }).pipe(
           Effect.flatMap((candidate) =>
             isControlOwnership(candidate)
@@ -287,12 +286,15 @@ export const updateManagedLaunch = (
     Effect.gen(function* () {
       const document = yield* resolveManagedDocument(input);
       const manager = yield* ManagedStackManager;
-      const acquisition = yield* manager.acquireControl(document.id);
+      const acquisition = yield* manager.acquireControl(document.id, "update");
       if (!isControlOwnership(acquisition)) {
         if (document.lifecycle !== "running" || document.runtime?.controlEndpoint === undefined) {
           return yield* Effect.fail(new ManagedStackAttachedError({ stackId: document.id }));
         }
         const status = yield* acquisition.ownerStatus;
+        if (!isControlSupervisorStatus(status)) {
+          return yield* Effect.fail(new ManagedStackAttachedError({ stackId: document.id }));
+        }
         yield* updateRemoteLaunch(
           acquisition.endpoint,
           {

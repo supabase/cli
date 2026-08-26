@@ -1,9 +1,9 @@
-import { Duration, Effect, FileSystem, Path } from "effect";
+import { Duration, Effect, FileSystem, Match, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { validateStackRuntime, type StackRuntimeSelection } from "./ContainerRuntime.ts";
 import type { SupervisorStartMessage } from "./SupervisorProtocol.ts";
 import {
-  makeControlClient,
+  observeControlStopForSession,
   type ControlProbe,
   type ControlTransportShape,
 } from "./managed/control.ts";
@@ -23,6 +23,7 @@ import {
 } from "./StackConfigResolver.ts";
 import { versionsForConfig } from "./StackBuilder.ts";
 import { StopTimeout, UpgradePreflightError, UpgradeRestartError } from "./errors.ts";
+import { isControlSupervisorStatus } from "./DaemonProtocol.ts";
 
 interface UpgradeRestartContext {
   readonly stackId: string;
@@ -371,41 +372,48 @@ export const prepareUpgradeReplacement = (
     const initial = yield* preflightCurrentLaunch();
     const oldOwner = context.oldOwner;
     if (oldOwner === undefined) return initial;
-    const client = makeControlClient(context.controlTransport);
-    yield* client
-      .stopSession(oldOwner.endpoint, oldOwner.status.ownershipId, oldOwner.status.ownerSessionId)
-      .pipe(
-        Effect.timeoutOrElse({
-          duration: phaseTimeout,
-          orElse: () =>
-            client.readOwner(oldOwner.endpoint, oldOwner.status.ownershipId).pipe(
-              Effect.map((status) =>
-                status.ownerSessionId === oldOwner.status.ownerSessionId
-                  ? status.state
-                  : oldOwner.status.state,
-              ),
-              Effect.catch(() => Effect.succeed(oldOwner.status.state)),
-              Effect.flatMap((lastState) =>
-                Effect.fail(
-                  new StopTimeout({
-                    endpoint: oldOwner.endpoint.url,
-                    ownerSessionId: oldOwner.status.ownerSessionId,
-                    lastState,
-                  }),
-                ),
-              ),
+    if (!isControlSupervisorStatus(oldOwner.status)) {
+      return yield* Effect.fail(
+        new UpgradeRestartError({
+          stackId: context.stackId,
+          newCliVersion: context.input.cliVersion,
+          detail: `Managed stack is busy with ${oldOwner.status.operation} maintenance`,
+        }),
+      );
+    }
+    const oldStatus = oldOwner.status;
+    yield* observeControlStopForSession(
+      oldOwner.endpoint,
+      oldStatus.ownershipId,
+      oldStatus.ownerSessionId,
+      context.controlTransport,
+      "replacement",
+      phaseTimeout,
+    ).pipe(
+      Effect.flatMap((result) =>
+        Match.valueTags(result, {
+          ended: () => Effect.void,
+          replaced: () => Effect.void,
+          "still-live": ({ lastState }) =>
+            Effect.fail(
+              new StopTimeout({
+                endpoint: oldOwner.endpoint.url,
+                ownerSessionId: oldStatus.ownerSessionId,
+                lastState,
+              }),
             ),
         }),
-        Effect.mapError((error) =>
-          error instanceof StopTimeout
-            ? error
-            : new UpgradeRestartError({
-                stackId: context.stackId,
-                newCliVersion: context.input.cliVersion,
-                detail: causeMessage(error),
-              }),
-        ),
-      );
+      ),
+      Effect.mapError((error) =>
+        error instanceof StopTimeout
+          ? error
+          : new UpgradeRestartError({
+              stackId: context.stackId,
+              newCliVersion: context.input.cliVersion,
+              detail: causeMessage(error),
+            }),
+      ),
+    );
     return yield* preflightCurrentLaunch().pipe(
       Effect.mapError(
         (error) =>

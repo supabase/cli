@@ -24,6 +24,7 @@ import {
   isControlOwnership,
   probeControl,
   type ControlAcquisition,
+  type ControlMaintenanceOperation,
   type ControlOwnership,
   type ControlProbe,
 } from "./control.ts";
@@ -193,7 +194,8 @@ export type ManagedStackManagerError =
   | import("./control.ts").ControlTransportError
   | import("./control.ts").ControlProtocolError
   | import("./control.ts").ControlProtocolMismatchError
-  | import("./control.ts").ControlAddressConflictError;
+  | import("./control.ts").ControlAddressConflictError
+  | import("./control.ts").ControlMaintenanceBusyError;
 
 export interface ManagedStackManagerShape {
   readonly stateRoot: string;
@@ -205,6 +207,7 @@ export interface ManagedStackManagerShape {
   ) => Effect.Effect<WorkspaceDiscovery, ManagedStackManagerError>;
   readonly acquireControl: (
     stackId: string,
+    operation: ControlMaintenanceOperation,
   ) => Effect.Effect<ControlAcquisition, ManagedStackManagerError, Scope.Scope>;
   readonly probeControl: (
     stackId: string,
@@ -730,7 +733,7 @@ const makeManager = (
         const stackId = deriveStackId(discovery.identity, stackName);
         const repairId = deriveRepairOwnershipId(discovery.identity);
         const repairAcquisition = yield* provideDependencies(
-          acquireControl({ stackId: repairId }).pipe(
+          acquireControl({ stackId: repairId, maintenanceOperation: "repair" }).pipe(
             Effect.flatMap((acquisition) =>
               isOwned(acquisition)
                 ? Effect.succeed(acquisition)
@@ -901,7 +904,7 @@ const makeManager = (
           }
           const repairId = deriveRepairOwnershipId(request.identity);
           const repairAcquisition = yield* provideDependencies(
-            acquireControl({ stackId: repairId }),
+            acquireControl({ stackId: repairId, maintenanceOperation: "repair" }),
           );
           if (!isOwned(repairAcquisition)) {
             return yield* Effect.fail(
@@ -924,7 +927,7 @@ const makeManager = (
           const stackOwners: Array<ControlOwnership> = [];
           for (const document of affected) {
             const acquisition = yield* provideDependencies(
-              acquireControl({ stackId: document.id }),
+              acquireControl({ stackId: document.id, maintenanceOperation: "repair" }),
             );
             if (!isOwned(acquisition)) {
               return yield* Effect.fail(
@@ -1034,7 +1037,8 @@ const makeManager = (
           yield* validateOrdinaryWorkspaceIdentity(discovery);
           return discovery;
         }),
-      acquireControl: (stackId) => provideDependencies(acquireControl({ stackId })),
+      acquireControl: (stackId, operation) =>
+        provideDependencies(acquireControl({ stackId, maintenanceOperation: operation })),
       probeControl: (stackId) => provideDependencies(probeControl(stackId)),
       readStack,
       startStack,

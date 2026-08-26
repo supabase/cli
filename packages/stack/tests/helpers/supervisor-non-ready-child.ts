@@ -18,6 +18,7 @@ process.once("message", (value: unknown) => {
         url: "http://127.0.0.1:1",
       },
       owner: {
+        kind: "supervisor",
         ownershipId: value.stackId,
         ownerSessionId: "stopping-test-session",
         controlProtocolVersion: 1,

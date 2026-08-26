@@ -2,7 +2,8 @@ import { Cause, Context, Deferred, Effect, Exit, Fiber, Match, Queue, Ref, Scope
 import {
   CONTROL_PROTOCOL,
   CONTROL_PROTOCOL_VERSION,
-  type ControlOwnerStatus,
+  type ControlSupervisorStatus,
+  type ControlStopIntent,
 } from "./DaemonProtocol.ts";
 import type { Stack } from "./Stack.ts";
 import { StackUnavailableError } from "./errors.ts";
@@ -16,7 +17,7 @@ export type SupervisorSessionState =
 
 type SessionCommand =
   | { readonly _tag: "StartupFinished" }
-  | { readonly _tag: "StopRequested" }
+  | { readonly _tag: "StopRequested"; readonly intent: ControlStopIntent }
   | { readonly _tag: "RuntimeDisposed" };
 
 interface SupervisorSessionRunInput<A, E, R> {
@@ -24,7 +25,7 @@ interface SupervisorSessionRunInput<A, E, R> {
   readonly stack: (runtime: A) => Stack["Service"];
   readonly awaitDisposed: (runtime: A) => Effect.Effect<void, never>;
   readonly onRunning: (runtime: A) => Effect.Effect<void, unknown>;
-  readonly onStopped: Effect.Effect<void, unknown>;
+  readonly onStopped: (intent: ControlStopIntent) => Effect.Effect<void, unknown>;
   readonly onFailure: (detail: string) => Effect.Effect<void, unknown>;
   readonly closeOwner: Effect.Effect<void, unknown>;
   readonly errorDetail: (cause: Cause.Cause<unknown>) => string;
@@ -50,9 +51,10 @@ export class SupervisorSession extends Context.Service<
   SupervisorSession,
   {
     readonly currentState: Effect.Effect<SupervisorSessionState>;
-    readonly currentStatus: Effect.Effect<ControlOwnerStatus>;
+    readonly currentStatus: Effect.Effect<ControlSupervisorStatus>;
     readonly runtimeStack: Effect.Effect<Stack["Service"], StackUnavailableError>;
     readonly submitShutdown: Effect.Effect<void, never>;
+    readonly submitShutdownWithIntent: (intent: ControlStopIntent) => Effect.Effect<void, never>;
   }
 >()("stack/SupervisorSession") {
   static make(input: {
@@ -65,11 +67,12 @@ export class SupervisorSession extends Context.Service<
       const stateRef = Ref.makeUnsafe<SupervisorSessionState>({ phase: "starting" });
       const commands = yield* Queue.unbounded<SessionCommand>();
       const stopAccepted = Deferred.makeUnsafe<void>();
-      const status = (state: SupervisorSessionState): ControlOwnerStatus => ({
+      const status = (state: SupervisorSessionState): ControlSupervisorStatus => ({
         controlProtocol: CONTROL_PROTOCOL,
         controlProtocolVersion: CONTROL_PROTOCOL_VERSION,
         ownershipId: input.ownershipId,
         ownerSessionId: input.ownerSessionId,
+        kind: "supervisor",
         state: state.phase === "closed" ? "stopping" : state.phase,
         ready: state.phase === "running",
         daemonCliVersion: input.daemonCliVersion,
@@ -89,9 +92,13 @@ export class SupervisorSession extends Context.Service<
                 ),
           ),
         ),
-        submitShutdown: Queue.offer(commands, { _tag: "StopRequested" }).pipe(
+        submitShutdown: Queue.offer(commands, { _tag: "StopRequested", intent: "explicit" }).pipe(
           Effect.andThen(Deferred.await(stopAccepted)),
         ),
+        submitShutdownWithIntent: (intent) =>
+          Queue.offer(commands, { _tag: "StopRequested", intent }).pipe(
+            Effect.andThen(Deferred.await(stopAccepted)),
+          ),
       };
       const run = <A, E, R>(
         runInput: SupervisorSessionRunInput<A, E, R>,
@@ -171,7 +178,7 @@ export class SupervisorSession extends Context.Service<
                       Effect.forkIn(sessionScope),
                     );
                 }),
-              StopRequested: () =>
+              StopRequested: (command) =>
                 Effect.gen(function* () {
                   const current = yield* Ref.get(stateRef);
                   const stack = current.phase === "running" ? current.stack : undefined;
@@ -184,7 +191,7 @@ export class SupervisorSession extends Context.Service<
                   const startupExit = yield* Deferred.await(startupResult);
                   if (runtime === undefined && Exit.isSuccess(startupExit))
                     runtime = startupExit.value;
-                  yield* cleanup(runInput.onStopped);
+                  yield* cleanup(runInput.onStopped(command.intent));
                   return { started };
                 }),
               RuntimeDisposed: () =>

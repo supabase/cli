@@ -21,7 +21,7 @@ export const makeSupervisorSessionFixture = (input: {
         stack: (stack) => stack,
         awaitDisposed: () => Effect.never,
         onRunning: () => Deferred.succeed(running, undefined).pipe(Effect.asVoid),
-        onStopped: Effect.void,
+        onStopped: () => Effect.void,
         onFailure: () => Effect.void,
         closeOwner: Ref.get(closeRef).pipe(Effect.flatMap((close) => close)),
         errorDetail: (cause) => String(Cause.squash(cause)),

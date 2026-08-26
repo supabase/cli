@@ -39,6 +39,7 @@ describe("Bun runtime RPC", () => {
             controlProtocolVersion: 1 as const,
             ownershipId: ownerId,
             ownerSessionId: "bun-rpc-session",
+            kind: "supervisor" as const,
             state: "running" as const,
             ready: true,
             daemonCliVersion: "test",

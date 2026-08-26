@@ -19,6 +19,7 @@ import type { ManagedStackLaunchInput } from "./managed/document.ts";
 import type { ManagedPortIntentDocument } from "./managed/model.ts";
 import { ManagedStackManager } from "./managed/manager.ts";
 import { ControlTransport } from "./managed/control.ts";
+import { isControlSupervisorStatus } from "./DaemonProtocol.ts";
 import { deriveStackId, ensureEnvironment } from "./managed/environment.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
 import { prepareUpgradeReplacement } from "./SupervisorUpgradeRestart.ts";
@@ -242,12 +243,23 @@ export const restartManagedStackForUpgrade = (
           }),
       ),
     );
-    if (probe?.status.daemonCliVersion === startMsg.cliVersion) {
+    const owner = probe?.status;
+    if (owner !== undefined && !isControlSupervisorStatus(owner)) {
+      return yield* Effect.fail(
+        new UpgradeRestartError({
+          stackId: startMsg.stackId,
+          newCliVersion: startMsg.cliVersion,
+          detail: `Managed stack is busy with ${owner.operation} maintenance`,
+        }),
+      );
+    }
+    if (owner?.daemonCliVersion === startMsg.cliVersion) {
       return yield* launchManagedSupervisor(startMsg, daemonEntryPoint);
     }
+    const oldCliVersion = owner?.daemonCliVersion ?? mismatch.oldCliVersion;
     const prepared = yield* prepareUpgradeReplacement({
       stackId: startMsg.stackId,
-      oldCliVersion: probe?.status.daemonCliVersion ?? mismatch.oldCliVersion,
+      oldCliVersion,
       ...(probe === undefined ? {} : { oldOwner: probe }),
       input: startMsg,
       configInput,

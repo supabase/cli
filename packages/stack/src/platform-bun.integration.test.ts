@@ -37,6 +37,7 @@ describe("Bun control transport", () => {
             transport.requestStop(endpoint, {
               ownershipId: "0".repeat(64),
               ownerSessionId: "captured-session",
+              intent: "explicit",
             }),
           ).pipe(Effect.provide(controlTransportLayer), Effect.exit),
         );
@@ -68,6 +69,7 @@ describe("Bun control transport", () => {
               controlProtocolVersion: 1,
               ownershipId,
               ownerSessionId: "replacement-session",
+              kind: "supervisor",
               state: "running",
               ready: true,
               daemonCliVersion: "test",
@@ -91,7 +93,9 @@ describe("Bun control transport", () => {
           ).pipe(Effect.provide(controlTransportLayer), Effect.exit),
         );
         expect(Exit.isSuccess(exit)).toBe(true);
-        expect(stopBodies).toEqual([JSON.stringify({ ownershipId, ownerSessionId })]);
+        expect(stopBodies).toEqual([
+          JSON.stringify({ ownershipId, ownerSessionId, intent: "explicit" }),
+        ]);
       } finally {
         await server.stop(true);
       }
@@ -195,6 +199,7 @@ describe("Bun control transport", () => {
             ownershipId: "a".repeat(64),
             ownerSessionId: "session",
             state: "starting" as const,
+            kind: "supervisor" as const,
             ready: false,
             daemonCliVersion: "test",
           }),
@@ -236,6 +241,7 @@ describe("Bun control transport", () => {
             ownershipId: "b".repeat(64),
             ownerSessionId: "session",
             state: "running" as const,
+            kind: "supervisor" as const,
             ready: true,
             daemonCliVersion: "test",
           }),
@@ -304,6 +310,7 @@ describe("Bun control transport", () => {
             ownershipId: "c".repeat(64),
             ownerSessionId: "session",
             state: "running" as const,
+            kind: "supervisor" as const,
             ready: true,
             daemonCliVersion: "test",
           }),
@@ -327,7 +334,11 @@ describe("Bun control transport", () => {
       const response = await fetch(`http://127.0.0.1:${address.port}/stop`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ownershipId: "c".repeat(64), ownerSessionId: "session" }),
+        body: JSON.stringify({
+          ownershipId: "c".repeat(64),
+          ownerSessionId: "session",
+          intent: "explicit",
+        }),
       });
       const body = await response.text();
       await Effect.runPromise(Deferred.await(started));
@@ -373,6 +384,7 @@ describe("Bun control transport", () => {
               ownershipId,
               ownerSessionId,
               state: "running" as const,
+              kind: "supervisor" as const,
               ready: true,
               daemonCliVersion: "test",
             }),

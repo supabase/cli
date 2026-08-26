@@ -447,7 +447,7 @@ describe("managed stack ports journeys", () => {
         yield* releaseLease(running);
         yield* manager.recordLifecycle(initialOwnership, { stackId, lifecycle: "stopped" });
         yield* initialOwnership.close;
-        const ownership = yield* acquireControl({ stackId });
+        const ownership = yield* acquireControl({ stackId, maintenanceOperation: "update" });
         if (!isControlOwnership(ownership)) throw new Error("expected ownership");
         const stopped = yield* startManagedStack(manager, {
           workspacePath: workspace,

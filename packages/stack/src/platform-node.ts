@@ -15,6 +15,7 @@ import {
   type ControlStopRequest,
   ControlBindError,
   ControlStopConflictError,
+  ControlMaintenanceBusyError,
   ControlTransport,
   ControlTransportError,
   type ControlOwnerStatus,
@@ -52,7 +53,7 @@ const controlTransport: ControlTransport["Service"] = {
   bind: (
     endpoint: ControlEndpoint,
     ownerStatus: () => ControlOwnerStatus,
-    onStop: (request: ControlStopRequest) => "accepted" | "conflict" | "invalid",
+    onStop: (request: ControlStopRequest) => "accepted" | "conflict" | "busy" | "invalid",
     application?: ControlApplication,
   ) => {
     const rawServer = createServer(
@@ -76,7 +77,14 @@ const controlTransport: ControlTransport["Service"] = {
                   return;
                 }
                 const decision = onStop(decoded);
-                const status = decision === "accepted" ? 202 : decision === "conflict" ? 409 : 400;
+                const status =
+                  decision === "accepted"
+                    ? 202
+                    : decision === "conflict"
+                      ? 409
+                      : decision === "busy"
+                        ? 423
+                        : 400;
                 response.writeHead(status, { "content-type": "application/json" });
                 response.end(
                   JSON.stringify(decision === "accepted" ? { ok: true } : { error: decision }),
@@ -211,6 +219,8 @@ const controlTransport: ControlTransport["Service"] = {
               finish(Effect.void);
             } else if (status === 409) {
               finish(Effect.fail(new ControlStopConflictError({ endpoint })), true);
+            } else if (status === 423) {
+              finish(Effect.fail(new ControlMaintenanceBusyError({ endpoint })), true);
             } else {
               finish(Effect.fail(new Error(`Control stop request returned ${status}`)), true);
             }
@@ -270,7 +280,7 @@ const controlTransport: ControlTransport["Service"] = {
         orElse: () => Effect.fail(new Error("Control stop request timed out")),
       }),
       Effect.mapError((cause) =>
-        cause instanceof ControlStopConflictError
+        cause instanceof ControlStopConflictError || cause instanceof ControlMaintenanceBusyError
           ? cause
           : new ControlTransportError({
               endpoint,

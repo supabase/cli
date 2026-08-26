@@ -15,6 +15,7 @@ import type { ManagedPortDrift, ManagedPortIntentDocument } from "./managed/mode
 import { managedStackDocumentPathEffect } from "./managed/paths.ts";
 import { HttpTransportClient } from "./HttpTransportClient.ts";
 import type { ControlTransport } from "./managed/control.ts";
+import { isControlSupervisorStatus } from "./DaemonProtocol.ts";
 import {
   DaemonUpgradeRequired,
   StackRpcProtocolError,
@@ -83,7 +84,15 @@ const liveStatus = (
 ): Effect.Effect<boolean, ManagedStackManagerError, never> =>
   manager
     .probeControl(document.id)
-    .pipe(Effect.map((probe) => probe?.status.state === "running" && probe.status.ready));
+    .pipe(
+      Effect.map(
+        (probe) =>
+          probe !== undefined &&
+          isControlSupervisorStatus(probe.status) &&
+          probe.status.state === "running" &&
+          probe.status.ready,
+      ),
+    );
 
 export const listStacks = (opts: {
   readonly cacheRoot: string;

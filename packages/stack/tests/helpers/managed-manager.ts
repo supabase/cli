@@ -151,7 +151,7 @@ export const acquireWorkspaceControl = (base: string, prefix = "workspace") =>
       const workspace = mkdtempSync(join(base, `${prefix}-`));
       const environment = yield* ensureEnvironment(workspace);
       const stackId = deriveStackId(environment.identity, "default");
-      const acquired = yield* acquireControl({ stackId }).pipe(
+      const acquired = yield* acquireControl({ stackId, maintenanceOperation: "update" }).pipe(
         Effect.map((ownership) => ({ ownership })),
         Effect.catch((error) =>
           (Predicate.isTagged(error, "ControlAddressConflictError") ||
@@ -177,7 +177,7 @@ export const startWithOwner = (
   Effect.gen(function* () {
     const environment = yield* ensureEnvironment(workspacePath);
     const stackId = deriveStackId(environment.identity, stackName);
-    const ownership = yield* acquireControl({ stackId });
+    const ownership = yield* acquireControl({ stackId, maintenanceOperation: "update" });
     if (!isControlOwnership(ownership)) throw new Error("expected stack control ownership");
     return yield* manager.startStack({
       workspacePath,

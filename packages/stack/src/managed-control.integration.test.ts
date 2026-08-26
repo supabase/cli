@@ -82,6 +82,7 @@ const makeStaticOwner = (stackId: string, stack: Stack["Service"]) =>
         controlProtocolVersion: 1,
         ownershipId: stackId,
         ownerSessionId,
+        kind: "supervisor",
         state: "starting",
         ready: false,
         daemonCliVersion: "test",
@@ -147,6 +148,7 @@ it.effect("canonical owner reads retain foreign-owner conflict diagnostics", () 
         controlProtocolVersion: 1,
         ownershipId: "f".repeat(64),
         ownerSessionId: "foreign-session",
+        kind: "supervisor",
         state: "running",
         ready: true,
         daemonCliVersion: "foreign",
@@ -156,6 +158,27 @@ it.effect("canonical owner reads retain foreign-owner conflict diagnostics", () 
     if (Result.isFailure(result)) {
       expect(Predicate.isTagged(result.failure, "ControlAddressConflictError")).toBe(true);
     }
+  }),
+);
+
+it.effect("decodes maintenance ownership without a daemon version identity", () =>
+  Effect.gen(function* () {
+    const endpoint = yield* controlEndpoint(STACK_ID);
+    const status = yield* readControlOwnerStatus(endpoint, STACK_ID, () =>
+      Effect.succeed({
+        controlProtocol: "supabase-stack-control",
+        controlProtocolVersion: 1,
+        ownershipId: STACK_ID,
+        ownerSessionId: "maintenance-session",
+        kind: "maintenance",
+        operation: "delete",
+      }),
+    );
+    expect(status).toMatchObject({
+      kind: "maintenance",
+      operation: "delete",
+    });
+    expect("daemonCliVersion" in status).toBe(false);
   }),
 );
 
@@ -234,7 +257,11 @@ describe("managed control endpoint", () => {
             const application = {
               app: yield* SupervisorControlServer.make(lifecycle),
             };
-            const owner = yield* acquireControl({ stackId: STACK_ID, application });
+            const owner = yield* acquireControl({
+              stackId: STACK_ID,
+              initialStatus: yield* lifecycle.currentStatus,
+              application,
+            });
             if (!isControlOwnership(owner)) throw new Error("expected control ownership");
             yield* lifecycle.setClose(owner.close);
             const before = yield* Effect.promise(() => fetch(`${owner.endpoint.url}/owner`));
@@ -274,6 +301,7 @@ describe("managed control endpoint", () => {
               body: JSON.stringify({
                 ownershipId: STACK_ID,
                 ownerSessionId: ownerStatus.ownerSessionId,
+                intent: "explicit",
               }),
             }),
           );
@@ -291,7 +319,10 @@ describe("managed control endpoint", () => {
       live(
         Effect.gen(function* () {
           yield* makeStaticOwner(STACK_ID, makeStack({ value: false }));
-          const contender = yield* acquireControl({ stackId: STACK_ID });
+          const contender = yield* acquireControl({
+            stackId: STACK_ID,
+            maintenanceOperation: "update",
+          });
           expect(isControlAttached(contender)).toBe(true);
           expect(yield* contender.ownerStatus).toMatchObject({
             controlProtocolVersion: 1,
@@ -310,9 +341,15 @@ describe("managed control endpoint", () => {
           const firstEndpoint = yield* controlEndpoint(STACK_ID);
           const secondEndpoint = yield* controlEndpoint(COLLIDING_STACK_ID);
           expect(secondEndpoint.port).toBe(firstEndpoint.port);
-          const owner = yield* acquireControl({ stackId: STACK_ID });
+          const owner = yield* acquireControl({
+            stackId: STACK_ID,
+            maintenanceOperation: "update",
+          });
           if (!isControlOwnership(owner)) throw new Error("expected control ownership");
-          const contender = yield* acquireControl({ stackId: COLLIDING_STACK_ID });
+          const contender = yield* acquireControl({
+            stackId: COLLIDING_STACK_ID,
+            maintenanceOperation: "update",
+          });
           if (!isControlOwnership(contender)) throw new Error("expected contender ownership");
           expect(contender.endpoint.port).not.toBe(owner.endpoint.port);
 
@@ -323,7 +360,10 @@ describe("managed control endpoint", () => {
           expect(contenderProbe?.endpoint.port).toBe(contender.endpoint.port);
 
           // A second caller for the collided stack attaches to its owner.
-          const attached = yield* acquireControl({ stackId: COLLIDING_STACK_ID });
+          const attached = yield* acquireControl({
+            stackId: COLLIDING_STACK_ID,
+            maintenanceOperation: "update",
+          });
           expect(isControlAttached(attached)).toBe(true);
           expect(attached.endpoint.port).toBe(contender.endpoint.port);
         }),
@@ -336,13 +376,16 @@ describe("managed control endpoint", () => {
       Effect.gen(function* () {
         yield* Effect.scoped(
           Effect.gen(function* () {
-            const owner = yield* acquireControl({ stackId: STACK_ID });
+            const owner = yield* acquireControl({
+              stackId: STACK_ID,
+              maintenanceOperation: "update",
+            });
             expect(isControlOwnership(owner)).toBe(true);
           }),
         );
         const next = yield* Effect.scoped(
           Effect.gen(function* () {
-            return yield* acquireControl({ stackId: STACK_ID });
+            return yield* acquireControl({ stackId: STACK_ID, maintenanceOperation: "update" });
           }),
         );
         expect(isControlOwnership(next)).toBe(true);
@@ -359,7 +402,10 @@ describe("managed control endpoint", () => {
             Effect.promise(() => listenRaw(candidates[0]!.port)),
             (server) => Effect.promise(() => closeRaw(server)),
           );
-          const owner = yield* acquireControl({ stackId: STACK_ID });
+          const owner = yield* acquireControl({
+            stackId: STACK_ID,
+            maintenanceOperation: "update",
+          });
           if (!isControlOwnership(owner)) throw new Error("expected control ownership");
           expect(owner.endpoint.port).toBe(candidates[1]!.port);
           expect(unrelated.listening).toBe(true);
@@ -379,7 +425,10 @@ describe("managed control endpoint", () => {
             Effect.promise(() => listenNonHttp(candidates[0]!.port)),
             (listener) => Effect.promise(() => listener.close()),
           );
-          const owner = yield* acquireControl({ stackId: STACK_ID });
+          const owner = yield* acquireControl({
+            stackId: STACK_ID,
+            maintenanceOperation: "update",
+          });
           if (!isControlOwnership(owner)) throw new Error("expected control ownership");
           expect(owner.endpoint.port).toBe(candidates[1]!.port);
           expect(unrelated.server.listening).toBe(true);
@@ -399,7 +448,10 @@ describe("managed control endpoint", () => {
               (server) => Effect.promise(() => closeRaw(server)),
             ),
           );
-          const result = yield* acquireControl({ stackId: STACK_ID }).pipe(Effect.result);
+          const result = yield* acquireControl({
+            stackId: STACK_ID,
+            maintenanceOperation: "update",
+          }).pipe(Effect.result);
           expect(Result.isFailure(result)).toBe(true);
           if (Result.isFailure(result)) {
             expect(Predicate.isTagged(result.failure, "ControlAddressConflictError")).toBe(true);
@@ -427,11 +479,10 @@ describe("managed control endpoint", () => {
             ),
           requestStop: () => Effect.void,
         });
-        const exit = yield* acquireControl({ stackId: STACK_ID }).pipe(
-          Effect.timeout("10 seconds"),
-          Effect.exit,
-          Effect.provide(unavailable),
-        );
+        const exit = yield* acquireControl({
+          stackId: STACK_ID,
+          maintenanceOperation: "update",
+        }).pipe(Effect.timeout("10 seconds"), Effect.exit, Effect.provide(unavailable));
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(Cause.squash(exit.cause)).toMatchObject({
@@ -452,6 +503,7 @@ describe("managed control endpoint", () => {
           controlProtocolVersion: 1,
           ownershipId: STACK_ID,
           ownerSessionId: "owner-session",
+          kind: "supervisor",
           state: "running",
           ready: true,
           daemonCliVersion: "old",
@@ -502,10 +554,10 @@ describe("managed control endpoint", () => {
           },
           requestStop: () => Effect.void,
         });
-        const pending = yield* acquireControl({ stackId: STACK_ID }).pipe(
-          Effect.provide(transport),
-          Effect.forkChild({ startImmediately: true }),
-        );
+        const pending = yield* acquireControl({
+          stackId: STACK_ID,
+          maintenanceOperation: "update",
+        }).pipe(Effect.provide(transport), Effect.forkChild({ startImmediately: true }));
         yield* Deferred.await(attachUnavailable);
         yield* TestClock.adjust("50 millis");
         yield* Effect.yieldNow;
@@ -540,10 +592,10 @@ describe("managed control endpoint", () => {
             ),
           requestStop: () => Effect.void,
         });
-        const exit = yield* acquireControl({ stackId: STACK_ID }).pipe(
-          Effect.result,
-          Effect.provide(transport),
-        );
+        const exit = yield* acquireControl({
+          stackId: STACK_ID,
+          maintenanceOperation: "update",
+        }).pipe(Effect.result, Effect.provide(transport));
         expect(Result.isFailure(exit)).toBe(true);
         if (Result.isFailure(exit)) {
           expect(exit.failure).toBeInstanceOf(ControlTransportError);
@@ -564,6 +616,7 @@ describe("managed control endpoint", () => {
         controlProtocolVersion: 1,
         ownershipId: STACK_ID,
         ownerSessionId,
+        kind: "supervisor",
         state: "running",
         ready: true,
         daemonCliVersion: "test",
@@ -601,8 +654,6 @@ describe("managed control endpoint", () => {
       yield* Effect.yieldNow;
       yield* TestClock.adjust("30 seconds");
       yield* Effect.yieldNow;
-      yield* TestClock.adjust("30 seconds");
-      yield* Effect.yieldNow;
 
       const result = yield* Fiber.join(pending).pipe(Effect.result);
       expect(Result.isFailure(result)).toBe(true);
@@ -620,6 +671,44 @@ describe("managed control endpoint", () => {
     }),
   );
 
+  it.effect("completes when the captured session is replaced at the stop deadline", () =>
+    Effect.gen(function* () {
+      const endpoint = yield* controlEndpoint(STACK_ID);
+      const replacement: ControlOwnerStatus = {
+        controlProtocol: "supabase-stack-control",
+        controlProtocolVersion: 1,
+        ownershipId: STACK_ID,
+        ownerSessionId: "replacement-session",
+        kind: "supervisor",
+        state: "running",
+        ready: true,
+        daemonCliVersion: "new",
+      };
+      let reads = 0;
+      const transport: ControlTransportShape = {
+        bind: () => Effect.die("unused"),
+        read: () =>
+          Effect.sync(() => {
+            reads += 1;
+            return replacement;
+          }),
+        requestStop: () => Effect.never,
+      };
+      const pending = yield* requestControlStopForSession(
+        endpoint,
+        STACK_ID,
+        "old-session",
+        transport,
+        "replacement",
+        "1 second",
+      ).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("1 second");
+      yield* Fiber.join(pending);
+      expect(reads).toBe(1);
+    }),
+  );
+
   it.effect("retries an ambiguous observation until the exact session changes", () =>
     Effect.gen(function* () {
       const endpoint = yield* controlEndpoint(STACK_ID);
@@ -630,6 +719,7 @@ describe("managed control endpoint", () => {
         controlProtocolVersion: 1,
         ownershipId: STACK_ID,
         ownerSessionId,
+        kind: "supervisor",
         state: "stopping",
         ready: false,
         daemonCliVersion: "test",
@@ -691,6 +781,7 @@ describe("managed control endpoint", () => {
         controlProtocolVersion: 1,
         ownershipId: "f".repeat(64),
         ownerSessionId: "foreign-session",
+        kind: "supervisor",
         state: "running",
         ready: true,
         daemonCliVersion: "test",
@@ -745,6 +836,7 @@ describe("managed control endpoint", () => {
                 controlProtocolVersion: 2,
                 ownershipId: STACK_ID,
                 ownerSessionId: "replacement-session",
+                kind: "supervisor",
                 state: "running",
                 ready: true,
                 daemonCliVersion: "foreign",
@@ -773,6 +865,7 @@ describe("managed control endpoint", () => {
         controlProtocolVersion: 1,
         ownershipId: STACK_ID,
         ownerSessionId: "owner-session",
+        kind: "supervisor",
         state: "running",
         ready: true,
         daemonCliVersion: "test",
@@ -795,9 +888,10 @@ describe("managed control endpoint", () => {
           }),
         requestStop: () => Effect.void,
       };
-      const attached = yield* acquireControl({ stackId: STACK_ID }).pipe(
-        Effect.provideService(ControlTransport, transport),
-      );
+      const attached = yield* acquireControl({
+        stackId: STACK_ID,
+        maintenanceOperation: "update",
+      }).pipe(Effect.provideService(ControlTransport, transport));
       expect(isControlAttached(attached)).toBe(true);
       if (!isControlAttached(attached)) return;
       expect(attached.observedStatus).toEqual(status);
@@ -815,6 +909,7 @@ describe("managed control endpoint", () => {
         controlProtocolVersion: 1,
         ownershipId: STACK_ID,
         ownerSessionId: "attached-session",
+        kind: "supervisor",
         state: "running",
         ready: true,
         daemonCliVersion: "old",
@@ -832,11 +927,13 @@ describe("managed control endpoint", () => {
         requestStop: (_requestEndpoint, request) =>
           Effect.sync(() => {
             requestedSession = request.ownerSessionId;
+            expect(request).toMatchObject({ intent: "explicit" });
           }),
       };
-      const attached = yield* acquireControl({ stackId: STACK_ID }).pipe(
-        Effect.provideService(ControlTransport, transport),
-      );
+      const attached = yield* acquireControl({
+        stackId: STACK_ID,
+        maintenanceOperation: "update",
+      }).pipe(Effect.provideService(ControlTransport, transport));
       expect(isControlAttached(attached)).toBe(true);
       if (!isControlAttached(attached)) return;
 
@@ -860,6 +957,7 @@ describe("managed control endpoint", () => {
                   controlProtocolVersion: 2,
                   ownershipId: STACK_ID,
                   ownerSessionId: "foreign",
+                  kind: "supervisor",
                   state: "running",
                   ready: true,
                   daemonCliVersion: "foreign",
@@ -868,7 +966,10 @@ describe("managed control endpoint", () => {
             ),
             (server) => Effect.promise(() => closeRaw(server)),
           );
-          const result = yield* acquireControl({ stackId: STACK_ID }).pipe(Effect.result);
+          const result = yield* acquireControl({
+            stackId: STACK_ID,
+            maintenanceOperation: "update",
+          }).pipe(Effect.result);
           expect(Result.isFailure(result)).toBe(true);
           if (Result.isFailure(result)) {
             expect(Predicate.isTagged(result.failure, "ControlProtocolMismatchError")).toBe(true);
@@ -883,12 +984,18 @@ describe("managed control endpoint", () => {
     live(
       Effect.scoped(
         Effect.gen(function* () {
-          const owner = yield* acquireControl({ stackId: STACK_ID });
+          const owner = yield* acquireControl({
+            stackId: STACK_ID,
+            maintenanceOperation: "update",
+          });
           if (!isControlOwnership(owner)) throw new Error("expected control ownership");
-          const attached = yield* acquireControl({ stackId: STACK_ID });
+          const attached = yield* acquireControl({
+            stackId: STACK_ID,
+            maintenanceOperation: "update",
+          });
           expect(isControlAttached(attached)).toBe(true);
           yield* owner.close;
-          const next = yield* acquireControl({ stackId: STACK_ID });
+          const next = yield* acquireControl({ stackId: STACK_ID, maintenanceOperation: "update" });
           expect(isControlOwnership(next)).toBe(true);
         }),
       ),
@@ -904,8 +1011,35 @@ describe("managed control endpoint", () => {
           yield* Effect.promise(() => child.ready);
           child.child.kill("SIGKILL");
           yield* Effect.promise(() => child.exited);
-          const owner = yield* acquireControl({ stackId: STACK_ID });
+          const owner = yield* acquireControl({
+            stackId: STACK_ID,
+            maintenanceOperation: "update",
+          });
           expect(isControlOwnership(owner)).toBe(true);
+        }),
+      ),
+    ),
+  );
+
+  it.live("rejects a fenced stop while a maintenance owner holds the endpoint", () =>
+    Effect.scoped(
+      live(
+        Effect.gen(function* () {
+          const maintenance = yield* acquireControl({
+            stackId: STACK_ID,
+            maintenanceOperation: "delete",
+          });
+          if (!isControlOwnership(maintenance)) throw new Error("expected maintenance ownership");
+          const attached = yield* acquireControl({
+            stackId: STACK_ID,
+            maintenanceOperation: "update",
+          });
+          if (!isControlAttached(attached)) throw new Error("expected maintenance attachment");
+          const result = yield* attached.requestStop.pipe(Effect.result);
+          expect(Result.isFailure(result)).toBe(true);
+          if (Result.isFailure(result)) {
+            expect(Predicate.isTagged(result.failure, "ControlMaintenanceBusyError")).toBe(true);
+          }
         }),
       ),
     ),

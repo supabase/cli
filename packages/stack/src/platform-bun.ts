@@ -17,6 +17,7 @@ import {
   ControlStopRequestSchema,
   ControlBindError,
   ControlStopConflictError,
+  ControlMaintenanceBusyError,
   ControlTransport,
   ControlTransportError,
   type ControlOwnerStatus,
@@ -50,7 +51,7 @@ const controlTransport: ControlTransport["Service"] = {
   bind: (
     endpoint: ControlEndpoint,
     ownerStatus: () => ControlOwnerStatus,
-    onStop: (request: ControlStopRequest) => "accepted" | "conflict" | "invalid",
+    onStop: (request: ControlStopRequest) => "accepted" | "conflict" | "busy" | "invalid",
     application?: ControlApplication,
   ) =>
     // Bun.serve starts synchronously inside BunHttpServer.make, before that
@@ -204,7 +205,13 @@ const controlTransport: ControlTransport["Service"] = {
                       Effect.map((stopRequest) => {
                         const decision = onStop(stopRequest);
                         const status =
-                          decision === "accepted" ? 202 : decision === "conflict" ? 409 : 400;
+                          decision === "accepted"
+                            ? 202
+                            : decision === "conflict"
+                              ? 409
+                              : decision === "busy"
+                                ? 423
+                                : 400;
                         return HttpServerResponse.jsonUnsafe(
                           decision === "accepted" ? { ok: true } : { error: decision },
                           { status },
@@ -246,7 +253,7 @@ const controlTransport: ControlTransport["Service"] = {
   requestStop: (endpoint: ControlEndpoint, stopRequest: ControlStopRequest) =>
     Effect.tryPromise({
       try: (signal) =>
-        fetch(`http://127.0.0.1:${endpoint.port}${CONTROL_STOP_PATH}`, {
+        fetch(`http://${endpoint.hostname}:${endpoint.port}${CONTROL_STOP_PATH}`, {
           method: "POST",
           signal: AbortSignal.any([signal, AbortSignal.timeout(500)]),
           headers: {
@@ -266,10 +273,17 @@ const controlTransport: ControlTransport["Service"] = {
         consumeControlResponse(endpoint, response).pipe(Effect.as(response)),
       ),
       Effect.flatMap(
-        (response): Effect.Effect<void, ControlStopConflictError | ControlTransportError> => {
+        (
+          response,
+        ): Effect.Effect<
+          void,
+          ControlStopConflictError | ControlMaintenanceBusyError | ControlTransportError
+        > => {
           if (response.ok) return Effect.void;
           if (response.status === 409)
             return Effect.fail(new ControlStopConflictError({ endpoint }));
+          if (response.status === 423)
+            return Effect.fail(new ControlMaintenanceBusyError({ endpoint }));
           return Effect.fail(
             new ControlTransportError({
               endpoint,

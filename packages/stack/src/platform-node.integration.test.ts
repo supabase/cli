@@ -69,6 +69,7 @@ const runStop = (endpoint: ControlEndpoint) =>
       transport.requestStop(endpoint, {
         ownershipId: "0".repeat(64),
         ownerSessionId: "session",
+        intent: "explicit",
       }),
     ).pipe(Effect.provide(controlTransportLayer), Effect.exit),
   );
@@ -112,6 +113,7 @@ describe("Node control transport", () => {
             controlProtocolVersion: 1,
             ownershipId,
             ownerSessionId: "replacement-session",
+            kind: "supervisor",
             state: "running",
             ready: true,
             daemonCliVersion: "test",
@@ -139,7 +141,9 @@ describe("Node control transport", () => {
         ).pipe(Effect.provide(controlTransportLayer), Effect.exit),
       );
       expect(Exit.isSuccess(exit)).toBe(true);
-      expect(stopBodies).toEqual([JSON.stringify({ ownershipId, ownerSessionId })]);
+      expect(stopBodies).toEqual([
+        JSON.stringify({ ownershipId, ownerSessionId, intent: "explicit" }),
+      ]);
     } finally {
       await close(server, sockets);
     }

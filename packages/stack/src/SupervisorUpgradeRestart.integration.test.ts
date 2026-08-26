@@ -8,8 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ControlTransportError,
-  type ControlOwnerStatus,
-  type ControlProbe,
+  type ControlSupervisorStatus,
   type ControlTransportShape,
 } from "./managed/control.ts";
 import type { ManagedStack, ManagedStackManagerShape } from "./managed/manager.ts";
@@ -43,16 +42,17 @@ const setup = (persistedVersions: Partial<Record<ServiceName, string>> = { auth:
     port: 54321,
     url: "http://127.0.0.1:54321",
   } as const;
-  const status: ControlOwnerStatus = {
+  const status: ControlSupervisorStatus = {
     controlProtocol: "supabase-stack-control",
     controlProtocolVersion: 1,
     ownershipId: stackId,
     ownerSessionId: "old-session",
+    kind: "supervisor",
     state: "running",
     ready: true,
     daemonCliVersion: "old",
   };
-  const oldOwner: ControlProbe = {
+  const oldOwner = {
     endpoint,
     status,
   };
@@ -102,6 +102,7 @@ const setup = (persistedVersions: Partial<Record<ServiceName, string>> = { auth:
     deleteStack: unused,
   };
   const stopState = { requested: false };
+  const stopRequest = { intent: undefined as "explicit" | "replacement" | undefined };
   const transport: ControlTransportShape = {
     bind: () => Effect.die("unused bind"),
     read: (readEndpoint) =>
@@ -114,9 +115,10 @@ const setup = (persistedVersions: Partial<Record<ServiceName, string>> = { auth:
             }),
           )
         : Effect.succeed(status),
-    requestStop: () =>
+    requestStop: (_endpoint, request) =>
       Effect.sync(() => {
         stopState.requested = true;
+        stopRequest.intent = request.intent;
       }),
   };
   const configInput: DaemonConfigInput = {
@@ -159,6 +161,7 @@ const setup = (persistedVersions: Partial<Record<ServiceName, string>> = { auth:
     oldOwner,
     stackId,
     stopState,
+    stopRequest,
     transport,
   };
 };
@@ -210,6 +213,24 @@ describe("incompatible supervisor upgrade restart", () => {
         Effect.sync(() => {
           expect(result.effectiveConfigInput.auth).toEqual({ version: "v-old" });
           expect(result.effectiveConfigInput.servicePolicies?.auth).not.toBe("off");
+        }),
+      ),
+      Effect.asVoid,
+    );
+  });
+
+  it.live("fences upgrade replacement with replacement stop intent", () => {
+    const context = setup();
+    return prepareUpgradeReplacement({
+      ...context,
+      configInput: context.configInput,
+      controlTransport: context.transport,
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.scoped,
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(context.stopRequest.intent).toBe("replacement");
         }),
       ),
       Effect.asVoid,
@@ -386,7 +407,7 @@ describe("incompatible supervisor upgrade restart", () => {
 
   it.effect("reports the refreshed owner state when stop times out", () => {
     const context = setup();
-    const stoppingStatus: ControlOwnerStatus = {
+    const stoppingStatus: ControlSupervisorStatus = {
       ...context.oldOwner.status,
       state: "stopping",
       ready: false,

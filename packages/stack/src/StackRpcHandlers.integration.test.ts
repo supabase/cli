@@ -12,8 +12,14 @@ import { makeSupervisorControlApplication } from "./SupervisorControlServer.ts";
 import { makeSupervisorSessionFixture } from "../tests/helpers/SupervisorSessionFixture.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 import { stackRpcFenceHeaders } from "./StackRpc.ts";
+import { isControlSupervisorStatus, type ControlOwnerStatus } from "./DaemonProtocol.ts";
 
 const OWNER_ID = "e".repeat(64);
+
+const supervisorStatus = (status: ControlOwnerStatus) => {
+  if (!isControlSupervisorStatus(status)) throw new Error("expected supervisor status");
+  return status;
+};
 
 const serviceState = (name: string) =>
   new StackServiceState({
@@ -105,7 +111,7 @@ it.live("serves handler behavior over the RPC boundary", () =>
       });
       if (!isControlOwnership(owner)) throw new Error("expected control ownership");
       yield* lifecycle.setClose(owner.close);
-      const status = yield* owner.ownerStatus;
+      const status = supervisorStatus(yield* owner.ownerStatus);
       const layer = RemoteStack.layer(owner.endpoint, {
         cliVersion: "test",
         owner: {
@@ -203,7 +209,7 @@ it.live("rejects launch updates after supervisor shutdown begins", () =>
       });
       if (!isControlOwnership(owner)) throw new Error("expected control ownership");
       yield* lifecycle.setClose(owner.close);
-      const status = yield* owner.ownerStatus;
+      const status = supervisorStatus(yield* owner.ownerStatus);
       const stopStarted = yield* Deferred.make<void>();
       const releaseStop = yield* Deferred.make<void>();
       yield* lifecycle.publishStack({

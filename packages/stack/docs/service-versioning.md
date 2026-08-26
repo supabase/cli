@@ -38,7 +38,9 @@ and launch metadata. There is no second state or metadata file. Start, status, l
 services, and stop all go through the managed lifecycle facade. The stable cross-build control
 protocol is `GET /owner` plus session-fenced `POST /stop`; runtime operations use same-version
 Effect RPC over HTTP/NDJSON at `POST /rpc`. A running document without an owned control endpoint
-is stale and can be reclaimed by the next lifecycle operation.
+is stale and can be reclaimed by the next lifecycle operation. `/owner` distinguishes versioned
+supervisor ownership from unversioned maintenance ownership, and `/stop` distinguishes an explicit
+user stop from an authorized upgrade replacement.
 
 ## Built-in defaults and remote versions
 
@@ -139,7 +141,9 @@ New stacks can adopt newer catalog defaults immediately. Existing stacks remain 
 changes their managed launch metadata. When `supabase start` encounters an incompatible live owner,
 it performs an explicit stop/start upgrade restart after preflight. The restart is authorized only by that
 explicit operation: it preflights while the old owner is live, stops the exact captured session through
-the stable `ControlClient`, waits for that session to release ownership, and launches an ordinary child.
+the stable `ControlClient` with replacement intent, waits for that session to release ownership, and
+launches an ordinary child. A concurrent explicit stop wins and prevents that child from restarting the
+stack.
 Persisted exclusions are reapplied to effective runtime
 service policies before preflight, active-port calculation, allocation, configuration resolution, and
 startup—not merely copied into `stack.json`. The upgrade restart preserves durable stack identity and

@@ -266,10 +266,10 @@ control protocol has no token authentication; ownership, endpoint identity,
 protocol-version checks, and the owner session fence provide the lifecycle
 boundary. The one static application exposes only:
 
-- `GET /owner` for the current owner, lifecycle phase, readiness, and daemon
-  CLI version;
-- `POST /stop` for an idempotent shutdown request containing the ownership id
-  and exact owner session id; and
+- `GET /owner` for the current supervisor lifecycle and CLI version, or the
+  current maintenance operation;
+- `POST /stop` for an idempotent shutdown request containing the ownership id,
+  exact owner session id, and explicit-user or upgrade-replacement intent; and
 - `POST /rpc` for same-version Effect RPC over framed NDJSON, fenced to the
   expected ownership id and owner session before dispatch.
 
@@ -277,14 +277,17 @@ boundary. The one static application exposes only:
 runtime route table or stream parser. Remote stop uses the stable `/stop` route
 and waits for the targeted owner session to end.
 
-The `/owner` payload contains the deterministic ownership id, random
-`ownerSessionId`, control protocol/version, lifecycle state, readiness, and
-daemon CLI version. `/stop` requires both ownership id and
-session id, returns `409` for a different owner session, and returns `202` only
-after the supervisor has accepted the one-shot shutdown request. The caller
-then observes the targeted session until it disappears. The protocol is
-session-fenced from its first supported release; there is no
-legacy runtime compatibility window or second-server handoff.
+The `/owner` payload is an exhaustive union. A `supervisor` owner publishes the
+deterministic ownership id, random `ownerSessionId`, control protocol/version,
+lifecycle state, readiness, and daemon CLI version. A `maintenance` owner
+publishes its operation (`delete`, `stop`, `update`, or `repair`) and has no
+daemon version or RPC surface. `/stop` requires ownership id, session id, and
+intent, returns `409` for a different owner session, `423` while maintenance
+owns the endpoint, and `202` only after the supervisor has accepted the
+one-shot shutdown request. The caller then observes the captured session under
+one deadline; disappearance completes as ended, while another valid owner is a
+replacement. The protocol is session-fenced from its first supported release;
+there is no legacy runtime compatibility window or second-server handoff.
 
 ### CLI version identity and upgrade restart
 
@@ -302,8 +305,8 @@ runtime or RPC code, the developer restarts the managed stack before testing.
 
 Only an explicit `supabase start` may authorize an upgrade restart. It
 preflights the managed document and persisted launch selection while the old
-owner is live, sends the session-fenced `/stop`, waits for that exact session to
-end, then starts the current version. The upgrade restart preserves the
+owner is live, sends a session-fenced replacement `/stop`, waits for that exact
+session to end, then starts the current version. The upgrade restart preserves the
 managed stack identity and creation metadata, data roots, runtime mode, pinned
 service versions, exclusions, and sticky port intents. It never invokes the
 destructive delete path or silently changes launch metadata.
@@ -333,7 +336,10 @@ The upgrade restart is a stop/start transaction rather than a supervisor handoff
 Preflight failure leaves the old owner running; stop timeout never binds a new
 owner; startup failure preserves the document and data for retry. Concurrent
 ordinary starts never restart an incompatible stack, and a delayed stop
-containing the old session id receives `409` from the new owner.
+containing the old session id receives `409` from the new owner. An explicit
+user stop is persisted before the old endpoint closes and prevents an attached
+or delayed replacement child from restarting the stack; a replacement stop
+does not set that user intent.
 
 ### Static application and lifecycle ownership
 

@@ -1153,15 +1153,28 @@ export const localStackLayer = (
               .pipe((effect) => withReadinessPolicy(effect, "stack", opts));
             yield* syncRuntimeProjectedStates(runtime);
           }).pipe(cleanupOnReadinessFailure),
-        subscribeLogs: (name) => logBuffer.subscribe(name),
+        subscribeLogs: (name) =>
+          Stream.unwrap(requireKnownService(name).pipe(Effect.as(logBuffer.subscribe(name)))),
         subscribeAllLogs: (services) =>
           services === undefined || services.length === 0
             ? logBuffer.subscribeAll()
-            : logBuffer
-                .subscribeAll()
-                .pipe(Stream.filter((entry) => services.includes(entry.service))),
-        logHistory: (name, limit) => logBuffer.history(name, limit),
-        logHistoryAll: (limit, services) => logBuffer.historyAll(limit, services),
+            : Stream.unwrap(
+                Effect.forEach(services, requireKnownService, { discard: true }).pipe(
+                  Effect.as(
+                    logBuffer
+                      .subscribeAll()
+                      .pipe(Stream.filter((entry) => services.includes(entry.service))),
+                  ),
+                ),
+              ),
+        logHistory: (name, limit) =>
+          requireKnownService(name).pipe(Effect.andThen(logBuffer.history(name, limit))),
+        logHistoryAll: (limit, services) =>
+          services === undefined || services.length === 0
+            ? logBuffer.historyAll(limit)
+            : Effect.forEach(services, requireKnownService, { discard: true }).pipe(
+                Effect.andThen(logBuffer.historyAll(limit, services)),
+              ),
       } satisfies StackService;
 
       return Context.make(Stack, stack).pipe(

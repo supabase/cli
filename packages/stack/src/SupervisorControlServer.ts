@@ -68,7 +68,7 @@ export const makeSupervisorControlApplication = (
           }
           // Submit ownership of the stop transaction before returning 202. The
           // listener closes gracefully after the response is flushed.
-          yield* session.submitShutdown;
+          yield* session.submitShutdownWithIntent(request.intent);
           return HttpServerResponse.jsonUnsafe({ ok: true }, { status: 202 });
         }).pipe(
           Effect.catchTags({

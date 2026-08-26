@@ -4,6 +4,7 @@ import {
   CONTROL_STOP_PATH,
   ControlProtocolError,
   ControlStopConflictError,
+  ControlMaintenanceBusyError,
   ControlTransportError,
   makeControlClient,
   type ControlClientShape,
@@ -116,11 +117,16 @@ const makeHttpControlTransport = (
           response,
         ): Effect.Effect<
           void,
-          ControlTransportError | ControlProtocolError | ControlStopConflictError
+          | ControlTransportError
+          | ControlProtocolError
+          | ControlStopConflictError
+          | ControlMaintenanceBusyError
         > => {
           if (response.ok) return Effect.void;
           if (response.status === 409)
             return Effect.fail(new ControlStopConflictError({ endpoint }));
+          if (response.status === 423)
+            return Effect.fail(new ControlMaintenanceBusyError({ endpoint }));
           // A stop response can be lost after the daemon accepts the request
           // (for example while it closes its listener). Treat every non-409
           // HTTP status as ambiguous transport, matching the platform

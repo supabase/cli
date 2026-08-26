@@ -41,7 +41,7 @@ describe("managed stack projects journeys", () => {
         const manager = yield* ManagedStackManager;
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
-        const ownership = yield* acquireControl({ stackId });
+        const ownership = yield* acquireControl({ stackId, maintenanceOperation: "update" });
         if (!isControlOwnership(ownership)) throw new Error("expected stack control ownership");
         const initial = yield* startManagedStack(manager, {
           workspacePath: workspace,
@@ -194,6 +194,7 @@ describe("managed stack projects journeys", () => {
               controlProtocolVersion: 1,
               ownershipId: stackId,
               ownerSessionId: "projects-test-session",
+              kind: "supervisor",
               state: "running",
               ready: true,
               daemonCliVersion: "test",

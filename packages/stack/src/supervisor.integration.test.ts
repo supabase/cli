@@ -394,7 +394,10 @@ const remoteStop = async (endpoint: ControlEndpoint): Promise<void> => {
   );
 };
 
-const requestOwnerStop = async (endpoint: ControlEndpoint): Promise<Response> => {
+const requestOwnerStop = async (
+  endpoint: ControlEndpoint,
+  intent: "explicit" | "replacement" = "explicit",
+): Promise<Response> => {
   const owner = ownerDescriptor(await fetchOwner(endpoint));
   return fetch(`${endpoint.url}/stop`, {
     method: "POST",
@@ -402,6 +405,7 @@ const requestOwnerStop = async (endpoint: ControlEndpoint): Promise<Response> =>
     body: JSON.stringify({
       ownershipId: owner.ownershipId,
       ownerSessionId: owner.ownerSessionId,
+      intent,
     }),
   });
 };
@@ -522,6 +526,7 @@ const listenStartingOwner = (
             controlProtocolVersion: 1,
             ownershipId,
             ownerSessionId: "fake-session",
+            kind: "supervisor",
             state: "starting",
             ready: false,
             daemonCliVersion: "test",
@@ -574,6 +579,7 @@ const listenOwnerSequence = (
           controlProtocolVersion: 1,
           ownershipId,
           ownerSessionId: "fake-session",
+          kind: "supervisor",
           state,
           ready: false,
           daemonCliVersion: "test",
@@ -947,6 +953,7 @@ describe("detached supervisor child journeys", () => {
         body: JSON.stringify({
           ownershipId: oldStarted.owner.ownershipId,
           ownerSessionId: oldStarted.owner.ownerSessionId,
+          intent: "explicit",
         }),
       });
       expect(staleStop.status).toBe(409);
@@ -1033,6 +1040,39 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
+  test("demotes a stale running document when startup validation fails before claiming it", async () => {
+    const roots = await workspace();
+    const oldOwner = spawnChild(messageFor(roots));
+    let failed: ChildHandle | undefined;
+    try {
+      const oldStarted = await oldOwner.started;
+      await remoteStop(oldStarted.endpoint);
+      await waitForExit(oldOwner.child);
+      const documentPath = Effect.runSync(
+        managedStackDocumentPathEffect(roots.stateRoot, roots.stackId),
+      );
+      const document = JSON.parse(readFileSync(documentPath, "utf8")) as {
+        lifecycle: string;
+        stopIntent?: string;
+      };
+      writeFileSync(
+        documentPath,
+        `${JSON.stringify({ ...document, lifecycle: "running", stopIntent: undefined }, null, 2)}\n`,
+      );
+      failed = spawnChild(
+        messageFor(roots, {
+          config: { ...messageFor(roots).config, mode: "docker" },
+        }),
+      );
+      await expect(failed.started).rejects.toThrow(/runtime is already native/);
+      expect(readStackDocument(roots)?.lifecycle).toBe("failed");
+    } finally {
+      if (oldOwner.child.exitCode === null) await kill(oldOwner.child);
+      if (failed?.child.exitCode === null) await kill(failed.child);
+      cleanupRoots(roots);
+    }
+  });
+
   test("preserves retryable managed data when upgrade restart startup fails", async () => {
     const roots = await workspace();
     const oldOwner = spawnChild(
@@ -1055,7 +1095,9 @@ describe("detached supervisor child journeys", () => {
       const sentinel = join(paths.root, "data", "upgrade-restart-start-failure.txt");
       mkdirSync(dirname(sentinel), { recursive: true });
       writeFileSync(sentinel, "retryable");
-      await remoteStop(oldStarted.endpoint);
+      const stopResponse = await requestOwnerStop(oldStarted.endpoint, "replacement");
+      expect(stopResponse.status).toBe(202);
+      await stopResponse.arrayBuffer();
       await waitForExit(oldOwner.child);
       restart = spawnChild(
         messageFor(roots, {
@@ -1094,7 +1136,9 @@ describe("detached supervisor child journeys", () => {
     let attached: ChildHandle | undefined;
     try {
       const oldStarted = await oldOwner.started;
-      await remoteStop(oldStarted.endpoint);
+      const stopResponse = await requestOwnerStop(oldStarted.endpoint, "replacement");
+      expect(stopResponse.status).toBe(202);
+      await stopResponse.arrayBuffer();
       await waitForExit(oldOwner.child);
       restart = spawnChild(messageFor(roots, { replacement: true, cliVersion: "new" }), {
         environment: { SUPABASE_STACK_TEST_MANAGED_STARTED_RELEASE_FILE: managedStartedRelease },
@@ -1539,7 +1583,7 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
-  test("starts after an owner finishes stopping", async () => {
+  test("does not restart when an explicit stop wins an attached takeover", async () => {
     const roots = await workspace();
     const releaseFile = join(roots.root, "release-stop");
     const stopBegan = join(roots.root, "stop-began");
@@ -1561,11 +1605,9 @@ describe("detached supervisor child journeys", () => {
       contender = spawnChild(input);
       await contender.attachedBeforeReady;
       writeFileSync(releaseFile, "release");
-      const restarted = await contender.started;
-      expect(restarted.attached).not.toBe(true);
-      expect(await fetchOwner(restarted.endpoint)).toMatchObject({ state: "running", ready: true });
+      await expect(contender.started).rejects.toThrow("stopped before takeover");
       await stop;
-      await remoteStop(restarted.endpoint);
+      expect(readStackDocument(roots)?.lifecycle).toBe("stopped");
       await waitForExit(contender.child);
     } finally {
       if (owner.child.exitCode === null) await kill(owner.child);
@@ -1934,7 +1976,9 @@ describe("detached supervisor child journeys", () => {
     const observedStates: Array<"starting" | "stopping"> = [];
     try {
       const started = await initial.started;
-      await remoteStop(started.endpoint);
+      const stopResponse = await requestOwnerStop(started.endpoint, "replacement");
+      expect(stopResponse.status).toBe(202);
+      await stopResponse.arrayBuffer();
       await waitForExit(initial.child);
       const document = await waitForStackDocument(roots, "stopped");
       const endpoint = await Effect.runPromise(controlEndpoint(document.id));

@@ -40,7 +40,6 @@ import {
   type ControlAcquisition,
   type ControlAttached,
   type ControlOwnership,
-  type ControlOwnerStatus,
   type ControlApplication,
   type ControlAddressConflictError,
   type ControlBindError,
@@ -77,7 +76,11 @@ import { HttpTransportClient } from "./HttpTransportClient.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { terminateChildProcess } from "./terminateChild.ts";
 import { dockerForceRemove } from "./cleanup.ts";
-import { CONTROL_PROTOCOL_VERSION } from "./DaemonProtocol.ts";
+import {
+  CONTROL_PROTOCOL_VERSION,
+  isControlSupervisorStatus,
+  type ControlSupervisorStatus,
+} from "./DaemonProtocol.ts";
 import {
   DaemonUpgradeRequired,
   StackBuildError,
@@ -113,7 +116,10 @@ const isControlOwnership = (value: ControlAcquisition): value is ControlOwnershi
 const isControlAttached = (value: ControlAcquisition): value is ControlAttached =>
   Predicate.isTagged(value, "Attached");
 
-const startedOwnerDescriptor = (status: ControlOwnerStatus): SupervisorStartedMessage["owner"] => ({
+const startedOwnerDescriptor = (
+  status: ControlSupervisorStatus,
+): SupervisorStartedMessage["owner"] => ({
+  kind: "supervisor",
   ownershipId: status.ownershipId,
   ownerSessionId: status.ownerSessionId,
   controlProtocolVersion: status.controlProtocolVersion,
@@ -179,6 +185,14 @@ const awaitOwnerReady = (
 > =>
   acquisition.ownerStatus.pipe(
     Effect.flatMap((status) => {
+      if (!isControlSupervisorStatus(status)) {
+        return Effect.fail(
+          new SupervisorOwnerUnavailableError({
+            retry: false,
+            detail: `Managed stack is busy with ${status.operation} maintenance`,
+          }),
+        );
+      }
       if (status.state === "running" && status.ready) return Effect.succeed(status);
       return Effect.fail(
         new SupervisorOwnerUnavailableError({
@@ -461,7 +475,8 @@ const makeRunManagedExecution = (
       | ControlTransportError
       | ControlProtocolError
       | ControlProtocolMismatchError
-      | InvalidControlOwnershipIdError,
+      | InvalidControlOwnershipIdError
+      | SupervisorStartError,
       Scope.Scope
     > =>
       Effect.gen(function* () {
@@ -472,6 +487,13 @@ const makeRunManagedExecution = (
           application: controlApplication,
         }).pipe(Effect.provideService(ControlTransport, controlTransport));
         if (isControlOwnership(candidate)) return candidate;
+        if (!isControlSupervisorStatus(candidate.observedStatus)) {
+          return yield* Effect.fail(
+            new SupervisorStartError({
+              message: `Managed stack is busy with ${candidate.observedStatus.operation} maintenance`,
+            }),
+          );
+        }
         if (candidate.observedStatus.daemonCliVersion !== input.cliVersion) {
           return yield* Effect.fail(
             new DaemonUpgradeRequired({
@@ -499,6 +521,14 @@ const makeRunManagedExecution = (
         }),
       );
     if (isControlAttached(initialAcquisition)) {
+      const attachedStatus = initialAcquisition.observedStatus;
+      if (!isControlSupervisorStatus(attachedStatus)) {
+        return yield* Effect.fail(
+          new SupervisorStartError({
+            message: `Managed stack is busy with ${attachedStatus.operation} maintenance`,
+          }),
+        );
+      }
       const discovery = yield* manager.ensureWorkspace(input.workspacePath);
       const stackId = deriveStackId(discovery.identity, input.stackName);
       if (stackId !== input.stackId) {
@@ -522,7 +552,6 @@ const makeRunManagedExecution = (
           }),
         );
       }
-      const attachedStatus = initialAcquisition.observedStatus;
       if (attachedStatus.daemonCliVersion !== input.cliVersion) {
         return yield* Effect.fail(
           new DaemonUpgradeRequired({
@@ -584,6 +613,13 @@ const makeRunManagedExecution = (
         );
       }
       const attachedStatus = yield* acquisition.ownerStatus;
+      if (!isControlSupervisorStatus(attachedStatus)) {
+        return yield* Effect.fail(
+          new SupervisorStartError({
+            message: `Managed stack is busy with ${attachedStatus.operation} maintenance`,
+          }),
+        );
+      }
       yield* sendMessage({
         type: "started",
         endpoint: acquisition.endpoint,
@@ -744,27 +780,38 @@ const makeRunManagedExecution = (
             ),
             Effect.tap(() => Effect.sync(() => process.disconnect?.())),
           ),
-      onStopped: manager.inspectStack(input.stackId).pipe(
-        Effect.flatMap((current) =>
-          current?.lifecycle === "starting" || current?.lifecycle === "running"
-            ? manager
-                .recordLifecycle(ownership, {
-                  stackId: input.stackId,
-                  lifecycle: "stopped",
-                })
-                .pipe(Effect.asVoid)
-            : Effect.void,
-        ),
-      ),
+      onStopped: (intent) =>
+        Effect.gen(function* () {
+          const current = yield* manager.inspectStack(input.stackId);
+          if (current?.lifecycle !== "starting" && current?.lifecycle !== "running") return;
+          yield* manager
+            .recordLifecycle(ownership, {
+              stackId: input.stackId,
+              lifecycle: "stopped",
+              ...(intent === "explicit" ? { stopIntent: "explicit" as const } : {}),
+            })
+            .pipe(Effect.asVoid);
+        }),
       onFailure: () =>
-        claimedStack
-          ? manager
-              .recordLifecycle(ownership, {
-                stackId: input.stackId,
-                lifecycle: "failed",
-              })
-              .pipe(Effect.asVoid)
-          : Effect.void,
+        Effect.gen(function* () {
+          const current = yield* manager.inspectStack(input.stackId);
+          if (
+            current === undefined ||
+            current.lifecycle === "deleting" ||
+            (!claimedStack &&
+              current.lifecycle !== "starting" &&
+              current.lifecycle !== "running" &&
+              current.lifecycle !== "failed")
+          ) {
+            return;
+          }
+          yield* manager
+            .recordLifecycle(ownership, {
+              stackId: input.stackId,
+              lifecycle: "failed",
+            })
+            .pipe(Effect.asVoid);
+        }),
       closeOwner: ownership.close,
       errorDetail: (cause) => causeMessage(Cause.squash(cause)),
     });
