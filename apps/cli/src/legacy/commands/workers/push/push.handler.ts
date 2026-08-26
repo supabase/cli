@@ -188,8 +188,17 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
             : Effect.fail(error),
         ),
       );
+    // Something is there, it is just not a directory. Reporting that as "there
+    // is no worker source" is false twice over: the path is occupied, and
+    // `workers new` refuses a destination that exists and is not a directory,
+    // so the scaffold suggestion would answer with a second error.
     if (info.type !== "Directory") {
-      return yield* Effect.fail(sourceMissing);
+      return yield* Effect.fail(
+        new WorkerSourceMissingError({
+          detail: `${sourceDisplay} is not a directory.`,
+          suggestion: `Replace it with a directory holding your worker's code, then run this command again.`,
+        }),
+      );
     }
     // An empty directory packages and deploys perfectly happily, producing an
     // image with nothing in it — a success message for a worker that cannot

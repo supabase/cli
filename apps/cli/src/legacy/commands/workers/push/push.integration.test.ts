@@ -1,4 +1,4 @@
-import { chmodSync, readdirSync, rmSync, symlinkSync } from "node:fs";
+import { chmodSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option, Schedule } from "effect";
@@ -438,6 +438,29 @@ describe("legacy workers push", () => {
       // that names it would answer with a second error instead of a fix.
       expect((error as WorkerSourceMissingError).suggestion).not.toContain("--force");
       expect((error as WorkerSourceMissingError).suggestion).not.toContain("workers new");
+      expect(http.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // A file sitting where the source directory should be is not a missing
+  // worker: the path is occupied, and `workers new` refuses a destination that
+  // exists and is not a directory, so pointing there would answer with a second
+  // error.
+  it.live("reports a file at the source path as not a directory", () => {
+    const repo = project({});
+    const source = join(repo.dir, "supabase", "workers", "api");
+    rmSync(source, { recursive: true, force: true });
+    writeFileSync(source, "not a directory");
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      const error = yield* push().pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerSourceMissingError);
+      const failure = error as WorkerSourceMissingError;
+      expect(failure.detail).toContain("is not a directory");
+      expect(failure.detail).not.toContain("There is no worker source");
+      expect(failure.suggestion).not.toContain("workers new");
       expect(http.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
