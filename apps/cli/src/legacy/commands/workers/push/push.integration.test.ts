@@ -336,6 +336,39 @@ describe("legacy workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // `config.json` is a supported project format. `push` only reads the workers
+  // section, so it has to honour one: loading TOML-only left the section empty,
+  // which meant a guessed runtime and default size and instance count for a
+  // worker that had configured all three.
+  it.live("deploys a worker configured in config.json, not just config.toml", () => {
+    const created = makeWorkersProject({
+      "supabase/config.json": JSON.stringify({
+        project_id: "demo",
+        workers: { api: { runtime: "node", size: "2gb", instances: 3 } },
+      }),
+      "supabase/workers/api/index.js": "export default { fetch: () => new Response('ok') };\n",
+    });
+    const repo = {
+      dir: created.dir,
+      cleanup: () => rmSync(created.dir, { recursive: true, force: true }),
+    };
+    const { layer, http, out } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      yield* push();
+
+      const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
+      expect(JSON.parse(deploy?.body ?? "{}").data.attributes.spec).toEqual({
+        runtime: "node",
+        size: "2gb-1vcpu",
+        exposure: "public",
+        instances: 3,
+      });
+      // Every value came from config, so nothing was inferred from the files.
+      expect(out.stderrText).not.toContain("guessed");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   // The presigned URL's query string is a write-capable credential, so it must
   // not ride along in the error text — which rules out the library's own
   // `HttpClientError.message`, since that appends the method and URL that
