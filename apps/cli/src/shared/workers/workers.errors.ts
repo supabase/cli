@@ -22,24 +22,6 @@ export class InvalidWorkerNameError extends Data.TaggedError("InvalidWorkerNameE
 }
 
 /**
- * A worker is configured `runtime = "dockerfile"` but its source holds no
- * top-level `Dockerfile`.
- *
- * Only reachable from a recorded runtime: when the runtime is guessed instead,
- * the classifier picked `dockerfile` precisely because it found the file. The
- * server has nothing to build without it, so refusing here costs the user a
- * message instead of an upload, a deploy and a remote build failure.
- */
-export class WorkerDockerfileMissingError extends Data.TaggedError("WorkerDockerfileMissingError")<{
-  readonly detail: string;
-  readonly suggestion: string;
-}> {
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.invalidConfig;
-  }
-}
-
-/**
  * A symlink in the worker source points outside the build context.
  *
  * The archive is everything the server gets — it runs no install step and has

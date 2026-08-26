@@ -1,4 +1,3 @@
-import { join } from "node:path";
 import { Effect, FileSystem, Option, Predicate, type Schedule } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import { Output } from "../../../../shared/output/output.service.ts";
@@ -38,7 +37,6 @@ import {
   UnknownWorkerRuntimeError,
   UnknownWorkerSizeError,
   WorkerBuildFailedError,
-  WorkerDockerfileMissingError,
   WorkerSourceMissingError,
 } from "../../../../shared/workers/workers.errors.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -256,31 +254,6 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     recorded: worker.entry?.runtime,
     sourceDir: worker.sourceDir,
   });
-
-  // A `dockerfile` worker ships its own build instructions, and the server has
-  // nothing to do without them. Checked before the archive is built rather than
-  // after the remote build fails — the CLI is already standing in the directory
-  // that either has the file or does not. A guessed `dockerfile` runtime always
-  // passes, since the classifier chose it by finding this exact file.
-  if (runtime === "dockerfile") {
-    const dockerfile = yield* fs.stat(join(worker.sourceDir, "Dockerfile")).pipe(
-      Effect.map(Option.some),
-      Effect.catchTag("PlatformError", (error) =>
-        Predicate.isTagged(error.reason, "NotFound") ? Effect.succeedNone : Effect.fail(error),
-      ),
-    );
-    if (Option.isNone(dockerfile) || dockerfile.value.type !== "File") {
-      return yield* Effect.fail(
-        new WorkerDockerfileMissingError({
-          detail: `${name} is configured to build its own Dockerfile, but there is no Dockerfile in ${sourceDisplay}.`,
-          suggestion: `Add a Dockerfile there, or set a catalog runtime under [workers.${name}] in ${displayPath(
-            project.projectRoot,
-            project.configPath,
-          )}.`,
-        }),
-      );
-    }
-  }
 
   // Size: whatever `new --size` recorded, else the alpha envelope's own
   // default. Never left unset, because a worker that is actually running always

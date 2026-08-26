@@ -43,7 +43,6 @@
 | `1`  | a worker's source is missing, not a directory, or empty |
 | `1`  | a worker's source directory cannot be read              |
 | `1`  | a worker's source links to a path outside itself        |
-| `1`  | a `dockerfile` worker's source holds no `Dockerfile`    |
 | `1`  | build context upload failed                             |
 | `1`  | the build reached `failed`, or never left `building`    |
 | `1`  | API error, or project not enrolled in the alpha         |
