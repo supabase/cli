@@ -849,29 +849,7 @@ function attachFrozenApiResponse<T extends Record<string, unknown>>(
   // caught and typed by cloneRawAttributes.
   const cloned = cloneRawAttributes(rawAttributes);
   assertRawAttributesDepthWithinBound(cloned, 0, undefined, reason);
-  // Object.freeze itself can throw on structured-cloneable non-JSON values
-  // (a typed array: "Cannot freeze array buffer views with elements") —
-  // parsed JSON never contains one, so reaching this is programmatic caller
-  // input, translated to keep the typed-error contract.
-  let frozen: Record<string, unknown>;
-  try {
-    frozen = deepFreeze(cloned);
-  } catch (cause) {
-    throw new ProjectConfigParseError({
-      message:
-        "attachApiResponse raw attributes hold a value that cannot be frozen (e.g. a typed array) — raw attributes must be plain parsed JSON",
-      cause,
-      reason: "caller_misuse",
-    });
-  }
-  const result = { ...enumerableProps };
-  Object.defineProperty(result, "_apiResponse", {
-    value: frozen,
-    enumerable: false,
-    writable: false,
-    configurable: false,
-  });
-  return result;
+  return attachOwnedSnapshot(enumerableProps, cloned);
 }
 
 /**
@@ -895,19 +873,57 @@ export function fromApiProjectConfig(input: unknown): ProjectConfig;
 // is the contract, pinned by the unit tests.
 export function fromApiProjectConfig(input: unknown): unknown {
   const rawAttributes = unwrapApiResponse(input);
-  // Depth/work-bound the raw structure BEFORE schema decoding: the mirror's
-  // `auth` record is `Schema.Json`, whose decode recurses through arbitrary
-  // nesting, so a pathologically deep auth value would overflow with a raw
-  // RangeError inside the decode — ahead of the bound `attachFrozenApiResponse`
-  // applies later — escaping the typed-error contract.
-  assertRawAttributesDepthWithinBound(rawAttributes);
-  const decodedAttributes = decodeAttributes(rawAttributes);
+  // ONE inert snapshot for everything: clone first (getters resolve exactly
+  // once — decode, mapping, and the attached metadata all read the same
+  // data, so no accessor can desynchronize them), then depth/work-bound the
+  // snapshot BEFORE schema decoding — the mirror's `auth` record is
+  // `Schema.Json`, whose decode recurses through arbitrary nesting, so a
+  // pathologically deep value would otherwise overflow with a raw RangeError
+  // inside the decode, escaping the typed-error contract. structuredClone's
+  // own failure modes (non-cloneables, extreme depth) are already typed by
+  // cloneRawAttributes.
+  const snapshot = cloneRawAttributes(rawAttributes);
+  assertRawAttributesDepthWithinBound(snapshot);
+  const decodedAttributes = decodeAttributes(snapshot);
 
   const output: Record<string, unknown> = {};
   applyMappingRows(decodedAttributes, output);
   applyDisabledSentinels(output);
 
-  return attachFrozenApiResponse(output, rawAttributes);
+  // The snapshot is already validated and exclusively owned here, so it is
+  // frozen and attached directly — no second clone/validation pass.
+  return attachOwnedSnapshot(output, snapshot);
+}
+
+/**
+ * Freezes and attaches an ALREADY-validated, exclusively-owned snapshot —
+ * the tail of {@link attachFrozenApiResponse} without the clone/validate
+ * steps, for the one caller ({@link fromApiProjectConfig}) that has already
+ * done both on the same object.
+ */
+function attachOwnedSnapshot<T extends Record<string, unknown>>(
+  enumerableProps: T,
+  snapshot: Record<string, unknown>,
+): T {
+  let frozen: Record<string, unknown>;
+  try {
+    frozen = deepFreeze(snapshot);
+  } catch (cause) {
+    throw new ProjectConfigParseError({
+      message:
+        "raw attributes hold a value that cannot be frozen (e.g. a typed array) — raw attributes must be plain parsed JSON",
+      cause,
+      reason: "caller_misuse",
+    });
+  }
+  const result = { ...enumerableProps };
+  Object.defineProperty(result, "_apiResponse", {
+    value: frozen,
+    enumerable: false,
+    writable: false,
+    configurable: false,
+  });
+  return result;
 }
 
 /**

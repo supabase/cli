@@ -231,7 +231,16 @@ function parseDuration(s: string): number {
     // e.g. "0.2593ms" scales as 2593 * (1e6 / 1e4) = 259300 exactly, where
     // (frac / post) * unitNs rounds to 259299.99999999997 and truncates a
     // nanosecond short.
-    const contribution = n * unitNs + Math.trunc(frac * (unitNs / post));
+    const wholeContribution = n * unitNs;
+    // A safe integer component can still round through the unit
+    // multiplication ("9007199254740ms" × 1e6 lands above MAX_SAFE, and the
+    // rounding can even divide back clean) — BigInt exactness is the only
+    // reliable detector; on loss the value stays verbatim. Representable
+    // floats at these magnitudes are integers, so BigInt() is total here.
+    if (n !== 0 && BigInt(wholeContribution) !== BigInt(n) * BigInt(unitNs)) {
+      throw new Error(`time: invalid duration "${orig}" (value out of range)`);
+    }
+    const contribution = wholeContribution + Math.trunc(frac * (unitNs / post));
     // Two bounds: Go's own int64 range, and float64 EXACTNESS — the addition
     // must not round ("2502h1ns" adds 1ns to a total whose float spacing is
     // already >1ns, so next - total comes back 0, not 1, and the value stays
@@ -476,7 +485,7 @@ function secondsDurationRow(
             expectNumberBetween(
               expectInteger(value, apiPath),
               apiPath,
-              0,
+              -MAX_CANONICAL_DURATION_SECONDS,
               MAX_CANONICAL_DURATION_SECONDS,
             ),
           ),
@@ -504,7 +513,10 @@ function secondsDurationRow(
  * it overflow the formatter ("InfinityhNaNmNaNs", exponent notation).
  * Negative session bounds are meaningless, so 0 is the floor.
  */
-const MAX_SESSION_DURATION_HOURS = MAX_GO_DURATION_NS / NS_PER_HOUR;
+const MAX_SESSION_DURATION_HOURS = (MAX_GO_DURATION_NS - 2 ** 10) / NS_PER_HOUR;
+// ^ 2^63 - 1024 (exactly representable at that float spacing) keeps the
+// INCLUSIVE bound below Go's maximum duration — 2^63 itself is one
+// nanosecond past max int64.
 
 function hoursDurationRow(
   configPath: ReadonlyArray<string>,

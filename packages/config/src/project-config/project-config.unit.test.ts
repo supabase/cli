@@ -2078,3 +2078,41 @@ describe("review round: clone-snapshot validation, provenance, digit exactness (
     expect(projected.auth?.sessions?.timebox).toBe("9007199254740993ns");
   });
 });
+
+describe("review round: unified snapshot, exact scaling, signed frequencies, endpoint (CLI-2230)", () => {
+  test("decode, mapping, and metadata all read one snapshot", () => {
+    let reads = 0;
+    const flippy: Record<string, unknown> = {};
+    Object.defineProperty(flippy, "max_rows", {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return reads;
+      },
+    });
+    const result = fromApiProjectConfig({ api: flippy });
+    // Whatever the first (and only) read produced is BOTH the mapped value
+    // and the metadata value — no desync possible.
+    expect(result.api?.max_rows).toBe(1);
+    expect(result._apiResponse?.["api"]).toEqual({ max_rows: 1 });
+  });
+
+  test("a safe integer component that rounds through its unit stays verbatim", () => {
+    const projected = fromConfigDocument({
+      auth: { sessions: { timebox: "9007199254740ms" } },
+    });
+    expect(projected.auth?.sessions?.timebox).toBe("9007199254740ms");
+  });
+
+  test("negative frequencies map (the contract types them signed)", () => {
+    const result = fromApiProjectConfig({ auth: { smtp_max_frequency: -5 } });
+    expect(result.auth?.email?.max_frequency).toBe("-5s");
+  });
+
+  test("the session-hour ceiling itself maps below Go's maximum duration", () => {
+    const ceilingHours = (2 ** 63 - 2 ** 10) / 3_600_000_000_000;
+    const result = fromApiProjectConfig({ auth: { sessions_timebox: ceilingHours } });
+    expect(typeof result.auth?.sessions?.timebox).toBe("string");
+    expect(result.auth?.sessions?.timebox).not.toContain("e");
+  });
+});
