@@ -159,9 +159,11 @@ and schema asset into `apps/docs`.
 ### Running the docs site
 
 ```sh
-cd apps/docs
-pnpm run generate   # Generate command pages from CLI source
-pnpm run dev        # Start dev server (also runs generate first)
+# From the repository root:
+pnpm run dev:docs    # Generate command pages, then start the Next.js dev server
+
+# To generate pages without starting the server:
+pnpm --filter @supabase/docs run generate
 ```
 
 ## Adding a new command's documentation

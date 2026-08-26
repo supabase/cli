@@ -9,7 +9,7 @@
     "test:e2e:run": "bun --bun vitest run",
     "test:legacy": "CLI_HARNESS_TARGET=ts-legacy pnpm run test:e2e",
     "test:next": "CLI_HARNESS_TARGET=ts-next pnpm run test:e2e",
-    "record": "RECORD=true CLI_HARNESS_TARGET=ts-legacy pnpm run test:e2e",
+    "record": "RECORD=true CLI_HARNESS_TARGET=ts-legacy pnpm run test:e2e:run",
     "types:check": "tsc --noEmit"
   },
   "dependencies": {
@@ -23,48 +23,6 @@
     "vitest": "catalog:"
   },
   "nx": {
-    "targets": {
-      "test:e2e": {
-        "dependsOn": [
-          {
-            "projects": [
-              "supabase"
-            ],
-            "target": "build"
-          },
-          {
-            "projects": [
-              "cli-go"
-            ],
-            "target": "build"
-          }
-        ],
-        "inputs": [
-          "default",
-          "{workspaceRoot}/apps/cli/dist/**/*"
-        ]
-      },
-      "record": {
-        "dependsOn": [
-          {
-            "projects": [
-              "supabase"
-            ],
-            "target": "build"
-          },
-          {
-            "projects": [
-              "cli-go"
-            ],
-            "target": "build"
-          }
-        ],
-        "inputs": [
-          "default",
-          "{workspaceRoot}/apps/cli/dist/**/*"
-        ]
-      }
-    },
     "implicitDependencies": [
       "cli-go",
       "supabase"

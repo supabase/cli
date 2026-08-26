@@ -4,6 +4,10 @@
   "scripts": {
     "build": "pnpm exec turbo run build",
     "generate": "pnpm exec turbo run @supabase/api#generate && pnpm exec turbo run @supabase/docs#generate",
+    "test:live": "pnpm exec turbo run supabase#test:live --concurrency=1 --",
+    "record": "pnpm exec turbo run @supabase/cli-e2e#record --",
+    "test:smoke": "pnpm exec turbo run supabase#test:smoke --",
+    "dev:docs": "pnpm exec turbo run @supabase/docs#dev",
     "test:unit": "pnpm exec turbo run test:unit:run --filter=!@supabase/cli-go --",
     "test:integration": "pnpm exec turbo run test:integration:run --",
     "test:e2e": "pnpm exec turbo run supabase#build && pnpm exec turbo run test:e2e:run --only --concurrency=1 --",

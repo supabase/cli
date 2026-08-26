@@ -211,10 +211,10 @@ from the provisioned project's database metadata.
 
 Live coverage is smoke coverage, not an exhaustive command matrix. Add one representative golden-path test for each user-facing command, colocated beside that command. A live test should assert one target command; setup and teardown may invoke other commands when they prepare or clean up state, but those commands are not asserted in that test. Keep validation, formatting, fallback, error, and matrix details in integration tests unless the remote/runtime boundary itself is the behavior under test. See [ADR 0013](docs/adr/0013-live-e2e-bypasses-replay-server.md) and [`apps/cli/live.env.example`](apps/cli/live.env.example).
 
-To run the live suite locally, copy [`apps/cli/live.env.example`](apps/cli/live.env.example), set the API URL and access token for the target platform, and run the Nx target from the repository root. The target's build dependency prepares the CLI artifacts before Vitest starts:
+To run the live suite locally, copy [`apps/cli/live.env.example`](apps/cli/live.env.example), set the API URL and access token for the target platform, and run the root Turbo entrypoint. Its build dependency prepares the CLI artifacts before Vitest starts:
 
 ```sh
-pnpm exec nx run supabase:test:live
+pnpm run test:live
 ```
 
 Optional `SUPABASE_LIVE_ORG_ID`, `SUPABASE_LIVE_REGION`, and
@@ -228,12 +228,7 @@ Live CI is manual or daily scheduled and is not PR-blocking; run it manually on 
 
 ```sh
 # Replay mode — fast, no credentials needed
-cd apps/cli-e2e
-pnpm test            # ts-legacy target (default and only target)
-pnpm test:legacy     # ts-legacy target (explicit, same as above)
-
-# Or via Turbo from the repo root
-pnpm --filter @supabase/cli-e2e run test:e2e
+pnpm exec turbo run @supabase/cli-e2e#test:e2e:run   # ts-legacy target
 ```
 
 ### Recording fixtures
@@ -241,8 +236,7 @@ pnpm --filter @supabase/cli-e2e run test:e2e
 Recording proxies CLI traffic to the Supabase staging API. Provide a staging access token and a project ref for commands that need one — everything else is baked into the script:
 
 ```sh
-cd apps/cli-e2e
-SUPABASE_ACCESS_TOKEN=<your-staging-token> SUPABASE_TEST_PROJECT_REF=<your-project-ref> SUPABASE_STAGING_URL=<stagingUrl> pnpm record
+SUPABASE_ACCESS_TOKEN=<your-staging-token> SUPABASE_TEST_PROJECT_REF=<your-project-ref> SUPABASE_STAGING_URL=<stagingUrl> pnpm run record
 ```
 
 Review the generated files in `apps/cli-e2e/fixtures/recorded/` before committing — verify that no real tokens, UUIDs, or project refs appear (they should be replaced with `__ACCESS_TOKEN__`, `__UUID__`, `__PROJECT_REF__` placeholders).
@@ -252,7 +246,7 @@ Review the generated files in `apps/cli-e2e/fixtures/recorded/` before committin
 After recording, replay must pass with no changes against the freshly committed fixtures:
 
 ```sh
-pnpm test:legacy
+pnpm exec turbo run @supabase/cli-e2e#test:e2e:run
 ```
 
 A test failing only after a recording session usually means an assertion needs updating to match the CLI's current real-world output, not the fixture.
@@ -375,21 +369,21 @@ The CLI build names its config and Go build prerequisites explicitly. The
 remaining CLI workspace dependencies intentionally have no build script, so
 strict Turbo task selection does not synthesize no-op `^build` tasks for them.
 
-Nx remains for live and auxiliary workflows. **Run the live suite:**
+**Run the live suite:**
 
 The target's uncached build dependency prepares the CLI artifacts before Vitest
 starts; use Turbo for cacheable build outputs.
 
 ```sh
-pnpm exec nx run supabase:test:live
+pnpm run test:live
 ```
 
-Use `nx show project supabase` to inspect build/live dependencies and outputs.
+Use `nx show project supabase` to inspect remaining Nx dependency metadata.
 Do not use Nx affected mode for quality checks; run `pnpm run check:all` or
 `pnpm run fix:all` from the repository root instead. Package-local checks use
 `pnpm types:check` plus the package's test scripts. See
 [`docs/nx-inference-plugins.md`](docs/nx-inference-plugins.md) for the retained
-Go plugin used by the Nx build graph.
+Go plugin used by the Nx dependency graph.
 
 ## Documentation
 
