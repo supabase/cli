@@ -1317,6 +1317,94 @@ describe("legacy functions serve integration", () => {
     });
   });
 
+  it.live("leaves the existing container alone when create loses a name conflict", () => {
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && (args[1] === "inspect" || args[1] === "rm")) {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "create") {
+        return {
+          exitCode: 1,
+          stdout: "",
+          stderr:
+            'Conflict. The container name "/supabase_edge_runtime_test-project" is already in use',
+        };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() => writeCliConfig('project_id = "test-project"\n'));
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+
+      const { layer } = setupServe();
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      const steps = deployMockState.runCalls.map((call) => call.args.slice(0, 2));
+      const createIndex = steps.findIndex(([first]) => first === "create");
+      expect(createIndex).toBeGreaterThan(-1);
+      expect(
+        steps
+          .slice(createIndex + 1)
+          .some(([first, second]) => first === "container" && second === "rm"),
+      ).toBe(false);
+    });
+  });
+
+  it.live("removes the created container when the bootstrap copy fails", () => {
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && (args[1] === "inspect" || args[1] === "rm")) {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "create") {
+        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+      }
+      if (args[0] === "cp") {
+        return { exitCode: 1, stdout: "", stderr: "cp target is gone" };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() => writeCliConfig('project_id = "test-project"\n'));
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+
+      const { layer } = setupServe();
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      expect(String(error)).toContain(
+        "failed to copy edge runtime main service into container: cp target is gone",
+      );
+      const steps = deployMockState.runCalls.map((call) => call.args.slice(0, 2));
+      const createIndex = steps.findIndex(([first]) => first === "create");
+      expect(createIndex).toBeGreaterThan(-1);
+      expect(steps.some(([first]) => first === "start")).toBe(false);
+      expect(
+        steps
+          .slice(createIndex + 1)
+          .some(([first, second]) => first === "container" && second === "rm"),
+      ).toBe(true);
+    });
+  });
+
   it.live("binds per-function deno.json scope targets outside a nested project repository", () => {
     deployMockState.runHandler = (command, args) => {
       if (command !== "docker") {
