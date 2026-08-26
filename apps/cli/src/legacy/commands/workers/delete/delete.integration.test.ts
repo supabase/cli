@@ -103,6 +103,68 @@ describe("legacy workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // The API grants `edge_functions:read` for the GET and `edge_functions:write`
+  // for the DELETE separately, so a credential holding only write could not
+  // delete a worker it is entitled to delete.
+  it.live("deletes with --yes when the credential may not read the worker", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      yes: true,
+      routes: {
+        [getRoute]: { status: 403, body: { message: "insufficient scope" } },
+        [deleteRoute]: { status: 204 },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersDelete({ name: "api", projectRef: Option.none() });
+
+      expect(http.routeKeys).toEqual([getRoute, deleteRoute]);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("still confirms interactively when the worker cannot be read", () => {
+    const repo = project();
+    const { layer, out, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      promptTextResponses: ["api"],
+      routes: {
+        [getRoute]: { status: 403, body: { message: "insufficient scope" } },
+        [deleteRoute]: { status: 204 },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersDelete({ name: "api", projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("permanently deletes");
+      // No count is quoted: the read that would have supplied one was refused.
+      expect(out.stdoutText).not.toContain("will be terminated");
+      expect(http.routeKeys).toEqual([getRoute, deleteRoute]);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // A refusal is not an absence: only a real 404 means there was nothing there.
+  it.live("reports an unreadable worker as deleted, not as nothing to delete", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      yes: true,
+      routes: {
+        [getRoute]: { status: 403, body: { message: "insufficient scope" } },
+        [deleteRoute]: { status: 204 },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersDelete({ name: "api", projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("Deleted Worker");
+      expect(out.stdoutText).not.toContain("nothing to delete");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("refuses -o env before deleting anything", () => {
     const repo = project();
     const { layer, http } = setupLegacyWorkers({

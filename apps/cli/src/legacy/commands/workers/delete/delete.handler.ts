@@ -15,6 +15,7 @@ import {
   WorkerDeleteConfirmationRequiredError,
   WorkerDeleteNotConfirmedError,
   WorkerNotDeployedError,
+  WorkersApiUnexpectedStatusError,
 } from "../../../../shared/workers/workers.errors.ts";
 import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -82,12 +83,23 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
     yield* legacyRejectWorkersEnvOutput();
 
     const fetching = yield* output.task("Fetching worker...");
-    const found = yield* getWorker(api, projectRef, name).pipe(
+    // The lookup is a courtesy, not a prerequisite: it supplies the instance
+    // tally the confirmation quotes and the "already gone" verdict. The API
+    // grants the read and the delete separately — `edge_functions:read` for
+    // `GET`, `edge_functions:write` for `DELETE` — so a credential holding only
+    // the latter could not delete a worker it is entitled to delete. A refused
+    // read now leaves the worker *unknown* and the delete goes ahead.
+    const lookup = yield* getWorker(api, projectRef, name).pipe(
+      Effect.map((found) => ({ readable: true, worker: Option.getOrUndefined(found) })),
+      Effect.catchIf(
+        (error) => error instanceof WorkersApiUnexpectedStatusError && error.status === 403,
+        () => Effect.succeed({ readable: false, worker: undefined }),
+      ),
       Effect.tapError(() => fetching.fail()),
     );
     yield* fetching.clear();
 
-    const deployed = Option.getOrUndefined(found);
+    const deployed = lookup.worker;
     const machineOutput = yield* legacyWorkersMachineOutputRequested();
 
     // `--yes` is the scripted path, and `deleteWorker` already treats a DELETE
@@ -96,7 +108,7 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
     // twice exited non-zero the second time, for a worker in exactly the state
     // it asked for. Interactively the error stays: somebody typed this command
     // and wants to hear the worker was not there.
-    if (deployed === undefined && !yes) {
+    if (lookup.readable && deployed === undefined && !yes) {
       return yield* Effect.fail(
         new WorkerNotDeployedError({
           detail: `Nothing is deployed for "${name}" in project ${projectRef}.`,
@@ -108,7 +120,7 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
       );
     }
 
-    if (deployed !== undefined && !yes) {
+    if (!yes) {
       // `-o json` leaves `output.format` as `text`, so the format check alone
       // still let the warning and the prompt run — onto the stdout the user had
       // asked to carry a payload. A machine format is as non-interactive as a
@@ -132,14 +144,16 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
       // does not. `spec.instances` is the target, which for a worker still
       // provisioning differs from what is running — and a destructive prompt is
       // the wrong place to overstate.
-      const live = deployed.instances?.live;
-      const declared = deployed.spec.instances;
+      // Absent when the read was refused: the prompt still asks for the name,
+      // it just cannot quote a count it was not allowed to see.
+      const live = deployed?.instances?.live;
+      const declared = deployed?.spec.instances;
       const terminating =
         live !== undefined
           ? live > 0
             ? ` ${live} running instance${live === 1 ? "" : "s"} will be terminated.`
             : ""
-          : declared > 0
+          : declared !== undefined && declared > 0
             ? ` ${declared} declared instance${declared === 1 ? "" : "s"} will be terminated.`
             : "";
       yield* output.raw(
@@ -158,10 +172,10 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
       }
     }
 
-    // Skipped when the fetch already said there is nothing there: only `--yes`
-    // reaches this with `deployed` undefined, and a DELETE for a worker we never
-    // saw is a request with nothing to do.
-    if (deployed !== undefined) {
+    // Skipped only when the fetch actually said there is nothing there. An
+    // unreadable worker still gets the DELETE — that request is the one the
+    // credential is entitled to make, and the API treats a 404 on it as done.
+    if (deployed !== undefined || !lookup.readable) {
       const deleting = yield* output.task("Deleting worker...");
       yield* deleteWorker(api, projectRef, name).pipe(Effect.tapError(() => deleting.fail()));
       yield* deleting.clear();
@@ -193,7 +207,7 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
     }
 
     {
-      if (deployed === undefined) {
+      if (deployed === undefined && lookup.readable) {
         yield* output.raw(
           `Nothing was deployed for ${legacyAqua(name, process.stdout)} in project ${projectRef}, so there was nothing to delete.\n`,
         );

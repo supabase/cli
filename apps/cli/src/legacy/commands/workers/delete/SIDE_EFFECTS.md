@@ -33,10 +33,10 @@ rather than deleting unasked.
 
 ## API Routes
 
-| Method   | Path                                | Auth         | Request body | Response (used fields)                  |
-| -------- | ----------------------------------- | ------------ | ------------ | --------------------------------------- |
-| `GET`    | `/v2/projects/{ref}/workers/{name}` | Bearer token | none         | `spec.instances` (for the confirmation) |
-| `DELETE` | `/v2/projects/{ref}/workers/{name}` | Bearer token | none         | status only                             |
+| Method   | Path                                | Auth         | Request body | Response (used fields)                                                                                                                                                                                                                                            |
+| -------- | ----------------------------------- | ------------ | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/v2/projects/{ref}/workers/{name}` | Bearer token | none         | `instances.live` when present, else `spec.instances` (for the confirmation). A `403` is tolerated: the worker is treated as unknown and the `DELETE` still runs, since the two endpoints are granted separately (`edge_functions:read` vs `edge_functions:write`) |
+| `DELETE` | `/v2/projects/{ref}/workers/{name}` | Bearer token | none         | status only                                                                                                                                                                                                                                                       |
 
 ## Exit Codes
 
