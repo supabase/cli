@@ -592,6 +592,17 @@ function assertRawAttributesDepthWithinBound(
       suggestion: PROJECT_CONFIG_PARSE_ERROR_SUGGESTION,
     });
   }
+  // Bigint is structured-cloneable and freezable but not JSON — it would
+  // land under a ReadonlyJsonValue-typed _apiResponse and blow up the first
+  // JSON.stringify a consumer runs on an unmappedApiFields report. Parsed
+  // JSON never produces one; programmatic caller input.
+  if (typeof value === "bigint") {
+    throw new ProjectConfigParseError({
+      message: "raw attributes hold a bigint — raw attributes must be plain parsed JSON",
+      cause: new Error(`bigint at depth ${depth}`),
+      reason: "caller_misuse",
+    });
+  }
   visits.count += 1;
   if (visits.count > MAX_RAW_ATTRIBUTES_NODE_VISITS) {
     const detail = `pathological structure: exceeded ${MAX_RAW_ATTRIBUTES_NODE_VISITS} node visits while validating the raw API response`;

@@ -14,43 +14,53 @@ import { CliConfigSchema } from "../base.ts";
  * over duplicating it.
  */
 function collectSecretPathPatterns(
-  node: {
-    readonly annotations?: Record<string, unknown>;
-    readonly propertySignatures?: ReadonlyArray<{
-      readonly name: string;
-      readonly type: unknown;
-    }>;
-    readonly indexSignatures?: ReadonlyArray<{
-      readonly type: unknown;
-    }>;
-  },
+  node: unknown,
   prefix: ReadonlyArray<string> = [],
 ): Array<ReadonlyArray<string>> {
+  // The walker narrows each AST piece structurally instead of asserting a
+  // node shape: an AST change then makes the walk find nothing (which the
+  // exhaustive secret-strip test catches as a vanished pattern set) rather
+  // than silently reading through a stale asserted shape.
   const patterns: Array<ReadonlyArray<string>> = [];
+  if (!isAstNodeLike(node)) {
+    return patterns;
+  }
 
-  if (node.annotations?.["x-secret"] === true) {
+  const annotations = node["annotations"];
+  if (isAstNodeLike(annotations) && annotations["x-secret"] === true) {
     patterns.push(prefix);
   }
 
-  for (const property of node.propertySignatures ?? []) {
-    patterns.push(
-      ...collectSecretPathPatterns(
-        property.type as Parameters<typeof collectSecretPathPatterns>[0],
-        [...prefix, property.name],
-      ),
-    );
+  const propertySignatures = node["propertySignatures"];
+  if (Array.isArray(propertySignatures)) {
+    for (const property of propertySignatures) {
+      if (!isAstNodeLike(property)) {
+        continue;
+      }
+      const name = property["name"];
+      if (typeof name !== "string") {
+        continue;
+      }
+      patterns.push(...collectSecretPathPatterns(property["type"], [...prefix, name]));
+    }
   }
 
-  for (const indexSignature of node.indexSignatures ?? []) {
-    patterns.push(
-      ...collectSecretPathPatterns(
-        indexSignature.type as Parameters<typeof collectSecretPathPatterns>[0],
-        [...prefix, "*"],
-      ),
-    );
+  const indexSignatures = node["indexSignatures"];
+  if (Array.isArray(indexSignatures)) {
+    for (const indexSignature of indexSignatures) {
+      if (!isAstNodeLike(indexSignature)) {
+        continue;
+      }
+      patterns.push(...collectSecretPathPatterns(indexSignature["type"], [...prefix, "*"]));
+    }
   }
 
   return patterns;
+}
+
+/** AST nodes are class instances, so this is a keyed-access guard, not a plain-object check. */
+function isAstNodeLike(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 /**
@@ -63,7 +73,7 @@ function collectSecretPathPatterns(
  * can build an exhaustive secret-strip probe from the same source of truth,
  * rather than a second hand-picked field list.
  */
-export const secretPathPatterns = collectSecretPathPatterns(CliConfigSchema.ast as never);
+export const secretPathPatterns = collectSecretPathPatterns(CliConfigSchema.ast);
 
 function matchesPathPattern(
   pattern: ReadonlyArray<string>,

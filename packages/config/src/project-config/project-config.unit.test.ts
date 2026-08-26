@@ -1235,7 +1235,7 @@ describe("review round: numeric and provider narrowing (CLI-2230)", () => {
     }
     expect(thrown).toBeInstanceOf(ProjectConfigParseError);
     expect((thrown as ProjectConfigParseError).apiPath).toEqual(["api", "max_rows"]);
-    expect((thrown as ProjectConfigParseError).message).toContain("an integer");
+    expect((thrown as ProjectConfigParseError).message).toContain("integer");
   });
 
   test("fractional session hours map faithfully (no whole-hour rounding)", () => {
@@ -1732,5 +1732,41 @@ describe("review round: clone taxonomy, precision bound, type discriminator, sec
     expect(Object.hasOwn(fromApiProjectConfig({ auth: { smtp_pass: "hmac" } }), "auth")).toBe(
       false,
     );
+  });
+});
+
+describe("review round: safe integers, Go truncation, bigint, fractional-hour bound (CLI-2230)", () => {
+  test("an unsafe integer throws instead of laundering JSON parse rounding", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({ api: { max_rows: Number.MAX_SAFE_INTEGER + 2 } });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).message).toContain("a safe integer");
+  });
+
+  test("fractional nanoseconds truncate like Go's ParseDuration", () => {
+    // Go reads "1.0000000005s" as exactly 1s (fractional ns truncate); the
+    // legacy port rounds up to 1.000000001s — deliberate match-Go divergence.
+    const projected = fromConfigDocument({ auth: { sessions: { timebox: "1.0000000005s" } } });
+    expect(projected.auth?.sessions?.timebox).toBe("1s");
+  });
+
+  test("a bigint raw value throws the typed caller-misuse error", () => {
+    let thrown: unknown;
+    try {
+      attachApiResponse({}, { new_service: 1n });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
+  });
+
+  test("fractional session hours inside the safe range map instead of tripping a whole-hour ceiling", () => {
+    const result = fromApiProjectConfig({ auth: { sessions_timebox: 2501.5 } });
+    expect(result.auth?.sessions?.timebox).toBe("2501h30m0s");
   });
 });

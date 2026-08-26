@@ -202,7 +202,11 @@ function parseDuration(s: string): number {
       throw new Error(`time: unknown unit in duration "${orig}"`);
     }
 
-    total += n * unitNs + Math.round((frac / post) * unitNs);
+    // Math.trunc, not round: Go's ParseDuration truncates fractional
+    // nanoseconds ("1.0000000005s" reads as exactly 1s), and the legacy port
+    // rounds — a deliberate match-Go divergence so canonicalization never
+    // shifts a value by a nanosecond.
+    total += n * unitNs + Math.trunc((frac / post) * unitNs);
     // Stricter than Go's int64 range check: past Number.MAX_SAFE_INTEGER
     // nanoseconds (~104 days) the float accumulation silently rounds smaller
     // components away ("2502h1ns" would lose its 1ns and canonicalize to
@@ -434,14 +438,15 @@ function secondsDurationRow(
  */
 /**
  * Bound for the session-hour fields — the same canonical-duration domain as
- * {@link MAX_CANONICAL_DURATION_SECONDS}, in whole hours (~104 days, far
- * beyond any legitimate session bound): the contract only requires these
- * finite, but larger values overflow the formatter ("InfinityhNaNmNaNs",
- * exponent notation) or land past the precision bound the document-side
- * canonicalizer re-parses. Negative session bounds are meaningless, so 0 is
- * the floor.
+ * {@link MAX_CANONICAL_DURATION_SECONDS}, expressed exactly in (fractional)
+ * hours rather than rounded down to a whole hour, so a legitimate fractional
+ * value like `2501.5` hours (inside the safe-nanosecond range) still maps:
+ * the contract only requires these finite, but values past this bound
+ * overflow the formatter ("InfinityhNaNmNaNs", exponent notation) or land
+ * past the precision bound the document-side canonicalizer re-parses.
+ * Negative session bounds are meaningless, so 0 is the floor.
  */
-const MAX_SESSION_DURATION_HOURS = 2_501;
+const MAX_SESSION_DURATION_HOURS = Number.MAX_SAFE_INTEGER / NS_PER_HOUR;
 
 function hoursDurationRow(
   configPath: ReadonlyArray<string>,

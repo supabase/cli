@@ -129,8 +129,11 @@ function expectNumber(value: unknown, apiPath: ReadonlyArray<string>): number {
  */
 export function expectInteger(value: unknown, apiPath: ReadonlyArray<string>): number {
   const numeric = expectNumber(value, apiPath);
-  if (!Number.isInteger(numeric)) {
-    throw parseErrorFor("an integer", numeric, apiPath);
+  // Safe integers only: the generated contract bounds every int field to
+  // Number.MAX_SAFE_INTEGER, and a JSON number past it has already been
+  // silently rounded during parsing — emitting it would launder the rounding.
+  if (!Number.isSafeInteger(numeric)) {
+    throw parseErrorFor("a safe integer", numeric, apiPath);
   }
   return numeric;
 }
