@@ -98,7 +98,10 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
       return yield* Effect.fail(
         new WorkerNotDeployedError({
           detail: `Nothing is deployed for "${name}" in project ${projectRef}.`,
-          suggestion: `Deploy it with \`supabase workers push ${name}${refSuffix}\`.`,
+          // `status`'s wording, inherited, pointed the wrong way here: somebody
+          // deleting "api" and hearing "nothing is deployed" does not want to
+          // deploy it — they want to see what *is* deployed.
+          suggestion: `See what is deployed with \`supabase workers list${refSuffix}\`.`,
         }),
       );
     }

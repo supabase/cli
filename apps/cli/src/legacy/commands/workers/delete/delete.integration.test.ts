@@ -269,6 +269,10 @@ describe("legacy workers delete", () => {
       }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerNotDeployedError);
+      // Not `workers push`: somebody deleting "api" does not want to deploy it.
+      const suggestion = error instanceof WorkerNotDeployedError ? error.suggestion : "";
+      expect(suggestion).toContain("supabase workers list");
+      expect(suggestion).not.toContain("workers push");
       expect(out.messages.filter((message) => message.type === "warn")).toHaveLength(0);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
