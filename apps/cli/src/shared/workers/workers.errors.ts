@@ -21,6 +21,22 @@ export class InvalidWorkerNameError extends Data.TaggedError("InvalidWorkerNameE
   }
 }
 
+/**
+ * A bare `new` had no name to scaffold under, and nowhere to ask for one.
+ *
+ * The name is the one input this command cannot default — it is the directory,
+ * the `config.toml` key and the hostname all at once — so with `-o` in force or
+ * no interactive terminal there is nothing to do but say so.
+ */
+export class MissingWorkerNameError extends Data.TaggedError("MissingWorkerNameError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+
 /** A bare `push` found no workers to deploy — none named, none in the project. */
 export class NoWorkersToDeployError extends Data.TaggedError("NoWorkersToDeployError")<{
   readonly detail: string;

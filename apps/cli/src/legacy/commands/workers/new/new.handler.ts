@@ -33,18 +33,22 @@ import {
 } from "../../../../shared/workers/worker-runtimes.ts";
 import { WORKER_STACKS } from "../../../../shared/workers/worker-stacks.ts";
 import {
-  InvalidWorkerNameError,
+  MissingWorkerNameError,
   WorkerDirectoryExistsError,
 } from "../../../../shared/workers/workers.errors.ts";
-import { legacyLoadWorkersProject } from "../workers.shared.ts";
+import {
+  legacyLoadWorkersProject,
+  legacyValidateWorkerName,
+  type LegacyWorkersProject,
+} from "../workers.shared.ts";
 import type { LegacyWorkersNewFlags } from "./new.command.ts";
 
 /**
- * `supabase workers new <name>` — scaffold `supabase/workers/<name>/` from the
+ * `supabase workers new [name]` — scaffold `supabase/workers/<name>/` from the
  * chosen runtime's starter files and record the choice in `config.toml`.
  * Nothing is deployed; this is entirely local-disk work.
  *
- * The runtime and size are resolved *before* anything is written, so a
+ * The name, runtime and size are all resolved *before* anything is written, so a
  * cancelled prompt leaves nothing behind for this worker at all.
  */
 
@@ -52,6 +56,49 @@ import type { LegacyWorkersNewFlags } from "./new.command.ts";
 function defaultFirst<T>(values: ReadonlyArray<T>, defaultValue: T): Array<T> {
   return [defaultValue, ...values.filter((value) => value !== defaultValue)];
 }
+
+/**
+ * The worker name, asked for when the command line did not carry one.
+ *
+ * The name is the one input here that cannot be defaulted — it is the
+ * directory, the `config.toml` key and the hostname — so a bare
+ * `supabase workers new` asks rather than failing the parse. The prompt
+ * validates against everything the command would otherwise refuse a moment
+ * later, so a mistyped or already-recorded name is corrected in place instead
+ * of ending the run.
+ */
+const resolveName = Effect.fnUntraced(function* (options: {
+  readonly explicit: Option.Option<string>;
+  /** `-o json|yaml|toml|env` — stdout belongs to the payload, so do not prompt. */
+  readonly machineOutput: boolean;
+  readonly project: LegacyWorkersProject;
+}) {
+  if (Option.isSome(options.explicit)) {
+    return options.explicit.value;
+  }
+
+  const output = yield* Output;
+  if (output.format === "text" && output.interactive && !options.machineOutput) {
+    return yield* output.promptText("What should this worker be called?", {
+      validate: (value) => {
+        const invalid = validateWorkerNameMessage(value);
+        if (invalid !== undefined) {
+          return invalid;
+        }
+        return options.project.section.workers[value] === undefined
+          ? undefined
+          : `"${value}" is already configured in ${options.project.configPath}.`;
+      },
+    });
+  }
+
+  return yield* Effect.fail(
+    new MissingWorkerNameError({
+      detail: "Worker name is required in non-interactive mode.",
+      suggestion: "Pass a worker name, for example `supabase workers new api`.",
+    }),
+  );
+});
 
 const resolveRuntime = Effect.fnUntraced(function* (options: {
   readonly explicit: Option.Option<WorkerRuntime>;
@@ -134,21 +181,21 @@ export const legacyWorkersNew = Effect.fn("legacy.workers.new")(function* (
   yield* Effect.gen(function* () {
     const project = yield* legacyLoadWorkersProject();
 
-    const name = flags.name;
-    const invalid = validateWorkerNameMessage(name);
-    if (invalid !== undefined) {
-      return yield* Effect.fail(
-        new InvalidWorkerNameError({
-          detail: `"${name}" is not a valid worker name. ${invalid}`,
-          suggestion: "Worker names become hostnames, so they must be DNS labels.",
-        }),
-      );
-    }
+    // `-o` leaves `output.format` as `text`, and the prompts go through Clack,
+    // which writes its terminal UI to stdout with no stream override — so a
+    // prompt would land in front of the payload just as the notices did. Read
+    // before the first prompt rather than beside the last, since the name is
+    // now asked for too.
+    const machineOutput = yield* legacyWorkersMachineOutputRequested();
+
+    const name = yield* resolveName({ explicit: flags.name, machineOutput, project });
+    yield* legacyValidateWorkerName(name);
 
     // Refused before anything is asked or written. `new` creates a worker;
     // changing one that already exists is a `config.toml` edit, and the file is
     // the user's. Checking here rather than only in `planWorkerEntry` means the
-    // prompts never run for a name that was going to be refused anyway.
+    // runtime and size prompts never run for a name that was going to be
+    // refused anyway; the name prompt rejects it up front for the same reason.
     if (project.section.workers[name] !== undefined) {
       return yield* Effect.fail(
         new WorkerAlreadyConfiguredError({
@@ -159,12 +206,8 @@ export const legacyWorkersNew = Effect.fn("legacy.workers.new")(function* (
     }
 
     // Resolved before anything is written, so cancelling either prompt leaves
-    // nothing behind — the name included.
-    // `-o` leaves `output.format` as `text`, and `promptSelect` goes through
-    // Clack, which writes its terminal UI to stdout with no stream override — so
-    // a prompt would land in front of the payload just as the notices did. With a
-    // machine format requested there is nowhere to ask, so the defaults stand.
-    const machineOutput = yield* legacyWorkersMachineOutputRequested();
+    // nothing behind — the name included. With a machine format requested there
+    // is nowhere to ask, so the defaults stand.
     const runtime = yield* resolveRuntime({ explicit: flags.runtime, machineOutput });
     const size = yield* resolveSize({ explicit: flags.size, machineOutput });
 

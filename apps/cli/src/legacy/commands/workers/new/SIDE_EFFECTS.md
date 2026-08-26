@@ -1,4 +1,4 @@
-# `supabase workers new <name>`
+# `supabase workers new [name]`
 
 > **Local-disk only.** Nothing is deployed and no Management API route is
 > called; `workers push` is what talks to the platform.
@@ -29,6 +29,13 @@ project that has a `config.json`, the worker is therefore written to
 is left byte-for-byte alone. A rendered edit that would not parse is refused
 before anything reaches disk.
 
+The name is prompted for when the command line does not carry one, and the
+prompt refuses a name that is not a DNS label or that `config.toml` already
+records — so nothing is asked, and nothing written, for a name the command was
+going to refuse. With `-o json|yaml|toml|env` or no interactive terminal there is
+nowhere to ask, and the command fails instead of defaulting: unlike the runtime
+and size, the name has no default to fall back on.
+
 Writes to `config.toml` are append-only. A worker already recorded under
 `[workers.<name>]` is refused outright — before the runtime and size prompts,
 and before anything reaches disk — because editing an entry the user owns is
@@ -55,6 +62,7 @@ root.
 | ---- | ----------------------------------------------------------------------------------- |
 | `0`  | success                                                                             |
 | `1`  | invalid worker name — the name must be a DNS label                                  |
+| `1`  | no name given, and nowhere to ask for one — not a terminal, or `-o` is in force     |
 | `1`  | bad `--source`: outside the project, or a path the CLI owns                         |
 | `1`  | destination exists and is not empty                                                 |
 | `1`  | the worker is already recorded in `config.toml`, in any form                        |
@@ -77,7 +85,9 @@ root.
 No custom events — only the `cli_command_executed` that the instrumentation
 wrapper emits for every command.
 
-Nothing is emitted for a failure the parser catches, such as a missing worker
-name or a `--runtime`/`--size` value outside the choice list. The wrapper is
-installed by `Command.withHandler`, so a command that never reaches its handler
-never reaches the instrumentation either — and `telemetry.json` is not written.
+Nothing is emitted for a failure the parser catches, such as a
+`--runtime`/`--size` value outside the choice list. The wrapper is installed by
+`Command.withHandler`, so a command that never reaches its handler never reaches
+the instrumentation either — and `telemetry.json` is not written. A missing name
+is _not_ one of those: the argument is optional, so a bare `workers new` reaches
+the handler, which asks for the name or fails for want of anywhere to ask.

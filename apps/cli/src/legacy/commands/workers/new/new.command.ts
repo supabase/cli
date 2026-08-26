@@ -12,7 +12,10 @@ import { legacyWorkersNew } from "./new.handler.ts";
 
 const config = {
   name: Argument.string("name").pipe(
-    Argument.withDescription("Worker name. Doubles as its directory, and its hostname."),
+    Argument.withDescription(
+      "Worker name. Doubles as its directory, and its hostname. Prompted when omitted.",
+    ),
+    Argument.optional,
   ),
   runtime: Flag.choice("runtime", WORKER_RUNTIMES).pipe(
     Flag.withDescription(
@@ -51,6 +54,10 @@ export const legacyWorkersNewCommand = Command.make("new", config).pipe(
   ),
   Command.withShortDescription("Scaffold a worker locally"),
   Command.withExamples([
+    {
+      command: "supabase workers new",
+      description: "Prompt for the name, then for runtime and size",
+    },
     {
       command: "supabase workers new api",
       description: "Scaffold supabase/workers/api, prompting for runtime and size",
