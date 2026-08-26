@@ -2,6 +2,8 @@
   "name": "@supabase/root",
   "private": true,
   "scripts": {
+    "build": "pnpm exec turbo run build",
+    "generate": "pnpm exec turbo run @supabase/api#generate && pnpm exec turbo run @supabase/docs#generate",
     "test:unit": "pnpm exec turbo run test:unit:run --filter=!@supabase/cli-go --",
     "test:integration": "pnpm exec turbo run test:integration:run --",
     "test:e2e": "pnpm exec turbo run supabase#build && pnpm exec turbo run test:e2e:run --only --concurrency=1 --",

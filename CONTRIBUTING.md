@@ -135,6 +135,8 @@ Root-level scripts:
 ```sh
 pnpm run repos:install
 pnpm run repos:pull
+pnpm run build       # build CLI, config, and docs artifacts with Turbo
+pnpm run generate    # generate API, then documentation artifacts with Turbo
 pnpm run check:all   # run all checks across every project
 pnpm run fix:all     # run all fixers across every project
 ```
@@ -344,22 +346,39 @@ supabase --version
 | `npm` / `pnpm` tries to fetch from `localhost:4873` when no registry is running | Stale global registry override left behind by an older version of `local-registry.ts` (the current script never modifies global config). Run `npm config delete registry` and `pnpm config delete registry`. Note that pnpm stores the override in its own global config (`~/Library/Preferences/pnpm/auth.ini` on macOS, `~/.config/pnpm/` on Linux), not `~/.npmrc` — check there if the delete command fails |
 | `npx` resolves from npm instead of local                                        | Pass `--registry http://localhost:4873` explicitly to `npx` / `npm install`                                                                                                                                                                                                                                                                                                                                     |
 
-## Using Nx
+## Using Turbo and Nx
 
-Nx remains the task runner for the CLI build and live-test workflows. Quality
-checks are root-owned `check:all`/`fix:all` scripts orchestrated with Turbo,
-while ordinary unit, integration, and e2e tests remain package-local scripts;
-see [Standard package scripts](#standard-package-scripts).
+Turbo owns repository build and generation orchestration. Quality checks are
+root-owned `check:all`/`fix:all` scripts orchestrated with Turbo, while ordinary
+unit, integration, and e2e tests remain package-local scripts; see [Standard
+package scripts](#standard-package-scripts).
 
-**Build the CLI and its Go sidecar:**
+**Build all migrated workspaces:**
 
 ```sh
-pnpm exec nx run supabase:build
+pnpm run build
 ```
 
-**Run the live suite:**
+**Generate API and documentation artifacts:**
 
-The target's build dependency prepares the CLI artifacts before Vitest starts:
+```sh
+pnpm run generate
+```
+
+**Build only the CLI and its Go sidecar:**
+
+```sh
+pnpm exec turbo run supabase#build
+```
+
+The CLI build names its config and Go build prerequisites explicitly. The
+remaining CLI workspace dependencies intentionally have no build script, so
+strict Turbo task selection does not synthesize no-op `^build` tasks for them.
+
+Nx remains for live and auxiliary workflows. **Run the live suite:**
+
+The target's uncached build dependency prepares the CLI artifacts before Vitest
+starts; use Turbo for cacheable build outputs.
 
 ```sh
 pnpm exec nx run supabase:test:live

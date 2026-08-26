@@ -123,19 +123,6 @@
   },
   "nx": {
     "targets": {
-      "build": {
-        "outputs": [
-          "{projectRoot}/dist"
-        ],
-        "dependsOn": [
-          {
-            "projects": [
-              "cli-go"
-            ],
-            "target": "build"
-          }
-        ]
-      },
       "test:smoke": {
         "cache": false
       }

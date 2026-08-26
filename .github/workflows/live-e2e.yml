@@ -123,7 +123,7 @@ jobs:
 
       # The ts-legacy harness runs the compiled supabase binary from apps/cli/dist.
       - name: Build CLI
-        run: pnpm exec nx run supabase:build
+        run: pnpm exec turbo run supabase#build
 
       # Docker is a hard requirement for the --use-docker bundler cell.
       - name: Docker preflight

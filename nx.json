@@ -5,25 +5,12 @@
   "plugins": ["./tools/nx-plugins/src/go.plugin.ts"],
   "namedInputs": {
     "sharedGlobals": ["{workspaceRoot}/package.json", "{workspaceRoot}/pnpm-workspace.yaml"],
-    "default": ["{projectRoot}/**/*", "sharedGlobals"],
-    "production": [
-      "default",
-      "!{projectRoot}/**/*.test.ts",
-      "!{projectRoot}/**/*.integration.test.ts",
-      "!{projectRoot}/**/*.e2e.test.ts",
-      "!{projectRoot}/vitest.config*",
-      "!{projectRoot}/tests/**/*"
-    ]
+    "default": ["{projectRoot}/**/*", "sharedGlobals"]
   },
   "targetDefaults": {
     "build": {
       "dependsOn": ["^build"],
-      "inputs": ["production", "^production"],
-      "cache": true
-    },
-    "generate": {
-      "inputs": ["default"],
-      "cache": true
+      "cache": false
     },
     "test:live": {
       "parallelism": false,
