@@ -50,8 +50,8 @@ describe("toSlimImage", () => {
   });
 
   it("v-prefixes pins whose slim tag scheme differs from docker.io's", () => {
-    expect(toSlimImage("supavisor", "supabase/supavisor:2.9.7")).toBe(
-      "ghcr.io/supabase/cli/pooler:v2.9.7",
+    expect(toSlimImage("supavisor", "supabase/supavisor:2.9.10")).toBe(
+      "ghcr.io/supabase/cli/pooler:v2.9.10",
     );
     expect(toSlimImage("logflare", "supabase/logflare:1.50.4")).toBe(
       "ghcr.io/supabase/cli/analytics:v1.50.4",

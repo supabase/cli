@@ -9,7 +9,7 @@ FROM supabase/studio:2026.08.17-sha-0c1da8f AS studio
 FROM darthsim/imgproxy:v3.8.0 AS imgproxy
 FROM supabase/edge-runtime:v1.74.3 AS edgeruntime
 FROM timberio/vector:0.53.0-alpine AS vector
-FROM supabase/supavisor:2.9.7 AS supavisor
+FROM supabase/supavisor:2.9.10 AS supavisor
 FROM supabase/gotrue:v2.196.0 AS gotrue
 FROM supabase/realtime:v2.129.3 AS realtime
 FROM supabase/storage-api:v1.70.3 AS storage
