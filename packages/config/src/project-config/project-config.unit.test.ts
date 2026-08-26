@@ -1639,3 +1639,47 @@ describe("review round: duration/size bounds and freeze failures (CLI-2230)", ()
     expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
   });
 });
+
+describe("review round: absent anchors, exponent-free seconds, non-plain values (CLI-2230)", () => {
+  test("a malformed additional_client_ids throws even when the anchor key is absent", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({ auth: { external_google_additional_client_ids: 5 } });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).apiPath).toEqual([
+      "auth",
+      "external_google_additional_client_ids",
+    ]);
+    // A VALID sibling with an absent anchor still omits the field (nothing
+    // to fold into) and stays consumed.
+    const omitted = fromApiProjectConfig({
+      auth: { external_google_additional_client_ids: "b,c" },
+    });
+    expect(Object.hasOwn(omitted, "auth")).toBe(false);
+    expect(unmappedApiFields(omitted)).toEqual({});
+  });
+
+  test("sub-microsecond remainders format fixed-decimal, never exponent notation", () => {
+    const projected = fromConfigDocument({ auth: { sessions: { timebox: "1h1ns" } } });
+    expect(projected.auth?.sessions?.timebox).toBe("1h0m0.000000001s");
+  });
+
+  test("non-plain structured-cloneable values are rejected before attach", () => {
+    for (const nonPlain of [new Map(), new Set(), new Date()]) {
+      let thrown: unknown;
+      try {
+        attachApiResponse({}, { x: nonPlain as unknown as ReadonlyJsonValue } as unknown as Record<
+          string,
+          unknown
+        >);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+      expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
+    }
+  });
+});

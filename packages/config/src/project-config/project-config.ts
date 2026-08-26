@@ -483,7 +483,16 @@ function applyMappingRows(
 
     const rawValue = readPath(decodedAttributes, row.apiPath);
     if (rawValue === undefined) {
-      continue;
+      // A row that also consumes sibling paths must still run when a sibling
+      // is present despite the absent anchor: the sibling is in the consumed
+      // set, so skipping here would silently swallow a malformed sibling
+      // without it ever being validated (or reported unmapped).
+      const siblingPresent = row.alsoConsumes?.some(
+        (alsoPath) => readPath(decodedAttributes, alsoPath) !== undefined,
+      );
+      if (siblingPresent !== true) {
+        continue;
+      }
     }
     if (rawValue === null && row.transform === undefined) {
       continue;
@@ -569,6 +578,20 @@ function assertRawAttributesDepthWithinBound(
     return;
   }
   if (isObject(value)) {
+    // Only PLAIN objects pass: a Map/Set/Date/typed array/class instance is
+    // structured-cloneable, but Object.freeze only freezes its wrapper — its
+    // internal mutators (map.set, date.setTime) still work afterwards, so it
+    // would punch a mutable hole through the deep-frozen metadata. Parsed
+    // JSON never produces one; reaching this is programmatic caller input.
+    const prototype = Object.getPrototypeOf(value);
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw new ProjectConfigParseError({
+        message:
+          "raw attributes hold a non-plain object (e.g. a Map, Set, Date, or typed array) — raw attributes must be plain parsed JSON",
+        cause: new Error(`non-plain object at depth ${depth}`),
+        reason: "caller_misuse",
+      });
+    }
     for (const child of Object.values(value)) {
       assertRawAttributesDepthWithinBound(child, depth + 1, visits);
     }

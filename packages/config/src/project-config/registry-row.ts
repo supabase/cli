@@ -17,9 +17,11 @@ import {
  * merges remote values into a local document, so it maps API `null` to a
  * zero value (`valOrDefault`). This registry produces a *standalone sparse*
  * config instead, where "no value" must stay absent: the engine skips a row
- * whose API value is `undefined` (key not reported) always, and skips `null`
- * unless the row declares a `transform` — a transform receives `null` and
- * decides (e.g. `smtp_host: null` still means "SMTP disabled").
+ * whose API value is `undefined` (key not reported) — unless the row declares
+ * `alsoConsumes` and a consumed sibling IS present, in which case the
+ * transform runs with `undefined` so it can still validate the sibling — and
+ * skips `null` unless the row declares a `transform`; a transform receives
+ * `null` and decides (e.g. `smtp_host: null` still means "SMTP disabled").
  */
 export interface ProjectConfigMappingRow {
   /** Path segments into the hosted subset of `CliConfig`, e.g. `["api", "max_rows"]`. */

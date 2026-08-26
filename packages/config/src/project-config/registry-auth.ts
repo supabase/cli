@@ -60,9 +60,16 @@ function durationString(ns: number): string {
   ns -= us * 1_000;
 
   const subSecondNs = ms * 1_000_000 + us * 1_000 + ns;
+  // toFixed(9), not toPrecision: a sub-microsecond fraction under a whole
+  // second (e.g. "1h1ns" => 1e-9 s) stringifies in exponent notation under
+  // toPrecision, which Go duration syntax does not accept — Go prints
+  // "1h0m0.000000001s" (up to nine decimals, trailing zeros trimmed).
   const secondsText =
     subSecondNs > 0
-      ? ((secs * 1_000_000_000 + subSecondNs) / 1_000_000_000).toPrecision(10).replace(/\.?0+$/, "")
+      ? ((secs * 1_000_000_000 + subSecondNs) / 1_000_000_000)
+          .toFixed(9)
+          .replace(/0+$/, "")
+          .replace(/\.$/, "")
       : `${secs}`;
   if (hours > 0) {
     result += `${hours}h${minutes}m${secondsText}s`;
@@ -886,7 +893,10 @@ function providerClientIdRow(id: string): ProjectConfigMappingRow {
         additional === undefined || additional === null
           ? undefined
           : expectString(additional, additionalApiPath);
-      if (value === null) return undefined;
+      // Undefined = the anchor key is absent entirely — the engine still ran
+      // this transform because a consumed sibling is present (see
+      // applyMappingRows); the sibling was validated above, so bail like null.
+      if (value === null || value === undefined) return undefined;
       const clientId = expectString(value, apiPath);
       return additionalIds !== undefined && additionalIds.length > 0
         ? `${clientId},${additionalIds}`
