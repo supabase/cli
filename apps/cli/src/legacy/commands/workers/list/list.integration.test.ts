@@ -328,29 +328,33 @@ describe("legacy workers list", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `table` and `csv` are accepted by the global flag for `db query`'s benefit;
-  // every resource command is meant to ignore them and render text. They used to
-  // fall through to the TOML encoder.
-  it.live.each(["table", "csv"] as const)("renders text rather than TOML for -o %s", (goOutput) => {
-    const repo = project();
-    const { layer, out } = setupLegacyWorkers({
-      workdir: repo.dir,
-      goOutput,
-      routes: {
-        [listRoute]: {
-          status: 200,
-          body: { data: [workerResource({ name: "api", runtime: "node" })] },
+  // `pretty` is the human default; `table` and `csv` are accepted by the global
+  // flag for `db query`'s benefit, and every resource command is meant to ignore
+  // them and render text. All three used to fall through to the TOML encoder,
+  // which is the trap the payload allowlist closes.
+  it.live.each(["pretty", "table", "csv"] as const)(
+    "renders text rather than TOML for -o %s",
+    (goOutput) => {
+      const repo = project();
+      const { layer, out } = setupLegacyWorkers({
+        workdir: repo.dir,
+        goOutput,
+        routes: {
+          [listRoute]: {
+            status: 200,
+            body: { data: [workerResource({ name: "api", runtime: "node" })] },
+          },
         },
-      },
-    });
+      });
 
-    return Effect.gen(function* () {
-      yield* legacyWorkersList({ projectRef: Option.none() });
+      return Effect.gen(function* () {
+        yield* legacyWorkersList({ projectRef: Option.none() });
 
-      expect(out.stdoutText).toContain("NAME");
-      expect(out.stdoutText).not.toContain("project_ref = ");
-    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
-  });
+        expect(out.stdoutText).toContain("NAME");
+        expect(out.stdoutText).not.toContain("project_ref = ");
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    },
+  );
 
   it.live("flushes telemetry when the project config cannot be loaded", () => {
     const repo = project("project_id = [unclosed\n");
