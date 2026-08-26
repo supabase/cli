@@ -16,6 +16,7 @@ import {
   NoWorkersToDeployError,
   WorkerBuildFailedError,
   WorkerBuildTimeoutError,
+  WorkerDockerfileMissingError,
   WorkerProjectNotFoundError,
   WorkersUnavailableError,
   WorkerSourceMissingError,
@@ -172,6 +173,50 @@ describe("legacy workers push", () => {
         instances: 1,
       });
       expect(attributes.context_upload_id).toBe(UPLOAD_ID);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Configured `runtime = "dockerfile"` with nothing to build: the server can
+  // only report this after the context has uploaded and a build has started, so
+  // the CLI answers it from the directory it is already looking at.
+  it.live("refuses a Dockerfile worker with no Dockerfile, before uploading", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "dockerfile"\n`,
+    });
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      const error = yield* push().pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerDockerfileMissingError);
+      expect((error as WorkerDockerfileMissingError).suggestion).toContain("config.toml");
+      expect(http.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The same worker with the file present deploys as a Dockerfile build, which
+  // is what keeps the guard above from being a blanket refusal.
+  it.live("deploys a Dockerfile worker that has one", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "dockerfile"\n`,
+      "supabase/workers/api/Dockerfile": "FROM scratch\n",
+    });
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: routes({
+        [`POST ${workersRoute("/api/deploy")}`]: {
+          status: 202,
+          body: { data: workerResource({ name: "api", buildState: "active" }) },
+        },
+      }),
+    });
+
+    return Effect.gen(function* () {
+      yield* push();
+
+      const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
+      // No catalog runtime: the uploaded context carries its own Dockerfile.
+      expect(JSON.parse(deploy?.body ?? "{}").data.attributes.spec.runtime).toBeUndefined();
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
