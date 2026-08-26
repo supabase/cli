@@ -59,7 +59,9 @@ Expected exceptions:
 
 Use the `Cli*` prefix for the local checkout side and a bare `Project*` name for the hosted
 Supabase project. Config-value helpers follow the config family regardless of their inputs (e.g.
-`resolveCliConfigValue`, `MissingCliConfigValueError`).
+`resolveCliConfigValue`, `MissingCliConfigValueError`). A symbol that deliberately spans both
+families takes a family-neutral name instead of a misleading prefix (e.g. `EffectiveConfig`, the
+comparison operand accepting both `CliConfig` and `ProjectConfig`).
 
 See [`docs/adr/0020-config-naming-vocabulary.md`](docs/adr/0020-config-naming-vocabulary.md) and
 [`packages/config/docs/cli-config-loading.md`](packages/config/docs/cli-config-loading.md) for the
