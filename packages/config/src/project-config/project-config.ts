@@ -108,16 +108,15 @@ export type ProjectConfig = DeepPartial<Pick<CliConfig, HostedSectionKey>> & {
  * an `x-secret` field's value (ADR 0019 rule 5, the API only ever returns an
  * HMAC digest), a document-sourced `ProjectConfig` that kept its secrets
  * would register as drift against the API-sourced side for every secret
- * field, which is worse than useless for a diff consumer. Arrays get only a
- * SHALLOW copy (`.slice()`), never descended into for secret paths — no
- * `x-secret` leaf in `CliConfigSchema` sits inside an array, and this
- * mirrors `../sparse.ts`'s own array-is-atomic rule. `.slice()` aliases each
- * element rather than copying it, which would matter for an array of
- * objects; it doesn't matter here because every array `CliConfigSchema`
- * currently puts inside a hosted section (`additional_redirect_urls`,
- * `db.network_restrictions.allowed_cidrs`, …) holds only primitives
- * (strings), and aliasing a primitive is indistinguishable from copying one.
- * A future hosted-section array of objects would need this reconsidered.
+ * field, which is worse than useless for a diff consumer. Arrays are copied
+ * recursively, element by element — a hosted array can hold objects (e.g.
+ * `experimental.inspect.rules`), and a merely-sliced container would alias
+ * them back to the (possibly frozen) input, breaking the fresh-copy
+ * contract. No `x-secret` leaf in `CliConfigSchema` sits inside an array, so
+ * the secret-path walk carries through elements as a no-op; empty-record
+ * *elements* are preserved (the empty-container prune applies only to record
+ * children — arrays compare wholesale in `../sparse.ts`, so their contents
+ * must survive verbatim).
  *
  * A child that stripping leaves as (or that already was) an empty plain
  * object is pruned from `result` entirely, rather than kept as `{}` litter:
@@ -135,7 +134,15 @@ export type ProjectConfig = DeepPartial<Pick<CliConfig, HostedSectionKey>> & {
  */
 function copyHostedValueWithoutSecrets(value: unknown, path: ReadonlyArray<string>): unknown {
   if (Array.isArray(value)) {
-    return value.slice();
+    // Elements are copied recursively too — a hosted array can hold objects
+    // (e.g. `experimental.inspect.rules`), and a merely-sliced container
+    // would alias them back to the (possibly frozen) input, breaking the
+    // fresh-copy contract. The path passes through unchanged: no x-secret
+    // pattern descends through an array in the hosted schema today, and
+    // empty-record *elements* are preserved (the empty-container prune below
+    // applies only to record children — arrays compare wholesale, so their
+    // contents must survive verbatim).
+    return value.map((element) => copyHostedValueWithoutSecrets(element, path));
   }
   if (isObject(value)) {
     const result: Record<string, unknown> = {};
@@ -664,11 +671,11 @@ export function toProjectConfig(source: ToProjectConfigSource): ProjectConfig {
 }
 
 function pathKey(path: ReadonlyArray<string>): string {
-  // Joined with NUL, not "." — a raw API key can legitimately contain a
-  // literal dot, which would otherwise let a one-segment key collide with an
-  // unrelated two-segment registry path. NUL cannot appear in a JSON key from
-  // a real API document boundary.
-  return path.join("\u0000");
+  // JSON-encoded, not joined — a raw API key can legitimately contain any
+  // candidate separator (a literal dot, even an escaped NUL), so no join
+  // delimiter is collision-free. Encoding the segment array itself is
+  // unambiguous for every representable key.
+  return JSON.stringify(path);
 }
 
 /**
@@ -714,6 +721,13 @@ function walkUnmapped(value: unknown, path: ReadonlyArray<string>, depth = 0): u
   }
   if (!isObject(value)) {
     return value;
+  }
+  // An empty object in the raw response is itself information — a newly
+  // introduced, not-yet-populated section would otherwise vanish here and
+  // make the response look fully mapped. Only containers emptied by
+  // consumption are pruned (the final return below).
+  if (Object.keys(value).length === 0) {
+    return {};
   }
 
   const result: Record<string, unknown> = {};

@@ -63,6 +63,19 @@ describe("registry auth rows resolve against the generated v1 auth-config contra
       expect(apiKey).toBeDefined();
       expect(generatedAuthKeys.has(apiKey as string)).toBe(true);
     });
+
+    // A transform reads every path it declares in `alsoConsumes` (e.g. the
+    // Apple/Google `external_*_additional_client_ids` fold) — a renamed or
+    // removed generated key there would leave the transform silently reading
+    // a stale key while the primary-apiPath check above stays green.
+    for (const alsoPath of row.alsoConsumes ?? []) {
+      if (alsoPath[0] !== "auth") continue;
+      const alsoKey = alsoPath[1];
+      it(`alsoConsumes "${alsoPath.join(".")}" (configPath ${row.configPath.join(".")}) names a real V1GetAuthServiceConfigOutput key`, () => {
+        expect(alsoKey).toBeDefined();
+        expect(generatedAuthKeys.has(alsoKey as string)).toBe(true);
+      });
+    }
   }
 });
 

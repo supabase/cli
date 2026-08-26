@@ -437,14 +437,19 @@ const coreRows: ReadonlyArray<ProjectConfigMappingRow> = [
   {
     configPath: ["auth", "password_requirements"],
     apiPath: ["auth", "password_required_characters"],
-    // "" is a legitimate value (no character-class requirement); any other
-    // non-string or unrecognized character-class string omits the field
-    // rather than throwing, matching this package's leniency toward
-    // API-ahead-of-package skew (ADR 0019, rule 2) — see auth.sync.ts:1259-1261.
+    // "" is a legitimate value (no character-class requirement) and an
+    // unrecognized character-class STRING omits the field — an enum member
+    // this package version doesn't model, tolerable API-ahead skew (ADR
+    // 0019 rule 2; see auth.sync.ts:1259-1261). A present non-string,
+    // however, is a malformed platform response and throws like every other
+    // mapped auth field — silently omitting it would also let
+    // `unmappedApiFields` hide the malformed value, since this path is
+    // consumed. `null` keeps the no-value-omits convention.
     transform: (value) => {
-      if (typeof value !== "string") return undefined;
-      if (value === "") return "";
-      return CHAR_TO_PASSWORD_REQUIREMENTS[value];
+      if (value === null) return undefined;
+      const characters = expectString(value, ["auth", "password_required_characters"]);
+      if (characters === "") return "";
+      return CHAR_TO_PASSWORD_REQUIREMENTS[characters];
     },
   },
 ];

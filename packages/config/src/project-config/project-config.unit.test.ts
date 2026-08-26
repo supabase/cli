@@ -1280,3 +1280,50 @@ describe("review round: numeric and provider narrowing (CLI-2230)", () => {
     expect(projected.auth?.sessions?.timebox).toBe("s");
   });
 });
+
+describe("review round: aliasing, unknown-empty sections, path encoding (CLI-2230)", () => {
+  test("object elements inside hosted arrays are copied, not aliased", () => {
+    const rule = { name: "r1" };
+    const projected = fromConfigDocument({ experimental: { inspect: { rules: [rule] } } });
+    const copied = projected.experimental?.inspect?.rules?.[0];
+    expect(copied).toEqual(rule);
+    expect(copied).not.toBe(rule);
+  });
+
+  test("an unknown empty section survives into unmappedApiFields", () => {
+    const result = fromApiProjectConfig({ brand_new_service: {} });
+    expect(unmappedApiFields(result)).toEqual({ brand_new_service: {} });
+  });
+
+  test("a raw key that would collide with a registry path under join-encoding stays unmapped", () => {
+    // One key containing a NUL between "auth" and "site_url" must not collide
+    // with the consumed two-segment path ["auth", "site_url"] — pathKey
+    // JSON-encodes the segment array instead of joining on a delimiter.
+    const collidingKey = ["auth", "site_url"].join(String.fromCharCode(0));
+    const result = fromApiProjectConfig({ [collidingKey]: "x" });
+    expect(unmappedApiFields(result)).toEqual({ [collidingKey]: "x" });
+  });
+
+  test("a non-string password_required_characters throws with its apiPath", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({ auth: { password_required_characters: 123 } });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).apiPath).toEqual([
+      "auth",
+      "password_required_characters",
+    ]);
+  });
+
+  test("an unrecognized password character-class string still omits the field", () => {
+    // An enum member this package version doesn't model — tolerable skew,
+    // same bucket as pool_mode "statement": absent from typed output and
+    // (path consumed) from unmappedApiFields; reachable via _apiResponse.
+    const result = fromApiProjectConfig({ auth: { password_required_characters: "abc" } });
+    expect(Object.hasOwn(result, "auth")).toBe(false);
+    expect(unmappedApiFields(result)).toEqual({});
+  });
+});
