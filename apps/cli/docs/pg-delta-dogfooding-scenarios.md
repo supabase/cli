@@ -478,11 +478,11 @@ from any reachable database, and it is not called out anywhere in the command do
 | #   | Scenario                        | Status                                                                                    |
 | --- | ------------------------------- | ----------------------------------------------------------------------------------------- |
 | 1   | Adopt on an existing project    | Partial — declarative export half confirmed; `link`/`db pull` migration mode not verified |
-| 2   | Greenfield, declarative-first   | Partial — `init` confirmed; `start`/`sync`/`push` not verified                            |
+| 2   | Greenfield, declarative-first   | Partial — `init` and `db push` confirmed; `start`/`sync` not verified                     |
 | 3   | Day-to-day iteration loop       | Partial — diff/export quality confirmed; `sync` loop not verified                         |
 | 4   | Remote drift resolution         | Partial — drift diff confirmed via two live DBs; remote half not verified                 |
 | 5   | Local drift resolution          | Not verified (needs local stack)                                                          |
-| 6   | Migration history repair        | Not verified (needs remote history)                                                       |
+| 6   | Migration history repair        | **Confirmed** — ran end to end against a live database                                    |
 | 7   | Fresh clone onboarding          | Not verified (needs local stack)                                                          |
 | 8   | Squash a long history           | Not verified (needs local stack)                                                          |
 | 9   | Review-only diffs               | **Confirmed** — ran end to end                                                            |
@@ -778,6 +778,96 @@ declarative export.
 drop the ones it now handles. Leaving stale limitations in the docs makes users avoid a workflow
 that works.
 
+### F17 — `migration fetch` silently destroys local edits (high)
+
+**Scenarios 1, 6.** A migration file edited locally after being pushed is overwritten with the
+copy stored in the remote history table — silently:
+
+```sh
+echo "-- IMPORTANT local edit" >> supabase/migrations/20240101000000_initial_schema.sql
+supabase migration fetch --db-url "$URL"
+# stderr: Do you want to overwrite existing files in supabase/migrations directory? [Y/n]
+# stderr: Connecting to remote database...
+# exit: 0
+```
+
+The appended line is gone afterwards. The command names no file, reports no count, and says
+nothing about what it changed.
+
+**Why it's bad:** three problems compound. The prompt defaults to **yes**, so a non-interactive
+or piped run overwrites without anyone answering. The prompt fires _before_ connecting, so the
+user is asked to approve an overwrite the CLI cannot yet describe. And nothing is reported
+afterwards, so the loss is invisible until someone notices the file changed in `git diff` — or
+does not notice at all. Comments, formatting, and any post-push edit are lost.
+
+**Suggestions:** list the files that will be written and ask after connecting, not before; report
+what was written and skipped; default the prompt to **no**; skip files whose content already
+matches; and require `--yes`/`--overwrite` to proceed non-interactively rather than assuming
+consent.
+
+### F18 — Non-interactive prompt defaults run opposite to risk (medium)
+
+**Scenarios 1, 2, 4.** With no TTY, the two commands take opposite defaults, and the dangerous
+one is the permissive one:
+
+| Command                          | Prompt                                         | Non-interactive default | Effect                                    |
+| -------------------------------- | ---------------------------------------------- | ----------------------- | ----------------------------------------- |
+| `db schema declarative generate` | `Overwrite declarative schema? … [y/N]`        | **No**                  | writes nothing, exit 0 (F5)               |
+| `migration fetch`                | `… overwrite existing files … [Y/n]`           | **Yes**                 | overwrites local files (F17)              |
+| `db push`                        | `Do you want to push these migrations … [Y/n]` | **Yes**                 | applies migrations to the target database |
+
+**Why it's bad:** the safe, local, reversible operation (writing schema files) refuses to act,
+while the two that mutate a remote database or destroy local files proceed unattended. That is
+backwards, and it makes the CLI's non-interactive contract unpredictable — a user cannot reason
+about what a scripted Supabase command will do without checking each one.
+
+**Suggestion:** pick one rule and apply it everywhere — the defensible one is that any prompt
+that mutates a remote database or overwrites files must fail without `--yes` when there is no
+TTY. `db push` in CI is common enough that changing it is a compatibility decision, but the
+asymmetry should at least be documented in one place.
+
+### F19 — "reverted" suggests a schema rollback that never happens (medium)
+
+**Scenario 6.** After repairing a migration that added a column:
+
+```sh
+supabase migration repair 20240102000000 --status reverted --db-url "$URL"
+# Repaired migration history: [20240102000000] => reverted
+```
+
+The column that migration added is still present:
+
+```
+psql -c "\d employees"  →  age, id, name
+```
+
+**Why it's bad:** "reverted" is the vocabulary of undoing a change. The command only deletes a row
+from `supabase_migrations.schema_migrations`; the schema is untouched. A user repairing history to
+"undo" a bad migration will believe the change is gone, and the next diff or pull will then report
+drift they do not understand.
+
+**Suggestion:** say what actually happened — "Removed migration history record [20240102000000].
+The schema itself was not changed." The flag name can stay for compatibility; the output does not
+have to reinforce the wrong mental model.
+
+### F20 — `migration list` emits literal backticks in non-TTY output (low)
+
+Piped or redirected, the table renders as:
+
+```
+   Local            | Remote           | Time (UTC)
+  ------------------|------------------|-----------------------
+   `20240101000000` | `20240101000000` | `2024-01-01 00:00:00`
+   ` `              | `20240102000000` | `2024-01-02 00:00:00`
+```
+
+**Why it's bad:** the backticks are markdown styling that never got rendered, and empty cells come
+out as `` ` ` ``. Anyone grepping or parsing this in CI has to strip them, and it reads as a
+rendering bug.
+
+**Suggestion:** strip the markdown styling when stdout is not a TTY, the same way the spinner is
+suppressed for machine formats.
+
 ## What worked well
 
 Worth recording, because these are the load-bearing behaviors:
@@ -802,6 +892,21 @@ Worth recording, because these are the load-bearing behaviors:
   ```
 
 - **`--use-pg-delta` deprecation** on `db pull` prints a clear pointer to `--declarative`.
+- **The migration-history mismatch guard is excellent.** `db pull` refuses to run against a
+  database whose history does not match local files, and hands over the exact fix:
+
+  ```
+  The remote database's migration history does not match local files in supabase/migrations directory.
+
+  Make sure your local git repo is up-to-date. If the error persists, try repairing the migration
+  history table:
+  supabase migration repair --status applied 20260826032843
+  ```
+
+- **Scenario 6 works end to end.** `migration list` showed drift in both directions (a remote-only
+  row and a local-only row), `migration repair --status reverted` removed the right record, the
+  list came back aligned, and a following `db push` applied only the still-missing migration.
+- **`db push --dry-run`** lists exactly the migrations it would apply and changes nothing.
 - **Agent/JSON output mode** is correctly auto-detected and cleanly separated from human text
   output; human mode renders errors on stderr with the `--debug` hint.
 
