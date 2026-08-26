@@ -45,6 +45,28 @@ Expected exceptions:
 }
 ```
 
+## Config Naming Vocabulary
+
+`@supabase/config` and its CLI consumer use three settled names:
+
+- `CliConfig` — the full config-file document (`supabase/config.toml`/`.json`), the local superset
+  including local-only sections.
+- `ProjectConfig` — the hosted-project subset: a sparse overlay of the hosted sections (api, auth,
+  db, realtime, storage, workers, experimental) describing what a Supabase project looks like on
+  the platform.
+- `CliSettings` — the CLI's own runtime settings (platform `apiUrl`, access token, telemetry flags,
+  `supabaseHome`, …), owned by `apps/cli`.
+
+Use the `Cli*` prefix for the local checkout side and a bare `Project*` name for the hosted
+Supabase project. Config-value helpers follow the config family regardless of their inputs (e.g.
+`resolveCliConfigValue`, `MissingCliConfigValueError`). A symbol that deliberately spans both
+families takes a family-neutral name instead of a misleading prefix (see the ADR 0020 addendum for
+the `EffectiveConfig` precedent).
+
+See [`docs/adr/0020-config-naming-vocabulary.md`](docs/adr/0020-config-naming-vocabulary.md) and
+[`packages/config/docs/cli-config-loading.md`](packages/config/docs/cli-config-loading.md) for the
+full vocabulary.
+
 ## Effect
 
 The complete source code for the `effect` library (V4) is in `.repos/effect/`. Study types, APIs, and patterns there instead of `node_modules/`.
