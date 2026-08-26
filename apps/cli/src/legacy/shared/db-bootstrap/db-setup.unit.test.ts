@@ -6,7 +6,7 @@ import { CliConfigSchema } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach, vi } from "vitest";
-import { Deferred, Effect, FileSystem, Layer, Option, Path, Schema, Sink, Stream } from "effect";
+import { Deferred, Effect, FileSystem, Layer, Path, Schema, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
@@ -369,7 +369,7 @@ describe("legacyStartSetupLocalDatabase", () => {
     });
 
     it.effect(
-      "slim refs: skips storage migrate-call, overrides realtime entrypoint, and passes migrate as auth argv",
+      "slim refs: skips realtime and storage one-shot jobs and passes migrate as auth argv",
       () => {
         vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
         const workdir = makeWorkdir();
@@ -390,15 +390,9 @@ describe("legacyStartSetupLocalDatabase", () => {
         ).pipe(
           Effect.map(() => {
             expect(docker.runs.map((job) => job.image)).toEqual([
-              "ghcr.io/supabase/cli/realtime:v2.129.3",
               "ghcr.io/supabase/cli/auth:v2.196.0",
             ]);
-            expect(docker.runs[0]?.entrypoint).toEqual(Option.some("/app/bin/realtime"));
-            expect(docker.runs[0]?.cmd[0]).toBe("eval");
-            expect(docker.runs[0]?.cmd[1]).toContain(
-              'Realtime.Tenants.health_check("realtime-dev")',
-            );
-            expect(docker.runs[1]?.cmd).toEqual(["migrate"]);
+            expect(docker.runs[0]?.cmd).toEqual(["migrate"]);
             rmSync(workdir, { recursive: true, force: true });
           }),
         );

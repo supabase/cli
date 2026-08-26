@@ -18,7 +18,10 @@
  *      run-to-completion container on the SAME Docker network as `db` — Go's
  *      `DockerStart` defaults `NetworkMode` to `utils.NetId` when unset,
  *      `docker.go:379-383`), each gated on its own service's `enabled` flag and none
- *      of which touch `conn` directly:
+ *      of which touch `conn` directly. Slim images skip the Realtime and Storage
+ *      jobs: those images migrate (and Realtime seeds) from their long-running
+ *      entrypoint. Slim Auth still runs a one-shot `migrate` under the baked
+ *      `auth` ENTRYPOINT.
  *      - `initRealtimeJob` (`start.go:268-295`) — reuses
  *        `./realtime-env.ts`'s `legacyBuildRealtimeEnv`, which builds
  *        the byte-identical env-var literal Go's own `initRealtimeJob` embeds
@@ -670,8 +673,6 @@ const legacyRunStartMigrateJob = Effect.fnUntraced(function* (
     readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
     /** `--debug` — Go's `utils.GetDebugLogger()`, see this function's own doc comment. */
     readonly debug: boolean;
-    /** `--entrypoint` override; omit to keep the image's own ENTRYPOINT. */
-    readonly entrypoint?: Option.Option<string>;
   },
 ) {
   const docker = yield* LegacyDockerRun;
@@ -702,7 +703,6 @@ const legacyRunStartMigrateJob = Effect.fnUntraced(function* (
     // Already resolved, immediately above — `LegacyDockerRun.runCapture`'s own ambient-only
     // resolver must not re-resolve it (it doesn't see `opts.projectEnvValues` at all).
     skipImageResolve: true,
-    ...(opts.entrypoint === undefined ? {} : { entrypoint: opts.entrypoint }),
   };
   // `runStream` (not `runCapture`) so stdout is actually discarded chunk-by-chunk as it
   // arrives, matching Go's `io.Discard` writer for this job (`start.go:352`, and this
@@ -806,29 +806,33 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (
   const dbPassword = legacyStartInternalDbPassword(input.dbUrl);
 
   if (input.config.realtime.enabled) {
-    // Slim realtime's ENTRYPOINT is tini + /app/entry.sh, which migrates then
-    // `exec`s the image CMD (`/app/bin/server`) and would hang a one-shot job.
-    // Override the entrypoint so this stays the docker.io eval (create the
-    // `realtime-dev` tenant), matching Go's `initRealtimeJob`.
-    const slimRealtime = legacyUsesSlimRuntime(input.images.realtime);
-    const realtimeEval = `{:ok, _} = Application.ensure_all_started(:realtime)\n{:ok, _} = Realtime.Tenants.health_check("${LEGACY_REALTIME_TENANT_ID}")`;
-    yield* legacyRunStartMigrateJob(spawner, {
-      image: input.images.realtime,
-      networkId: input.networkId,
-      projectId: input.projectId,
-      projectEnvValues: input.projectEnvValues,
-      debug: input.debug,
-      env: legacyBuildRealtimeEnv({
-        ipVersion: input.config.realtime.ip_version,
-        maxHeaderLength: input.config.realtime.max_header_length,
-        dbHost,
-        dbPassword,
-        jwtSecret: input.jwtSecret,
-        jwks: input.jwks,
-      }),
-      cmd: slimRealtime ? ["eval", realtimeEval] : ["/app/bin/realtime", "eval", realtimeEval],
-      entrypoint: slimRealtime ? Option.some("/app/bin/realtime") : undefined,
-    });
+    // Slim realtime's ENTRYPOINT (`tini` + `/app/entry.sh`) already runs
+    // `/app/bin/migrate`, seeds when `SEED_SELF_HOST=true` (set by
+    // `legacyBuildRealtimeEnv`), then execs the server. The docker.io one-shot
+    // `eval` health_check would otherwise start a second BEAM against the
+    // same DB (and hang if it inherited `entry.sh`). Skip it.
+    if (!legacyUsesSlimRuntime(input.images.realtime)) {
+      yield* legacyRunStartMigrateJob(spawner, {
+        image: input.images.realtime,
+        networkId: input.networkId,
+        projectId: input.projectId,
+        projectEnvValues: input.projectEnvValues,
+        debug: input.debug,
+        env: legacyBuildRealtimeEnv({
+          ipVersion: input.config.realtime.ip_version,
+          maxHeaderLength: input.config.realtime.max_header_length,
+          dbHost,
+          dbPassword,
+          jwtSecret: input.jwtSecret,
+          jwks: input.jwks,
+        }),
+        cmd: [
+          "/app/bin/realtime",
+          "eval",
+          `{:ok, _} = Application.ensure_all_started(:realtime)\n{:ok, _} = Realtime.Tenants.health_check("${LEGACY_REALTIME_TENANT_ID}")`,
+        ],
+      });
+    }
   }
   if (input.config.storage.enabled) {
     // `legacyStartStorageMigrateEnv` parses `storage.file_size_limit` via
