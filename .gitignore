@@ -24,3 +24,6 @@ packages/cli-*/bin/
 # Nx
 .nx/cache
 .nx/workspace-data
+
+# Turbo
+.turbo/

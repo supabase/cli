@@ -29,7 +29,7 @@ These workspaces should generally follow this structure:
 - Standard scripts: `test`, `check:all`, `fix:all` (per-package target: `types:check`)
 - Standard devDependencies: `@tsconfig/bun`, `@types/bun`, `typescript`
 
-Linting (`oxlint`), formatting (`oxfmt`), and unused-code analysis (`knip`) are repo-wide, not per-package: the tools are root devDependencies configured by `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key), and run as `lint:*`/`fmt:*`/`knip:*` targets on the `@supabase/root` project. `pnpm exec oxlint`, `pnpm exec oxfmt`, and `pnpm exec knip-bun` from the repo root work directly, and each package's `check:all`/`fix:all` includes the root targets.
+Linting (`oxlint`), formatting (`oxfmt`), and unused-code analysis (`knip`) are repo-wide, not per-package: the tools are root devDependencies configured by `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key). Turbo orchestrates these root-owned `lint:*`/`fmt:*`/`knip:*` scripts, while `pnpm exec oxlint`, `pnpm exec oxfmt`, and `pnpm exec knip-bun` from the repo root work directly; each package's `check:all`/`fix:all` includes the root targets.
 
 Expected exceptions:
 
@@ -209,7 +209,9 @@ If a workspace exposes a different script set, use that workspace's `package.jso
 
 ## Nx
 
-This repo uses Nx for task orchestration. Prefer Nx commands over running scripts directly when working across projects or when you need to understand project structure.
+This repo uses pnpm and Turbo for quality checks and ordinary unit, integration,
+and e2e tests. Package scripts are the source of truth for those workflows.
+Nx remains scoped to the CLI build/live graph and its dependency inspection.
 
 ### Exploring the workspace
 
@@ -224,23 +226,20 @@ nx show project <name> --json
 nx graph
 ```
 
-### Running tasks
+### Running build/live workflows
 
 ```sh
-# Run a single target
-nx run <project>:<target>
+# Build the CLI and its Go sidecar
+nx run supabase:build
 
-# Run a target across all projects
-nx run-many -t <target>
-
-# Run a target only on projects affected by current changes
-nx affected -t <target>
-
-# Run multiple targets (e.g. build + test)
-nx run-many -t build test
+# Run the live CLI suite
+nx run supabase:test:live
 ```
 
-Use `nx show project <name> --json` to discover available targets before running them — do not guess target names.
+Use `nx show project <name> --json` to inspect build/live targets, dependencies,
+and outputs before running them — do not guess target names. Run quality checks
+and ordinary tests through the package scripts (`pnpm check:all`, `pnpm fix:all`,
+and `pnpm test`), which delegate quality orchestration to Turbo.
 
 ## Pull Requests
 

@@ -98,7 +98,7 @@ That pulls `.repos/effect/`, which is the local source of truth for Effect v4 AP
 |   |-- stack/                # Programmatic local Supabase stack runtime
 |   `-- cli-*/                # Platform-specific CLI binary packages
 |-- tools/
-|   `-- nx-plugins/           # Local Nx inference plugins
+|   `-- nx-plugins/           # Local Nx Go inference plugin
 |-- docs/                     # ADRs, design notes, and implementation docs
 `-- .repos/effect/            # Effect v4 reference source
 ```
@@ -141,21 +141,21 @@ pnpm run fix:all     # run all fixers across every project
 
 ### Standard package scripts
 
-Standard TypeScript workspaces (`apps/cli`, `packages/api`, `packages/config`, `packages/process-compose`, `packages/stack`) declare their package scripts explicitly. Test suites vary by package: unit tests are standard, while integration and e2e tests exist only where applicable.
+Standard TypeScript workspaces (`apps/cli-e2e`, `apps/cli`, `packages/api`, `packages/cli-test-helpers`, `packages/config`, `packages/process-compose`, `packages/stack`) declare their package scripts explicitly. Test suites vary by package: unit tests are standard, while integration and e2e tests exist only where applicable.
 
-| Script             | What it does                                             |
-| ------------------ | -------------------------------------------------------- |
-| `test`             | Run the package's declared test suites                   |
-| `test:unit`        | Run unit tests                                           |
-| `test:integration` | Run integration tests where applicable                   |
-| `test:e2e`         | Run end-to-end tests where applicable                    |
-| `check:all`        | Run all check targets for this project                   |
-| `fix:all`          | Run all fix targets for this project                     |
-| `types:check`      | Type-check with `tsc --noEmit` _(inferred by Nx plugin)_ |
+| Script             | What it does                           |
+| ------------------ | -------------------------------------- |
+| `test`             | Run the package's declared test suites |
+| `test:unit`        | Run unit tests                         |
+| `test:integration` | Run integration tests where applicable |
+| `test:e2e`         | Run end-to-end tests where applicable  |
+| `check:all`        | Run all check targets for this project |
+| `fix:all`          | Run all fix targets for this project   |
+| `types:check`      | Type-check with `tsc --noEmit`         |
 
-The test scripts are declared in each package's `package.json`, so package-local test commands are directly discoverable and can be sharded independently. Type-checking remains an Nx-inferred target.
+The test and type-check scripts are declared in each package's `package.json`, so package-local commands are directly discoverable and can be sharded independently.
 
-Linting, formatting, and unused-code analysis are repo-wide rather than per-package: `oxlint`, `oxfmt`, and `knip` read `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key) and run as `lint:*`/`fmt:*`/`knip:*` targets on the `@supabase/root` project (declared in the root `package.json`). Each package's `check:all`/`fix:all` includes them, and running the tools directly also just works:
+Linting, formatting, and unused-code analysis are repo-wide rather than per-package: `oxlint`, `oxfmt`, and `knip` read `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key). The root `check:all`/`fix:all` scripts use Turbo to run the package type checks and root-owned quality scripts. Each package's `check:all`/`fix:all` uses Turbo filters to run its own type check together with the root-owned checks. Running the tools directly also just works:
 
 ```sh
 pnpm exec oxlint
@@ -348,64 +348,29 @@ supabase --version
 
 ## Using Nx
 
-Nx is the task runner for this repo. It handles caching, parallelism, and cross-project orchestration. All tasks — whether declared in a project's `package.json` or inferred by a plugin — are invoked the same way.
+Nx remains the task runner for the CLI build and live-test workflows. Quality
+checks and ordinary unit, integration, and e2e tests are package-local scripts
+orchestrated with pnpm and Turbo; see [Standard package scripts](#standard-package-scripts).
 
-**Run a single target:**
-
-```sh
-nx run @supabase/api:types:check
-```
-
-Ordinary unit, integration, and e2e tests are package-local scripts orchestrated
-from the workspace root with pnpm and Turbo; see [Standard package scripts](#standard-package-scripts).
-The live suite remains an Nx target documented below.
-
-**Run a target across all projects:**
+**Build the CLI and its Go sidecar:**
 
 ```sh
-nx run-many -t types:check
-nx run-many -t lint:check fmt:check types:check knip:check
+pnpm exec nx run supabase:build
 ```
 
-**Run only affected projects** (compared to `main`) for quality targets:
+**Run the live suite:**
+
+The target's build dependency prepares the CLI artifacts before Vitest starts:
 
 ```sh
-nx affected -t types:check
+pnpm exec nx run supabase:test:live
 ```
 
-Lint, format, and knip targets live on the root project and always cover the whole repo (a few seconds at most), so run them with `nx run-many` (or the tools directly) rather than `nx affected`.
-
-**Inspect a project's full task configuration** (including inferred targets):
-
-```sh
-nx show project @supabase/api
-```
-
-This is the best way to see what quality targets exist on a project, what their inputs and outputs are, and whether they are cached. Test orchestration is handled by Turbo's package-local `test:*:run` tasks instead.
-
-### Caching
-
-Nx caches task results locally under `.nx/cache`. A target hits the cache when all its inputs are unchanged since the last successful run — inputs include source files, named input sets like `sharedGlobals`, and external dependency versions.
-
-To force a re-run and bypass the cache:
-
-```sh
-nx run @supabase/api:types:check --skip-nx-cache
-```
-
-To clear all cached results:
-
-```sh
-nx reset
-```
-
-### Inferred targets
-
-Several targets in this repo are not explicitly declared in any project file. They are injected by local plugins in `tools/nx-plugins/` that inspect each package's `package.json` and derive targets from the tooling configuration found there.
-
-To see the full list of targets for a project, always use `nx show project` rather than reading the `nx.targets` field in `package.json` directly.
-
-See [`docs/nx-inference-plugins.md`](docs/nx-inference-plugins.md) for how the plugin system works and how to add new plugins.
+Use `nx show project supabase` to inspect build/live dependencies and outputs.
+Do not use Nx affected mode for quality checks; run `pnpm run check:all` or a
+package's filtered `check:all` instead. See
+[`docs/nx-inference-plugins.md`](docs/nx-inference-plugins.md) for the retained
+Go plugin used by the Nx build graph.
 
 ## Documentation
 

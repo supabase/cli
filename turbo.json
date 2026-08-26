@@ -4,6 +4,27 @@
     "strictTaskEntrypointSelection": true
   },
   "tasks": {
+    "types:check": {
+      "cache": true
+    },
+    "lint:check": {
+      "cache": false
+    },
+    "lint:fix": {
+      "cache": false
+    },
+    "fmt:check": {
+      "cache": false
+    },
+    "fmt:fix": {
+      "cache": false
+    },
+    "knip:check": {
+      "cache": false
+    },
+    "knip:fix": {
+      "cache": false
+    },
     "test:unit:run": {
       "cache": false,
       "passThroughEnv": ["*"]
