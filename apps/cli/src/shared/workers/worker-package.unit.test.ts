@@ -122,12 +122,47 @@ describe("packageWorkerDirectory", () => {
     expect(link?.link).toBe("target.txt");
   });
 
+  // Broken, but pointing at a name inside the tree: whether the target exists is
+  // the server's problem once the archive is extracted, and dropping the link
+  // would change the tree the build sees.
   test("keeps a broken symlink instead of dropping it", async () => {
-    symlinkSync("/nowhere-at-all", join(dir, "broken.txt"));
+    symlinkSync("nowhere-at-all.txt", join(dir, "broken.txt"));
 
     const entries = readEntries((await pack(dir)).archive);
 
     expect(entries.find((entry) => entry.path === "broken.txt")?.type).toBe("2");
+  });
+
+  // The archive is the whole of what the server gets, so a link out of it
+  // arrives dangling however valid it is here. Refused while the user is still
+  // at the terminal, rather than surfacing as a remote build failure.
+  test.each([
+    ["a relative escape", "../../outside.txt"],
+    ["an absolute escape", "/nowhere-at-all"],
+    ["a hoisted dependency", "../../node_modules/.pnpm/left-pad@1.3.0/node_modules/left-pad"],
+  ])("refuses %s out of the build context", async (_label, target) => {
+    mkdirSync(join(dir, "nested"));
+    symlinkSync(target, join(dir, "nested", "dep"));
+
+    const exit = await Effect.runPromise(
+      packageWorkerDirectory(dir).pipe(Effect.provide(BunServices.layer), Effect.exit),
+    );
+
+    expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(false);
+    expect(Exit.isFailure(exit) && Cause.hasFails(exit.cause)).toBe(true);
+    expect(JSON.stringify(exit)).toContain("WorkerSourceEscapingLinkError");
+  });
+
+  // An absolute target that lands back inside the tree is a path on this
+  // machine; stored verbatim it would resolve to nothing on the other end.
+  test("rewrites an absolute in-tree link target as a relative one", async () => {
+    writeFileSync(join(dir, "target.txt"), "t");
+    mkdirSync(join(dir, "nested"));
+    symlinkSync(join(dir, "target.txt"), join(dir, "nested", "link.txt"));
+
+    const entries = readEntries((await pack(dir)).archive);
+
+    expect(entries.find((entry) => entry.path === "nested/link.txt")?.link).toBe("../target.txt");
   });
 
   test("does not recurse through a directory symlink that points at an ancestor", async () => {

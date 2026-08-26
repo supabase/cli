@@ -1,6 +1,8 @@
 import { gzipSync } from "node:zlib";
+import { isAbsolute, relative, resolve } from "node:path";
 import { Effect, FileSystem, Option } from "effect";
 import type { PlatformError } from "effect/PlatformError";
+import { WorkerSourceEscapingLinkError } from "./workers.errors.ts";
 import { createTar, type TarEntry, TarFieldOutOfRangeError, TarPathTooLongError } from "./tar.ts";
 
 /**
@@ -19,6 +21,28 @@ import { createTar, type TarEntry, TarFieldOutOfRangeError, TarPathTooLongError 
 interface PackagedWorker {
   readonly archive: Uint8Array;
   readonly fileCount: number;
+}
+
+/**
+ * Where a symlink points, relative to the packaged tree — or `undefined` when it
+ * points outside it.
+ *
+ * A link is stored rather than followed, so the target has to be packaged too
+ * for the link to mean anything on the other end. Targets are also rewritten
+ * relative to the link's own directory: an absolute one is a path on this
+ * machine and would not resolve anywhere else.
+ */
+function confinedLinkTarget(input: {
+  readonly root: string;
+  readonly linkDir: string;
+  readonly target: string;
+}): string | undefined {
+  const resolved = resolve(input.linkDir, input.target);
+  const fromRoot = relative(input.root, resolved);
+  if (fromRoot.startsWith("..") || isAbsolute(fromRoot)) {
+    return undefined;
+  }
+  return isAbsolute(input.target) ? relative(input.linkDir, resolved) : input.target;
 }
 
 /**
@@ -49,7 +73,11 @@ function tarMtime(modified: Option.Option<Date>): number {
 const collectEntries = (
   root: string,
   relativeDir: string,
-): Effect.Effect<Array<TarEntry>, PlatformError, FileSystem.FileSystem> =>
+): Effect.Effect<
+  Array<TarEntry>,
+  PlatformError | WorkerSourceEscapingLinkError,
+  FileSystem.FileSystem
+> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const absoluteDir = relativeDir === "" ? root : `${root}/${relativeDir}`;
@@ -69,12 +97,26 @@ const collectEntries = (
       // an ancestor from being walked into.
       const linkTarget = yield* fs.readLink(absolutePath).pipe(Effect.option);
       if (Option.isSome(linkTarget)) {
+        const confined = confinedLinkTarget({
+          root,
+          linkDir: absoluteDir,
+          target: linkTarget.value,
+        });
+        if (confined === undefined) {
+          return yield* Effect.fail(
+            new WorkerSourceEscapingLinkError({
+              detail: `${relativePath} links to ${linkTarget.value}, which is outside the worker source and cannot be packaged with it.`,
+              suggestion:
+                "Install the worker's dependencies inside its own directory, or point `source` at a directory that contains everything the build needs.",
+            }),
+          );
+        }
         entries.push({
           path: relativePath,
           contents: new Uint8Array(0),
           mode: 0o777,
           mtime: 0,
-          linkTarget: linkTarget.value,
+          linkTarget: confined,
         });
         continue;
       }
