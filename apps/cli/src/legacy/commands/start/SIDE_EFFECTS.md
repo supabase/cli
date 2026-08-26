@@ -33,8 +33,7 @@ before any other service starts. Opens a direct `LegacyDbConnection` session to 
 host-facing Postgres address (PG<=14: execs schema/globals/API-privileges SQL over that
 session; PG>=15: runs three one-shot `LegacyDockerRun` jobs instead, gated independently on
 `realtime.enabled`/`storage.enabled`/`auth.enabled`; slim refs skip the Realtime and Storage
-jobs and run Auth as `migrate`. Slim Storage then grants `postgres` SUPERUSER and creates
-the `vector` extension so storage-api's vector-bucket migrations can run). Also upserts `[db.vault]` secrets and
+jobs and run Auth as `migrate`). Also upserts `[db.vault]` secrets and
 seeds `supabase/roles.sql`: the `Seeding globals from roles.sql...` stderr line always
 prints first, whether or not the file exists — a missing file is silently tolerated (no SQL
 runs), any other read/exec error still fails the run. Finally runs every pending migration +
@@ -117,10 +116,10 @@ always `CMD-SHELL` — and `legacyCheckContainerReady` treats `Running` as ready
 analytics keep a busybox `wget --spider` probe; slim Edge Runtime is started without
 `--entrypoint sh` (the wrapped binary has no shell) and the main-service template is
 copied to `/tmp/index.ts` (`--main-service=/tmp`) because the image runs as uid 65532
-and cannot read `/root`. After schema init, slim Storage also execs
-`ALTER ROLE postgres WITH SUPERUSER` plus `CREATE EXTENSION vector` — slim postgres
-leaves `postgres` as a non-superuser, and storage-api's vector-bucket migrations create
-that extension as that role.
+and cannot read `/root`. Slim Postgres's `/etc/postgresql.schema.sql` postinit also
+runs `ALTER ROLE postgres WITH SUPERUSER` plus `CREATE EXTENSION vector` as
+`supabase_admin` after bundled migrations demote `postgres` — storage-api's
+vector-bucket migrations create that extension as the `postgres` role.
 Kong's `kong.yml`/TLS cert/TLS key, Postgres's `pgsodium_root.key`, and Supavisor's
 `pooler_tenant.exs` DO carry secret content (a service-role-key-derived bearer/query
 key, TLS private key material, and the DB password respectively). Since

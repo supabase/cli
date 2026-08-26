@@ -62,6 +62,18 @@ const LEGACY_POSTGRES_PGSODIUM_ROOT_KEY_PATH = "/etc/postgresql-custom/pgsodium_
  */
 const LEGACY_POSTGRES_SCHEMA_SQL_PATH = "/etc/postgresql.schema.sql";
 
+/**
+ * Slim `migrate.sh` demotes `postgres` after bundled migrations
+ * (`10000000000000_demote-postgres.sql`). The local CLI still talks to the
+ * cluster as that role, and storage-api's vector-bucket migrations
+ * `CREATE EXTENSION vector` as it — docker.io's local postgres stays a
+ * superuser. Re-promote and pre-create `vector` in the postinit hook, which
+ * runs as `supabase_admin` after demote and before the CLI connects.
+ */
+const LEGACY_POSTGRES_SLIM_POSTINIT_SQL = `ALTER ROLE postgres WITH SUPERUSER;
+CREATE EXTENSION IF NOT EXISTS vector;
+`;
+
 /** Go's `container.HealthConfig` literals (`apps/cli-go/internal/db/start/start.go:85-90`). */
 const LEGACY_POSTGRES_HEALTHCHECK_INTERVAL_SECONDS = 10;
 const LEGACY_POSTGRES_HEALTHCHECK_TIMEOUT_SECONDS = 2;
@@ -427,12 +439,12 @@ export function legacyIsSlimPostgresImage(image: string): boolean {
 }
 
 /**
- * The bytes the docker.io entrypoint heredocs into
- * {@link LEGACY_POSTGRES_SCHEMA_SQL_PATH} on PG >= 15 — schema.sql + webhook.sql +
- * _supabase.sql, in that exact order, each terminated by the newline the heredoc
- * body contributes (see {@link legacyPostgresEntrypointScriptPg15}).
+ * The bytes the slim image's `migrate.sh` runs as `supabase_admin` after bundled
+ * migrations: schema.sql + webhook.sql + _supabase.sql, then a slim-only postinit
+ * that re-promotes `postgres` (the bundled demote migration leaves it
+ * NOSUPERUSER) and creates `vector` for storage-api.
  */
-const LEGACY_POSTGRES_SLIM_SCHEMA_SQL = `${LEGACY_START_DB_SCHEMA_SQL}\n${LEGACY_START_DB_WEBHOOK_SQL}\n${LEGACY_START_DB_SUPABASE_SQL}\n`;
+const LEGACY_POSTGRES_SLIM_SCHEMA_SQL = `${LEGACY_START_DB_SCHEMA_SQL}\n${LEGACY_START_DB_WEBHOOK_SQL}\n${LEGACY_START_DB_SUPABASE_SQL}\n${LEGACY_POSTGRES_SLIM_POSTINIT_SQL}`;
 
 /**
  * The image-dependent half of a Postgres container spec: how the entrypoint is

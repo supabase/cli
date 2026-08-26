@@ -36,7 +36,9 @@ composition reuses too — see that command's `SIDE_EFFECTS.md`):
    heredoc script, `[db.settings]` travels as trailing `-c key=value` argv rather than a
    `postgresql.conf` append, and `/etc/postgresql.schema.sql` plus the pgsodium root key are
    `docker cp`'d in before start (the slim image's bundled `migrate.sh` runs that schema file
-   once, at initdb, exactly like the docker.io image does). `--from-backup` combined with a
+   once, at initdb, exactly like the docker.io image does). Slim schema SQL also re-promotes
+   `postgres` to SUPERUSER and `CREATE EXTENSION vector` after the image's bundled demote
+   migration, so storage-api vector-bucket migrations can run as that role. `--from-backup` combined with a
    resolved slim image is refused here instead — the restore entrypoint has no slim
    equivalent.
 6. Wait for the container to become healthy (`db.health_timeout`, default `2m`). A timeout
