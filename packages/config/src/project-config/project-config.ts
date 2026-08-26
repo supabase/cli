@@ -29,6 +29,31 @@ const HOSTED_SECTION_KEYS = [
 type HostedSectionKey = (typeof HOSTED_SECTION_KEYS)[number];
 
 /**
+ * A deeply-readonly JSON value — the shape of everything under
+ * `_apiResponse`, which holds (a clone of) a parsed Management API JSON
+ * payload and is recursively frozen at attach time. Typed recursively
+ * readonly so no narrowing path reaches a mutable view: with plain `unknown`
+ * values, `Array.isArray(...)` would narrow to a mutable array whose
+ * `.push` compiles and then throws against the frozen runtime value. (A
+ * programmatic `attachApiResponse` caller can technically hand over
+ * non-JSON structured-cloneable values — Dates, Maps; those step outside
+ * this type by their own choice, exactly like any other consumer-side
+ * assertion.) One narrowing caveat no user-space type can close: the lib's
+ * own `Array.isArray` guard is typed `arg is any[]`, so narrowing through it
+ * yields a MUTABLE array view (microsoft/TypeScript#17002) whose `.push`
+ * compiles and then throws against the frozen value — narrow with a
+ * readonly-preserving guard (`(v): v is ReadonlyArray<ReadonlyJsonValue> =>
+ * Array.isArray(v)`) instead.
+ */
+export type ReadonlyJsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | ReadonlyArray<ReadonlyJsonValue>
+  | { readonly [key: string]: ReadonlyJsonValue };
+
+/**
  * The hosted-project subset of {@link CliConfig}: the sections a Management
  * API project-config response can speak for (`api`, `auth`, `db`,
  * `realtime`, `storage`, `workers`, `experimental`) — never the local-only
@@ -90,31 +115,6 @@ type HostedSectionKey = (typeof HOSTED_SECTION_KEYS)[number];
  * to restrict a comparison to exactly the fields `fromApiProjectConfig` can
  * actually speak for, rather than hand-maintaining an equivalent field list.
  */
-/**
- * A deeply-readonly JSON value — the shape of everything under
- * `_apiResponse`, which holds (a clone of) a parsed Management API JSON
- * payload and is recursively frozen at attach time. Typed recursively
- * readonly so no narrowing path reaches a mutable view: with plain `unknown`
- * values, `Array.isArray(...)` would narrow to a mutable array whose
- * `.push` compiles and then throws against the frozen runtime value. (A
- * programmatic `attachApiResponse` caller can technically hand over
- * non-JSON structured-cloneable values — Dates, Maps; those step outside
- * this type by their own choice, exactly like any other consumer-side
- * assertion.) One narrowing caveat no user-space type can close: the lib's
- * own `Array.isArray` guard is typed `arg is any[]`, so narrowing through it
- * yields a MUTABLE array view (microsoft/TypeScript#17002) whose `.push`
- * compiles and then throws against the frozen value — narrow with a
- * readonly-preserving guard (`(v): v is ReadonlyArray<ReadonlyJsonValue> =>
- * Array.isArray(v)`) instead.
- */
-export type ReadonlyJsonValue =
-  | string
-  | number
-  | boolean
-  | null
-  | ReadonlyArray<ReadonlyJsonValue>
-  | { readonly [key: string]: ReadonlyJsonValue };
-
 export type ProjectConfig = DeepPartial<Pick<CliConfig, HostedSectionKey>> & {
   // Readonly, recursively: the runtime value is deep-frozen
   // (attachFrozenApiResponse), so any compile-permitted mutation — a
@@ -619,9 +619,24 @@ function attachFrozenApiResponse<T extends Record<string, unknown>>(
 ): T {
   assertRawAttributesDepthWithinBound(rawAttributes);
   const cloned = cloneRawAttributes(rawAttributes);
+  // Object.freeze itself can throw on structured-cloneable non-JSON values
+  // (a typed array: "Cannot freeze array buffer views with elements") —
+  // parsed JSON never contains one, so reaching this is programmatic caller
+  // input, translated to keep the typed-error contract.
+  let frozen: Record<string, unknown>;
+  try {
+    frozen = deepFreeze(cloned);
+  } catch (cause) {
+    throw new ProjectConfigParseError({
+      message:
+        "attachApiResponse raw attributes hold a value that cannot be frozen (e.g. a typed array) — raw attributes must be plain parsed JSON",
+      cause,
+      reason: "caller_misuse",
+    });
+  }
   const result = { ...enumerableProps };
   Object.defineProperty(result, "_apiResponse", {
-    value: deepFreeze(cloned),
+    value: frozen,
     enumerable: false,
     writable: false,
     configurable: false,

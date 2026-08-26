@@ -30,12 +30,13 @@ import {
 // Local helpers replicated from the legacy shell (see each citation).
 
 /**
- * Port of Go `time.Duration.String()`, replicated from
- * `apps/cli/src/legacy/commands/config/push/config-sync/config-sync.duration.ts:18-82`.
- * Every call site below feeds it a whole multiple of a second or an hour, but
- * the full fractional-unit logic is copied verbatim so the output matches
- * that shared helper exactly rather than only on the inputs this file happens
- * to exercise today.
+ * Port of Go `time.Duration.String()`, based on the legacy port at
+ * `apps/cli/src/legacy/commands/config/push/config-sync/config-sync.duration.ts:18-82`,
+ * with one DELIBERATE divergence: the legacy port truncates sub-second
+ * remainders in its hours/minutes branches (its :62-69), where Go itself
+ * prints fractional seconds (`"1h0m0.5s"`). Truncating there would let
+ * canonicalization silently change a configured duration, so this copy
+ * matches Go.
  */
 function durationString(ns: number): string {
   if (ns === 0) return "0s";
@@ -58,22 +59,21 @@ function durationString(ns: number): string {
   const us = Math.floor(ns / 1_000);
   ns -= us * 1_000;
 
+  const subSecondNs = ms * 1_000_000 + us * 1_000 + ns;
+  const secondsText =
+    subSecondNs > 0
+      ? ((secs * 1_000_000_000 + subSecondNs) / 1_000_000_000).toPrecision(10).replace(/\.?0+$/, "")
+      : `${secs}`;
   if (hours > 0) {
-    result += `${hours}h${minutes}m${secs}s`;
+    result += `${hours}h${minutes}m${secondsText}s`;
     return result;
   }
   if (minutes > 0) {
-    result += `${minutes}m${secs}s`;
+    result += `${minutes}m${secondsText}s`;
     return result;
   }
   if (secs > 0) {
-    if (ms > 0 || us > 0 || ns > 0) {
-      const total_ns = secs * 1_000_000_000 + ms * 1_000_000 + us * 1_000 + ns;
-      const secFloat = total_ns / 1_000_000_000;
-      result += `${secFloat.toPrecision(10).replace(/\.?0+$/, "")}s`;
-    } else {
-      result += `${secs}s`;
-    }
+    result += `${secondsText}s`;
     return result;
   }
   if (ms > 0) {
@@ -107,6 +107,14 @@ function durationString(ns: number): string {
  * inside its usable domain.
  */
 const MAX_GO_DURATION_NS = 2 ** 63;
+
+/**
+ * The same bound in whole seconds, for the `*_max_frequency` rows: a larger
+ * integer passes `expectInteger` but converts to nanoseconds past
+ * {@link MAX_GO_DURATION_NS}, producing a duration string this file's own
+ * {@link parseDuration} (and Go's config loading) rejects as out of range.
+ */
+const MAX_GO_DURATION_SECONDS = 9_223_372_036;
 
 const NS_PER_SECOND = 1_000_000_000;
 const NS_PER_MINUTE = 60 * NS_PER_SECOND;
@@ -237,12 +245,15 @@ function secondsToDurationString(seconds: number): string {
 
 /**
  * Hours (float, as reported by the API) → Go duration string. Used for
- * `sessions.timebox`/`sessions.inactivity_timeout`, mirroring the inline
- * `Math.round(hours) * 3_600_000_000_000` conversion in
- * `auth.sync.ts:1402-1407` (`applyRemoteAuthConfig`'s sessions block).
+ * `sessions.timebox`/`sessions.inactivity_timeout`. DELIBERATE divergence
+ * from the legacy apply, which rounds to whole hours
+ * (`Math.round(hours) * 3_600_000_000_000`, auth.sync.ts:1402-1407): a
+ * standalone mapping must represent the hosted value faithfully — rounding
+ * `1.5` hours to `"2h0m0s"` would change the setting, break the push-side
+ * round-trip (which converts back to fractional hours), and hide real drift.
  */
 function hoursToDurationString(hours: number): string {
-  return durationString(Math.round(hours) * 3_600_000_000_000);
+  return durationString(hours * 3_600_000_000_000);
 }
 
 /**
@@ -396,7 +407,11 @@ function secondsDurationRow(
     configPath,
     apiPath,
     transform: (value) =>
-      value === null ? undefined : secondsToDurationString(expectInteger(value, apiPath)),
+      value === null
+        ? undefined
+        : secondsToDurationString(
+            expectNumberBetween(expectInteger(value, apiPath), apiPath, 0, MAX_GO_DURATION_SECONDS),
+          ),
     normalizeDocument: canonicalizeDurationString,
     unit: "seconds → duration string",
   };

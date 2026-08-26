@@ -1238,10 +1238,12 @@ describe("review round: numeric and provider narrowing (CLI-2230)", () => {
     expect((thrown as ProjectConfigParseError).message).toContain("an integer");
   });
 
-  test("fractional session hours still map (durations are genuinely non-integer)", () => {
+  test("fractional session hours map faithfully (no whole-hour rounding)", () => {
     const result = fromApiProjectConfig({ auth: { sessions_timebox: 1.5 } });
-    // hoursToDurationString rounds to whole hours, matching auth.sync.ts:1402-1407.
-    expect(result.auth?.sessions?.timebox).toBe("2h0m0s");
+    // Deliberate divergence from the legacy apply's Math.round
+    // (auth.sync.ts:1402-1407): a standalone mapping must represent the
+    // hosted value, not change it.
+    expect(result.auth?.sessions?.timebox).toBe("1h30m0s");
   });
 
   test("a non-string apple client_id throws instead of silently omitting", () => {
@@ -1587,5 +1589,53 @@ describe("review round: sibling validation, formatter overflow, prototype lookup
   test("a document file_size_limit that overflows through its suffix stays verbatim", () => {
     const projected = fromConfigDocument({ storage: { file_size_limit: "1e308KiB" } });
     expect(projected.storage?.file_size_limit).toBe("1e308KiB");
+  });
+});
+
+describe("review round: duration/size bounds and freeze failures (CLI-2230)", () => {
+  test("an out-of-range *_max_frequency throws instead of formatting an unparsable duration", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({ auth: { smtp_max_frequency: 10_000_000_000 } });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).apiPath).toEqual(["auth", "smtp_max_frequency"]);
+  });
+
+  test("a negative storage file_size_limit throws instead of formatting -1B", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({ storage: { file_size_limit: -1 } });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).apiPath).toEqual(["storage", "file_size_limit"]);
+  });
+
+  test("canonicalization preserves fractional seconds in hours/minutes durations", () => {
+    const projected = fromConfigDocument({
+      auth: {
+        sessions: { timebox: "1h0.5s", inactivity_timeout: "1m0.5s" },
+      },
+    });
+    // Go's Duration.String() prints fractional seconds in these branches;
+    // the legacy port truncates them (config-sync.duration.ts:62-69) — this
+    // copy deliberately matches Go so canonicalizing never changes the value.
+    expect(projected.auth?.sessions?.timebox).toBe("1h0m0.5s");
+    expect(projected.auth?.sessions?.inactivity_timeout).toBe("1m0.5s");
+  });
+
+  test("an unfreezable raw attribute value throws the typed caller-misuse error", () => {
+    let thrown: unknown;
+    try {
+      attachApiResponse({}, { bytes: new Uint8Array([1]) });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
   });
 });

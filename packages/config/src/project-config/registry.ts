@@ -9,6 +9,7 @@ import {
   clampToUint,
   expectBoolean,
   expectInteger,
+  expectNumberBetween,
   expectString,
   splitCommaSeparated,
   type ProjectConfigMappingRow,
@@ -478,7 +479,18 @@ const storageSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
   {
     configPath: ["storage", "file_size_limit"],
     apiPath: storageFileSizeLimitPath,
-    transform: (value) => bytesSize(expectInteger(value, storageFileSizeLimitPath)),
+    // Non-negative: ramInBytes above rejects negative sizes, so formatting a
+    // negative API byte count (e.g. "-1B") would persist a value config
+    // loading cannot read back.
+    transform: (value) =>
+      bytesSize(
+        expectNumberBetween(
+          expectInteger(value, storageFileSizeLimitPath),
+          storageFileSizeLimitPath,
+          0,
+          Number.MAX_SAFE_INTEGER,
+        ),
+      ),
     normalizeDocument: canonicalizeFileSizeLimit,
     unit: 'bytes → BytesSize string (e.g. "50MiB")',
   },
