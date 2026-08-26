@@ -147,9 +147,12 @@ function mapRequestError(operation: string) {
       return markSupabaseApiInputErrorAsUserInput(error);
     }
     if (HttpClientError.isHttpClientError(error)) {
-      const description = error.reason.description ?? error.reason._tag;
+      // `message` is the library's own rendering of the reason — its label, the
+      // description when there is one, and the method and URL that failed.
+      // These requests all go to the Management API, so that URL is safe to
+      // show and is the most useful thing in the sentence.
       return new WorkersApiNetworkError({
-        detail: `Could not reach the Workers API while trying to ${operation}: ${description}.`,
+        detail: `Could not reach the Workers API while trying to ${operation}: ${error.message}.`,
         suggestion: "Check your network connection and retry.",
       });
     }
@@ -286,8 +289,13 @@ export const uploadBuildContext = Effect.fnUntraced(function* (
     Effect.mapError(
       (error) =>
         new WorkerUploadFailedError({
+          // Deliberately not `error.message`, which is what the other transport
+          // failures in this module use: it appends the URL that failed, and
+          // here that URL is the write-capable signature. The reason's own
+          // description is the part worth showing, and the destination is
+          // already named by the step the user is watching.
           detail: `Uploading the build context failed: ${
-            error.reason.description ?? error.reason._tag
+            error.reason.description ?? "the upload request did not complete"
           }.`,
           suggestion: "Check your network connection, then re-run the same command.",
         }),

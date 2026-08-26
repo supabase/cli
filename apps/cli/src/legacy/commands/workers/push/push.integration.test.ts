@@ -336,6 +336,31 @@ describe("legacy workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // The presigned URL's query string is a write-capable credential, so it must
+  // not ride along in the error text — which rules out the library's own
+  // `HttpClientError.message`, since that appends the method and URL that
+  // failed. A transport failure is the case that would carry it.
+  it.live("keeps the presigned signature out of an upload transport failure", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: routes({
+        "PUT /deploy-context/api.tar.gz": { transportError: "connection reset by peer" },
+      }),
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* push().pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerUploadFailedError);
+      const failure = error as WorkerUploadFailedError;
+      expect(failure.detail).toContain("connection reset by peer");
+      expect(failure.detail).not.toContain("signed");
+      expect(failure.detail).not.toContain(UPLOAD_URL);
+      expect(http.routeKeys).not.toContain(`POST ${workersRoute("/api/deploy")}`);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   // Both of the next two arrive as a 404 on the same route; only `error.code`
   // separates them, so they are asserted against the bodies the API really
   // sends rather than a shape of our own invention.
