@@ -141,8 +141,6 @@ function parseDuration(s: string): number {
   const orig = s;
   let neg = false;
   let total = 0;
-  let componentCount = 0;
-  let fractionUsed = false;
 
   if (s.startsWith("-") || s.startsWith("+")) {
     neg = s.startsWith("-");
@@ -226,25 +224,18 @@ function parseDuration(s: string): number {
     // e.g. "0.2593ms" scales as 2593 * (1e6 / 1e4) = 259300 exactly, where
     // (frac / post) * unitNs rounds to 259299.99999999997 and truncates a
     // nanosecond short.
-    total += n * unitNs + Math.trunc(frac * (unitNs / post));
-    componentCount += 1;
-    if (post > 1) {
-      fractionUsed = true;
-    }
-    // Two bounds: Go's own int64 range, and — stricter, but only for MIXED
-    // or FRACTIONAL durations — float64 integer precision: past
-    // Number.MAX_SAFE_INTEGER nanoseconds the accumulation silently rounds
-    // smaller components away ("2502h1ns" would lose its 1ns), so such
-    // values stay verbatim. A SINGLE whole-unit component ("8760h", the push
-    // parser's own output range) stays exact at any magnitude inside Go's
-    // range and parses fine.
-    if (
-      !Number.isFinite(total) ||
-      total > MAX_GO_DURATION_NS ||
-      (total > Number.MAX_SAFE_INTEGER && (componentCount > 1 || fractionUsed))
-    ) {
+    const contribution = n * unitNs + Math.trunc(frac * (unitNs / post));
+    // Two bounds: Go's own int64 range, and float64 EXACTNESS — the addition
+    // must not round ("2502h1ns" adds 1ns to a total whose float spacing is
+    // already >1ns, so next - total comes back 0, not 1, and the value stays
+    // verbatim rather than silently losing its tail), while exact additions
+    // parse at any magnitude inside Go's range ("8760h", "8760h0m",
+    // "8760h30m" — zero or coarse-grained components stay exact).
+    const next = total + contribution;
+    if (!Number.isFinite(next) || next > MAX_GO_DURATION_NS || next - total !== contribution) {
       throw new Error(`time: invalid duration "${orig}" (value out of range)`);
     }
+    total = next;
   }
 
   return neg ? -total : total;

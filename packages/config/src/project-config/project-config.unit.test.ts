@@ -1953,3 +1953,62 @@ describe("review round: Go-range sessions, SMTP/provider/storage disabled sentin
     expect(enabled.auth?.external?.github).toEqual({ enabled: true, client_id: "live" });
   });
 });
+
+describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-2230)", () => {
+  test("multi-component long durations parse when every addition is float-exact", () => {
+    const zeroTail = fromConfigDocument({ auth: { sessions: { timebox: "8760h0m" } } });
+    expect(zeroTail.auth?.sessions?.timebox).toBe("8760h0m0s");
+    const coarseTail = fromConfigDocument({ auth: { sessions: { timebox: "8760h30m" } } });
+    expect(coarseTail.auth?.sessions?.timebox).toBe("8760h30m0s");
+    // Precision-losing additions still stay verbatim.
+    const lossy = fromConfigDocument({ auth: { sessions: { timebox: "2502h1ns" } } });
+    expect(lossy.auth?.sessions?.timebox).toBe("2502h1ns");
+  });
+
+  test("the API arm prunes unmanaged fields behind disabled toggles too", () => {
+    const result = fromApiProjectConfig({
+      auth: {
+        security_captcha_enabled: false,
+        security_captcha_provider: "turnstile",
+        hook_send_email_enabled: false,
+        hook_send_email_uri: "https://stale.example.com",
+        sms_provider: "twilio",
+        sms_messagebird_originator: "stale-originator",
+        external_github_enabled: false,
+        external_github_client_id: "retired-id",
+      },
+      storage: {
+        features: {
+          iceberg_catalog: { enabled: false, max_namespaces: 5, max_tables: 10, max_catalogs: 2 },
+        },
+      },
+    });
+    expect(result.auth?.captcha).toEqual({ enabled: false });
+    expect(result.auth?.hook?.send_email).toEqual({ enabled: false });
+    expect(result.auth?.sms?.messagebird).toEqual({ enabled: false });
+    expect(result.auth?.external?.github).toEqual({ enabled: false });
+    expect(result.storage?.analytics).toEqual({ enabled: false });
+  });
+
+  test("documents with auth or storage disabled project only the toggle", () => {
+    const projected = fromConfigDocument({
+      auth: { enabled: false, site_url: "http://localhost:3000" },
+      storage: { enabled: false, file_size_limit: "50MiB" },
+    });
+    expect(projected.auth).toEqual({ enabled: false });
+    expect(projected.storage).toEqual({ enabled: false });
+  });
+
+  test("the email rate limit is omitted while SMTP is unmanaged", () => {
+    const doc = fromConfigDocument({
+      auth: { rate_limit: { email_sent: 30, sms_sent: 30 } },
+    });
+    expect(doc.auth?.rate_limit).toEqual({ sms_sent: 30 });
+    const api = fromApiProjectConfig({ auth: { rate_limit_email_sent: 30 } });
+    expect(Object.hasOwn(api, "auth")).toBe(false);
+    const apiWithSmtp = fromApiProjectConfig({
+      auth: { smtp_host: "smtp.example.com", rate_limit_email_sent: 30 },
+    });
+    expect(apiWithSmtp.auth?.rate_limit).toEqual({ email_sent: 30 });
+  });
+});

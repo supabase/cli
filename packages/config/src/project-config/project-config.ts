@@ -287,20 +287,29 @@ export function fromConfigDocument(config: EffectiveConfig): unknown {
 }
 
 /**
- * Containers whose `enabled: false` makes their sibling fields unmanaged
- * noise: the legacy push writes only the disable sentinel for each of these
- * (Data API: only `db_schema: ""`, api.sync.ts:130-145; network
- * restrictions: whole flow skipped, db.sync.ts:148-150; SMTP: only
- * `smtp_host: ""`, auth.sync.ts:2384-2397; storage Iceberg/Vector: whole
- * feature omitted, storage.sync.ts:287-299), so projecting the (usually
- * schema-filled) siblings would fabricate drift between two representations
- * of the same disabled state. The API arm mirrors each of these with its own
- * sentinel gating.
+ * Fields the legacy push does not manage while their section's toggle is off
+ * — it writes only the disable sentinel for each of these (Data API: only
+ * `db_schema: ""`, api.sync.ts:130-145; network restrictions: whole flow
+ * skipped, db.sync.ts:148-150; SMTP: only `smtp_host: ""`,
+ * auth.sync.ts:2384-2397; storage Iceberg/Vector: whole feature omitted,
+ * storage.sync.ts:287-299; captcha provider/secret only when enabled,
+ * :2315-2324; hook URI/secrets only when enabled, :2551-2565; SMS provider
+ * credentials only for the selected provider, :2498-2539; whole Auth/Storage
+ * sections gated on their own `enabled`, :1224-1226 / storage.sync.ts's
+ * subset gating) — so projecting the (usually schema-filled or
+ * platform-retained) siblings would fabricate drift between representations
+ * of the same disabled state. Applied to BOTH normalizers' outputs: the
+ * mapped shape is identical on the document and API arms, so one pass keeps
+ * the two symmetric by construction.
  */
 const DISABLED_SENTINEL_PRUNES: ReadonlyArray<{
   readonly containerPath: ReadonlyArray<string>;
-  readonly dropKeys: ReadonlyArray<string>;
+  /** Keys to drop when `enabled === false`; absent = drop every key but `enabled`. */
+  readonly dropKeys?: ReadonlyArray<string>;
 }> = [
+  // Top-level service toggles first — they subsume the section rules below.
+  { containerPath: ["auth"] },
+  { containerPath: ["storage"] },
   { containerPath: ["api"], dropKeys: ["schemas", "extra_search_path", "max_rows"] },
   {
     containerPath: ["db", "network_restrictions"],
@@ -310,6 +319,7 @@ const DISABLED_SENTINEL_PRUNES: ReadonlyArray<{
     containerPath: ["auth", "email", "smtp"],
     dropKeys: ["host", "port", "user", "pass", "admin_email", "sender_name"],
   },
+  { containerPath: ["auth", "captcha"], dropKeys: ["provider", "secret"] },
   {
     containerPath: ["storage", "analytics"],
     dropKeys: ["max_namespaces", "max_tables", "max_catalogs"],
@@ -317,30 +327,71 @@ const DISABLED_SENTINEL_PRUNES: ReadonlyArray<{
   { containerPath: ["storage", "vector"], dropKeys: ["max_buckets", "max_indexes"] },
 ];
 
+/** Record-shaped containers whose per-entry `enabled: false` keeps only the flag. */
+const DISABLED_SENTINEL_ENTRY_SWEEPS: ReadonlyArray<{
+  readonly containerPath: ReadonlyArray<string>;
+  /** Restrict the sweep to these entry keys (a container mixing records and scalars). */
+  readonly entryKeys?: ReadonlyArray<string>;
+}> = [
+  { containerPath: ["auth", "external"] },
+  { containerPath: ["auth", "hook"] },
+  {
+    containerPath: ["auth", "sms"],
+    entryKeys: ["twilio", "twilio_verify", "messagebird", "textlocal", "vonage"],
+  },
+];
+
+function pruneDisabledContainer(
+  container: Record<string, unknown>,
+  dropKeys?: ReadonlyArray<string>,
+): void {
+  for (const key of dropKeys ?? Object.keys(container)) {
+    if (key !== "enabled") {
+      delete container[key];
+    }
+  }
+}
+
 function applyDisabledSentinels(result: Record<string, unknown>): void {
   for (const rule of DISABLED_SENTINEL_PRUNES) {
     const container = readPath(result, rule.containerPath);
     if (isObject(container) && container["enabled"] === false) {
-      for (const dropKey of rule.dropKeys) {
-        delete container[dropKey];
+      pruneDisabledContainer(container, rule.dropKeys);
+    }
+  }
+  for (const sweep of DISABLED_SENTINEL_ENTRY_SWEEPS) {
+    const container = readPath(result, sweep.containerPath);
+    if (!isObject(container)) {
+      continue;
+    }
+    const entries = sweep.entryKeys ?? Object.keys(container);
+    for (const entryKey of entries) {
+      const entry = container[entryKey];
+      if (isObject(entry) && entry["enabled"] === false) {
+        pruneDisabledContainer(entry);
       }
     }
   }
-  // Disabled EXTERNAL PROVIDERS keep only their `enabled: false`: the push
-  // sends nothing but the flag for a disabled provider
-  // (auth.sync.ts:2575-2589), while a decoded document materializes every
-  // provider with default-empty credentials — reporting those against a
-  // platform that retains an old client ID would be pure phantom drift.
+  // Cross-section rule: the email rate limit is only managed while SMTP is
+  // enabled (authToUpdateBody sends rate_limit_email_sent solely under
+  // local.email.smtp.enabled, auth.sync.ts:2310-2313) — with SMTP absent or
+  // disabled, a (default or platform-retained) value is unmanaged noise.
   const authSection = result["auth"];
-  const external = isObject(authSection) ? authSection["external"] : undefined;
-  if (isObject(external)) {
-    for (const provider of Object.values(external)) {
-      if (isObject(provider) && provider["enabled"] === false) {
-        for (const key of Object.keys(provider)) {
-          if (key !== "enabled") {
-            delete provider[key];
-          }
-        }
+  if (isObject(authSection)) {
+    const email = authSection["email"];
+    const smtp = isObject(email) ? email["smtp"] : undefined;
+    const smtpEnabled = isObject(smtp) && smtp["enabled"] === true;
+    const rateLimit = authSection["rate_limit"];
+    if (!smtpEnabled && isObject(rateLimit)) {
+      delete rateLimit["email_sent"];
+      if (Object.keys(rateLimit).length === 0) {
+        delete authSection["rate_limit"];
+      }
+      // This is the one sentinel that can empty its whole section (every
+      // other rule keeps at least the `enabled` flag) — a section emptied by
+      // pruning is unmanaged noise, unlike an originally-empty one.
+      if (Object.keys(authSection).length === 0) {
+        delete result["auth"];
       }
     }
   }
@@ -826,6 +877,7 @@ export function fromApiProjectConfig(input: unknown): unknown {
 
   const output: Record<string, unknown> = {};
   applyMappingRows(decodedAttributes, output);
+  applyDisabledSentinels(output);
 
   return attachFrozenApiResponse(output, rawAttributes);
 }
