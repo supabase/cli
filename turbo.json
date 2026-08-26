@@ -25,6 +25,10 @@
     "knip:fix": {
       "cache": false
     },
+    "@supabase/docs#types:check": {
+      "cache": true,
+      "outputs": [".source/**"]
+    },
     "test:unit:run": {
       "cache": false,
       "passThroughEnv": ["*"]
