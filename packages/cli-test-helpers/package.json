@@ -7,9 +7,10 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "nx run-many -t test:unit --projects=$npm_package_name",
-    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name,@supabase/root",
-    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name,@supabase/root"
+    "test": "pnpm run test:unit",
+    "test:unit": "pnpm exec turbo run @supabase/cli-test-helpers#test:unit:run --",
+    "test:unit:run": "bun --bun vitest run --project unit --coverage.reportsDirectory=coverage/unit",
+    "types:check": "tsc --noEmit"
   },
   "devDependencies": {
     "@tsconfig/bun": "catalog:",

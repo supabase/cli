@@ -26,7 +26,18 @@ import { existsSync, watch } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { styleText } from "node:util";
-import { Cause, Duration, Effect, Layer, Option, Queue, Redacted, Schema, Stream } from "effect";
+import {
+  Cause,
+  Duration,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Queue,
+  Redacted,
+  Schema,
+  Stream,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   legacyDescribeContainerCliFailure,
@@ -261,6 +272,7 @@ export interface ServeEdgeRuntimeContainerConfig {
  * {@link dbUrl} specifically must be caller-supplied rather than hardcoded).
  */
 export interface StartEdgeRuntimeContainerInput {
+  readonly onContainerCreated?: () => void;
   readonly config: ServeEdgeRuntimeContainerConfig;
   readonly authArtifacts: ServeAuthArtifacts;
   /**
@@ -1813,7 +1825,11 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
 
       // The container must exist for `docker cp` to have a target, and must not be running
       // yet so edge-runtime never races the copy.
-      yield* runEdgeRuntimeDockerStep(command);
+      yield* Effect.uninterruptibleMask((restore) =>
+        restore(runEdgeRuntimeDockerStep(command)).pipe(
+          Effect.tap(() => Effect.sync(() => input.onContainerCreated?.())),
+        ),
+      );
       yield* runEdgeRuntimeDockerStep(["cp", "-", `${containerId}:/`], {
         messagePrefix: "failed to copy edge runtime main service into container",
         stdin: Stream.make(serveMainArchive),
@@ -1906,7 +1922,6 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
 
     yield* assertLocalDbRunning(projectId);
     yield* bestEffortRemoveContainer(containerId);
-    ownsRuntime = true;
 
     // Go's `restartEdgeRuntime` prints this right before calling `ServeFunctions`
     // (`serve.go:124-125`) — `ServeFunctions` itself (this file's `startEdgeRuntimeContainer`,
@@ -1950,6 +1965,9 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
     );
 
     startedRuntime = yield* startEdgeRuntimeContainer({
+      onContainerCreated: () => {
+        ownsRuntime = true;
+      },
       config: {
         projectId,
         apiPort: resolved.apiPort,
@@ -1982,14 +2000,18 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
     return startedRuntime;
   }).pipe(
     // `startEdgeRuntimeContainer`'s own `Effect.onError` only reaches while it's still running —
-    // once it returns successfully, an interrupt here (e.g. mid-`reloadKong`) escapes that scope
-    // entirely, so this wrapper must also run the returned runtime's own staging-file cleanup,
-    // not just remove the container.
-    Effect.onInterrupt(() =>
-      Effect.all([
-        ownsRuntime ? bestEffortRemoveContainer(containerId) : Effect.void,
-        startedRuntime === undefined ? Effect.void : startedRuntime.cleanup,
-      ]).pipe(Effect.asVoid),
+    // once it returns successfully, a failure or interrupt here (e.g. mid-`reloadKong`) escapes
+    // that scope entirely, so this wrapper must also run the returned runtime's own staging-file
+    // cleanup, not just remove the container. Removal stays with this caller for bring-up
+    // failures too (`docker cp`/`docker start`), matching `docker run -d` behavior — the shared
+    // core never removes the container it created.
+    Effect.onExit((exit) =>
+      Exit.isFailure(exit)
+        ? Effect.all([
+            ownsRuntime ? bestEffortRemoveContainer(containerId) : Effect.void,
+            startedRuntime === undefined ? Effect.void : startedRuntime.cleanup,
+          ]).pipe(Effect.asVoid)
+        : Effect.void,
     ),
   );
 });

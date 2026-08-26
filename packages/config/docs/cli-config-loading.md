@@ -22,6 +22,13 @@ This document explains how the CLI's on-disk config document loading works, acro
   scoped to the legacy shell, and pending deletion once the legacy/next shells consolidate.
   Defined at `apps/cli/src/legacy/config/legacy-cli-settings.service.ts`.
 
+The `Cli*` prefix is a rule, not a per-name coincidence: it names the local checkout side — what
+the CLI reads, writes, or resolves about itself on disk. A bare `Project*` name is reserved for the
+hosted Supabase project. Value-helpers follow the config family regardless of their inputs, not the
+shape of whatever they're passed — `resolveCliConfigValue` and `MissingCliConfigValueError` are
+`Cli*`-named for this reason. See [ADR 0020](../../../docs/adr/0020-config-naming-vocabulary.md)
+for the full decision record.
+
 Within `CliConfig` itself, `project_id` is overloaded by position: the root-scope `project_id` is
 a local identifier that defaults to the working directory name when running `supabase init` (see
 `packages/config/src/base.ts`), while a `[remotes.<label>].project_id` is the hosted project's

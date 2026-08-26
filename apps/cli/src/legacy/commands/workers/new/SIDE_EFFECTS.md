@@ -29,6 +29,12 @@ project that has a `config.json`, the worker is therefore written to
 is left byte-for-byte alone. A rendered edit that would not parse is refused
 before anything reaches disk.
 
+`<workdir>` above is exact: the loader is pinned to it (`search: false`, the
+same resolver `start`/`stop`/`status` use) and never climbs to an ancestor. A
+`--workdir` pointing at a bare directory inside another Supabase project
+therefore records the worker in that directory's own `config.toml` — created if
+absent — rather than in the ancestor project's.
+
 Writes to `config.toml` are append-only. A worker already recorded under
 `[workers.<name>]` is refused outright — before the runtime and size prompts,
 and before anything reaches disk — because editing an entry the user owns is

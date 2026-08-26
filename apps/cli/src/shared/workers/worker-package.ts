@@ -1,7 +1,9 @@
 import { gzipSync } from "node:zlib";
+import { isAbsolute, relative, resolve } from "node:path";
 import { Effect, FileSystem, Option } from "effect";
 import type { PlatformError } from "effect/PlatformError";
-import { createTar, type TarEntry, TarPathTooLongError } from "./tar.ts";
+import { WorkerSourceEscapingLinkError } from "./workers.errors.ts";
+import { createTar, type TarEntry, TarFieldOutOfRangeError, TarPathTooLongError } from "./tar.ts";
 
 /**
  * Package a worker's source directory into the `.tar.gz` build context the
@@ -22,6 +24,45 @@ interface PackagedWorker {
 }
 
 /**
+ * Where a symlink points, relative to the packaged tree — or `undefined` when it
+ * points outside it.
+ *
+ * A link is stored rather than followed, so the target has to be packaged too
+ * for the link to mean anything on the other end. Targets are also rewritten
+ * relative to the link's own directory: an absolute one is a path on this
+ * machine and would not resolve anywhere else.
+ */
+function confinedLinkTarget(input: {
+  readonly root: string;
+  readonly linkDir: string;
+  readonly target: string;
+}): string | undefined {
+  const resolved = resolve(input.linkDir, input.target);
+  const fromRoot = relative(input.root, resolved);
+  if (fromRoot.startsWith("..") || isAbsolute(fromRoot)) {
+    return undefined;
+  }
+  return isAbsolute(input.target) ? relative(input.linkDir, resolved) : input.target;
+}
+
+/**
+ * Seconds since the epoch, as a USTAR octal field can hold them.
+ *
+ * A filesystem timestamp is not always a sane one. A pre-1970 mtime is negative
+ * — a botched `touch` and some archive extractors both produce them — and a
+ * corrupt one decodes to an `Invalid Date` whose `getTime()` is `NaN`. Neither
+ * is representable, and neither is worth failing a deploy over, so both collapse
+ * to the epoch rather than reaching `writeOctal`'s range check.
+ */
+function tarMtime(modified: Option.Option<Date>): number {
+  if (Option.isNone(modified)) {
+    return 0;
+  }
+  const seconds = Math.floor(modified.value.getTime() / 1000);
+  return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : 0;
+}
+
+/**
  * Every entry under `root`, as tar entries.
  *
  * Filesystem errors propagate rather than being skipped: an entry missing from
@@ -32,7 +73,11 @@ interface PackagedWorker {
 const collectEntries = (
   root: string,
   relativeDir: string,
-): Effect.Effect<Array<TarEntry>, PlatformError, FileSystem.FileSystem> =>
+): Effect.Effect<
+  Array<TarEntry>,
+  PlatformError | WorkerSourceEscapingLinkError,
+  FileSystem.FileSystem
+> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const absoluteDir = relativeDir === "" ? root : `${root}/${relativeDir}`;
@@ -52,20 +97,33 @@ const collectEntries = (
       // an ancestor from being walked into.
       const linkTarget = yield* fs.readLink(absolutePath).pipe(Effect.option);
       if (Option.isSome(linkTarget)) {
+        const confined = confinedLinkTarget({
+          root,
+          linkDir: absoluteDir,
+          target: linkTarget.value,
+        });
+        if (confined === undefined) {
+          return yield* Effect.fail(
+            new WorkerSourceEscapingLinkError({
+              detail: `${relativePath} links to ${linkTarget.value}, which is outside the worker source and cannot be packaged with it.`,
+              suggestion:
+                "Install the worker's dependencies inside its own directory, or point `source` at a directory that contains everything the build needs.",
+            }),
+          );
+        }
         entries.push({
           path: relativePath,
           contents: new Uint8Array(0),
           mode: 0o777,
           mtime: 0,
-          linkTarget: linkTarget.value,
+          linkTarget: confined,
         });
         continue;
       }
 
       const info = yield* fs.stat(absolutePath);
 
-      const modified = info.mtime;
-      const mtime = Option.isSome(modified) ? Math.floor(modified.value.getTime() / 1000) : 0;
+      const mtime = tarMtime(info.mtime);
 
       if (info.type === "Directory") {
         entries.push({ path: `${relativePath}/`, contents: new Uint8Array(0), mode: 0o755, mtime });
@@ -98,14 +156,16 @@ const collectEntries = (
 export const packageWorkerDirectory = Effect.fnUntraced(function* (dir: string) {
   const entries = yield* collectEntries(dir, "");
 
-  // `createTar` throws for a name USTAR cannot represent, such as a path
-  // component over 100 bytes. That is user-actionable, so it belongs in the
-  // failure channel: `withJsonErrorHandling` only catches failures, and a defect
-  // would exit `--output-format json` with no structured error.
+  // `createTar` throws for anything USTAR cannot represent: a path component
+  // over 100 bytes, or a size past the 8 GiB an octal field holds. Both are
+  // user-actionable, and both declare themselves so, which only takes effect if
+  // they reach the failure channel — `withJsonErrorHandling` catches failures
+  // and not defects, so a defect exits `--output-format json` with no
+  // structured error at all.
   const archive = yield* Effect.try({
     try: () => gzipSync(createTar(entries)),
     catch: (cause) => {
-      if (cause instanceof TarPathTooLongError) {
+      if (cause instanceof TarPathTooLongError || cause instanceof TarFieldOutOfRangeError) {
         return cause;
       }
       // Anything else here really is a bug, so let it stay a defect rather than

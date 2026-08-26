@@ -22,17 +22,7 @@
         "src/shared/workers/stacks/**"
       ],
       "ignoreBinaries": ["mkfifo"],
-      "ignoreDependencies": [
-        "@parcel/watcher-darwin-arm64",
-        "@parcel/watcher-darwin-x64",
-        "@parcel/watcher-linux-arm64-glibc",
-        "@parcel/watcher-linux-arm64-musl",
-        "@parcel/watcher-linux-x64-glibc",
-        "@parcel/watcher-linux-x64-musl",
-        "@parcel/watcher-win32-arm64",
-        "@parcel/watcher-win32-x64",
-        "prettier"
-      ]
+      "ignoreDependencies": ["prettier"]
     },
     "apps/cli-e2e": {
       "entry": ["src/**/*.e2e.test.ts", "tests/**/*.ts"]

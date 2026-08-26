@@ -29,12 +29,6 @@ export const createNodesV2: CreateNodesV2<GoPluginOptions> = [
                   inputs: ["default", { runtime: "go version" }],
                   outputs: [`{projectRoot}/${binaryName}`],
                 },
-                "test:unit": {
-                  command: "go test ./...",
-                  options: { cwd: "{projectRoot}", forwardAllArgs: false },
-                  cache: true,
-                  inputs: ["default", { runtime: "go version" }],
-                },
                 "lint:check": {
                   command: "golangci-lint run --timeout 5m",
                   options: { cwd: "{projectRoot}", forwardAllArgs: false },
@@ -50,7 +44,6 @@ export const createNodesV2: CreateNodesV2<GoPluginOptions> = [
               metadata: {
                 targetGroups: {
                   Build: ["build"],
-                  Tests: ["test:unit"],
                   Checks: ["lint:check", "lint:fix"],
                 },
               },
