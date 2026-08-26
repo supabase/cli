@@ -6,6 +6,7 @@ import {
   legacyEmitWorkersMachineOutput,
   legacyRejectWorkersEnvOutput,
   legacyWorkersMachineOutputRequested,
+  legacyWorkersProjectRefSuffix,
 } from "../workers.output.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { displayPath } from "../../../../shared/workers/worker-paths.ts";
@@ -63,6 +64,9 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
   // validating the name, resolving the worker — belongs inside, so those
   // failures still flush telemetry. Same shape as `config/push`.
   const projectRef = yield* resolver.resolve(flags.projectRef);
+  // Every retry this command suggests is for a *destructive* re-run, so the ref
+  // has to survive the copy-paste.
+  const refSuffix = legacyWorkersProjectRefSuffix(flags.projectRef);
 
   yield* Effect.gen(function* () {
     const project = yield* legacyLoadWorkersProject();
@@ -100,7 +104,7 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
         return yield* Effect.fail(
           new WorkerDeleteConfirmationRequiredError({
             detail: `Deleting "${name}" from project ${projectRef} needs confirmation, and there is no interactive terminal to ask on.`,
-            suggestion: `Re-run \`supabase workers delete ${name} --yes\` to confirm without a prompt.`,
+            suggestion: `Re-run \`supabase workers delete ${name} --yes${refSuffix}\` to confirm without a prompt.`,
           }),
         );
       }
@@ -129,7 +133,7 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
         return yield* Effect.fail(
           new WorkerDeleteNotConfirmedError({
             detail: `The confirmation did not match "${name}", so nothing was deleted.`,
-            suggestion: `Re-run \`supabase workers delete ${name}\` and type the name exactly, or pass --yes.`,
+            suggestion: `Re-run \`supabase workers delete ${name}${refSuffix}\` and type the name exactly, or pass --yes.`,
           }),
         );
       }
@@ -183,7 +187,7 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
         // alone is not enough to redeploy from, so `push` would fail on the very
         // command this line recommends.
         if (keptSource !== undefined) {
-          yield* output.raw(`Redeploy it with supabase workers push ${name}.\n`);
+          yield* output.raw(`Redeploy it with supabase workers push ${name}${refSuffix}.\n`);
         }
       } else {
         yield* output.raw(

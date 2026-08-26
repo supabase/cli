@@ -90,3 +90,18 @@ export const legacyRejectWorkersEnvOutput = Effect.fnUntraced(function* () {
     });
   }
 });
+
+/**
+ * The `--project-ref` a retry suggestion has to carry, or `""` when the ref came
+ * from the link.
+ *
+ * A suggested command is copy-pasted verbatim, so one that drops an explicit
+ * `--project-ref` re-resolves to whatever *this* checkout is linked to. On
+ * `delete --yes` that is a same-named worker in a project the user never named,
+ * removed without a prompt.
+ *
+ * Keyed off the flag rather than the resolved ref: when the link supplied it,
+ * appending it again is noise on a command that already resolves correctly.
+ */
+export const legacyWorkersProjectRefSuffix = (projectRef: Option.Option<string>): string =>
+  Option.isSome(projectRef) ? ` --project-ref ${projectRef.value}` : "";

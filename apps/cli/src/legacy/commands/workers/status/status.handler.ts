@@ -1,7 +1,11 @@
 import { Effect, Option } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
-import { legacyEmitWorkersMachineOutput, legacyRejectWorkersEnvOutput } from "../workers.output.ts";
+import {
+  legacyEmitWorkersMachineOutput,
+  legacyRejectWorkersEnvOutput,
+  legacyWorkersProjectRefSuffix,
+} from "../workers.output.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { displayPath } from "../../../../shared/workers/worker-paths.ts";
@@ -41,6 +45,7 @@ export const legacyWorkersStatus = Effect.fn("legacy.workers.status")(function* 
   // validating the name, resolving the worker — belongs inside, so those
   // failures still flush telemetry. Same shape as `config/push`.
   const projectRef = yield* resolver.resolve(flags.projectRef);
+  const refSuffix = legacyWorkersProjectRefSuffix(flags.projectRef);
 
   yield* Effect.gen(function* () {
     const project = yield* legacyLoadWorkersProject();
@@ -61,7 +66,7 @@ export const legacyWorkersStatus = Effect.fn("legacy.workers.status")(function* 
       return yield* Effect.fail(
         new WorkerNotDeployedError({
           detail: `Nothing is deployed for "${name}" in project ${projectRef}.`,
-          suggestion: `Deploy it with \`supabase workers push ${name}\`.`,
+          suggestion: `Deploy it with \`supabase workers push ${name}${refSuffix}\`.`,
         }),
       );
     }
@@ -137,7 +142,7 @@ export const legacyWorkersStatus = Effect.fn("legacy.workers.status")(function* 
       yield* output.raw(`Instance counts could not be read: ${record.instancesError}\n`, "stderr");
     }
     if (record.buildState === "failed") {
-      yield* output.raw(`Fix the issue, then re-run supabase workers push ${name}.\n`);
+      yield* output.raw(`Fix the issue, then re-run supabase workers push ${name}${refSuffix}.\n`);
     }
   }).pipe(
     Effect.ensuring(linkedProjectCache.cache(projectRef)),

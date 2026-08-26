@@ -118,6 +118,79 @@ describe("legacy workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // The suggested retry is copy-pasted verbatim and carries `--yes`, so dropping
+  // an explicit ref points a no-prompt delete at whatever this checkout is
+  // linked to — a same-named worker in a project the user never named.
+  it.live("keeps an explicit --project-ref in the retry it suggests", () => {
+    const repo = project();
+    const otherRef = "qrstuvwxyzabcdefghij";
+    const { layer } = setupLegacyWorkers({
+      workdir: repo.dir,
+      format: "json",
+      routes: {
+        [`GET /v2/projects/${otherRef}/workers/api`]: {
+          status: 200,
+          body: { data: workerResource({ name: "api" }) },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* legacyWorkersDelete({
+        name: "api",
+        projectRef: Option.some(otherRef),
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerDeleteConfirmationRequiredError);
+      const suggestion =
+        error instanceof WorkerDeleteConfirmationRequiredError ? error.suggestion : "";
+      expect(suggestion).toContain(`--project-ref ${otherRef}`);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("leaves the retry bare when the ref came from the link", () => {
+    const repo = project();
+    const { layer } = setupLegacyWorkers({ workdir: repo.dir, format: "json", routes });
+
+    return Effect.gen(function* () {
+      const error = yield* legacyWorkersDelete({
+        name: "api",
+        projectRef: Option.none(),
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerDeleteConfirmationRequiredError);
+      const suggestion =
+        error instanceof WorkerDeleteConfirmationRequiredError ? error.suggestion : "";
+      expect(suggestion).not.toContain("--project-ref");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("keeps an explicit --project-ref in the confirmation-mismatch retry", () => {
+    const repo = project();
+    const otherRef = "qrstuvwxyzabcdefghij";
+    const { layer } = setupLegacyWorkers({
+      workdir: repo.dir,
+      promptTextResponses: ["nope"],
+      routes: {
+        [`GET /v2/projects/${otherRef}/workers/api`]: {
+          status: 200,
+          body: { data: workerResource({ name: "api" }) },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* legacyWorkersDelete({
+        name: "api",
+        projectRef: Option.some(otherRef),
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerDeleteNotConfirmedError);
+      const suggestion = error instanceof WorkerDeleteNotConfirmedError ? error.suggestion : "";
+      expect(suggestion).toContain(`--project-ref ${otherRef}`);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("skips the confirmation with --yes", () => {
     const repo = project();
     const { layer, out, http } = setupLegacyWorkers({ workdir: repo.dir, routes, yes: true });
