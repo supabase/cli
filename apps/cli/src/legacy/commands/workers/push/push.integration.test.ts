@@ -1,4 +1,4 @@
-import { rmSync } from "node:fs";
+import { chmodSync, readdirSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option, Schedule } from "effect";
@@ -88,6 +88,20 @@ function tagOf(error: unknown): string | undefined {
   return typeof error === "object" && error !== null && "_tag" in error
     ? String((error as { _tag: unknown })._tag)
     : undefined;
+}
+
+/**
+ * Whether the current user can still list `path` after it was chmod-ed shut.
+ * Root ignores the permission bits, and CI sometimes runs as root, so the
+ * permission test below asserts the opposite outcome instead of skipping.
+ */
+function listableAsCurrentUser(path: string): boolean {
+  try {
+    readdirSync(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function push(flagOverrides: Partial<LegacyWorkersPushFlags> = {}) {
@@ -421,6 +435,57 @@ describe("legacy workers push", () => {
       expect((error as WorkerSourceMissingError).detail).toContain("is empty");
       expect(http.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // "Cannot read it" and "it is not there" want opposite things from the user,
+  // and `Effect.option` on the stat collapsed them into the second — so an
+  // unreadable source was reported as an unscaffolded worker, with a suggestion
+  // to run `workers new` over a path that is already occupied. A symlink loop
+  // is the cheapest stat failure that is not a missing path, and unlike a
+  // chmod it behaves the same when the suite runs as root.
+  it.live("reports an unstattable source rather than calling it missing", () => {
+    const repo = project({});
+    const source = join(repo.dir, "supabase", "workers", "api");
+    rmSync(source, { recursive: true, force: true });
+    symlinkSync("api", source);
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      const error = yield* push().pipe(Effect.flip);
+
+      expect(error).not.toBeInstanceOf(WorkerSourceMissingError);
+      expect(tagOf(error)).toBe("PlatformError");
+      expect(http.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Same rule one line down: `orElseSucceed([])` on the read reported a
+  // directory the CLI cannot open as a directory with nothing in it.
+  it.live("reports an unreadable source rather than calling it empty", () => {
+    const repo = project({});
+    const source = join(repo.dir, "supabase", "workers", "api");
+    chmodSync(source, 0o000);
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      const error = yield* push().pipe(Effect.flip);
+
+      if (listableAsCurrentUser(source)) {
+        expect(http.requests.length).toBeGreaterThan(0);
+      } else {
+        expect(error).not.toBeInstanceOf(WorkerSourceMissingError);
+        expect(tagOf(error)).toBe("PlatformError");
+        expect(http.requests).toHaveLength(0);
+      }
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(
+        Effect.sync(() => {
+          chmodSync(source, 0o700);
+          repo.cleanup();
+        }),
+      ),
+    );
   });
 
   it.live("rides out a transient failure while polling the build", () => {

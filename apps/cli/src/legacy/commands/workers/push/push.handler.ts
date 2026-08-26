@@ -1,4 +1,5 @@
-import { Effect, FileSystem, Option, type Schedule } from "effect";
+import { Effect, FileSystem, Option, Predicate, type Schedule } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import {
@@ -155,19 +156,35 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
   // guessed. Doing that first meant reporting an inference about a path that
   // does not exist, and only then failing on the path.
   {
-    const stat = yield* fs.stat(worker.sourceDir).pipe(Effect.option);
-    if (Option.isNone(stat) || stat.value.type !== "Directory") {
-      return yield* Effect.fail(
-        new WorkerSourceMissingError({
-          detail: `There is no worker source at ${sourceDisplay}.`,
-          suggestion: `Scaffold it with \`supabase workers new ${name}\`.`,
-        }),
+    const sourceMissing = new WorkerSourceMissingError({
+      detail: `There is no worker source at ${sourceDisplay}.`,
+      suggestion: `Scaffold it with \`supabase workers new ${name}\`.`,
+    });
+    // Only "no such path" means the worker was never scaffolded. A permission
+    // or I/O error on the directory is a different problem with a different
+    // fix, and answering it with "there is no worker source, run `workers new`"
+    // both misdiagnoses it and points at a directory that already exists — so
+    // every other reason propagates as itself.
+    const info = yield* fs
+      .stat(worker.sourceDir)
+      .pipe(
+        Effect.catchTag("PlatformError", (error) =>
+          Predicate.isTagged(error.reason, "NotFound")
+            ? Effect.fail<WorkerSourceMissingError | PlatformError>(sourceMissing)
+            : Effect.fail(error),
+        ),
       );
+    if (info.type !== "Directory") {
+      return yield* Effect.fail(sourceMissing);
     }
     // An empty directory packages and deploys perfectly happily, producing an
     // image with nothing in it — a success message for a worker that cannot
     // serve anything. Refuse before uploading rather than after.
-    const contents = yield* fs.readDirectory(worker.sourceDir).pipe(Effect.orElseSucceed(() => []));
+    //
+    // Read errors propagate rather than reading as empty: a directory the CLI
+    // cannot open is not a directory with nothing in it, and the two want
+    // opposite things from the user.
+    const contents = yield* fs.readDirectory(worker.sourceDir);
     if (contents.length === 0) {
       return yield* Effect.fail(
         new WorkerSourceMissingError({
