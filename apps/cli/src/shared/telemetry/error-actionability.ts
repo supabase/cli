@@ -131,6 +131,7 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "managed_control_protocol",
   "managed_control_address_conflict",
   "managed_control_stop_conflict",
+  "managed_control_maintenance_busy",
   "managed_document",
   "managed_control_required",
   "managed_attached",
@@ -1080,6 +1081,13 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   ControlStopConflictError: () => ({
     ...actionability.impossibleState,
     fingerprint_suffix: "managed_control_stop_conflict",
+  }),
+  ControlMaintenanceBusyError: () => ({
+    error_kind: CliErrorKind.UserActionable,
+    error_category: CliErrorCategory.InvalidConfig,
+    has_suggestion: true,
+    suggestion_type: CliSuggestionType.RunCommand,
+    fingerprint_suffix: "managed_control_maintenance_busy",
   }),
   InvalidManagedStackDocumentError: () => ({
     ...actionability.invalidConfig,

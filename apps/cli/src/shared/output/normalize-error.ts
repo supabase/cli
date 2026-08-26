@@ -172,6 +172,12 @@ const mappedError = (
         message: "The local Supabase stack changed owners while it was stopping.",
         suggestion: "Retry `supabase stop` to stop the current owner.",
       };
+    case "ControlMaintenanceBusyError":
+      return {
+        code: tag,
+        message: "The local Supabase stack is being maintained by another command.",
+        suggestion: "Wait for that command to finish, then retry this command.",
+      };
     case "MissingOption": {
       // Mirror Go Cobra's `required flag(s) "X" not set` wording. Effect CLI's
       // default `Missing required flag: --X` differs and would break scripts

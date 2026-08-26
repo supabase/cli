@@ -156,7 +156,11 @@ export async function makeManagedStackFixture(
                   ),
           }),
         };
-        const ownership = yield* acquireControl({ stackId, application });
+        const ownership = yield* acquireControl({
+          stackId,
+          initialStatus: yield* session.currentStatus,
+          application,
+        });
         if (!isControlOwnership(ownership)) throw new Error("fixture failed to acquire control");
         owned = ownership;
         ownedControl = ownership;
@@ -193,9 +197,14 @@ export async function makeManagedStackFixture(
             stack: (stack) => stack,
             awaitDisposed: () => Effect.never,
             onRunning: () => Deferred.succeed(ready, undefined).pipe(Effect.asVoid),
-            onStopped: manager
-              .recordLifecycle(ownership, { stackId, lifecycle: "stopped" })
-              .pipe(Effect.asVoid),
+            onStopped: (intent) =>
+              manager
+                .recordLifecycle(ownership, {
+                  stackId,
+                  lifecycle: "stopped",
+                  ...(intent === "explicit" ? { stopIntent: "explicit" as const } : {}),
+                })
+                .pipe(Effect.asVoid),
             onFailure: () =>
               manager
                 .recordLifecycle(ownership, { stackId, lifecycle: "failed" })
@@ -211,9 +220,14 @@ export async function makeManagedStackFixture(
             stack: (stack: Stack["Service"]) => stack,
             awaitDisposed: () => Effect.never,
             onRunning: () => Effect.void,
-            onStopped: manager
-              .recordLifecycle(ownership, { stackId, lifecycle: "stopped" })
-              .pipe(Effect.asVoid),
+            onStopped: (intent) =>
+              manager
+                .recordLifecycle(ownership, {
+                  stackId,
+                  lifecycle: "stopped",
+                  ...(intent === "explicit" ? { stopIntent: "explicit" as const } : {}),
+                })
+                .pipe(Effect.asVoid),
             onFailure: () => Effect.void,
             closeOwner: ownership.close,
             errorDetail: (cause) => String(cause),

@@ -505,6 +505,22 @@ describe("classifyCliErrorActionability", () => {
     expect(JSON.stringify(result)).not.toContain("127.0.0.1");
   });
 
+  it("classifies maintenance contention as a retryable user action", () => {
+    const result = classifyCliErrorActionability({
+      _tag: "ControlMaintenanceBusyError",
+      endpoint: "http://127.0.0.1:54321",
+    });
+
+    expect(result).toEqual({
+      error_kind: "user_actionable",
+      error_category: "invalid_config",
+      error_fingerprint: "tag:ControlMaintenanceBusyError:managed_control_maintenance_busy",
+      has_suggestion: true,
+      suggestion_type: "run_command",
+    });
+    expect(JSON.stringify(result)).not.toContain("127.0.0.1");
+  });
+
   it("splits docker pull failures from a stopped docker daemon", () => {
     const daemonDown = classifyCliErrorActionability({
       _tag: "DockerPullError",

@@ -154,6 +154,11 @@ describe("normalizeCliError", () => {
       "The local Supabase stack changed owners while it was stopping.",
       "Retry `supabase stop` to stop the current owner.",
     ],
+    [
+      "ControlMaintenanceBusyError",
+      "The local Supabase stack is being maintained by another command.",
+      "Wait for that command to finish, then retry this command.",
+    ],
   ])("maps %s to an actionable control-plane error", (tag, message, suggestion) => {
     expect(normalizeCliError({ _tag: tag })).toEqual({
       code: tag,
