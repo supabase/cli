@@ -73,7 +73,12 @@ The hosted-project subset — `ProjectConfig` — and its normalizers live on th
 
 `ProjectConfig` is sparse by design: it carries only what its source actually said, so it
 composes with `subtractCliConfig`/`omitDefaultValues` (operand type `EffectiveConfig`) without
-fabricating drift from schema defaults.
+fabricating drift from schema defaults. Diffing two independently-sourced `ProjectConfig`s (a
+remote response against a local document, rather than either against schema defaults) still needs
+restricting to `comparableProjectConfigPaths`/`isComparableProjectConfigPath` — and at LEAF-path
+granularity: `isComparableProjectConfigPath` takes a full path like
+`["auth", "email", "smtp", "enabled"]`, not a top-level section name, so filtering
+`Object.entries(overlay)` (section names only) restricts nothing.
 
 ```ts
 import {
@@ -82,11 +87,28 @@ import {
   isComparableProjectConfigPath,
 } from "@supabase/config";
 
-const remote = toProjectConfig({ apiResponse }); // or { cliConfig } for a local document
-const overlay = subtractCliConfig(remote, remote);
-const restrictedDrift = Object.fromEntries(
-  Object.entries(overlay).filter(([key]) => isComparableProjectConfigPath([key])),
-);
+const remote = toProjectConfig({ apiResponse }); // Management API v2 project-config response
+const local = toProjectConfig({ cliConfig }); // decoded supabase/config.toml document
+
+// `overlay` is what `local` says that `remote` doesn't already agree with.
+const overlay = subtractCliConfig(local, remote);
+
+// Restrict to individual LEAF paths — see the granularity note above.
+function leafPaths(
+  value: unknown,
+  prefix: ReadonlyArray<string> = [],
+): ReadonlyArray<ReadonlyArray<string>> {
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    return Object.entries(value as Record<string, unknown>).flatMap(([key, child]) =>
+      leafPaths(child, [...prefix, key]),
+    );
+  }
+  return [prefix];
+}
+
+const restrictedDrift = leafPaths(overlay).filter(isComparableProjectConfigPath);
+// e.g. [["api", "schemas"], ["api", "max_rows"], ["auth", "site_url"]] — the fields `local` and
+// `remote` genuinely disagree on, restricted to what `fromApiProjectConfig` can actually speak for.
 ```
 
 ## Usage

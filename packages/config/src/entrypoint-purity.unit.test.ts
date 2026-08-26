@@ -361,10 +361,12 @@ describe("src/index.ts export surface", () => {
         "getDefaultCliConfig",
         "isComparableProjectConfigPath",
         "omitDefaultValues",
+        "projectConfigMappingRows",
         "subtractCliConfig",
         "toCliConfigJsonSchema",
         "toProjectConfig",
         "unmappedApiFields",
+        "unmappedSecretApiPaths",
       ]
     `);
   });
@@ -408,6 +410,7 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
         "loadCliProjectEnvironment",
         "loadDotEnvFile",
         "omitDefaultValues",
+        "projectConfigMappingRows",
         "resolveCliConfigSubtree",
         "resolveCliConfigValue",
         "saveCliConfig",
@@ -415,6 +418,7 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
         "toCliConfigJsonSchema",
         "toProjectConfig",
         "unmappedApiFields",
+        "unmappedSecretApiPaths",
       ]
     `);
   });

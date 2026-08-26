@@ -81,7 +81,7 @@ export function formatProjectConfigParseErrorMessage(
  * (`./project-config/api-attributes.ts`, `./project-config/registry*.ts`) is
  * behind what the Management API actually sent. There is therefore exactly
  * one remediation, attached as `suggestion` at every construction site:
- * upgrade first (a newer package version may already map or lenently accept
+ * upgrade first (a newer package version may already map or leniently accept
  * the offending shape), then report if it persists.
  */
 export const PROJECT_CONFIG_PARSE_ERROR_SUGGESTION =

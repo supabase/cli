@@ -26,6 +26,16 @@ import { toProjectConfig, type ProjectConfigApiAttributes } from "@supabase/conf
  *    assertions to compile. `auth` is exempt — both sides model it as an
  *    open `Record<string, Json>`, so there is no fixed key set to diff.
  *
+ * `_typeDriftGuard` is also intentionally vacuous for every field
+ * `ProjectConfigApiAttributes` mirrors as `Schema.Unknown` (every unmapped
+ * field, per `api-attributes.ts`'s own docstring): the mirror's field type is
+ * `unknown`, and every type is assignable to `unknown`, so a real-contract
+ * type change on one of those fields can never fail this assignability check
+ * — only the key-set assertions in point 2 still catch that field being
+ * added, removed, or renamed outright. This is by design (ADR 0019 rule 2:
+ * an unmapped field's *type* is deliberately not load-bearing at decode
+ * time), not a gap this file needs to close.
+ *
  * No `as` cast anywhere in this file: a cast would defeat either guard's
  * entire purpose by silencing exactly the failure it exists to surface.
  */

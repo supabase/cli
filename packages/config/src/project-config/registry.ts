@@ -442,6 +442,17 @@ function ramInBytes(sizeStr: string): number {
  * for one logical limit. Never throws: a document value has already passed
  * schema validation, so an unparsable value (which should not occur) is
  * returned verbatim rather than failing `fromConfigDocument`.
+ *
+ * Deliberately quantized, not exact: both this function and the API-side row
+ * below format their byte count through {@link bytesSize}, which rounds to 4
+ * significant digits ({@link formatSignificantDigits}). Two limits within
+ * ~0.1% of each other therefore compare equal as `BytesSize` strings even
+ * though their raw byte counts differ. This is accepted, not a bug to fix by
+ * comparing raw bytes instead: every value a user actually writes in
+ * `storage.file_size_limit` (`"50MiB"`, `"1GB"`, …) is exact at 4 significant
+ * digits, and the config schema models the field as a string
+ * (`../storage.ts`), so the comparison this canonicalization feeds is
+ * textual by construction either way.
  */
 function canonicalizeFileSizeLimit(value: unknown): unknown {
   if (typeof value !== "string") {

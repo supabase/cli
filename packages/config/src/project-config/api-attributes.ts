@@ -21,7 +21,15 @@ import { Schema } from "effect";
  *   to plain `Schema.String` here — `pooler.pool_mode`,
  *   `database.network_restrictions.allowed_cidrs[].type`,
  *   `database.postgres_settings.session_replication_role` — so a new enum
- *   member the platform starts returning never fails decode either.
+ *   member the platform starts returning never fails THIS decode. `pool_mode`
+ *   and `session_replication_role` carry that leniency all the way through:
+ *   their rows (`./registry.ts`) silently omit an unrecognized value rather
+ *   than throwing. `allowed_cidrs[].type` does not — it decodes fine here,
+ *   but its row (`filterCidrAddresses`, `./registry.ts`) deliberately
+ *   hard-fails the mapping on an unrecognized type, since this field is a
+ *   security allowlist where loud beats silent (that file's own docstring).
+ *   So a new CIDR `type` member still surfaces as a `ProjectConfigParseError`
+ *   overall — just one this schema's decode step isn't the one that throws.
  * - `auth` is the real contract's own `Schema.Record(Schema.String,
  *   Schema.Json)` (a flat record keyed by lowercased GoTrue setting name) —
  *   already maximally lenient in the real contract, so no widening needed.

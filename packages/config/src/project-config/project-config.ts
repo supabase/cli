@@ -95,10 +95,10 @@ export type ProjectConfig = DeepPartial<Pick<CliConfig, HostedSectionKey>> & {
 };
 
 /**
- * Deep-copies `value` (a hosted-section subtree rooted at `path`), dropping
- * every leaf whose full path matches an `x-secret` schema annotation
- * (CLI-2230's secret-omission finding): `fromConfigDocument`'s input is a
- * *decoded* `CliConfig`/`EffectiveConfig`, where `secret()`-annotated fields
+ * Deep-copies `value` (a hosted-section subtree rooted at `path`) at the
+ * OBJECT level, dropping every leaf whose full path matches an `x-secret`
+ * schema annotation (CLI-2230's secret-omission finding): `fromConfigDocument`'s
+ * input is a *decoded* `CliConfig`/`EffectiveConfig`, where `secret()`-annotated fields
  * (`../lib/env.ts`) hold plaintext or an unresolved `env(VAR)` literal, never
  * a `Redacted` wrapper (decode never redacts — only
  * `resolveCliConfigValue`/`resolveCliConfigSubtree`, `../project.ts`, do,
@@ -108,10 +108,30 @@ export type ProjectConfig = DeepPartial<Pick<CliConfig, HostedSectionKey>> & {
  * an `x-secret` field's value (ADR 0019 rule 5, the API only ever returns an
  * HMAC digest), a document-sourced `ProjectConfig` that kept its secrets
  * would register as drift against the API-sourced side for every secret
- * field, which is worse than useless for a diff consumer. Arrays are copied
- * (via `.slice()`) but never descended into for secret paths — no
+ * field, which is worse than useless for a diff consumer. Arrays get only a
+ * SHALLOW copy (`.slice()`), never descended into for secret paths — no
  * `x-secret` leaf in `CliConfigSchema` sits inside an array, and this
- * mirrors `../sparse.ts`'s own array-is-atomic rule.
+ * mirrors `../sparse.ts`'s own array-is-atomic rule. `.slice()` aliases each
+ * element rather than copying it, which would matter for an array of
+ * objects; it doesn't matter here because every array `CliConfigSchema`
+ * currently puts inside a hosted section (`additional_redirect_urls`,
+ * `db.network_restrictions.allowed_cidrs`, …) holds only primitives
+ * (strings), and aliasing a primitive is indistinguishable from copying one.
+ * A future hosted-section array of objects would need this reconsidered.
+ *
+ * A child that stripping leaves as (or that already was) an empty plain
+ * object is pruned from `result` entirely, rather than kept as `{}` litter:
+ * a genuinely-empty container carries no comparable information either way
+ * (nothing for a diff consumer to compare against), and left in place it is
+ * exactly the kind of key `subtractCliConfig` keeps verbatim forever, since
+ * a baseline that never declared that key at all treats `{}` the same as
+ * any other "present" value (CLI-2230's secret-strip empty-container
+ * finding). Pruning recurses back up through {@link fromConfigDocument}'s
+ * own per-section loop too, so a hosted section that turns out to contain
+ * nothing but secrets disappears from the projection outright instead of
+ * surviving as an empty section. Arrays are exempt — `[]` is a meaningful,
+ * explicit value (e.g. "no redirect URLs"), never litter from secret
+ * stripping.
  */
 function copyHostedValueWithoutSecrets(value: unknown, path: ReadonlyArray<string>): unknown {
   if (Array.isArray(value)) {
@@ -124,7 +144,11 @@ function copyHostedValueWithoutSecrets(value: unknown, path: ReadonlyArray<strin
       if (isSecretPath(childPath)) {
         continue;
       }
-      setOwnProperty(result, key, copyHostedValueWithoutSecrets(child, childPath));
+      const copied = copyHostedValueWithoutSecrets(child, childPath);
+      if (isObject(copied) && Object.keys(copied).length === 0) {
+        continue;
+      }
+      setOwnProperty(result, key, copied);
     }
     return result;
   }
@@ -182,7 +206,15 @@ export function fromConfigDocument(config: EffectiveConfig): unknown {
   const result: Record<string, unknown> = {};
   for (const key of HOSTED_SECTION_KEYS) {
     if (Object.hasOwn(config, key)) {
-      setOwnProperty(result, key, copyHostedValueWithoutSecrets(config[key], [key]));
+      const copied = copyHostedValueWithoutSecrets(config[key], [key]);
+      // Same empty-container prune as `copyHostedValueWithoutSecrets`'s own
+      // recursion, applied at the section boundary: a section that turns out
+      // to contain nothing but secrets must disappear from the projection
+      // entirely, not survive as an empty `{ auth: {} }`-style section.
+      if (isObject(copied) && Object.keys(copied).length === 0) {
+        continue;
+      }
+      setOwnProperty(result, key, copied);
     }
   }
   applyDocumentNormalizations(result);
@@ -278,6 +310,13 @@ const decodeApiAttributes = Schema.decodeUnknownSync(ProjectConfigApiAttributesS
  * `SchemaError` message when `cause` isn't a `SchemaError` at all — should
  * not happen given `decodeApiAttributes` is the only caller, but this
  * function must not itself throw while building an error message.
+ *
+ * Normalizes an empty issue path to `undefined`: an issue at the attributes
+ * ROOT (the envelope/shape itself, rather than any specific field within it)
+ * reports a zero-length path, and {@link ProjectConfigParseError}'s own
+ * `apiPath` docstring promises `undefined` for exactly that case — an empty
+ * array reads to a consumer as "the offending path is the empty path",
+ * which is a different (and wrong) claim.
  */
 function schemaDecodeFailureMessage(cause: unknown): {
   readonly message: string;
@@ -299,9 +338,10 @@ function schemaDecodeFailureMessage(cause: unknown): {
   // `DefaultIssue.path: ReadonlyArray<PropertyKey>`), but the public type is
   // the wider spec shape, so this reads `.key` off an object segment rather
   // than stringifying it directly.
-  const apiPath = firstIssue?.path?.map((segment) =>
+  const rawApiPath = firstIssue?.path?.map((segment) =>
     String(typeof segment === "object" ? segment.key : segment),
   );
+  const apiPath = rawApiPath !== undefined && rawApiPath.length > 0 ? rawApiPath : undefined;
   const summary = firstIssue?.message ?? cause.message;
   const detail = SchemaIssue.makeFormatterDefault()(cause.issue);
   return {
@@ -397,6 +437,77 @@ function applyMappingRows(
 }
 
 /**
+ * Guards {@link walkUnmapped} and {@link assertRawAttributesDepthWithinBound}
+ * against a pathologically (or maliciously) deep response body — an object
+ * graph deeper than this could otherwise overflow the call stack with an
+ * uncaught `RangeError` instead of the package's own documented failure
+ * type.
+ */
+const MAX_UNMAPPED_WALK_DEPTH = 64;
+
+/**
+ * Pre-clone depth guard for {@link attachFrozenApiResponse} (CLI-2230's
+ * clone/freeze finding): `structuredClone` and {@link deepFreeze} are both
+ * naive recursive walks with no depth limit of their own, so a
+ * pathologically deep `rawAttributes` — say, ~50k levels of nesting under an
+ * API-ahead-of-package key (unmapped fields reach `attachFrozenApiResponse`
+ * verbatim; decode's own leniency never prunes them) — overflows the call
+ * stack with a raw, uncaught `RangeError` from inside `structuredClone`
+ * itself, before this package ever gets a chance to turn it into a {@link
+ * ProjectConfigParseError}. Walking (and throwing) here, before either
+ * function ever runs, catches that case first. This also bounds cycles as a
+ * side effect, with no separate visited-set needed: a self-referential
+ * object has no finite depth, so re-encountering the same node at every
+ * increasing `depth` still exceeds {@link MAX_UNMAPPED_WALK_DEPTH}
+ * deterministically, well before either function's own recursion could
+ * overflow the stack.
+ */
+function assertRawAttributesDepthWithinBound(value: unknown, depth = 0): void {
+  if (depth > MAX_UNMAPPED_WALK_DEPTH) {
+    const detail = `pathological nesting: exceeded ${MAX_UNMAPPED_WALK_DEPTH} levels while validating the raw API response`;
+    throw new ProjectConfigParseError({
+      message: formatProjectConfigParseErrorMessage(detail),
+      cause: new Error(detail),
+      suggestion: PROJECT_CONFIG_PARSE_ERROR_SUGGESTION,
+    });
+  }
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      assertRawAttributesDepthWithinBound(child, depth + 1);
+    }
+    return;
+  }
+  if (isObject(value)) {
+    for (const child of Object.values(value)) {
+      assertRawAttributesDepthWithinBound(child, depth + 1);
+    }
+  }
+}
+
+/**
+ * Wraps `structuredClone` for {@link attachFrozenApiResponse}: a
+ * function-valued or symbol-valued raw attribute (never a shape a real API
+ * response should carry, but not excluded by this package's otherwise
+ * maximally-lenient decode either — `Schema.Unknown` accepts it) fails
+ * `structuredClone` with an untyped, un-tagged `DOMException` ("The object
+ * can not be cloned"). Translating it here keeps that failure inside this
+ * package's documented `ProjectConfigParseError` contract instead of leaking
+ * a raw `DOMException` to every caller.
+ */
+function cloneRawAttributes(rawAttributes: Record<string, unknown>): Record<string, unknown> {
+  try {
+    return structuredClone(rawAttributes);
+  } catch (cause) {
+    const detail = "the raw API response contains a value structuredClone cannot copy";
+    throw new ProjectConfigParseError({
+      message: formatProjectConfigParseErrorMessage(detail),
+      cause,
+      suggestion: PROJECT_CONFIG_PARSE_ERROR_SUGGESTION,
+    });
+  }
+}
+
+/**
  * Attaches a deep-cloned, deep-frozen copy of `rawAttributes` to a fresh
  * shallow copy of `enumerableProps`'s own enumerable properties, as a
  * non-enumerable `_apiResponse` (ADR 0019 rule 1). Shared by
@@ -404,15 +515,22 @@ function applyMappingRows(
  * both go through one clone+freeze path. Cloning (rather than aliasing the
  * caller's object) and freezing means neither this package nor a caller can
  * mutate the attached raw attributes after the fact — including through the
- * very reference `rawAttributes` was passed in by.
+ * very reference `rawAttributes` was passed in by. Every failure mode this
+ * function can hit — pathological depth/cycles ({@link
+ * assertRawAttributesDepthWithinBound}) and non-cloneable values ({@link
+ * cloneRawAttributes}) — is translated into {@link ProjectConfigParseError}
+ * rather than left to surface as a raw `RangeError`/`DOMException`, per this
+ * package's documented failure-type contract.
  */
 function attachFrozenApiResponse<T extends Record<string, unknown>>(
   enumerableProps: T,
   rawAttributes: Record<string, unknown>,
 ): T {
+  assertRawAttributesDepthWithinBound(rawAttributes);
+  const cloned = cloneRawAttributes(rawAttributes);
   const result = { ...enumerableProps };
   Object.defineProperty(result, "_apiResponse", {
-    value: deepFreeze(structuredClone(rawAttributes)),
+    value: deepFreeze(cloned),
     enumerable: false,
     writable: false,
     configurable: false,
@@ -460,7 +578,11 @@ export function fromApiProjectConfig(input: unknown): unknown {
  * access permanently. Returns a NEW object: a shallow copy of `config`'s own
  * enumerable properties, plus `rawAttributes` attached via the same
  * clone-and-freeze path {@link fromApiProjectConfig} uses internally
- * ({@link attachFrozenApiResponse}) — never mutates `config` in place.
+ * ({@link attachFrozenApiResponse}) — never mutates `config` in place. Throws
+ * {@link ProjectConfigParseError} when `config` is not an object, matching
+ * {@link toProjectConfig}'s own strictness — a non-object `config` used to
+ * silently substitute `{}`, discarding whatever the caller actually passed
+ * instead of surfacing the misuse.
  */
 export function attachApiResponse(
   config: ProjectConfig,
@@ -471,7 +593,15 @@ export function attachApiResponse(
   config: unknown,
   rawAttributes: Record<string, unknown>,
 ): unknown {
-  return attachFrozenApiResponse(isObject(config) ? config : {}, rawAttributes);
+  if (!isObject(config)) {
+    const detail = `expected an object for "config", got ${nonObjectDescription(config)}`;
+    throw new ProjectConfigParseError({
+      message: formatProjectConfigParseErrorMessage(detail),
+      cause: new Error(detail),
+      suggestion: PROJECT_CONFIG_PARSE_ERROR_SUGGESTION,
+    });
+  }
+  return attachFrozenApiResponse(config, rawAttributes);
 }
 
 /**
@@ -570,14 +700,6 @@ const consumedApiPathKeys: ReadonlySet<string> = (() => {
   return keys;
 })();
 
-/**
- * Guards {@link walkUnmapped} against a pathologically (or maliciously) deep
- * response body — an object graph deeper than this could otherwise overflow
- * the call stack with an uncaught `RangeError` instead of the package's own
- * documented failure type.
- */
-const MAX_UNMAPPED_WALK_DEPTH = 64;
-
 function walkUnmapped(value: unknown, path: ReadonlyArray<string>, depth = 0): unknown {
   if (depth > MAX_UNMAPPED_WALK_DEPTH) {
     const detail = `pathological nesting: exceeded ${MAX_UNMAPPED_WALK_DEPTH} levels while walking for unmapped fields`;
@@ -644,6 +766,22 @@ export function unmappedApiFields(config: ProjectConfig): Record<string, unknown
  * it can never meaningfully participate in a comparison) and every field
  * with no row at all (`realtime` in full, `workers`/`experimental`, and
  * every "Deliberately unmapped" field the sibling registries document).
+ *
+ * This ONLY remedies the whole-SECTION-granularity gap (e.g. `realtime` in
+ * full never showing up as phantom drift just because it has zero rows). It
+ * does NOT remedy the finer, per-path granularity gap this file's own
+ * {@link ProjectConfig} docstring describes: `["auth", "email", "smtp",
+ * "enabled"]` IS a member of this list (`isComparableProjectConfigPath`
+ * returns `true` for it) and yet still fabricates drift against a document
+ * operand that never declared `[auth.email.smtp]` at all, because
+ * `subtractCliConfig`'s baseline has no `smtp` key to compare against and
+ * therefore keeps the API side's value verbatim (pinned by
+ * `project-config.unit.test.ts`'s "does NOT rescue a diff against a document
+ * operand that never declared the sub-section at all" test). A caller doing
+ * that comparison must additionally intersect with what the document-side
+ * operand actually declared — or accept that every field a row maps
+ * unconditionally will read as a remote-only statement whenever the document
+ * side is silent on it, never as neutral "no opinion".
  */
 export const comparableProjectConfigPaths: ReadonlyArray<ReadonlyArray<string>> = (() => {
   const seenKeys = new Set<string>();

@@ -229,3 +229,25 @@ API-sourced config values carry the raw response, governed by five rules:
   schema mirror explicitly awaiting the published `@supabase/config` package.
 - Linear: CLI-2155/CLI-2156 (sparse + diff), CLI-2231 (entrypoint split),
   CLI-2234 (public-surface audit), CLI-2169 (publish umbrella).
+
+## Addendum (2026-08-26): the attach step, and a precise reading of "verbatim" and "invisible" (CLI-2230)
+
+CLI-2230 shipped rule 1's attach step as `attachApiResponse` (plus the internal
+`attachFrozenApiResponse` it shares with `fromApiProjectConfig`), and shipped rule 1's raw-object
+requirement as a deep-cloned, deep-frozen copy of the caller's `rawAttributes` — never the
+caller's own object by reference. Read this ADR's "holding the raw v2 `data.attributes` object
+verbatim" (rule 1) as verbatim in the _structural_ sense — the attached value is deeply
+`toEqual`-equal to what the caller passed — not verbatim in the _identity_ sense: neither this
+package nor a caller can mutate the attached copy after the fact, including through the very
+reference `rawAttributes` was passed in by. Cloning and freezing also close two failure modes rule
+1 did not originally anticipate: a pathologically deep or self-referential `rawAttributes` and a
+non-cloneable (function- or symbol-valued) field both used to escape this ADR's own
+`ProjectConfigParseError` contract as a raw, uncaught `RangeError`/`DOMException`; the attach step
+now validates depth and wraps the clone before either can happen.
+
+Rule 3's "invisible to structural walks" claim is scoped to exactly that — serializers
+(`JSON.stringify`, object spread, `Object.assign`, `structuredClone`) and the structural walks in
+`sparse.ts`. It is not a claim about every possible form of inspection: a debug inspector that
+deliberately renders non-enumerable own properties (Bun's `console.log`, `util.inspect` with
+`showHidden`) still prints `_apiResponse`, HMAC digests and all. Never log an API-sourced
+`ProjectConfig` directly for this reason.

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { CliConfigSchema } from "../base.ts";
 import { ProjectConfigParseError } from "../errors.ts";
+import { isSecretPath, secretPathPatterns } from "../lib/secret-paths.ts";
 import { getDefaultCliConfig, omitDefaultValues, subtractCliConfig } from "../sparse.ts";
 import type { EffectiveConfig } from "../sparse.ts";
 import { Schema } from "effect";
@@ -149,8 +150,14 @@ function apiEnvelope(attributes: Record<string, unknown>): unknown {
 }
 
 describe("fromConfigDocument", () => {
-  test("projecting the default config keeps exactly the hosted sections", () => {
+  test("projecting the default config keeps exactly the non-empty hosted sections", () => {
     const projected = fromConfigDocument(getDefaultCliConfig());
+    // `workers` is absent here despite being a hosted section
+    // (`HOSTED_SECTION_KEYS`): its schema default is an empty record (zero
+    // configured workers), and an empty container is pruned from the
+    // projection like any other (CLI-2230's secret-strip empty-container
+    // finding generalizes to every genuinely-empty container, not just ones
+    // secret-stripping produced).
     expect(Object.keys(projected).sort()).toEqual([
       "api",
       "auth",
@@ -158,8 +165,8 @@ describe("fromConfigDocument", () => {
       "experimental",
       "realtime",
       "storage",
-      "workers",
     ]);
+    expect(Object.hasOwn(projected, "workers")).toBe(false);
     // Local-only sections never appear, however they're spelled on `CliConfig`.
     for (const droppedKey of [
       "project_id",
@@ -238,6 +245,139 @@ describe("fromConfigDocument", () => {
 
     // Never merely enumerable-hidden — genuinely absent, own or otherwise.
     expect(Object.hasOwn(projected.auth?.captcha ?? {}, "secret")).toBe(false);
+  });
+
+  test("prunes an empty container left behind by secret stripping, rather than keeping it as litter", () => {
+    // `auth.captcha` here declares nothing but its secret leaf — a sparse
+    // `EffectiveConfig` literal, not a decoded document (decoding would
+    // materialize `enabled`/`provider` defaults alongside it and mask this
+    // case). `auth.site_url` keeps the surrounding `auth` section itself
+    // non-empty, isolating the nested prune. Once `secret` is stripped,
+    // `captcha` is left with zero keys and must be pruned rather than
+    // surviving as `{}` litter (CLI-2230's secret-strip empty-container
+    // finding) — an empty container carries no comparable information, but
+    // `subtractCliConfig` would otherwise keep it forever as phantom drift
+    // against any baseline that never declared `captcha` at all.
+    const projected = fromConfigDocument({
+      auth: { site_url: "https://example.com", captcha: { secret: "captcha-secret" } },
+    });
+    expect(Object.hasOwn(projected.auth ?? {}, "captcha")).toBe(false);
+    expect(projected.auth).toEqual({ site_url: "https://example.com" });
+  });
+
+  test("a section that only contains a secret disappears entirely from the projection", () => {
+    // Unlike the nested case above, here the ENTIRE `experimental` section
+    // (both of whose declared fields are `secret()`-annotated,
+    // `../experimental.ts`) has nothing left after stripping — pruning must
+    // bubble all the way up through `fromConfigDocument`'s own per-section
+    // loop, not just `copyHostedValueWithoutSecrets`'s internal recursion.
+    const projected = fromConfigDocument({
+      experimental: { s3_access_key: "access-key", s3_secret_key: "s3-secret" },
+    });
+    expect(Object.hasOwn(projected, "experimental")).toBe(false);
+    expect(projected).toEqual({});
+  });
+
+  // Schema-derived, exhaustive counterpart to the 5-hand-picked-field test
+  // above (CLI-2230's review): rather than trusting a hand-picked field list
+  // to stay in sync with `CliConfigSchema`'s actual `x-secret` annotations,
+  // this enumerates every `x-secret` path pattern the schema declares
+  // (`secretPathPatterns`, `../lib/secret-paths.ts` — the same source of
+  // truth `isSecretPath` itself is built from), builds one probe document
+  // that populates every pattern reachable through a hosted section, and
+  // asserts none of them survive `fromConfigDocument`. This is the real
+  // "no x-secret path survives" contract; the hand-picked test above stays
+  // as a readable, minimal illustration of the same guarantee.
+  test("no x-secret path from the schema's own pattern list survives fromConfigDocument, exhaustively", () => {
+    // Mirrors `HOSTED_SECTION_KEYS` (`./project-config.ts`): `fromConfigDocument`
+    // only ever copies these seven sections, so a secret pattern rooted
+    // anywhere else (`remotes.*`, `studio.*`, `edge_runtime.secrets.*`) is
+    // unreachable through it and deliberately excluded from this probe.
+    const HOSTED_TOP_LEVEL_KEYS = new Set([
+      "api",
+      "auth",
+      "db",
+      "realtime",
+      "storage",
+      "workers",
+      "experimental",
+    ]);
+
+    const reachablePatterns = secretPathPatterns.filter((pattern) =>
+      HOSTED_TOP_LEVEL_KEYS.has(pattern[0] ?? ""),
+    );
+    // Guards the loop below against passing vacuously if the schema-derived
+    // pattern list is ever empty due to a broken import.
+    expect(reachablePatterns.length).toBeGreaterThan(0);
+
+    const WILDCARD_KEY = "probe_key";
+    const concretePaths = reachablePatterns.map((pattern) =>
+      pattern.map((segment) => (segment === "*" ? WILDCARD_KEY : segment)),
+    );
+
+    // Every concrete path must actually be recognized as secret by the same
+    // predicate `copyHostedValueWithoutSecrets` consults — otherwise this
+    // probe would be asserting nothing.
+    for (const path of concretePaths) {
+      expect(isSecretPath(path)).toBe(true);
+    }
+
+    function setAtPath(root: Record<string, unknown>, path: ReadonlyArray<string>): void {
+      let current = root;
+      for (let index = 0; index < path.length - 1; index += 1) {
+        const segment = path[index] as string;
+        const existing = current[segment];
+        if (existing === null || typeof existing !== "object" || Array.isArray(existing)) {
+          current[segment] = {};
+        }
+        current = current[segment] as Record<string, unknown>;
+      }
+      current[path[path.length - 1] as string] = "SECRET_PROBE_VALUE";
+    }
+
+    function readAtPath(root: unknown, path: ReadonlyArray<string>): unknown {
+      let current = root;
+      for (const segment of path) {
+        if (current === null || typeof current !== "object" || Array.isArray(current)) {
+          return undefined;
+        }
+        current = (current as Record<string, unknown>)[segment];
+      }
+      return current;
+    }
+
+    const probeDocument: Record<string, unknown> = {};
+    // A benign sibling one level up keeps its parent container non-empty
+    // regardless of pruning, so a passing assertion below actually proves
+    // the SECRET leaf was removed rather than the whole subtree
+    // disappearing for an unrelated reason (e.g. a bug that wipes the
+    // projection entirely). Skipped when the sibling path would itself be
+    // secret-shaped — `db.vault.*` matches every key under `db.vault`, so no
+    // sibling there can ever prove non-vacuousness; other sections' siblings
+    // still do.
+    const survivingSiblingPaths: Array<ReadonlyArray<string>> = [];
+    for (const path of concretePaths) {
+      setAtPath(probeDocument, path);
+      const parentPath = path.slice(0, -1);
+      if (parentPath.length === 0) {
+        continue;
+      }
+      const siblingPath = [...parentPath, "__probe_sibling__"];
+      if (!isSecretPath(siblingPath)) {
+        setAtPath(probeDocument, siblingPath);
+        survivingSiblingPaths.push(siblingPath);
+      }
+    }
+    expect(survivingSiblingPaths.length).toBeGreaterThan(0);
+
+    const projected = fromConfigDocument(probeDocument);
+
+    for (const path of concretePaths) {
+      expect(readAtPath(projected, path)).toBeUndefined();
+    }
+    for (const siblingPath of survivingSiblingPaths) {
+      expect(readAtPath(projected, siblingPath)).toBe("SECRET_PROBE_VALUE");
+    }
   });
 
   test("canonicalizes duration and byte-size document spellings to match the API side's canonical form", () => {
@@ -372,6 +512,22 @@ describe("fromApiProjectConfig — api section", () => {
   test("max_rows is clamped to zero when negative", () => {
     const result = fromApiProjectConfig({ api: { max_rows: -5 } });
     expect(result.api?.max_rows).toBe(0);
+  });
+
+  // A non-finite number's `typeof` is already `"number"`, so the mismatch
+  // message must say "a finite number", not the generic "a number" — the
+  // latter would render the nonsensical "expected a number, got number".
+  test("a non-finite max_rows throws with an 'expected a finite number' message, not the nonsensical 'expected a number, got number'", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({ api: { max_rows: Number.NaN } });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).message).toContain(
+      "expected a finite number, got number",
+    );
   });
 });
 
@@ -726,17 +882,25 @@ describe("fromApiProjectConfig — secrets (ADR 0019 rule 5)", () => {
     },
   );
 
-  // `figma` has no row at all (no config-schema counterpart), so it would
-  // otherwise leak its HMAC digest into `unmappedApiFields` — the
-  // `unmappedSecretApiPaths` orphan list (`./registry-auth.ts`) treats it as
-  // consumed anyway.
-  test("a secret-shaped GoTrue key with no registry row (external_figma_secret) is still absent from unmappedApiFields", () => {
-    const result = fromApiProjectConfig({ auth: { external_figma_secret: "figma-secret" } });
-    expect(unmappedApiFields(result)).toEqual({});
-    expect((result._apiResponse as Record<string, unknown>).auth).toEqual({
-      external_figma_secret: "figma-secret",
-    });
-  });
+  // None of these four have a registry row at all (no config-schema
+  // counterpart), so they would otherwise leak their HMAC digest into
+  // `unmappedApiFields` — the `unmappedSecretApiPaths` orphan list
+  // (`./registry-auth.ts`) treats each as consumed anyway.
+  test.each([
+    "external_figma_secret",
+    "external_slack_secret",
+    "hook_after_user_created_secrets",
+    "nimbus_oauth_client_secret",
+  ])(
+    "a secret-shaped GoTrue key with no registry row (%s) is still absent from unmappedApiFields",
+    (apiKey) => {
+      const result = fromApiProjectConfig({ auth: { [apiKey]: "the-secret-value" } });
+      expect(unmappedApiFields(result)).toEqual({});
+      expect((result._apiResponse as Record<string, unknown>).auth).toEqual({
+        [apiKey]: "the-secret-value",
+      });
+    },
+  );
 });
 
 describe("fromApiProjectConfig — null convention", () => {
@@ -817,6 +981,34 @@ describe("fromApiProjectConfig — _apiResponse (ADR 0019 rules 1/3/4)", () => {
   });
 });
 
+describe("fromApiProjectConfig — clone/freeze robustness (CLI-2230)", () => {
+  // Attaching `_apiResponse` clones and freezes the raw attributes
+  // (`attachFrozenApiResponse`) BEFORE any depth check existed; each of these
+  // three payload shapes used to escape this package's documented
+  // `ProjectConfigParseError` contract with a raw, uncaught failure instead.
+  test("a pathologically deep raw attributes payload throws ProjectConfigParseError, not an uncaught RangeError", () => {
+    let deeplyNested: Record<string, unknown> = { leaf: "value" };
+    for (let i = 0; i < 100; i += 1) {
+      deeplyNested = { nested: deeplyNested };
+    }
+    expect(() => fromApiProjectConfig({ new_service: deeplyNested })).toThrow(
+      ProjectConfigParseError,
+    );
+  });
+
+  test("a self-referential (cyclic) raw attributes payload throws ProjectConfigParseError, not an uncaught RangeError", () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic["self"] = cyclic;
+    expect(() => fromApiProjectConfig({ new_service: cyclic })).toThrow(ProjectConfigParseError);
+  });
+
+  test("a function-valued unmapped field throws ProjectConfigParseError, not an uncaught DOMException", () => {
+    expect(() => fromApiProjectConfig({ new_service: { fn: () => 1 } })).toThrow(
+      ProjectConfigParseError,
+    );
+  });
+});
+
 describe("attachApiResponse", () => {
   test("restores _apiResponse lost across a spread, as a new object", () => {
     const result = fromApiProjectConfig({ api: { max_rows: 5 } });
@@ -837,6 +1029,18 @@ describe("attachApiResponse", () => {
 
     const restored = attachApiResponse(cloned, { api: { max_rows: 5 }, new_field: "x" });
     expect(unmappedApiFields(restored)).toEqual({ new_field: "x" });
+  });
+
+  test("throws ProjectConfigParseError rather than silently substituting {} for a non-object config", () => {
+    let thrown: unknown;
+    try {
+      // @ts-expect-error — exercising the runtime guard against a non-object config.
+      attachApiResponse("not an object", { api: { max_rows: 5 } });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).message).toContain("got string");
   });
 });
 
@@ -945,18 +1149,27 @@ describe("comparableProjectConfigPaths / isComparableProjectConfigPath", () => {
     expect(isComparableProjectConfigPath(["not", "a", "real", "path"])).toBe(false);
   });
 
-  test("a diff restricted to comparableProjectConfigPaths ignores the phantom drift of unconditionally-mapped fields", () => {
-    // The API side maps `email.smtp.enabled` unconditionally even when the
-    // local document never declared `[auth.email.smtp]` at all (CLI-2230's
-    // granularity finding) — an unrestricted diff would report that as
-    // drift; restricting to comparableProjectConfigPaths lets a consumer
-    // choose to ignore it, but the field itself is still genuinely present
-    // on both sides in a way a documented baseline can pin.
+  test("comparableProjectConfigPaths does NOT rescue a diff against a document operand that never declared the sub-section at all", () => {
+    // The API side maps `email.smtp.enabled` unconditionally, even when the
+    // *document* operand's `auth` section is genuinely present (it declares
+    // `site_url`) but never mentions `[auth.email.smtp]` at all (CLI-2230's
+    // granularity finding). This pins the case `comparableProjectConfigPaths`
+    // does NOT cover: `auth.email.smtp.enabled` IS a comparable leaf path,
+    // yet it still survives `subtractCliConfig` as phantom drift, because the
+    // baseline has no `smtp` key at that depth to compare against
+    // (`subtractValue` keeps a value verbatim whenever its baseline
+    // counterpart is absent). Restricting to comparableProjectConfigPaths
+    // only removes the WHOLE-SECTION-granularity false positives (e.g.
+    // `realtime`); it cannot rescue this finer-grained one — see
+    // `comparableProjectConfigPaths`'s docstring.
     const apiSide = fromApiProjectConfig({ auth: { smtp_host: "" } });
-    const documentSide = fromConfigDocument(getDefaultCliConfig());
+    const documentSide = fromConfigDocument({ auth: { site_url: "https://example.com" } });
+
     expect(isComparableProjectConfigPath(["auth", "email", "smtp", "enabled"])).toBe(true);
-    expect(apiSide.auth?.email?.smtp?.enabled).toBe(false);
-    expect(documentSide.auth?.email?.smtp?.enabled).toBe(false);
+    expect(documentSide).toEqual({ auth: { site_url: "https://example.com" } });
+
+    const overlay = subtractCliConfig(apiSide, documentSide);
+    expect(overlay).toEqual({ auth: { email: { smtp: { enabled: false } } } });
   });
 });
 
@@ -1001,12 +1214,12 @@ describe("unmappedApiFields", () => {
     expect(unmappedApiFields(result)).toEqual({});
   });
 
-  test("throws ProjectConfigParseError (not an uncaught RangeError) on pathologically deep nesting", () => {
-    let deeplyNested: Record<string, unknown> = { leaf: "value" };
-    for (let i = 0; i < 100; i += 1) {
-      deeplyNested = { nested: deeplyNested };
-    }
-    const result = fromApiProjectConfig({ new_service: deeplyNested });
-    expect(() => unmappedApiFields(result)).toThrow(ProjectConfigParseError);
-  });
+  // `walkUnmapped`'s own `MAX_UNMAPPED_WALK_DEPTH` guard is no longer
+  // reachable through the public API on its own: every path that attaches
+  // `_apiResponse` (`fromApiProjectConfig`, `attachApiResponse`) now shares
+  // the same bound at construction time (`assertRawAttributesDepthWithinBound`,
+  // CLI-2230's clone/freeze finding), so a payload deep enough to trip
+  // `walkUnmapped`'s check always fails earlier, at construction — see
+  // "fromApiProjectConfig — clone/freeze robustness (CLI-2230)" above.
+  // `walkUnmapped`'s own guard remains as defense in depth.
 });

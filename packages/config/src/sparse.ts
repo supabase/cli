@@ -69,11 +69,29 @@ export function getDefaultCliConfig(): CliConfig {
  * `_apiResponse` clone-and-freeze finding) so `./project-config/
  * project-config.ts` can freeze the cloned raw attributes it attaches, using
  * the same freezing behavior {@link getDefaultCliConfig}'s memo relies on.
+ *
+ * Guarded against revisiting an already-frozen (or otherwise already-seen)
+ * object with a `WeakSet`, as defense in depth: {@link getDefaultCliConfig}'s
+ * memo is a decoded schema default, genuinely acyclic by construction, but
+ * `./project-config/project-config.ts`'s caller is a cloned Management API
+ * response — untrusted input — and that caller now bounds depth and cycles
+ * itself before ever calling this (`assertRawAttributesDepthWithinBound`).
+ * This guard exists so `deepFreeze` stays safe to call directly against
+ * arbitrary input even if that upstream bound is ever bypassed or forgotten,
+ * not because this function's own callers currently need it.
  */
 export function deepFreeze<T>(value: T): T {
+  return deepFreezeVisiting(value, new WeakSet());
+}
+
+function deepFreezeVisiting<T>(value: T, visited: WeakSet<object>): T {
   if (typeof value === "object" && value !== null) {
+    if (visited.has(value)) {
+      return value;
+    }
+    visited.add(value);
     for (const child of Object.values(value)) {
-      deepFreeze(child);
+      deepFreezeVisiting(child, visited);
     }
     Object.freeze(value);
   }

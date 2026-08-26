@@ -100,10 +100,16 @@ export function expectString(value: unknown, apiPath: ReadonlyArray<string>): st
   return value;
 }
 
-/** Also rejects non-finite numbers (`NaN`, `Infinity`, `-Infinity`) — no registry row expects one. */
+/**
+ * Also rejects non-finite numbers (`NaN`, `Infinity`, `-Infinity`) — no
+ * registry row expects one. The expectation text is "a finite number", not
+ * "a number": for a non-finite input, `typeof value` is already `"number"`,
+ * so the generic "a number" wording used to render the nonsensical "expected
+ * a number, got number".
+ */
 export function expectNumber(value: unknown, apiPath: ReadonlyArray<string>): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw parseErrorFor("a number", value, apiPath);
+    throw parseErrorFor("a finite number", value, apiPath);
   }
   return value;
 }

@@ -27,6 +27,18 @@ import { projectConfigMappingRows } from "./registry.ts";
  * `ProjectConfigApiAttributesSchema`'s `auth: Schema.Record(Schema.String,
  * Schema.Json)` field: every row's two-segment `["auth", "<gotrue_key>"]`
  * `apiPath` resolves through that index signature, not a named property.
+ *
+ * That same open-`Record` shape makes this file's `apiPath` check
+ * structurally vacuous for all 189 auth rows: ANY second segment resolves
+ * through the record's index signature, whether or not GoTrue actually has a
+ * key by that name, so this walker cannot catch a renamed or invented
+ * GoTrue key the way it catches a real `configPath`/`CliConfigSchema`
+ * mismatch. The real check for the auth half of the registry — every row's
+ * `apiPath` against the generated Management API v1 auth-config contract's
+ * actual key set — lives in
+ * `apps/cli/src/shared/config/project-config-auth-contract.unit.test.ts`,
+ * since `packages/config` cannot depend on `packages/api`'s generated
+ * client.
  */
 
 interface AstNode {
