@@ -1,10 +1,11 @@
 /**
- * Post-Postgres-health local database setup pipeline — a strict 1:1 port of Go's
- * `SetupLocalDatabase` (`apps/cli-go/internal/db/start/start.go:359-381`), run once
+ * Post-Postgres-health local database setup pipeline — a port of Go's
+ * `SetupLocalDatabase` (`apps/cli-go/internal/db/start/start.go:359-381`, with one
+ * intentional divergence: see step 3 below on `api.auto_expose_new_tables`), run once
  * the `db` container's healthcheck passes on a FRESH volume (Go's `NoBackupVolume`
  * gate, `start.go:184` — the caller decides whether to invoke this at all; see
  * `legacyVolumeExists` in `./container-lifecycle.ts`). The single exported
- * entry point, {@link legacyStartSetupLocalDatabase}, runs the exact Go call chain
+ * entry point, {@link legacyStartSetupLocalDatabase}, runs the same call chain,
  * in order:
  *
  * 1. **`initSchema`** (`start.go:243-266`) — prints `Initialising schema...`, then
@@ -35,11 +36,10 @@
  *    into `experimental.webhooks`, unless the setup caller disables user extension
  *    activation. Legacy callers may explicitly request the historical `pg_net`
  *    baseline independently of that user config.
- * 3. **`ApplyApiPrivileges`** (`start.go:414-435`) — tri-state on
- *    `api.auto_expose_new_tables`: `true` is a no-op (keep the bundled initial-schema
- *    grants); unset/`false` execs {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL}
- *    (Go's inline `RevokeDefaultDataApiPrivilegesSql` constant, `start.go:405-412`)
- *    via a temp file, same as the schema SQL above.
+ * 3. **API privileges** — tri-state on `api.auto_expose_new_tables`: unset and `true`
+ *    are both a no-op (keep the bundled initial-schema grants); an explicit `false`
+ *    execs {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL} via a temp file, same as the
+ *    schema SQL above.
  * 4. **Vault upsert** (`start.go:390-393`) — `legacyUpsertVaultSecrets`, run BEFORE
  *    the custom-roles seed "so roles.sql can reference them" (Go's own comment).
  * 5. **Custom-roles seed** (`start.go:394-398` + `pkg/migration/seed.go:84-97`) —
@@ -463,7 +463,7 @@ export interface LegacySetupDatabaseInput {
    * `utils.GetDebugLogger()` as the job's stderr writer (`start.go:349-353`).
    */
   readonly debug: boolean;
-  /** `toml.baseline.apiAutoExposeNewTables` — Go's `api.auto_expose_new_tables` tri-state, threaded straight into {@link legacyApplyApiPrivileges}. */
+  /** `toml.baseline.apiAutoExposeNewTables` — the `api.auto_expose_new_tables` tri-state, threaded straight into {@link legacyApplyApiPrivileges}. */
   readonly apiAutoExposeNewTables: Option.Option<boolean>;
   /** `toml.vault` — Go's `utils.Config.Db.Vault`, threaded straight into {@link legacyUpsertVaultSecrets}. */
   readonly vault: ReadonlyArray<LegacyVaultSecret>;
@@ -912,17 +912,16 @@ const legacyStartInitSchema = Effect.fnUntraced(function* (
 });
 
 /**
- * Port of Go's `ApplyApiPrivileges` (`start.go:414-435`): tri-state on
- * `api.auto_expose_new_tables` — `true` keeps the bundled initial-schema grants
- * (no-op); unset/`false` execs {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL}. Runs
- * regardless of PG major version (unlike `initSchema`, this always execs SQL over
- * `session` directly — it is never part of the PG15+ one-shot Docker jobs). Exported
- * (and taking `session`/`fs`/`path` directly, not the whole
- * {@link LegacyStartSetupLocalDatabaseInput}) because Go's `ApplyApiPrivileges` is
- * the SAME exported function `db reset`'s PG14 `initDatabase` calls
- * (`reset.go:176-186`), after its own `InitSchema14` call and with none of
- * `SetupDatabase`'s other steps (vault/roles.sql/MigrateAndSeed) — see
- * `legacy/shared/db-bootstrap/recreate-local-database.ts`.
+ * Applies the `api.auto_expose_new_tables` tri-state: unset and `true` both keep the
+ * bundled initial-schema grants (no-op), matching the cloud default of auto-exposing
+ * new `public` entities; only an explicit `false` execs
+ * {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL}. Runs regardless of PG major version
+ * (unlike `initSchema`, this always execs SQL over `session` directly — it is never
+ * part of the PG15+ one-shot Docker jobs). Exported (and taking `session`/`fs`/`path`
+ * directly, not the whole {@link LegacyStartSetupLocalDatabaseInput}) because `db
+ * reset`'s PG14 `initDatabase` path calls it too, after its own init-schema step and
+ * with none of `legacySetupDatabase`'s other steps (vault/roles.sql/migrate+seed) —
+ * see `legacy/shared/db-bootstrap/recreate-local-database.ts`.
  */
 export const legacyApplyApiPrivileges = Effect.fnUntraced(function* (
   session: LegacyDbSession,
@@ -931,7 +930,7 @@ export const legacyApplyApiPrivileges = Effect.fnUntraced(function* (
   tmpDir: string,
   autoExposeNewTables: Option.Option<boolean>,
 ) {
-  if (Option.isSome(autoExposeNewTables) && autoExposeNewTables.value) return;
+  if (Option.getOrElse(autoExposeNewTables, () => true)) return;
   yield* legacyExecSqlConstant(
     session,
     fs,
