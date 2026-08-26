@@ -135,6 +135,43 @@ const mappedError = (
         suggestion: "Check `supabase status`, then retry `supabase stop`.",
       };
     }
+    case "ControlBindError":
+      return {
+        code: tag,
+        message: "Could not start the local Supabase stack control service.",
+        suggestion:
+          "Check for another local process using the stack control port, then retry `supabase start`.",
+      };
+    case "ControlTransportError":
+      return {
+        code: tag,
+        message: "Could not communicate with the local Supabase stack control service.",
+        suggestion: "Run `supabase start` to restore the local stack, then retry the command.",
+      };
+    case "ControlProtocolError":
+      return {
+        code: tag,
+        message: "The local Supabase stack control service returned an invalid response.",
+        suggestion: "Restart the stack with `supabase start`, then retry the command.",
+      };
+    case "ControlProtocolMismatchError":
+      return {
+        code: tag,
+        message: "The local Supabase stack uses an incompatible control protocol.",
+        suggestion: "Restart the stack with `supabase start`, then retry the command.",
+      };
+    case "ControlAddressConflictError":
+      return {
+        code: tag,
+        message: "The local Supabase stack control endpoint is occupied by another process.",
+        suggestion: "Stop the conflicting local stack or process, then retry `supabase start`.",
+      };
+    case "ControlStopConflictError":
+      return {
+        code: tag,
+        message: "The local Supabase stack changed owners while it was stopping.",
+        suggestion: "Retry `supabase stop` to stop the current owner.",
+      };
     case "MissingOption": {
       // Mirror Go Cobra's `required flag(s) "X" not set` wording. Effect CLI's
       // default `Missing required flag: --X` differs and would break scripts

@@ -835,6 +835,15 @@ describe("classifyCliErrorActionability", () => {
     expect(status.error_fingerprint).toBe("tag:HttpTransportClientError:daemon_transport");
   });
 
+  it("classifies loopback stack RPC transport failures as a recoverable local stack failure", () => {
+    const result = classifyCliErrorActionability({ _tag: "StackRpcTransportError" });
+
+    expect(result.error_kind).toBe("user_actionable");
+    expect(result.error_category).toBe("invalid_config");
+    expect(result.suggested_command).toBe("supabase start");
+    expect(result.error_fingerprint).toBe("tag:StackRpcTransportError:daemon_transport");
+  });
+
   it("keeps daemon status and protocol failures in the internal-bug bucket", () => {
     for (const [reason, suffix] of [
       ["status", "daemon_status"],

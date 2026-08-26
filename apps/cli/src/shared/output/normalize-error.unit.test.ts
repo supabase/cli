@@ -117,6 +117,45 @@ describe("normalizeCliError", () => {
     });
   });
 
+  test.each([
+    [
+      "ControlBindError",
+      "Could not start the local Supabase stack control service.",
+      "Check for another local process using the stack control port, then retry `supabase start`.",
+    ],
+    [
+      "ControlTransportError",
+      "Could not communicate with the local Supabase stack control service.",
+      "Run `supabase start` to restore the local stack, then retry the command.",
+    ],
+    [
+      "ControlProtocolError",
+      "The local Supabase stack control service returned an invalid response.",
+      "Restart the stack with `supabase start`, then retry the command.",
+    ],
+    [
+      "ControlProtocolMismatchError",
+      "The local Supabase stack uses an incompatible control protocol.",
+      "Restart the stack with `supabase start`, then retry the command.",
+    ],
+    [
+      "ControlAddressConflictError",
+      "The local Supabase stack control endpoint is occupied by another process.",
+      "Stop the conflicting local stack or process, then retry `supabase start`.",
+    ],
+    [
+      "ControlStopConflictError",
+      "The local Supabase stack changed owners while it was stopping.",
+      "Retry `supabase stop` to stop the current owner.",
+    ],
+  ])("maps %s to an actionable control-plane error", (tag, message, suggestion) => {
+    expect(normalizeCliError({ _tag: tag })).toEqual({
+      code: tag,
+      message,
+      suggestion,
+    });
+  });
+
   test("falls back to tagged error fields when no explicit mapping exists", () => {
     const error = {
       _tag: "ExampleError",

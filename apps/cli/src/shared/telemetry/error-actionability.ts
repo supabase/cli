@@ -1029,7 +1029,7 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   StackReadinessError: () => actionability.startStack,
   StackUnavailableError: () => actionability.startStack,
   StackRpcTransportError: () => ({
-    ...actionability.externalNetwork,
+    ...actionability.startStack,
     fingerprint_suffix: "daemon_transport",
   }),
   StackRpcProtocolError: () => ({

@@ -11,6 +11,7 @@ import type { ManagedStackManagerShape } from "./managed/manager.ts";
 import { managedStackPathsEffect } from "./managed/paths.ts";
 import type { ManagedStackLaunch } from "./managed/document.ts";
 import { PORT_CATALOG, PORT_FIELDS, type PortField } from "./PortCatalog.ts";
+import { reservePortSet } from "./PortAllocator.ts";
 import { portFieldsForConfigInput } from "./ServicePorts.ts";
 import { SERVICE_CATALOG, SERVICE_NAMES } from "./ServiceCatalog.ts";
 import { expandExcludedServices } from "./ServiceExclusions.ts";
@@ -20,6 +21,7 @@ import {
   resolveConfig,
   type DaemonConfigInput,
 } from "./StackConfigResolver.ts";
+import { versionsForConfig } from "./StackBuilder.ts";
 import { StopTimeout, UpgradePreflightError, UpgradeRestartError } from "./errors.ts";
 
 interface UpgradeRestartContext {
@@ -265,9 +267,9 @@ const preflight = (
       persistedRuntime.mode === "native" && context.configInput.mode === undefined
         ? applyNativeDefaults(withExclusions)
         : withExclusions;
-    yield* portRequestsForConfig(effectiveConfigInput, { runtime: persistedRuntime }).pipe(
-      Effect.mapError((cause) => preflightError(context, causeMessage(cause))),
-    );
+    const portRequests = yield* portRequestsForConfig(effectiveConfigInput, {
+      runtime: persistedRuntime,
+    }).pipe(Effect.mapError((cause) => preflightError(context, causeMessage(cause))));
     const activeFields = portFieldsForConfigInput({
       ...effectiveConfigInput,
       mode: persistedRuntime.mode,
@@ -288,6 +290,26 @@ const preflight = (
       })
       .pipe(Effect.mapError((cause) => preflightError(context, causeMessage(cause))));
 
+    const persistedFields = new Set(
+      existing.ports.flatMap((assignment) => {
+        const field = persistedPortField(assignment.key);
+        return field === undefined ? [] : [field];
+      }),
+    );
+    const newlyActivatedExactPorts = portRequests.filter(
+      (request) =>
+        request.selection.kind === "exact" &&
+        PORT_CATALOG[request.field].persistence === "sticky" &&
+        !persistedFields.has(request.field),
+    );
+    if (newlyActivatedExactPorts.length > 0) {
+      yield* Effect.acquireUseRelease(
+        reservePortSet(newlyActivatedExactPorts),
+        () => Effect.void,
+        (lease) => lease.releaseAll,
+      ).pipe(Effect.mapError((cause) => preflightError(context, causeMessage(cause))));
+    }
+
     const paths = yield* managedStackPathsEffect(context.input.stateRoot, existing.id).pipe(
       Effect.mapError((cause) => preflightError(context, causeMessage(cause))),
     );
@@ -300,7 +322,7 @@ const preflight = (
       if (syntheticPorts[field] === undefined)
         syntheticPorts[field] = PORT_CATALOG[field].preferred ?? 60_000 + index;
     }
-    yield* resolveConfig(
+    const resolvedConfig = yield* resolveConfig(
       {
         ...effectiveConfigInput,
         projectDir: effectiveConfigInput.projectDir ?? context.input.workspacePath,
@@ -313,7 +335,16 @@ const preflight = (
         ports: syntheticPorts,
       },
     ).pipe(Effect.mapError((cause) => preflightError(context, causeMessage(cause))));
-    return { effectiveConfigInput, launch: existing.launch };
+    return {
+      effectiveConfigInput,
+      launch: {
+        ...existing.launch,
+        versions: {
+          ...versionsForConfig(resolvedConfig),
+          ...existing.launch.versions,
+        },
+      },
+    };
   });
 
 /**

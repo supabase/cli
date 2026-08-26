@@ -957,7 +957,8 @@ describe("detached supervisor child journeys", () => {
       const after = JSON.parse(readFileSync(documentPath, "utf8")) as typeof before;
       expect(after.id).toBe(before.id);
       expect(after.createdAt).toBe(before.createdAt);
-      expect(after.launch).toEqual(persistedBefore.launch);
+      expect(after.launch).toMatchObject(persistedBefore.launch);
+      expect(after.launch.versions.postgres).toEqual(expect.any(String));
       expect(after.ports).toHaveLength(persistedBefore.ports.length);
       expect(after.ports).toEqual(expect.arrayContaining(persistedBefore.ports));
       expect(readFileSync(sentinel, "utf8")).toBe("preserve-me");

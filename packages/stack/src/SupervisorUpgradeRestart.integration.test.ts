@@ -16,6 +16,7 @@ import type { ManagedStack, ManagedStackManagerShape } from "./managed/manager.t
 import type { SupervisorStartMessage } from "./SupervisorProtocol.ts";
 import { SERVICE_CATALOG, SERVICE_NAMES } from "./ServiceCatalog.ts";
 import type { ServiceName } from "./ServiceName.ts";
+import { reservePortSet } from "./PortAllocator.ts";
 import { prepareUpgradeReplacement } from "./SupervisorUpgradeRestart.ts";
 import { StopTimeout, UpgradePreflightError, UpgradeRestartError } from "./errors.ts";
 import type { DaemonConfigInput } from "./StackConfigResolver.ts";
@@ -100,11 +101,11 @@ const setup = (persistedVersions: Partial<Record<ServiceName, string>> = { auth:
     repairWorkspace: unused,
     deleteStack: unused,
   };
-  let stopped = false;
+  const stopState = { requested: false };
   const transport: ControlTransportShape = {
     bind: () => Effect.die("unused bind"),
     read: (readEndpoint) =>
-      stopped
+      stopState.requested
         ? Effect.fail(
             new ControlTransportError({
               endpoint: readEndpoint,
@@ -115,7 +116,7 @@ const setup = (persistedVersions: Partial<Record<ServiceName, string>> = { auth:
         : Effect.succeed(status),
     requestStop: () =>
       Effect.sync(() => {
-        stopped = true;
+        stopState.requested = true;
       }),
   };
   const configInput: DaemonConfigInput = {
@@ -157,6 +158,7 @@ const setup = (persistedVersions: Partial<Record<ServiceName, string>> = { auth:
     oldCliVersion: "old",
     oldOwner,
     stackId,
+    stopState,
     transport,
   };
 };
@@ -294,6 +296,62 @@ describe("incompatible supervisor upgrade restart", () => {
       Effect.asVoid,
     );
   });
+
+  it.live("persists a concrete version for an enabled service introduced after the old CLI", () => {
+    const context = setup({ postgres: "pg-old" });
+    const configInput = { ...context.configInput, auth: { version: "auth-current" } };
+    return prepareUpgradeReplacement({
+      ...context,
+      configInput,
+      controlTransport: context.transport,
+    }).pipe(
+      Effect.provide(NodeServices.layer),
+      Effect.scoped,
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          expect(result.launch.versions).toMatchObject({
+            auth: "auth-current",
+            postgres: "pg-old",
+          });
+        }),
+      ),
+      Effect.asVoid,
+    );
+  });
+
+  it.live(
+    "rejects an occupied exact port for a newly activated sticky service before stopping",
+    () => {
+      const context = setup();
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const blocker = yield* reservePortSet([
+            { field: "studioPort", selection: { kind: "automatic" } },
+          ]);
+          yield* Effect.addFinalizer(() => blocker.releaseAll);
+          const occupiedPort = blocker.ports.studioPort;
+          if (occupiedPort === undefined) return yield* Effect.die("expected an occupied port");
+
+          const exit = yield* prepareUpgradeReplacement({
+            ...context,
+            configInput: {
+              ...context.configInput,
+              edgeRuntime: { inspectorPort: occupiedPort, version: "edge-current" },
+            },
+            controlTransport: context.transport,
+          }).pipe(Effect.exit);
+
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const error = Cause.findErrorOption(exit.cause);
+            expect(Option.isSome(error)).toBe(true);
+            if (Option.isSome(error)) expect(error.value).toBeInstanceOf(UpgradePreflightError);
+          }
+          expect(context.stopState.requested).toBe(false);
+        }),
+      ).pipe(Effect.provide(NodeServices.layer));
+    },
+  );
 
   it.live("keeps restart-request exclusions from enabling native Docker-only services", () => {
     const context = setup(allPersistedVersions);
