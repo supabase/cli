@@ -151,14 +151,13 @@ function apiEnvelope(attributes: Record<string, unknown>): unknown {
 }
 
 describe("fromConfigDocument", () => {
-  test("projecting the default config keeps exactly the non-empty hosted sections", () => {
+  test("projecting the default config keeps exactly the hosted sections", () => {
     const projected = fromConfigDocument(getDefaultCliConfig());
-    // `workers` is absent here despite being a hosted section
-    // (`HOSTED_SECTION_KEYS`): its schema default is an empty record (zero
-    // configured workers), and an empty container is pruned from the
-    // projection like any other (CLI-2230's secret-strip empty-container
-    // finding generalizes to every genuinely-empty container, not just ones
-    // secret-stripping produced).
+    // `workers` survives as `{}`: the prune removes only containers the copy
+    // itself EMPTIED (secret stripping) — an originally-empty container is
+    // declared data (a record entry's value can be an empty struct by schema
+    // design, e.g. `storage.analytics.buckets` entries, where the key is the
+    // information).
     expect(Object.keys(projected).sort()).toEqual([
       "api",
       "auth",
@@ -166,8 +165,9 @@ describe("fromConfigDocument", () => {
       "experimental",
       "realtime",
       "storage",
+      "workers",
     ]);
-    expect(Object.hasOwn(projected, "workers")).toBe(false);
+    expect(projected.workers).toEqual({});
     // Local-only sections never appear, however they're spelled on `CliConfig`.
     for (const droppedKey of [
       "project_id",
@@ -1498,5 +1498,52 @@ describe("review round: deep-readonly metadata, integer frequencies, provider na
     }
     expect(thrown).toBeInstanceOf(ProjectConfigParseError);
     expect((thrown as ProjectConfigParseError).apiPath).toEqual(["auth", "sms_provider"]);
+  });
+});
+
+describe("review round: operand guards, empty-entry preservation, duration bounds (CLI-2230)", () => {
+  test("a non-object fromConfigDocument operand throws the typed caller-misuse error", () => {
+    for (const operand of [null, undefined, ["not", "a", "config"]]) {
+      let thrown: unknown;
+      try {
+        fromConfigDocument(operand as unknown as Parameters<typeof fromConfigDocument>[0]);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+      expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
+    }
+  });
+
+  test("record entries whose values are empty structs by design survive projection", () => {
+    const projected = fromConfigDocument({
+      storage: { analytics: { buckets: { reports: {} } } },
+    });
+    expect(projected.storage?.analytics?.buckets).toEqual({ reports: {} });
+  });
+
+  test("sections the copy itself emptied still disappear", () => {
+    const withOnlySecret = decodeCliConfig({
+      auth: { captcha: { enabled: true, provider: "hcaptcha", secret: "captcha-secret" } },
+    });
+    const projected = fromConfigDocument({ auth: { captcha: withOnlySecret.auth.captcha } });
+    // captcha kept its non-secret fields; only the secret leaf is gone.
+    expect(projected.auth?.captcha).toEqual({ enabled: true, provider: "hcaptcha" });
+  });
+
+  test("session-hour values beyond the formatter's range throw with their apiPath", () => {
+    for (const hours of [1e300, 1e22, -1]) {
+      let thrown: unknown;
+      try {
+        fromApiProjectConfig({ auth: { sessions_timebox: hours } });
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+      expect((thrown as ProjectConfigParseError).apiPath).toEqual(["auth", "sessions_timebox"]);
+    }
+    // A sane value still maps.
+    const result = fromApiProjectConfig({ auth: { sessions_timebox: 24 } });
+    expect(result.auth?.sessions?.timebox).toBe("24h0m0s");
   });
 });

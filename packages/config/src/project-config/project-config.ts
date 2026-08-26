@@ -181,7 +181,18 @@ function copyHostedValueWithoutSecrets(value: unknown, path: ReadonlyArray<strin
         continue;
       }
       const copied = copyHostedValueWithoutSecrets(child, childPath);
-      if (isObject(copied) && Object.keys(copied).length === 0) {
+      // Prune only containers this copy itself EMPTIED (a secret-stripped
+      // subtree, possibly cascading upward) — never one that was empty in the
+      // input. An originally-empty object can be data: a record entry's value
+      // is an empty struct by schema design (`storage.analytics.buckets`,
+      // `storage.vector.buckets`), so `{ buckets: { reports: {} } }` must
+      // keep its entry — the KEY is the information.
+      if (
+        isObject(copied) &&
+        Object.keys(copied).length === 0 &&
+        isObject(child) &&
+        Object.keys(child).length > 0
+      ) {
         continue;
       }
       setOwnProperty(result, key, copied);
@@ -239,15 +250,31 @@ export function fromConfigDocument(config: EffectiveConfig): ProjectConfig;
 // `ProjectConfig`; the overload above is the contract, pinned by the unit
 // tests.
 export function fromConfigDocument(config: EffectiveConfig): unknown {
+  // A JavaScript caller can hand this public normalizer null/undefined/an
+  // array despite the compile-time type; guarding before Object.hasOwn keeps
+  // the failure inside the documented typed-error contract (with the
+  // caller-misuse reason) instead of a native TypeError or a silent `{}`.
+  if (!isObject(config)) {
+    throw callerMisuseError(
+      `fromConfigDocument operand must be an object, got ${nonObjectDescription(config)}`,
+    );
+  }
   const result: Record<string, unknown> = {};
   for (const key of HOSTED_SECTION_KEYS) {
     if (Object.hasOwn(config, key)) {
-      const copied = copyHostedValueWithoutSecrets(config[key], [key]);
-      // Same empty-container prune as `copyHostedValueWithoutSecrets`'s own
-      // recursion, applied at the section boundary: a section that turns out
-      // to contain nothing but secrets must disappear from the projection
-      // entirely, not survive as an empty `{ auth: {} }`-style section.
-      if (isObject(copied) && Object.keys(copied).length === 0) {
+      const section = config[key];
+      const copied = copyHostedValueWithoutSecrets(section, [key]);
+      // Same emptied-by-the-copy prune as `copyHostedValueWithoutSecrets`'s
+      // own recursion, applied at the section boundary: a section that turns
+      // out to contain nothing but secrets must disappear from the projection
+      // entirely, while a section the document genuinely declared empty
+      // survives as declared.
+      if (
+        isObject(copied) &&
+        Object.keys(copied).length === 0 &&
+        isObject(section) &&
+        Object.keys(section).length > 0
+      ) {
         continue;
       }
       setOwnProperty(result, key, copied);

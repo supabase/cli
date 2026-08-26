@@ -4,7 +4,7 @@ import {
   clampToUint,
   expectBoolean,
   expectInteger,
-  expectNumber,
+  expectNumberBetween,
   expectString,
   splitCommaSeparated,
   type ProjectConfigMappingRow,
@@ -393,6 +393,16 @@ function secondsDurationRow(
  * `normalizeDocument` is wired unconditionally here rather than per call
  * site.
  */
+/**
+ * Bound for the session-hour fields: the contract only requires them finite,
+ * but past ~1e6 hours (≈114 years — far beyond any legitimate session
+ * bound) the nanosecond conversion loses formatter validity: 1e300 hours
+ * renders "InfinityhNaNmNaNs" and 1e22 hours stringifies in exponent
+ * notation no duration parser reads. Negative session bounds are equally
+ * meaningless, so 0 is the floor.
+ */
+const MAX_SESSION_DURATION_HOURS = 1_000_000;
+
 function hoursDurationRow(
   configPath: ReadonlyArray<string>,
   apiKey: string,
@@ -402,7 +412,9 @@ function hoursDurationRow(
     configPath,
     apiPath,
     transform: (value) =>
-      value === null ? undefined : hoursToDurationString(expectNumber(value, apiPath)),
+      value === null
+        ? undefined
+        : hoursToDurationString(expectNumberBetween(value, apiPath, 0, MAX_SESSION_DURATION_HOURS)),
     normalizeDocument: canonicalizeDurationString,
     unit: "hours → duration string",
   };

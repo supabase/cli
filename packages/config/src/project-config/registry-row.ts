@@ -133,6 +133,27 @@ export function expectInteger(value: unknown, apiPath: ReadonlyArray<string>): n
   return numeric;
 }
 
+/**
+ * Narrows to a finite number within `[min, max]` — for fields whose
+ * downstream formatter is only defined on a bounded range. The session-hour
+ * durations are the motivating case: the generated contract only requires
+ * them finite, but a huge-but-finite hours value overflows the nanosecond
+ * conversion into `"InfinityhNaNmNaNs"`, and a merely-large one stringifies
+ * in exponent notation (`"1e+22h0m0s"`) that no duration parser reads.
+ */
+export function expectNumberBetween(
+  value: unknown,
+  apiPath: ReadonlyArray<string>,
+  min: number,
+  max: number,
+): number {
+  const numeric = expectNumber(value, apiPath);
+  if (numeric < min || numeric > max) {
+    throw parseErrorFor(`a number between ${min} and ${max}`, numeric, apiPath);
+  }
+  return numeric;
+}
+
 export function expectBoolean(value: unknown, apiPath: ReadonlyArray<string>): boolean {
   if (typeof value !== "boolean") {
     throw parseErrorFor("a boolean", value, apiPath);
