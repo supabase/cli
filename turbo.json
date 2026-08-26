@@ -1,0 +1,62 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "futureFlags": {
+    "strictTaskEntrypointSelection": true
+  },
+  "tasks": {
+    "types:check": {
+      "cache": true
+    },
+    "lint:check": {
+      "cache": false
+    },
+    "lint:fix": {
+      "cache": false
+    },
+    "fmt:check": {
+      "cache": false
+    },
+    "fmt:fix": {
+      "cache": false
+    },
+    "knip:check": {
+      "cache": false
+    },
+    "knip:fix": {
+      "cache": false
+    },
+    "@supabase/docs#types:check": {
+      "cache": true,
+      "outputs": [".source/**"]
+    },
+    "test:unit:run": {
+      "cache": false,
+      "passThroughEnv": ["*"]
+    },
+    "test:integration:run": {
+      "cache": false,
+      "passThroughEnv": ["*"]
+    },
+    "test:e2e:run": {
+      "cache": false,
+      "passThroughEnv": ["*"]
+    },
+    "@supabase/cli-go#build": {
+      "cache": false
+    },
+    "supabase#build": {
+      "cache": false,
+      "dependsOn": ["@supabase/cli-go#build"]
+    },
+    "supabase#test:e2e:run": {
+      "cache": false,
+      "passThroughEnv": ["*"],
+      "dependsOn": ["supabase#build"]
+    },
+    "@supabase/cli-e2e#test:e2e:run": {
+      "cache": false,
+      "passThroughEnv": ["*"],
+      "dependsOn": ["supabase#build"]
+    }
+  }
+}

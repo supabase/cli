@@ -2,11 +2,17 @@
   "name": "@supabase/root",
   "private": true,
   "scripts": {
-    "test:core": "nx run-many -t test:unit test:integration --coverage.enabled",
-    "test:e2e": "nx run-many -t test:e2e",
-    "affected:test:e2e": "nx affected -t test:e2e",
-    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check",
-    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix",
+    "test:unit": "pnpm exec turbo run test:unit:run --filter=!@supabase/cli-go --",
+    "test:integration": "pnpm exec turbo run test:integration:run --",
+    "test:e2e": "pnpm exec turbo run supabase#build && pnpm exec turbo run test:e2e:run --only --concurrency=1 --",
+    "check:all": "pnpm exec turbo run types:check lint:check fmt:check knip:check",
+    "fix:all": "pnpm exec turbo run lint:fix fmt:fix knip:fix",
+    "lint:check": "oxlint --config .oxlintrc.json",
+    "lint:fix": "oxlint --config .oxlintrc.json --fix",
+    "fmt:check": "oxfmt --config .oxfmtrc.json --check",
+    "fmt:fix": "oxfmt --config .oxfmtrc.json",
+    "knip:check": "knip-bun",
+    "knip:fix": "knip-bun --fix",
     "repos:install": "git submodule update --init --recursive",
     "repos:pull": "git submodule update --remote",
     "local-registry": "bun tools/release/local-registry.ts",
@@ -19,6 +25,7 @@
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:",
     "pkg-pr-new": "0.0.88",
+    "turbo": "catalog:",
     "typescript": "catalog:",
     "verdaccio": "^6.9.3"
   },
@@ -28,28 +35,5 @@
       "version": "24"
     }
   },
-  "packageManager": "pnpm@11.4.0",
-  "nx": {
-    "includedScripts": [],
-    "targets": {
-      "lint:check": {
-        "command": "oxlint --config .oxlintrc.json"
-      },
-      "lint:fix": {
-        "command": "oxlint --config .oxlintrc.json --fix"
-      },
-      "fmt:check": {
-        "command": "oxfmt --config .oxfmtrc.json --check"
-      },
-      "fmt:fix": {
-        "command": "oxfmt --config .oxfmtrc.json"
-      },
-      "knip:check": {
-        "command": "knip-bun"
-      },
-      "knip:fix": {
-        "command": "knip-bun --fix"
-      }
-    }
-  }
+  "packageManager": "pnpm@11.4.0"
 }

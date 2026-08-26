@@ -3,11 +3,6 @@
 Supabase project configuration package built on Effect V4 Schema — owns the canonical `CliConfig`
 document schema, config file loading/saving, and JSON Schema generation.
 
-> `CliConfig` is the config _document_ (`supabase/config.toml`/`.json`) — the full local
-> superset the CLI reads and writes. `ProjectConfig` is the hosted-project subset produced
-> by `toProjectConfig` (see "ProjectConfig mapping" below). `CliSettings` is the CLI's own
-> runtime settings and lives in the CLI, not this package.
-
 It owns:
 
 - the canonical `CliConfig` schema
@@ -15,6 +10,21 @@ It owns:
 - JSON Schema generation at `@supabase/config/schema.json`
 - config file loading/saving for `supabase/config.json`
 - backward-compatible TOML support for `supabase/config.toml`
+
+## Naming
+
+- `CliConfig` — the config _document_ (`supabase/config.toml`/`.json`) — the full local superset
+  the CLI reads and writes.
+- `ProjectConfig` — the hosted-project subset: a sparse overlay of the hosted sections (api, auth,
+  db, realtime, storage, workers, experimental) describing what a Supabase project looks like on
+  the platform. Introduced by CLI-2230: produced by `toProjectConfig` from either a `CliConfig`
+  document or a Management API response — see "ProjectConfig mapping" below.
+- `CliSettings` — the CLI's own runtime settings; lives in `apps/cli`, not this package.
+
+Use the `Cli*` prefix for the local checkout side and a bare `Project*` name for the hosted
+Supabase project. Helpers that operate on config values follow the config family regardless of
+their inputs (`resolveCliConfigValue`, `MissingCliConfigValueError`). See
+[ADR 0020](../../docs/adr/0020-config-naming-vocabulary.md) for the full decision record.
 
 ## Entrypoints
 
@@ -121,9 +131,17 @@ When both `supabase/config.json` and `supabase/config.toml` exist in one project
 
 ## Development
 
+Repo-wide quality checks run from the repository root:
+
 ```sh
-pnpm run check:all   # Run all quality checks in parallel
-pnpm run fix:all     # Auto-fix lint, format, and unused exports in parallel
+pnpm check:all
+pnpm fix:all
+```
+
+Package-local checks and development commands run from `packages/config`:
+
+```sh
+pnpm types:check
 pnpm run test        # Run tests
 pnpm run build       # Generate dist/schema.json
 ```
