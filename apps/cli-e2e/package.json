@@ -10,9 +10,7 @@
     "test:legacy": "CLI_HARNESS_TARGET=ts-legacy pnpm run test:e2e",
     "test:next": "CLI_HARNESS_TARGET=ts-next pnpm run test:e2e",
     "record": "RECORD=true CLI_HARNESS_TARGET=ts-legacy pnpm run test:e2e",
-    "types:check": "tsc --noEmit",
-    "check:all": "pnpm exec turbo run types:check lint:check fmt:check knip:check --filter=$npm_package_name --filter=@supabase/root",
-    "fix:all": "pnpm exec turbo run lint:fix fmt:fix knip:fix --filter=$npm_package_name --filter=@supabase/root"
+    "types:check": "tsc --noEmit"
   },
   "dependencies": {
     "@supabase/cli-test-helpers": "workspace:*"

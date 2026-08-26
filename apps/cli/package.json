@@ -41,9 +41,7 @@
     "test:e2e:run": "bun --bun vitest run --project e2e",
     "test:live": "bun --bun vitest run --project live",
     "test:smoke": "bun run tests/smoke-test.ts",
-    "types:check": "tsc --noEmit",
-    "check:all": "pnpm exec turbo run types:check lint:check fmt:check knip:check --filter=$npm_package_name --filter=@supabase/root",
-    "fix:all": "pnpm exec turbo run lint:fix fmt:fix knip:fix --filter=$npm_package_name --filter=@supabase/root"
+    "types:check": "tsc --noEmit"
   },
   "dependencies": {
     "eciesjs": "^0.5.0",

@@ -18,9 +18,7 @@
     "test": "pnpm run test:unit",
     "test:unit": "pnpm exec turbo run @supabase/api#test:unit:run --",
     "test:unit:run": "bun --bun vitest run --project unit --coverage.reportsDirectory=coverage/unit",
-    "types:check": "tsc --noEmit",
-    "check:all": "pnpm exec turbo run types:check lint:check fmt:check knip:check --filter=$npm_package_name --filter=@supabase/root",
-    "fix:all": "pnpm exec turbo run lint:fix fmt:fix knip:fix --filter=$npm_package_name --filter=@supabase/root"
+    "types:check": "tsc --noEmit"
   },
   "dependencies": {
     "@effect/platform-bun": "catalog:",

@@ -43,8 +43,9 @@ nx run cli-go:build
 nx run supabase:test:live
 ```
 
-Type checks, formatting, linting, and unused-code analysis for the TypeScript
-workspaces are explicit package scripts. Run them with Turbo from the root:
+Type checks are explicit package scripts, while formatting, linting, and
+unused-code analysis are root-owned scripts. Run all repository quality checks
+with Turbo from the root:
 
 ```sh
 pnpm run check:all

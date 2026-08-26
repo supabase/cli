@@ -149,13 +149,11 @@ Standard TypeScript workspaces (`apps/cli-e2e`, `apps/cli`, `packages/api`, `pac
 | `test:unit`        | Run unit tests                         |
 | `test:integration` | Run integration tests where applicable |
 | `test:e2e`         | Run end-to-end tests where applicable  |
-| `check:all`        | Run all check targets for this project |
-| `fix:all`          | Run all fix targets for this project   |
 | `types:check`      | Type-check with `tsc --noEmit`         |
 
 The test and type-check scripts are declared in each package's `package.json`, so package-local commands are directly discoverable and can be sharded independently.
 
-Linting, formatting, and unused-code analysis are repo-wide rather than per-package: `oxlint`, `oxfmt`, and `knip` read `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key). The root `check:all`/`fix:all` scripts use Turbo to run the package type checks and root-owned quality scripts. Each package's `check:all`/`fix:all` uses Turbo filters to run its own type check together with the root-owned checks. Running the tools directly also just works:
+Linting, formatting, and unused-code analysis are repo-wide rather than per-package: `oxlint`, `oxfmt`, and `knip` read `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key). The root `check:all`/`fix:all` scripts are the sole repo-wide quality entrypoints and use Turbo to run the package type checks and root-owned quality scripts. Package-local work can run `pnpm types:check` and the package's test scripts. Running the tools directly from the repository root also just works:
 
 ```sh
 pnpm exec oxlint
@@ -163,18 +161,18 @@ pnpm exec oxfmt
 pnpm exec knip-bun
 ```
 
-Quality checks are run from the workspace you are changing:
+Package-local type checks and tests can be run from the workspace you are changing:
 
 ```sh
 # From a project directory — scoped to that project only:
-pnpm run check:all
-pnpm run fix:all
+pnpm types:check
 pnpm run test:unit
 # If this package declares an integration suite:
 pnpm run test:integration
 
-# From the workspace root — runs across all projects:
+# From the workspace root — repo-wide quality and all-project test fan-out:
 pnpm run check:all
+pnpm run fix:all
 pnpm run test:unit && pnpm run test:integration
 ```
 
@@ -349,8 +347,9 @@ supabase --version
 ## Using Nx
 
 Nx remains the task runner for the CLI build and live-test workflows. Quality
-checks and ordinary unit, integration, and e2e tests are package-local scripts
-orchestrated with pnpm and Turbo; see [Standard package scripts](#standard-package-scripts).
+checks are root-owned `check:all`/`fix:all` scripts orchestrated with Turbo,
+while ordinary unit, integration, and e2e tests remain package-local scripts;
+see [Standard package scripts](#standard-package-scripts).
 
 **Build the CLI and its Go sidecar:**
 
@@ -367,8 +366,9 @@ pnpm exec nx run supabase:test:live
 ```
 
 Use `nx show project supabase` to inspect build/live dependencies and outputs.
-Do not use Nx affected mode for quality checks; run `pnpm run check:all` or a
-package's filtered `check:all` instead. See
+Do not use Nx affected mode for quality checks; run `pnpm run check:all` or
+`pnpm run fix:all` from the repository root instead. Package-local checks use
+`pnpm types:check` plus the package's test scripts. See
 [`docs/nx-inference-plugins.md`](docs/nx-inference-plugins.md) for the retained
 Go plugin used by the Nx build graph.
 
