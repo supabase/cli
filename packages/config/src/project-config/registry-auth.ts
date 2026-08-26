@@ -208,10 +208,12 @@ function parseDuration(s: string): number {
     if (s.startsWith("ns")) {
       unitNs = 1;
       s = s.slice(2);
-    } else if (s.startsWith("us") || s.startsWith("µs") || s.startsWith("μs")) {
-      // Go accepts all three micro spellings — "us", "µs" (U+00B5), and
-      // "μs" (Greek small mu, U+03BC); each is 2 JS code units, so slice(2)
-      // advances past any of them.
+    } else if (s.startsWith("us") || s.startsWith("µs")) {
+      // Only the two spellings the PUSH parser accepts (config-sync.
+      // duration.ts:134): Go itself also takes Greek small mu (U+03BC), but
+      // push throws on it, so canonicalizing "1μs" into a pushable "1µs"
+      // would fabricate a reading the pipeline never performs — per the
+      // authority scoping above, it stays verbatim instead.
       unitNs = NS_PER_US;
       s = s.slice(2);
     } else if (s.startsWith("ms")) {

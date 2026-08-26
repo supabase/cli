@@ -804,18 +804,25 @@ function assertRawAttributesDepthWithinBound(
  * package's documented `ProjectConfigParseError` contract instead of leaking
  * a raw `DOMException` to every caller.
  */
-function cloneRawAttributes(rawAttributes: Record<string, unknown>): Record<string, unknown> {
+function cloneRawAttributes(
+  rawAttributes: Record<string, unknown>,
+  reason: "api_response" | "caller_misuse" = "api_response",
+): Record<string, unknown> {
   try {
     return structuredClone(rawAttributes);
   } catch (cause) {
-    // Only a function/symbol-valued attribute reaches this (parsed JSON never
-    // carries one), so it is programmatic caller input — same taxonomy as the
-    // non-plain-object rejection in the validation walk above.
+    // Non-cloneable values (functions/symbols) can only be programmatic, but
+    // structuredClone ALSO throws on sufficiently deep plain JSON — which a
+    // platform response genuinely can be — so provenance follows the call
+    // site rather than assuming misuse.
+    const detail =
+      "raw attributes hold a value structuredClone cannot copy (a non-JSON value, or pathologically deep nesting)";
     throw new ProjectConfigParseError({
-      message:
-        "raw attributes hold a value structuredClone cannot copy (e.g. a function) — raw attributes must be plain parsed JSON",
+      message: reason === "caller_misuse" ? detail : formatProjectConfigParseErrorMessage(detail),
       cause,
-      reason: "caller_misuse",
+      ...(reason === "caller_misuse"
+        ? { reason }
+        : { suggestion: PROJECT_CONFIG_PARSE_ERROR_SUGGESTION }),
     });
   }
 }
@@ -847,7 +854,7 @@ function attachFrozenApiResponse<T extends Record<string, unknown>>(
   // structuredClone — so what gets validated is what gets attached. A
   // pathologically deep input failing inside structuredClone itself is
   // caught and typed by cloneRawAttributes.
-  const cloned = cloneRawAttributes(rawAttributes);
+  const cloned = cloneRawAttributes(rawAttributes, reason);
   assertRawAttributesDepthWithinBound(cloned, 0, undefined, reason);
   return attachOwnedSnapshot(enumerableProps, cloned);
 }

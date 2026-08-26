@@ -1877,9 +1877,12 @@ describe("review round: Go fraction order, mu units, realms, disabled-gate valid
     expect(projected.auth?.sessions?.timebox).toBe("259.3µs");
   });
 
-  test("the Greek small mu spelling canonicalizes like Go accepts it", () => {
+  test("the Greek small mu spelling stays verbatim (the push parser rejects it)", () => {
+    // Go accepts U+03BC, but the push parser takes only us/µs
+    // (config-sync.duration.ts:134) — canonicalizing "1μs" into a pushable
+    // spelling would fabricate a reading the pipeline never performs.
     const projected = fromConfigDocument({ auth: { sessions: { timebox: "1μs" } } });
-    expect(projected.auth?.sessions?.timebox).toBe("1µs");
+    expect(projected.auth?.sessions?.timebox).toBe("1μs");
   });
 
   test("plain JSON objects with a foreign prototype chain are accepted", () => {
