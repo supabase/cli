@@ -8,7 +8,7 @@ import { authMappingRows } from "./registry-auth.ts";
 import {
   clampToUint,
   expectBoolean,
-  expectNumber,
+  expectInteger,
   expectString,
   splitCommaSeparated,
   type ProjectConfigMappingRow,
@@ -88,7 +88,7 @@ const apiSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     transform: (value, attributes) =>
       remoteDataApiDisabled(attributes)
         ? undefined
-        : clampToUint(expectNumber(value, apiMaxRowsPath)),
+        : clampToUint(expectInteger(value, apiMaxRowsPath)),
   },
   // Deliberately unmapped (no config counterpart): api.db_pool,
   // api.db_pool_acquisition_timeout.
@@ -171,7 +171,7 @@ const dbSettingsRows: ReadonlyArray<ProjectConfigMappingRow> = [
   sessionReplicationRoleRow,
   dbSettingRow("track_commit_timestamp", expectBoolean),
   ...DB_SETTINGS_UINT_KEYS.map((key) =>
-    dbSettingRow(key, (value, apiPath) => clampToUint(expectNumber(value, apiPath))),
+    dbSettingRow(key, (value, apiPath) => clampToUint(expectInteger(value, apiPath))),
   ),
 ];
 
@@ -243,7 +243,7 @@ const dbSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
   {
     configPath: ["db", "major_version"],
     apiPath: dbMajorVersionPath,
-    transform: (value) => (value === null ? undefined : expectNumber(value, dbMajorVersionPath)),
+    transform: (value) => (value === null ? undefined : expectInteger(value, dbMajorVersionPath)),
   },
   // v2 flattens what v1 nested under `currentConfig.database`
   // (db.sync.ts:241 `applyRemoteSslEnforcement`).
@@ -288,13 +288,13 @@ const dbSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     configPath: ["db", "pooler", "default_pool_size"],
     apiPath: poolerDefaultPoolSizePath,
     transform: (value) =>
-      value === null ? undefined : expectNumber(value, poolerDefaultPoolSizePath),
+      value === null ? undefined : expectInteger(value, poolerDefaultPoolSizePath),
   },
   {
     configPath: ["db", "pooler", "max_client_conn"],
     apiPath: poolerMaxClientConnPath,
     transform: (value) =>
-      value === null ? undefined : expectNumber(value, poolerMaxClientConnPath),
+      value === null ? undefined : expectInteger(value, poolerMaxClientConnPath),
   },
   // Deliberately unmapped (no faithful counterpart): pooler.
   // ignore_startup_parameters, server_idle_timeout, server_lifetime,
@@ -380,7 +380,7 @@ const DIGIT_OR_DOT_OR_SPACE = "0123456789. ";
 function ramInBytes(sizeStr: string): number {
   let sep = -1;
   for (let i = 0; i < sizeStr.length; i++) {
-    if (DIGIT_OR_DOT_OR_SPACE.includes(sizeStr[i] as string)) sep = i;
+    if (DIGIT_OR_DOT_OR_SPACE.includes(sizeStr.charAt(i))) sep = i;
   }
   if (sep === -1) {
     throw new Error(`invalid size: '${sizeStr}'`);
@@ -419,7 +419,7 @@ function ramInBytes(sizeStr: string): number {
     }
     return Math.trunc(size);
   }
-  const mul = BINARY_MAP[sfx[0] as string];
+  const mul = BINARY_MAP[sfx.charAt(0)];
   if (mul === undefined) {
     throw new Error(`invalid suffix: '${sfx}'`);
   }
@@ -471,7 +471,7 @@ const storageSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
   {
     configPath: ["storage", "file_size_limit"],
     apiPath: storageFileSizeLimitPath,
-    transform: (value) => bytesSize(expectNumber(value, storageFileSizeLimitPath)),
+    transform: (value) => bytesSize(expectInteger(value, storageFileSizeLimitPath)),
     normalizeDocument: canonicalizeFileSizeLimit,
     unit: 'bytes → BytesSize string (e.g. "50MiB")',
   },
@@ -492,20 +492,20 @@ const storageSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     apiPath: ["storage", "features", "iceberg_catalog", "max_namespaces"],
     transform: (value) =>
       clampToUint(
-        expectNumber(value, ["storage", "features", "iceberg_catalog", "max_namespaces"]),
+        expectInteger(value, ["storage", "features", "iceberg_catalog", "max_namespaces"]),
       ),
   },
   {
     configPath: ["storage", "analytics", "max_tables"],
     apiPath: ["storage", "features", "iceberg_catalog", "max_tables"],
     transform: (value) =>
-      clampToUint(expectNumber(value, ["storage", "features", "iceberg_catalog", "max_tables"])),
+      clampToUint(expectInteger(value, ["storage", "features", "iceberg_catalog", "max_tables"])),
   },
   {
     configPath: ["storage", "analytics", "max_catalogs"],
     apiPath: ["storage", "features", "iceberg_catalog", "max_catalogs"],
     transform: (value) =>
-      clampToUint(expectNumber(value, ["storage", "features", "iceberg_catalog", "max_catalogs"])),
+      clampToUint(expectInteger(value, ["storage", "features", "iceberg_catalog", "max_catalogs"])),
   },
   {
     configPath: ["storage", "vector", "enabled"],
@@ -515,13 +515,13 @@ const storageSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     configPath: ["storage", "vector", "max_buckets"],
     apiPath: ["storage", "features", "vector_buckets", "max_buckets"],
     transform: (value) =>
-      clampToUint(expectNumber(value, ["storage", "features", "vector_buckets", "max_buckets"])),
+      clampToUint(expectInteger(value, ["storage", "features", "vector_buckets", "max_buckets"])),
   },
   {
     configPath: ["storage", "vector", "max_indexes"],
     apiPath: ["storage", "features", "vector_buckets", "max_indexes"],
     transform: (value) =>
-      clampToUint(expectNumber(value, ["storage", "features", "vector_buckets", "max_indexes"])),
+      clampToUint(expectInteger(value, ["storage", "features", "vector_buckets", "max_indexes"])),
   },
   // Deliberately unmapped: storage.features.purge_cache.enabled,
   // storage.capabilities.{list_v2,iceberg_catalog}, storage.upstream_target,

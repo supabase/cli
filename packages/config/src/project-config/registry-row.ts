@@ -114,6 +114,23 @@ export function expectNumber(value: unknown, apiPath: ReadonlyArray<string>): nu
   return value;
 }
 
+/**
+ * Narrows to a finite integer. The generated API contract types these fields
+ * `isInt`; the lenient mirror deliberately drops that check so API-ahead skew
+ * never fails the decode (ADR 0019 rule 2), so the rows for integer-typed
+ * config fields re-assert it here — a fractional value on an integer field is
+ * a malformed platform response, not tolerable skew. Duration-valued numbers
+ * (session hours, frequency seconds) stay on {@link expectNumber}: fractional
+ * values are meaningful there and the duration renderer handles them.
+ */
+export function expectInteger(value: unknown, apiPath: ReadonlyArray<string>): number {
+  const numeric = expectNumber(value, apiPath);
+  if (!Number.isInteger(numeric)) {
+    throw parseErrorFor("an integer", numeric, apiPath);
+  }
+  return numeric;
+}
+
 export function expectBoolean(value: unknown, apiPath: ReadonlyArray<string>): boolean {
   if (typeof value !== "boolean") {
     throw parseErrorFor("a boolean", value, apiPath);

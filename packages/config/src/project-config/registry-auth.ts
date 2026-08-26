@@ -3,6 +3,7 @@ import { setOwnProperty } from "../sparse.ts";
 import {
   clampToUint,
   expectBoolean,
+  expectInteger,
   expectNumber,
   expectString,
   splitCommaSeparated,
@@ -135,6 +136,7 @@ function parseDuration(s: string): number {
       n = n * 10 + parseInt(s.charAt(i), 10);
       i++;
     }
+    const integerDigits = i;
     if (i < s.length && s.charAt(i) === ".") {
       i++;
       while (i < s.length && s.charAt(i) >= "0" && s.charAt(i) <= "9") {
@@ -142,6 +144,15 @@ function parseDuration(s: string): number {
         post *= 10;
         i++;
       }
+    }
+    // Go's ParseDuration rejects a component with no digits at all (`!pre &&
+    // !post`, e.g. "s" or ".h") — the legacy port at
+    // config-sync.duration.ts:107-125 omits that check and reads such input
+    // as zero, which would let `canonicalizeDurationString` silently rewrite
+    // a malformed document value like "s" into "0s". Failing here instead
+    // leaves the document value verbatim (normalizeDocument's contract).
+    if (integerDigits === 0 && post === 1) {
+      throw new Error(`time: invalid duration "${orig}"`);
     }
     s = s.slice(i);
     if (s.length === 0) throw new Error(`time: missing unit in duration "${orig}"`);
@@ -348,7 +359,7 @@ function uintRow(configPath: ReadonlyArray<string>, apiKey: string): ProjectConf
   return {
     configPath,
     apiPath,
-    transform: (value) => (value === null ? undefined : clampToUint(expectNumber(value, apiPath))),
+    transform: (value) => (value === null ? undefined : clampToUint(expectInteger(value, apiPath))),
   };
 }
 
@@ -769,17 +780,24 @@ const EXTERNAL_PROVIDERS: ReadonlyArray<ExternalProviderSpec> = [
  */
 function providerClientIdRow(id: string): ProjectConfigMappingRow {
   const additionalKey = `external_${id}_additional_client_ids`;
+  const apiPath = ["auth", `external_${id}_client_id`];
+  const additionalApiPath = ["auth", additionalKey];
   return {
     configPath: ["auth", "external", id, "client_id"],
-    apiPath: ["auth", `external_${id}_client_id`],
-    alsoConsumes: [["auth", additionalKey]],
+    apiPath,
+    alsoConsumes: [additionalApiPath],
     transform: (value, attributes) => {
-      if (typeof value !== "string") return undefined;
+      // Null keeps the row's no-value-omits convention; any other non-string
+      // is a malformed platform response and throws like every other
+      // registry-mapped field — silently omitting here would let
+      // `unmappedApiFields` hide the malformed value too, since both paths
+      // are marked consumed.
+      if (value === null) return undefined;
+      const clientId = expectString(value, apiPath);
       const additional = readAuthAttribute(attributes, additionalKey);
-      if (typeof additional === "string" && additional.length > 0) {
-        return `${value},${additional}`;
-      }
-      return value;
+      if (additional === undefined || additional === null) return clientId;
+      const additionalIds = expectString(additional, additionalApiPath);
+      return additionalIds.length > 0 ? `${clientId},${additionalIds}` : clientId;
     },
   };
 }

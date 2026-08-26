@@ -1223,3 +1223,60 @@ describe("unmappedApiFields", () => {
   // "fromApiProjectConfig — clone/freeze robustness (CLI-2230)" above.
   // `walkUnmapped`'s own guard remains as defense in depth.
 });
+
+describe("review round: numeric and provider narrowing (CLI-2230)", () => {
+  test("a fractional value on an integer-typed field throws with its apiPath", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({ api: { max_rows: 1.5 } });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).apiPath).toEqual(["api", "max_rows"]);
+    expect((thrown as ProjectConfigParseError).message).toContain("an integer");
+  });
+
+  test("fractional session hours still map (durations are genuinely non-integer)", () => {
+    const result = fromApiProjectConfig({ auth: { sessions_timebox: 1.5 } });
+    // hoursToDurationString rounds to whole hours, matching auth.sync.ts:1402-1407.
+    expect(result.auth?.sessions?.timebox).toBe("2h0m0s");
+  });
+
+  test("a non-string apple client_id throws instead of silently omitting", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({ auth: { external_apple_client_id: 123 } });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).apiPath).toEqual([
+      "auth",
+      "external_apple_client_id",
+    ]);
+  });
+
+  test("a non-string apple additional_client_ids throws instead of being ignored", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({
+        auth: { external_apple_client_id: "main", external_apple_additional_client_ids: 5 },
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).apiPath).toEqual([
+      "auth",
+      "external_apple_additional_client_ids",
+    ]);
+  });
+
+  test("a digit-less document duration stays verbatim instead of rewriting to 0s", () => {
+    // Go's ParseDuration rejects "s"; the canonicalizer therefore leaves it
+    // untouched rather than silently reading it as zero.
+    const projected = fromConfigDocument({ auth: { sessions: { timebox: "s" } } });
+    expect(projected.auth?.sessions?.timebox).toBe("s");
+  });
+});
