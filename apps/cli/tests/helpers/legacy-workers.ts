@@ -17,7 +17,7 @@ import { randomLayer } from "../../src/shared/runtime/random.layer.ts";
 import { LegacyProjectNotLinkedError } from "../../src/legacy/config/legacy-project-ref.errors.ts";
 import { mockLegacyLinkedProjectCacheLayer } from "./legacy-mocks.ts";
 import { LegacyTelemetryState } from "../../src/legacy/telemetry/legacy-telemetry-state.service.ts";
-import { mockOutput, mockRuntimeInfo } from "./mocks.ts";
+import { mockOutput, mockRuntimeInfo, mockTty } from "./mocks.ts";
 
 /**
  * Shared scaffolding for the `supabase workers` command integration tests.
@@ -254,6 +254,12 @@ export interface WorkersSetupOptions {
   readonly cwd?: string;
   readonly format?: "text" | "json" | "stream-json";
   readonly interactive?: boolean;
+  /**
+   * Whether stdin is a terminal. Defaults to `interactive`, so a text-mode test
+   * can prompt; set it false to model a piped stdin with a TTY stdout, which is
+   * what `printf 'api\n' | supabase workers delete api` looks like.
+   */
+  readonly stdinIsTty?: boolean;
   readonly linked?: boolean;
   readonly promptTextResponses?: ReadonlyArray<string>;
   readonly promptSelectResponses?: ReadonlyArray<string>;
@@ -295,9 +301,10 @@ function mockWorkersTelemetryState() {
 }
 
 export function setupLegacyWorkers(options: WorkersSetupOptions) {
+  const interactive = options.interactive ?? (options.format ?? "text") === "text";
   const out = mockOutput({
     format: options.format ?? "text",
-    interactive: options.interactive ?? (options.format ?? "text") === "text",
+    interactive,
     ...(options.promptTextResponses === undefined
       ? {}
       : { promptTextResponses: options.promptTextResponses }),
@@ -316,6 +323,7 @@ export function setupLegacyWorkers(options: WorkersSetupOptions) {
       out.layer,
       http.layer,
       mockRuntimeInfo({ cwd: options.cwd ?? options.workdir }),
+      mockTty({ stdinIsTty: options.stdinIsTty ?? interactive, stdoutIsTty: interactive }),
       legacyTestCliConfigLayer(options.workdir),
       legacyTestProjectRefLayer(options.linked !== false),
       telemetry.layer,

@@ -203,6 +203,29 @@ describe("legacy workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // `printf 'api\n' | supabase workers delete api`: stdout is still a TTY, so
+  // `output.interactive` stayed true and the prompt read the worker name off the
+  // pipe — a confirmation the user never typed.
+  it.live("refuses to read the confirmation off a piped stdin", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes,
+      stdinIsTty: false,
+      promptTextResponses: ["api"],
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* legacyWorkersDelete({
+        name: "api",
+        projectRef: Option.none(),
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerDeleteConfirmationRequiredError);
+      expect(http.routeKeys).not.toContain(deleteRoute);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("refuses to delete unattended rather than skipping the confirmation", () => {
     const repo = project();
     const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, format: "json", routes });

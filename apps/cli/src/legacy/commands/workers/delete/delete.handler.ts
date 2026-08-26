@@ -18,6 +18,7 @@ import {
 } from "../../../../shared/workers/workers.errors.ts";
 import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import {
@@ -56,6 +57,7 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
+  const tty = yield* Tty;
   // `--yes` OR `SUPABASE_YES`, matching `projects delete` and every other
   // command that guards a destructive step behind a prompt.
   const yes = yield* legacyResolveYes;
@@ -111,7 +113,13 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
       // still let the warning and the prompt run — onto the stdout the user had
       // asked to carry a payload. A machine format is as non-interactive as a
       // redirected stdout, whichever flag asked for it.
-      if (output.format !== "text" || machineOutput || !output.interactive) {
+      //
+      // `output.interactive` only tracks *stdout*, so on its own it still let
+      // `printf 'api\n' | supabase workers delete api` feed the pipe straight
+      // into the prompt and delete without `--yes`. The confirmation is only
+      // meaningful from a keyboard, so stdin has to be a terminal too — the same
+      // pair `projects delete` guards its prompt with.
+      if (output.format !== "text" || machineOutput || !output.interactive || !tty.stdinIsTty) {
         return yield* Effect.fail(
           new WorkerDeleteConfirmationRequiredError({
             detail: `Deleting "${name}" from project ${projectRef} needs confirmation, and there is no interactive terminal to ask on.`,
