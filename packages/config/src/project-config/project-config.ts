@@ -295,6 +295,19 @@ export function fromConfigDocument(config: EffectiveConfig): unknown {
       delete apiSection[disabledKey];
     }
   }
+  // Same sentinel symmetry for network restrictions: the legacy push skips
+  // the entire read/diff/apply flow when the section is disabled
+  // (db.sync.ts:148-150), so a disabled document's schema-filled allowlists
+  // are unmanaged noise that would fabricate drift.
+  const dbSection = result["db"];
+  if (isObject(dbSection)) {
+    const networkRestrictions = dbSection["network_restrictions"];
+    if (isObject(networkRestrictions) && networkRestrictions["enabled"] === false) {
+      for (const disabledKey of ["allowed_cidrs", "allowed_cidrs_v6"]) {
+        delete networkRestrictions[disabledKey];
+      }
+    }
+  }
   return result;
 }
 
@@ -646,13 +659,22 @@ function assertRawAttributesDepthWithinBound(
     return;
   }
   if (isObject(value)) {
-    // Only PLAIN objects pass: a Map/Set/Date/typed array/class instance is
+    // Only PLAIN objects pass: a Map/Set/Date/typed array is
     // structured-cloneable, but Object.freeze only freezes its wrapper — its
     // internal mutators (map.set, date.setTime) still work afterwards, so it
     // would punch a mutable hole through the deep-frozen metadata. Parsed
-    // JSON never produces one; reaching this is programmatic caller input.
+    // JSON never produces one. The identity check alone would also reject a
+    // plain JSON payload parsed in ANOTHER REALM (an iframe handing its
+    // JSON.parse result to the parent has that realm's Object.prototype), so
+    // the cross-realm-safe brand check backs it up — built-ins carry their
+    // own tags ("[object Map]"), a plain object reports "[object Object]"
+    // from any realm.
     const prototype = Object.getPrototypeOf(value);
-    if (prototype !== Object.prototype && prototype !== null) {
+    if (
+      prototype !== Object.prototype &&
+      prototype !== null &&
+      Object.prototype.toString.call(value) !== "[object Object]"
+    ) {
       throw new ProjectConfigParseError({
         message:
           "raw attributes hold a non-plain object (e.g. a Map, Set, Date, or typed array) — raw attributes must be plain parsed JSON",

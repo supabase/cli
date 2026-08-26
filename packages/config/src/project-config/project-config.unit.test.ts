@@ -1856,3 +1856,43 @@ describe("review round: fraction exactness, hour round-trip, bigint discriminato
     expect((thrown as ProjectConfigParseError).message).toContain("bigint");
   });
 });
+
+describe("review round: Go fraction order, mu units, realms, disabled-gate validation (CLI-2230)", () => {
+  test("short decimal fractions scale exactly like Go", () => {
+    const projected = fromConfigDocument({ auth: { sessions: { timebox: "0.2593ms" } } });
+    // Go computes int64(f * (unit/scale)) = 2593 * 100 = 259300ns exactly;
+    // the old operand order truncated a nanosecond short (259.299µs).
+    expect(projected.auth?.sessions?.timebox).toBe("259.3µs");
+  });
+
+  test("the Greek small mu spelling canonicalizes like Go accepts it", () => {
+    const projected = fromConfigDocument({ auth: { sessions: { timebox: "1μs" } } });
+    expect(projected.auth?.sessions?.timebox).toBe("1µs");
+  });
+
+  test("plain JSON objects with a foreign prototype chain are accepted", () => {
+    // Simulates a cross-realm JSON.parse result: same shape, different
+    // Object.prototype identity.
+    const foreign = Object.assign(Object.create(Object.create(null)), { max_rows: 5 });
+    const result = fromApiProjectConfig({ api: foreign });
+    expect(result.api?.max_rows).toBe(5);
+  });
+
+  test("disabled network restrictions project only the enabled sentinel", () => {
+    const projected = fromConfigDocument({
+      db: { network_restrictions: { enabled: false, allowed_cidrs: ["0.0.0.0/0"] } },
+    });
+    expect(projected.db?.network_restrictions).toEqual({ enabled: false });
+  });
+
+  test("a malformed value alongside the disabled Data API sentinel still throws", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({ api: { db_schema: "", max_rows: 1.5 } });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).apiPath).toEqual(["api", "max_rows"]);
+  });
+});

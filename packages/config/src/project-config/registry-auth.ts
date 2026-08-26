@@ -190,9 +190,10 @@ function parseDuration(s: string): number {
     if (s.startsWith("ns")) {
       unitNs = 1;
       s = s.slice(2);
-    } else if (s.startsWith("us") || s.startsWith("µs")) {
-      // Both "us" and "µs" (U+00B5, the only micro sign Go accepts) are 2 JS
-      // code units, so slice(2) advances past either.
+    } else if (s.startsWith("us") || s.startsWith("µs") || s.startsWith("μs")) {
+      // Go accepts all three micro spellings — "us", "µs" (U+00B5), and
+      // "μs" (Greek small mu, U+03BC); each is 2 JS code units, so slice(2)
+      // advances past any of them.
       unitNs = NS_PER_US;
       s = s.slice(2);
     } else if (s.startsWith("ms")) {
@@ -215,7 +216,11 @@ function parseDuration(s: string): number {
     // nanoseconds ("1.0000000005s" reads as exactly 1s), and the legacy port
     // rounds — a deliberate match-Go divergence so canonicalization never
     // shifts a value by a nanosecond.
-    total += n * unitNs + Math.trunc((frac / post) * unitNs);
+    // Go's exact operand order — `int64(f * (float64(unit) / scale))` — so
+    // e.g. "0.2593ms" scales as 2593 * (1e6 / 1e4) = 259300 exactly, where
+    // (frac / post) * unitNs rounds to 259299.99999999997 and truncates a
+    // nanosecond short.
+    total += n * unitNs + Math.trunc(frac * (unitNs / post));
     // Stricter than Go's int64 range check: past Number.MAX_SAFE_INTEGER
     // nanoseconds (~104 days) the float accumulation silently rounds smaller
     // components away ("2502h1ns" would lose its 1ns and canonicalize to

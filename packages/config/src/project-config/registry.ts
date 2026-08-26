@@ -59,10 +59,13 @@ const apiSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
   {
     configPath: ["api", "schemas"],
     apiPath: apiDbSchemaPath,
-    transform: (value, attributes) =>
-      remoteDataApiDisabled(attributes)
-        ? undefined
-        : splitCommaSeparated(expectString(value, apiDbSchemaPath)),
+    // Validation runs BEFORE the disabled gate: a malformed value alongside
+    // the disabled sentinel must still throw, not vanish behind the gate
+    // while its (consumed) path also disappears from unmappedApiFields.
+    transform: (value, attributes) => {
+      const schemas = splitCommaSeparated(expectString(value, apiDbSchemaPath));
+      return remoteDataApiDisabled(attributes) ? undefined : schemas;
+    },
     unit: "csv → string[]",
   },
   {
@@ -77,19 +80,19 @@ const apiSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
   {
     configPath: ["api", "extra_search_path"],
     apiPath: apiExtraSearchPathPath,
-    transform: (value, attributes) =>
-      remoteDataApiDisabled(attributes)
-        ? undefined
-        : splitCommaSeparated(expectString(value, apiExtraSearchPathPath)),
+    transform: (value, attributes) => {
+      const paths = splitCommaSeparated(expectString(value, apiExtraSearchPathPath));
+      return remoteDataApiDisabled(attributes) ? undefined : paths;
+    },
     unit: "csv → string[]",
   },
   {
     configPath: ["api", "max_rows"],
     apiPath: apiMaxRowsPath,
-    transform: (value, attributes) =>
-      remoteDataApiDisabled(attributes)
-        ? undefined
-        : clampToUint(expectInteger(value, apiMaxRowsPath)),
+    transform: (value, attributes) => {
+      const rows = clampToUint(expectInteger(value, apiMaxRowsPath));
+      return remoteDataApiDisabled(attributes) ? undefined : rows;
+    },
   },
   // Deliberately unmapped (no config counterpart): api.db_pool,
   // api.db_pool_acquisition_timeout.
