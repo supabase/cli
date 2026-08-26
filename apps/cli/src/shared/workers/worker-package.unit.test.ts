@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { gunzipSync } from "node:zlib";
-import { Effect, Exit } from "effect";
+import { Cause, Effect, Exit } from "effect";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { formatBytes, packageWorkerDirectory } from "./worker-package.ts";
 
@@ -232,8 +232,37 @@ describe("packageWorkerDirectory tar limits", () => {
 
     expect(Exit.isFailure(exit)).toBe(true);
     // A failure, not a defect: the difference is whether the JSON error handler
-    // ever sees it.
+    // ever sees it. `Exit.isFailure` alone does not say which, since a defect
+    // exits that way too — the cause is what tells them apart.
+    expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(false);
+    expect(Exit.isFailure(exit) && Cause.hasFails(exit.cause)).toBe(true);
     expect(JSON.stringify(exit)).toContain("TarPathTooLong");
+  });
+
+  // The other half of the same rule. `TarFieldOutOfRangeError` declares itself
+  // user-actionable too, and that declaration can only take effect if the error
+  // reaches the failure channel rather than being rethrown as a defect. An 8 GiB
+  // file trips it through the size field; a far-future mtime is the same check
+  // for the price of a `utimes` call.
+  test("reports an out-of-range header field as a failure rather than a defect", async () => {
+    const file = join(dir, "a.txt");
+    writeFileSync(file, "contents");
+    // One past the 11-digit octal ceiling, a little past the year 2242.
+    utimesSync(file, 8 ** 11, 8 ** 11);
+
+    const exit = await Effect.runPromise(
+      packageWorkerDirectory(dir).pipe(Effect.provide(BunServices.layer), Effect.exit),
+    );
+
+    // Filesystems that cannot hold a timestamp that far out clamp it on the way
+    // in, which leaves nothing out of range to report.
+    if (Math.floor(statSync(file).mtimeMs / 1000) > 8 ** 11 - 1) {
+      expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause)).toBe(false);
+      expect(Exit.isFailure(exit) && Cause.hasFails(exit.cause)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("TarFieldOutOfRange");
+    } else {
+      expect(Exit.isSuccess(exit)).toBe(true);
+    }
   });
 });
 

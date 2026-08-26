@@ -1,7 +1,7 @@
 import { gzipSync } from "node:zlib";
 import { Effect, FileSystem, Option } from "effect";
 import type { PlatformError } from "effect/PlatformError";
-import { createTar, type TarEntry, TarPathTooLongError } from "./tar.ts";
+import { createTar, type TarEntry, TarFieldOutOfRangeError, TarPathTooLongError } from "./tar.ts";
 
 /**
  * Package a worker's source directory into the `.tar.gz` build context the
@@ -114,14 +114,16 @@ const collectEntries = (
 export const packageWorkerDirectory = Effect.fnUntraced(function* (dir: string) {
   const entries = yield* collectEntries(dir, "");
 
-  // `createTar` throws for a name USTAR cannot represent, such as a path
-  // component over 100 bytes. That is user-actionable, so it belongs in the
-  // failure channel: `withJsonErrorHandling` only catches failures, and a defect
-  // would exit `--output-format json` with no structured error.
+  // `createTar` throws for anything USTAR cannot represent: a path component
+  // over 100 bytes, or a size past the 8 GiB an octal field holds. Both are
+  // user-actionable, and both declare themselves so, which only takes effect if
+  // they reach the failure channel — `withJsonErrorHandling` catches failures
+  // and not defects, so a defect exits `--output-format json` with no
+  // structured error at all.
   const archive = yield* Effect.try({
     try: () => gzipSync(createTar(entries)),
     catch: (cause) => {
-      if (cause instanceof TarPathTooLongError) {
+      if (cause instanceof TarPathTooLongError || cause instanceof TarFieldOutOfRangeError) {
         return cause;
       }
       // Anything else here really is a bug, so let it stay a defect rather than
