@@ -130,11 +130,23 @@ const NS_PER_MS = 1_000_000;
 const NS_PER_US = 1_000;
 
 /**
- * Port of Go `time.ParseDuration`, replicated verbatim from
+ * Port of Go `time.ParseDuration`, based on the push parser at
  * `apps/cli/src/legacy/commands/config/push/config-sync/config-sync.duration.ts:95-159`
  * (the same file `durationString` above is ported from). Returns nanoseconds;
- * throws on invalid input — used only by {@link canonicalizeDurationString},
- * which never lets this throw escape.
+ * throws on invalid input — used only by the canonicalizers below, which
+ * never let a throw escape (unparsable document values stay verbatim).
+ *
+ * SETTLED AUTHORITY SCOPING (after several review rounds pulled in opposite
+ * directions): for VALID inputs the fractional-nanosecond arithmetic
+ * replicates the push parser verbatim — its float rounding is the pipeline's
+ * real reading, and canonicalization exists to predict the hosted value, so
+ * a more "exact" result push would never produce is the wrong target. The
+ * MAGNITUDE guards (digit-accumulation and whole-component exactness, the
+ * Go-range bound) instead keep verbatim-on-loss semantics: there the
+ * discrepancy changes a user-visible value by whole units, which
+ * canonicalization must never do silently. Malformed inputs (digit-less
+ * components, unknown units) throw here and stay verbatim, even though the
+ * legacy parser tolerates some of them.
  */
 function parseDuration(s: string): number {
   if (s === "0") return 0;
@@ -170,17 +182,12 @@ function parseDuration(s: string): number {
     if (i < s.length && s.charAt(i) === ".") {
       i++;
       while (i < s.length && s.charAt(i) >= "0" && s.charAt(i) <= "9") {
-        // Accumulate only while frac/post stay float-exact (15 digits):
-        // an 18-digit fraction like "0.999999999999999999" would round the
-        // numerator ABOVE 1e18 and truncate to a full extra second where Go
-        // reads 999999999ns. Digits past exactness cannot change the
-        // truncated-nanosecond result, so they are consumed positionally and
-        // ignored — matching Go, whose own fraction reader stops adding once
-        // its scale underflows.
-        if (post < 1e15) {
-          frac = frac * 10 + parseInt(s.charAt(i), 10);
-          post *= 10;
-        }
+        // Unbounded float accumulation, exactly like the push parser
+        // (config-sync.duration.ts:112-123): its rounding IS the pipeline's
+        // reading of long fractions, so the canonicalizer must reproduce it
+        // rather than a more exact result push would never produce.
+        frac = frac * 10 + parseInt(s.charAt(i), 10);
+        post *= 10;
         i++;
       }
     }
@@ -240,7 +247,20 @@ function parseDuration(s: string): number {
     if (n !== 0 && BigInt(wholeContribution) !== BigInt(n) * BigInt(unitNs)) {
       throw new Error(`time: invalid duration "${orig}" (value out of range)`);
     }
-    const contribution = wholeContribution + Math.trunc(frac * (unitNs / post));
+    // The fractional arithmetic replicates the PUSH parser verbatim
+    // (config-sync.duration.ts:155, `Math.round((frac / post) * unitNs)`):
+    // that parser is what actually processes the document on push, so the
+    // canonical spelling must predict ITS reading — Go's own ParseDuration
+    // truncates and scales in the other operand order, but matching Go here
+    // would canonicalize toward a hosted value the pipeline never produces.
+    const fracNs = Math.round((frac / post) * unitNs);
+    // The frac addition itself can round onto a large exactly-scaled whole
+    // ("9000000000000.001ms": 9e18 + 1000 lands between float ticks) — on
+    // loss the value stays verbatim.
+    const contribution = wholeContribution + fracNs;
+    if (fracNs !== 0 && contribution - wholeContribution !== fracNs) {
+      throw new Error(`time: invalid duration "${orig}" (value out of range)`);
+    }
     // Two bounds: Go's own int64 range, and float64 EXACTNESS — the addition
     // must not round ("2502h1ns" adds 1ns to a total whose float spacing is
     // already >1ns, so next - total comes back 0, not 1, and the value stays

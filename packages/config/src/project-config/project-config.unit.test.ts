@@ -1755,11 +1755,14 @@ describe("review round: safe integers, Go truncation, bigint, fractional-hour bo
     expect((thrown as ProjectConfigParseError).message).toContain("a safe integer");
   });
 
-  test("fractional nanoseconds truncate like Go's ParseDuration", () => {
-    // Go reads "1.0000000005s" as exactly 1s (fractional ns truncate); the
-    // legacy port rounds up to 1.000000001s — deliberate match-Go divergence.
+  test("fractional nanoseconds round like the push parser (the pipeline authority)", () => {
+    // The push parser (config-sync.duration.ts:155) ROUNDS fractional
+    // nanoseconds — it is what actually processes the document on push, so
+    // canonicalization predicts its reading. (Go itself truncates; matching
+    // Go would canonicalize toward a hosted value the pipeline never
+    // produces.)
     const projected = fromConfigDocument({ auth: { sessions: { timebox: "1.0000000005s" } } });
-    expect(projected.auth?.sessions?.timebox).toBe("1s");
+    expect(projected.auth?.sessions?.timebox).toBe("1.000000001s");
   });
 
   test("a bigint raw value throws the typed caller-misuse error", () => {
@@ -1835,14 +1838,15 @@ describe("review round: non-JSON primitives, tiny hours, readonly report, whole-
 });
 
 describe("review round: fraction exactness, hour round-trip, bigint discriminator (CLI-2230)", () => {
-  test("18-digit duration fractions truncate like Go instead of rounding up a second", () => {
+  test("18-digit duration fractions canonicalize to the push parser's reading", () => {
     const projected = fromConfigDocument({
       auth: { sessions: { timebox: "0.999999999999999999s" } },
     });
-    // Go reads this as 999999999ns and prints sub-second values in ms units
-    // ("999.999999ms"); float accumulation used to round the numerator past
-    // 1e18 and emit a full extra second ("1s").
-    expect(projected.auth?.sessions?.timebox).toBe("999.999999ms");
+    // The push parser's float accumulation reads this as exactly 1s — and
+    // ITS reading is the pipeline authority the canonical spelling predicts.
+    // (Go itself would truncate to 999999999ns; see parseDuration's
+    // authority-scoping note for why push wins for fractional arithmetic.)
+    expect(projected.auth?.sessions?.timebox).toBe("1s");
   });
 
   test("hour values quantized from integer-nanosecond durations round-trip exactly", () => {
@@ -2114,5 +2118,14 @@ describe("review round: unified snapshot, exact scaling, signed frequencies, end
     const result = fromApiProjectConfig({ auth: { sessions_timebox: ceilingHours } });
     expect(typeof result.auth?.sessions?.timebox).toBe("string");
     expect(result.auth?.sessions?.timebox).not.toContain("e");
+  });
+});
+
+describe("review round: fractional-addition exactness (CLI-2230)", () => {
+  test("a fractional addition that rounds onto a large whole component stays verbatim", () => {
+    const projected = fromConfigDocument({
+      auth: { sessions: { timebox: "9000000000000.001ms" } },
+    });
+    expect(projected.auth?.sessions?.timebox).toBe("9000000000000.001ms");
   });
 });
