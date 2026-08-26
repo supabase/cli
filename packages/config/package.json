@@ -47,14 +47,5 @@
     "@effect/platform-node": {
       "optional": true
     }
-  },
-  "nx": {
-    "targets": {
-      "build": {
-        "outputs": [
-          "{projectRoot}/dist"
-        ]
-      }
-    }
   }
 }

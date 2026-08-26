@@ -2,8 +2,8 @@
 
 This repository keeps one local Nx inference plugin for the Go CLI sidecar.
 TypeScript workspaces declare their `types:check` scripts explicitly, and
-Turbo orchestrates the repository quality checks. Nx is retained for the CLI
-build and live-test graph.
+Turbo orchestrates repository build, generation, and quality checks. Nx is
+retained for live and auxiliary workflows and dependency inspection.
 
 ## Current plugin
 
@@ -17,13 +17,14 @@ default binary output is `supabase-go`.
 
 | Target       | Command                          | Cached |
 | ------------ | -------------------------------- | ------ |
-| `build`      | `go build -o supabase-go .`      | Yes    |
+| `build`      | `go build -o supabase-go .`      | No     |
 | `lint:check` | `golangci-lint run --timeout 5m` | Yes    |
 | `lint:fix`   | `golangci-lint run --fix`        | No     |
 
 These are the plugin's inferred defaults. The explicit package scripts take
-precedence in the final Nx target configuration; Turbo's cache policy is
-defined in `turbo.json`.
+precedence in the final Nx target configuration, and the retained Nx build
+bridge is uncached so live runs always prepare fresh artifacts. Turbo's cache
+policy for ordinary builds is defined in `turbo.json`.
 
 The same Go lint commands are also declared in `apps/cli-go/package.json` so
 they can be invoked directly and by Turbo quality workflows.
@@ -36,10 +37,11 @@ To see the Go project's inferred Nx targets and their configuration:
 nx show project cli-go
 ```
 
-Build and live workflows can invoke the inferred targets through Nx:
+Use Turbo for builds and generation; use Nx for the retained live workflow:
 
 ```sh
-nx run cli-go:build
+pnpm exec turbo run @supabase/cli-go#build
+pnpm exec turbo run supabase#build
 nx run supabase:test:live
 ```
 

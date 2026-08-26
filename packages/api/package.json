@@ -32,19 +32,5 @@
     "@vitest/coverage-istanbul": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
-  },
-  "nx": {
-    "targets": {
-      "generate": {
-        "executor": "nx:run-commands",
-        "options": {
-          "command": "pnpm run generate",
-          "cwd": "{projectRoot}"
-        },
-        "outputs": [
-          "{projectRoot}/src/generated"
-        ]
-      }
-    }
   }
 }

@@ -172,7 +172,7 @@ jobs:
       # binary in `apps/cli/dist/`. Build the CLI explicitly before invoking
       # every package-local e2e suite.
       - name: Build CLI
-        run: pnpm exec nx run supabase:build
+        run: pnpm exec turbo run supabase#build
 
       - name: Run end-to-end tests
         run: pnpm exec turbo run test:e2e:run --only --concurrency=1 -- --shard=${{ matrix.shard }}/3
