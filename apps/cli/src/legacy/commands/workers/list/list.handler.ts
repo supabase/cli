@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { renderGlamourTable } from "../../../output/legacy-glamour-table.ts";
-import { legacyEmitWorkersMachineOutput } from "../workers.output.ts";
+import { legacyEmitWorkersMachineOutput, legacyRejectWorkersEnvOutput } from "../workers.output.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { formatApiSize } from "../../../../shared/workers/worker-runtimes.ts";
@@ -97,6 +97,11 @@ export const legacyWorkersList = Effect.fn("legacy.workers.list")(function* (
 
   yield* Effect.gen(function* () {
     const project = yield* legacyLoadWorkersProject();
+
+    // Up front, like the rest of the family: this payload always carries a
+    // `workers` array, so `-o env` can never encode it, and finding that out at
+    // emit time means failing after the fetch has already been paid for.
+    yield* legacyRejectWorkersEnvOutput();
 
     const fetching = yield* output.task("Fetching workers...");
     const deployed = yield* listWorkers(api, projectRef).pipe(

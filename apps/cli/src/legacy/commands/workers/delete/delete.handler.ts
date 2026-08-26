@@ -4,6 +4,7 @@ import { legacyAqua } from "../../../shared/legacy-colors.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import {
   legacyEmitWorkersMachineOutput,
+  legacyRejectWorkersEnvOutput,
   legacyWorkersMachineOutputRequested,
 } from "../workers.output.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
@@ -67,6 +68,11 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
     const project = yield* legacyLoadWorkersProject();
     const name = yield* legacyValidateWorkerName(flags.name);
     const worker = yield* legacyDescribeWorkerForReporting(project, name);
+
+    // Before the first API call, not at emit time: the emit branch is reached
+    // *after* the DELETE, so `--yes -o env` deleted the worker and only then
+    // exited non-zero with no payload — which a script reads as a failed delete.
+    yield* legacyRejectWorkersEnvOutput();
 
     const fetching = yield* output.task("Fetching worker...");
     const found = yield* getWorker(api, projectRef, name).pipe(

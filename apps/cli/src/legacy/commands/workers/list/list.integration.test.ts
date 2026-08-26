@@ -200,9 +200,9 @@ describe("legacy workers list", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  it.live("refuses -o env, which cannot represent the worker list", () => {
+  it.live("refuses -o env before making any request at all", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({
+    const { layer, http } = setupLegacyWorkers({
       workdir: repo.dir,
       goOutput: "env",
       routes: { [listRoute]: { status: 200, body: { data: [] } } },
@@ -212,6 +212,7 @@ describe("legacy workers list", () => {
       const error = yield* legacyWorkersList({ projectRef: Option.none() }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(LegacyWorkersEnvNotSupportedError);
+      expect(http.routeKeys).toEqual([]);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 

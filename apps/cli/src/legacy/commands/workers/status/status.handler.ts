@@ -1,7 +1,7 @@
 import { Effect, Option } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
-import { legacyEmitWorkersMachineOutput } from "../workers.output.ts";
+import { legacyEmitWorkersMachineOutput, legacyRejectWorkersEnvOutput } from "../workers.output.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { displayPath } from "../../../../shared/workers/worker-paths.ts";
@@ -46,6 +46,10 @@ export const legacyWorkersStatus = Effect.fn("legacy.workers.status")(function* 
     const project = yield* legacyLoadWorkersProject();
     const name = yield* legacyValidateWorkerName(flags.name);
     const worker = yield* legacyDescribeWorkerForReporting(project, name);
+
+    // Up front, like the rest of the family: discovering an unencodable format
+    // at emit time means failing after the fetch has already been paid for.
+    yield* legacyRejectWorkersEnvOutput();
 
     const fetching = yield* output.task("Fetching worker...");
     const found = yield* getWorker(api, projectRef, name).pipe(

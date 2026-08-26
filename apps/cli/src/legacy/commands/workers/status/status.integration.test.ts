@@ -13,6 +13,7 @@ import {
   InvalidWorkerNameError,
   WorkerNotDeployedError,
 } from "../../../../shared/workers/workers.errors.ts";
+import { LegacyWorkersEnvNotSupportedError } from "../workers.errors.ts";
 import { legacyWorkersStatus } from "./status.handler.ts";
 
 const CONFIG = `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsize = "2gb"\n`;
@@ -348,6 +349,24 @@ describe("legacy workers status", () => {
 
       expect(out.stdoutText).toContain("active");
       expect(http.routeKeys).toEqual([`GET ${workersRoute("/root")}`]);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("refuses -o env before making any request at all", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      goOutput: "env",
+      routes: { [getRoute]: { status: 200, body: { data: workerResource({ name: "api" }) } } },
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() }).pipe(
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(LegacyWorkersEnvNotSupportedError);
+      expect(http.routeKeys).toEqual([]);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 

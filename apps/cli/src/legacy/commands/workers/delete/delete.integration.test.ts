@@ -15,6 +15,7 @@ import {
   WorkerNotDeployedError,
   WorkersApiUnexpectedStatusError,
 } from "../../../../shared/workers/workers.errors.ts";
+import { LegacyWorkersEnvNotSupportedError } from "../workers.errors.ts";
 import { legacyWorkersDelete } from "./delete.handler.ts";
 
 const CONFIG = `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsize = "2gb"\n`;
@@ -72,6 +73,29 @@ describe("legacy workers delete", () => {
       expect(existsSync(join(repo.dir, "supabase", "workers", "api", "index.js"))).toBe(true);
       expect(readFileSync(join(repo.dir, "supabase", "config.toml"), "utf8")).toBe(CONFIG);
       expect(out.stdoutText).toContain("supabase workers push api");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The refusal used to live at emit time, which on this command is *after* the
+  // DELETE: `--yes -o env` removed the worker and then exited non-zero with no
+  // payload, which a script reads as "the delete failed" and may retry.
+  it.live("refuses -o env before deleting anything", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes,
+      yes: true,
+      goOutput: "env",
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* legacyWorkersDelete({
+        name: "api",
+        projectRef: Option.none(),
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(LegacyWorkersEnvNotSupportedError);
+      expect(http.routeKeys).toEqual([]);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
