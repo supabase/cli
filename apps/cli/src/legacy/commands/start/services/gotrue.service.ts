@@ -54,6 +54,7 @@ import {
 import { LEGACY_DEFAULT_SIGNING_KEY } from "../../../shared/legacy-go-jwt.ts";
 import type { LegacyResolvedAuthEmail } from "../../../shared/legacy-local-config-values.ts";
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
+import { legacyUsesSlimRuntime } from "../../../shared/db-bootstrap/slim-runtime.ts";
 import {
   legacyStartInternalDbPassword,
   legacyStartInternalDbUrl,
@@ -645,6 +646,7 @@ export function legacyBuildGotrueContainerSpec(
   const dbHost = legacyServiceContainerName("db", input.projectId);
   const dbPassword = legacyStartInternalDbPassword(input.dbUrl);
   const env = legacyBuildGotrueEnv({ ...input.env, dbHost, dbPassword });
+  const slim = legacyUsesSlimRuntime(input.image);
 
   return {
     image: input.image,
@@ -652,19 +654,25 @@ export function legacyBuildGotrueContainerSpec(
     env,
     binds: [],
     exposedPorts: [{ containerPort: LEGACY_GOTRUE_PORT }],
-    healthcheck: {
-      test: [
-        "CMD",
-        "wget",
-        "--no-verbose",
-        "--tries=1",
-        "--spider",
-        `http://127.0.0.1:${LEGACY_GOTRUE_PORT}/health`,
-      ],
-      intervalSeconds: 10,
-      timeoutSeconds: 2,
-      retries: 3,
-    },
+    // Distroless slim auth has no wget/curl/sh. Omitting the Docker healthcheck
+    // makes `legacyCheckContainerReady` treat `Running` as ready (same as PostgREST).
+    ...(slim
+      ? {}
+      : {
+          healthcheck: {
+            test: [
+              "CMD",
+              "wget",
+              "--no-verbose",
+              "--tries=1",
+              "--spider",
+              `http://127.0.0.1:${LEGACY_GOTRUE_PORT}/health`,
+            ],
+            intervalSeconds: 10,
+            timeoutSeconds: 2,
+            retries: 3,
+          },
+        }),
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
     networkAliases: [LEGACY_GOTRUE_CONTAINER_SUFFIX],

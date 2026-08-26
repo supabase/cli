@@ -37,8 +37,9 @@
 import type { CliConfig } from "@supabase/config";
 
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
-import { ramInBytes } from "../../../shared/legacy-size-units.ts";
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
+import { legacyUsesSlimRuntime } from "../../../shared/db-bootstrap/slim-runtime.ts";
+import { ramInBytes } from "../../../shared/legacy-size-units.ts";
 import { legacyEnvOrDefault } from "../lib/legacy-env-or-default.ts";
 import {
   legacyStartInternalDbUrl,
@@ -227,21 +228,27 @@ export function legacyBuildStorageContainerSpec(
     containerName,
     env,
     binds: [`${containerName}:${LEGACY_STORAGE_DOCKER_PATH}`],
-    healthcheck: {
-      // "For some reason, localhost resolves to IPv6 address on GitPod which breaks
-      // healthcheck." — IPv4 loopback pinned.
-      test: [
-        "CMD",
-        "wget",
-        "--no-verbose",
-        "--tries=1",
-        "--spider",
-        "http://127.0.0.1:5000/status",
-      ],
-      intervalSeconds: 10,
-      timeoutSeconds: 2,
-      retries: 3,
-    },
+    // Distroless slim storage has no /bin/sh; Docker CLI healthchecks are always
+    // CMD-SHELL. Omitting makes `legacyCheckContainerReady` treat Running as ready.
+    ...(legacyUsesSlimRuntime(input.image)
+      ? {}
+      : {
+          healthcheck: {
+            // "For some reason, localhost resolves to IPv6 address on GitPod which breaks
+            // healthcheck." — IPv4 loopback pinned.
+            test: [
+              "CMD",
+              "wget",
+              "--no-verbose",
+              "--tries=1",
+              "--spider",
+              "http://127.0.0.1:5000/status",
+            ],
+            intervalSeconds: 10,
+            timeoutSeconds: 2,
+            retries: 3,
+          },
+        }),
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
     // The Storage network alias.

@@ -1,10 +1,14 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   legacyBuildStudioContainerSpec,
   legacyBuildStudioEnv,
   type LegacyBuildStudioEnvInput,
 } from "./studio.service.ts";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 const baseEnvInput: LegacyBuildStudioEnvInput = {
   dbPassword: "postgres",
@@ -168,5 +172,14 @@ describe("legacyBuildStudioContainerSpec", () => {
     });
 
     expect(spec.binds).toEqual(["/project/supabase/snippets:/project/supabase/snippets:rw"]);
+  });
+
+  test("omits the Docker healthcheck on a slim distroless studio image", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    const spec = legacyBuildStudioContainerSpec({
+      ...baseSpecInput,
+      image: "ghcr.io/supabase/cli/studio:2026.08.17-sha-0c1da8f",
+    });
+    expect(spec.healthcheck).toBeUndefined();
   });
 });

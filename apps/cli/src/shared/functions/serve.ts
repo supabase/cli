@@ -76,6 +76,7 @@ import {
 } from "./functions-docker.ts";
 import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
 import { edgeRuntimeImage, resolveEdgeRuntimeVersionPin } from "./functions.shared.ts";
+import { usesSlimImageRuntime } from "../services/slim-images.ts";
 const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 const defaultCliConfig = decodeCliConfig({});
 
@@ -1767,6 +1768,14 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         ...buildFunctionsServeInspectArgs(input.inspectMode, input.inspectMain),
         ...(input.debug ? ["--verbose"] : []),
       ];
+      const slimEdgeRuntime = usesSlimImageRuntime(input.image);
+      if (slimEdgeRuntime && dockerMultilineEnvScript !== undefined) {
+        return yield* Effect.fail(
+          new Error(
+            "SUPABASE_USE_SLIM_IMAGES cannot source multiline function secrets: the slim edge-runtime image has no shell. Unset the flag, or remove newline-containing values from the functions env file.",
+          ),
+        );
+      }
       const serveMainTemplate = yield* Effect.promise(() => getLegacyFunctionsServeMainTemplate());
       // Streamed in via `docker cp` between create and start: embedding the template in the
       // `sh -c` argv hits Windows ENAMETOOLONG (#5711), and a single-file host bind mounts as
@@ -1804,11 +1813,11 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         ...(input.inspectMode === undefined
           ? []
           : ["-p", `${input.config.edgeRuntimeInspectorPort}:${dockerRuntimeInspectorPort}`]),
-        "--entrypoint",
-        "sh",
+        ...(slimEdgeRuntime ? [] : ["--entrypoint", "sh"]),
         input.image,
-        "-c",
-        buildServeEntrypointCommand(runtimeCommand, dockerMultilineEnvScript?.scriptPath),
+        ...(slimEdgeRuntime
+          ? runtimeCommand.slice(1)
+          : ["-c", buildServeEntrypointCommand(runtimeCommand, dockerMultilineEnvScript?.scriptPath)]),
       ];
 
       // The container must exist for `docker cp` to have a target, and must not be running

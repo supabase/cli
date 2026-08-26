@@ -1,11 +1,15 @@
 import { join } from "node:path";
 
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   legacyBuildLogflareContainerSpec,
   type LegacyLogflareContainerSpecInput,
 } from "./logflare.service.ts";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 const base: LegacyLogflareContainerSpecInput = {
   image: "supabase/logflare:1.0.0",
@@ -116,5 +120,24 @@ describe("legacyBuildLogflareContainerSpec", () => {
       workdir: "/workdir",
     });
     expect(spec.binds).toEqual([`${join("/workdir", "")}:/opt/app/rel/logflare/bin/gcloud.json`]);
+  });
+
+  test("keeps the image entrypoint and uses busybox wget on a slim analytics image", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    const spec = legacyBuildLogflareContainerSpec({
+      ...base,
+      image: "ghcr.io/supabase/cli/analytics:v1.50.4",
+    });
+    expect(spec.entrypoint).toBeUndefined();
+    expect(spec.cmd).toBeUndefined();
+    expect(spec.healthcheck?.test).toEqual([
+      "CMD",
+      "/bin/busybox",
+      "wget",
+      "-q",
+      "--spider",
+      "http://127.0.0.1:4000/health",
+    ]);
+    expect(spec.healthcheck?.startPeriodSeconds).toBe(10);
   });
 });

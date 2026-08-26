@@ -107,6 +107,13 @@ Exception: with `SUPABASE_USE_SLIM_IMAGES` enabled the Postgres container keeps 
 slim image's own entrypoint — settings travel as `-c` argv and the bootstrap schema is
 delivered via `docker cp` alongside the root key instead (see `db start`'s
 SIDE_EFFECTS.md, which documents the slim container shape both commands share).
+The same flag also keeps Vector's image entrypoint (`vector --config /etc/vector/vector.yaml`)
+and copies `vector.yaml` via `secretFiles` instead of a `sh` heredoc, because the slim Vector
+image has no shell-based entrypoint override. Distroless slim services with no `/bin/sh`
+(auth, storage, studio, pg-meta) omit Docker healthchecks — `docker create --health-cmd` is
+always `CMD-SHELL` — and `legacyCheckContainerReady` treats `Running` as ready. Realtime and
+analytics keep a busybox `wget --spider` probe; slim Edge Runtime is started without
+`--entrypoint sh` (the wrapped binary has no shell).
 Kong's `kong.yml`/TLS cert/TLS key, Postgres's `pgsodium_root.key`, and Supavisor's
 `pooler_tenant.exs` DO carry secret content (a service-role-key-derived bearer/query
 key, TLS private key material, and the DB password respectively). Since

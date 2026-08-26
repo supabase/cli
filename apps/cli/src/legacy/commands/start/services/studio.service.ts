@@ -24,6 +24,7 @@ import { join } from "node:path";
 
 import { legacyToDockerPath } from "../../../shared/legacy-docker-path.ts";
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
+import { legacyUsesSlimRuntime } from "../../../shared/db-bootstrap/slim-runtime.ts";
 
 /** Container-internal port Studio listens on — hardcoded, never configurable. */
 const STUDIO_CONTAINER_PORT = 3000;
@@ -186,15 +187,21 @@ export function legacyBuildStudioContainerSpec(
     containerName: input.containerName,
     env: legacyBuildStudioEnv({ ...input.env, containerSnippetsPath }),
     binds,
-    healthcheck: {
-      test: [
-        "CMD-SHELL",
-        `node --eval="fetch('http://127.0.0.1:${STUDIO_CONTAINER_PORT}/api/platform/profile').then((r) => {if (!r.ok) throw new Error(r.status)})"`,
-      ],
-      intervalSeconds: 10,
-      timeoutSeconds: 2,
-      retries: 3,
-    },
+    // Distroless slim studio has no /bin/sh; Docker CLI healthchecks are always
+    // CMD-SHELL. Omitting makes `legacyCheckContainerReady` treat Running as ready.
+    ...(legacyUsesSlimRuntime(input.image)
+      ? {}
+      : {
+          healthcheck: {
+            test: [
+              "CMD-SHELL",
+              `node --eval="fetch('http://127.0.0.1:${STUDIO_CONTAINER_PORT}/api/platform/profile').then((r) => {if (!r.ok) throw new Error(r.status)})"`,
+            ],
+            intervalSeconds: 10,
+            timeoutSeconds: 2,
+            retries: 3,
+          },
+        }),
     ports: [{ hostPort: String(input.port), containerPort: String(STUDIO_CONTAINER_PORT) }],
     restartPolicy: "unless-stopped",
     networkId: input.networkId,

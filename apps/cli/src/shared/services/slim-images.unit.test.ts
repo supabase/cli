@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { dockerfileServiceImages } from "./dockerfile-images.ts";
-import { slimImageForAlias, slimImagesEnabled, toSlimImage } from "./slim-images.ts";
+import {
+  slimImageForAlias,
+  slimImagesEnabled,
+  toSlimImage,
+  usesSlimImageRuntime,
+} from "./slim-images.ts";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -113,5 +118,18 @@ describe("slimImageForAlias", () => {
     expect(slimImageForAlias("pg", "supabase/postgres:17.6.1.165")).toBe(
       "ghcr.io/supabase/cli/postgres:17.6.1.165",
     );
+  });
+});
+
+describe("usesSlimImageRuntime", () => {
+  it("is false while the flag is off even for a ghcr ref", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
+    expect(usesSlimImageRuntime("ghcr.io/supabase/cli/postgres:17.6.1.165")).toBe(false);
+  });
+
+  it("is true only when the flag is on and the ref is slim", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    expect(usesSlimImageRuntime("ghcr.io/supabase/cli/auth:v2.196.0")).toBe(true);
+    expect(usesSlimImageRuntime("supabase/gotrue:v2.196.0")).toBe(false);
   });
 });
