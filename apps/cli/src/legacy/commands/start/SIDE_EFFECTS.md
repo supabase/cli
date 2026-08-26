@@ -116,7 +116,9 @@ always `CMD-SHELL` — and `legacyCheckContainerReady` treats `Running` as ready
 analytics keep a busybox `wget --spider` probe; slim Edge Runtime is started without
 `--entrypoint sh` (the wrapped binary has no shell) and the main-service template is
 copied to `/tmp/index.ts` (`--main-service=/tmp`) because the image runs as uid 65532
-and cannot read `/root`. Slim Postgres's `/etc/postgresql.schema.sql` postinit also
+and cannot read `/root`. Slim Storage mounts its named volume at `/home/nonroot`
+(owned by uid 65532 in the image) instead of `/mnt`, which Docker would create
+root-owned. Slim Postgres's `/etc/postgresql.schema.sql` postinit also
 runs `ALTER ROLE postgres WITH SUPERUSER` plus `CREATE EXTENSION vector` as
 `supabase_admin` after bundled migrations demote `postgres` — storage-api's
 vector-bucket migrations create that extension as the `postgres` role.

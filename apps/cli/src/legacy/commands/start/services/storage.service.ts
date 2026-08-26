@@ -48,6 +48,14 @@ import {
 
 /** Both the container's `FILE_STORAGE_BACKEND_PATH` and its named-volume mount target. */
 const LEGACY_STORAGE_DOCKER_PATH = "/mnt";
+/**
+ * Distroless slim storage runs as uid 65532. `/mnt` does not exist in the
+ * image, so a named volume mounted there is created root-owned and
+ * `mkdir /mnt/stub` fails with EACCES. `/home/nonroot` is owned by that user;
+ * Docker copies the image directory into an empty named volume, so the
+ * tenant dir is writable.
+ */
+const LEGACY_STORAGE_SLIM_DOCKER_PATH = "/home/nonroot";
 
 export interface LegacyStorageVectorEnvInput {
   /** The `db` container's own Docker name (`legacyServiceContainerName("db", projectId)`). */
@@ -197,40 +205,46 @@ export interface LegacyStorageContainerSpecInput {
 
 /**
  * Builds the `docker create` spec for the Storage container. `binds` mounts
- * the container's own named volume at `/mnt` — no `ports`/`exposedPorts`,
- * Storage is reached only via its Docker network alias.
+ * the container's own named volume at `/mnt` (docker.io) or `/home/nonroot`
+ * (slim, uid 65532) — no `ports`/`exposedPorts`, Storage is reached only via
+ * its Docker network alias.
  */
 export function legacyBuildStorageContainerSpec(
   input: LegacyStorageContainerSpecInput,
 ): LegacyStartContainerSpec {
   const containerName = legacyServiceContainerName("storage", input.projectId);
-  const env = legacyBuildStorageEnv({
-    targetMigration: input.targetMigration,
-    anonKey: input.anonKey,
-    serviceRoleKey: input.serviceRoleKey,
-    jwtSecret: input.jwtSecret,
-    jwks: input.jwks,
-    dbHost: legacyServiceContainerName("db", input.projectId),
-    dbPassword: legacyStartInternalDbPassword(input.dbUrl),
-    fileSizeLimit: input.fileSizeLimit,
-    s3Region: input.s3Region,
-    s3AccessKeyId: input.s3AccessKeyId,
-    s3SecretAccessKey: input.s3SecretAccessKey,
-    imageTransformationEnabled: input.imageTransformationEnabled,
-    imgproxyHost: legacyServiceContainerName("imgproxy", input.projectId),
-    s3ProtocolEnabled: input.s3ProtocolEnabled,
-    vectorBucketsEnabled: input.vectorBucketsEnabled,
-    projectEnvValues: input.projectEnvValues,
-  });
+  const slim = legacyUsesSlimRuntime(input.image);
+  const storagePath = slim ? LEGACY_STORAGE_SLIM_DOCKER_PATH : LEGACY_STORAGE_DOCKER_PATH;
+  const env = {
+    ...legacyBuildStorageEnv({
+      targetMigration: input.targetMigration,
+      anonKey: input.anonKey,
+      serviceRoleKey: input.serviceRoleKey,
+      jwtSecret: input.jwtSecret,
+      jwks: input.jwks,
+      dbHost: legacyServiceContainerName("db", input.projectId),
+      dbPassword: legacyStartInternalDbPassword(input.dbUrl),
+      fileSizeLimit: input.fileSizeLimit,
+      s3Region: input.s3Region,
+      s3AccessKeyId: input.s3AccessKeyId,
+      s3SecretAccessKey: input.s3SecretAccessKey,
+      imageTransformationEnabled: input.imageTransformationEnabled,
+      imgproxyHost: legacyServiceContainerName("imgproxy", input.projectId),
+      s3ProtocolEnabled: input.s3ProtocolEnabled,
+      vectorBucketsEnabled: input.vectorBucketsEnabled,
+      projectEnvValues: input.projectEnvValues,
+    }),
+    FILE_STORAGE_BACKEND_PATH: storagePath,
+  };
 
   return {
     image: input.image,
     containerName,
     env,
-    binds: [`${containerName}:${LEGACY_STORAGE_DOCKER_PATH}`],
+    binds: [`${containerName}:${storagePath}`],
     // Distroless slim storage has no /bin/sh; Docker CLI healthchecks are always
     // CMD-SHELL. Omitting makes `legacyCheckContainerReady` treat Running as ready.
-    ...(legacyUsesSlimRuntime(input.image)
+    ...(slim
       ? {}
       : {
           healthcheck: {
