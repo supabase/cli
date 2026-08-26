@@ -266,7 +266,13 @@ export const RemoteStack = {
         const { client } = yield* makeRemoteRpcClient(endpoint, options).pipe(
           Scope.provide(rpcScope),
         );
-        const closeRpcScope = yield* Effect.cached(Scope.close(rpcScope, Exit.void));
+        // Scope.close marks the scope closed before its finalizers complete,
+        // while Effect.cached memoizes every Exit. Keep the first close
+        // uninterruptible so cancellation cannot strand unfinished finalizers
+        // behind a permanently cached interruption.
+        const closeRpcScope = yield* Effect.cached(
+          Effect.uninterruptible(Scope.close(rpcScope, Exit.void)),
+        );
         const scopedRpcStream = <A, E, R>(stream: Stream.Stream<A, E, R>) =>
           stream.pipe(Stream.provideService(Scope.Scope, rpcScope));
         const call = <A, E extends StackRpcFailure, R>(
@@ -285,21 +291,13 @@ export const RemoteStack = {
           );
         const requestStop = () => {
           const owner = options.owner;
-          // Closing the RPC scope is best-effort cleanup. The control-plane
-          // stop is fenced to the session captured during the owner handshake
-          // and must still be sent when a stream/client finalizer fails. The
-          // cleanup handoff is best-effort and interruptible so cancellation
-          // cannot pin the caller behind the control-plane stop timeout.
+          // Observe foreign finalizer failures so they cannot suppress the
+          // fenced control-plane stop. The network request remains
+          // interruptible and bounded by the control client.
           return Effect.uninterruptibleMask((restore) =>
-            Effect.exit(restore(closeRpcScope)).pipe(
+            Effect.exit(closeRpcScope).pipe(
               Effect.andThen(
-                restore(
-                  control.stopSession(endpoint, owner.ownershipId, owner.ownerSessionId),
-                ).pipe(
-                  Effect.catchTag("ControlMaintenanceBusyError", (error) =>
-                    Effect.fail(new ControlProtocolError({ endpoint, cause: error })),
-                  ),
-                ),
+                restore(control.stopSession(endpoint, owner.ownershipId, owner.ownerSessionId)),
               ),
             ),
           );

@@ -216,8 +216,6 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
     return;
   }
 
-  const summary = yield* resolveConfiguredSummary(summaryInput);
-
   const stackResult = yield* Effect.scoped(
     Effect.gen(function* () {
       const context = yield* Layer.build(layerResult.layer);
@@ -231,10 +229,15 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
     ),
   );
   if (Predicate.isTagged(stackResult, "upgrade")) {
+    // Layer construction performs the second owner/version handshake. As with
+    // the initial connect path, render the daemon's managed document directly
+    // so an incompatible checkout config cannot prevent upgrade guidance.
+    const summary = yield* resolveStackSummary(summaryInput);
     yield* renderUpgradeRequiredStatus({ summary, error: stackResult.error });
     return;
   }
 
+  const summary = yield* resolveConfiguredSummary(summaryInput);
   const { info, services } = stackResult;
   const serviceVersionContext = yield* resolveServiceVersionContext(
     [],

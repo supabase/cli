@@ -123,7 +123,6 @@ export class DaemonUpgradeRequired extends Data.TaggedError("DaemonUpgradeRequir
 
 export class SupervisorStartError extends Data.TaggedError("SupervisorStartError")<{
   readonly message: string;
-  readonly reason?: "owner-stopped" | "build-mismatch";
 }> {}
 
 export class UpgradePreflightError extends Data.TaggedError("UpgradePreflightError")<{

@@ -46,6 +46,7 @@ const closeControlServer = (
     }
     server.close((error) => resume(error === undefined ? Effect.void : Effect.die(error)));
     interruptRpcRequests();
+    server.closeIdleConnections();
     return Effect.void;
   });
 

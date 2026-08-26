@@ -1,4 +1,16 @@
-import { Cause, Context, Deferred, Effect, Exit, Fiber, Match, Queue, Ref, Scope } from "effect";
+import {
+  Cause,
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  Fiber,
+  Match,
+  Queue,
+  Ref,
+  Scope,
+  Stream,
+} from "effect";
 import {
   CONTROL_PROTOCOL,
   CONTROL_PROTOCOL_VERSION,
@@ -38,13 +50,14 @@ export interface SupervisorSessionController {
   ) => Effect.Effect<{ readonly started: boolean }, unknown, Exclude<R, Scope.Scope>>;
 }
 
-const firstFailure = (
+const cleanupFailures = (
   exits: ReadonlyArray<Exit.Exit<void, unknown>>,
-): Cause.Cause<unknown> | undefined => {
+): ReadonlyArray<Cause.Cause<unknown>> => {
+  const failures: Array<Cause.Cause<unknown>> = [];
   for (const exit of exits) {
-    if (Exit.isFailure(exit)) return exit.cause;
+    if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)) failures.push(exit.cause);
   }
-  return undefined;
+  return failures;
 };
 
 export class SupervisorSession extends Context.Service<
@@ -56,6 +69,9 @@ export class SupervisorSession extends Context.Service<
     readonly interruptWhenStopping: <A, E, R>(
       effect: Effect.Effect<A, E, R>,
     ) => Effect.Effect<A, E | StackUnavailableError, R>;
+    readonly interruptStreamWhenStopping: <A, E, R>(
+      stream: Stream.Stream<A, E, R>,
+    ) => Stream.Stream<A, E, R>;
     readonly submitShutdown: Effect.Effect<void, never>;
     readonly submitShutdownWithIntent: (intent: ControlStopIntent) => Effect.Effect<void, never>;
   }
@@ -102,6 +118,8 @@ export class SupervisorSession extends Context.Service<
               Effect.andThen(Effect.fail(new StackUnavailableError({ phase: "stopping" }))),
             ),
           ),
+        interruptStreamWhenStopping: (stream) =>
+          stream.pipe(Stream.interruptWhen(Deferred.await(stopAccepted))),
         submitShutdown: Queue.offer(commands, { _tag: "StopRequested", intent: "explicit" }).pipe(
           Effect.andThen(Deferred.await(stopAccepted)),
         ),
@@ -113,113 +131,171 @@ export class SupervisorSession extends Context.Service<
       const run = <A, E, R>(
         runInput: SupervisorSessionRunInput<A, E, R>,
       ): Effect.Effect<{ readonly started: boolean }, unknown, Exclude<R, Scope.Scope>> =>
-        Effect.gen(function* () {
-          const runtimeScope = yield* Scope.fork(sessionScope);
-          const startupResult = Deferred.makeUnsafe<Exit.Exit<A, E>>();
-          const startupFiber = yield* Effect.uninterruptibleMask((restore) =>
-            restore(runInput.startup(runtimeScope)).pipe(
-              Scope.provide(runtimeScope),
-              Effect.exit,
-              Effect.flatMap((exit) =>
-                Deferred.succeed(startupResult, exit).pipe(
-                  Effect.andThen(Queue.offer(commands, { _tag: "StartupFinished" })),
+        Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            const runtimeScope = yield* Scope.fork(sessionScope);
+            const startupResult = Deferred.makeUnsafe<Exit.Exit<A, E>>();
+            const startupFiber = yield* Effect.uninterruptibleMask((restore) =>
+              restore(runInput.startup(runtimeScope)).pipe(
+                Scope.provide(runtimeScope),
+                Effect.exit,
+                Effect.flatMap((exit) =>
+                  Deferred.succeed(startupResult, exit).pipe(
+                    Effect.andThen(Queue.offer(commands, { _tag: "StartupFinished" })),
+                  ),
                 ),
               ),
-            ),
-          ).pipe(Effect.forkChild({ startImmediately: true }));
-          let runtime: A | undefined;
-          let started = false;
+            ).pipe(Effect.forkChild({ startImmediately: true }));
+            let runtime: A | undefined;
+            let started = false;
 
-          const cleanup = (terminal: Effect.Effect<void, unknown>) =>
-            Effect.uninterruptible(
-              Effect.gen(function* () {
-                yield* Deferred.succeed(stopAccepted, undefined);
-                const stack = runtime === undefined ? undefined : runInput.stack(runtime);
-                const stopExit = stack === undefined ? Exit.void : yield* Effect.exit(stack.stop());
-                const disposeExit =
-                  stack === undefined ? Exit.void : yield* Effect.exit(stack.dispose());
-                const scopeExit = yield* Effect.exit(Scope.close(runtimeScope, Exit.void));
-                const terminalExit = yield* Effect.exit(terminal);
-                const closeExit = yield* Effect.exit(runInput.closeOwner);
-                yield* Ref.set(stateRef, { phase: "closed" });
-                yield* Queue.shutdown(commands);
-                const failure = firstFailure([
-                  stopExit,
-                  disposeExit,
-                  scopeExit,
-                  terminalExit,
-                  closeExit,
-                ]);
-                if (failure !== undefined) yield* Effect.failCause(failure);
-              }),
+            type CleanupRequest = Effect.Effect<void, unknown>;
+            const cleanupResult = Deferred.makeUnsafe<Exit.Exit<void, never>>();
+            let cleanupStarted = false;
+            let cleanupRequest: CleanupRequest | undefined;
+            const awaitCleanup = Deferred.await(cleanupResult).pipe(
+              Effect.flatMap((exit) =>
+                Exit.isSuccess(exit) ? Effect.void : Effect.failCause(exit.cause),
+              ),
             );
 
-          while (true) {
-            const command = yield* Queue.take(commands);
-            const outcome = yield* Match.valueTags(command, {
-              StartupFinished: () =>
-                Effect.gen(function* () {
-                  const exit = yield* Deferred.await(startupResult);
-                  if (Exit.isFailure(exit)) {
-                    const detail = runInput.errorDetail(exit.cause);
-                    yield* Ref.set(stateRef, { phase: "failed", detail });
-                    yield* cleanup(runInput.onFailure(detail));
-                    return yield* Effect.failCause(exit.cause);
+            const cleanup = (request: CleanupRequest) =>
+              Effect.uninterruptible(
+                Effect.suspend(() => {
+                  if (cleanupStarted) {
+                    return awaitCleanup;
                   }
-                  runtime = exit.value;
-                  yield* Ref.set(stateRef, { phase: "running", stack: runInput.stack(runtime) });
-                  const runningExit = yield* Effect.exit(runInput.onRunning(runtime));
-                  if (Exit.isFailure(runningExit)) {
-                    const detail = runInput.errorDetail(runningExit.cause);
-                    yield* Ref.set(stateRef, {
-                      phase: "failed",
-                      detail,
-                      stack: runInput.stack(runtime),
-                    });
-                    yield* cleanup(runInput.onFailure(detail));
-                    return yield* Effect.failCause(runningExit.cause);
-                  }
-                  started = true;
-                  yield* runInput
-                    .awaitDisposed(runtime)
-                    .pipe(
-                      Effect.exit,
-                      Effect.andThen(Queue.offer(commands, { _tag: "RuntimeDisposed" })),
-                      Effect.forkIn(sessionScope),
+                  cleanupStarted = true;
+                  cleanupRequest = request;
+                  return Effect.gen(function* () {
+                    yield* Deferred.succeed(stopAccepted, undefined);
+                    // The startup fiber may have built a runtime without yet
+                    // publishing StartupFinished. Interrupt and join it before
+                    // deriving the stack so every cleanup path owns the value.
+                    yield* Fiber.interrupt(startupFiber);
+                    const startupExit = yield* Deferred.await(startupResult);
+                    if (runtime === undefined && Exit.isSuccess(startupExit)) {
+                      runtime = startupExit.value;
+                    }
+                    const stack = runtime === undefined ? undefined : runInput.stack(runtime);
+                    const stopExit =
+                      stack === undefined ? Exit.void : yield* Effect.exit(stack.stop());
+                    const disposeExit =
+                      stack === undefined ? Exit.void : yield* Effect.exit(stack.dispose());
+                    const scopeExit = yield* Effect.exit(Scope.close(runtimeScope, Exit.void));
+                    const terminalExit = yield* Effect.exit(request);
+                    const closeExit = yield* Effect.exit(runInput.closeOwner);
+                    yield* Ref.set(stateRef, { phase: "closed" });
+                    yield* Queue.shutdown(commands);
+                    const failures = cleanupFailures([
+                      stopExit,
+                      disposeExit,
+                      scopeExit,
+                      terminalExit,
+                      closeExit,
+                    ]);
+                    yield* Effect.forEach(failures, (failure) =>
+                      Effect.logError("Supervisor cleanup failed", Cause.pretty(failure)),
                     );
+                  }).pipe(
+                    Effect.exit,
+                    Effect.flatMap((exit) =>
+                      Deferred.succeed(cleanupResult, exit).pipe(
+                        Effect.andThen(
+                          Exit.isFailure(exit) ? Effect.failCause(exit.cause) : Effect.void,
+                        ),
+                      ),
+                    ),
+                  );
                 }),
-              StopRequested: (command) =>
-                Effect.gen(function* () {
-                  const current = yield* Ref.get(stateRef);
-                  const stack = current.phase === "running" ? current.stack : undefined;
-                  yield* Ref.set(stateRef, {
-                    phase: "stopping",
-                    ...(stack === undefined ? {} : { stack }),
-                  });
-                  yield* Deferred.succeed(stopAccepted, undefined);
-                  yield* Fiber.interrupt(startupFiber);
-                  const startupExit = yield* Deferred.await(startupResult);
-                  if (runtime === undefined && Exit.isSuccess(startupExit))
-                    runtime = startupExit.value;
-                  yield* cleanup(runInput.onStopped(command.intent));
-                  return { started };
-                }),
-              RuntimeDisposed: () =>
-                Effect.gen(function* () {
-                  const detail = "Local stack disposed unexpectedly";
-                  const stack = runtime === undefined ? undefined : runInput.stack(runtime);
-                  yield* Ref.set(stateRef, {
-                    phase: "failed",
-                    detail,
-                    ...(stack === undefined ? {} : { stack }),
-                  });
-                  yield* cleanup(runInput.onFailure(detail));
-                  return yield* Effect.fail(new StackUnavailableError({ phase: "failed", detail }));
-                }),
+              );
+
+            yield* Scope.addFinalizer(
+              sessionScope,
+              Effect.suspend(() => cleanup(cleanupRequest ?? runInput.onStopped("explicit"))),
+            );
+
+            const runLoop = Effect.gen(function* () {
+              while (true) {
+                const command = yield* Queue.take(commands);
+                const outcome = yield* Match.valueTags(command, {
+                  StartupFinished: () =>
+                    Effect.gen(function* () {
+                      const exit = yield* Deferred.await(startupResult);
+                      if (Exit.isFailure(exit)) {
+                        const detail = runInput.errorDetail(exit.cause);
+                        yield* Ref.set(stateRef, { phase: "failed", detail });
+                        yield* cleanup(runInput.onFailure(detail));
+                        return yield* Effect.failCause(exit.cause);
+                      }
+                      runtime = exit.value;
+                      yield* Ref.set(stateRef, {
+                        phase: "running",
+                        stack: runInput.stack(runtime),
+                      });
+                      const runningExit = yield* Effect.exit(runInput.onRunning(runtime));
+                      if (Exit.isFailure(runningExit)) {
+                        const detail = runInput.errorDetail(runningExit.cause);
+                        yield* Ref.set(stateRef, {
+                          phase: "failed",
+                          detail,
+                          stack: runInput.stack(runtime),
+                        });
+                        yield* cleanup(runInput.onFailure(detail));
+                        return yield* Effect.failCause(runningExit.cause);
+                      }
+                      started = true;
+                      yield* runInput
+                        .awaitDisposed(runtime)
+                        .pipe(
+                          Effect.exit,
+                          Effect.andThen(Queue.offer(commands, { _tag: "RuntimeDisposed" })),
+                          Effect.forkIn(sessionScope),
+                        );
+                    }),
+                  StopRequested: (command) =>
+                    Effect.gen(function* () {
+                      const current = yield* Ref.get(stateRef);
+                      const stack = current.phase === "running" ? current.stack : undefined;
+                      yield* Ref.set(stateRef, {
+                        phase: "stopping",
+                        ...(stack === undefined ? {} : { stack }),
+                      });
+                      yield* cleanup(runInput.onStopped(command.intent));
+                      return { started };
+                    }),
+                  RuntimeDisposed: () =>
+                    Effect.gen(function* () {
+                      const detail = "Local stack disposed unexpectedly";
+                      const stack = runtime === undefined ? undefined : runInput.stack(runtime);
+                      yield* Ref.set(stateRef, {
+                        phase: "failed",
+                        detail,
+                        ...(stack === undefined ? {} : { stack }),
+                      });
+                      yield* cleanup(runInput.onFailure(detail));
+                      return yield* Effect.fail(
+                        new StackUnavailableError({ phase: "failed", detail }),
+                      );
+                    }),
+                });
+                if (outcome !== undefined) return outcome;
+              }
             });
-            if (outcome !== undefined) return outcome;
-          }
-        });
+
+            return yield* restore(runLoop).pipe(
+              Effect.onExit((exit) => {
+                if (Exit.isSuccess(exit)) return Effect.void;
+                const activeCleanup = cleanupRequest;
+                if (activeCleanup !== undefined) return cleanup(activeCleanup);
+                const request: CleanupRequest = Cause.hasInterruptsOnly(exit.cause)
+                  ? runInput.onStopped("explicit")
+                  : runInput.onFailure(runInput.errorDetail(exit.cause));
+                return cleanup(request);
+              }),
+            );
+          }),
+        );
       return { service, run };
     });
   }

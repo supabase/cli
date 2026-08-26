@@ -48,9 +48,14 @@ Every shutdown source submits to one session actor. The first accepted intent
 wins. Once accepted, the actor
 publishes `stopping`, interrupts and joins startup, attempts runtime stop and
 disposal, closes the runtime scope, persists terminal state, and closes the
-ownership listener last, even when an earlier step fails. It preserves the
-first cleanup failure and its exact `Cause` after all steps have run. Node and
-Bun close listeners gracefully after flushing the
+ownership listener last, even when an earlier step fails. The same idempotent
+cleanup transaction is also registered as the session-scope finalizer, so scope
+closure remains a liveness backstop if the actor fiber exits unexpectedly.
+Explicit stop succeeds after teardown and logs every non-interruption cleanup
+failure; startup and runtime failures retain their original `Cause` after the
+same teardown completes. Active RPC streams observe the actor's stop-accepted
+gate and finish before the listener closes. Node and Bun close listeners
+gracefully after flushing the
 accepted `202`; the stable client drains that response and then polls the exact
 session fence, so listener shutdown cannot be stranded by an unread body.
 Explicit stop intent is persisted before listener release; replacement intent

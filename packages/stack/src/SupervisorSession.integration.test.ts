@@ -68,6 +68,53 @@ const makeSession = async () => {
 };
 
 describe("SupervisorSession", () => {
+  it("runs explicit cleanup when the session is externally interrupted during startup", () =>
+    withSession(async ({ controller }) => {
+      const events: Array<string> = [];
+      const startupEntered = Deferred.makeUnsafe<void>();
+      const run = Effect.runFork(
+        controller.run({
+          startup: () =>
+            Deferred.succeed(startupEntered, undefined).pipe(Effect.andThen(Effect.never)),
+          stack: (runtime: Stack["Service"]) => runtime,
+          awaitDisposed: () => Effect.never,
+          onRunning: () => Effect.void,
+          onStopped: (intent) => Effect.sync(() => events.push(`stopped:${intent}`)),
+          onFailure: () => Effect.sync(() => events.push("failed")),
+          closeOwner: Effect.sync(() => events.push("close-owner")),
+          errorDetail: () => "failed",
+        }),
+      );
+
+      await Effect.runPromise(Deferred.await(startupEntered));
+      await Effect.runPromise(Fiber.interrupt(run));
+      expect(events).toEqual(["stopped:explicit", "close-owner"]);
+      expect(await Effect.runPromise(controller.service.currentState)).toEqual({ phase: "closed" });
+    }));
+
+  it("runs explicit cleanup when the session is externally interrupted while running", () =>
+    withSession(async ({ controller }) => {
+      const events: Array<string> = [];
+      const running = Deferred.makeUnsafe<void>();
+      const stack = makeStack(events);
+      const run = Effect.runFork(
+        controller.run({
+          startup: () => Effect.succeed(stack),
+          stack: (runtime) => runtime,
+          awaitDisposed: () => Effect.never,
+          onRunning: () => Deferred.succeed(running, undefined),
+          onStopped: (intent) => Effect.sync(() => events.push(`stopped:${intent}`)),
+          onFailure: () => Effect.sync(() => events.push("failed")),
+          closeOwner: Effect.sync(() => events.push("close-owner")),
+          errorDetail: () => "failed",
+        }),
+      );
+
+      await Effect.runPromise(Deferred.await(running));
+      await Effect.runPromise(Fiber.interrupt(run));
+      expect(events).toEqual(["stop", "dispose", "stopped:explicit", "close-owner"]);
+    }));
+
   it("acknowledges stop after publishing stopping and closes ownership last", () =>
     withSession(async ({ controller }) => {
       const events: Array<string> = [];
@@ -165,7 +212,7 @@ describe("SupervisorSession", () => {
       ]);
     }));
 
-  it("persists the terminal state and closes ownership when a runtime finalizer defects", () =>
+  it("logs runtime finalizer defects while completing an explicit stop", () =>
     withSession(async ({ controller }) => {
       const events: Array<string> = [];
       const running = Deferred.makeUnsafe<void>();
@@ -189,8 +236,35 @@ describe("SupervisorSession", () => {
       await Effect.runPromise(Deferred.await(running));
       await Effect.runPromise(controller.service.submitShutdown);
       const exit = await Effect.runPromise(Fiber.await(run));
-      expect(Exit.isFailure(exit)).toBe(true);
+      expect(Exit.isSuccess(exit)).toBe(true);
       expect(events).toEqual(["stop", "dispose", "persist-stopped", "close-owner"]);
+    }));
+
+  it("preserves the startup failure when cleanup also defects", () =>
+    withSession(async ({ controller }) => {
+      const events: Array<string> = [];
+      const startupFailure = new Error("startup failed");
+      const exit = await Effect.runPromise(
+        controller
+          .run({
+            startup: () =>
+              Effect.addFinalizer(() => Effect.die("runtime finalizer failed")).pipe(
+                Effect.andThen(Effect.fail(startupFailure)),
+              ),
+            stack: (runtime: Stack["Service"]) => runtime,
+            awaitDisposed: () => Effect.never,
+            onRunning: () => Effect.void,
+            onStopped: () => Effect.void,
+            onFailure: () => Effect.sync(() => events.push("persist-failed")),
+            closeOwner: Effect.sync(() => events.push("close-owner")),
+            errorDetail: () => startupFailure.message,
+          })
+          .pipe(Effect.exit),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(startupFailure);
+      expect(events).toEqual(["persist-failed", "close-owner"]);
     }));
 
   it("acknowledges a stop submitted while terminal cleanup is already running", () =>

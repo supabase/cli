@@ -107,10 +107,14 @@ unexpected runtime disposal submit commands to that actor instead of mutating
 lifecycle state independently. Shutdown publishes `stopping`, interrupts and
 joins startup, stops and disposes any constructed runtime, closes its scope,
 persists the terminal document state, and releases the control listener last.
-Concurrent stop callers join the same actor-owned result. For HTTP stop, Node
-and Bun close the listener gracefully after flushing a successful `202`; the
-stable client consumes that bounded response and polls the exact session fence
-until the owner disappears.
+Concurrent stop callers join the same actor-owned cleanup transaction, which is
+also the session scope's idempotent finalizer. Explicit stops complete after all
+teardown attempts and log cleanup anomalies; startup and runtime failures
+preserve their primary cause. Unary calls and streams observe the same
+stop-accepted gate, so streams finish before listener shutdown. For HTTP stop,
+Node and Bun close the listener gracefully after flushing a successful `202`;
+the stable client consumes that bounded response and polls the exact session
+fence until the owner disappears.
 
 `StackPreparation` resolves independent services with a concurrency cap of four.
 Its closure includes the resources for every public graph dependency a requested

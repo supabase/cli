@@ -1,5 +1,6 @@
-import { Cause, Effect, Exit } from "effect";
-import { createServer, type Server } from "node:http";
+import { Deferred, Cause, Effect, Exit, Predicate } from "effect";
+import { HttpServerResponse } from "effect/unstable/http";
+import { Agent, createServer, get, type Server } from "node:http";
 import type { Socket } from "node:net";
 import { describe, expect, test } from "vitest";
 import {
@@ -83,6 +84,69 @@ const expectTypedFailure = <E extends object>(
 };
 
 describe("Node control transport", () => {
+  test("closes an idle keep-alive RPC socket immediately", async () => {
+    const agent = new Agent({ keepAlive: true, maxSockets: 1 });
+    const closeCompleted = Deferred.makeUnsafe<void>();
+    let closeFiber: Promise<unknown> | undefined;
+    try {
+      const result = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const transport = yield* ControlTransport;
+            const listener = yield* transport.bind(
+              { hostname: "127.0.0.1", port: 0, url: "http://127.0.0.1:0" },
+              () => ({
+                controlProtocol: "supabase-stack-control" as const,
+                controlProtocolVersion: 1 as const,
+                ownershipId: "0".repeat(64),
+                ownerSessionId: "keep-alive-session",
+                kind: "supervisor" as const,
+                state: "running" as const,
+                ready: true,
+                daemonCliVersion: "test",
+              }),
+              () => "accepted",
+              { app: Effect.succeed(HttpServerResponse.text("ok")) },
+            );
+            const address = listener.server.address;
+            if (!Predicate.isTagged(address, "TcpAddress")) throw new Error("expected TCP address");
+            yield* Effect.tryPromise(
+              () =>
+                new Promise<void>((resolve, reject) => {
+                  const request = get(
+                    {
+                      host: "127.0.0.1",
+                      port: address.port,
+                      path: "/rpc",
+                      agent,
+                    },
+                    (response: import("node:http").IncomingMessage) => {
+                      response.resume();
+                      response.once("end", resolve);
+                    },
+                  );
+                  request.once("error", reject);
+                }),
+            );
+            const close = listener.close.pipe(
+              Effect.andThen(Deferred.succeed(closeCompleted, undefined)),
+            );
+            closeFiber = Effect.runPromise(close);
+            const closed = yield* Deferred.await(closeCompleted).pipe(
+              Effect.timeout("1 second"),
+              Effect.exit,
+            );
+            return closed;
+          }).pipe(Effect.provide(controlTransportLayer)),
+        ),
+      );
+      expect(Exit.isSuccess(result)).toBe(true);
+    } finally {
+      agent.destroy();
+      await closeFiber;
+    }
+  });
+
   test("classifies a fenced stop conflict distinctly from transport failure", async () => {
     const sockets = new Set<Socket>();
     const server = createServer((_request, response) => {

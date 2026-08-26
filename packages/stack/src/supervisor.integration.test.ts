@@ -769,7 +769,6 @@ describe("detached supervisor child journeys", () => {
         expect(Predicate.isTagged(error, "SupervisorStartError")).toBe(true);
         expect(error).toBeInstanceOf(SupervisorStartError);
         if (error instanceof SupervisorStartError) {
-          expect(error.reason).toBe("owner-stopped");
         }
       }
     } finally {

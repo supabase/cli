@@ -18,6 +18,7 @@ import type { EdgeRuntimeConfig, ReadyOptions } from "./StackConfig.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 import type {
   ControlAddressConflictError,
+  ControlMaintenanceBusyError,
   ControlProtocolError,
   ControlProtocolMismatchError,
   ControlTransportError,
@@ -83,6 +84,7 @@ export class Stack extends Context.Service<
       | ControlProtocolError
       | ControlProtocolMismatchError
       | ControlAddressConflictError
+      | ControlMaintenanceBusyError
       | StopTimeout
     >;
     readonly dispose: () => Effect.Effect<
@@ -91,6 +93,7 @@ export class Stack extends Context.Service<
       | ControlProtocolError
       | ControlProtocolMismatchError
       | ControlAddressConflictError
+      | ControlMaintenanceBusyError
       | StopTimeout
     >;
     readonly startService: (

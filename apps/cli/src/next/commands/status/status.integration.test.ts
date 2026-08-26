@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer } from "effect";
+import { HttpTransportClient } from "@supabase/stack/testing";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { status } from "./status.handler.ts";
@@ -151,6 +152,65 @@ describe("status handler", () => {
                 expect.objectContaining({
                   type: "info",
                   message: expect.stringContaining("API URL:"),
+                }),
+              );
+            }),
+          ),
+        );
+      }),
+    ),
+  );
+
+  it.live("does not parse checkout config before an RPC handshake detects an upgrade", () =>
+    Effect.promise(() => makeRunningStackFixture()).pipe(
+      Effect.flatMap((fixture) => {
+        mkdirSync(join(fixture.projectRoot, "supabase"), { recursive: true });
+        writeFileSync(join(fixture.projectRoot, "supabase", "config.toml"), "[invalid\n");
+        const out = mockOutput();
+        const transport = {
+          request: (
+            endpoint: Parameters<HttpTransportClient["Service"]["request"]>[0],
+            path: string,
+            init?: RequestInit,
+          ) =>
+            Effect.promise(async () => {
+              const response = await fetch(`${endpoint.url}${path}`, {
+                ...init,
+                signal:
+                  init?.signal === undefined || init.signal === null ? undefined : init.signal,
+              });
+              if (path !== "/owner") return response;
+              const owner = await response.json();
+              if (typeof owner !== "object" || owner === null) return response;
+              return new Response(JSON.stringify({ ...owner, daemonCliVersion: "2.60.0" }), {
+                status: response.status,
+                headers: response.headers,
+              });
+            }),
+        } satisfies HttpTransportClient["Service"];
+        const layer = Layer.mergeAll(
+          fixture.baseLayer,
+          Layer.succeed(HttpTransportClient, transport),
+          out.layer,
+          mockProjectLinkState(),
+          mockCliProjectLocalServiceVersions(),
+          BunServices.layer,
+        );
+        return status({ stack: fixture.stackName }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(Effect.promise(() => fixture.dispose())),
+          Effect.andThen(
+            Effect.sync(() => {
+              expect(out.messages).toContainEqual(
+                expect.objectContaining({
+                  type: "warn",
+                  message: "Local Supabase stack is managed by a different CLI version.",
+                }),
+              );
+              expect(out.messages).not.toContainEqual(
+                expect.objectContaining({
+                  type: "fail",
+                  message: expect.stringContaining("config"),
                 }),
               );
             }),

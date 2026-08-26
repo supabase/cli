@@ -366,12 +366,8 @@ const supervisorErrorMessage = (cause: Cause.Cause<unknown>): SupervisorErrorMes
 const startDaemon = (input: {
   readonly config: ResolvedDaemonConfig;
   readonly lease: PortLease;
-  readonly ownership: ControlOwnership;
   readonly platform: SupervisorPlatform;
   readonly scope: Scope.Scope;
-  readonly launchUpdate?: (
-    launch: import("./managed/document.ts").ManagedStackLaunchUpdate,
-  ) => Effect.Effect<void, unknown>;
 }): Effect.Effect<
   {
     readonly stack: Stack["Service"];
@@ -396,7 +392,6 @@ const startDaemon = (input: {
 const makeRunManagedExecution = (
   input: SupervisorStartMessage,
   platform: SupervisorPlatform,
-  scope: Scope.Scope,
 ): Effect.Effect<
   void,
   unknown,
@@ -652,7 +647,6 @@ const makeRunManagedExecution = (
           return yield* Effect.fail(
             new SupervisorStartError({
               message: OWNER_STOPPED_AFTER_TAKEOVER,
-              reason: "owner-stopped",
             }),
           );
         }
@@ -742,17 +736,11 @@ const makeRunManagedExecution = (
         const built = yield* startDaemon({
           config,
           lease: started.lease,
-          ownership,
           platform,
           scope: runtimeScope,
-          launchUpdate: (launch) =>
-            manager
-              .updateLaunch(ownership, { stackId: started.stack.id, launch })
-              .pipe(Effect.asVoid),
         });
         return { started, built };
       });
-    yield* waitForSignal().pipe(Effect.andThen(session.submitShutdown), Effect.forkIn(scope));
     const result = yield* sessionController.run({
       startup,
       stack: (runtime) => runtime.built.stack,
@@ -823,9 +811,8 @@ const makeRunManagedExecution = (
 const runManaged = (
   input: SupervisorStartMessage,
   platform: SupervisorPlatform,
-  scope: Scope.Scope,
 ): ReturnType<typeof makeRunManagedExecution> =>
-  Effect.suspend(() => makeRunManagedExecution(input, platform, scope));
+  Effect.suspend(() => makeRunManagedExecution(input, platform));
 
 /** Effect-native child program. Node/Bun entrypoints only call runPromise here. */
 export const runSupervisor = (
@@ -840,11 +827,18 @@ export const runSupervisor = (
 > =>
   Effect.scoped(
     Effect.gen(function* () {
-      const scope = yield* Effect.scope;
       const input = yield* receiveStartMessage();
-      yield* Effect.matchCauseEffect(runManaged(input, platform, scope), {
+      const execution = Effect.raceFirst(
+        runManaged(input, platform),
+        waitForSignal().pipe(Effect.andThen(Effect.interrupt)),
+      );
+      yield* Effect.matchCauseEffect(execution, {
         onFailure: (cause) =>
-          sendMessage(supervisorErrorMessage(cause)).pipe(Effect.andThen(Effect.failCause(cause))),
+          Cause.hasInterruptsOnly(cause)
+            ? Effect.void
+            : sendMessage(supervisorErrorMessage(cause)).pipe(
+                Effect.andThen(Effect.failCause(cause)),
+              ),
         onSuccess: Effect.succeed,
       });
     }),
@@ -1006,7 +1000,6 @@ export const supervisorLayer = (
         return yield* Effect.fail(
           new SupervisorStartError({
             message: STACK_STOPPED_DURING_STARTUP,
-            reason: "owner-stopped",
           }),
         );
       }

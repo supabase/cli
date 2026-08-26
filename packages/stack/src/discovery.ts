@@ -164,7 +164,7 @@ export const stopDaemon = (opts: {
 }): Effect.Effect<
   void,
   NoRunningStackError | ManagedStackManagerError | StopTimeout,
-  ManagedStackManager | HttpTransportClient | ControlTransport
+  ManagedStackManager | HttpTransportClient
 > =>
   stopManagedStack({
     workspacePath: opts.projectDir ?? opts.cwd ?? process.cwd(),

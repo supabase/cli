@@ -31,7 +31,12 @@ import {
   StackReadinessError,
   StackUnavailableError,
 } from "./errors.ts";
-import { acquireControl, ControlTransport, isControlOwnership } from "./managed/control.ts";
+import {
+  acquireControl,
+  ControlMaintenanceBusyError,
+  ControlTransport,
+  isControlOwnership,
+} from "./managed/control.ts";
 import { isControlSupervisorStatus, type ControlOwnerStatus } from "./DaemonProtocol.ts";
 import { makeSupervisorControlApplication } from "./SupervisorControlServer.ts";
 import { makeSupervisorSessionFixture } from "../tests/helpers/SupervisorSessionFixture.ts";
@@ -148,6 +153,65 @@ const startMalformedServer = (frame: string) =>
         return Effect.void;
       }),
   );
+
+const startBusyServer = Effect.acquireRelease(
+  Effect.callback<
+    {
+      readonly server: Server;
+      readonly endpoint: {
+        readonly hostname: string;
+        readonly port: number;
+        readonly url: string;
+      };
+    },
+    Error
+  >((resume) => {
+    const server = createServer((request, response) => {
+      if (request.url === "/owner") {
+        response.writeHead(200, { "content-type": "application/json", connection: "close" });
+        response.end(JSON.stringify(remoteOwner("busy-session")));
+        return;
+      }
+      if (request.url === "/stop") {
+        response.writeHead(423, { "content-type": "application/json", connection: "close" });
+        response.end(JSON.stringify({ error: "busy" }));
+        return;
+      }
+      response.writeHead(404, { connection: "close" });
+      response.end();
+    });
+    server.once("error", (error) => resume(Effect.fail(error)));
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        resume(Effect.fail(new Error("busy control test server did not expose an address")));
+        return;
+      }
+      resume(
+        Effect.succeed({
+          server,
+          endpoint: {
+            hostname: "127.0.0.1",
+            port: address.port,
+            url: `http://127.0.0.1:${address.port}`,
+          },
+        }),
+      );
+    });
+    return Effect.sync(() => {
+      if (server.listening) server.close();
+    });
+  }),
+  ({ server }) =>
+    Effect.callback<void>((resume) => {
+      if (!server.listening) {
+        resume(Effect.void);
+        return Effect.void;
+      }
+      server.close(() => resume(Effect.void));
+      return Effect.void;
+    }),
+);
 
 const startDisconnectServer = (
   requestStarted: Deferred.Deferred<void>,
@@ -491,10 +555,43 @@ it.live("executes every Stack operation over the same-version RPC endpoint", () 
           yield* Deferred.await(activeLogStarted);
           yield* remote.stop();
           yield* Deferred.await(activeLogReleased);
-          expect(Exit.isFailure(yield* Fiber.join(activeLogs).pipe(Effect.exit))).toBe(true);
+          yield* Fiber.await(activeLogs);
         }).pipe(Effect.provide(remoteLayer));
       }),
     ),
+  ),
+);
+
+it.live("preserves a maintenance-busy stop as a typed RemoteStack failure", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const server = yield* startBusyServer;
+      const layer = RemoteStack.layer(server.endpoint, {
+        cliVersion: "test",
+        owner: {
+          ownershipId: ownerId,
+          ownerSessionId: "busy-session",
+          controlProtocolVersion: 1,
+          daemonCliVersion: "test",
+        },
+      }).pipe(Layer.provide(httpTransportClientLayer));
+
+      const exit = yield* Effect.exit(
+        Effect.gen(function* () {
+          const remote = yield* Stack;
+          return yield* remote.stop();
+        }).pipe(Effect.provide(layer)),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure)).toBe(true);
+        if (Option.isSome(failure)) {
+          expect(Predicate.isTagged(failure.value, "ControlMaintenanceBusyError")).toBe(true);
+          expect(failure.value).toBeInstanceOf(ControlMaintenanceBusyError);
+        }
+      }
+    }),
   ),
 );
 
@@ -805,6 +902,87 @@ it.live("closes an owner while another client still consumes an RPC stream", () 
         );
         expect(Exit.isSuccess(shutdownExit)).toBe(true);
         yield* Deferred.await(streamReleased);
+      }),
+    ),
+  ),
+);
+
+it.live("finishes an active stream when a fenced stop is accepted", () =>
+  live(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const ownerSessionId = "active-stream-stop-accepted-session";
+        const streamStarted = Deferred.makeUnsafe<void>();
+        const streamReleased = Deferred.makeUnsafe<void>();
+        const stopRelease = Deferred.makeUnsafe<void>();
+        const log = {
+          timestamp: 1,
+          service: "auth",
+          stream: "stdout" as const,
+          line: "ready",
+        };
+        const lifecycle = yield* makeSupervisorSessionFixture({
+          ownershipId: ownerId,
+          ownerSessionId,
+          daemonCliVersion: "test",
+        });
+        yield* lifecycle.publishStack({
+          ...makeTestStack(),
+          stop: () => Deferred.await(stopRelease),
+          subscribeLogs: () =>
+            Stream.concat(
+              Stream.succeed(log).pipe(
+                Stream.tap(() => Deferred.succeed(streamStarted, undefined).pipe(Effect.asVoid)),
+              ),
+              Stream.never,
+            ).pipe(
+              Stream.ensuring(Deferred.succeed(streamReleased, undefined).pipe(Effect.asVoid)),
+            ),
+        });
+        const owner = yield* acquireControl({
+          stackId: ownerId,
+          initialStatus: yield* lifecycle.currentStatus,
+          application: { app: yield* makeSupervisorControlApplication(lifecycle) },
+        });
+        if (!isControlOwnership(owner)) throw new Error("expected ownership");
+        yield* lifecycle.setClose(owner.close);
+        const layer = RemoteStack.layer(owner.endpoint, {
+          cliVersion: "test",
+          owner: {
+            ownershipId: owner.ownershipId,
+            ownerSessionId,
+            controlProtocolVersion: 1,
+            daemonCliVersion: "test",
+          },
+        }).pipe(Layer.provide(httpTransportClientLayer));
+        yield* Effect.addFinalizer(() =>
+          Deferred.succeed(stopRelease, undefined).pipe(Effect.asVoid),
+        );
+        const outcome = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const remote = yield* Stack;
+            const activeLogs = yield* Effect.forkChild(
+              Stream.runDrain(remote.subscribeLogs("auth")),
+              { startImmediately: true },
+            );
+            yield* Deferred.await(streamStarted);
+            const transport = yield* ControlTransport;
+            yield* transport.requestStop(owner.endpoint, {
+              ownershipId: owner.ownershipId,
+              ownerSessionId,
+              intent: "explicit",
+            });
+            const streamExit = yield* Fiber.join(activeLogs).pipe(
+              Effect.timeout("1 second"),
+              Effect.exit,
+            );
+            yield* Deferred.succeed(stopRelease, undefined);
+            yield* lifecycle.awaitShutdown;
+            yield* Deferred.await(streamReleased);
+            return streamExit;
+          }).pipe(Effect.provide(layer)),
+        );
+        expect(Exit.isSuccess(outcome)).toBe(true);
       }),
     ),
   ),
