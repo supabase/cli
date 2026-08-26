@@ -49,7 +49,6 @@ import {
 // and `Data.TaggedError(...)`.
 const parserFileSystem = createVirtualFileSystem({});
 const parserApi = new API({ cwd: process.cwd(), fs: parserFileSystem });
-let syntheticFileId = 0;
 
 afterAll(() => parserApi.close());
 
@@ -121,17 +120,6 @@ function hasExportModifier(node: ClassLikeDeclaration): boolean {
 // every plain `class X extends Error` (untagged classes are fingerprinted by
 // name). A tagged class contributes its tag once — the heritage call is
 // claimed by the class rule so the factory rule does not count it again.
-async function extractErrorTags(
-  source: string,
-  fileName = "scan.ts",
-  options: { readonly exportedOnly?: boolean } = {},
-): Promise<Array<string>> {
-  const parseFileName = fileName === "scan.ts" ? `scan-${syntheticFileId++}.ts` : fileName;
-  return withParsedSource(parseFileName, source, (sourceFile) =>
-    extractErrorTagsFromFile(sourceFile, options),
-  );
-}
-
 function extractErrorTagsFromFile(
   sourceFile: SourceFile,
   options: { readonly exportedOnly?: boolean },
@@ -176,6 +164,47 @@ function extractErrorTagsFromFile(
   return tags;
 }
 
+// Parse the focused AST fixtures once, before Vitest starts scheduling the
+// module-import checks below. Keeping these assertions synchronous avoids
+// competing for the shared TypeScript project service while those imports are
+// exercising the full CLI module graph under load.
+const extractedTestTags = await withParsedSources(
+  [
+    [
+      "definitions.ts",
+      [
+        'export class TaggedThingError extends Data.TaggedError("TaggedThingError") {}',
+        'export class FactoryThingError extends CliError("FactoryTag") {}',
+        "export class PlainThingError extends Error {}",
+        'const Base = Data.TaggedError("FreeStandingTag");',
+      ].join("\n"),
+    ],
+    [
+      "comments.ts",
+      [
+        "// class Fake extends Error",
+        '/* e.g. Data.TaggedError("FakeTag") */',
+        "const x = 1;",
+      ].join("\n"),
+    ],
+    [
+      "literals.ts",
+      [
+        'const a = "class Fake extends Error";',
+        'const b = `Data.TaggedError("FakeTag")`;',
+        "const c = 'class AlsoFake extends Error';",
+      ].join("\n"),
+    ],
+  ] as const,
+  (files) =>
+    new Map(
+      ["definitions.ts", "comments.ts", "literals.ts"].map((fileName) => [
+        fileName,
+        extractErrorTagsFromFile(files.get(fileName)!, {}),
+      ]),
+    ),
+);
+
 async function scanErrorTags(
   root: string,
   options: { readonly exportedOnly?: boolean } = {},
@@ -205,36 +234,20 @@ async function scanErrorTags(
 
 describe("extractErrorTags", () => {
   it("finds tagged, factory-tagged and plain error class definitions", () => {
-    const source = [
-      'export class TaggedThingError extends Data.TaggedError("TaggedThingError") {}',
-      'export class FactoryThingError extends CliError("FactoryTag") {}',
-      "export class PlainThingError extends Error {}",
-      'const Base = Data.TaggedError("FreeStandingTag");',
-    ].join("\n");
-    return expect(extractErrorTags(source)).resolves.toEqual([
+    expect(extractedTestTags.get("definitions.ts")).toEqual([
       "TaggedThingError",
       "FactoryTag",
       "PlainThingError",
       "FreeStandingTag",
     ]);
-  }, 30_000);
+  });
 
   it("ignores definitions that only appear in comments", () => {
-    const source = [
-      "// class Fake extends Error",
-      '/* e.g. Data.TaggedError("FakeTag") */',
-      "const x = 1;",
-    ].join("\n");
-    return expect(extractErrorTags(source)).resolves.toEqual([]);
+    expect(extractedTestTags.get("comments.ts")).toEqual([]);
   });
 
   it("ignores definitions that only appear inside string and template literals", () => {
-    const source = [
-      'const a = "class Fake extends Error";',
-      'const b = `Data.TaggedError("FakeTag")`;',
-      "const c = 'class AlsoFake extends Error';",
-    ].join("\n");
-    return expect(extractErrorTags(source)).resolves.toEqual([]);
+    expect(extractedTestTags.get("literals.ts")).toEqual([]);
   });
 });
 
