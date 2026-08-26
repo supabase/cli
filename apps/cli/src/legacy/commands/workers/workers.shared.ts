@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { loadCliConfig } from "@supabase/config/effect";
-import { Effect, FileSystem, Option } from "effect";
+import { Effect, FileSystem, Option, Predicate } from "effect";
 import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
 import {
   readWorkersSection,
@@ -147,11 +147,32 @@ export const legacyDiscoverWorkerNames = Effect.fnUntraced(function* (
   project: LegacyWorkersProject,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const entries = yield* fs.readDirectory(project.workersDir).pipe(Effect.orElseSucceed(() => []));
+
+  // No workers root at all is a project that has never scaffolded one, and the
+  // config entries below may still name workers living elsewhere — so absence
+  // reads as nothing here. Any other reason propagates: a root the CLI cannot
+  // list is not a project with no workers in it, and answering a bare `push`
+  // with "deployed everything" after silently skipping them is the worst
+  // possible reading of it.
+  const entries = yield* fs
+    .readDirectory(project.workersDir)
+    .pipe(
+      Effect.catchTag("PlatformError", (error) =>
+        Predicate.isTagged(error.reason, "NotFound")
+          ? Effect.succeed<ReadonlyArray<string>>([])
+          : Effect.fail(error),
+      ),
+    );
 
   const scaffolded: Array<string> = [];
   for (const entry of entries) {
-    const info = yield* fs.stat(join(project.workersDir, entry)).pipe(Effect.option);
+    // Only a name that vanished between the listing and this stat is skipped.
+    const info = yield* fs.stat(join(project.workersDir, entry)).pipe(
+      Effect.map(Option.some),
+      Effect.catchTag("PlatformError", (error) =>
+        Predicate.isTagged(error.reason, "NotFound") ? Effect.succeedNone : Effect.fail(error),
+      ),
+    );
     if (Option.isSome(info) && info.value.type === "Directory") {
       scaffolded.push(entry);
     }

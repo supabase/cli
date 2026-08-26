@@ -699,6 +699,40 @@ describe("legacy workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // A bare `push` promises to deploy every worker in the project, and a worker
+  // with no config entry is known only by its directory. Reading an unlistable
+  // workers root as "no workers here" therefore answers a real filesystem
+  // problem with "nothing to deploy" — the same absence-versus-unreadable
+  // confusion as the source-directory guards, one level up.
+  it.live("fails rather than reporting an unlistable workers root as empty", () => {
+    const repo = project({ "supabase/config.toml": 'project_id = "demo"\n' });
+    const workersRoot = join(repo.dir, "supabase", "workers");
+    chmodSync(workersRoot, 0o000);
+    const listable = listableAsCurrentUser(workersRoot);
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      const error = yield* push({ names: [] }).pipe(Effect.flip);
+
+      if (listable) {
+        // Root ignores the permission bits, so the root lists and `api` is found.
+        expect(error).not.toBeInstanceOf(NoWorkersToDeployError);
+      } else {
+        expect(error).not.toBeInstanceOf(NoWorkersToDeployError);
+        expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
+        expect(http.requests).toHaveLength(0);
+      }
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(
+        Effect.sync(() => {
+          chmodSync(workersRoot, 0o700);
+          repo.cleanup();
+        }),
+      ),
+    );
+  });
+
   it.live("fails when there are no workers to deploy at all", () => {
     const repo = project({ "supabase/config.toml": `project_id = "demo"\n` });
     rmSync(join(repo.dir, "supabase", "workers"), { recursive: true, force: true });
