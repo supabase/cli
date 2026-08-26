@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Exit, Layer, Option } from "effect";
+import { vi } from "vitest";
 
 import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../shared/legacy/global-flags.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
@@ -191,6 +192,28 @@ describe("legacyEdgeRuntimeScriptLayer sentinel handling", () => {
       );
     },
   );
+
+  it.effect("keeps the runner on the docker.io image with the slim-images flag on", () => {
+    // The runner replaces the entrypoint with `sh -c <heredoc>`; the distroless
+    // slim image ships no shell, so it must never be selected here.
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    const { layer, docker } = setup({
+      exitCode: 1,
+      stdout: "",
+      stderr: "main worker has been destroyed\n",
+    });
+    return runScript().pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(docker.lastOpts?.entrypoint).toStrictEqual(Option.some("sh"));
+          expect(docker.lastOpts?.image).not.toContain("ghcr.io/supabase/cli/");
+          expect(docker.lastOpts?.image).toContain("edge-runtime:");
+        }),
+      ),
+      Effect.provide(layer),
+      Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())),
+    );
+  });
 
   it.effect(
     "disables SELinux label separation so the container can read CLI-written workspace files",

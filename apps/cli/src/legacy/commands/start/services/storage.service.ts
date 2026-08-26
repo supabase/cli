@@ -242,8 +242,11 @@ export function legacyBuildStorageContainerSpec(
     containerName,
     env,
     binds: [`${containerName}:${storagePath}`],
-    // Distroless slim storage has no /bin/sh; Docker CLI healthchecks are always
-    // CMD-SHELL. Omitting makes `legacyCheckContainerReady` treat Running as ready.
+    // Distroless slim storage has no /bin/sh (nor wget) and Docker CLI
+    // healthchecks are always CMD-SHELL, so there is no probe to declare here.
+    // `start` gates readiness on Kong's `/storage/v1/status` instead — see
+    // `health-check.ts` — because `legacyCheckContainerReady` would otherwise
+    // accept a merely-Running container.
     ...(slim
       ? {}
       : {

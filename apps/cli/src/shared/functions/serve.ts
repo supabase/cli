@@ -75,6 +75,7 @@ import {
   toDockerPath,
 } from "./functions-docker.ts";
 import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
+import { SlimEdgeRuntimeMultilineSecretError } from "./serve.errors.ts";
 import { edgeRuntimeImage, resolveEdgeRuntimeVersionPin } from "./functions.shared.ts";
 import { usesSlimImageRuntime } from "../services/slim-images.ts";
 const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
@@ -1774,9 +1775,10 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       ];
       if (slimEdgeRuntime && dockerMultilineEnvScript !== undefined) {
         return yield* Effect.fail(
-          new Error(
-            "SUPABASE_USE_SLIM_IMAGES cannot source multiline function secrets: the slim edge-runtime image has no shell. Unset the flag, or remove newline-containing values from the functions env file.",
-          ),
+          new SlimEdgeRuntimeMultilineSecretError({
+            message:
+              "SUPABASE_USE_SLIM_IMAGES cannot source multiline function secrets: the slim edge-runtime image has no shell. Unset the flag, or remove newline-containing values from the functions env file.",
+          }),
         );
       }
       const serveMainTemplate = yield* Effect.promise(() => getLegacyFunctionsServeMainTemplate());

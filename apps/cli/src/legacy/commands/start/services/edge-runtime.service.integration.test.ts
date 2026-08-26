@@ -9,6 +9,7 @@ import { afterEach, beforeEach, vi } from "vitest";
 
 import { useLegacyTempWorkdir } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { SlimEdgeRuntimeMultilineSecretError } from "../../../../shared/functions/serve.errors.ts";
 import {
   legacyStartEdgeRuntimeContainer,
   type LegacyEdgeRuntimeBringUpInput,
@@ -386,6 +387,31 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         }
         const files = yield* Effect.promise(() => new Bun.Archive(archiveBytes).files());
         expect([...files.keys()]).toEqual(["tmp/index.ts"]);
+      }),
+  );
+
+  it.effect(
+    "slim edge-runtime: refuses a multiline secret it has no shell to source, before creating anything",
+    () =>
+      Effect.gen(function* () {
+        vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+        const mock = mockDockerSpawner();
+        const out = mockOutput();
+        const input = {
+          ...baseInput(tempWorkdir.current),
+          image: "ghcr.io/supabase/cli/edge-runtime:v1.74.2",
+          edgeRuntimeSecrets: { MULTI_LINE_KEY: "-----BEGIN KEY-----\nsecret\n-----END KEY-----" },
+        };
+
+        const error = yield* legacyStartEdgeRuntimeContainer(input).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+          Effect.provide(out.layer),
+          Effect.flip,
+        );
+
+        expect(error).toBeInstanceOf(SlimEdgeRuntimeMultilineSecretError);
+        expect(String(error)).toContain("cannot source multiline function secrets");
+        expect(mock.runCall).toBeUndefined();
       }),
   );
 

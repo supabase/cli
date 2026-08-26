@@ -178,6 +178,7 @@ import {
 import { legacyBuildMailpitContainerSpec } from "./services/mailpit.service.ts";
 import { legacyBuildRealtimeContainerSpec } from "./services/realtime.service.ts";
 import { LEGACY_REALTIME_TENANT_ID } from "../../shared/db-bootstrap/realtime-env.ts";
+import { legacyUsesSlimRuntime } from "../../shared/db-bootstrap/slim-runtime.ts";
 import { legacyBuildPostgrestContainerSpec } from "./services/postgrest.service.ts";
 import { legacyBuildStorageContainerSpec } from "./services/storage.service.ts";
 import { legacyBuildImgproxyContainerSpec } from "./services/imgproxy.service.ts";
@@ -1667,6 +1668,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       const started = new Map<string, string>();
       let postgrestGateway: LegacyHealthCheckPostgrestGateway | undefined;
       let edgeRuntimeGateway: LegacyHealthCheckPostgrestGateway | undefined;
+      let storageGateway: LegacyHealthCheckPostgrestGateway | undefined;
       let storageContainerId: string | undefined;
       const imagePlanByService = new Map(imagePlan.map((entry) => [entry.service, entry.image]));
       for (const entry of LEGACY_START_SERVICES) {
@@ -1815,6 +1817,18 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         }
         if (entry.service === "storage") {
           storageContainerId = spec.containerName;
+          // The slim Storage spec declares no Docker healthcheck (distroless —
+          // see `storage.service.ts`), so without this gateway the health wait
+          // would accept it as soon as it is `Running` and bucket seeding below
+          // would race its startup. Needs Kong to reach it; with Kong excluded
+          // there is no route to probe, so fall back to the Running-only check.
+          if (legacyUsesSlimRuntime(spec.image) && gates.kong) {
+            storageGateway = {
+              containerId: spec.containerName,
+              apiExternalUrl: values.apiUrl,
+              secretKey: values.secretKey,
+            };
+          }
         }
       }
 
@@ -1823,6 +1837,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         started,
         postgrestGateway,
         edgeRuntimeGateway,
+        storageGateway,
         storageContainerId,
       };
     }).pipe(
@@ -1886,7 +1901,8 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // but never re-entering these later steps once the DB bootstrap has
     // already returned.
     if (bringUpResult.kind === "started") {
-      const { started, postgrestGateway, edgeRuntimeGateway, storageContainerId } = bringUpResult;
+      const { started, postgrestGateway, edgeRuntimeGateway, storageGateway, storageContainerId } =
+        bringUpResult;
 
       // Wraps steps 9-11 below (bulk health wait, the ignore-health-check
       // storage-only recheck-and-seed, the success-path bucket seeding, and
@@ -1980,18 +1996,27 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           projectRef: "",
           config: effectiveLocalStorageConfig,
         });
+        // Shared by every gateway probe below (the bulk wait and the
+        // storage-only recheck), so both trust the same local Kong CA.
+        const withLocalKongCa = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+          localKongCa === undefined
+            ? effect
+            : effect.pipe(
+                Effect.provideService(
+                  FetchHttpClient.Fetch,
+                  legacyStorageGatewayFetch(localKongCa),
+                ),
+              );
         // Keep the synthetic value out of project dotenv resolution and container environments.
         legacyConfigureLoopbackProxyBypass();
-        const healthResult = yield* legacyWaitForHealthyServices(spawner, [...started.keys()], {
-          postgrest: postgrestGateway,
-          edgeRuntime: edgeRuntimeGateway,
-          images: started,
-        }).pipe(
-          Effect.result,
-          localKongCa !== undefined
-            ? Effect.provideService(FetchHttpClient.Fetch, legacyStorageGatewayFetch(localKongCa))
-            : (effect) => effect,
-        );
+        const healthResult = yield* withLocalKongCa(
+          legacyWaitForHealthyServices(spawner, [...started.keys()], {
+            postgrest: postgrestGateway,
+            edgeRuntime: edgeRuntimeGateway,
+            storage: storageGateway,
+            images: started,
+          }),
+        ).pipe(Effect.result);
         if (Result.isFailure(healthResult)) {
           const error = healthResult.failure;
           if (flags.ignoreHealthCheck && legacyIsUnhealthyStartError(error)) {
@@ -2012,10 +2037,11 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               // `images` is intentionally the whole run's registry, not scoped to
               // this one-container watch list — the hint can only ever key off
               // containers that actually appear in this call's own failures.
-              const storageHealthResult = yield* legacyWaitForHealthyServices(
-                spawner,
-                [storageContainerId],
-                { images: started },
+              const storageHealthResult = yield* withLocalKongCa(
+                legacyWaitForHealthyServices(spawner, [storageContainerId], {
+                  storage: storageGateway,
+                  images: started,
+                }),
               ).pipe(Effect.result);
               if (Result.isSuccess(storageHealthResult)) {
                 const seedResult = yield* legacySeedBucketsRun({

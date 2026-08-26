@@ -1,6 +1,9 @@
 import { Effect, type FileSystem, type Path } from "effect";
 import { DENO1_EDGE_RUNTIME_VERSION } from "../../shared/functions/functions.shared.ts";
-import { dockerfileServiceImage } from "../../shared/services/dockerfile-images.ts";
+import {
+  dockerfileServiceImage,
+  dockerfileServiceImageRaw,
+} from "../../shared/services/dockerfile-images.ts";
 
 /**
  * Resolves the edge-runtime Docker image the way Go's `config.Load` does
@@ -28,20 +31,14 @@ function replaceImageTag(image: string, tag: string): string {
   return image.slice(0, index + 1) + tag.trim();
 }
 
-/**
- * Resolve the edge-runtime image, honoring the pinned tag in
- * `supabase/.temp/edge-runtime-version` and the `deno_version` selector
- * (default 2 → Dockerfile image; 1 → `deno1`). The version pin is applied first
- * (Go's `Load`), then `deno_version = 1` overrides to `deno1` (Go's validate
- * pass).
- */
-export const legacyResolveEdgeRuntimeImage = Effect.fnUntraced(function* (
+const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
+  baseImage: string,
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
   denoVersion: number,
 ) {
-  let image = legacyEdgeRuntimeImage();
+  let image = baseImage;
   const versionPath = path.join(workdir, "supabase", ".temp", "edge-runtime-version");
   const pinned = yield* fs.readFileString(versionPath).pipe(
     Effect.map((s) => s.trim()),
@@ -54,10 +51,38 @@ export const legacyResolveEdgeRuntimeImage = Effect.fnUntraced(function* (
     image =
       pinned === DENO1_EDGE_RUNTIME_VERSION
         ? LEGACY_EDGE_RUNTIME_DENO1_IMAGE
-        : replaceImageTag(legacyEdgeRuntimeImage(), pinned);
+        : replaceImageTag(baseImage, pinned);
   }
   if (denoVersion === 1) {
     image = LEGACY_EDGE_RUNTIME_DENO1_IMAGE;
   }
   return image;
 });
+
+/**
+ * Resolve the edge-runtime image, honoring the pinned tag in
+ * `supabase/.temp/edge-runtime-version` and the `deno_version` selector
+ * (default 2 → Dockerfile image; 1 → `deno1`). The version pin is applied first
+ * (Go's `Load`), then `deno_version = 1` overrides to `deno1` (Go's validate
+ * pass).
+ */
+export const legacyResolveEdgeRuntimeImage = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+  denoVersion: number,
+) => resolveEdgeRuntimeImage(legacyEdgeRuntimeImage(), fs, path, workdir, denoVersion);
+
+/**
+ * Same resolution pinned to docker.io, for callers that replace the image
+ * entrypoint with a shell. The slim edge-runtime image is distroless: its only
+ * executables are `/usr/bin/edge-runtime` and its wrapper, so `sh -c …` cannot
+ * run there at all — the same locked exception the `deno1` tag already carries.
+ */
+export const legacyResolveEdgeRuntimeShellImage = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+  denoVersion: number,
+) =>
+  resolveEdgeRuntimeImage(dockerfileServiceImageRaw("edgeruntime"), fs, path, workdir, denoVersion);

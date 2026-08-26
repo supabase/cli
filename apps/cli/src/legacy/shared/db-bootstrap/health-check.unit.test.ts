@@ -151,6 +151,8 @@ const runningStarting = JSON.stringify({
   Health: { Status: "starting" },
 });
 const notRunning = JSON.stringify({ Status: "exited", Running: false });
+/** A container with no Docker healthcheck at all, like every distroless slim image. */
+const runningNoHealth = JSON.stringify({ Status: "running", Running: true });
 
 /**
  * `legacyWaitForHealthyServices` structurally requires `HttpClient.HttpClient`
@@ -649,6 +651,77 @@ describe("legacyWaitForHealthyServices", () => {
         expect(error.unhealthy).toEqual([
           { containerId: "supabase_rest_proj", reason: "unexpected status 503" },
         ]);
+      }),
+    );
+  });
+
+  describe("slim Storage HTTP-HEAD readiness", () => {
+    const storageGateway: LegacyHealthCheckPostgrestGateway = {
+      containerId: "supabase_storage_proj",
+      apiExternalUrl: "http://127.0.0.1:54321",
+      secretKey: "sb_secret_local",
+    };
+
+    function httpLayer(status: number) {
+      return Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          expect(request.method).toBe("HEAD");
+          expect(request.url).toBe("http://127.0.0.1:54321/storage/v1/status");
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(request, new Response(null, { status })),
+          );
+        }),
+      );
+    }
+
+    it.effect("succeeds on a 200 instead of trusting a merely-Running container", () =>
+      Effect.gen(function* () {
+        const mock = mockHealthSpawner(() => runningNoHealth);
+
+        const exit = yield* legacyWaitForHealthyServices(mock.spawner, ["supabase_storage_proj"], {
+          timeoutSeconds: 1,
+          storage: storageGateway,
+        }).pipe(Effect.provide(httpLayer(200)), Effect.exit);
+
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(inspectCalls(mock)).toHaveLength(0);
+      }),
+    );
+
+    it.effect("keeps waiting while Storage is still starting up", () =>
+      Effect.gen(function* () {
+        const mock = mockHealthSpawner(() => runningNoHealth);
+
+        const fiber = yield* legacyWaitForHealthyServices(mock.spawner, ["supabase_storage_proj"], {
+          timeoutSeconds: 1,
+          storage: storageGateway,
+        }).pipe(
+          Effect.provide(httpLayer(503)),
+          withSilencedStderr,
+          Effect.forkChild({ startImmediately: true }),
+        );
+
+        yield* TestClock.adjust("1 seconds");
+        const error = yield* Fiber.join(fiber).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(LegacyHealthCheckTimeoutError);
+        expect(error.unhealthy).toEqual([
+          { containerId: "supabase_storage_proj", reason: "unexpected status 503" },
+        ]);
+      }),
+    );
+
+    it.effect("falls back to the Docker state when no gateway is configured", () =>
+      Effect.gen(function* () {
+        const mock = mockHealthSpawner(() => runningNoHealth);
+
+        const exit = yield* legacyWaitForHealthyServices(mock.spawner, ["supabase_storage_proj"], {
+          timeoutSeconds: 1,
+        }).pipe(Effect.provide(unusedHttpClientLayer), Effect.exit);
+
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(inspectCalls(mock)).toHaveLength(1);
       }),
     );
   });

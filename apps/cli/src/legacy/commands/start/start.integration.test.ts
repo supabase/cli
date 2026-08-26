@@ -322,9 +322,12 @@ function freshVolumeRoute(
 function mockStorageBucketHttpClient() {
   const createdBucketRequests: Array<string> = [];
   const createdBucketBodies: Array<unknown> = [];
+  /** Every request in order, so a test can assert a readiness probe preceded seeding. */
+  const requests: Array<{ method: string; url: string }> = [];
   const layer = Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) => {
+      requests.push({ method: request.method, url: request.url });
       if (request.method === "GET" && request.url.includes("/storage/v1/bucket")) {
         return Effect.succeed(
           HttpClientResponse.fromWeb(
@@ -362,7 +365,7 @@ function mockStorageBucketHttpClient() {
       );
     }),
   );
-  return { layer, createdBucketRequests, createdBucketBodies };
+  return { layer, createdBucketRequests, createdBucketBodies, requests };
 }
 
 /**
@@ -2645,7 +2648,33 @@ content_path = "./supabase/templates/custom_notice.html"
       return Effect.gen(function* () {
         yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
         expect(http.createdBucketRequests).toHaveLength(1);
+        // docker.io Storage carries its own Docker healthcheck, so readiness
+        // never goes through the gateway.
+        expect(http.requests.some((entry) => entry.url.includes("/storage/v1/status"))).toBe(false);
       }).pipe(Effect.provide(layer));
+    });
+
+    it.live("probes storage's own /status before seeding a bucket on the slim image", () => {
+      // The slim Storage spec carries no Docker healthcheck, so without the
+      // gateway probe seeding would fire the moment the container is Running.
+      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+      const http = mockStorageBucketHttpClient();
+      const { layer } = setup({
+        configContents: 'project_id = "demo"\n[storage.buckets.avatars]\npublic = false\n',
+        route: freshVolumeRoute(defaultRoute()),
+        httpClientLayer: http.layer,
+      });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+        const probeIndex = http.requests.findIndex(
+          (entry) => entry.method === "HEAD" && entry.url.includes("/storage/v1/status"),
+        );
+        const seedIndex = http.requests.findIndex(
+          (entry) => entry.method === "POST" && entry.url.includes("/storage/v1/bucket"),
+        );
+        expect(probeIndex).toBeGreaterThanOrEqual(0);
+        expect(seedIndex).toBeGreaterThan(probeIndex);
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
     });
 
     it.live(
