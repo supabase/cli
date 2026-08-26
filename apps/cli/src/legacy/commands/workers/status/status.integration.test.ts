@@ -139,6 +139,66 @@ describe("legacy workers status", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // Mid-scale the snapshot and the desired spec disagree; reading the numerator
+  // from one and the denominator from the other rendered fractions like
+  // `3/1 ready`.
+  it.live("reads the whole tally from one snapshot while scaling", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [getRoute]: {
+          status: 200,
+          body: {
+            data: workerResource({
+              name: "api",
+              runtime: "node",
+              instances: 1,
+              instanceCounts: { declared: 3, live: 3, ready: 3, stale: 0 },
+            }),
+          },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("3/3 ready");
+      expect(out.stdoutText).not.toContain("3/1 ready");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Deletion is asynchronous, so pushing here races the tombstone or resurrects
+  // the worker the user is removing.
+  it.live("withholds the build retry while the worker is being deleted", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [getRoute]: {
+          status: 200,
+          body: {
+            data: workerResource({
+              name: "api",
+              runtime: "node",
+              buildState: "failed",
+              stateReason: "exit status 1",
+              deleting: true,
+            }),
+          },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("deleting");
+      expect(out.stdoutText).not.toContain("re-run supabase workers push");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("points a failed build at the retry, with the reason", () => {
     const repo = project();
     const { layer, out } = setupLegacyWorkers({

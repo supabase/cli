@@ -124,9 +124,12 @@ export const legacyWorkersStatus = Effect.fn("legacy.workers.status")(function* 
       ["Image", record.imageVersion ?? ""],
       ["Access", record.spec.exposure],
       [
+        // Every number in the tally line comes from the tally: mixing
+        // `instances.ready` with `spec.instances` compares a snapshot against
+        // the desired count, which mid-scale renders fractions like `3/1 ready`.
         "Instances",
         record.instances !== undefined
-          ? `${record.instances.ready}/${record.spec.instances} ready, ${record.instances.live} live, ${record.instances.stale} stale`
+          ? `${record.instances.ready}/${record.instances.declared} ready, ${record.instances.live} live, ${record.instances.stale} stale`
           : `${record.spec.instances} declared`,
       ],
       ["URL", url ?? ""],
@@ -141,7 +144,9 @@ export const legacyWorkersStatus = Effect.fn("legacy.workers.status")(function* 
     if (record.instances === undefined && record.instancesError !== undefined) {
       yield* output.raw(`Instance counts could not be read: ${record.instancesError}\n`, "stderr");
     }
-    if (record.buildState === "failed") {
+    // Not while it is being torn down: deletion is asynchronous, so a push here
+    // races the tombstone or resurrects the very worker the user is removing.
+    if (record.buildState === "failed" && record.deleting !== true) {
       yield* output.raw(`Fix the issue, then re-run supabase workers push ${name}${refSuffix}.\n`);
     }
   }).pipe(
