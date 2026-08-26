@@ -395,7 +395,9 @@ describe("legacyStartSetupLocalDatabase", () => {
             ]);
             expect(docker.runs[0]?.entrypoint).toEqual(Option.some("/app/bin/realtime"));
             expect(docker.runs[0]?.cmd[0]).toBe("eval");
-            expect(docker.runs[0]?.cmd[1]).toContain('Realtime.Tenants.health_check("realtime-dev")');
+            expect(docker.runs[0]?.cmd[1]).toContain(
+              'Realtime.Tenants.health_check("realtime-dev")',
+            );
             expect(docker.runs[1]?.cmd).toEqual(["migrate"]);
             rmSync(workdir, { recursive: true, force: true });
           }),

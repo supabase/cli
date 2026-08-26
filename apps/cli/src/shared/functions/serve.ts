@@ -1817,7 +1817,10 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         input.image,
         ...(slimEdgeRuntime
           ? runtimeCommand.slice(1)
-          : ["-c", buildServeEntrypointCommand(runtimeCommand, dockerMultilineEnvScript?.scriptPath)]),
+          : [
+              "-c",
+              buildServeEntrypointCommand(runtimeCommand, dockerMultilineEnvScript?.scriptPath),
+            ]),
       ];
 
       // The container must exist for `docker cp` to have a target, and must not be running

@@ -42,6 +42,8 @@ export function legacySlimBusyboxWgetHealthcheck(
     intervalSeconds: 10,
     timeoutSeconds: 2,
     retries: 3,
-    ...(opts.startPeriodSeconds === undefined ? {} : { startPeriodSeconds: opts.startPeriodSeconds }),
+    ...(opts.startPeriodSeconds === undefined
+      ? {}
+      : { startPeriodSeconds: opts.startPeriodSeconds }),
   };
 }

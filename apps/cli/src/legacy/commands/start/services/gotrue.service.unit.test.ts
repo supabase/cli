@@ -713,26 +713,17 @@ describe("legacyBuildGotrueContainerSpec", () => {
     );
   });
 
-  test("omits the wget healthcheck on a slim distroless auth image", () => {
+  test("omits the wget healthcheck only when the slim flag is on", () => {
+    const input = {
+      image: "ghcr.io/supabase/cli/auth:v2.196.0",
+      projectId: "proj",
+      networkId: "supabase_network_proj",
+      dbUrl: "postgresql://postgres:secret@127.0.0.1:54322/postgres",
+      env: baseEnvInput,
+    };
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
+    expect(legacyBuildGotrueContainerSpec(input).healthcheck?.test[1]).toBe("wget");
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-    const spec = legacyBuildGotrueContainerSpec({
-      image: "ghcr.io/supabase/cli/auth:v2.196.0",
-      projectId: "proj",
-      networkId: "supabase_network_proj",
-      dbUrl: "postgresql://postgres:secret@127.0.0.1:54322/postgres",
-      env: baseEnvInput,
-    });
-    expect(spec.healthcheck).toBeUndefined();
-  });
-
-  test("keeps the wget healthcheck for a ghcr-shaped override while the flag is off", () => {
-    const spec = legacyBuildGotrueContainerSpec({
-      image: "ghcr.io/supabase/cli/auth:v2.196.0",
-      projectId: "proj",
-      networkId: "supabase_network_proj",
-      dbUrl: "postgresql://postgres:secret@127.0.0.1:54322/postgres",
-      env: baseEnvInput,
-    });
-    expect(spec.healthcheck?.test[1]).toBe("wget");
+    expect(legacyBuildGotrueContainerSpec(input).healthcheck).toBeUndefined();
   });
 });
