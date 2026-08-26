@@ -159,8 +159,17 @@ function parseDuration(s: string): number {
     if (i < s.length && s.charAt(i) === ".") {
       i++;
       while (i < s.length && s.charAt(i) >= "0" && s.charAt(i) <= "9") {
-        frac = frac * 10 + parseInt(s.charAt(i), 10);
-        post *= 10;
+        // Accumulate only while frac/post stay float-exact (15 digits):
+        // an 18-digit fraction like "0.999999999999999999" would round the
+        // numerator ABOVE 1e18 and truncate to a full extra second where Go
+        // reads 999999999ns. Digits past exactness cannot change the
+        // truncated-nanosecond result, so they are consumed positionally and
+        // ignored — matching Go, whose own fraction reader stops adding once
+        // its scale underflows.
+        if (post < 1e15) {
+          frac = frac * 10 + parseInt(s.charAt(i), 10);
+          post *= 10;
+        }
         i++;
       }
     }
@@ -280,11 +289,15 @@ function secondsToDurationString(seconds: number): string {
  * round-trip (which converts back to fractional hours), and hide real drift.
  */
 function hoursToDurationString(hours: number): string {
-  // Go durations are integer nanoseconds by definition; a sub-nanosecond
-  // fractional remainder (e.g. sessions_timebox: 1e-20 hours) would
-  // otherwise fall through durationString's floor decomposition untouched
-  // and render exponent-notation "3.6e-8ns" that no duration parser reads.
-  return durationString(Math.trunc(hours * 3_600_000_000_000));
+  // Go durations are integer nanoseconds by definition, so the float product
+  // resolves to the NEAREST integer nanosecond: an hour value that itself
+  // came from quantizing an integer-nanosecond duration (pushing "65s"
+  // stores 65e9/3.6e12 hours) can land a hair below the original, and
+  // truncation would shave a nanosecond ("1m4.999999999s"); rounding repairs
+  // that representation error while sub-nanosecond noise (sessions_timebox:
+  // 1e-20 → exponent-notation "3.6e-8ns" under raw decomposition) still
+  // collapses to "0s".
+  return durationString(Math.round(hours * 3_600_000_000_000));
 }
 
 /**

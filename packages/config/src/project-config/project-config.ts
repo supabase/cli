@@ -363,7 +363,14 @@ function assertProjectConfigResourceType(envelope: Record<string, unknown>): voi
   }
   const resourceType = envelope["type"];
   if (resourceType !== "project_config") {
-    throw envelopeError(`type is ${JSON.stringify(resourceType)}, expected "project_config"`);
+    // Rendered defensively: JSON.stringify throws on a bigint discriminator,
+    // which would escape the typed-error contract from inside the error
+    // builder itself.
+    const rendered =
+      typeof resourceType === "string"
+        ? JSON.stringify(resourceType)
+        : nonObjectDescription(resourceType);
+    throw envelopeError(`type is ${rendered}, expected "project_config"`);
   }
 }
 

@@ -1825,3 +1825,34 @@ describe("review round: non-JSON primitives, tiny hours, readonly report, whole-
     expect(projected.api).toEqual({ enabled: false });
   });
 });
+
+describe("review round: fraction exactness, hour round-trip, bigint discriminator (CLI-2230)", () => {
+  test("18-digit duration fractions truncate like Go instead of rounding up a second", () => {
+    const projected = fromConfigDocument({
+      auth: { sessions: { timebox: "0.999999999999999999s" } },
+    });
+    // Go reads this as 999999999ns and prints sub-second values in ms units
+    // ("999.999999ms"); float accumulation used to round the numerator past
+    // 1e18 and emit a full extra second ("1s").
+    expect(projected.auth?.sessions?.timebox).toBe("999.999999ms");
+  });
+
+  test("hour values quantized from integer-nanosecond durations round-trip exactly", () => {
+    // Pushing "65s" stores 65e9/3.6e12 hours; the float product lands a hair
+    // below 65e9 and truncation shaved a nanosecond ("1m4.999999999s").
+    const hours = 65_000_000_000 / 3_600_000_000_000;
+    const result = fromApiProjectConfig({ auth: { sessions_timebox: hours } });
+    expect(result.auth?.sessions?.timebox).toBe("1m5s");
+  });
+
+  test("a bigint resource-type discriminator stays inside the typed error contract", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({ type: 1n, attributes: {} });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).message).toContain("bigint");
+  });
+});
