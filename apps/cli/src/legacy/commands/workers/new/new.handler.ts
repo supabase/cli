@@ -36,7 +36,7 @@ import {
   InvalidWorkerNameError,
   WorkerDirectoryExistsError,
 } from "../../../../shared/workers/workers.errors.ts";
-import { legacyLoadWorkersProject } from "../workers.shared.ts";
+import { legacyLoadWorkersProjectForEntryWrite } from "../workers.shared.ts";
 import type { LegacyWorkersNewFlags } from "./new.command.ts";
 
 /**
@@ -132,7 +132,7 @@ export const legacyWorkersNew = Effect.fn("legacy.workers.new")(function* (
 
   // The telemetry state file is written on every invocation, success or failure.
   yield* Effect.gen(function* () {
-    const project = yield* legacyLoadWorkersProject();
+    const project = yield* legacyLoadWorkersProjectForEntryWrite();
 
     const name = flags.name;
     const invalid = validateWorkerNameMessage(name);

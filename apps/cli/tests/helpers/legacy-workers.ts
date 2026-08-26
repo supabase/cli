@@ -5,7 +5,7 @@ import { BunServices } from "@effect/platform-bun";
 import { makeApiClient } from "@supabase/api/effect";
 import { Effect, Layer, Option, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
-import type * as HttpClientError from "effect/unstable/http/HttpClientError";
+import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { LegacyPlatformApi } from "../../src/legacy/auth/legacy-platform-api.service.ts";
@@ -14,10 +14,8 @@ import { LegacyProjectRefResolver } from "../../src/legacy/config/legacy-project
 import { LegacyOutputFlag } from "../../src/shared/legacy/global-flags.ts";
 import { randomLayer } from "../../src/shared/runtime/random.layer.ts";
 import { LegacyProjectNotLinkedError } from "../../src/legacy/config/legacy-project-ref.errors.ts";
-import {
-  mockLegacyLinkedProjectCacheLayer,
-  mockLegacyTelemetryStateLayer,
-} from "./legacy-mocks.ts";
+import { mockLegacyLinkedProjectCacheLayer } from "./legacy-mocks.ts";
+import { LegacyTelemetryState } from "../../src/legacy/telemetry/legacy-telemetry-state.service.ts";
 import { mockOutput, mockRuntimeInfo } from "./mocks.ts";
 
 /**
@@ -45,8 +43,26 @@ export interface StubResponse {
   readonly body?: unknown;
 }
 
+/**
+ * A request that never reaches a status code — the connection itself failed.
+ * Distinct from a `StubResponse` with an error status, which is a server that
+ * answered.
+ */
+export interface StubTransportFailure {
+  readonly transportError: string;
+}
+
+function isTransportFailure(
+  stub: StubResponse | StubTransportFailure,
+): stub is StubTransportFailure {
+  return "transportError" in stub;
+}
+
 /** How a test answers one request; sequential entries reply to repeated calls. */
-export type RouteHandler = StubResponse | ReadonlyArray<StubResponse>;
+export type RouteHandler =
+  | StubResponse
+  | StubTransportFailure
+  | ReadonlyArray<StubResponse | StubTransportFailure>;
 
 export interface WorkersHttpRoutes {
   /** Keyed `"<METHOD> <pathname>"`, e.g. `"GET /v2/projects/abc.../workers"`. */
@@ -74,17 +90,17 @@ function respond(
  */
 export function mockWorkersHttp(routes: WorkersHttpRoutes) {
   const requests: Array<RecordedRequest> = [];
-  const remaining = new Map<string, Array<StubResponse>>(
+  const remaining = new Map<string, Array<StubResponse | StubTransportFailure>>(
     Object.entries(routes).map(([route, handler]) => [
       route,
-      Array.isArray(handler) ? [...handler] : [handler as StubResponse],
+      Array.isArray(handler) ? [...handler] : [handler as StubResponse | StubTransportFailure],
     ]),
   );
 
   const handle = (
     request: HttpClientRequest.HttpClientRequest,
   ): Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError> =>
-    Effect.sync(() => {
+    Effect.suspend(() => {
       const bytes = request.body._tag === "Uint8Array" ? request.body.body : new Uint8Array(0);
       const url = new URL(request.url);
       requests.push({
@@ -97,12 +113,24 @@ export function mockWorkersHttp(routes: WorkersHttpRoutes) {
       const key = `${request.method} ${url.pathname}`;
       const queue = remaining.get(key);
       if (queue === undefined || queue.length === 0) {
-        return respond(request, { status: 599, body: { error: `unstubbed route: ${key}` } });
+        return Effect.succeed(
+          respond(request, { status: 599, body: { error: `unstubbed route: ${key}` } }),
+        );
       }
       // The last stub for a route keeps answering, so a poll loop does not have
       // to be stubbed a fixed number of times.
       const stub = queue.length === 1 ? queue[0]! : queue.shift()!;
-      return respond(request, stub);
+      if (isTransportFailure(stub)) {
+        return Effect.fail(
+          new HttpClientError.HttpClientError({
+            reason: new HttpClientError.TransportError({
+              request,
+              description: stub.transportError,
+            }),
+          }),
+        );
+      }
+      return Effect.succeed(respond(request, stub));
     });
 
   const httpClientLayer = Layer.succeed(HttpClient.HttpClient, HttpClient.make(handle));
@@ -233,6 +261,30 @@ export interface WorkersSetupOptions {
   readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
 }
 
+/**
+ * `LegacyTelemetryState`, recording whether it was flushed.
+ *
+ * Every worker command is supposed to write the telemetry state file on every
+ * invocation, success or failure — which is only observable if the mock says so,
+ * so the shared always-void mock cannot cover it.
+ */
+function mockWorkersTelemetryState() {
+  let flushed = false;
+  return {
+    layer: Layer.succeed(LegacyTelemetryState, {
+      flush: Effect.sync(() => {
+        flushed = true;
+      }),
+      stitchLogin: () => Effect.void,
+      clearDistinctId: Effect.void,
+      resetIdentity: Effect.void,
+    } as unknown as LegacyTelemetryState["Service"]),
+    get flushed() {
+      return flushed;
+    },
+  };
+}
+
 export function setupLegacyWorkers(options: WorkersSetupOptions) {
   const out = mockOutput({
     format: options.format ?? "text",
@@ -245,17 +297,19 @@ export function setupLegacyWorkers(options: WorkersSetupOptions) {
       : { promptSelectResponses: options.promptSelectResponses }),
   });
   const http = mockWorkersHttp(options.routes ?? {});
+  const telemetry = mockWorkersTelemetryState();
 
   return {
     out,
     http,
+    telemetry,
     layer: Layer.mergeAll(
       out.layer,
       http.layer,
       mockRuntimeInfo({ cwd: options.cwd ?? options.workdir }),
       legacyTestCliConfigLayer(options.workdir),
       legacyTestProjectRefLayer(options.linked !== false),
-      mockLegacyTelemetryStateLayer,
+      telemetry.layer,
       mockLegacyLinkedProjectCacheLayer,
       randomLayer,
       Layer.succeed(
