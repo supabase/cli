@@ -108,20 +108,16 @@ function durationString(ns: number): string {
 }
 
 /**
- * Go's maximum time.Duration is max int64 nanoseconds (~292 years); 2^63 is
- * the nearest exactly-representable float64 (one ns above it). The guard
- * below is approximate by design — its only job is keeping the formatter
- * inside its usable domain.
+ * The canonical-duration domain is bounded by float64 integer precision, not
+ * Go's int64 range: past `Number.MAX_SAFE_INTEGER` nanoseconds (~104 days)
+ * accumulation silently rounds small components away, so {@link
+ * parseDuration} rejects such values and the API-side row bounds below stay
+ * INSIDE that domain — every duration the API side can emit is one the
+ * document-side canonicalizer can also re-parse, keeping the two spellings
+ * convergent. This is the same bound in whole seconds, for the
+ * `*_max_frequency` rows.
  */
-const MAX_GO_DURATION_NS = 2 ** 63;
-
-/**
- * The same bound in whole seconds, for the `*_max_frequency` rows: a larger
- * integer passes `expectInteger` but converts to nanoseconds past
- * {@link MAX_GO_DURATION_NS}, producing a duration string this file's own
- * {@link parseDuration} (and Go's config loading) rejects as out of range.
- */
-const MAX_GO_DURATION_SECONDS = 9_223_372_036;
+const MAX_CANONICAL_DURATION_SECONDS = 9_007_199;
 
 const NS_PER_SECOND = 1_000_000_000;
 const NS_PER_MINUTE = 60 * NS_PER_SECOND;
@@ -207,11 +203,12 @@ function parseDuration(s: string): number {
     }
 
     total += n * unitNs + Math.round((frac / post) * unitNs);
-    // Go errors past int64 nanoseconds ("value out of range"); the JS float
-    // total additionally loses formatter validity there (exponent notation,
-    // then Infinity). The comparison is approximate in float64 — fine for a
-    // guard whose only job is keeping the formatter inside its domain.
-    if (!Number.isFinite(total) || total > MAX_GO_DURATION_NS) {
+    // Stricter than Go's int64 range check: past Number.MAX_SAFE_INTEGER
+    // nanoseconds (~104 days) the float accumulation silently rounds smaller
+    // components away ("2502h1ns" would lose its 1ns and canonicalize to
+    // "2502h0m0s", changing the configured value), so the canonicalizer must
+    // treat such durations as unparsable and leave them verbatim.
+    if (!Number.isFinite(total) || total > Number.MAX_SAFE_INTEGER) {
       throw new Error(`time: invalid duration "${orig}" (value out of range)`);
     }
   }
@@ -417,7 +414,12 @@ function secondsDurationRow(
       value === null
         ? undefined
         : secondsToDurationString(
-            expectNumberBetween(expectInteger(value, apiPath), apiPath, 0, MAX_GO_DURATION_SECONDS),
+            expectNumberBetween(
+              expectInteger(value, apiPath),
+              apiPath,
+              0,
+              MAX_CANONICAL_DURATION_SECONDS,
+            ),
           ),
     normalizeDocument: canonicalizeDurationString,
     unit: "seconds → duration string",
@@ -431,14 +433,15 @@ function secondsDurationRow(
  * site.
  */
 /**
- * Bound for the session-hour fields: the contract only requires them finite,
- * but past ~1e6 hours (≈114 years — far beyond any legitimate session
- * bound) the nanosecond conversion loses formatter validity: 1e300 hours
- * renders "InfinityhNaNmNaNs" and 1e22 hours stringifies in exponent
- * notation no duration parser reads. Negative session bounds are equally
- * meaningless, so 0 is the floor.
+ * Bound for the session-hour fields — the same canonical-duration domain as
+ * {@link MAX_CANONICAL_DURATION_SECONDS}, in whole hours (~104 days, far
+ * beyond any legitimate session bound): the contract only requires these
+ * finite, but larger values overflow the formatter ("InfinityhNaNmNaNs",
+ * exponent notation) or land past the precision bound the document-side
+ * canonicalizer re-parses. Negative session bounds are meaningless, so 0 is
+ * the floor.
  */
-const MAX_SESSION_DURATION_HOURS = 1_000_000;
+const MAX_SESSION_DURATION_HOURS = 2_501;
 
 function hoursDurationRow(
   configPath: ReadonlyArray<string>,

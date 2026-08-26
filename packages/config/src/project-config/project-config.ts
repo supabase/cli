@@ -13,6 +13,7 @@ import {
   type ProjectConfigApiAttributes,
 } from "./api-attributes.ts";
 import { unmappedSecretApiPaths } from "./registry-auth.ts";
+import { expectString } from "./registry-row.ts";
 import { projectConfigMappingRows } from "./registry.ts";
 
 const HOSTED_SECTION_KEYS = [
@@ -318,12 +319,14 @@ function unwrapApiResponse(input: unknown): Record<string, unknown> {
     if (!isObject(data)) {
       throw envelopeError("data is not an object");
     }
+    assertProjectConfigResourceType(data);
     if (!isObject(data["attributes"])) {
       throw envelopeError("data.attributes is not an object");
     }
     return data["attributes"];
   }
   if (Object.hasOwn(input, "attributes")) {
+    assertProjectConfigResourceType(input);
     const attributes = input["attributes"];
     if (!isObject(attributes)) {
       throw envelopeError("attributes is not an object");
@@ -331,6 +334,24 @@ function unwrapApiResponse(input: unknown): Record<string, unknown> {
     return attributes;
   }
   return input;
+}
+
+/**
+ * An envelope carrying an explicit `type` must carry THIS resource's type —
+ * the generated contract's discriminator is `"project_config"`, so e.g. a
+ * mixed-up response for another resource fails loudly instead of being
+ * partially mapped wherever its attribute names happen to overlap. An absent
+ * `type` stays tolerated (lenient toward trimmed-down callers that pass only
+ * `{data:{attributes}}`).
+ */
+function assertProjectConfigResourceType(envelope: Record<string, unknown>): void {
+  if (!Object.hasOwn(envelope, "type")) {
+    return;
+  }
+  const resourceType = envelope["type"];
+  if (resourceType !== "project_config") {
+    throw envelopeError(`type is ${JSON.stringify(resourceType)}, expected "project_config"`);
+  }
 }
 
 function nonObjectDescription(value: unknown): string {
@@ -478,6 +499,15 @@ function applyMappingRows(
 ): void {
   for (const row of projectConfigMappingRows) {
     if (row.isSecret) {
+      // The value is never emitted (ADR 0019 rule 5 — the API only reports
+      // an HMAC digest), but a present non-string is still a malformed
+      // platform response and must not vanish silently: the path is in the
+      // consumed set, so without this check `unmappedApiFields` would hide
+      // the malformed value too.
+      const secretValue = readPath(decodedAttributes, row.apiPath);
+      if (secretValue !== undefined && secretValue !== null) {
+        expectString(secretValue, row.apiPath);
+      }
       continue;
     }
 
@@ -612,11 +642,14 @@ function cloneRawAttributes(rawAttributes: Record<string, unknown>): Record<stri
   try {
     return structuredClone(rawAttributes);
   } catch (cause) {
-    const detail = "the raw API response contains a value structuredClone cannot copy";
+    // Only a function/symbol-valued attribute reaches this (parsed JSON never
+    // carries one), so it is programmatic caller input — same taxonomy as the
+    // non-plain-object rejection in the validation walk above.
     throw new ProjectConfigParseError({
-      message: formatProjectConfigParseErrorMessage(detail),
+      message:
+        "raw attributes hold a value structuredClone cannot copy (e.g. a function) — raw attributes must be plain parsed JSON",
       cause,
-      suggestion: PROJECT_CONFIG_PARSE_ERROR_SUGGESTION,
+      reason: "caller_misuse",
     });
   }
 }

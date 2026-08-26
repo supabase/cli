@@ -1683,3 +1683,54 @@ describe("review round: absent anchors, exponent-free seconds, non-plain values 
     }
   });
 });
+
+describe("review round: clone taxonomy, precision bound, type discriminator, secret validation (CLI-2230)", () => {
+  test("a non-cloneable raw value carries the caller-misuse reason", () => {
+    let thrown: unknown;
+    try {
+      attachApiResponse({}, { x: () => {} });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
+  });
+
+  test("a duration past the float precision bound stays verbatim (no silent rounding)", () => {
+    const projected = fromConfigDocument({ auth: { sessions: { timebox: "2502h1ns" } } });
+    // 2502h1ns exceeds Number.MAX_SAFE_INTEGER nanoseconds — canonicalizing
+    // would silently drop the 1ns, so the value must stay as written.
+    expect(projected.auth?.sessions?.timebox).toBe("2502h1ns");
+  });
+
+  test("an envelope for a different resource type throws instead of partially mapping", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({
+        data: { type: "some_other_resource", attributes: { api: { max_rows: 5 } } },
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    // An envelope WITHOUT a type stays tolerated.
+    const lenient = fromApiProjectConfig({ data: { attributes: { api: { max_rows: 5 } } } });
+    expect(lenient.api?.max_rows).toBe(5);
+  });
+
+  test("a malformed secret value throws instead of being silently consumed", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({ auth: { smtp_pass: 123 } });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).apiPath).toEqual(["auth", "smtp_pass"]);
+    // Null and digest strings still omit without throwing.
+    expect(Object.hasOwn(fromApiProjectConfig({ auth: { smtp_pass: null } }), "auth")).toBe(false);
+    expect(Object.hasOwn(fromApiProjectConfig({ auth: { smtp_pass: "hmac" } }), "auth")).toBe(
+      false,
+    );
+  });
+});
