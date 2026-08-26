@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import * as net from "node:net";
 import type { ConnectionOptions } from "node:tls";
 import { PgClient } from "@effect/sql-pg";
-import { Cause, Duration, Effect, Exit, Layer, Scope } from "effect";
+import { Cause, Duration, Effect, Exit, Layer, Option, Scope } from "effect";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import { ConnectionError, SqlError } from "effect/unstable/sql/SqlError";
 // `pg` is also `@effect/sql-pg`'s transitive driver; we depend on it directly for
@@ -224,7 +224,13 @@ const LEGACY_DB_KEEPALIVE_IDLE_MILLIS = 300_000;
  */
 export function legacyBatchFailureError(
   error: Error,
-  batch: { readonly completed: number; readonly outcome: LegacyBatchOutcome } | undefined,
+  batch:
+    | {
+        readonly completed: number;
+        readonly outcome: LegacyBatchOutcome;
+        readonly began?: boolean;
+      }
+    | undefined,
   isLocal: boolean,
 ): LegacyDbExecError | LegacyDbConnectError {
   if (batch === undefined || batch.outcome === "unsent") {
@@ -236,8 +242,15 @@ export function legacyBatchFailureError(
     });
   }
   const mapped = legacyToExecError(error);
+  // A lost connection (including a FATAL termination) is not a BEGIN failure.
+  const beganFailed =
+    batch.outcome === "submitted" &&
+    batch.began === false &&
+    legacyExtractPgServerError(error)?.severity === "ERROR";
   return new LegacyDbExecError({
-    message: mapped.message,
+    message: beganFailed
+      ? `failed to begin the batch transaction: ${mapped.message}`
+      : mapped.message,
     code: mapped.code,
     detail: mapped.detail,
     position: mapped.position,
@@ -251,10 +264,12 @@ export function legacyBatchFailureError(
  * socket is already gone, so the next checkout would write into the same dead connection.
  *
  * A batch that WAS written keeps its client: a statement failure should not cost a redial and
- * a fresh step-down on a single-connection pool. Recovering from a socket that died after the
- * write is left to pg-pool, which drops a released client whose private `_queryable` flag is
- * false — so that is the behavior to re-check if a pg-pool bump ever breaks the recovery this
- * layer's integration tests assert.
+ * a fresh step-down on a single-connection pool. The keep is conditional on the release
+ * path's rollback — one that fails or times out discards the client after all. Recovering
+ * from a socket that died after the write is additionally backstopped by pg-pool, which
+ * drops a released client whose private `_queryable` flag is false — so that is the behavior
+ * to re-check if a pg-pool bump ever breaks the recovery this layer's integration tests
+ * assert.
  */
 export function legacyShouldDiscardBatchClient(
   batch: { readonly outcome: LegacyBatchOutcome } | undefined,
@@ -282,6 +297,7 @@ export class LegacyPgBatchQuery implements Pg.Submittable {
   callback: (error: Error | undefined) => void;
   completed = 0;
   outcome: LegacyBatchOutcome = "unsent";
+  began = false;
 
   constructor(
     statements: ReadonlyArray<LegacyDbBatchStatement>,
@@ -301,7 +317,12 @@ export class LegacyPgBatchQuery implements Pg.Submittable {
     let started = false;
     connection.stream.cork?.();
     try {
-      for (const { sql, params } of this.statements) {
+      // A bare pipeline is not a transaction block (supabase/cli#6347).
+      for (const { sql, params } of [
+        { sql: "BEGIN", params: [] },
+        ...this.statements,
+        { sql: "COMMIT", params: [] },
+      ]) {
         started = true;
         connection.parse({ name: "", text: sql, types: [] }, true);
         connection.bind({ portal: "", statement: "", values: [...params] }, true);
@@ -332,11 +353,22 @@ export class LegacyPgBatchQuery implements Pg.Submittable {
   handlePortalSuspended(): void {}
 
   handleCommandComplete(): void {
-    this.completed += 1;
+    this.recordCompletion();
   }
 
   handleEmptyQuery(): void {
-    this.completed += 1;
+    this.recordCompletion();
+  }
+
+  // BEGIN completes first and COMMIT only after every statement; neither counts.
+  private recordCompletion(): void {
+    if (!this.began) {
+      this.began = true;
+      return;
+    }
+    if (this.completed < this.statements.length) {
+      this.completed += 1;
+    }
   }
 
   handleCopyInResponse(connection: Pg.Connection): void {
@@ -1085,12 +1117,17 @@ const connect = (
     const execBatch = (statements: ReadonlyArray<LegacyDbBatchStatement>) => {
       if (statements.length === 0) return Effect.void;
       let batchQuery: LegacyPgBatchQuery | undefined;
+      // Spans the whole checkout: an unlistened 'error' kills the process (see
+      // acquireRawClient) and pg-pool detaches its own handler while checked out.
+      const onConnectionError = () => {};
       return Effect.acquireUseRelease(
-        Effect.interruptible(acquireBatchClient),
-        (activeClient) => {
-          const onConnectionError = () => {};
-          activeClient.on("error", onConnectionError);
-          return Effect.callback<void, LegacyDbExecError | LegacyDbConnectError>((resume) => {
+        Effect.interruptible(acquireBatchClient).pipe(
+          Effect.tap((activeClient) =>
+            Effect.sync(() => activeClient.on("error", onConnectionError)),
+          ),
+        ),
+        (activeClient) =>
+          Effect.callback<void, LegacyDbExecError | LegacyDbConnectError>((resume) => {
             let done = false;
             const finish = (error: Error | undefined) => {
               if (done) return;
@@ -1110,16 +1147,29 @@ const connect = (
             return Effect.sync(() => {
               done = true;
             });
-          }).pipe(
-            Effect.ensuring(
-              Effect.sync(() => activeClient.removeListener("error", onConnectionError)),
-            ),
-          );
-        },
+          }),
         (activeClient, exit) =>
-          Effect.sync(() => {
+          Effect.suspend(() => {
             const discard = legacyShouldDiscardBatchClient(batchQuery, exit);
-            activeClient.release(discard ? new Error("batch connection discarded") : undefined);
+            const release = (broken: boolean) =>
+              Effect.sync(() => {
+                activeClient.release(broken ? new Error("batch connection discarded") : undefined);
+                activeClient.removeListener("error", onConnectionError);
+              });
+            if (discard || !Exit.isFailure(exit) || batchQuery?.outcome !== "submitted") {
+              return release(discard);
+            }
+            // Roll the aborted transaction back before the client is reused (25P02),
+            // bounded because this release step is uninterruptible.
+            return Effect.promise(() =>
+              activeClient.query("ROLLBACK").then(
+                () => true,
+                () => false,
+              ),
+            ).pipe(
+              Effect.timeoutOption(1000),
+              Effect.flatMap((rolledBack) => release(!Option.getOrElse(rolledBack, () => false))),
+            );
           }),
       );
     };

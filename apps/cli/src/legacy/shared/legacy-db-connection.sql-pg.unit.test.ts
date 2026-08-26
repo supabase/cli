@@ -608,7 +608,9 @@ describe("LegacyPgBatchQuery.submit", () => {
       frames,
       connection: {
         stream,
-        parse: record("parse"),
+        parse: (query: { text: string }) => {
+          frames.push(`parse(${query.text})`);
+        },
         bind: record("bind"),
         describe: record("describe"),
         execute: record("execute"),
@@ -638,10 +640,26 @@ describe("LegacyPgBatchQuery.submit", () => {
       "the connection's socket became unwritable while the batch was flushing",
     );
     expect(batch.outcome).toBe("unsent");
-    expect(frames).toEqual(["cork", "parse", "bind", "describe", "execute", "sync", "uncork"]);
+    expect(frames).toEqual([
+      "cork",
+      "parse(BEGIN)",
+      "bind",
+      "describe",
+      "execute",
+      "parse(select 1)",
+      "bind",
+      "describe",
+      "execute",
+      "parse(COMMIT)",
+      "bind",
+      "describe",
+      "execute",
+      "sync",
+      "uncork",
+    ]);
   });
 
-  it("writes parse/bind/describe/execute per statement and one sync while writable", () => {
+  it("brackets the statements in BEGIN/COMMIT and writes one sync while writable", () => {
     const { connection, frames } = fakeConnection(true);
     const batch = new LegacyPgBatchQuery([{ sql: "select 1" }, { sql: "select 2" }], () => {});
 
@@ -649,11 +667,19 @@ describe("LegacyPgBatchQuery.submit", () => {
 
     expect(frames).toEqual([
       "cork",
-      "parse",
+      "parse(BEGIN)",
       "bind",
       "describe",
       "execute",
-      "parse",
+      "parse(select 1)",
+      "bind",
+      "describe",
+      "execute",
+      "parse(select 2)",
+      "bind",
+      "describe",
+      "execute",
+      "parse(COMMIT)",
       "bind",
       "describe",
       "execute",
@@ -661,6 +687,18 @@ describe("LegacyPgBatchQuery.submit", () => {
       "uncork",
     ]);
     expect(batch.outcome).toBe("submitted");
+  });
+
+  it("counts neither BEGIN's nor COMMIT's completion toward the statement index", () => {
+    const batch = new LegacyPgBatchQuery([{ sql: "select 1" }, { sql: "select 2" }], () => {});
+
+    batch.handleCommandComplete();
+    expect(batch.completed).toBe(0);
+    batch.handleCommandComplete();
+    batch.handleEmptyQuery();
+    expect(batch.completed).toBe(2);
+    batch.handleCommandComplete();
+    expect(batch.completed).toBe(2);
   });
 });
 
@@ -735,6 +773,69 @@ describe("legacyBatchFailureError", () => {
 
     expect(error._tag).toBe("LegacyDbExecError");
     expect(error).toMatchObject({ message: "Error: serialization blew up", statementIndex: 0 });
+  });
+
+  it("names the transaction start when the server rejected the batch before BEGIN completed", () => {
+    const beginRejected = new SqlError({
+      reason: new SqlSyntaxError({
+        cause: Object.assign(new Error("canceling statement due to statement timeout"), {
+          severity: "ERROR",
+          code: "57014",
+        }),
+        message: "Failed to execute statement",
+        operation: "execute",
+      }),
+    });
+    const error = legacyBatchFailureError(
+      beginRejected,
+      { completed: 0, outcome: "submitted", began: false },
+      true,
+    );
+
+    expect(error._tag).toBe("LegacyDbExecError");
+    expect(error).toMatchObject({
+      message:
+        "failed to begin the batch transaction: " +
+        "ERROR: canceling statement due to statement timeout (SQLSTATE 57014)",
+      statementIndex: 0,
+    });
+
+    const lost = legacyBatchFailureError(
+      new Error("Connection terminated unexpectedly"),
+      { completed: 0, outcome: "submitted", began: false },
+      true,
+    );
+    expect(lost._tag).toBe("LegacyDbExecError");
+    expect(lost.message).toBe("Error: Connection terminated unexpectedly");
+
+    const terminated = legacyBatchFailureError(
+      new SqlError({
+        reason: new SqlSyntaxError({
+          cause: Object.assign(new Error("terminating connection due to idle-session timeout"), {
+            severity: "FATAL",
+            code: "57P05",
+          }),
+          message: "Failed to execute statement",
+          operation: "execute",
+        }),
+      }),
+      { completed: 0, outcome: "submitted", began: false },
+      true,
+    );
+    expect(terminated._tag).toBe("LegacyDbExecError");
+    expect(terminated.message).toBe(
+      "FATAL: terminating connection due to idle-session timeout (SQLSTATE 57P05)",
+    );
+
+    const poisoned = legacyBatchFailureError(
+      beginRejected,
+      { completed: 0, outcome: "poisoned", began: false },
+      true,
+    );
+    expect(poisoned._tag).toBe("LegacyDbExecError");
+    expect(poisoned.message).toBe(
+      "ERROR: canceling statement due to statement timeout (SQLSTATE 57014)",
+    );
   });
 
   it("keeps server-error mapping and the completed count for a statement failure", () => {

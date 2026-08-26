@@ -98,7 +98,7 @@ const legacyTrimLeadingSqlComments = (sql: string): string => {
  * Whether a migration statement cannot run inside a transaction block — `CREATE
  * [UNIQUE] INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`,
  * `VACUUM`, `ALTER SYSTEM`, `CLUSTER`. Such statements fail with SQLSTATE 25001
- * inside the implicit transaction
+ * inside the transaction
  * created by a migration batch, so `execMigrationBatch` runs them standalone.
  * Port of `isPipelineIncompatible` (`pkg/migration/file.go`, supabase/cli#5156).
  */
@@ -531,8 +531,8 @@ const formattedExecBatchDbError = (error: unknown): LegacyDbExecError | undefine
 
 /**
  * Runs a single migration/seed file's statements (plus the optional history insert).
- * Statements run inside an implicitly transactional extended-protocol batch,
- * except pipeline-incompatible ones
+ * Statements run inside an explicitly transactional extended-protocol batch
+ * (supabase/cli#6347), except pipeline-incompatible ones
  * (`legacyIsPipelineIncompatible` — `CREATE INDEX CONCURRENTLY`, `VACUUM`, …) which
  * cannot run in a transaction block: the open batch is flushed (committed), the
  * statement runs standalone, then batching resumes (supabase/cli#5156). The history

@@ -108,8 +108,10 @@ export interface LegacyDbSession {
   /** Run a single SQL statement, ignoring any returned rows. */
   readonly exec: (sql: string) => Effect.Effect<void, LegacyDbExecError>;
   /**
-   * Run statements as one extended-protocol batch with a single final Sync.
-   * On failure, {@link LegacyDbExecError.statementIndex} is the number of
+   * Run statements as one extended-protocol batch inside a single explicit
+   * transaction, with a single final Sync — a bare pipeline is not a transaction
+   * block (supabase/cli#6347). On failure the batch is rolled back and
+   * {@link LegacyDbExecError.statementIndex} is the number of the caller's
    * statements that completed before the error.
    *
    * A batch runs on its own pooled connection, which the driver checks out per

@@ -166,6 +166,7 @@ interface FakeBatchServerState {
   readonly frameTypes: Array<string>;
   readonly statements: Array<string>;
   readonly params: Array<ReadonlyArray<string | null>>;
+  readonly simpleQueries: Array<string>;
   syncs: number;
 }
 
@@ -177,6 +178,8 @@ const fakeBatchServer = (
     readonly emptyAt?: number;
     /** Never answer an extended-protocol frame, so a batch hangs until interrupted. */
     readonly stall?: boolean;
+    readonly stallRollback?: boolean;
+    readonly destroyOnRollback?: boolean;
     /** Drop the connection on the first Sync, so a batch dies mid-flight. */
     readonly destroyOnFirstSync?: boolean;
   } = {},
@@ -191,6 +194,7 @@ const fakeBatchServer = (
       frameTypes: [],
       statements: [],
       params: [],
+      simpleQueries: [],
       syncs: 0,
     };
     const sockets: Array<net.Socket> = [];
@@ -223,6 +227,13 @@ const fakeBatchServer = (
           const body = pending.subarray(5, length + 1);
           pending = pending.subarray(length + 1);
           if (type === "Q") {
+            const sql = body.toString("utf8", 0, body.length - 1);
+            state.simpleQueries.push(sql);
+            if (options.stallRollback === true && sql === "ROLLBACK") continue;
+            if (options.destroyOnRollback === true && sql === "ROLLBACK") {
+              socket.destroy();
+              return;
+            }
             socket.write(Buffer.concat([commandComplete("SELECT 1"), READY_FOR_QUERY]));
             continue;
           }
@@ -554,9 +565,9 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
       Effect.ensuring(Effect.sync(server.close)),
     );
 
-  it.live("sends every statement and parameter set before one Sync", () =>
+  it.live("sends every statement and parameter set inside one BEGIN/COMMIT before one Sync", () =>
     Effect.gen(function* () {
-      const server = yield* Effect.promise(() => fakeBatchServer({ emptyAt: 1 }));
+      const server = yield* Effect.promise(() => fakeBatchServer({ emptyAt: 2 }));
       const values = ["plain", 'quote"', "slash\\", "comma,", "{brace}", "line\nbreak", "NULL", ""];
       yield* runWithBatchServer(server, (session) =>
         session.execBatch([
@@ -569,11 +580,14 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
         ]),
       );
       expect(server.state.statements).toEqual([
+        "BEGIN",
         "SELECT 1",
         "-- comment only",
         "INSERT INTO history(version, name, statements) VALUES($1, $2, $3)",
+        "COMMIT",
       ]);
       expect(server.state.params).toEqual([
+        [],
         [],
         [],
         [
@@ -581,8 +595,17 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
           "name\\two",
           '{"plain","quote\\\"","slash\\\\","comma,","{brace}","line\nbreak","NULL",""}',
         ],
+        [],
       ]);
       expect(server.state.frameTypes).toEqual([
+        "P",
+        "B",
+        "D",
+        "E",
+        "P",
+        "B",
+        "D",
+        "E",
         "P",
         "B",
         "D",
@@ -598,12 +621,13 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
         "S",
       ]);
       expect(server.state.syncs).toBe(1);
+      expect(server.state.simpleQueries).not.toContain("ROLLBACK");
     }),
   );
 
   it.live("maps a later parse failure to its statement and keeps its local position", () =>
     Effect.gen(function* () {
-      const server = yield* Effect.promise(() => fakeBatchServer({ emptyAt: 1, failAt: 2 }));
+      const server = yield* Effect.promise(() => fakeBatchServer({ emptyAt: 2, failAt: 3 }));
       yield* runWithBatchServer(server, (session) =>
         Effect.gen(function* () {
           const error = asBatchExecError(
@@ -624,7 +648,7 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
 
   it.live("maps a position-less runtime failure from completed commands", () =>
     Effect.gen(function* () {
-      const server = yield* Effect.promise(() => fakeBatchServer({ failExecuteAt: 1 }));
+      const server = yield* Effect.promise(() => fakeBatchServer({ failExecuteAt: 2 }));
       yield* runWithBatchServer(server, (session) =>
         session
           .execBatch([{ sql: "SELECT 1" }, { sql: "INSERT duplicate" }, { sql: "SELECT 3" }])
@@ -660,6 +684,72 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
         ),
       );
     }),
+  );
+
+  it.live("rolls a failed batch's transaction back before the pooled client is reused", () =>
+    Effect.gen(function* () {
+      const server = yield* Effect.promise(() => fakeBatchServer({ failExecuteAt: 3 }));
+      yield* runWithBatchServer(server, (session) =>
+        Effect.gen(function* () {
+          yield* session
+            .execBatch([{ sql: "SELECT 1" }, { sql: "SELECT 2" }, { sql: "INSERT duplicate" }])
+            .pipe(Effect.flip);
+          const sockets = server.sockets.length;
+          yield* session.execBatch([{ sql: "SELECT 3" }]);
+          expect(server.sockets.length).toBe(sockets);
+        }),
+      );
+      expect(server.state.simpleQueries).toContain("ROLLBACK");
+      expect(server.state.syncs).toBe(2);
+    }),
+  );
+
+  it.live("absorbs a socket death during the release-path rollback instead of crashing", () =>
+    Effect.gen(function* () {
+      const server = yield* Effect.promise(() =>
+        fakeBatchServer({ failExecuteAt: 3, destroyOnRollback: true }),
+      );
+      yield* runWithBatchServer(server, (session) =>
+        Effect.gen(function* () {
+          yield* session
+            .execBatch([{ sql: "SELECT 1" }, { sql: "SELECT 2" }, { sql: "INSERT duplicate" }])
+            .pipe(Effect.flip);
+          yield* session.execBatch([{ sql: "SELECT 3" }]).pipe(
+            Effect.timeoutOrElse({
+              duration: Duration.seconds(10),
+              orElse: () => Effect.die("the batch after a dead-rollback socket never settled"),
+            }),
+          );
+          expect(server.state.simpleQueries).toContain("ROLLBACK");
+        }),
+      );
+    }),
+  );
+
+  it.live(
+    "bounds a stalled failed-batch rollback and discards the client instead of reusing it",
+    () =>
+      Effect.gen(function* () {
+        const server = yield* Effect.promise(() =>
+          fakeBatchServer({ failExecuteAt: 3, stallRollback: true }),
+        );
+        yield* runWithBatchServer(server, (session) =>
+          Effect.gen(function* () {
+            const before = server.sockets.length;
+            yield* session
+              .execBatch([{ sql: "SELECT 1" }, { sql: "SELECT 2" }, { sql: "INSERT duplicate" }])
+              .pipe(Effect.flip);
+            yield* session.execBatch([{ sql: "SELECT 3" }]).pipe(
+              Effect.timeoutOrElse({
+                duration: Duration.seconds(10),
+                orElse: () => Effect.die("the batch after a stalled rollback never settled"),
+              }),
+            );
+            expect(server.state.simpleQueries).toContain("ROLLBACK");
+            expect(server.sockets.length).toBeGreaterThan(before);
+          }),
+        );
+      }),
   );
 
   it.live("fails a batch whose connection drops after it was written, then recovers", () =>
