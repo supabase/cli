@@ -433,6 +433,11 @@ describe("legacy workers push", () => {
 
       expect(error).toBeInstanceOf(WorkerSourceMissingError);
       expect((error as WorkerSourceMissingError).detail).toContain("is empty");
+      // `workers new` defines no `--force`, and refuses both a name already in
+      // `config.toml` and a directory that is not empty — so recovery advice
+      // that names it would answer with a second error instead of a fix.
+      expect((error as WorkerSourceMissingError).suggestion).not.toContain("--force");
+      expect((error as WorkerSourceMissingError).suggestion).not.toContain("workers new");
       expect(http.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
@@ -673,6 +678,8 @@ describe("legacy workers push", () => {
       const error = yield* push().pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerSourceMissingError);
+      expect((error as WorkerSourceMissingError).suggestion).not.toContain("--force");
+      expect((error as WorkerSourceMissingError).suggestion).not.toContain("workers new");
       expect(http.routeKeys).toEqual([]);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });

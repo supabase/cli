@@ -131,6 +131,20 @@ function resolveInstances(options: {
   return Option.getOrElse(options.override, () => options.recorded ?? DEFAULT_WORKER_INSTANCES);
 }
 
+/**
+ * What to do about a source directory that exists but holds nothing to deploy.
+ *
+ * Deliberately does not point at `supabase workers new`. That command refuses
+ * any name already present in `config.toml`, which is where a pushed worker
+ * almost always comes from, and it refuses a directory that exists and is not
+ * empty — so for both callers here it would answer with a second error rather
+ * than a fix. The directory is already in place and already wired up; the only
+ * thing missing is the code.
+ */
+function addYourCode(sourceDisplay: string): string {
+  return `Add your worker's code to ${sourceDisplay}, then run this command again.`;
+}
+
 const deployOneWorker = Effect.fnUntraced(function* (input: {
   readonly project: LegacyWorkersProject;
   readonly name: string;
@@ -189,7 +203,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
       return yield* Effect.fail(
         new WorkerSourceMissingError({
           detail: `${sourceDisplay} is empty, so there is nothing to deploy.`,
-          suggestion: `Add your code there, or re-scaffold it with \`supabase workers new ${name} --force\`.`,
+          suggestion: addYourCode(sourceDisplay),
         }),
       );
     }
@@ -234,7 +248,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
       return yield* Effect.fail(
         new WorkerSourceMissingError({
           detail: `${sourceDisplay} holds no files to deploy, only empty directories.`,
-          suggestion: `Add your code there, or re-scaffold it with \`supabase workers new ${name} --force\`.`,
+          suggestion: addYourCode(sourceDisplay),
         }),
       );
     }
