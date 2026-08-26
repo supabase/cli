@@ -34,7 +34,11 @@ composition reuses too — see that command's `SIDE_EFFECTS.md`):
    `SUPABASE_USE_SLIM_IMAGES` changes the container's shape (never its volume, published
    port, healthcheck, or labels): the image's own entrypoint is kept instead of a `sh -c`
    heredoc script, `[db.settings]` travels as trailing `-c key=value` argv rather than a
-   `postgresql.conf` append, and `/etc/postgresql.schema.sql` plus the pgsodium root key are
+   `postgresql.conf` append — led by the `supautils.privileged_extensions`/
+   `privileged_extensions_superuser`/`privileged_role`/`privileged_role_allowed_configs`
+   defaults the docker.io image ships in its bundled `supautils.conf` but the slim bundle's
+   template is missing (a stopgap; without them `CREATE EXTENSION pg_net` as `postgres` is
+   denied, breaking webhooks activation) — and `/etc/postgresql.schema.sql` plus the pgsodium root key are
    `docker cp`'d in before start (the slim image's bundled `migrate.sh` runs that schema file
    once, at initdb, exactly like the docker.io image does). Slim schema SQL also re-promotes
    `postgres` to SUPERUSER and `CREATE EXTENSION vector` after the image's bundled demote

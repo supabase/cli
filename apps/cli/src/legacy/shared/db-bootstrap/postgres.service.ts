@@ -74,6 +74,39 @@ const LEGACY_POSTGRES_SLIM_POSTINIT_SQL = `ALTER ROLE postgres WITH SUPERUSER;
 CREATE EXTENSION IF NOT EXISTS vector;
 `;
 
+/**
+ * The `supautils.*` allowlist the docker.io Postgres image ships in its bundled
+ * `supautils.conf` but the slim bundle's `postgresql.conf.template` does not
+ * (checked against `supabase/postgres` tag `17.6.1.165`, the current pin): the
+ * slim template puts `supautils` in `shared_preload_libraries` while leaving
+ * `supautils.privileged_extensions` at its empty default, so `CREATE EXTENSION
+ * pg_net` as `postgres` is denied. That statement is exactly what the
+ * post-health webhooks activation runs (`legacyApplyDatabaseWebhooks`,
+ * `db-setup.ts`) on every fresh slim cluster — the real `db` container with
+ * `[experimental.webhooks]` on, and every shadow `db diff`/`db pull`/declarative
+ * sync provisions when webhooks are on or a migration installs `pg_net`.
+ *
+ * STOPGAP until the slim image's own template ships this block: the values are
+ * copied verbatim from `ansible/files/postgresql_config/supautils.conf.j2` at
+ * the pinned tag, so they can drift when the pin moves — re-check them on every
+ * slim Postgres bump, and delete this constant once the bundled template
+ * carries the block itself. Delivered as leading `-c` argv (the slim image's
+ * only config seam, see {@link legacyPostgresSlimBootFields}), AHEAD of the
+ * `[db.settings]` pairs so a later user-set value for the same GUC still wins.
+ * The initdb-time bundled migrations are unaffected either way: they run as the
+ * `supabase_admin` superuser, which supautils never gates.
+ */
+export const LEGACY_POSTGRES_SLIM_SUPAUTILS_ARGV: ReadonlyArray<string> = [
+  "-c",
+  "supautils.privileged_extensions=address_standardizer, address_standardizer_data_us, autoinc, bloom, btree_gin, btree_gist, citext, cube, dblink, dict_int, dict_xsyn, earthdistance, fuzzystrmatch, hstore, http, hypopg, index_advisor, insert_username, intarray, isn, ltree, moddatetime, orioledb, pg_buffercache, pg_cron, pg_graphql, pg_hashids, pg_jsonschema, pg_net, pg_prewarm, pg_repack, pg_stat_monitor, pg_stat_statements, pg_tle, pg_trgm, pg_walinspect, pgaudit, pgcrypto, pgjwt, pgroonga, pgroonga_database, pgrouting, pgrowlocks, pgsodium, pgstattuple, pgtap, plcoffee, pljava, plls, plpgsql_check, plv8, postgis, postgis_raster, postgis_sfcgal, postgis_tiger_geocoder, postgis_topology, postgres_fdw, refint, rum, seg, sslinfo, supabase_vault, supautils, tablefunc, tcn, timescaledb, tsm_system_rows, tsm_system_time, unaccent, uuid-ossp, vector, wrappers",
+  "-c",
+  "supautils.privileged_extensions_superuser=supabase_admin",
+  "-c",
+  "supautils.privileged_role=supabase_privileged_role",
+  "-c",
+  "supautils.privileged_role_allowed_configs=auto_explain.*, deadlock_timeout, log_duration, log_lock_waits, log_min_duration_statement, log_min_error_statement, log_min_messages, log_parameter_max_length, log_replication_commands, log_statement, log_temp_files, pg_net.batch_size, pg_net.ttl, pg_stat_statements.*, pgaudit.log, pgaudit.log_catalog, pgaudit.log_client, pgaudit.log_level, pgaudit.log_relation, pgaudit.log_rows, pgaudit.log_statement, pgaudit.log_statement_once, pgaudit.role, pgrst.*, plan_filter.*, safeupdate.enabled, session_replication_role, track_functions, track_io_timing, wal_compression",
+];
+
 /** Go's `container.HealthConfig` literals (`apps/cli-go/internal/db/start/start.go:85-90`). */
 const LEGACY_POSTGRES_HEALTHCHECK_INTERVAL_SECONDS = 10;
 const LEGACY_POSTGRES_HEALTHCHECK_TIMEOUT_SECONDS = 2;
@@ -467,7 +500,9 @@ type LegacyPostgresBootFields = Pick<
  *
  *  - **Trailing argv** — `entry.sh` ends in `exec postgres -D $PGDATA "$@"`, so
  *    `[db.settings]` travels as `-c key=value` pairs
- *    ({@link legacyPostgresSettingsToConfigArgs}) rather than a conf-file append.
+ *    ({@link legacyPostgresSettingsToConfigArgs}) rather than a conf-file append,
+ *    led by {@link LEGACY_POSTGRES_SLIM_SUPAUTILS_ARGV} (the supautils allowlist
+ *    the slim bundle's own template is missing — see that constant's doc comment).
  *    Everything the docker.io script appends by hand (`listen_addresses`, `port`,
  *    `wal_level`, the `host all all all scram-sha-256` HBA rule) `entry.sh`
  *    already applies itself on first boot.
@@ -501,7 +536,11 @@ function legacyPostgresSlimBootFields(input: {
       JWT_EXP: String(input.jwtExpiry),
       PGSODIUM_KEY_FILE: LEGACY_POSTGRES_PGSODIUM_ROOT_KEY_PATH,
     },
-    cmd: [...legacyPostgresSettingsToConfigArgs(input.settings), ...input.extraArgs],
+    cmd: [
+      ...LEGACY_POSTGRES_SLIM_SUPAUTILS_ARGV,
+      ...legacyPostgresSettingsToConfigArgs(input.settings),
+      ...input.extraArgs,
+    ],
     secretFiles: [
       { containerPath: LEGACY_POSTGRES_PGSODIUM_ROOT_KEY_PATH, content: input.rootKey },
       { containerPath: LEGACY_POSTGRES_SCHEMA_SQL_PATH, content: LEGACY_POSTGRES_SLIM_SCHEMA_SQL },

@@ -7,6 +7,7 @@ import { LEGACY_START_DB_SUPABASE_SQL } from "./templates/db-supabase.sql.ts";
 import { LEGACY_START_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
 import { LEGACY_POSTGRES_DEFAULT_ROOT_KEY } from "../legacy-local-config-values.ts";
 import {
+  LEGACY_POSTGRES_SLIM_SUPAUTILS_ARGV,
   LEGACY_SHADOW_ENTRYPOINT_ARGS,
   legacyBuildPostgresStartContainerSpec,
   legacyBuildShadowPostgresContainerSpec,
@@ -513,8 +514,63 @@ describe("slim Postgres image spec", () => {
     );
 
     expect(spec.entrypoint).toBeUndefined();
-    expect(spec.cmd).toEqual(["-c", "max_connections=120", "-c", "effective_cache_size=512MB"]);
+    expect(spec.cmd).toEqual([
+      ...LEGACY_POSTGRES_SLIM_SUPAUTILS_ARGV,
+      "-c",
+      "max_connections=120",
+      "-c",
+      "effective_cache_size=512MB",
+    ]);
     expect(spec.cmd?.join(" ")).not.toContain("docker-entrypoint.sh");
+  });
+
+  test("leads the argv with the supautils allowlist docker.io ships in supautils.conf, so the post-health webhooks pg_net install is not denied on a fresh slim cluster", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    const dbSpec = legacyBuildPostgresStartContainerSpec(baseInput({ image: SLIM_POSTGRES_IMAGE }));
+    const shadowSpec = legacyBuildShadowPostgresContainerSpec(
+      baseShadowInput({ image: SLIM_POSTGRES_IMAGE }),
+    );
+
+    for (const spec of [dbSpec, shadowSpec]) {
+      expect(spec.cmd?.slice(0, LEGACY_POSTGRES_SLIM_SUPAUTILS_ARGV.length)).toEqual([
+        ...LEGACY_POSTGRES_SLIM_SUPAUTILS_ARGV,
+      ]);
+      const privilegedExtensions = spec.cmd?.find((arg) =>
+        arg.startsWith("supautils.privileged_extensions="),
+      );
+      expect(privilegedExtensions).toContain("pg_net");
+      expect(privilegedExtensions).toContain("vector");
+      expect(privilegedExtensions).toContain("pgcrypto");
+      expect(spec.cmd).toContain("supautils.privileged_extensions_superuser=supabase_admin");
+      expect(spec.cmd).toContain("supautils.privileged_role=supabase_privileged_role");
+      const allowedConfigs = spec.cmd?.find((arg) =>
+        arg.startsWith("supautils.privileged_role_allowed_configs="),
+      );
+      expect(allowedConfigs).toContain("pg_net.batch_size");
+      expect(allowedConfigs).toContain("pg_net.ttl");
+    }
+  });
+
+  test("[db.settings] pairs come after the supautils defaults, so a user-set value for the same GUC wins (last -c wins)", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    const spec = legacyBuildPostgresStartContainerSpec(
+      baseInput({
+        image: SLIM_POSTGRES_IMAGE,
+        db: baseDb({ settings: { max_connections: 120 } }),
+      }),
+    );
+
+    const supautilsIndex = spec.cmd?.findIndex((arg) => arg.startsWith("supautils.")) ?? -1;
+    const settingsIndex = spec.cmd?.indexOf("max_connections=120") ?? -1;
+    expect(supautilsIndex).toBeGreaterThanOrEqual(0);
+    expect(settingsIndex).toBeGreaterThan(supautilsIndex);
+  });
+
+  test("the docker.io entrypoint script carries no supautils GUCs — the docker.io image's own bundled supautils.conf already sets them", () => {
+    const spec = legacyBuildPostgresStartContainerSpec(baseInput());
+    expect(spec.cmd?.join(" ")).not.toContain("supautils.");
+    const shadowSpec = legacyBuildShadowPostgresContainerSpec(baseShadowInput());
+    expect(shadowSpec.cmd?.join(" ")).not.toContain("supautils.");
   });
 
   test("stages the schema SQL the bundled migrate.sh hook runs, plus the pgsodium root key it is pointed at by env", () => {
@@ -588,7 +644,13 @@ describe("slim Postgres image spec", () => {
     );
 
     expect(spec.entrypoint).toBeUndefined();
-    expect(spec.cmd).toEqual(["-c", "max_connections=120", "-c", "max_worker_processes=0"]);
+    expect(spec.cmd).toEqual([
+      ...LEGACY_POSTGRES_SLIM_SUPAUTILS_ARGV,
+      "-c",
+      "max_connections=120",
+      "-c",
+      "max_worker_processes=0",
+    ]);
     expect(spec.env?.["POSTGRES_PASSWORD"]).toBe("hunter2");
     expect(spec.autoRemove).toBe(true);
     expect(spec.secretFiles?.map((file) => file.containerPath)).toEqual([
