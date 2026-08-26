@@ -539,7 +539,7 @@
 
 - [ ] **Step 5: Run the entire unit and integration suite**
 
-  Run: `pnpm test:core`
+  Run: `pnpm run test:unit && pnpm run test:integration`
 
   Expected: exit 0 with only the lean replacement scenarios and retained runtime tests.
 
@@ -627,8 +627,8 @@
 - [ ] **Step 6: Run fresh final verification**
 
   ```bash
-  cd packages/stack && pnpm test:core && pnpm check:all
-  cd ../../apps/cli && pnpm test:core && pnpm check:all
+  cd packages/stack && pnpm run test:unit && pnpm run test:integration && pnpm check:all
+  cd ../../apps/cli && pnpm run test:unit --coverage.enabled && pnpm run test:integration --coverage.enabled && pnpm check:all
   ```
 
   If `apps/cli` exposes different scripts, use its `package.json` as the source of truth and run its

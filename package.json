@@ -2,9 +2,9 @@
   "name": "@supabase/root",
   "private": true,
   "scripts": {
-    "test:core": "nx run-many -t test:unit test:integration --coverage.enabled",
-    "test:e2e": "nx run-many -t test:e2e",
-    "affected:test:e2e": "nx affected -t test:e2e",
+    "test:unit": "pnpm exec turbo run test:unit:run --filter=!@supabase/cli-go --",
+    "test:integration": "pnpm exec turbo run test:integration:run --",
+    "test:e2e": "pnpm exec turbo run supabase#build && pnpm exec turbo run test:e2e:run --only --concurrency=1 --",
     "check:all": "nx run-many -t types:check lint:check fmt:check knip:check",
     "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix",
     "repos:install": "git submodule update --init --recursive",
@@ -19,6 +19,7 @@
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:",
     "pkg-pr-new": "0.0.88",
+    "turbo": "catalog:",
     "typescript": "catalog:",
     "verdaccio": "^6.9.3"
   },

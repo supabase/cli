@@ -141,20 +141,19 @@ pnpm run fix:all     # run all fixers across every project
 
 ### Standard package scripts
 
-All standard TypeScript workspaces (`apps/cli`, `packages/api`, `packages/config`, `packages/process-compose`, `packages/stack`) expose the following scripts:
+Standard TypeScript workspaces (`apps/cli`, `packages/api`, `packages/config`, `packages/process-compose`, `packages/stack`) declare their package scripts explicitly. Test suites vary by package: unit tests are standard, while integration and e2e tests exist only where applicable.
 
 | Script             | What it does                                             |
 | ------------------ | -------------------------------------------------------- |
-| `test`             | Run the full test suite (unit + integration + e2e)       |
-| `test:core`        | Run unit and integration tests                           |
-| `test:unit`        | Run unit tests _(inferred by Nx plugin)_                 |
-| `test:integration` | Run integration tests _(inferred by Nx plugin)_          |
-| `test:e2e`         | Run end-to-end tests _(inferred by Nx plugin)_           |
+| `test`             | Run the package's declared test suites                   |
+| `test:unit`        | Run unit tests                                           |
+| `test:integration` | Run integration tests where applicable                   |
+| `test:e2e`         | Run end-to-end tests where applicable                    |
 | `check:all`        | Run all check targets for this project                   |
 | `fix:all`          | Run all fix targets for this project                     |
 | `types:check`      | Type-check with `tsc --noEmit` _(inferred by Nx plugin)_ |
 
-The inferred scripts (`test:unit`, `test:integration`, `test:e2e`, `types:check`) are not declared in `package.json` — they are injected by local Nx plugins in `tools/nx-plugins/`. They are fully cached and can be discovered via `nx show project <name>`.
+The test scripts are declared in each package's `package.json`, so package-local test commands are directly discoverable and can be sharded independently. Type-checking remains an Nx-inferred target.
 
 Linting, formatting, and unused-code analysis are repo-wide rather than per-package: `oxlint`, `oxfmt`, and `knip` read `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key) and run as `lint:*`/`fmt:*`/`knip:*` targets on the `@supabase/root` project (declared in the root `package.json`). Each package's `check:all`/`fix:all` includes them, and running the tools directly also just works:
 
@@ -170,11 +169,22 @@ Quality checks are run from the workspace you are changing:
 # From a project directory — scoped to that project only:
 pnpm run check:all
 pnpm run fix:all
-pnpm run test
+pnpm run test:unit
+# If this package declares an integration suite:
+pnpm run test:integration
 
 # From the workspace root — runs across all projects:
 pnpm run check:all
+pnpm run test:unit && pnpm run test:integration
 ```
+
+The root unit and integration scripts use Turbo to fan out the package-local
+`test:*:run` tasks across the standard TypeScript/Vitest workspaces. The Go
+workspace remains package-local because its tests run directly through Go:
+`pnpm --dir apps/cli-go run test:unit`. Go tests are covered by the dedicated
+Go CI workflow. Unit and integration tasks are uncached for now; e2e tasks are
+also uncached and run one package at a time. Forward a Vitest shard to every
+e2e package with `pnpm run test:e2e --shard=1/3`.
 
 ## E2E Compatibility Test Suite
 
@@ -222,8 +232,8 @@ cd apps/cli-e2e
 pnpm test            # ts-legacy target (default and only target)
 pnpm test:legacy     # ts-legacy target (explicit, same as above)
 
-# Or via Nx from the repo root
-nx run @supabase/cli-e2e:test:e2e
+# Or via Turbo from the repo root
+pnpm --filter @supabase/cli-e2e run test:e2e
 ```
 
 ### Recording fixtures
@@ -344,8 +354,11 @@ Nx is the task runner for this repo. It handles caching, parallelism, and cross-
 
 ```sh
 nx run @supabase/api:types:check
-nx run supabase:test
 ```
+
+Ordinary unit, integration, and e2e tests are package-local scripts orchestrated
+from the workspace root with pnpm and Turbo; see [Standard package scripts](#standard-package-scripts).
+The live suite remains an Nx target documented below.
 
 **Run a target across all projects:**
 
@@ -354,10 +367,9 @@ nx run-many -t types:check
 nx run-many -t lint:check fmt:check types:check knip:check
 ```
 
-**Run only affected projects** (compared to `main`):
+**Run only affected projects** (compared to `main`) for quality targets:
 
 ```sh
-nx affected -t test
 nx affected -t types:check
 ```
 
@@ -369,7 +381,7 @@ Lint, format, and knip targets live on the root project and always cover the who
 nx show project @supabase/api
 ```
 
-This is the best way to see what targets exist on a project, what their inputs and outputs are, and whether they are cached. Some targets are not declared in `package.json` but are injected by local Nx plugins — `types:check` and `test:unit` are examples of this.
+This is the best way to see what quality targets exist on a project, what their inputs and outputs are, and whether they are cached. Test orchestration is handled by Turbo's package-local `test:*:run` tasks instead.
 
 ### Caching
 
