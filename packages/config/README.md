@@ -4,9 +4,9 @@ Supabase project configuration package built on Effect V4 Schema — owns the ca
 document schema, config file loading/saving, and JSON Schema generation.
 
 > `CliConfig` is the config _document_ (`supabase/config.toml`/`.json`) — the full local
-> superset the CLI reads and writes. `ProjectConfig` is reserved for the hosted-project
-> subset (not implemented yet). `CliSettings` is the CLI's own runtime settings and lives
-> in the CLI, not this package.
+> superset the CLI reads and writes. `ProjectConfig` is the hosted-project subset produced
+> by `toProjectConfig` (see "ProjectConfig mapping" below). `CliSettings` is the CLI's own
+> runtime settings and lives in the CLI, not this package.
 
 It owns:
 
@@ -29,6 +29,29 @@ It owns:
   `CliConfigStore` service, `cliConfigStoreLayer`, and other Effect programs (config
   loading/saving, project env resolution, functions manifest inference).
 - `@supabase/config/schema.json` — generated JSON Schema for `CliConfig`.
+
+## ProjectConfig mapping
+
+The hosted-project subset — `ProjectConfig` — and its normalizers live on the pure entrypoint
+(`@supabase/config`), so the CLI and Studio share one implementation:
+
+- `toProjectConfig(source)` — thin dispatcher over the two normalizers; pass `{ cliConfig }`
+  or `{ apiResponse }`.
+- `fromConfigDocument(cliConfig)` — projection of a `CliConfig` document (or any
+  `EffectiveConfig`): keeps the hosted sections (`api`, `auth`, `db`, `realtime`, `storage`,
+  `workers`, `experimental`), drops local-only ones.
+- `fromApiProjectConfig(input)` — translation of a Management API v2 project-config response
+  (the full envelope, its `data` object, or bare `data.attributes`): registry-driven renames, boolean inversions, and
+  unit conversions; lenient toward API keys this package version doesn't know; secret fields
+  omitted (the API reports HMAC digests, never plaintext). Attaches the raw attributes as a
+  non-enumerable `_apiResponse` — invisible to encodes and structural walks, never persisted
+  (ADR 0019).
+- `unmappedApiFields(projectConfig)` — the API fields this package version doesn't map,
+  derived from the same mapping registry.
+
+`ProjectConfig` is sparse by design: it carries only what its source actually said, so it
+composes with `subtractCliConfig`/`omitDefaultValues` (operand type `EffectiveConfig`) without
+fabricating drift from schema defaults.
 
 ## Usage
 

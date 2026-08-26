@@ -18,6 +18,7 @@ export {
   DuplicateRemoteProjectIdError,
   InvalidRemoteProjectIdError,
   MissingCliConfigValueError,
+  ProjectConfigParseError,
 } from "./errors.ts";
 export type { ConfigFormat } from "./config-format.ts";
 export {
@@ -46,7 +47,7 @@ export type {
 export type { CliProjectPaths } from "./paths.ts";
 export { CLI_CONFIG_SCHEMA_URL } from "./schema-metadata.ts";
 export {
-  type BaseCliConfig,
+  type EffectiveConfig,
   type SparseCliConfig,
   getDefaultCliConfig,
   omitDefaultValues,
@@ -54,3 +55,12 @@ export {
 } from "./sparse.ts";
 export { KONG_LOCAL_CA_CERT } from "./tls.ts";
 export { ENV_CAPTURE_REGEX } from "./lib/env.ts";
+export {
+  type ProjectConfig,
+  type ToProjectConfigSource,
+  fromApiProjectConfig,
+  fromConfigDocument,
+  toProjectConfig,
+  unmappedApiFields,
+} from "./project-config/project-config.ts";
+export { type ProjectConfigApiAttributes } from "./project-config/api-attributes.ts";

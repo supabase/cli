@@ -48,6 +48,22 @@ export class CliConfigParseError extends Data.TaggedError("CliConfigParseError")
   readonly appliedRemote?: string;
 }> {}
 
+/**
+ * A Management API v2 project-config response failed to map into a
+ * `ProjectConfig`: the envelope/attributes shape didn't decode, or a
+ * registry-mapped field carried a value of the wrong type. Unknown keys never
+ * cause this — the mapping decode is lenient toward API-ahead-of-package skew
+ * by design (ADR 0019, rule 2).
+ */
+export class ProjectConfigParseError extends Data.TaggedError("ProjectConfigParseError")<{
+  /**
+   * Path under v2 `data.attributes` of the offending value; `undefined` when
+   * the response envelope/attributes shape itself failed to decode.
+   */
+  readonly apiPath?: ReadonlyArray<string>;
+  readonly cause: unknown;
+}> {}
+
 export class CliProjectEnvParseError extends Data.TaggedError("CliProjectEnvParseError")<{
   readonly path: string;
   readonly line: number;

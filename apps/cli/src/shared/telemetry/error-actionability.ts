@@ -937,6 +937,10 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   MissingCliConfigValueError: () => actionability.invalidConfig,
   DuplicateRemoteProjectIdError: () => actionability.invalidConfig,
   InvalidRemoteProjectIdError: () => actionability.invalidConfig,
+  // A Management API project-config response that fails to map is a platform
+  // response problem, not a local config-file mistake — the user can't fix
+  // the payload by editing supabase/config.toml.
+  ProjectConfigParseError: () => actionability.apiStatus,
 
   // @supabase/api — client construction failed before any request (missing
   // access token / bad configuration); remediation is the token env var.

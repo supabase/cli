@@ -84,3 +84,31 @@ ADR's `ProjectConfig` never meant that subset. Old → new:
 [`packages/config/docs/cli-config-loading.md`](../../packages/config/docs/cli-config-loading.md)
 for the settled vocabulary going forward, and ADR 0009's own addendum for the sibling rename of
 this package's config-document load/save/schema symbols.
+
+## Addendum (2026-08-26): family-neutral sparse operand `EffectiveConfig` (CLI-2230)
+
+CLI-2230 replaced `BaseCliConfig` — the fully-materialized `Omit<CliConfig, "remotes">` operand
+type of `subtractCliConfig`/`omitDefaultValues` — with the family-neutral
+`EffectiveConfig = DeepPartial<Omit<CliConfig, "remotes">>`. (Read the table above's
+`BaseCliConfig` as `EffectiveConfig` now.) Two forces, both filed on CLI-2230 before the mapping
+was implemented:
+
+1. **Vocabulary**: under the CLI-2235 prefix rule (`Cli*` names the local checkout side) a
+   `Cli`-prefixed operand type designed to accept a hosted-project value was a contradiction —
+   its docstring already named "a branch's effective config translated from the Management API"
+   as an operand.
+2. **Assignability**: `ProjectConfig` (the hosted subset CLI-2230 introduces) is sparse by
+   design — an API response never mentions sections it doesn't manage, and decoding API-sourced
+   values through the full schema would flood in local defaults, fabricating drift. A sparse
+   value is not assignable to the fully-materialized operand, so CLI-2156 would have needed
+   either a widening cast (banned) or a signature change to already-published functions.
+
+The widening changes no runtime behavior: the subtraction walk already treated absence with the
+overlay semantics this ADR records (a value-side absent key reports nothing; a baseline-side
+absent key keeps the value verbatim). Operands must now be effective _where they speak_ — every
+present key carries its fully-resolved value. The decoded-fragment hazard above (a
+standalone-decoded `[remotes.*]` block materializes defaults it meant to inherit) is unchanged:
+it is about wrong _present_ values, not about partiality. `BaseCliConfig` had no use sites
+beyond these two signatures and was deleted rather than kept alongside. The general naming rule
+this instantiates — cross-family symbols take family-neutral names — is recorded in ADR 0020
+(`0020-config-naming-vocabulary.md`, landing separately with CLI-2238 / supabase/cli#6335).

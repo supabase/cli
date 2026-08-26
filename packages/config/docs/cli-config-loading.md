@@ -8,8 +8,13 @@ This document explains how the CLI's on-disk config document loading works, acro
 - `CliConfig`: the persisted config-file document (`supabase/config.toml` / `supabase/config.json`)
   — the full local superset, including local-only sections (`studio`, ports, `edge_runtime`,
   `analytics`, …) plus `[remotes.*]` overrides. Owned by `@supabase/config`.
-- `ProjectConfig`: reserved. Not implemented in this package yet — it will be the hosted-project
-  subset produced by mapping a Management API project-config response, once CLI-2230/CLI-2156 land.
+- `ProjectConfig`: the hosted-project subset — the sections a hosted project manages (`api`,
+  `auth`, `db`, `realtime`, `storage`, `workers`, `experimental`), produced by `toProjectConfig`
+  from either a `CliConfig` document or a Management API v2 project-config response (CLI-2230).
+  Sparse by design: it carries only what its source actually said, so it composes with the
+  subtraction core (`subtractCliConfig`/`omitDefaultValues`, operand type `EffectiveConfig`)
+  without fabricating drift from schema defaults. Owned by `@supabase/config`
+  (`packages/config/src/project-config/`).
 - `CliSettings`: the CLI's effective runtime settings bundle (platform `apiUrl`, `dashboardUrl`,
   access token, telemetry flags, `supabaseHome`, `noKeyring`, `debug`). Lives in `apps/cli`, not
   this package.
