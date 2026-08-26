@@ -15,7 +15,9 @@ earlier flows. Every scenario is safe to run on a disposable staging project.
 - A **staging** Supabase account and access token.
 - A disposable staging project (create one in the staging dashboard, or reuse a scratch project).
   Several scenarios mutate the remote schema; never point these at a project you care about.
-- The CLI built from this repo (`bun src/supabase.ts …` from `apps/cli/`, or a released binary).
+- The CLI built from this repo (`bun src/legacy/main.ts …` from `apps/cli/`, or `pnpm dev:legacy`,
+  or a released binary). Note `src/supabase.ts` does not exist — the legacy shell's entrypoint is
+  `src/legacy/main.ts`.
 
 ### Environment setup
 
@@ -109,10 +111,16 @@ supabase db schema declarative generate --linked
 ```
 
 Expected layout under `supabase/schemas/`: one directory per schema
-(`public/tables/<table>.sql`, `public/schema.sql`, …), cluster-level objects under `_cluster/`
-(e.g. `_cluster/roles.sql`), and an export manifest `.pgdelta-export.json`. The export never
-writes to or prunes `_custom/` — that directory is yours for hand-authored SQL pg-delta does
-not model.
+(`public/tables/<table>.sql`, `public/schema.sql`, plus `types/`, `views/`, `functions/`,
+`sequences/` as needed), cluster-level objects under `_cluster/` (e.g. `_cluster/roles.sql`), and
+an export manifest `.pgdelta-export.json`. The export never writes to or prunes `_custom/` —
+that directory is yours for hand-authored SQL pg-delta does not model.
+
+Note on `_cluster/`: the manifest records a `scope`, and a `--db-url` export against a plain
+database comes back with `"scope": "database"` and no `_cluster/` directory at all. Check the
+manifest's `scope` before concluding that missing cluster files are a bug.
+
+Do not trust the manifest's `loadOrder` as an apply order — see finding F1 in the run log below.
 
 **Convergence check (the point of the scenario):** the migrations state and the declarative
 tree now describe the same database, so:
@@ -432,3 +440,382 @@ generated SQL (or debug bundle for empty results), and whether the convergence c
 `No schema changes found`) held. Convergence failures and destructive SQL emitted without a
 warning are the highest-priority findings; prompt/wording confusion is still worth filing —
 this workflow is about to be the default experience.
+
+---
+
+# Run log — first dogfooding pass
+
+Findings below come from an actual pass over these scenarios. Each finding states what was run,
+what happened, why it hurts in a user's hands, and a suggested fix. Everything marked
+**Confirmed** was reproduced against a live Postgres; everything marked **Not verified** was
+blocked by the environment (see "What this pass could not cover").
+
+## What this pass could not cover
+
+Two environment limits blocked the remote and container-backed halves of the matrix. Neither is a
+CLI defect, but both bound the confidence of this run:
+
+- **Staging Management API unreachable.** `api.supabase.green` is denied by the egress policy
+  (HTTP 403 on CONNECT). Anything routed through the platform — `link`, `--linked`, `db push`
+  against a project, `migration list/repair` against remote history — could not run.
+- **Container images unpullable.** All three registries (`public.ecr.aws`, `ghcr.io`,
+  `docker.io`) return 403 on blob fetch, so no image can be pulled. That blocks every path that
+  provisions a shadow or the local stack: `supabase start`, `db reset`, `db schema declarative
+sync`, migration-mode `db pull`, `generate --local/--linked`, and `db diff --linked/--local/
+--from migrations`.
+
+To dogfood anyway, the pass used a **native PostgreSQL 16 server** as the target and drove the
+shadow-free code paths: `db diff --from <url> --to <url>`, `db schema declarative generate
+--db-url`, and `db pull --declarative --db-url`. These exercise the real pg-delta engine
+(planning, rendering, export) — just not the shadow provisioning around it.
+
+**Worth knowing regardless of environment:** `generate --db-url` and `db pull --declarative
+--db-url` need no Docker at all. That is a genuinely fast path for exporting a declarative tree
+from any reachable database, and it is not called out anywhere in the command docs.
+
+## Scenario status
+
+| #   | Scenario                        | Status                                                                                    |
+| --- | ------------------------------- | ----------------------------------------------------------------------------------------- |
+| 1   | Adopt on an existing project    | Partial — declarative export half confirmed; `link`/`db pull` migration mode not verified |
+| 2   | Greenfield, declarative-first   | Partial — `init` confirmed; `start`/`sync`/`push` not verified                            |
+| 3   | Day-to-day iteration loop       | Partial — diff/export quality confirmed; `sync` loop not verified                         |
+| 4   | Remote drift resolution         | Partial — drift diff confirmed via two live DBs; remote half not verified                 |
+| 5   | Local drift resolution          | Not verified (needs local stack)                                                          |
+| 6   | Migration history repair        | Not verified (needs remote history)                                                       |
+| 7   | Fresh clone onboarding          | Not verified (needs local stack)                                                          |
+| 8   | Squash a long history           | Not verified (needs local stack)                                                          |
+| 9   | Review-only diffs               | **Confirmed** — ran end to end                                                            |
+| 10  | Legacy declarative tree upgrade | Partial — former-default warning confirmed; staged upgrade not verified                   |
+| 11  | Escape hatches & debugging      | Partial — `format_options` and gates confirmed; `--no-cache`/`PGDELTA_DEBUG` not verified |
+
+## Findings
+
+### F1 — The export manifest's `loadOrder` is not a valid apply order (high)
+
+**Scenarios 1, 2, 3.** Export any schema where a table depends on a function — a column default
+calling one, or the near-universal `updated_at` trigger — and the generated
+`.pgdelta-export.json` lists the table file _before_ the function file, because functions are
+sorted last as a category.
+
+Minimal reproduction:
+
+```sh
+psql -c "CREATE FUNCTION public.gen_code() RETURNS text LANGUAGE sql IMMUTABLE AS \$\$ SELECT 'x' \$\$;"
+psql -c "CREATE TABLE public.items (id INT PRIMARY KEY, code TEXT NOT NULL DEFAULT public.gen_code());"
+supabase db schema declarative generate --db-url "$URL"
+# manifest loadOrder: public/schema.sql, public/tables/items.sql, public/functions/gen_code.sql
+```
+
+Replaying the tree in its own declared `loadOrder` fails:
+
+```
+FAILED [public/tables/items.sql]
+ERROR:  function public.gen_code() does not exist
+```
+
+The same happens with a trigger (`ERROR: function public.set_updated_at() does not exist`).
+
+**Why it's bad:** `loadOrder` is published in the manifest as the tree's apply contract, and it is
+wrong for one of the most common Supabase patterns. Anything outside the CLI that trusts it — a
+CI step, a `psql -f` loop, another tool, or a human reading `tables/items.sql` and wondering
+where `set_updated_at` comes from — breaks. It also makes the tree look untrustworthy in review.
+
+**Scope of impact:** the CLI's own `sync` passes `reorder: true` to pg-delta
+(`legacy-pgdelta-next-adapter.layer.ts`), so its shadow load very likely re-orders internally and
+survives. That was not verifiable here (needs a shadow container), so this is reported as a
+manifest-contract defect, not as "sync is broken."
+
+**Suggestions:** make the emitted `loadOrder` a real topological order over cross-file
+dependencies rather than a fixed category order; failing that, either drop `loadOrder` from the
+manifest or document it explicitly as "informational, not an apply order — the tree must be
+loaded through pg-delta, which reorders." Add a test that replays every exported fixture tree in
+`loadOrder` against a clean database.
+
+### F2 — Destructive plans are emitted with no warning and exit 0 (high)
+
+**Scenarios 4, 5, 9.** Diffing toward a target that lacks objects produces drops with no banner,
+no count, and a success exit code:
+
+```sh
+supabase db diff --from "$FULL" --to "$EMPTIER"
+# DROP POLICY / DROP TRIGGER / DROP INDEX / DROP VIEW / DROP FUNCTION
+# ALTER TABLE ... DROP COLUMN "body" / "m" / "title"
+# DROP TABLE ... / DROP TYPE ...
+# exit: 0
+```
+
+**Why it's bad:** drift resolution is exactly where users get the direction backwards, and
+`--from`/`--to` gives no hint which side is the desired state (the help text is just "Diff from
+local, linked, migrations, or a Postgres URL"). The output is a wall of SQL where three
+data-destroying `DROP COLUMN`s look no different from an index rename. `sync` warns about drop
+statements; `db diff` does not.
+
+**Suggestions:** print a destructive-change summary to stderr before the SQL ("⚠ 9 destructive
+statements: 3 DROP COLUMN, 2 DROP TABLE, 1 DROP TYPE …"), and expand the `--from`/`--to` help to
+state the direction plainly ("`--to` is the desired state; the plan transforms `--from` into
+it"). Consider a `--allow-destructive` gate for the file-writing modes.
+
+### F3 — Image-pull failure produces a ~15 KB unreadable error (high)
+
+**Scenarios 2, 3, 5, 7, 8, 11 — any Docker path.** With registries unreachable, the failure is
+reported as every attempt from every registry concatenated into one message: 3 registries × 3
+attempts, each embedding a full multi-thousand-character presigned CloudFront URL. Each attempt
+is printed once as it happens and then _again_ in the final error.
+
+**Why it's bad:** the actionable content is one line ("could not pull
+`supabase/postgres:17.6.1.165`"), and it is buried in pages of signed URLs that scroll the real
+context off screen. Anyone behind a corporate proxy, a VPN, an air-gapped runner, or a registry
+outage hits this, and it floods CI logs. It reads like a CLI crash rather than "your machine
+cannot reach the registry."
+
+**Suggestions:** collapse to one line naming the image and the registries tried, with per-attempt
+detail behind `--debug`; strip query strings from registry URLs in error text; do not re-print
+attempts that were already streamed.
+
+### F4 — Flattened `--from/--to` output has no unit boundaries and misleading preambles (medium)
+
+**Scenario 9.** Plans that cross a transaction boundary are rendered as one flat stream. The only
+sign of a second unit is a blank line and a repeated `SET local check_function_bodies = off;`.
+Applied the two obvious ways:
+
+```
+psql -1 -f plan.sql   → ERROR: unsafe use of new value "ecstatic" of enum type mood   (exit 3)
+psql -f plan.sql      → WARNING: SET LOCAL can only be used in transaction blocks (×2)  (exit 0)
+```
+
+**Why it's bad:** two problems in one artifact. The docs warn not to apply this output directly,
+but the artifact itself carries no marker, so a user who pipes it into `psql -1` gets a confusing
+enum error with no clue that the plan was meant to be two transactions. And in the mode that does
+succeed (autocommit), `SET LOCAL` is a no-op — so `check_function_bodies = off` never takes
+effect, and its protection against forward references silently is not there.
+
+**Suggestions:** emit unit boundaries as SQL comments (`-- unit 2/2 — must run in a separate
+transaction`), and either emit `SET` rather than `SET LOCAL` when rendering flattened review
+output or wrap each unit in explicit `BEGIN`/`COMMIT`. Repeat the "not a portable apply script"
+caveat as a comment header in the output itself, not only in the docs.
+
+### F5 — Non-interactive `generate` over an existing tree is a silent no-op with exit 0 (medium)
+
+**Scenarios 1, 4.** With a tree already present and no TTY:
+
+```sh
+supabase db schema declarative generate --db-url "$URL"
+# stderr: Overwrite declarative schema? Existing files may be deleted. [y/N]
+# stderr: Skipped writing declarative schema.
+# exit: 0
+```
+
+**Why it's bad:** a CI job that regenerates the tree reports success while changing nothing, and
+the drift it was supposed to catch stays invisible. It is also inconsistent with `sync`, which
+fails with exit 1 in the same non-interactive situation.
+
+**Suggestions:** in non-interactive mode, fail with exit 1 and a message naming `--overwrite`
+(or `--yes`), matching `sync`'s behavior. At minimum, exit non-zero when the command was asked to
+write and wrote nothing.
+
+### F6 — `-f/--file` is silently ignored in `--from/--to` mode (medium)
+
+**Scenario 9.** `supabase db diff --from A --to B -f my_migration` prints the diff, creates no
+migration file, warns nothing, and exits 0.
+
+**Why it's bad:** the user explicitly asked for a file. Silence plus exit 0 means they find out
+later, when the migration they thought they had is missing. The behavior _is_ documented in the
+flag's own help ("Ignored with `--from`/`--to`"), which makes this a runtime-feedback gap rather
+than a documentation gap.
+
+**Suggestion:** warn on stderr when `-f` is passed with `--from`/`--to`, pointing at the normal
+target mode that does write a file. Rejecting the combination outright would be defensible too.
+
+### F7 — Foreign files inside managed directories survive `--overwrite` and become desired state (medium)
+
+**Scenarios 3, 4.** A file dropped into a managed directory (`public/tables/stale_leftover.sql`)
+survives `generate --overwrite` untouched. Pruning itself works correctly for objects the export
+manages: dropping `public.set_updated_at()` from the database and re-exporting did remove
+`public/functions/set_updated_at.sql`.
+
+**Why it's bad:** the declarative tree is defined as the complete desired state, so a leftover
+file in a managed directory is not inert — `sync` will read it and try to make the database match
+it. A half-renamed file or a stray copy silently resurrects an object.
+
+**Suggestion:** either prune unrecognized `.sql` files in managed directories under `--overwrite`,
+or warn that they were found and will be treated as desired state. `_custom/` correctly stays
+untouched and is the right home for hand-authored SQL — that part works as documented.
+
+### F8 — Exported "declarative" files read as incremental scripts (low)
+
+**Scenarios 1, 3.** A column whose default calls a function is emitted as a trailing `ALTER`
+rather than inline:
+
+```sql
+CREATE TABLE "public"."items" (
+  "id"         integer                  NOT NULL,
+  "updated_at" timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT "items_pkey" PRIMARY KEY (id)
+);
+...
+ALTER TABLE "public"."items"
+  ADD COLUMN "code" text NOT NULL DEFAULT public.gen_code();
+```
+
+**Why it's bad:** the promise of declarative schemas is that a file reads as the desired state.
+Here the column list is incomplete and the reader has to scan for `ALTER`s to reconstruct the
+table. It also makes hand-editing error-prone — the natural edit (add the column to the
+`CREATE TABLE`) conflicts with what the exporter regenerates.
+
+**Suggestion:** inline column definitions whenever the dependency is already satisfied earlier in
+the load order; reserve the trailing-`ALTER` form for genuine cycles, with a comment saying why.
+
+### F9 — Inconsistent rendering: some statements bypass the formatter (low)
+
+**Scenarios 1, 3, 9.** In the same plan, most statements are quoted and formatted while indexes
+and views come out raw:
+
+```sql
+ALTER TABLE "public"."posts" ADD COLUMN "body" text;              -- quoted, formatted
+CREATE INDEX posts_partial ON public.posts USING btree (title)    -- unquoted, catalog form
+CREATE VIEW "public"."post_titles" WITH (security_invoker=true) AS  SELECT id,
+    title
+   FROM public.posts;                                             -- raw viewdef, double space
+```
+
+**Why it's bad:** this lands verbatim in migrations and declarative files that humans review. Two
+identifier-quoting conventions and two indentation styles in one file look like a bug and make
+diffs noisier than the change warrants.
+
+**Suggestion:** route index and view definitions through the same renderer as everything else
+instead of passing `pg_get_indexdef` / `pg_get_viewdef` output through.
+
+### F10 — Docs contradict each other on the default keyword case (low)
+
+`db/diff.md` and `db/pull.md` say the formatter defaults to **uppercase** keywords;
+`db/schema/declarative/sync/SIDE_EFFECTS.md` says it "defaults to **lowercase** SQL at width 180".
+Observed default output is uppercase, so `SIDE_EFFECTS.md` is the wrong one.
+
+**Why it's bad:** `SIDE_EFFECTS.md` is treated as the precise contract for the command, so a
+contradiction there undermines the file people consult when output looks off.
+
+**Suggestion:** fix the `sync` SIDE_EFFECTS line to say uppercase, and state the full default set
+(`keywordCase: upper`, `indent: 2`, `maxWidth: 180`) in exactly one place that the others link to.
+
+### F11 — The config template's `format_options` example is not the default (low)
+
+`supabase init` writes this commented line:
+
+```toml
+# format_options = "{\"keywordCase\":\"upper\",\"indent\":2,\"maxWidth\":80,\"commaStyle\":\"trailing\"}"
+```
+
+`maxWidth` is 80 there, but the documented and observed default is 180.
+
+**Why it's bad:** it reads as "here is the default, uncomment to edit." Uncommenting it silently
+reflows every generated file to a narrower width, producing a large unrelated diff the user did
+not ask for.
+
+**Suggestion:** make the example match the real default, or label it explicitly as a non-default
+sample.
+
+_(Verified working alongside this: `format_options = "null"` correctly emits single-line raw
+statements, a custom `{"keywordCase":"lower"}` correctly lowercases and column-aligns, and invalid
+JSON fails with the clear `Invalid config for experimental.pgdelta.format_options: must be valid
+JSON`.)_
+
+### F12 — The gate message says "add" when the section already exists (low)
+
+With `[experimental.pgdelta] enabled = false` present in config:
+
+```
+declarative commands require --experimental flag or pg-delta enabled in config
+Either pass --experimental or add [experimental.pgdelta] with enabled = true to supabase/config.toml
+```
+
+**Why it's bad:** the user already has the section; following the advice literally means adding a
+duplicate key. The one-word fix they actually need (`false` → `true`) is never stated.
+
+**Suggestion:** branch the message — "set `enabled = true` under `[experimental.pgdelta]`" when
+the section exists, "add …" when it does not.
+
+### F13 — `init` enables pg-delta but leaves no signpost to declarative schemas (low)
+
+**Scenario 2.** `supabase init` writes `[experimental.pgdelta] enabled = true` and creates
+neither `supabase/schemas/` nor `supabase/migrations/`. The only hint about where declarative
+files go is a commented `declarative_schema_path` line at line ~412 of a 15 KB config file.
+
+**Why it's bad:** if declarative is to be the default experience, a fresh project should show
+where schema files belong. As it stands the greenfield user has to already know the command name
+to discover the workflow.
+
+**Suggestion:** create `supabase/schemas/` at init with a short `README.md` or a
+`_custom/.gitkeep`, and mention `db schema declarative generate` in the init success output.
+
+### F14 — Non-SSL connection error does not suggest the fix (low)
+
+`--db-url` against a server without SSL fails with `tls error (The server does not support SSL
+connections)` and no remedy. Adding `?sslmode=disable` works.
+
+**Why it's bad:** self-hosted and local-container Postgres commonly run without TLS. The user is
+told what failed but not the one-parameter fix.
+
+**Suggestion:** append "append `?sslmode=disable` to the connection string if the server does not
+use TLS" to that error.
+
+### F15 — Flag-conflict messages read as generated grammar (low)
+
+```
+if any flags in the group [apply no-apply] are set none of the others can be; [apply no-apply] were all set
+```
+
+**Suggestion:** "`--apply` and `--no-apply` cannot be used together." Same for
+`[declarative diff-engine]`.
+
+### F16 — `db diff`'s "known to fail" list is stale for pg-delta (informational)
+
+`db/diff.md` lists views with `security_invoker` among cases where diffing "is known to fail".
+pg-delta handled a `security_invoker = true` view correctly, both in a diff plan and in the
+declarative export.
+
+**Suggestion:** scope that list to the migra engine, or re-test each entry against pg-delta and
+drop the ones it now handles. Leaving stale limitations in the docs makes users avoid a workflow
+that works.
+
+## What worked well
+
+Worth recording, because these are the load-bearing behaviors:
+
+- **Convergence held.** Both a simple diff and a complex one (enum, `security_invoker` view,
+  trigger, RLS policy, partial index, table comment) applied cleanly and re-diffed to empty.
+- **Transaction-boundary awareness is real.** `ALTER TYPE ... ADD VALUE` was correctly placed in
+  its own unit, ahead of the `ADD COLUMN ... DEFAULT 'ecstatic'::public.mood` that depends on it.
+  `psql -1` failing on the flattened form (F4) is the proof the split was necessary.
+- **Object coverage is broad.** Enums, `security_invoker` views, trigger functions, RLS enable +
+  policy, partial indexes, comments, sequence ownership and grants were all rendered.
+- **Pruning works.** Dropping a function from the database and re-exporting removed its file.
+- **`_custom/` is respected** exactly as documented — never written, never pruned.
+- **The former-default warning is a model error message.** It names what was found, what changed,
+  and both ways out:
+
+  ```
+  WARNING: found declarative schema files in supabase/database, but the default declarative
+  directory is now supabase/schemas.
+  Set declarative_schema_path = "./database" under [experimental.pgdelta] in supabase/config.toml
+  to keep using the existing tree, or move it to supabase/schemas.
+  ```
+
+- **`--use-pg-delta` deprecation** on `db pull` prints a clear pointer to `--declarative`.
+- **Agent/JSON output mode** is correctly auto-detected and cleanly separated from human text
+  output; human mode renders errors on stderr with the `--debug` hint.
+
+## Suggested next pass
+
+Run the same matrix in an environment with registry access and a reachable staging project. The
+highest-value unverified checks, in order:
+
+1. Whether `sync` tolerates the F1 `loadOrder` problem in its shadow load (`reorder: true`
+   suggests yes) — and whether an externally-authored tree with the same shape is refused.
+2. The Scenario 1 convergence check on a real project: `db pull` → `generate --linked` → `sync`
+   must print `No schema changes found`.
+3. Grant noise on a real project, where `anon`, `authenticated`, and `service_role` exist —
+   `GRANT ... TO "postgres"` was emitted for every table here, and whether that stays stable
+   against a real Supabase ACL baseline is unknown.
+4. `--strict-coverage` against a schema with objects pg-delta cannot model.
+5. Shadow timings cold vs. warm, with and without `SUPABASE_SHADOW_CACHE=1`.
