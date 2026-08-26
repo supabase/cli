@@ -2025,3 +2025,56 @@ describe("review round: oauth_server disabled sentinel (CLI-2230)", () => {
     expect(doc.auth?.oauth_server).toEqual({ enabled: false });
   });
 });
+
+describe("review round: clone-snapshot validation, provenance, digit exactness (CLI-2230)", () => {
+  test("a getter that changes answers cannot desynchronize validation from the attached snapshot", () => {
+    // Clone-first ordering: structuredClone reads the getter exactly once,
+    // and the VALIDATED value is the CLONE — so either the snapshot is plain
+    // JSON and attaches coherently (this case: first read returns 1), or the
+    // snapshot itself fails validation typed. No ordering lets a value that
+    // wasn't validated get attached.
+    let reads = 0;
+    const sneaky: Record<string, unknown> = {};
+    Object.defineProperty(sneaky, "flip", {
+      enumerable: true,
+      get() {
+        reads += 1;
+        return reads > 1 ? 1n : 1;
+      },
+    });
+    const attached = attachApiResponse({}, sneaky);
+    expect((attached as ProjectConfig)._apiResponse?.["flip"]).toBe(1);
+  });
+
+  test("pathological structures via attachApiResponse carry caller provenance", () => {
+    let node: Record<string, unknown> = { leaf: true };
+    for (let level = 0; level < 200; level++) {
+      node = { nested: node };
+    }
+    let thrown: unknown;
+    try {
+      attachApiResponse({}, { deep: node });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
+    expect((thrown as ProjectConfigParseError).suggestion).toBeUndefined();
+    // The same structure via the API arm stays a platform-response failure.
+    let apiThrown: unknown;
+    try {
+      fromApiProjectConfig({ deep: node });
+    } catch (error) {
+      apiThrown = error;
+    }
+    expect(apiThrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((apiThrown as ProjectConfigParseError).reason).toBeUndefined();
+  });
+
+  test("integer duration components past the safe range stay verbatim", () => {
+    const projected = fromConfigDocument({
+      auth: { sessions: { timebox: "9007199254740993ns" } },
+    });
+    expect(projected.auth?.sessions?.timebox).toBe("9007199254740993ns");
+  });
+});

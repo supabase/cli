@@ -710,13 +710,23 @@ function assertRawAttributesDepthWithinBound(
   value: unknown,
   depth = 0,
   visits: { count: number } = { count: 0 },
+  // Call-site provenance for the depth/visit bounds: via fromApiProjectConfig
+  // a pathological structure is a platform-response problem (upgrade
+  // suggestion applies); via attachApiResponse the structure is the CALLER's
+  // own data, and reporting it as an external api_status failure would
+  // corrupt the KPI. Non-JSON primitives and non-plain objects stay
+  // caller_misuse unconditionally — parsed JSON cannot produce them on any
+  // path.
+  reason: "api_response" | "caller_misuse" = "api_response",
 ): void {
   if (depth > MAX_UNMAPPED_WALK_DEPTH) {
     const detail = `pathological nesting: exceeded ${MAX_UNMAPPED_WALK_DEPTH} levels while validating the raw API response`;
     throw new ProjectConfigParseError({
-      message: formatProjectConfigParseErrorMessage(detail),
+      message: reason === "caller_misuse" ? detail : formatProjectConfigParseErrorMessage(detail),
       cause: new Error(detail),
-      suggestion: PROJECT_CONFIG_PARSE_ERROR_SUGGESTION,
+      ...(reason === "caller_misuse"
+        ? { reason }
+        : { suggestion: PROJECT_CONFIG_PARSE_ERROR_SUGGESTION }),
     });
   }
   // Bigint is structured-cloneable and freezable but not JSON — it would
@@ -741,14 +751,16 @@ function assertRawAttributesDepthWithinBound(
   if (visits.count > MAX_RAW_ATTRIBUTES_NODE_VISITS) {
     const detail = `pathological structure: exceeded ${MAX_RAW_ATTRIBUTES_NODE_VISITS} node visits while validating the raw API response`;
     throw new ProjectConfigParseError({
-      message: formatProjectConfigParseErrorMessage(detail),
+      message: reason === "caller_misuse" ? detail : formatProjectConfigParseErrorMessage(detail),
       cause: new Error(detail),
-      suggestion: PROJECT_CONFIG_PARSE_ERROR_SUGGESTION,
+      ...(reason === "caller_misuse"
+        ? { reason }
+        : { suggestion: PROJECT_CONFIG_PARSE_ERROR_SUGGESTION }),
     });
   }
   if (Array.isArray(value)) {
     for (const child of value) {
-      assertRawAttributesDepthWithinBound(child, depth + 1, visits);
+      assertRawAttributesDepthWithinBound(child, depth + 1, visits, reason);
     }
     return;
   }
@@ -777,7 +789,7 @@ function assertRawAttributesDepthWithinBound(
       });
     }
     for (const child of Object.values(value)) {
-      assertRawAttributesDepthWithinBound(child, depth + 1, visits);
+      assertRawAttributesDepthWithinBound(child, depth + 1, visits, reason);
     }
   }
 }
@@ -826,9 +838,17 @@ function cloneRawAttributes(rawAttributes: Record<string, unknown>): Record<stri
 function attachFrozenApiResponse<T extends Record<string, unknown>>(
   enumerableProps: T,
   rawAttributes: Record<string, unknown>,
+  reason: "api_response" | "caller_misuse" = "api_response",
 ): T {
-  assertRawAttributesDepthWithinBound(rawAttributes);
+  // Clone FIRST, then validate the CLONE: validating the live input leaves a
+  // time-of-check/time-of-use gap for accessor properties (a getter can
+  // answer the validation walk with a plain value and hand structuredClone a
+  // bigint). The clone is inert data — getters are resolved exactly once by
+  // structuredClone — so what gets validated is what gets attached. A
+  // pathologically deep input failing inside structuredClone itself is
+  // caught and typed by cloneRawAttributes.
   const cloned = cloneRawAttributes(rawAttributes);
+  assertRawAttributesDepthWithinBound(cloned, 0, undefined, reason);
   // Object.freeze itself can throw on structured-cloneable non-JSON values
   // (a typed array: "Cannot freeze array buffer views with elements") —
   // parsed JSON never contains one, so reaching this is programmatic caller
@@ -926,7 +946,7 @@ export function attachApiResponse(
       `attachApiResponse "rawAttributes" must be an object, got ${nonObjectDescription(rawAttributes)}`,
     );
   }
-  return attachFrozenApiResponse(config, rawAttributes);
+  return attachFrozenApiResponse(config, rawAttributes, "caller_misuse");
 }
 
 /**

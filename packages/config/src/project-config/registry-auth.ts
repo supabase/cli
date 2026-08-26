@@ -157,6 +157,13 @@ function parseDuration(s: string): number {
     let i = 0;
     while (i < s.length && s.charAt(i) >= "0" && s.charAt(i) <= "9") {
       n = n * 10 + parseInt(s.charAt(i), 10);
+      // An integer component past Number.MAX_SAFE_INTEGER has already
+      // rounded during this very accumulation ("9007199254740993ns" reads
+      // back as ...992), invisibly to the exactness check below — reject
+      // here so the value stays verbatim instead of canonicalizing changed.
+      if (n > Number.MAX_SAFE_INTEGER) {
+        throw new Error(`time: invalid duration "${orig}" (value out of range)`);
+      }
       i++;
     }
     const integerDigits = i;
