@@ -32,22 +32,26 @@ type SessionCommand =
   | { readonly _tag: "StopRequested"; readonly intent: ControlStopIntent }
   | { readonly _tag: "RuntimeDisposed" };
 
-interface SupervisorSessionRunInput<A, E, R> {
+interface SupervisorSessionRunInput<A, E, R, F> {
   readonly startup: (runtimeScope: Scope.Scope) => Effect.Effect<A, E, R | Scope.Scope>;
   readonly stack: (runtime: A) => Stack["Service"];
   readonly awaitDisposed: (runtime: A) => Effect.Effect<void, never>;
-  readonly onRunning: (runtime: A) => Effect.Effect<void, unknown>;
-  readonly onStopped: (intent: ControlStopIntent) => Effect.Effect<void, unknown>;
-  readonly onFailure: (detail: string) => Effect.Effect<void, unknown>;
-  readonly closeOwner: Effect.Effect<void, unknown>;
+  readonly onRunning: (runtime: A) => Effect.Effect<void, F>;
+  readonly onStopped: (intent: ControlStopIntent) => Effect.Effect<void, F>;
+  readonly onFailure: (detail: string) => Effect.Effect<void, F>;
+  readonly closeOwner: Effect.Effect<void, F>;
   readonly errorDetail: (cause: Cause.Cause<unknown>) => string;
 }
 
 export interface SupervisorSessionController {
   readonly service: SupervisorSession["Service"];
-  readonly run: <A, E, R>(
-    input: SupervisorSessionRunInput<A, E, R>,
-  ) => Effect.Effect<{ readonly started: boolean }, unknown, Exclude<R, Scope.Scope>>;
+  readonly run: <A, E, R, F = never>(
+    input: SupervisorSessionRunInput<A, E, R, F>,
+  ) => Effect.Effect<
+    { readonly started: boolean },
+    E | F | StackUnavailableError,
+    Exclude<R, Scope.Scope>
+  >;
 }
 
 const cleanupFailures = (
@@ -130,9 +134,13 @@ export class SupervisorSession extends Context.Service<
             Effect.andThen(Deferred.await(terminalSignal).pipe(Effect.asVoid)),
           ),
       };
-      const run = <A, E, R>(
-        runInput: SupervisorSessionRunInput<A, E, R>,
-      ): Effect.Effect<{ readonly started: boolean }, unknown, Exclude<R, Scope.Scope>> =>
+      const run = <A, E, R, F = never>(
+        runInput: SupervisorSessionRunInput<A, E, R, F>,
+      ): Effect.Effect<
+        { readonly started: boolean },
+        E | F | StackUnavailableError,
+        Exclude<R, Scope.Scope>
+      > =>
         Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
             const runtimeScope = yield* Scope.fork(sessionScope);
@@ -152,7 +160,7 @@ export class SupervisorSession extends Context.Service<
             let started = false;
 
             type CleanupRequest = {
-              readonly terminal: Effect.Effect<void, unknown>;
+              readonly terminal: Effect.Effect<void, F>;
               readonly reason: StackUnavailableError;
             };
             const cleanupResult = Deferred.makeUnsafe<Exit.Exit<void, never>>();
@@ -287,9 +295,7 @@ export class SupervisorSession extends Context.Service<
                         terminal: runInput.onFailure(detail),
                         reason: new StackUnavailableError({ phase: "failed", detail }),
                       });
-                      return yield* Effect.fail(
-                        new StackUnavailableError({ phase: "failed", detail }),
-                      );
+                      return yield* new StackUnavailableError({ phase: "failed", detail });
                     }),
                 });
                 if (outcome !== undefined) return outcome;

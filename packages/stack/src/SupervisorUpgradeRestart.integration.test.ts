@@ -94,7 +94,7 @@ const setup = (persistedVersions: Partial<Record<ServiceName, string>> = { auth:
     readStack: unused,
     startStack: unused,
     inspectStack: () => Effect.succeed(document),
-    listStacks: unused,
+    listStacks: Effect.die("unused manager operation"),
     allocateManagedPorts: unused,
     validateManagedPortReservations: () => Effect.void,
     recordLifecycle: unused,

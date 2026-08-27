@@ -47,7 +47,7 @@ describe("managed stack worktrees journeys", () => {
         expect(second.stack.ports.some((assignment) => firstPorts.has(assignment.port))).toBe(
           false,
         );
-        const listings = yield* manager.listStacks();
+        const listings = yield* manager.listStacks;
         expect(listings).toEqual(
           expect.arrayContaining([
             expect.objectContaining({ id: first.stack.id, status: "healthy" }),

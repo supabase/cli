@@ -395,7 +395,7 @@ describe("managed stack recovery journeys", () => {
           mkdirSync(corruptPaths.root, { recursive: true });
           writeFileSync(corruptDocumentPath, "not-json");
         });
-        const listings = yield* manager.listStacks();
+        const listings = yield* manager.listStacks;
         expect(listings).toEqual(
           expect.arrayContaining([
             expect.objectContaining({ id: stack.stack.id, status: "healthy" }),

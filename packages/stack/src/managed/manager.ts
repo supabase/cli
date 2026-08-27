@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   Context,
   Data,
+  DateTime,
   Effect,
   Exit,
   FileSystem,
@@ -13,6 +14,7 @@ import {
   Semaphore,
   Scope,
 } from "effect";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Managed path validation relies on native path semantics at the filesystem boundary.
 import { isAbsolute, relative, resolve } from "node:path";
 import { PORT_CATALOG, type PortSet } from "../PortCatalog.ts";
 import { reservePortSet, type PortLease, type PortReservationRequest } from "../PortAllocator.ts";
@@ -225,7 +227,7 @@ export interface ManagedStackManagerShape {
   readonly inspectStack: (
     stackId: string,
   ) => Effect.Effect<ManagedStack | undefined, ManagedStackManagerError>;
-  readonly listStacks: () => Effect.Effect<
+  readonly listStacks: Effect.Effect<
     ReadonlyArray<ManagedStackListing>,
     ManagedStackManagerError,
     never
@@ -267,7 +269,7 @@ export class ManagedStackManager extends Context.Service<
   ManagedStackManagerShape
 >()("stack/managed/ManagedStackManager") {}
 
-const now = (): string => new Date().toISOString();
+const now = (): string => DateTime.formatIso(DateTime.nowUnsafe());
 
 const lengthPrefixed = (value: string): Uint8Array => {
   const bytes = new TextEncoder().encode(value);
@@ -470,9 +472,7 @@ const makeManager = (
             .stat(persistedPath)
             .pipe(
               Effect.catchTag("PlatformError", (error) =>
-                Predicate.isTagged(error.reason, "NotFound")
-                  ? Effect.succeed(undefined)
-                  : Effect.fail(error),
+                Predicate.isTagged(error.reason, "NotFound") ? Effect.void : Effect.fail(error),
               ),
             );
           if (persistedInfo === undefined || persistedInfo.type !== "Directory") continue;
@@ -493,12 +493,10 @@ const makeManager = (
             marker.checkoutId === discovery.identity.checkoutId &&
             marker.contextId === discovery.identity.contextId
           ) {
-            return yield* Effect.fail(
-              new InvalidManagedIdentityError({
-                message:
-                  "This ordinary workspace identity is already in use at another folder. Delete the current copied folder's .supabase/identity.json so a new identity can be generated.",
-              }),
-            );
+            return yield* new InvalidManagedIdentityError({
+              message:
+                "This ordinary workspace identity is already in use at another folder. Delete the current copied folder's .supabase/identity.json so a new identity can be generated.",
+            });
           }
         }
       });
@@ -538,12 +536,10 @@ const makeManager = (
             (entry) => entry.configKey === invalidInactiveAutomatic?.key,
           )?.field;
         if (invalidPersistedField !== undefined && invalidPersistedPort !== undefined) {
-          return yield* Effect.fail(
-            new ManagedPortAllocationError({
-              fields: [invalidPersistedField],
-              cause: `Persisted automatic port ${invalidPersistedPort} is reserved for managed control endpoints`,
-            }),
-          );
+          return yield* new ManagedPortAllocationError({
+            fields: [invalidPersistedField],
+            cause: `Persisted automatic port ${invalidPersistedPort} is reserved for managed control endpoints`,
+          });
         }
         const strictReserved = new Set<number>();
         const exactReserved = new Set<number>(
@@ -591,13 +587,11 @@ const makeManager = (
         );
         for (const assignment of requestedAssignments) {
           if (!exactReserved.has(assignment.port)) continue;
-          return yield* Effect.fail(
-            new ManagedExactPortOccupiedError({
-              key: assignment.key,
-              port: assignment.port,
-              stackId: request.stackId,
-            }),
-          );
+          return yield* new ManagedExactPortOccupiedError({
+            key: assignment.key,
+            port: assignment.port,
+            stackId: request.stackId,
+          });
         }
         for (const assignment of requestedAssignments) {
           const owner = (owners.get(assignment.port) ?? []).find((candidate) => {
@@ -613,21 +607,19 @@ const makeManager = (
             });
           });
           if (owner !== undefined) {
-            return yield* Effect.fail(conflictError(request.stackId, assignment, owner.document));
+            return yield* conflictError(request.stackId, assignment, owner.document);
           }
           const inactiveOwner = plan.inactiveAssignments.find(
             (candidate) => candidate.port === assignment.port,
           );
           if (inactiveOwner !== undefined && assignment.intent === "exact") {
-            return yield* Effect.fail(
-              new ManagedExactPortOccupiedError({
-                key: assignment.key,
-                port: assignment.port,
-                stackId: request.stackId,
-                ownerStackId: request.stackId,
-                ownerKey: inactiveOwner.key,
-              }),
-            );
+            return yield* new ManagedExactPortOccupiedError({
+              key: assignment.key,
+              port: assignment.port,
+              stackId: request.stackId,
+              ownerStackId: request.stackId,
+              ownerKey: inactiveOwner.key,
+            });
           }
         }
         return { exactReserved, owners, plan, strictReserved };
@@ -706,7 +698,7 @@ const makeManager = (
         const discovery = yield* provideDependencies(discoverEnvironment(request.workspacePath));
         yield* validateOrdinaryWorkspaceIdentity(discovery);
         if (discovery.state === "needsRepair") {
-          return yield* Effect.fail(workspaceRepairConflict(discovery.reason));
+          return yield* workspaceRepairConflict(discovery.reason);
         }
         const stackId = deriveStackId(discovery.identity, stackName);
         const existing = yield* store.read(stackId);
@@ -728,7 +720,7 @@ const makeManager = (
         const discovery = yield* provideDependencies(ensureEnvironment(request.workspacePath));
         yield* validateOrdinaryWorkspaceIdentity(discovery);
         if (discovery.state === "needsRepair") {
-          return yield* Effect.fail(workspaceRepairConflict(discovery.reason));
+          return yield* workspaceRepairConflict(discovery.reason);
         }
         const stackId = deriveStackId(discovery.identity, stackName);
         const repairId = deriveRepairOwnershipId(discovery.identity);
@@ -759,15 +751,13 @@ const makeManager = (
           const refreshed = yield* provideDependencies(ensureEnvironment(request.workspacePath));
           yield* validateOrdinaryWorkspaceIdentity(refreshed);
           if (refreshed.state === "needsRepair") {
-            return yield* Effect.fail(workspaceRepairConflict(refreshed.reason));
+            return yield* workspaceRepairConflict(refreshed.reason);
           }
           const refreshedStackId = deriveStackId(refreshed.identity, stackName);
           if (refreshedStackId !== stackId) {
-            return yield* Effect.fail(
-              new ManagedWorkspaceRepairConflictError({
-                reason: "Workspace identity changed while resolving the stack",
-              }),
-            );
+            return yield* new ManagedWorkspaceRepairConflictError({
+              reason: "Workspace identity changed while resolving the stack",
+            });
           }
           yield* requireOwnedForStack(request.ownership, refreshedStackId);
           const existing = yield* store.read(refreshedStackId);
@@ -811,10 +801,10 @@ const makeManager = (
       stackId: string,
     ): Effect.Effect<ManagedStack | undefined, ManagedStackManagerError> => store.read(stackId);
 
-    const listStacks = (): Effect.Effect<
+    const listStacks: Effect.Effect<
       ReadonlyArray<ManagedStackListing>,
       ManagedStackManagerError
-    > => store.list;
+    > = store.list;
 
     const recordLifecycle = (
       ownership: ControlOwnership,
@@ -825,7 +815,7 @@ const makeManager = (
           yield* requireOwnedForStack(ownership, update.stackId);
           const current = yield* store.read(update.stackId);
           if (current === undefined) {
-            return yield* Effect.fail(new ManagedStackNotFoundError({ stackId: update.stackId }));
+            return yield* new ManagedStackNotFoundError({ stackId: update.stackId });
           }
           let next: ManagedStackDocument = {
             ...current,
@@ -863,7 +853,7 @@ const makeManager = (
           yield* requireOwnedForStack(ownership, update.stackId);
           const current = yield* store.read(update.stackId);
           if (current === undefined) {
-            return yield* Effect.fail(new ManagedStackNotFoundError({ stackId: update.stackId }));
+            return yield* new ManagedStackNotFoundError({ stackId: update.stackId });
           }
           const metadata = {
             versions: update.launch.versions,
@@ -900,18 +890,16 @@ const makeManager = (
       Effect.scoped(
         Effect.gen(function* () {
           if (request.reason === "duplicate") {
-            return yield* Effect.fail(workspaceRepairConflict("duplicate"));
+            return yield* workspaceRepairConflict("duplicate");
           }
           const repairId = deriveRepairOwnershipId(request.identity);
           const repairAcquisition = yield* provideDependencies(
             acquireControl({ stackId: repairId, maintenanceOperation: "repair" }),
           );
           if (!isOwned(repairAcquisition)) {
-            return yield* Effect.fail(
-              new ManagedWorkspaceRepairConflictError({
-                reason: "Workspace repair is already owned",
-              }),
-            );
+            return yield* new ManagedWorkspaceRepairConflictError({
+              reason: "Workspace repair is already owned",
+            });
           }
           yield* provideDependencies(validateEnvironmentRepair(request));
           const listings = yield* store.list;
@@ -930,23 +918,19 @@ const makeManager = (
               acquireControl({ stackId: document.id, maintenanceOperation: "repair" }),
             );
             if (!isOwned(acquisition)) {
-              return yield* Effect.fail(
-                new ManagedWorkspaceRepairConflictError({
-                  stackId: document.id,
-                  reason: `Managed stack ${document.id} is attached to a live owner`,
-                }),
-              );
+              return yield* new ManagedWorkspaceRepairConflictError({
+                stackId: document.id,
+                reason: `Managed stack ${document.id} is attached to a live owner`,
+              });
             }
             stackOwners.push(acquisition);
           }
           const revalidated = yield* provideDependencies(validateEnvironmentRepair(request));
           const inspection = yield* provideDependencies(inspectWorkspace(revalidated.path));
           if (inspection.kind !== "git-checkout") {
-            return yield* Effect.fail(
-              new ManagedWorkspaceRepairConflictError({
-                reason: "Repair target is not a Git checkout",
-              }),
-            );
+            return yield* new ManagedWorkspaceRepairConflictError({
+              reason: "Repair target is not a Git checkout",
+            });
           }
           const updatedAt = now();
           const checkoutRoot = revalidated.path;
@@ -959,12 +943,10 @@ const makeManager = (
           });
           for (const { document, escaped } of updates) {
             if (isAbsolute(escaped) || escaped === ".." || escaped.startsWith("../")) {
-              return yield* Effect.fail(
-                new ManagedWorkspaceRepairConflictError({
-                  stackId: document.id,
-                  reason: `Managed stack ${document.id} has an invalid local project key`,
-                }),
-              );
+              return yield* new ManagedWorkspaceRepairConflictError({
+                stackId: document.id,
+                reason: `Managed stack ${document.id} has an invalid local project key`,
+              });
             }
           }
           for (const { document, projectPath } of updates) {
@@ -1003,7 +985,7 @@ const makeManager = (
             ),
             Effect.catchTag("PlatformError", (error) =>
               Predicate.isTagged(error.reason, "NotFound")
-                ? Effect.succeed(undefined)
+                ? Effect.void
                 : store.remove(stackId).pipe(Effect.as({ outcome: "removed" as const, stackId })),
             ),
           );

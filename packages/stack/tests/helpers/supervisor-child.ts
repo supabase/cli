@@ -12,7 +12,7 @@ import {
 import { LocalStackLifecycle } from "../../src/LocalStack.ts";
 import { Stack } from "../../src/Stack.ts";
 import { validateResolvedConfig } from "../../src/StackBuilder.ts";
-import { StackReadinessError } from "../../src/errors.ts";
+import { StackBuildError, StackReadinessError } from "../../src/errors.ts";
 import { ControlTransport } from "../../src/managed/control.ts";
 import { gitConfigStoreLayer } from "../../src/managed/git.ts";
 import { ManagedStackManager, managedStackManagerLayer } from "../../src/managed/manager.ts";
@@ -176,7 +176,7 @@ const testRuntime = ({
   readonly lease: PortLease;
 }): Effect.Effect<
   Layer.Layer<Stack | LocalStackLifecycle>,
-  unknown,
+  SupervisorStartError,
   import("effect").Scope.Scope
 > => {
   const mode = testMode();
@@ -211,7 +211,15 @@ const testRuntime = ({
         isDisposed: Effect.succeed(mode === "readiness-failure"),
       }),
     );
-  });
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause instanceof SupervisorStartError
+        ? cause
+        : new SupervisorStartError({
+            message: cause instanceof StackBuildError ? cause.detail : String(cause),
+          }),
+    ),
+  );
 };
 
 const observeAttachedBeforeReady = (value: unknown): Effect.Effect<void> => {

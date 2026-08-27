@@ -1,4 +1,4 @@
-import { Effect, Exit, Fiber, Layer, Match, Scope, Stream } from "effect";
+import { Data, Effect, Exit, Fiber, Layer, Match, Scope, Schema, Stream } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -40,6 +40,10 @@ import {
   isControlSupervisorStatus,
   type ControlSupervisorStatus,
 } from "./DaemonProtocol.ts";
+
+class HttpBodyStreamError extends Data.TaggedError("HttpBodyStreamError")<{
+  readonly cause: unknown;
+}> {}
 
 interface RemoteOwnerDescriptor {
   readonly ownershipId: string;
@@ -95,9 +99,9 @@ const translateRpcClientFailure = (
   procedure: string,
 ): StackRpcTransportError | StackRpcProtocolError => {
   const reason = error.reason;
-  if (reason instanceof RpcClientError.RpcClientDefect)
+  if (Schema.is(RpcClientError.RpcClientDefect)(reason))
     return protocolError(endpoint, procedure, reason.message, reason.cause);
-  if (reason instanceof HttpClientError.HttpClientErrorSchema)
+  if (Schema.is(HttpClientError.HttpClientErrorSchema)(reason))
     return reason.kind === "TransportError"
       ? transportError(endpoint, procedure, reason.cause ?? reason)
       : protocolError(endpoint, procedure, error.message, reason);
@@ -106,14 +110,18 @@ const translateRpcClientFailure = (
 
 const bodyForRequest = (
   body: HttpBody.HttpBody,
-): Effect.Effect<string | Uint8Array | undefined, unknown> => {
+): Effect.Effect<string | Uint8Array | undefined, HttpBodyStreamError> => {
   return Match.valueTags(body, {
-    Empty: () => Effect.succeed(undefined),
-    FormData: () => Effect.succeed(undefined),
+    Empty: () => Effect.void.pipe(Effect.as(undefined)),
+    FormData: () => Effect.void.pipe(Effect.as(undefined)),
     Uint8Array: (value) => Effect.succeed(value.body),
     Raw: (value) => Effect.succeed(typeof value.body === "string" ? value.body : undefined),
     Stream: (value) =>
+      // HttpBody streams originate in the foreign RPC transport and expose
+      // their producer's unknown failure type; map it immediately below.
+      // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
       Stream.runCollect(value.stream).pipe(
+        Effect.mapError((cause) => new HttpBodyStreamError({ cause })),
         Effect.map((chunks) => {
           const size = chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
           const result = new Uint8Array(size);
@@ -175,32 +183,30 @@ const makeRemoteRpcClient = (
       .readOwner(endpoint, expectedOwner.ownershipId)
       .pipe(Effect.mapError((error) => controlErrorToRpc(endpoint, "owner", error)));
     if (!isControlSupervisorStatus(ownerStatus)) {
-      return yield* Effect.fail(
-        protocolError(endpoint, "owner", `Managed stack is busy with ${ownerStatus.operation}`),
+      return yield* protocolError(
+        endpoint,
+        "owner",
+        `Managed stack is busy with ${ownerStatus.operation}`,
       );
     }
     if (options.cliVersion !== ownerStatus.daemonCliVersion)
-      return yield* Effect.fail(
-        new DaemonUpgradeRequired({
-          stackId: options.stackId ?? expectedOwner.ownershipId,
-          oldCliVersion: ownerStatus.daemonCliVersion,
-          newCliVersion: options.cliVersion,
-          state: ownerStatus.state,
-          ready: ownerStatus.ready,
-        }),
-      );
+      return yield* new DaemonUpgradeRequired({
+        stackId: options.stackId ?? expectedOwner.ownershipId,
+        oldCliVersion: ownerStatus.daemonCliVersion,
+        newCliVersion: options.cliVersion,
+        state: ownerStatus.state,
+        ready: ownerStatus.ready,
+      });
     if (
       ownerStatus.ownershipId !== expectedOwner.ownershipId ||
       ownerStatus.ownerSessionId !== expectedOwner.ownerSessionId ||
       ownerStatus.controlProtocolVersion !== expectedOwner.controlProtocolVersion ||
       ownerStatus.daemonCliVersion !== expectedOwner.daemonCliVersion
     )
-      return yield* Effect.fail(
-        protocolError(
-          endpoint,
-          "owner",
-          "Remote supervisor owner descriptor changed before RPC construction",
-        ),
+      return yield* protocolError(
+        endpoint,
+        "owner",
+        "Remote supervisor owner descriptor changed before RPC construction",
       );
     const rpcHttpClient = HttpClient.mapRequest(
       makeHttpClient(endpoint, transport, {
@@ -224,7 +230,7 @@ type StackRpcFailure = StackRpcDomainError | RpcClientError.RpcClientError;
 const isRpcClientFailure = <E extends StackRpcFailure>(
   error: E,
 ): error is Extract<E, RpcClientError.RpcClientError> =>
-  error instanceof RpcClientError.RpcClientError;
+  Schema.is(RpcClientError.RpcClientError)(error);
 
 const callRpc = <A, E extends StackRpcFailure, R>(
   endpoint: ControlEndpoint,

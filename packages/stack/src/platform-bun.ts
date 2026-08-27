@@ -1,7 +1,8 @@
+// oxlint-disable effecttsgo/async-function -- Bun's native fetch and ReadableStream callbacks are Promise-based host boundaries.
 import * as BunServices from "@effect/platform-bun/BunServices";
 import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
 import { fileURLToPath } from "node:url";
-import { Effect, Exit, Layer, Scope } from "effect";
+import { Data, Effect, Exit, Layer, Scope } from "effect";
 import {
   HttpEffect,
   HttpServer,
@@ -24,6 +25,10 @@ import {
   type ControlEndpoint,
   type ControlApplication,
 } from "./managed/control.ts";
+
+class BunServerStopError extends Data.TaggedError("BunServerStopError")<{
+  readonly cause: unknown;
+}> {}
 const controlTransport: ControlTransport["Service"] = {
   bind: (
     endpoint: ControlEndpoint,
@@ -124,7 +129,7 @@ const controlTransport: ControlTransport["Service"] = {
                 for (const request of activeRpcRequests) request.interrupt();
                 return stopped;
               },
-              catch: (cause) => cause,
+              catch: (cause) => new BunServerStopError({ cause }),
             }).pipe(Effect.asVoid, Effect.orDie),
           );
           const service = HttpServer.make({

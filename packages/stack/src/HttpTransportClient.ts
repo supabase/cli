@@ -1,4 +1,7 @@
-import { Context, Data, Effect, Layer } from "effect";
+// oxlint-disable effecttsgo/global-fetch-in-effect, effecttsgo/prefer-schema-over-json --
+// This service is the native HTTP transport leaf; request bodies are encoded
+// for the control protocol and fetch is supplied by the host runtime.
+import { Context, Data, Effect, Layer, Schema } from "effect";
 import {
   CONTROL_STATUS_PATH,
   CONTROL_STOP_PATH,
@@ -11,6 +14,7 @@ import {
   type ControlClientTransport,
   type ControlEndpoint,
 } from "./managed/control.ts";
+import { ControlOwnerStatusSchema } from "./DaemonProtocol.ts";
 import { errorCode } from "./error-code.ts";
 
 export class HttpTransportClientError extends Data.TaggedError("HttpTransportClientError")<{
@@ -89,7 +93,14 @@ const makeHttpControlTransport = (
           ? Effect.tryPromise({
               try: () => response.json(),
               catch: (cause) => new ControlProtocolError({ endpoint, cause }),
-            })
+            }).pipe(
+              Effect.flatMap(Schema.decodeUnknownEffect(ControlOwnerStatusSchema)),
+              Effect.mapError((cause) =>
+                cause instanceof ControlProtocolError
+                  ? cause
+                  : new ControlProtocolError({ endpoint, cause }),
+              ),
+            )
           : Effect.fail(new ControlProtocolError({ endpoint, cause: response.status })),
       ),
     ),

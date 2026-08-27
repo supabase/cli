@@ -1,4 +1,4 @@
-import { Context, Effect, Stream } from "effect";
+import { Context, Effect, Predicate, Stream } from "effect";
 import {
   StackBuildError,
   type StackRpcProtocolError,
@@ -13,6 +13,12 @@ import { SupervisorSession } from "./SupervisorSession.ts";
 
 type StackService = Stack["Service"];
 
+const isRpcBoundaryError = (
+  error: unknown,
+): error is StackRpcTransportError | StackRpcProtocolError =>
+  Predicate.isTagged(error, "StackRpcTransportError") ||
+  Predicate.isTagged(error, "StackRpcProtocolError");
+
 const local = <A, E>(
   session: SupervisorSession["Service"],
   operation: (
@@ -21,8 +27,7 @@ const local = <A, E>(
 ): Effect.Effect<A, E | StackUnavailableError> =>
   session.runtimeStack.pipe(
     Effect.flatMap((stack) => session.interruptWhenStopping(operation(stack))),
-    Effect.catchTag("StackRpcTransportError", (error) => Effect.die(error)),
-    Effect.catchTag("StackRpcProtocolError", (error) => Effect.die(error)),
+    Effect.catchIf(isRpcBoundaryError, (error) => Effect.die(error)),
   );
 
 const localStream = <A, E>(
@@ -38,10 +43,7 @@ const localStream = <A, E>(
     session
       .interruptWhenStopping(session.runtimeStack.pipe(Effect.flatMap(operation)))
       .pipe(Effect.map(session.interruptStreamWhenStopping)),
-  ).pipe(
-    Stream.catchTag("StackRpcTransportError", (error) => Stream.die(error)),
-    Stream.catchTag("StackRpcProtocolError", (error) => Stream.die(error)),
-  );
+  ).pipe(Stream.catchIf(isRpcBoundaryError, (error) => Stream.die(error)));
 
 export interface StackLaunchUpdater {
   readonly update: (

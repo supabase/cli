@@ -294,7 +294,7 @@ export const localStackLayer = (
           const currentStates = SubscriptionRef.getUnsafe(stateRef);
           const match = currentStates.find((state) => state.name === name);
           if (match === undefined) {
-            return yield* Effect.fail(new ServiceNotFoundError({ name }));
+            return yield* new ServiceNotFoundError({ name });
           }
           return match;
         });
@@ -305,7 +305,7 @@ export const localStackLayer = (
           yield* requireKnownService(name);
           const service = SERVICE_NAMES.find((candidate) => candidate === name);
           if (service === undefined) {
-            return yield* Effect.fail(new ServiceNotFoundError({ name }));
+            return yield* new ServiceNotFoundError({ name });
           }
           return service;
         });
@@ -500,11 +500,9 @@ export const localStackLayer = (
               (service) => !graphServices.has(service),
             );
             if (missingEnabledService !== undefined) {
-              return yield* Effect.fail(
-                new StackBuildError({
-                  detail: `Prepared graph does not contain enabled service ${missingEnabledService}`,
-                }),
-              );
+              return yield* new StackBuildError({
+                detail: `Prepared graph does not contain enabled service ${missingEnabledService}`,
+              });
             }
             exactCleanupTargets = cleanupTargets;
 
@@ -600,7 +598,7 @@ export const localStackLayer = (
         Effect.gen(function* () {
           const currentEdgeRuntime = yield* Ref.get(edgeRuntimeConfigRef);
           if (currentEdgeRuntime === false || opts.edgeRuntime.enabled === false) {
-            return yield* Effect.fail(new ServiceNotFoundError({ name: "edge-runtime" }));
+            return yield* new ServiceNotFoundError({ name: "edge-runtime" });
           }
 
           return {
@@ -668,11 +666,9 @@ export const localStackLayer = (
               publicDependency !== undefined &&
               !allowExplicitlyStopped.has(publicDependency)
             ) {
-              return yield* Effect.fail(
-                new StackBuildError({
-                  detail: `Cannot activate ${root} because dependency ${dependency} was explicitly stopped`,
-                }),
-              );
+              return yield* new StackBuildError({
+                detail: `Cannot activate ${root} because dependency ${dependency} was explicitly stopped`,
+              });
             }
           }
 
@@ -737,7 +733,7 @@ export const localStackLayer = (
       const requireRunningPhase = Effect.gen(function* () {
         const phase = yield* Ref.get(phaseRef);
         if (phase !== "running") {
-          return yield* Effect.fail(new StackNotRunningError({ phase }));
+          return yield* new StackNotRunningError({ phase });
         }
       });
       const requireMutable = (operation: string) =>
@@ -1052,7 +1048,7 @@ export const localStackLayer = (
             yield* requireRunningPhase;
             yield* requireKnownService("edge-runtime");
             if (opts.edgeRuntime.enabled === false) {
-              return yield* Effect.fail(new ServiceNotFoundError({ name: "edge-runtime" }));
+              return yield* new ServiceNotFoundError({ name: "edge-runtime" });
             }
             const requestedBundle =
               opts.functions === undefined
@@ -1078,7 +1074,7 @@ export const localStackLayer = (
               );
 
               if (edgeRuntimeDef === undefined) {
-                return yield* Effect.fail(new ServiceNotFoundError({ name: "edge-runtime" }));
+                return yield* new ServiceNotFoundError({ name: "edge-runtime" });
               }
 
               yield* configureFunctions(nextConfig, nextBundle);
@@ -1111,7 +1107,7 @@ export const localStackLayer = (
             const currentStates = SubscriptionRef.getUnsafe(stateRef);
             const match = currentStates.find((state) => state.name === name);
             if (match === undefined) {
-              return yield* Effect.fail(new ServiceNotFoundError({ name }));
+              return yield* new ServiceNotFoundError({ name });
             }
             return match;
           }),
@@ -1126,11 +1122,9 @@ export const localStackLayer = (
           Effect.gen(function* () {
             const phase = yield* Ref.get(phaseRef);
             if (phase !== "running") {
-              return yield* Effect.fail(
-                new StackBuildError({
-                  detail: `Cannot wait for service ${name} while the stack is ${phase}`,
-                }),
-              );
+              return yield* new StackBuildError({
+                detail: `Cannot wait for service ${name} while the stack is ${phase}`,
+              });
             }
             yield* requireKnownServiceName(name);
             const runtime = yield* ensureRuntime;
@@ -1143,11 +1137,9 @@ export const localStackLayer = (
           Effect.gen(function* () {
             const phase = yield* Ref.get(phaseRef);
             if (phase !== "running") {
-              return yield* Effect.fail(
-                new StackBuildError({
-                  detail: `Cannot wait for stack readiness while the stack is ${phase}`,
-                }),
-              );
+              return yield* new StackBuildError({
+                detail: `Cannot wait for stack readiness while the stack is ${phase}`,
+              });
             }
             const runtime = yield* ensureRuntime;
             yield* runtime.orchestrator.waitAllReady.pipe((effect) =>

@@ -252,7 +252,7 @@ const preflight = (
       .inspectStack(context.stackId)
       .pipe(Effect.mapError((cause) => preflightError(context, causeMessage(cause))));
     if (existing === undefined)
-      return yield* Effect.fail(preflightError(context, "Managed stack document is missing"));
+      return yield* preflightError(context, "Managed stack document is missing");
 
     const persistedRuntime = runtimeSelectionForLaunch(existing.launch);
     yield* validateStackRuntime(persistedRuntime).pipe(
@@ -373,13 +373,11 @@ export const prepareUpgradeReplacement = (
     const oldOwner = context.oldOwner;
     if (oldOwner === undefined) return initial;
     if (!isControlSupervisorStatus(oldOwner.status)) {
-      return yield* Effect.fail(
-        new UpgradeRestartError({
-          stackId: context.stackId,
-          newCliVersion: context.input.cliVersion,
-          detail: `Managed stack is busy with ${oldOwner.status.operation} maintenance`,
-        }),
-      );
+      return yield* new UpgradeRestartError({
+        stackId: context.stackId,
+        newCliVersion: context.input.cliVersion,
+        detail: `Managed stack is busy with ${oldOwner.status.operation} maintenance`,
+      });
     }
     const oldStatus = oldOwner.status;
     yield* observeControlStopForSession(
