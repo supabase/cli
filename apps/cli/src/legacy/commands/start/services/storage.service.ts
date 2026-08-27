@@ -159,6 +159,10 @@ export function legacyBuildStorageEnv(input: LegacyStorageEnvInput): Record<stri
     STORAGE_S3_REGION: input.s3Region,
     GLOBAL_S3_BUCKET: "stub",
     ENABLE_IMAGE_TRANSFORMATION: String(input.imageTransformationEnabled),
+    // storage-api prefers this key over ENABLE_IMAGE_TRANSFORMATION, and the
+    // slim storage image bakes IMAGE_TRANSFORMATION_ENABLED=false as an image
+    // ENV default — set it explicitly so config.toml wins on both families.
+    IMAGE_TRANSFORMATION_ENABLED: String(input.imageTransformationEnabled),
     IMGPROXY_URL: `http://${input.imgproxyHost}:5001`,
     TUS_URL_PATH: "/storage/v1/upload/resumable",
     S3_PROTOCOL_ENABLED: String(input.s3ProtocolEnabled),
