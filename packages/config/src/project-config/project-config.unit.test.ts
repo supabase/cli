@@ -2341,6 +2341,48 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
     expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
   });
 
+  test("sub-minute fractional seconds quantize to the push formatter's toPrecision(10)", () => {
+    // The legacy seconds branch renders toPrecision(10) (config-sync.
+    // duration.ts:47-55) — "59.123456789s" pushes as "59.12345679s", so the
+    // canonical document spelling predicts that reading.
+    const doc = fromConfigDocument({ auth: { sessions: { timebox: "59.123456789s" } } });
+    expect(doc.auth?.sessions?.timebox).toBe("59.12345679s");
+    // Cross-arm equality for the post-push hosted value.
+    const api = fromApiProjectConfig({ auth: { sessions_timebox: 59.12345679 / 3600 } });
+    expect(api.auth?.sessions?.timebox).toBe(doc.auth?.sessions?.timebox);
+    // Nine or fewer significant digits pass through unchanged.
+    const short = fromConfigDocument({ auth: { sessions: { timebox: "59.5s" } } });
+    expect(short.auth?.sessions?.timebox).toBe("59.5s");
+    // Below one second the two formatters' branches are identical.
+    const subSecond = fromConfigDocument({ auth: { sessions: { timebox: "999.999999ms" } } });
+    expect(subSecond.auth?.sessions?.timebox).toBe("999.999999ms");
+  });
+
+  test("throwing hosted-section getters surface as caller misuse in fromConfigDocument", () => {
+    const topLevel: EffectiveConfig = {
+      get auth(): EffectiveConfig["auth"] {
+        throw new Error("boom");
+      },
+    };
+    const nested: EffectiveConfig = {
+      auth: {
+        get site_url(): string {
+          throw new Error("boom");
+        },
+      },
+    };
+    for (const config of [topLevel, nested]) {
+      let thrown: unknown;
+      try {
+        fromConfigDocument(config);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+      expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
+    }
+  });
+
   test("orphan secret paths validate like isSecret rows before being suppressed", () => {
     // The four unmappedSecretApiPaths are in the consumed set, so without
     // validation a contract-invalid value (string-or-null only) would vanish

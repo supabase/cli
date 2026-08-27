@@ -324,19 +324,34 @@ function canonicalizeDurationString(value: unknown): unknown {
  * remains (auth.sync.ts:2374-2375) — so a document `"1h0.5s"` stores exactly
  * one hour, and the canonical document spelling must predict that reading
  * (same convergence rule as the whole-second flooring for frequencies).
- * Sub-minute magnitudes keep their fraction: the legacy seconds/ms/µs
- * branches print it. The API-arm formatter ({@link durationString}) stays
- * Go-faithful — a hosted value set out-of-band CAN carry sub-second bits
- * under an hour/minute magnitude, and rendering them faithfully is what
- * makes the resulting drift honest (a push would quantize it away).
+ * Sub-minute magnitudes with at least a whole second follow the legacy
+ * SECONDS branch instead, which renders `toPrecision(10)` (config-sync.
+ * duration.ts:47-55) — ten significant digits, not nine fixed decimals — so
+ * `"59.123456789s"` pushes as `"59.12345679s"`; the quantized nanoseconds
+ * are recovered by re-parsing that exact rendering through
+ * {@link parseDuration}, which replicates the push parser's fractional
+ * arithmetic verbatim. Below one second the two formatters' branches are
+ * identical (both `toPrecision(10)`), so the value passes through. The
+ * API-arm formatter ({@link durationString}) stays Go-faithful — a hosted
+ * value set out-of-band CAN carry sub-second bits under an hour/minute
+ * magnitude, and rendering them faithfully is what makes the resulting
+ * drift honest (a push would quantize it away).
  */
 function truncateLikePushFormatter(ns: number): number {
   const magnitude = Math.abs(ns);
-  if (magnitude < NS_PER_MINUTE) {
-    return ns;
+  if (magnitude >= NS_PER_MINUTE) {
+    const wholeSeconds = Math.floor(magnitude / NS_PER_SECOND) * NS_PER_SECOND;
+    return ns < 0 ? -wholeSeconds : wholeSeconds;
   }
-  const wholeSeconds = Math.floor(magnitude / NS_PER_SECOND) * NS_PER_SECOND;
-  return ns < 0 ? -wholeSeconds : wholeSeconds;
+  if (magnitude >= NS_PER_SECOND && magnitude % NS_PER_SECOND !== 0) {
+    const rendered = (magnitude / NS_PER_SECOND)
+      .toPrecision(10)
+      .replace(/\.?0+$/, "")
+      .replace(/\.$/, "");
+    const quantized = parseDuration(`${rendered}s`);
+    return ns < 0 ? -quantized : quantized;
+  }
+  return ns;
 }
 
 /**

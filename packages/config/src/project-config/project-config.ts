@@ -304,8 +304,25 @@ export function fromConfigDocument(config: EffectiveConfig): unknown {
   const result: Record<string, unknown> = {};
   for (const key of HOSTED_SECTION_KEYS) {
     if (Object.hasOwn(config, key)) {
-      const section = config[key];
-      const copied = copyHostedValueWithoutSecrets(section, [key]);
+      // The section read AND the recursive copy both evaluate caller
+      // properties (the copy via Object.entries at every depth), so a
+      // throwing getter anywhere in the operand is translated here — plain
+      // data never carries accessors, making this programmatic caller input.
+      let section: unknown;
+      let copied: unknown;
+      try {
+        section = config[key];
+        copied = copyHostedValueWithoutSecrets(section, [key]);
+      } catch (cause) {
+        if (cause instanceof ProjectConfigParseError) {
+          throw cause;
+        }
+        throw new ProjectConfigParseError({
+          message: `reading document section "${key}" threw — fromConfigDocument operands must be plain data, not accessor-backed`,
+          cause,
+          reason: "caller_misuse",
+        });
+      }
       // Same emptied-by-the-copy prune as `copyHostedValueWithoutSecrets`'s
       // own recursion, applied at the section boundary: a section that turns
       // out to contain nothing but secrets must disappear from the projection
