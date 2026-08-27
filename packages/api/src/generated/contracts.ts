@@ -10216,7 +10216,10 @@ export const V2CreateOrganizationInvitationsInput = Schema.Struct({
     Schema.Struct({
       type: Schema.Literal("organization_invitation").annotate({ description: "Resource type." }),
       attributes: Schema.Struct({
-        email: Schema.String.annotate({ format: "email" }).check(
+        email: Schema.String.annotate({
+          description: "Email address of the invitation receipient.",
+          format: "email",
+        }).check(
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
@@ -10297,7 +10300,10 @@ export const V2CreateOrganizationInvitationsOutput = Schema.Struct({
               ),
             ),
             meta: Schema.Struct({
-              email: Schema.String.annotate({ format: "email" }).check(
+              email: Schema.String.annotate({
+                description: "Email address of the invitation receipient.",
+                format: "email",
+              }).check(
                 Schema.isPattern(
                   new RegExp(
                     "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
@@ -10317,7 +10323,10 @@ export const V2CreateOrganizationInvitationsOutput = Schema.Struct({
     Schema.Struct({
       type: Schema.Literal("organization_invitation").annotate({ description: "Resource type." }),
       attributes: Schema.Struct({
-        email: Schema.String.annotate({ format: "email" }).check(
+        email: Schema.String.annotate({
+          description: "Email address of the invitation receipient.",
+          format: "email",
+        }).check(
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
@@ -10520,7 +10529,10 @@ export const V2DeleteOrganizationInvitationsInput = Schema.Struct({
     Schema.Struct({
       type: Schema.Literal("organization_invitation").annotate({ description: "Resource type." }),
       attributes: Schema.Struct({
-        email: Schema.String.annotate({ format: "email" }).check(
+        email: Schema.String.annotate({
+          description: "Email address of the invitation receipient.",
+          format: "email",
+        }).check(
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
@@ -10541,7 +10553,10 @@ export const V2DeleteOrganizationInvitationsOutput = Schema.Struct({
     Schema.Struct({
       type: Schema.Literal("organization_invitation").annotate({ description: "Resource type." }),
       attributes: Schema.Struct({
-        email: Schema.String.annotate({ format: "email" }).check(
+        email: Schema.String.annotate({
+          description: "Email address of the invitation receipient.",
+          format: "email",
+        }).check(
           Schema.isPattern(
             new RegExp(
               "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
@@ -13854,7 +13869,7 @@ export const operationDefinitions = {
   v1GetProjectLogsAll: {
     id: "v1GetProjectLogsAll",
     description:
-      "Executes a SQL query on the project's logs.\n\nEither the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\nIf both are not provided, only the last 1 minute of logs will be queried.\nThe timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\nNote: Unless the `sql` parameter is provided, only edge_logs will be queried. See the [log query docs](/docs/guides/telemetry/logs?queryGroups=product&product=postgres&queryGroups=source&source=edge_logs#querying-with-the-logs-explorer:~:text=logs%20from%20the-,Sources,-drop%2Ddown%3A) for all available sources.",
+      "Executes a SQL query on the project's logs.\n\nEither the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\nIf both are not provided, only the last 1 minute of logs will be queried.\nThe timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\nNote: Unless the `sql` parameter is provided, only edge_logs will be queried. See the [log query docs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#logs-explorer) for all available sources.",
     method: "GET",
     path: "/v1/projects/{ref}/analytics/endpoints/logs.all",
     pathParams: ["ref"],
