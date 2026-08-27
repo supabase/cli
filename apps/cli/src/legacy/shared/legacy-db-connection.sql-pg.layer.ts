@@ -1116,68 +1116,71 @@ const connect = (
 
     const execBatch = (statements: ReadonlyArray<LegacyDbBatchStatement>) => {
       if (statements.length === 0) return Effect.void;
-      let batchQuery: LegacyPgBatchQuery | undefined;
-      let rolledBack = false;
-      // Spans the whole checkout: an unlistened 'error' kills the process (see
-      // acquireRawClient) and pg-pool detaches its own handler while checked out.
-      const onConnectionError = () => {};
-      return Effect.acquireUseRelease(
-        Effect.interruptible(acquireBatchClient).pipe(
-          Effect.tap((activeClient) =>
-            Effect.sync(() => activeClient.on("error", onConnectionError)),
-          ),
-        ),
-        (activeClient) =>
-          Effect.callback<void, LegacyDbExecError | LegacyDbConnectError>((resume) => {
-            let done = false;
-            const finish = (error: Error | undefined) => {
-              if (done) return;
-              done = true;
-              if (error === undefined) {
-                resume(Effect.void);
-                return;
-              }
-              resume(Effect.fail(legacyBatchFailureError(error, batchQuery, options.isLocal)));
-            };
-            batchQuery = new LegacyPgBatchQuery(statements, finish);
-            try {
-              activeClient.query(batchQuery);
-            } catch (error) {
-              finish(error instanceof Error ? error : new Error(String(error)));
-            }
-            return Effect.sync(() => {
-              done = true;
-            });
-          }).pipe(
-            // Roll a written batch's aborted transaction back while still
-            // interruptible; a rollback that fails or times out leaves the client
-            // to the discard below instead of returning it aborted (25P02).
-            Effect.tapError(() =>
-              Effect.suspend(() => {
-                if (batchQuery?.outcome !== "submitted") return Effect.void;
-                return Effect.promise(() =>
-                  activeClient.query("ROLLBACK").then(
-                    () => true,
-                    () => false,
-                  ),
-                ).pipe(
-                  Effect.timeoutOption(1000),
-                  Effect.map((result) => {
-                    rolledBack = Option.getOrElse(result, () => false);
-                  }),
-                );
-              }),
+      // Suspended so each evaluation owns fresh batch/rollback state.
+      return Effect.suspend(() => {
+        let batchQuery: LegacyPgBatchQuery | undefined;
+        let rolledBack = false;
+        // Spans the whole checkout: an unlistened 'error' kills the process (see
+        // acquireRawClient) and pg-pool detaches its own handler while checked out.
+        const onConnectionError = () => {};
+        return Effect.acquireUseRelease(
+          Effect.interruptible(acquireBatchClient).pipe(
+            Effect.tap((activeClient) =>
+              Effect.sync(() => activeClient.on("error", onConnectionError)),
             ),
           ),
-        (activeClient, exit) =>
-          Effect.sync(() => {
-            const discard =
-              legacyShouldDiscardBatchClient(batchQuery, exit) ||
-              (Exit.isFailure(exit) && batchQuery?.outcome === "submitted" && !rolledBack);
-            activeClient.release(discard ? new Error("batch connection discarded") : undefined);
-            activeClient.removeListener("error", onConnectionError);
-          }),
-      );
+          (activeClient) =>
+            Effect.callback<void, LegacyDbExecError | LegacyDbConnectError>((resume) => {
+              let done = false;
+              const finish = (error: Error | undefined) => {
+                if (done) return;
+                done = true;
+                if (error === undefined) {
+                  resume(Effect.void);
+                  return;
+                }
+                resume(Effect.fail(legacyBatchFailureError(error, batchQuery, options.isLocal)));
+              };
+              batchQuery = new LegacyPgBatchQuery(statements, finish);
+              try {
+                activeClient.query(batchQuery);
+              } catch (error) {
+                finish(error instanceof Error ? error : new Error(String(error)));
+              }
+              return Effect.sync(() => {
+                done = true;
+              });
+            }).pipe(
+              // Roll a written batch's aborted transaction back while still
+              // interruptible; a rollback that fails or times out leaves the client
+              // to the discard below instead of returning it aborted (25P02).
+              Effect.tapError(() =>
+                Effect.suspend(() => {
+                  if (batchQuery?.outcome !== "submitted") return Effect.void;
+                  return Effect.promise(() =>
+                    activeClient.query("ROLLBACK").then(
+                      () => true,
+                      () => false,
+                    ),
+                  ).pipe(
+                    Effect.timeoutOption(1000),
+                    Effect.map((result) => {
+                      rolledBack = Option.getOrElse(result, () => false);
+                    }),
+                  );
+                }),
+              ),
+            ),
+          (activeClient, exit) =>
+            Effect.sync(() => {
+              const discard =
+                legacyShouldDiscardBatchClient(batchQuery, exit) ||
+                (Exit.isFailure(exit) && batchQuery?.outcome === "submitted" && !rolledBack);
+              activeClient.release(discard ? new Error("batch connection discarded") : undefined);
+              activeClient.removeListener("error", onConnectionError);
+            }),
+        );
+      });
     };
 
     const session: LegacyDbSession = {
