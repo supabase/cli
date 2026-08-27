@@ -12,7 +12,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Effect, FileSystem, Layer, Option, PlatformError, Redacted } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, PlatformError, Redacted } from "effect";
 import { afterEach, beforeEach, vi } from "vitest";
 
 import {
@@ -317,8 +317,8 @@ describe("legacyCredentialsLayer.getAccessToken", () => {
     Effect.gen(function* () {
       const { getAccessToken } = yield* LegacyCredentials;
       const exit = yield* Effect.exit(getAccessToken);
-      expect(exit._tag).toBe("Failure");
-      if (exit._tag === "Failure") {
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidAccessTokenError");
       }
     }).pipe(
@@ -330,8 +330,8 @@ describe("legacyCredentialsLayer.getAccessToken", () => {
     Effect.gen(function* () {
       const { getAccessToken } = yield* LegacyCredentials;
       const exit = yield* Effect.exit(getAccessToken);
-      expect(exit._tag).toBe("Failure");
-      if (exit._tag === "Failure") {
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidAccessTokenError");
       }
     }).pipe(
