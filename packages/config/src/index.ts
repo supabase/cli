@@ -67,3 +67,4 @@ export {
   toProjectConfig,
   unmappedApiFields,
 } from "./project-config/project-config.ts";
+export { ProjectConfigSchema, toProjectConfigJsonSchema } from "./project-config/project-schema.ts";

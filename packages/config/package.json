@@ -13,7 +13,8 @@
       "default": "./src/node.ts"
     },
     "./effect": "./src/effect.ts",
-    "./schema.json": "./dist/schema.json"
+    "./schema.json": "./dist/schema.json",
+    "./project-schema.json": "./dist/project-schema.json"
   },
   "scripts": {
     "build": "bun run ./scripts/build.ts",

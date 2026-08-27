@@ -26,6 +26,7 @@ const packageJson = JSON.parse(readFileSync(join(packageRoot, "package.json"), "
     readonly "./io": Readonly<Record<string, string>>;
     readonly "./effect": string;
     readonly "./schema.json": string;
+    readonly "./project-schema.json": string;
   };
 };
 
@@ -287,7 +288,9 @@ const expectedPureGraphFiles = [
   "lib/schema.ts",
   "lib/secret-paths.ts",
   "project-config/api-attributes.ts",
+  "project-config/hosted-sections.ts",
   "project-config/project-config.ts",
+  "project-config/project-schema.ts",
   "project-config/registry-auth.ts",
   "project-config/registry-row.ts",
   "project-config/registry.ts",
@@ -348,6 +351,7 @@ describe("src/index.ts export surface", () => {
         "InvalidRemoteProjectIdError",
         "MissingCliConfigValueError",
         "ProjectConfigParseError",
+        "ProjectConfigSchema",
         "attachApiResponse",
         "cliConfigValueSourceAt",
         "comparableProjectConfigPaths",
@@ -366,6 +370,7 @@ describe("src/index.ts export surface", () => {
         "subtractCliConfig",
         "toCliConfigJsonSchema",
         "toProjectConfig",
+        "toProjectConfigJsonSchema",
         "unmappedApiFields",
       ]
     `);
@@ -385,6 +390,7 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
         "InvalidRemoteProjectIdError",
         "MissingCliConfigValueError",
         "ProjectConfigParseError",
+        "ProjectConfigSchema",
         "attachApiResponse",
         "cliConfigStoreLayer",
         "cliConfigValueSourceAt",
@@ -414,6 +420,7 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
         "subtractCliConfig",
         "toCliConfigJsonSchema",
         "toProjectConfig",
+        "toProjectConfigJsonSchema",
         "unmappedApiFields",
       ]
     `);
@@ -499,8 +506,9 @@ describe("package.json exports map", () => {
   });
 
   test("the '.', './effect', and './internal' export targets exist on disk", () => {
-    // `./schema.json` is a build output (`dist/schema.json`) and intentionally
-    // skipped here — it only exists after running `pnpm run build`.
+    // `./schema.json`/`./project-schema.json` are build outputs
+    // (`dist/schema.json`/`dist/project-schema.json`) and intentionally
+    // skipped here — they only exist after running `pnpm run build`.
     for (const key of [".", "./effect", "./internal"] as const) {
       const target = packageJson.exports[key];
       expect(() => readFileSync(join(packageRoot, target))).not.toThrow();
