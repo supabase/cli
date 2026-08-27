@@ -156,8 +156,12 @@ jobs:
           PR: ${{ needs.resolve.outputs.pr_number }}
         run: |
           mkdir -p /tmp/ai-review
-          gh pr diff "$PR" > /tmp/ai-review/pr.diff
-          gh pr view "$PR" --json number,title,body,baseRefName,headRefName,additions,deletions,changedFiles \
+          # `gh` infers the repo from the current directory's git remote, but this
+          # job checks out into `pr/` and `trusted/` subdirs, so $GITHUB_WORKSPACE
+          # itself is not a git repo — pass --repo explicitly.
+          gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" > /tmp/ai-review/pr.diff
+          gh pr view "$PR" --repo "$GITHUB_REPOSITORY" \
+            --json number,title,body,baseRefName,headRefName,additions,deletions,changedFiles \
             > /tmp/ai-review/pr.json
 
       # Pin the exact published version so a new Claude Code release can't
@@ -303,7 +307,8 @@ jobs:
           PR: ${{ needs.resolve.outputs.pr_number }}
         run: |
           mkdir -p /tmp/ai-review
-          gh pr diff "$PR" > /tmp/ai-review/pr.diff
+          # Pass --repo explicitly so `gh` never depends on cwd being a git repo.
+          gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" > /tmp/ai-review/pr.diff
 
       - name: Prepare merged-review output schema
         run: |
