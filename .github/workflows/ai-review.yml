@@ -42,7 +42,7 @@ permissions: {}
 # third time, and `post-review`'s footer reads them too (see the "Post
 # review" step below).
 env:
-  CLAUDE_MODEL: claude-fable-5
+  CLAUDE_MODEL: claude-opus-5
   CODEX_MODEL: gpt-5.6-sol
 
 # Ordinary (non-command) issue_comment events fire this workflow for EVERY
@@ -205,7 +205,11 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          set -uo pipefail
+          # GitHub launches this with `bash -e`; the retry loop below inspects
+          # exit codes manually (a non-zero `claude` is expected and retried),
+          # so errexit must be OFF — otherwise the failing subshell aborts the
+          # step before cli_exit/is_error are checked and the retry never runs.
+          set +e -uo pipefail
           success=false
           for attempt in 1 2; do
             (
