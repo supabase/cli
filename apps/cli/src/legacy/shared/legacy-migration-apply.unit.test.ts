@@ -1148,6 +1148,7 @@ describe("legacyIsPipelineIncompatible", () => {
     ["reindex schema", "REINDEX SCHEMA public", true],
     ["reindex table non-concurrent", "REINDEX TABLE public.widgets", false],
     ["alter database", "ALTER DATABASE demo SET search_path = public", false],
+    ["alter database set tablespace", "ALTER DATABASE demo SET TABLESPACE fast", true],
     ["create subscription", "CREATE SUBSCRIPTION sub CONNECTION 'host=h' PUBLICATION pub", true],
     ["drop subscription", "DROP SUBSCRIPTION IF EXISTS sub", true],
     ["alter subscription", "ALTER SUBSCRIPTION sub DISABLE", false],
