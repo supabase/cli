@@ -124,9 +124,9 @@ const testStackLayer = (
     return waitForFile(path);
   };
   return Layer.succeed(Stack, {
-    getInfo: () => Effect.succeed(info),
-    start: () => Effect.void,
-    stop: () =>
+    getInfo: Effect.succeed(info),
+    start: Effect.void,
+    stop:
       mode === "hold-stop"
         ? Effect.gen(function* () {
             const stageFile = process.env["SUPABASE_STACK_TEST_STOP_BEGAN_FILE"];
@@ -136,16 +136,16 @@ const testStackLayer = (
             yield* waitForStopRelease();
           })
         : Effect.void,
-    dispose: () => Effect.void,
+    dispose: Effect.void,
     startService: () => Effect.void,
     stopService: () => Effect.void,
     restartService: () => Effect.void,
     reloadFunctions: () => Effect.void,
     reloadEdgeRuntime: () => Effect.void,
     getState: () => Effect.die("test stack has no external service state"),
-    getAllStates: () => Effect.succeed([]),
+    getAllStates: Effect.succeed([]),
     stateChanges: () => Effect.succeed(Stream.empty),
-    allStateChanges: () => Stream.empty,
+    allStateChanges: Stream.empty,
     waitReady: () => Effect.void,
     waitAllReady: () =>
       mode === "readiness-failure"
@@ -199,10 +199,9 @@ const testRuntime = ({
     yield* Effect.addFinalizer(() => closeTestPorts(servers));
     if (mode === "fail-after-bind") {
       // Returning the failed yield exits this fixture before the success layer is constructed.
-      // oxlint-disable-next-line effecttsgo/unnecessary-fail-yieldable-error
-      return yield* Effect.fail(
-        new SupervisorStartError({ message: "Supervisor test runtime failed after binding" }),
-      );
+      return yield* new SupervisorStartError({
+        message: "Supervisor test runtime failed after binding",
+      });
     }
     return Layer.mergeAll(
       testStackLayer(config, mode, disposed),
@@ -324,9 +323,8 @@ export const runTestSupervisor = (): void => {
     };
     // runSupervisor's runtime layers are provided in dependency order: the decorated manager
     // and transport layers must be built before the platform services are attached.
-    // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
     const program = runSupervisor(supervisorPlatform).pipe(
-      // oxlint-disable-next-line effecttsgo/multiple-effect-provide
+      // oxlint-disable-next-line effecttsgo/multiple-effect-provide -- Child supervisor composes manager, transport, and platform layers in dependency order.
       Effect.provide(gitConfigStoreLayer),
       Effect.provide(testControlTransportLayer(nodeControlTransportLayer)),
       Effect.provide(NodeServices.layer),
@@ -334,7 +332,6 @@ export const runTestSupervisor = (): void => {
       Effect.provide(NodePath.layer),
     );
     // The child process is intentionally launched at this native Promise boundary.
-    // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
     void Effect.runPromise(program);
     return;
   }
@@ -363,16 +360,14 @@ export const runTestSupervisor = (): void => {
     };
     // runSupervisor's runtime layers are provided in dependency order: the decorated manager
     // and transport layers must be built before the platform services are attached.
-    // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
     const program = runSupervisor(supervisorPlatform).pipe(
-      // oxlint-disable-next-line effecttsgo/multiple-effect-provide
+      // oxlint-disable-next-line effecttsgo/multiple-effect-provide -- Child supervisor composes manager, transport, and platform layers in dependency order.
       Effect.provide(gitConfigStoreLayer),
       Effect.provide(testControlTransportLayer(bunPlatform.controlTransportLayer)),
       Effect.provide(bunServices.layer),
       Effect.provide(bunFileSystem.layer),
     );
     // The child process is intentionally launched at this native Promise boundary.
-    // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
     return Effect.runPromise(program);
   });
 };

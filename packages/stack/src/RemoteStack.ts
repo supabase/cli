@@ -312,10 +312,10 @@ export const RemoteStack = {
           );
         };
         return {
-          getInfo: () => fastCall(endpoint, "GetInfo", client.GetInfo(undefined)),
-          start: () => call("StartStack", client.StartStack(undefined)),
-          stop: () => requestStop(),
-          dispose: () => requestStop(),
+          getInfo: fastCall(endpoint, "GetInfo", client.GetInfo(undefined)),
+          start: call("StartStack", client.StartStack(undefined)),
+          stop: requestStop(),
+          dispose: requestStop(),
           startService: (name: string) => call("StartService", client.StartService({ name })),
           stopService: (name: string) => call("StopService", client.StopService({ name })),
           restartService: (name: string) => call("RestartService", client.RestartService({ name })),
@@ -329,10 +329,11 @@ export const RemoteStack = {
             fastCall(endpoint, "GetServiceState", client.GetServiceState({ name })).pipe(
               Effect.map((state) => new StackServiceState(state)),
             ),
-          getAllStates: () =>
-            fastCall(endpoint, "GetAllServiceStates", client.GetAllServiceStates(undefined)).pipe(
-              Effect.map((states) => states.map((state) => new StackServiceState(state))),
-            ),
+          getAllStates: fastCall(
+            endpoint,
+            "GetAllServiceStates",
+            client.GetAllServiceStates(undefined),
+          ).pipe(Effect.map((states) => states.map((state) => new StackServiceState(state)))),
           stateChanges: (name: string) =>
             fastCall(endpoint, "GetServiceState", client.GetServiceState({ name })).pipe(
               Effect.as(
@@ -341,13 +342,12 @@ export const RemoteStack = {
                 ).pipe(Stream.map((state) => new StackServiceState(state))),
               ),
             ),
-          allStateChanges: () =>
-            scopedRpcStream(
-              streamRpc(endpoint, "WatchServiceStates", client.WatchServiceStates({})),
-            ).pipe(
-              Stream.catchTag("ServiceNotFoundError", Stream.die),
-              Stream.map((state) => new StackServiceState(state)),
-            ),
+          allStateChanges: scopedRpcStream(
+            streamRpc(endpoint, "WatchServiceStates", client.WatchServiceStates({})),
+          ).pipe(
+            Stream.catchTag("ServiceNotFoundError", Stream.die),
+            Stream.map((state) => new StackServiceState(state)),
+          ),
           waitReady: (name: string, opts) =>
             call(
               "WaitServiceReady",

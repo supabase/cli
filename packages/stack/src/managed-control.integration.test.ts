@@ -34,28 +34,27 @@ const live = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   effect.pipe(Effect.provide(controlTransportLayer));
 
 const makeStack = (started: { value: boolean }): Stack["Service"] => ({
-  getInfo: () =>
-    Effect.succeed({
-      url: "http://127.0.0.1",
-      dbUrl: "postgres://127.0.0.1",
-      publishableKey: "publishable",
-      secretKey: "secret",
-      anonJwt: "anon",
-      serviceRoleJwt: "service",
-      serviceEndpoints: {},
-    }),
-  start: () => Effect.sync(() => void (started.value = true)),
-  stop: () => Effect.void,
-  dispose: () => Effect.void,
+  getInfo: Effect.succeed({
+    url: "http://127.0.0.1",
+    dbUrl: "postgres://127.0.0.1",
+    publishableKey: "publishable",
+    secretKey: "secret",
+    anonJwt: "anon",
+    serviceRoleJwt: "service",
+    serviceEndpoints: {},
+  }),
+  start: Effect.sync(() => void (started.value = true)),
+  stop: Effect.void,
+  dispose: Effect.void,
   startService: () => Effect.void,
   stopService: () => Effect.void,
   restartService: () => Effect.void,
   reloadFunctions: () => Effect.void,
   reloadEdgeRuntime: () => Effect.void,
   getState: () => Effect.die("unused"),
-  getAllStates: () => Effect.succeed([]),
+  getAllStates: Effect.succeed([]),
   stateChanges: () => Effect.succeed(Stream.empty),
-  allStateChanges: () => Stream.empty,
+  allStateChanges: Stream.empty,
   waitReady: () => Effect.void,
   waitAllReady: () => Effect.void,
   subscribeLogs: () => Stream.empty,
@@ -287,10 +286,9 @@ describe("managed control endpoint", () => {
           const stopCalls = { value: 0 };
           const stack = {
             ...makeStack({ value: false }),
-            stop: () =>
-              Effect.sync(() => {
-                stopCalls.value += 1;
-              }),
+            stop: Effect.sync(() => {
+              stopCalls.value += 1;
+            }),
           } satisfies Stack["Service"];
           const { owner, lifecycle } = yield* makeStaticOwner(STACK_ID, stack);
           const ownerStatus = yield* lifecycle.currentStatus;

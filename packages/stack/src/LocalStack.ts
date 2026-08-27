@@ -878,8 +878,8 @@ export const localStackLayer = (
         }).pipe(cleanupOnReadinessFailure);
 
       const stack = {
-        getInfo: () => Effect.succeed(info),
-        start: () => {
+        getInfo: Effect.succeed(info),
+        start: Effect.suspend(() => {
           let serviceStartupBegan = false;
           return Effect.gen(function* () {
             yield* requireMutable("start");
@@ -951,21 +951,20 @@ export const localStackLayer = (
             cleanupOnReadinessFailure,
             Effect.onError(() => (serviceStartupBegan ? disposeOnce() : Effect.void)),
           );
-        },
-        stop: () =>
-          Effect.gen(function* () {
-            if (disposed) {
-              return;
-            }
-            if (runtimeState === undefined) {
-              yield* Ref.set(phaseRef, "stopped");
-              return;
-            }
-            yield* Ref.set(phaseRef, "stopping");
-            yield* runtimeState.orchestrator.stop;
+        }),
+        stop: Effect.gen(function* () {
+          if (disposed) {
+            return;
+          }
+          if (runtimeState === undefined) {
             yield* Ref.set(phaseRef, "stopped");
-          }).pipe(withLifecycleLock),
-        dispose: disposeOnce,
+            return;
+          }
+          yield* Ref.set(phaseRef, "stopping");
+          yield* runtimeState.orchestrator.stop;
+          yield* Ref.set(phaseRef, "stopped");
+        }).pipe(withLifecycleLock),
+        dispose: disposeOnce(),
         startService: (name) =>
           Effect.gen(function* () {
             yield* requireMutable(`start service ${name}`);
@@ -1111,13 +1110,13 @@ export const localStackLayer = (
             }
             return match;
           }),
-        getAllStates: () => Effect.sync(() => SubscriptionRef.getUnsafe(stateRef)),
+        getAllStates: Effect.sync(() => SubscriptionRef.getUnsafe(stateRef)),
         stateChanges: (name) =>
           Effect.gen(function* () {
             yield* requireKnownService(name);
             return Stream.filter(publicAllStateChanges(), (state) => state.name === name);
           }),
-        allStateChanges: publicAllStateChanges,
+        allStateChanges: publicAllStateChanges(),
         waitReady: (name, opts) =>
           Effect.gen(function* () {
             const phase = yield* Ref.get(phaseRef);

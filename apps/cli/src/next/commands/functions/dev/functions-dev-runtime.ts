@@ -219,7 +219,7 @@ export const runFunctionsDevRuntime = Effect.fnUntraced(function* (
   yield* Effect.gen(function* () {
     yield* ensureFunctionsDirectory();
     yield* reloadEdgeRuntime(stack, opts, edgeRuntimeState.config);
-    const info = yield* stack.getInfo();
+    const info = yield* stack.getInfo;
     const watchPathList = yield* functionsDevWatchPaths(opts.envFile);
 
     yield* output.success("Edge Functions dev server is running.", {
@@ -255,7 +255,7 @@ export const runFunctionsDevRuntime = Effect.fnUntraced(function* (
   }).pipe(
     Effect.ensuring(
       startedByCommand
-        ? stack.dispose().pipe(Effect.ignore)
+        ? stack.dispose.pipe(Effect.ignore)
         : stack.reloadFunctions({ functions: restoreFunctions }).pipe(Effect.ignore),
     ),
   );

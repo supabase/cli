@@ -387,7 +387,7 @@ const remoteStop = async (endpoint: ControlEndpoint): Promise<void> => {
             cliVersion: owner.daemonCliVersion,
           }).pipe(Layer.provide(httpTransportClientLayer)),
         );
-        yield* Context.get(context, Stack).stop();
+        yield* Context.get(context, Stack).stop;
       }),
     ),
   );
@@ -446,7 +446,7 @@ const remoteInfo = async (endpoint: ControlEndpoint): Promise<{ readonly url: st
             cliVersion: owner.daemonCliVersion,
           }).pipe(Layer.provide(httpTransportClientLayer)),
         );
-        return yield* Context.get(context, Stack).getInfo();
+        return yield* Context.get(context, Stack).getInfo;
       }),
     ),
   );

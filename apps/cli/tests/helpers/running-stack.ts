@@ -65,10 +65,10 @@ const history = [
 ];
 
 const stackService = (info: StackInfo, onStop: Effect.Effect<void>): Stack["Service"] => ({
-  getInfo: () => Effect.succeed(info),
-  start: () => Effect.void,
-  stop: () => onStop,
-  dispose: () => onStop,
+  getInfo: Effect.succeed(info),
+  start: Effect.void,
+  stop: onStop,
+  dispose: onStop,
   startService: () => Effect.void,
   stopService: () => Effect.void,
   restartService: () => Effect.void,
@@ -80,10 +80,10 @@ const stackService = (info: StackInfo, onStop: Effect.Effect<void>): Stack["Serv
       ? Effect.fail(new ServiceNotFoundError({ name }))
       : Effect.succeed(state);
   },
-  getAllStates: () => Effect.succeed(stackStates),
+  getAllStates: Effect.succeed(stackStates),
   stateChanges: (name: string) =>
     Effect.succeed(Stream.fromIterable(stackStates.filter((state) => state.name === name))),
-  allStateChanges: () => Stream.fromIterable(stackStates),
+  allStateChanges: Stream.fromIterable(stackStates),
   waitReady: () => Effect.void,
   waitAllReady: () => Effect.void,
   subscribeLogs: (name: string) =>

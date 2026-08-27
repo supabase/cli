@@ -249,10 +249,10 @@ it.live("executes every Stack operation over the same-version RPC endpoint", () 
             calls += 1;
           });
         const stack: Stack["Service"] = makeTestStack({
-          getInfo: () => Effect.succeed(info),
-          start: counted,
-          stop: counted,
-          dispose: counted,
+          getInfo: Effect.succeed(info),
+          start: counted(),
+          stop: counted(),
+          dispose: counted(),
           startService: (name) => {
             switch (name) {
               case "unavailable":
@@ -287,9 +287,9 @@ it.live("executes every Stack operation over the same-version RPC endpoint", () 
             name === "missing"
               ? Effect.fail(new ServiceNotFoundError({ name }))
               : Effect.succeed(serviceState),
-          getAllStates: () => Effect.succeed([serviceState]),
+          getAllStates: Effect.succeed([serviceState]),
           stateChanges: () => Effect.succeed(Stream.fromIterable([serviceState])),
-          allStateChanges: () => Stream.fromIterable([serviceState]),
+          allStateChanges: Stream.fromIterable([serviceState]),
           waitReady: (name, options) =>
             Effect.sync(() => {
               calls += 1;
@@ -373,8 +373,8 @@ it.live("executes every Stack operation over the same-version RPC endpoint", () 
         }).pipe(Layer.provide(httpTransportClientLayer));
         yield* Effect.gen(function* () {
           const remote = yield* Stack;
-          expect(yield* remote.getInfo()).toEqual(info);
-          yield* remote.start();
+          expect(yield* remote.getInfo).toEqual(info);
+          yield* remote.start;
           yield* remote.startService("auth");
           const readyError = yield* Effect.flip(remote.startService("error"));
           expect(Predicate.isTagged(readyError, "ServiceReadyError")).toBe(true);
@@ -425,7 +425,7 @@ it.live("executes every Stack operation over the same-version RPC endpoint", () 
           yield* remote.reloadFunctions();
           yield* remote.reloadEdgeRuntime({ edgeRuntime: { enabled: true } });
           expect(yield* remote.getState("auth")).toEqual(serviceState);
-          expect(yield* remote.getAllStates()).toEqual([serviceState]);
+          expect(yield* remote.getAllStates).toEqual([serviceState]);
           const authChanges = yield* remote.stateChanges("auth");
           expect(yield* Stream.runCollect(authChanges)).toEqual([serviceState]);
           const missingChanges = yield* Effect.exit(remote.stateChanges("missing"));
@@ -440,7 +440,7 @@ it.live("executes every Stack operation over the same-version RPC endpoint", () 
               }
             }
           }
-          expect(yield* Stream.runCollect(remote.allStateChanges())).toEqual([serviceState]);
+          expect(yield* Stream.runCollect(remote.allStateChanges)).toEqual([serviceState]);
           yield* remote.waitReady("auth");
           yield* remote.waitAllReady();
           const finiteReady = { mode: "finite" as const, timeoutMs: 1234 };
@@ -462,7 +462,7 @@ it.live("executes every Stack operation over the same-version RPC endpoint", () 
           expect(calls).toBeGreaterThan(0);
           const activeLogs = yield* Effect.forkChild(Stream.runDrain(remote.subscribeLogs("auth")));
           yield* Deferred.await(activeLogStarted);
-          yield* remote.stop();
+          yield* remote.stop;
           yield* Deferred.await(activeLogReleased);
           yield* Fiber.await(activeLogs);
         }).pipe(Effect.provide(remoteLayer));
@@ -488,7 +488,7 @@ it.live("preserves a maintenance-busy stop as a typed RemoteStack failure", () =
       const exit = yield* Effect.exit(
         Effect.gen(function* () {
           const remote = yield* Stack;
-          return yield* remote.stop();
+          return yield* remote.stop;
         }).pipe(Effect.provide(layer)),
       );
       expect(Exit.isFailure(exit)).toBe(true);
@@ -530,11 +530,10 @@ it.live("fences stale RPC clients after deterministic endpoint replacement", () 
             });
             yield* lifecycle.publishStack({
               ...makeTestStack(),
-              getInfo: () =>
-                Effect.sync(() => {
-                  handlerCalls += 1;
-                  return info;
-                }),
+              getInfo: Effect.sync(() => {
+                handlerCalls += 1;
+                return info;
+              }),
             });
             const owner = yield* acquireControl({
               stackId,
@@ -559,12 +558,12 @@ it.live("fences stale RPC clients after deterministic endpoint replacement", () 
         }).pipe(Layer.provide(httpTransportClientLayer));
         const staleContext = yield* Layer.build(staleLayer);
         const staleRemote = Context.get(staleContext, Stack);
-        expect((yield* staleRemote.getInfo()).url).toBe(info.url);
+        expect((yield* staleRemote.getInfo).url).toBe(info.url);
         expect(handlerCalls).toBe(1);
 
         yield* first.owner.close;
         const replacement = yield* makeOwner(sessionB, "test");
-        const staleResult = yield* staleRemote.getInfo().pipe(Effect.result);
+        const staleResult = yield* staleRemote.getInfo.pipe(Effect.result);
         expect(Result.isFailure(staleResult)).toBe(true);
         if (Result.isFailure(staleResult)) {
           expect(staleResult.failure).toBeInstanceOf(StackRpcProtocolError);
@@ -583,7 +582,7 @@ it.live("fences stale RPC clients after deterministic endpoint replacement", () 
         }).pipe(Layer.provide(httpTransportClientLayer));
         const replacementContext = yield* Layer.build(replacementLayer);
         const replacementRemote = Context.get(replacementContext, Stack);
-        expect((yield* replacementRemote.getInfo()).url).toBe(info.url);
+        expect((yield* replacementRemote.getInfo).url).toBe(info.url);
         expect(handlerCalls).toBe(2);
 
         yield* replacement.owner.close;
@@ -611,7 +610,7 @@ it.live.each([
       const exit = yield* Effect.exit(
         Effect.gen(function* () {
           const remote = yield* Stack;
-          yield* remote.getInfo();
+          yield* remote.getInfo;
         }).pipe(Effect.provide(layer)),
       );
       expect(Exit.isFailure(exit)).toBe(true);
@@ -695,7 +694,7 @@ it.live("interrupts an owned server RPC request when the client disconnects", ()
       yield* Effect.scoped(
         Effect.gen(function* () {
           const remote = yield* Stack;
-          const request = yield* Effect.forkChild(remote.getInfo());
+          const request = yield* Effect.forkChild(remote.getInfo);
           yield* Deferred.await(requestStarted);
           yield* Fiber.interrupt(request);
           yield* Deferred.await(requestClosed);
@@ -731,7 +730,7 @@ it.effect("interrupts a remote stop after the cleanup handoff", () =>
       Effect.scoped(
         Effect.gen(function* () {
           const remote = yield* Stack;
-          yield* remote.stop();
+          yield* remote.stop;
         }).pipe(Effect.provide(layer)),
       ),
     );
@@ -833,7 +832,7 @@ it.live("terminates an active stream with the stopping reason", () =>
         });
         yield* lifecycle.publishStack({
           ...makeTestStack(),
-          stop: () => Deferred.await(stopRelease),
+          stop: Deferred.await(stopRelease),
           subscribeLogs: () =>
             Stream.concat(
               Stream.succeed(log).pipe(
@@ -939,7 +938,7 @@ it.effect("times out a hung fast unary RPC with endpoint and procedure context",
       Effect.scoped(
         Effect.gen(function* () {
           const remote = yield* Stack;
-          yield* remote.getInfo();
+          yield* remote.getInfo;
         }).pipe(Effect.provide(layer), Effect.exit),
       ),
     );
@@ -1001,7 +1000,7 @@ it.effect("does not apply the fast timeout to a long-running StartStack RPC", ()
       Effect.scoped(
         Effect.gen(function* () {
           const remote = yield* Stack;
-          yield* remote.start();
+          yield* remote.start;
         }).pipe(Effect.provide(layer)),
       ),
     );
@@ -1099,7 +1098,7 @@ it.effect("observes the captured session after the stop was accepted and its res
       const result = yield* Effect.scoped(
         Effect.gen(function* () {
           const remote = yield* Stack;
-          return yield* remote.stop().pipe(Effect.result);
+          return yield* remote.stop.pipe(Effect.result);
         }).pipe(Effect.provide(remoteLayer(endpoint, ownerSessionId, transport))),
       );
 
@@ -1137,7 +1136,7 @@ it.effect("observes the captured session after an ambiguous HTTP stop status", (
     const result = yield* Effect.scoped(
       Effect.gen(function* () {
         const remote = yield* Stack;
-        return yield* remote.stop().pipe(Effect.result);
+        return yield* remote.stop.pipe(Effect.result);
       }).pipe(Effect.provide(remoteLayer(endpoint, ownerSessionId, transport))),
     );
 
@@ -1187,7 +1186,7 @@ it.effect(
         Effect.scoped(
           Effect.gen(function* () {
             const remote = yield* Stack;
-            yield* remote.stop();
+            yield* remote.stop;
           }).pipe(Effect.provide(remoteLayer(endpoint, ownerSessionId, transport))),
         ),
       );
@@ -1229,7 +1228,7 @@ it.effect("finishes the captured stop when a replacement session answers with co
     const result = yield* Effect.scoped(
       Effect.gen(function* () {
         const remote = yield* Stack;
-        return yield* remote.stop().pipe(Effect.result);
+        return yield* remote.stop.pipe(Effect.result);
       }).pipe(Effect.provide(remoteLayer(endpoint, ownerSessionId, transport))),
     );
 
@@ -1284,7 +1283,7 @@ it.effect("finishes a fenced stop when another stack rebinds the endpoint", () =
     const result = yield* Effect.scoped(
       Effect.gen(function* () {
         const remote = yield* Stack;
-        return yield* remote.stop().pipe(Effect.result);
+        return yield* remote.stop.pipe(Effect.result);
       }).pipe(Effect.provide(layer)),
     );
     expect(Result.isSuccess(result)).toBe(true);
@@ -1309,12 +1308,11 @@ it.live("interrupts the real RPC handler fiber when the client request is cancel
         };
         const stack: Stack["Service"] = {
           ...makeTestStack(),
-          getInfo: () =>
-            Deferred.succeed(started, undefined).pipe(
-              Effect.andThen(Effect.never),
-              Effect.ensuring(Deferred.succeed(finalized, undefined)),
-              Effect.as(info),
-            ),
+          getInfo: Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Effect.never),
+            Effect.ensuring(Deferred.succeed(finalized, undefined)),
+            Effect.as(info),
+          ),
         };
         const lifecycle = yield* makeSupervisorSessionFixture({
           ownershipId: ownerId,
@@ -1344,7 +1342,7 @@ it.live("interrupts the real RPC handler fiber when the client request is cancel
         }).pipe(Layer.provide(httpTransportClientLayer));
         yield* Effect.gen(function* () {
           const remote = yield* Stack;
-          const request = yield* Effect.forkChild(remote.getInfo());
+          const request = yield* Effect.forkChild(remote.getInfo);
           yield* Deferred.await(started);
           yield* Fiber.interrupt(request);
           yield* Deferred.await(finalized);

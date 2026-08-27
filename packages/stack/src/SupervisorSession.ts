@@ -195,9 +195,9 @@ export class SupervisorSession extends Context.Service<
                     }
                     const stack = runtime === undefined ? undefined : runInput.stack(runtime);
                     const stopExit =
-                      stack === undefined ? Exit.void : yield* Effect.exit(stack.stop());
+                      stack === undefined ? Exit.void : yield* Effect.exit(stack.stop);
                     const disposeExit =
-                      stack === undefined ? Exit.void : yield* Effect.exit(stack.dispose());
+                      stack === undefined ? Exit.void : yield* Effect.exit(stack.dispose);
                     const scopeExit = yield* Effect.exit(Scope.close(runtimeScope, Exit.void));
                     const terminalExit = yield* Effect.exit(request.terminal);
                     const closeExit = yield* Effect.exit(runInput.closeOwner);

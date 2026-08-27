@@ -70,8 +70,8 @@ export const StackRpcHandlers = StackRpc.toLayer(
     const session = yield* SupervisorSession;
     const launchUpdater = yield* StackLaunchUpdater;
     return {
-      GetInfo: () => local(session, (stack) => stack.getInfo()),
-      StartStack: () => local(session, (stack) => stack.start()),
+      GetInfo: () => local(session, (stack) => stack.getInfo),
+      StartStack: () => local(session, (stack) => stack.start),
       StartService: ({ name }: { readonly name: string }) =>
         local(session, (stack) => stack.startService(name)),
       StopService: ({ name }: { readonly name: string }) =>
@@ -106,10 +106,10 @@ export const StackRpcHandlers = StackRpc.toLayer(
       }) => local(session, () => launchUpdater.update(stackId, launch)),
       GetServiceState: ({ name }: { readonly name: string }) =>
         local(session, (stack) => stack.getState(name)),
-      GetAllServiceStates: () => local(session, (stack) => stack.getAllStates()),
+      GetAllServiceStates: () => local(session, (stack) => stack.getAllStates),
       WatchServiceStates: ({ name }: { readonly name?: string }) =>
         name === undefined
-          ? localStream(session, (stack) => Effect.succeed(stack.allStateChanges()))
+          ? localStream(session, (stack) => Effect.succeed(stack.allStateChanges))
           : localStream(session, (stack) => stack.stateChanges(name)),
       GetLogHistory: ({
         name,

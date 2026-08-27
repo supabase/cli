@@ -74,7 +74,7 @@ describe("Bun runtime RPC", () => {
         Effect.scoped(
           Effect.gen(function* () {
             const remote = yield* Stack;
-            return yield* remote.getInfo();
+            return yield* remote.getInfo;
           }).pipe(Effect.provide(layer), Effect.exit),
         ),
       );

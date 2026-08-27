@@ -238,8 +238,7 @@ describe("Bun control transport", () => {
     await Effect.runPromise(
       lifecycle.publishStack(
         makeTestStack({
-          stop: () =>
-            Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release))),
+          stop: Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release))),
         }),
       ),
     );

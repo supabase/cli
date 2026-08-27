@@ -55,16 +55,15 @@ const logs = [
 ];
 
 const stack: Stack["Service"] = makeTestStack({
-  getInfo: () =>
-    Effect.succeed({
-      url: "http://127.0.0.1:54321",
-      dbUrl: "postgresql://localhost/postgres",
-      publishableKey: "publishable",
-      secretKey: "secret",
-      anonJwt: "anon",
-      serviceRoleJwt: "role",
-      serviceEndpoints: {},
-    }),
+  getInfo: Effect.succeed({
+    url: "http://127.0.0.1:54321",
+    dbUrl: "postgresql://localhost/postgres",
+    publishableKey: "publishable",
+    secretKey: "secret",
+    anonJwt: "anon",
+    serviceRoleJwt: "role",
+    serviceEndpoints: {},
+  }),
   reloadFunctions: () =>
     Effect.fail(
       new StackBuildError({
@@ -76,9 +75,9 @@ const stack: Stack["Service"] = makeTestStack({
     name === "postgres" || name === "auth"
       ? Effect.succeed(serviceState(name))
       : Effect.fail(new ServiceNotFoundError({ name })),
-  getAllStates: () => Effect.succeed([serviceState("postgres"), serviceState("auth")]),
+  getAllStates: Effect.succeed([serviceState("postgres"), serviceState("auth")]),
   stateChanges: (name) => Effect.succeed(Stream.fromIterable([serviceState(name)])),
-  allStateChanges: () => Stream.fromIterable([serviceState("postgres"), serviceState("auth")]),
+  allStateChanges: Stream.fromIterable([serviceState("postgres"), serviceState("auth")]),
   subscribeLogs: (name) => Stream.fromIterable(logs.filter((entry) => entry.service === name)),
   subscribeAllLogs: (services) =>
     Stream.fromIterable(
@@ -129,13 +128,13 @@ it.live("serves handler behavior over the RPC boundary", () =>
         Effect.map((context) => Context.get(context, Stack)),
       );
 
-      const unavailable = yield* Effect.flip(remote.getInfo());
+      const unavailable = yield* Effect.flip(remote.getInfo);
       expect(Predicate.isTagged(unavailable, "StackUnavailableError")).toBe(true);
       if (Predicate.isTagged(unavailable, "StackUnavailableError")) {
         expect(unavailable.phase).toBe("starting");
       }
       yield* lifecycle.publishStack(stack);
-      expect((yield* remote.getInfo()).url).toBe("http://127.0.0.1:54321");
+      expect((yield* remote.getInfo).url).toBe("http://127.0.0.1:54321");
 
       const history = yield* remote.logHistoryAll(3, ["postgres", "auth"]);
       expect(history.map((entry) => entry.line)).toEqual([
@@ -218,10 +217,9 @@ it.live("rejects launch updates after supervisor shutdown begins", () =>
       const releaseStop = yield* Deferred.make<void>();
       yield* lifecycle.publishStack({
         ...stack,
-        stop: () =>
-          Deferred.succeed(stopStarted, undefined).pipe(
-            Effect.andThen(Deferred.await(releaseStop)),
-          ),
+        stop: Deferred.succeed(stopStarted, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseStop)),
+        ),
       });
 
       yield* Effect.gen(function* () {
@@ -268,14 +266,13 @@ it.live("propagates a failure terminal reason to an active state stream", () =>
       });
       yield* lifecycle.publishStack({
         ...stack,
-        stop: () => Deferred.await(releaseStop),
-        allStateChanges: () =>
-          Stream.concat(
-            Stream.succeed(serviceState("auth")).pipe(
-              Stream.tap(() => Deferred.succeed(streamStarted, undefined).pipe(Effect.asVoid)),
-            ),
-            Stream.never,
+        stop: Deferred.await(releaseStop),
+        allStateChanges: Stream.concat(
+          Stream.succeed(serviceState("auth")).pipe(
+            Stream.tap(() => Deferred.succeed(streamStarted, undefined).pipe(Effect.asVoid)),
           ),
+          Stream.never,
+        ),
       });
       const application = { app: yield* makeSupervisorControlApplication(lifecycle) };
       const owner = yield* acquireControl({
@@ -299,7 +296,7 @@ it.live("propagates a failure terminal reason to an active state stream", () =>
       const streamExit = yield* Effect.scoped(
         Effect.gen(function* () {
           const remote = yield* Stack;
-          const active = yield* Effect.forkChild(Stream.runDrain(remote.allStateChanges()), {
+          const active = yield* Effect.forkChild(Stream.runDrain(remote.allStateChanges), {
             startImmediately: true,
           });
           yield* Deferred.await(streamStarted);
@@ -348,8 +345,10 @@ it.live("interrupts an in-flight runtime mutation before stopping the stack", ()
             Effect.ensuring(Deferred.succeed(mutationReleased, undefined)),
             operationLock.withPermit,
           ),
-        stop: () =>
-          Deferred.succeed(stopStarted, undefined).pipe(Effect.asVoid, operationLock.withPermit),
+        stop: Deferred.succeed(stopStarted, undefined).pipe(
+          Effect.asVoid,
+          operationLock.withPermit,
+        ),
       });
       const application = {
         app: yield* makeSupervisorControlApplication(lifecycle),

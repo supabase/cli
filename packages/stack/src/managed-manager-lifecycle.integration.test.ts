@@ -151,7 +151,7 @@ describe("managed stack lifecycle journeys", () => {
         const stopped = { value: false };
         const localStack = {
           ...controlStack(),
-          stop: () => Effect.sync(() => void (stopped.value = true)),
+          stop: Effect.sync(() => void (stopped.value = true)),
         } satisfies Stack["Service"];
         const lifecycle = yield* makeSupervisorSessionFixture({
           ownershipId: stackId,
