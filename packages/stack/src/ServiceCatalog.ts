@@ -27,6 +27,7 @@ interface NativeReleaseSource {
 }
 
 interface DockerImageSource {
+  readonly registry?: string;
   readonly repository: string;
   readonly tagPrefix?: string;
 }
@@ -77,7 +78,8 @@ export interface ServiceCatalogEntry<Name extends ServiceName> {
   readonly portFields: ReadonlyArray<PortField>;
 }
 
-const SUPABASE_GHCR_REGISTRY = "ghcr.io/supabase/cli";
+const SUPABASE_GHCR_REGISTRY = "ghcr.io/supabase";
+const SUPABASE_CLI_GHCR_REGISTRY = `${SUPABASE_GHCR_REGISTRY}/cli`;
 const SLIM_RELEASE_BASE = "https://github.com/supabase/slim-services/releases/download";
 
 const nativeRelease = (
@@ -290,7 +292,7 @@ export const SERVICE_CATALOG = {
     defaultVersion: "0.53.0-alpine",
     runtimeSupport: "docker-only",
     artifact: {
-      docker: { repository: "vector" },
+      docker: { registry: SUPABASE_GHCR_REGISTRY, repository: "vector" },
     },
     activation: { activates: [], owns: [] },
     preparation: preparation(["lazy", "eager"], "lazy", ["analytics"]),
@@ -299,10 +301,10 @@ export const SERVICE_CATALOG = {
   pooler: {
     name: "pooler",
     configKey: "pooler",
-    defaultVersion: "v2.9.7",
+    defaultVersion: "2.9.7",
     runtimeSupport: "docker-only",
     artifact: {
-      docker: { repository: "pooler" },
+      docker: { registry: SUPABASE_GHCR_REGISTRY, repository: "supavisor" },
     },
     activation: { activates: [], owns: [] },
     preparation: preparation(["eager"], "eager", ["postgres"]),
@@ -339,5 +341,5 @@ export const requiredPreparationDependencies = (service: ServiceName): ReadonlyA
 
 export const dockerImageForArtifact = (service: ServiceName, version: string): string => {
   const source = serviceMetadata(service).artifact.docker;
-  return `${SUPABASE_GHCR_REGISTRY}/${source.repository}:${source.tagPrefix ?? ""}${version}`;
+  return `${source.registry ?? SUPABASE_CLI_GHCR_REGISTRY}/${source.repository}:${source.tagPrefix ?? ""}${version}`;
 };
