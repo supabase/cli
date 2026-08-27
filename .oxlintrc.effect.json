@@ -3,5 +3,6 @@
   "extends": ["./.oxlintrc.json", "./node_modules/@effect/tsgo/oxlint-presets/recommended.json"],
   "options": {
     "denyWarnings": true
-  }
+  },
+  "ignorePatterns": []
 }

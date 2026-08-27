@@ -17,7 +17,7 @@ import { claimFileAtomically } from "./atomic-claim.ts";
 import { failsOnlyWith } from "./failure.ts";
 import { createManagedUuidEffect, validateManagedUuid } from "./ids.ts";
 import { ensureGitCheckoutLocation, readGitCheckoutLocation } from "./identity.ts";
-import { decodeGitCheckoutIdentity } from "./git-identity.ts";
+import { decodeGitCheckoutIdentity, encodeGitCheckoutIdentity } from "./git-identity.ts";
 import {
   GIT_CHECKOUT_IDENTITY_VERSION,
   InvalidManagedIdentityError,
@@ -863,12 +863,8 @@ const ensureCheckoutIdentity = (
       version: GIT_CHECKOUT_IDENTITY_VERSION,
       checkoutId: yield* mintUuid(idFactory, "checkoutId"),
     };
-    const outcome = yield* claimFileAtomically(
-      markerPath,
-      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Git checkout markers retain stable pretty JSON for the native filesystem protocol.
-      `${JSON.stringify(identity, null, 2)}\n`,
-      { mode: 0o600 },
-    ).pipe(
+    const content = yield* encodeGitCheckoutIdentity(identity);
+    const outcome = yield* claimFileAtomically(markerPath, `${content}\n`, { mode: 0o600 }).pipe(
       Effect.catchTags({
         AtomicClaimUnsupportedError: (error) =>
           Effect.fail(

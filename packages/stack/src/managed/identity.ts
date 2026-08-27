@@ -28,6 +28,18 @@ const ordinaryWorkspaceIdentitySchema = Schema.fromJsonString(
   }),
 );
 
+const encodeOrdinaryWorkspaceIdentity = (
+  identity: OrdinaryWorkspaceIdentity,
+): Effect.Effect<string, InvalidManagedIdentityError> =>
+  Schema.encodeEffect(ordinaryWorkspaceIdentitySchema)(identity).pipe(
+    Effect.mapError(
+      (error) =>
+        new InvalidManagedIdentityError({
+          message: `The ordinary workspace identity is invalid: ${String(error)}`,
+        }),
+    ),
+  );
+
 const decodeIdentity = (
   content: string,
 ): Effect.Effect<OrdinaryWorkspaceIdentity, InvalidManagedIdentityError> =>
@@ -153,10 +165,10 @@ export const ensureOrdinaryWorkspaceIdentity = (
       };
       const fs = yield* FileSystem.FileSystem;
       yield* fs.makeDirectory(dirname(markerPath), { recursive: true });
+      const content = yield* encodeOrdinaryWorkspaceIdentity(identity);
       const outcome = yield* claimIdentityFile(
         markerPath,
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Managed identity markers retain stable pretty JSON for the native filesystem protocol.
-        `${JSON.stringify(identity, null, 2)}\n`,
+        `${content}\n`,
         "Ordinary workspace identity",
         0o600,
       );
@@ -180,6 +192,19 @@ const detachedContextIdentitySchema = Schema.fromJsonString(
     contextId: Schema.String,
   }),
 );
+
+const encodeDetachedContextIdentity = (identity: {
+  readonly version: typeof DETACHED_CONTEXT_VERSION;
+  readonly contextId: string;
+}): Effect.Effect<string, InvalidManagedIdentityError> =>
+  Schema.encodeEffect(detachedContextIdentitySchema)(identity).pipe(
+    Effect.mapError(
+      (error) =>
+        new InvalidManagedIdentityError({
+          message: `The detached context identity is invalid: ${String(error)}`,
+        }),
+    ),
+  );
 
 const decodeDetachedContextId = (
   content: string,
@@ -227,10 +252,13 @@ export const ensureDetachedContextIdentity = (
       if (existing !== undefined) return { contextId: existing, created: false };
       const contextId = yield* createManagedUuidEffect(idFactory, "contextId");
       const markerPath = gitDetachedContextIdentityPath(gitDirectory);
+      const content = yield* encodeDetachedContextIdentity({
+        version: DETACHED_CONTEXT_VERSION,
+        contextId,
+      });
       const outcome = yield* claimIdentityFile(
         markerPath,
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Managed identity markers retain stable pretty JSON for the native filesystem protocol.
-        `${JSON.stringify({ version: DETACHED_CONTEXT_VERSION, contextId }, null, 2)}\n`,
+        `${content}\n`,
         "Detached context identity",
         0o600,
       );
@@ -251,6 +279,19 @@ const checkoutLocationSchema = Schema.fromJsonString(
     workspacePath: Schema.String,
   }),
 );
+
+const encodeCheckoutLocation = (location: {
+  readonly version: 1;
+  readonly workspacePath: string;
+}): Effect.Effect<string, InvalidManagedIdentityError> =>
+  Schema.encodeEffect(checkoutLocationSchema)(location).pipe(
+    Effect.mapError(
+      (error) =>
+        new InvalidManagedIdentityError({
+          message: `The git checkout location is invalid: ${String(error)}`,
+        }),
+    ),
+  );
 
 const decodeLocation = (content: string): Effect.Effect<string, InvalidManagedIdentityError> =>
   Schema.decodeEffect(checkoutLocationSchema)(content).pipe(
@@ -307,10 +348,10 @@ export const ensureGitCheckoutLocation = (
       const existing = yield* readGitCheckoutLocation(gitDirectory);
       if (existing !== undefined) return { workspacePath: existing, created: false };
       const markerPath = gitCheckoutLocationPath(gitDirectory);
+      const content = yield* encodeCheckoutLocation({ version: 1, workspacePath });
       const outcome = yield* claimIdentityFile(
         markerPath,
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Managed identity markers retain stable pretty JSON for the native filesystem protocol.
-        `${JSON.stringify({ version: 1, workspacePath }, null, 2)}\n`,
+        `${content}\n`,
         "Git checkout location",
         0o600,
       );
@@ -348,12 +389,10 @@ export const updateGitCheckoutLocationOwned = (
         });
       }
       const temporaryPath = `${markerPath}.tmp.${randomUUID()}`;
-      const publication = writeTemporary(
-        fs,
-        temporaryPath,
-        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Managed identity markers retain stable pretty JSON for the native filesystem protocol.
-        `${JSON.stringify({ version: 1, workspacePath }, null, 2)}\n`,
-      ).pipe(Effect.andThen(fs.rename(temporaryPath, markerPath)));
+      const content = yield* encodeCheckoutLocation({ version: 1, workspacePath });
+      const publication = writeTemporary(fs, temporaryPath, `${content}\n`).pipe(
+        Effect.andThen(fs.rename(temporaryPath, markerPath)),
+      );
       yield* Effect.ensuring(
         publication,
         Effect.uninterruptible(removeTemporary(fs, temporaryPath)),

@@ -156,9 +156,8 @@ export const encodeManagedStackDocument = (
     if (!hasCorePortAssignments(document)) {
       return yield* new InvalidManagedStackDocumentError({ path });
     }
-    const encoded = yield* Schema.encodeEffect(managedStackDocumentSchema)(document).pipe(
+    const encoded = yield* Schema.encodeEffect(ManagedStackDocumentSchema)(document).pipe(
       Effect.mapError(() => new InvalidManagedStackDocumentError({ path })),
     );
-    // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Persisted stack documents use stable pretty JSON for the native filesystem boundary.
-    return JSON.stringify(encoded, null, 2) + "\n";
+    return `${encoded}\n`;
   });
