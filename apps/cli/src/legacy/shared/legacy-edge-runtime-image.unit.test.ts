@@ -6,11 +6,18 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
 import { vi } from "vitest";
 
-import { dockerfileServiceImage } from "../../shared/services/dockerfile-images.ts";
+import {
+  dockerfileServiceImage,
+  dockerfileServiceImageRaw,
+} from "../../shared/services/dockerfile-images.ts";
+import { toSlimImage } from "../../shared/services/slim-images.ts";
 import {
   legacyResolveEdgeRuntimeImage,
   legacyResolveEdgeRuntimeShellImage,
 } from "./legacy-edge-runtime-image.ts";
+
+const currentEdgeRuntime = dockerfileServiceImageRaw("edgeruntime");
+const currentEdgeRuntimeTag = currentEdgeRuntime.split(":")[1] ?? "";
 
 const resolve = (workdir: string, denoVersion: number) =>
   Effect.gen(function* () {
@@ -82,7 +89,7 @@ describe("legacyResolveEdgeRuntimeImage", () => {
       vi.unstubAllEnvs();
     });
 
-    it.effect("resolves a normal pin onto the slim base", () => {
+    it.effect("keeps a historical pin on docker.io", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
       const dir = mkdtempSync(join(tmpdir(), "legacy-edge-img-"));
       mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
@@ -90,7 +97,25 @@ describe("legacyResolveEdgeRuntimeImage", () => {
       return resolve(dir, 2).pipe(
         Effect.tap((image) =>
           Effect.sync(() => {
-            expect(image).toBe("ghcr.io/supabase/cli/edge-runtime:v9.9.9");
+            expect(image).toBe("supabase/edge-runtime:v9.9.9");
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    });
+
+    it.effect("rewrites the current Dockerfile pin onto the slim base", () => {
+      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+      const dir = mkdtempSync(join(tmpdir(), "legacy-edge-img-"));
+      mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
+      writeFileSync(
+        join(dir, "supabase", ".temp", "edge-runtime-version"),
+        `${currentEdgeRuntimeTag}\n`,
+      );
+      return resolve(dir, 2).pipe(
+        Effect.tap((image) =>
+          Effect.sync(() => {
+            expect(image).toBe(toSlimImage("edgeruntime", currentEdgeRuntime));
             rmSync(dir, { recursive: true, force: true });
           }),
         ),

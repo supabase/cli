@@ -1,6 +1,5 @@
 import { styleText } from "node:util";
 import { makeApiClient, type ApiClient } from "@supabase/api/effect";
-import { dockerImageForService } from "@supabase/stack/versions";
 import { Data, Duration, Effect, Exit, Redacted } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
@@ -15,7 +14,7 @@ import {
   parseDockerfileServiceImages,
   type DockerfileImageSpec,
 } from "./dockerfile-images.ts";
-import { slimImageForAlias, slimImagesEnabled } from "./slim-images.ts";
+import { slimImageForAlias, slimImageForCurrentPin, slimImagesEnabled } from "./slim-images.ts";
 
 export { parseDockerfileServiceImages } from "./dockerfile-images.ts";
 
@@ -40,6 +39,12 @@ export interface LocalServiceImageOptions {
   readonly imageOverrides?: LocalServiceImageOverrides;
   readonly normalizeVersionTags?: boolean;
   readonly serviceVersions?: LocalServiceVersionOverrides;
+  /**
+   * Legacy `.temp` pins only slim-translate when they match the current
+   * Dockerfile tag (unpublished historical slim tags). Next start runs
+   * catalog versions from GHCR, so it leaves this off.
+   */
+  readonly slimCurrentPinOnly?: boolean;
 }
 
 // Mirrors Go's `utils.ProjectRefPattern` (`apps/cli-go/internal/utils/misc.go`).
@@ -124,7 +129,7 @@ export function postgresImageForDbMajorVersion(majorVersion: number): string | u
   }
 }
 
-export function replaceImageTag(image: string, tag: string): string {
+function replaceImageTag(image: string, tag: string): string {
   const index = image.lastIndexOf(":");
   if (index === -1) {
     return image;
@@ -157,9 +162,20 @@ function localServiceImagesForOptions(
       return baseImage === service.image ? service : { ...service, image: baseImage };
     }
     if (override === undefined && slim) {
-      // The catalog owns the slim tag scheme, which differs from docker.io's for
-      // `pooler`/`analytics`; a verbatim tag swap would miss the `v` prefix.
-      return { ...service, image: dockerImageForService(service.localService, version) };
+      return {
+        ...service,
+        image: options.slimCurrentPinOnly
+          ? slimImageForCurrentPin(service.alias, service.image, version)
+          : slimImageForAlias(
+              service.alias,
+              replaceImageTag(
+                service.image,
+                normalizeVersionTags
+                  ? tagForServiceVersion(service.localService, version)
+                  : version,
+              ),
+            ),
+      };
     }
     return {
       ...service,

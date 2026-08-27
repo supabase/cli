@@ -1,10 +1,8 @@
-import { dockerImageForService } from "@supabase/stack/versions";
-import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
-import { slimImagesEnabled } from "../../../shared/services/slim-images.ts";
-import {
-  replaceImageTag,
-  type LocalServiceVersionName,
-  type LocalServiceVersionOverrides,
+import { dockerfileServiceImageRaw } from "../../../shared/services/dockerfile-images.ts";
+import { slimImageForCurrentPin } from "../../../shared/services/slim-images.ts";
+import type {
+  LocalServiceVersionName,
+  LocalServiceVersionOverrides,
 } from "../../../shared/services/services.shared.ts";
 
 /**
@@ -20,21 +18,18 @@ import {
  * start`'s own native container bootstrap became a second caller across the
  * `start`/`db` family boundary, see `apps/cli/CLAUDE.md`'s "Hoist Before You
  * Duplicate" rule.
+ *
+ * Slim-translate only the current Dockerfile pin. A historical `.temp` pin
+ * stays on docker.io — those slim tags are not published.
  */
 export function legacyResolvePinnedImage(
   alias: string,
   localServiceName: LocalServiceVersionName,
   serviceVersions: LocalServiceVersionOverrides,
 ): string {
-  const baseImage = dockerfileServiceImage(alias);
-  const pinnedVersion = serviceVersions[localServiceName];
-  if (pinnedVersion === undefined) {
-    return baseImage;
-  }
-  // A verbatim tag swap would be wrong on slim refs whose tag scheme differs
-  // from docker.io's (`pooler`/`analytics` pins are unprefixed on docker.io but
-  // `v`-prefixed under `ghcr.io/supabase/cli`), so let the catalog normalize.
-  return slimImagesEnabled()
-    ? dockerImageForService(localServiceName, pinnedVersion)
-    : replaceImageTag(baseImage, pinnedVersion);
+  return slimImageForCurrentPin(
+    alias,
+    dockerfileServiceImageRaw(alias),
+    serviceVersions[localServiceName],
+  );
 }

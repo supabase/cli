@@ -135,10 +135,15 @@ import {
   legacyRollbackStart,
 } from "../../shared/db-bootstrap/rollback.ts";
 import { legacyResolveDbBootstrapConfig } from "../../shared/db-bootstrap/bootstrap-config.ts";
-import { legacyStartDatabase } from "../../shared/db-bootstrap/start-database.ts";
+import {
+  LegacySlimImageVolumeInaccessibleError,
+  legacyStartDatabase,
+} from "../../shared/db-bootstrap/start-database.ts";
 import { LEGACY_START_SERVICES } from "./start.services.ts";
 import {
   legacyCreateContainer,
+  legacyIsVolumeWritableByUid,
+  legacyVolumeExists,
   type LegacyContainerOpts,
 } from "../../shared/db-bootstrap/container-lifecycle.ts";
 import { legacyEnsureImagesCached } from "../../shared/db-bootstrap/image-prepull.ts";
@@ -1792,9 +1797,30 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         // the same typed config error every other malformed-config path in
         // this handler already produces, matching the fail-fast-at-decode
         // behavior every other field validates with.
+        const resolvedServiceImage = resolveImage(image);
+        if (entry.service === "storage" && legacyUsesSlimRuntime(resolvedServiceImage)) {
+          const storageVolumeExisted = yield* legacyVolumeExists(spawner, storageContainerName);
+          if (storageVolumeExisted) {
+            const writable = yield* legacyIsVolumeWritableByUid(
+              spawner,
+              resolveImage(postgresImage),
+              storageContainerName,
+              65532,
+            );
+            if (!writable) {
+              return yield* Effect.fail(
+                new LegacySlimImageVolumeInaccessibleError({
+                  message:
+                    "the existing storage volume was initialized by a non-slim storage image and is not writable by the slim image's user",
+                  suggestion: `Run ${legacyAqua("supabase stop --no-backup")} to reset the local storage volume, or unset SUPABASE_USE_SLIM_IMAGES.`,
+                }),
+              );
+            }
+          }
+        }
         const { spec, excludeFromHealthWatch } = yield* buildSpecForService(
           entry.service,
-          resolveImage(image),
+          resolvedServiceImage,
         ).pipe(
           Effect.catchDefect((defect) =>
             Effect.fail(

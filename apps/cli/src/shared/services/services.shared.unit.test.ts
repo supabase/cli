@@ -88,16 +88,28 @@ describe("services shared", () => {
     ]);
   });
 
-  test("applies pins on the slim tag scheme when SUPABASE_USE_SLIM_IMAGES is set", () => {
+  test("keeps historical pins on docker.io when slimCurrentPinOnly is set", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
     expect(
-      listLocalServiceVersions({ serviceVersions: { pooler: "2.0.0", analytics: "1.4.0" } }),
+      listLocalServiceVersions({
+        slimCurrentPinOnly: true,
+        serviceVersions: { pooler: "2.0.0", analytics: "1.4.0" },
+      }),
     ).toEqual(
       expect.arrayContaining([
-        { name: "ghcr.io/supabase/cli/pooler", local: "v2.0.0", remote: "" },
-        { name: "ghcr.io/supabase/cli/analytics", local: "v1.4.0", remote: "" },
+        { name: "supabase/supavisor", local: "2.0.0", remote: "" },
+        { name: "supabase/logflare", local: "1.4.0", remote: "" },
       ]),
     );
+  });
+
+  test("slim-translates catalog version overrides that are not the Dockerfile pin", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    expect(listLocalServiceVersions({ serviceVersions: { storage: "v1.70.3" } })).toContainEqual({
+      name: "ghcr.io/supabase/cli/storage",
+      local: "v1.70.3",
+      remote: "",
+    });
   });
 
   // The Postgres major-version fallback and a configured edge-runtime image are

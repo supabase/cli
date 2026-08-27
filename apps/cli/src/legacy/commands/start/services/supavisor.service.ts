@@ -163,10 +163,6 @@ export function legacyBuildSupavisorContainerSpec(
       PROXY_PORT_SESSION: LEGACY_SUPAVISOR_SESSION_PORT,
       PROXY_PORT_TRANSACTION: LEGACY_SUPAVISOR_TRANSACTION_PORT,
       DATABASE_URL: `ecto://${input.dbUser}:${input.dbPassword}@${input.dbHost}:${input.dbPort}/_supabase`,
-      // Supavisor's internal metadata Ecto pool defaults to 25 connections —
-      // half of the slim image's local-dev max_connections=50. A handful is
-      // plenty for the single local tenant.
-      DB_POOL_SIZE: "5",
       CLUSTER_POSTGRES: "true",
       SECRET_KEY_BASE: LEGACY_SUPAVISOR_SECRET_KEY_BASE,
       VAULT_ENC_KEY: LEGACY_SUPAVISOR_ENCRYPTION_KEY,

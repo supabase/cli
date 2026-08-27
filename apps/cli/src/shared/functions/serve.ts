@@ -1667,6 +1667,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         buildDockerBinds(projectId, functionsDir, functionsDir, config, {
           additionalModuleRoots: [input.flagCwd],
           skipMissingImportMapTargets: true,
+          image: input.image,
           onWarning: async (message) => {
             bindWarnings.push(message);
           },

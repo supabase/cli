@@ -1,7 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect } from "effect";
-import { dockerfileServiceImage } from "../services/dockerfile-images.ts";
+import {
+  dockerfileServiceImage,
+  dockerfileServiceImageRaw,
+} from "../services/dockerfile-images.ts";
+import { slimImageForCurrentPin } from "../services/slim-images.ts";
 
 const functionSlugPattern = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
@@ -65,9 +69,7 @@ export function edgeRuntimeImage(tag: string): string {
   if (tag === DENO1_EDGE_RUNTIME_VERSION) {
     return `supabase/edge-runtime:${DENO1_EDGE_RUNTIME_VERSION}`;
   }
-  const base = defaultEdgeRuntimeImage();
-  const index = base.indexOf(":");
-  return base.slice(0, index + 1) + tag.trim();
+  return slimImageForCurrentPin("edgeruntime", dockerfileServiceImageRaw("edgeruntime"), tag);
 }
 
 /**

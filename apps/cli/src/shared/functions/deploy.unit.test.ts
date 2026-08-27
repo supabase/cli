@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from "node:f
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildDockerBinds, formatDockerBind, type ResolvedDeployFunctionConfig } from "./deploy.ts";
 import { FunctionImportNotDirectoryError } from "./deploy.errors.ts";
@@ -640,6 +640,29 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
       });
 
       expect(warnings.some((warning) => warning.includes("nested"))).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("buildDockerBinds — slim deno cache path", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("mounts the named cache volume at /home/nonroot on a slim image", async () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    const { root, functionsDir, outputDir, config } = await createHelloFunctionProject(
+      {},
+      'Deno.serve(() => new Response("ok"));\n',
+    );
+    try {
+      const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config, {
+        image: "ghcr.io/supabase/cli/edge-runtime:v1.74.3",
+      });
+      expect(binds.some((bind) => bind.containerPath === "/home/nonroot")).toBe(true);
+      expect(binds.some((bind) => bind.containerPath === "/root/.cache/deno")).toBe(false);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

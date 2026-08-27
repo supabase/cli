@@ -28,6 +28,7 @@ import {
   runChildProcess,
 } from "./functions-docker.ts";
 import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
+import { usesSlimImageRuntime } from "../services/slim-images.ts";
 import {
   edgeRuntimeImage,
   FUNCTIONS_BUNDLER_MUTEX_GROUP,
@@ -48,7 +49,13 @@ const legacyEntrypointPath = "file:///src/index.ts";
 // — fixed container-side paths for the docker-unbundle path, unrelated to
 // deploy's `toDockerPath` host-mirroring scheme.
 const DOCKER_DENO_DIR = "/home/deno";
-const DOCKER_ESZIP_DIR = "/root/eszips";
+const dockerIoEszipDir = "/root/eszips";
+const slimEszipDir = "/tmp/eszips";
+const dockerIoDenoCacheDir = "/root/.cache/deno";
+// Slim HOME `/home/nonroot` is 0700 uid 65532. A named volume inherits that
+// owner only when the mount path already exists; `/tmp/.cache/deno` does not,
+// so Deno's default `$HOME/.cache/deno` never used a /tmp bind.
+const slimDenoCacheDir = "/home/nonroot";
 
 export interface DownloadFunctionsOptions {
   readonly functionName: Option.Option<string>;
@@ -1065,8 +1072,10 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
   const { projectId, denoVersion, image, projectEnvValues } = edgeRuntimeImage;
   const functionsDir = resolve(dependencies.projectRoot, "supabase", "functions");
   const hostEszipPath = resolve(eszipPath);
-  const dockerEszipPath = posix.join(DOCKER_ESZIP_DIR, eszipFileName);
+  const slim = usesSlimImageRuntime(image);
+  const dockerEszipPath = posix.join(slim ? slimEszipDir : dockerIoEszipDir, eszipFileName);
   const dockerOutputPath = posix.join(DOCKER_DENO_DIR, slug);
+  const dockerDenoCacheDir = slim ? slimDenoCacheDir : dockerIoDenoCacheDir;
 
   // Go: `viper.GetString("network-id")` else `NetId` (`docker.go:379-383`) —
   // `--network-id` is a persistent root flag (`cmd/root.go:328`), not
@@ -1104,7 +1113,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
     // `buildDockerBinds`.
     const binds = [
       ...(process.env["BITBUCKET_CLONE_DIR"] === undefined
-        ? [`${localDockerId("edge_runtime", projectId)}:/root/.cache/deno:rw`]
+        ? [`${localDockerId("edge_runtime", projectId)}:${dockerDenoCacheDir}:rw`]
         : []),
       `${hostEszipPath}:${dockerEszipPath}:ro`,
       `${functionsDir}:${DOCKER_DENO_DIR}:rw`,

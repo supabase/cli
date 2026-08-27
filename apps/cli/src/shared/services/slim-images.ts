@@ -66,6 +66,56 @@ export function slimImageForAlias(alias: string, image: string): string {
   return slimImagesEnabled() ? toSlimImage(alias, image) : image;
 }
 
+function imageTag(image: string): string | undefined {
+  const tagSeparator = image.lastIndexOf(":");
+  return tagSeparator === -1 ? undefined : image.slice(tagSeparator + 1);
+}
+
+function replaceImageTag(image: string, tag: string): string {
+  const tagSeparator = image.lastIndexOf(":");
+  return tagSeparator === -1 ? image : `${image.slice(0, tagSeparator + 1)}${tag}`;
+}
+
+/**
+ * True when `pin` catalog-normalizes to the same slim tag as `currentRawImage`.
+ * Historical `.temp` pins that would become unpublished slim tags return false.
+ */
+export function pinMatchesCurrentImage(
+  alias: string,
+  pin: string,
+  currentRawImage: string,
+): boolean {
+  const currentTag = imageTag(currentRawImage);
+  if (currentTag === undefined) {
+    return false;
+  }
+  const service = SLIM_SERVICE_BY_ALIAS[alias];
+  if (service === undefined) {
+    return pin.trim() === currentTag;
+  }
+  return dockerImageForService(service, pin) === dockerImageForService(service, currentTag);
+}
+
+/**
+ * Apply an optional `.temp` pin to the docker.io Dockerfile ref, then
+ * slim-translate only when the flag is on and the pin is absent or current.
+ */
+export function slimImageForCurrentPin(
+  alias: string,
+  currentRawImage: string,
+  pin?: string,
+): string {
+  const trimmed = pin?.trim() ?? "";
+  const tagged = trimmed.length > 0 ? replaceImageTag(currentRawImage, trimmed) : currentRawImage;
+  if (!slimImagesEnabled()) {
+    return tagged;
+  }
+  if (trimmed.length > 0 && !pinMatchesCurrentImage(alias, trimmed, currentRawImage)) {
+    return tagged;
+  }
+  return toSlimImage(alias, tagged);
+}
+
 /** Slim images are published only under this prefix; single home for the check. */
 export function isSlimImageRef(image: string): boolean {
   return image.startsWith(SLIM_IMAGE_PREFIX);

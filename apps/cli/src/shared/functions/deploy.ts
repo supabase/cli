@@ -27,6 +27,7 @@ import {
   hasExplicitLongFlag,
   lastExplicitLongFlagValue,
 } from "../cli/cobra-flag-groups.ts";
+import { usesSlimImageRuntime } from "../services/slim-images.ts";
 import {
   edgeRuntimeImage,
   FUNCTIONS_BUNDLER_MUTEX_GROUP,
@@ -1200,6 +1201,8 @@ export async function buildDockerBinds(
     readonly additionalModuleRoots?: ReadonlyArray<string>;
     readonly onWarning?: (message: string) => Promise<void>;
     readonly skipMissingImportMapTargets?: boolean;
+    /** Resolved edge-runtime ref — slim images persist cache under `/home/nonroot`. */
+    readonly image?: string;
   } = {},
 ): Promise<ReadonlyArray<DockerBind>> {
   const hostFunctionsDir = resolve(functionsDir);
@@ -1233,7 +1236,10 @@ export async function buildDockerBinds(
   if (process.env["BITBUCKET_CLONE_DIR"] === undefined) {
     binds.unshift({
       hostPath: localDockerId("edge_runtime", projectId),
-      containerPath: "/root/.cache/deno",
+      containerPath:
+        options.image !== undefined && usesSlimImageRuntime(options.image)
+          ? "/home/nonroot"
+          : "/root/.cache/deno",
       mode: "rw",
       externalScope: false,
     });
@@ -1423,9 +1429,11 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
       });
     }
     const outputPath = join(outputDir, "output.eszip");
+    const rawImage = edgeRuntimeImage(edgeRuntimeVersion);
     const binds = yield* Effect.promise(() =>
       buildDockerBinds(projectId, functionsDir, outputDir, config, {
         onWarning: (message) => Effect.runPromise(output.raw(message, "stderr")),
+        image: rawImage,
       }),
     );
     // Go: `DockerStart` -> `DockerResolveImageIfNotCached` (`internal/utils/docker.go:326-386`)
@@ -1439,7 +1447,7 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
       // `edgeRuntimeImage` applies the tag VERBATIM (Go's `replaceImageTag`)
       // — a `.temp/edge-runtime-version` pin flows through unmodified, `v`
       // prefix or not (see the helper's doc in `functions.shared.ts`).
-      edgeRuntimeImage(edgeRuntimeVersion),
+      rawImage,
       projectEnvValues,
     );
     yield* ensureDockerNetwork(networkMode, projectId);

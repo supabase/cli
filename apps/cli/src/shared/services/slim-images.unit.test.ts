@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { dockerfileServiceImages } from "./dockerfile-images.ts";
+import { dockerfileServiceImageRaw, dockerfileServiceImages } from "./dockerfile-images.ts";
 import {
+  pinMatchesCurrentImage,
   slimImageForAlias,
+  slimImageForCurrentPin,
   slimImagesEnabled,
   toSlimImage,
   usesSlimImageRuntime,
@@ -131,5 +133,39 @@ describe("usesSlimImageRuntime", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     expect(usesSlimImageRuntime("ghcr.io/supabase/cli/auth:v2.196.0")).toBe(true);
     expect(usesSlimImageRuntime("supabase/gotrue:v2.196.0")).toBe(false);
+  });
+});
+
+describe("pinMatchesCurrentImage", () => {
+  it("treats catalog-equivalent pooler tags as current", () => {
+    const current = dockerfileServiceImageRaw("supavisor");
+    const currentTag = current.split(":")[1] ?? "";
+    const altTag = currentTag.startsWith("v") ? currentTag.slice(1) : `v${currentTag}`;
+    expect(pinMatchesCurrentImage("supavisor", currentTag, current)).toBe(true);
+    expect(pinMatchesCurrentImage("supavisor", altTag, current)).toBe(true);
+    expect(pinMatchesCurrentImage("supavisor", "2.0.0", current)).toBe(false);
+  });
+});
+
+describe("slimImageForCurrentPin", () => {
+  it("slim-translates the current pin and leaves a historical pin on docker.io", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    const current = dockerfileServiceImageRaw("storage");
+    const currentTag = current.split(":")[1] ?? "";
+    expect(slimImageForCurrentPin("storage", current)).toBe(toSlimImage("storage", current));
+    expect(slimImageForCurrentPin("storage", current, currentTag)).toBe(
+      toSlimImage("storage", current),
+    );
+    expect(slimImageForCurrentPin("storage", current, "v1.67.0")).toBe(
+      "supabase/storage-api:v1.67.0",
+    );
+  });
+
+  it("is a no-op while the flag is off", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
+    const current = dockerfileServiceImageRaw("storage");
+    expect(slimImageForCurrentPin("storage", current, "v1.67.0")).toBe(
+      "supabase/storage-api:v1.67.0",
+    );
   });
 });

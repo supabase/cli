@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vitest";
 import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -624,6 +625,57 @@ describe("legacy functions download", () => {
         "/home/deno/hello-world",
       ]);
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("mounts eszip under /tmp and deno cache at HOME on a slim edge-runtime image", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi();
+    const proxy = mockProxy();
+    const child = mockChildProcessSpawner({ exitCode: 0 });
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
+      }),
+      proxy.layer,
+      child.layer,
+      Stdio.layerTest({
+        args: Effect.succeed([
+          "functions",
+          "download",
+          "hello-world",
+          "--use-docker",
+          "--project-ref",
+          PROJECT_ID,
+        ]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+
+      const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+      const hostEszipPath = resolve(
+        tempRoot.current,
+        "supabase",
+        ".temp",
+        "output_hello-world.eszip",
+      );
+      expect(runCommand?.args).toContain(`supabase_edge_runtime_${PROJECT_ID}:/home/nonroot:rw`);
+      expect(runCommand?.args).toContain(
+        `${hostEszipPath}:/tmp/eszips/output_hello-world.eszip:ro`,
+      );
+      expect(runCommand?.args.slice(-6)).toEqual([
+        dockerfileServiceImage("edgeruntime"),
+        "unbundle",
+        "--eszip",
+        "/tmp/eszips/output_hello-world.eszip",
+        "--output",
+        "/home/deno/hello-world",
+      ]);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
   });
 
   it.live("omits the named Deno cache volume bind on Bitbucket", () => {

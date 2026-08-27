@@ -550,6 +550,62 @@ export function legacyIsVolumeAccessibleToImage(
   );
 }
 
+/**
+ * Write probe for an existing named volume as `uid` (slim storage is
+ * distroless — do not exec in that image). Use an image that has `sh` (the
+ * already-resolved postgres image, same uid 65532). `/bin/sh` exists on both
+ * slim and docker.io postgres; `/usr/bin/sh` does not. Exit `0` writable,
+ * `1` not; other exits fail.
+ */
+export function legacyIsVolumeWritableByUid(
+  spawner: Spawner,
+  probeImage: string,
+  name: string,
+  uid: number,
+): Effect.Effect<boolean, LegacyContainerCreateError> {
+  const fail = (message: string): LegacyContainerCreateError =>
+    new LegacyContainerCreateError({ message, reason: "runtime" });
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const child = yield* spawnContainerCli(
+        spawner,
+        [
+          "run",
+          "--rm",
+          "--user",
+          String(uid),
+          "--entrypoint",
+          "/bin/sh",
+          "-v",
+          `${name}:/probe`,
+          probeImage,
+          "-c",
+          "test -w /probe",
+        ],
+        { stdin: "ignore", stdout: "ignore", stderr: "pipe" },
+      ).pipe(
+        Effect.mapError((cause) =>
+          fail(`failed to probe volume access: ${legacyDescribeContainerCliFailure(cause)}`),
+        ),
+      );
+      const [exitCode, stderr] = yield* Effect.all(
+        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.mapError(() => fail("failed to probe volume access")));
+      if (exitCode === 0) return true;
+      if (exitCode === 1) return false;
+      const message = stderr.trim();
+      return yield* Effect.fail(
+        fail(
+          message.length > 0
+            ? `failed to probe volume access: ${message}`
+            : `failed to probe volume access: exit ${exitCode}`,
+        ),
+      );
+    }),
+  );
+}
+
 /** `docker container rm -f <id>` (or `docker rm -f`) failed. */
 export class LegacyContainerRemoveError extends Data.TaggedError("LegacyContainerRemoveError")<{
   readonly message: string;

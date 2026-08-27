@@ -45,6 +45,7 @@ import type { LegacyGenTypesFlags } from "./types.command.ts";
 import { LegacyGenTypesNetworkError, LegacyGenTypesUnexpectedStatusError } from "./types.errors.ts";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
 import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
+import { usesSlimImageRuntime } from "../../../../shared/services/slim-images.ts";
 import {
   defaultSchemas,
   buildPostgresUrl,
@@ -440,15 +441,17 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
             // `--network-id` overrides any base network mode (even the
             // "host" mode used for --db-url), so honour the override here too.
             const networkMode = Option.isSome(networkId) ? networkId.value : input.networkMode;
+            const pgmetaImage = resolvePgmetaImage(input.pgmetaVersionOverride);
             const args = [
               "run",
               "--rm",
               "--network",
               networkMode,
               ...env.flatMap((entry) => ["--env", entry]),
-              resolvePgmetaImage(input.pgmetaVersionOverride),
-              "node",
-              "dist/server/server.js",
+              pgmetaImage,
+              // Slim pg-meta is already `ENTRYPOINT /node/bin/node`; repeating
+              // `node` here becomes `node node dist/server/server.js`.
+              ...(usesSlimImageRuntime(pgmetaImage) ? [] : ["node", "dist/server/server.js"]),
             ];
             const child = yield* spawnContainerCli(spawner, args, {
               stdin: "ignore",

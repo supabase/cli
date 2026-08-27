@@ -267,13 +267,13 @@ describe("legacyBuildStorageContainerSpec", () => {
     expect(spec.healthcheck).toBeUndefined();
   });
 
-  test("mounts the named volume at /home/nonroot on a slim image so uid 65532 can mkdir the tenant dir", () => {
+  test("mounts the named volume at /mnt on a slim image (uid 65532 owns /mnt)", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const spec = legacyBuildStorageContainerSpec({
       ...input,
       image: "ghcr.io/supabase/cli/storage:v1.70.3",
     });
-    expect(spec.binds).toEqual(["supabase_storage_proj:/home/nonroot"]);
-    expect(spec.env["FILE_STORAGE_BACKEND_PATH"]).toBe("/home/nonroot");
+    expect(spec.binds).toEqual(["supabase_storage_proj:/mnt"]);
+    expect(spec.env["FILE_STORAGE_BACKEND_PATH"]).toBe("/mnt");
   });
 });

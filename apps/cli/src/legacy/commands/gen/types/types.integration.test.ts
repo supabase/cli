@@ -3,6 +3,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vitest";
 import { BunServices } from "@effect/platform-bun";
 import type {
   V1CreateLoginRoleOutput,
@@ -2371,12 +2372,57 @@ describe("legacy gen types", () => {
             true,
           );
           expect(child.spawned[1]?.args).toContain(resolvePgmetaImage());
+          expect(child.spawned[1]?.args.slice(-2)).toEqual(["node", "dist/server/server.js"]);
           // The local/db-url paths have no project ref, so they must not
           // populate the linked-project cache.
           expect(linkedProjectCache.cached).toBe(false);
         }),
       catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
     }),
+  );
+
+  it.live("omits the extra node argv on slim pg-meta", () =>
+    Effect.tryPromise({
+      try: () =>
+        withSslProbeServer(async (port) => {
+          vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+          const workdir = mkdtempSync(join(tmpdir(), "supabase-gen-types-local-slim-"));
+          writeConfig(
+            workdir,
+            [
+              'project_id = "demo"',
+              "",
+              "[api]",
+              'schemas = ["public"]',
+              "",
+              "[db]",
+              `port = ${port}`,
+            ].join("\n"),
+          );
+
+          const { layer, child } = setup({
+            workdir,
+            childStdout: ["export type Database = {};"],
+          });
+
+          await Effect.runPromise(
+            legacyGenTypes(defaultFlags({ local: true })).pipe(Effect.provide(layer)),
+          );
+
+          const runArgs = child.spawned[1]?.args ?? [];
+          const image = resolvePgmetaImage();
+          expect(image.startsWith("ghcr.io/supabase/cli/pgmeta:")).toBe(true);
+          expect(runArgs).toContain(image);
+          expect(runArgs.slice(runArgs.indexOf(image) + 1)).toEqual([]);
+        }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          vi.unstubAllEnvs();
+        }),
+      ),
+    ),
   );
 
   it.live("falls back to podman when the docker executable is missing for local generation", () =>

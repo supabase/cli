@@ -4,6 +4,7 @@ import {
   dockerfileServiceImage,
   dockerfileServiceImageRaw,
 } from "../../shared/services/dockerfile-images.ts";
+import { slimImageForCurrentPin } from "../../shared/services/slim-images.ts";
 
 /**
  * Resolves the edge-runtime Docker image the way Go's `config.Load` does
@@ -32,31 +33,28 @@ function replaceImageTag(image: string, tag: string): string {
 }
 
 const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
-  baseImage: string,
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
   denoVersion: number,
+  slim: boolean,
 ) {
-  let image = baseImage;
+  if (denoVersion === 1) {
+    return LEGACY_EDGE_RUNTIME_DENO1_IMAGE;
+  }
+  const raw = dockerfileServiceImageRaw("edgeruntime");
   const versionPath = path.join(workdir, "supabase", ".temp", "edge-runtime-version");
   const pinned = yield* fs.readFileString(versionPath).pipe(
     Effect.map((s) => s.trim()),
     Effect.orElseSucceed(() => ""),
   );
-  if (pinned.length > 0) {
-    // A pin of the deno1 tag (e.g. left in .temp by an earlier deno_version = 1
-    // run) resolves docker.io whatever selected it: no slim build of that tag
-    // exists, so tag-swapping it onto a slim base would yield an unpullable ref.
-    image =
-      pinned === DENO1_EDGE_RUNTIME_VERSION
-        ? LEGACY_EDGE_RUNTIME_DENO1_IMAGE
-        : replaceImageTag(baseImage, pinned);
+  if (pinned === DENO1_EDGE_RUNTIME_VERSION) {
+    return LEGACY_EDGE_RUNTIME_DENO1_IMAGE;
   }
-  if (denoVersion === 1) {
-    image = LEGACY_EDGE_RUNTIME_DENO1_IMAGE;
+  if (!slim) {
+    return pinned.length > 0 ? replaceImageTag(raw, pinned) : raw;
   }
-  return image;
+  return slimImageForCurrentPin("edgeruntime", raw, pinned.length > 0 ? pinned : undefined);
 });
 
 /**
@@ -64,14 +62,14 @@ const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
  * `supabase/.temp/edge-runtime-version` and the `deno_version` selector
  * (default 2 → Dockerfile image; 1 → `deno1`). The version pin is applied first
  * (Go's `Load`), then `deno_version = 1` overrides to `deno1` (Go's validate
- * pass).
+ * pass). Historical pins stay on docker.io — those slim tags are not published.
  */
 export const legacyResolveEdgeRuntimeImage = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
   denoVersion: number,
-) => resolveEdgeRuntimeImage(legacyEdgeRuntimeImage(), fs, path, workdir, denoVersion);
+) => resolveEdgeRuntimeImage(fs, path, workdir, denoVersion, true);
 
 /**
  * Same resolution pinned to docker.io, for callers that replace the image
@@ -84,5 +82,4 @@ export const legacyResolveEdgeRuntimeShellImage = (
   path: Path.Path,
   workdir: string,
   denoVersion: number,
-) =>
-  resolveEdgeRuntimeImage(dockerfileServiceImageRaw("edgeruntime"), fs, path, workdir, denoVersion);
+) => resolveEdgeRuntimeImage(fs, path, workdir, denoVersion, false);

@@ -48,14 +48,6 @@ import {
 
 /** Both the container's `FILE_STORAGE_BACKEND_PATH` and its named-volume mount target. */
 const LEGACY_STORAGE_DOCKER_PATH = "/mnt";
-/**
- * Distroless slim storage runs as uid 65532. `/mnt` does not exist in the
- * image, so a named volume mounted there is created root-owned and
- * `mkdir /mnt/stub` fails with EACCES. `/home/nonroot` is owned by that user;
- * Docker copies the image directory into an empty named volume, so the
- * tenant dir is writable.
- */
-const LEGACY_STORAGE_SLIM_DOCKER_PATH = "/home/nonroot";
 
 export interface LegacyStorageVectorEnvInput {
   /** The `db` container's own Docker name (`legacyServiceContainerName("db", projectId)`). */
@@ -209,16 +201,15 @@ export interface LegacyStorageContainerSpecInput {
 
 /**
  * Builds the `docker create` spec for the Storage container. `binds` mounts
- * the container's own named volume at `/mnt` (docker.io) or `/home/nonroot`
- * (slim, uid 65532) — no `ports`/`exposedPorts`, Storage is reached only via
- * its Docker network alias.
+ * the container's own named volume at `/mnt` — no `ports`/`exposedPorts`,
+ * Storage is reached only via its Docker network alias. Slim `/mnt` is owned
+ * by uid 65532 so an empty volume inherits that owner.
  */
 export function legacyBuildStorageContainerSpec(
   input: LegacyStorageContainerSpecInput,
 ): LegacyStartContainerSpec {
   const containerName = legacyServiceContainerName("storage", input.projectId);
   const slim = legacyUsesSlimRuntime(input.image);
-  const storagePath = slim ? LEGACY_STORAGE_SLIM_DOCKER_PATH : LEGACY_STORAGE_DOCKER_PATH;
   const env = {
     ...legacyBuildStorageEnv({
       targetMigration: input.targetMigration,
@@ -238,14 +229,13 @@ export function legacyBuildStorageContainerSpec(
       vectorBucketsEnabled: input.vectorBucketsEnabled,
       projectEnvValues: input.projectEnvValues,
     }),
-    FILE_STORAGE_BACKEND_PATH: storagePath,
   };
 
   return {
     image: input.image,
     containerName,
     env,
-    binds: [`${containerName}:${storagePath}`],
+    binds: [`${containerName}:${LEGACY_STORAGE_DOCKER_PATH}`],
     // Distroless slim storage has no /bin/sh (nor wget) and Docker CLI
     // healthchecks are always CMD-SHELL, so there is no probe to declare here.
     // `start` gates readiness on Kong's `/storage/v1/status` instead — see
