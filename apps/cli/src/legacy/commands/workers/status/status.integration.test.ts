@@ -415,9 +415,9 @@ describe("legacy workers status", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `root` is only unusable *locally*, because `[workers] root` occupies the key.
-  // The API accepts it as a DNS label, and `status` writes no config, so it has
-  // no business refusing a worker `workers list` will happily show.
+  // `root` is an ordinary worker name: a valid DNS label, and `[workers]` has no
+  // reserved keys — `readWorkersSection` reads every table under it as a worker.
+  // Here as a guard against the name picking up a special case it never had.
   it.live("inspects a deployed worker named root", () => {
     const repo = project();
     const { layer, out, http } = setupLegacyWorkers({

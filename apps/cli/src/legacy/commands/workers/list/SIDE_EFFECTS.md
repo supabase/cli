@@ -7,15 +7,15 @@
 
 ## Files Read
 
-| Path                                          | Format     | When                                                                                                                                                     |
-| --------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.json`              | JSON       | always when present — preferred over `config.toml`; the `[workers.*]` entries                                                                            |
-| `<workdir>/supabase/config.toml`              | TOML       | always when no `config.json` exists — the same entries                                                                                                   |
-| `<workers root>/`                             | directory  | always — enumerated and each child stat'd, so a bare directory still appears in the inventory; `supabase/workers/` unless `[workers] root` names another |
-| `<SUPABASE_HOME or ~/.supabase>/access-token` | plain text | when `SUPABASE_ACCESS_TOKEN` is unset and the keyring holds no credential                                                                                |
-| `<workdir>/supabase/.temp/project-ref`        | plain text | when neither `--project-ref` nor `SUPABASE_PROJECT_ID` is set — names the linked project                                                                 |
-| `<SUPABASE_HOME or ~/.supabase>/profile`      | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set — names the profile, defaulting to `supabase`                                                     |
-| `<SUPABASE_PROFILE>` (YAML)                   | YAML       | when `SUPABASE_PROFILE` is a filesystem path rather than a built-in name; a read failure aborts the command                                              |
+| Path                                          | Format     | When                                                                                                                                                                                            |
+| --------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.json`              | JSON       | always when present — preferred over `config.toml`; the `[workers.*]` entries                                                                                                                   |
+| `<workdir>/supabase/config.toml`              | TOML       | always when no `config.json` exists — the same entries                                                                                                                                          |
+| `<workdir>/supabase/workers/`                 | directory  | always — enumerated and each child stat'd, so a directory with no `[workers.<name>]` entry still appears in the inventory. Absent reads as no workers; any other read failure fails the command |
+| `<SUPABASE_HOME or ~/.supabase>/access-token` | plain text | when `SUPABASE_ACCESS_TOKEN` is unset and the keyring holds no credential                                                                                                                       |
+| `<workdir>/supabase/.temp/project-ref`        | plain text | when neither `--project-ref` nor `SUPABASE_PROJECT_ID` is set — names the linked project                                                                                                        |
+| `<SUPABASE_HOME or ~/.supabase>/profile`      | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set — names the profile, defaulting to `supabase`                                                                                            |
+| `<SUPABASE_PROFILE>` (YAML)                   | YAML       | when `SUPABASE_PROFILE` is a filesystem path rather than a built-in name; a read failure aborts the command                                                                                     |
 
 ## Files Written
 
