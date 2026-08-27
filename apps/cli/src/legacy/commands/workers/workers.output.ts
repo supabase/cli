@@ -19,13 +19,34 @@ import { LegacyWorkersEnvNotSupportedError } from "./workers.errors.ts";
  * rendering — `output.success` writes to stdout in text mode and would corrupt
  * the payload otherwise.
  */
+/**
+ * Which `-o` values these commands answer with a payload.
+ *
+ * An allowlist, because the emitter's last branch is TOML: a denylist made every
+ * value it had not heard of serialise as TOML, so the next format the global
+ * flag learns would silently emit TOML from every workers command until somebody
+ * remembered to exclude it. `pretty` is the human default, and `table`/`csv` are
+ * accepted by the global flag only because `db query` reads them — every
+ * resource command falls through to its own text rendering for those, which is
+ * what an unrecognised value should do too.
+ *
+ * `env` is in the set so it reaches the refusal below rather than falling
+ * through to text: it is a format these commands *recognise* and cannot encode,
+ * which is a different answer from one they have never heard of.
+ */
+const PAYLOAD_FORMATS = new Set(["json", "yaml", "toml", "env"]);
+
+function emitsPayloadFor(goFormat: string | undefined): boolean {
+  return goFormat !== undefined && PAYLOAD_FORMATS.has(goFormat);
+}
+
 export const legacyEmitWorkersMachineOutput = Effect.fnUntraced(function* (
   payload: Record<string, unknown>,
 ) {
   const output = yield* Output;
   const goFormat = Option.getOrUndefined(yield* LegacyOutputFlag);
 
-  if (goFormat === undefined || goFormat === "pretty") {
+  if (!emitsPayloadFor(goFormat)) {
     return false;
   }
 
@@ -56,8 +77,7 @@ export const legacyEmitWorkersMachineOutput = Effect.fnUntraced(function* (
  * by which point those lines would already be on stdout.
  */
 export const legacyWorkersMachineOutputRequested = Effect.fnUntraced(function* () {
-  const goFormat = Option.getOrUndefined(yield* LegacyOutputFlag);
-  return goFormat !== undefined && goFormat !== "pretty";
+  return emitsPayloadFor(Option.getOrUndefined(yield* LegacyOutputFlag));
 });
 
 /**
@@ -76,3 +96,18 @@ export const legacyRejectWorkersEnvOutput = Effect.fnUntraced(function* () {
     });
   }
 });
+
+/**
+ * The `--project-ref` a retry suggestion has to carry, or `""` when the ref came
+ * from the link.
+ *
+ * A suggested command is copy-pasted verbatim, so one that drops an explicit
+ * `--project-ref` re-resolves to whatever *this* checkout is linked to. On
+ * `delete --yes` that is a same-named worker in a project the user never named,
+ * removed without a prompt.
+ *
+ * Keyed off the flag rather than the resolved ref: when the link supplied it,
+ * appending it again is noise on a command that already resolves correctly.
+ */
+export const legacyWorkersProjectRefSuffix = (projectRef: Option.Option<string>): string =>
+  Option.isSome(projectRef) ? ` --project-ref ${projectRef.value}` : "";

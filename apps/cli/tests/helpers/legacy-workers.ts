@@ -11,12 +11,13 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import { LegacyPlatformApi } from "../../src/legacy/auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../src/legacy/config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../src/legacy/config/legacy-project-ref.service.ts";
-import { LegacyOutputFlag } from "../../src/shared/legacy/global-flags.ts";
+import { CliArgs } from "../../src/shared/cli/cli-args.service.ts";
+import { LegacyOutputFlag, LegacyYesFlag } from "../../src/shared/legacy/global-flags.ts";
 import { randomLayer } from "../../src/shared/runtime/random.layer.ts";
 import { LegacyProjectNotLinkedError } from "../../src/legacy/config/legacy-project-ref.errors.ts";
 import { mockLegacyLinkedProjectCacheLayer } from "./legacy-mocks.ts";
 import { LegacyTelemetryState } from "../../src/legacy/telemetry/legacy-telemetry-state.service.ts";
-import { mockOutput, mockRuntimeInfo } from "./mocks.ts";
+import { mockOutput, mockRuntimeInfo, mockTty } from "./mocks.ts";
 
 /**
  * Shared scaffolding for the `supabase workers` command integration tests.
@@ -253,12 +254,26 @@ export interface WorkersSetupOptions {
   readonly cwd?: string;
   readonly format?: "text" | "json" | "stream-json";
   readonly interactive?: boolean;
+  /**
+   * Whether stdin is a terminal. Defaults to `interactive`, so a text-mode test
+   * can prompt; set it false to model a piped stdin with a TTY stdout, which is
+   * what `printf 'api\n' | supabase workers delete api` looks like.
+   */
+  readonly stdinIsTty?: boolean;
   readonly linked?: boolean;
   readonly promptTextResponses?: ReadonlyArray<string>;
   readonly promptSelectResponses?: ReadonlyArray<string>;
   readonly routes?: WorkersHttpRoutes;
-  /** The Go `-o`/`--output` flag, which every command family here honours. */
-  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
+  /**
+   * The `-o`/`--output` flag, with every value the global flag accepts —
+   * including `table` and `csv`, which these commands are meant to ignore and
+   * render text for.
+   */
+  readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
+  /** The root `--yes`, read by `delete` through `legacyResolveYes`. */
+  readonly yes?: boolean;
+  /** Raw argv, which `legacyResolveYes` scans for an explicit `--yes=false`. */
+  readonly cliArgs?: ReadonlyArray<string>;
 }
 
 /**
@@ -286,9 +301,10 @@ function mockWorkersTelemetryState() {
 }
 
 export function setupLegacyWorkers(options: WorkersSetupOptions) {
+  const interactive = options.interactive ?? (options.format ?? "text") === "text";
   const out = mockOutput({
     format: options.format ?? "text",
-    interactive: options.interactive ?? (options.format ?? "text") === "text",
+    interactive,
     ...(options.promptTextResponses === undefined
       ? {}
       : { promptTextResponses: options.promptTextResponses }),
@@ -307,6 +323,7 @@ export function setupLegacyWorkers(options: WorkersSetupOptions) {
       out.layer,
       http.layer,
       mockRuntimeInfo({ cwd: options.cwd ?? options.workdir }),
+      mockTty({ stdinIsTty: options.stdinIsTty ?? interactive, stdoutIsTty: interactive }),
       legacyTestCliConfigLayer(options.workdir),
       legacyTestProjectRefLayer(options.linked !== false),
       telemetry.layer,
@@ -316,6 +333,8 @@ export function setupLegacyWorkers(options: WorkersSetupOptions) {
         LegacyOutputFlag,
         options.goOutput === undefined ? Option.none() : Option.some(options.goOutput),
       ),
+      Layer.succeed(LegacyYesFlag, options.yes ?? false),
+      Layer.succeed(CliArgs, { args: options.cliArgs ?? [] }),
       BunServices.layer,
     ),
   };

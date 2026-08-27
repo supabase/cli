@@ -88,13 +88,62 @@ export const legacyLoadWorkersProject = () => loadWorkersProject({ tomlOnly: fal
  */
 export const legacyLoadWorkersProjectForEntryWrite = () => loadWorkersProject({ tomlOnly: true });
 
+/**
+ * As {@link legacyLoadWorkersProject}, but never failing on the project config.
+ *
+ * For commands that only *report* on local state — `status` and `delete` —
+ * which act on the remote worker and consult the project purely to add the
+ * optional source detail. Making it a prerequisite stranded a deployed worker
+ * behind an unrelated local parse error, even when `--project-ref` named the
+ * project explicitly and nothing local was going to be touched.
+ *
+ * A config that will not load reads the same as a project with no
+ * `[workers.*]` entries: no entry, no configured source, so no source row.
+ * Same degrade-rather-than-fail shape as
+ * {@link legacyDescribeWorkerForReporting}, which does it for the source path.
+ */
+export const legacyLoadWorkersProjectForReporting = Effect.fnUntraced(function* () {
+  const loaded = yield* legacyLoadWorkersProject().pipe(Effect.option);
+  if (Option.isSome(loaded)) {
+    return loaded.value;
+  }
+
+  const settings = yield* LegacyCliSettings;
+  const projectRoot = settings.workdir;
+  const supabaseDir = join(projectRoot, "supabase");
+  return {
+    projectRoot,
+    supabaseDir,
+    configPath: join(supabaseDir, "config.toml"),
+    section: readWorkersSection(undefined),
+    workersDir: workersDir(projectRoot),
+  } satisfies LegacyWorkersProject;
+});
+
 export interface LegacyResolvedWorker {
   readonly name: string;
   readonly entry: WorkerEntry | undefined;
   /** The worker's default directory, `supabase/workers/<name>/`. */
   readonly defaultDir: string;
-  /** Where its code actually lives, honouring `[workers.<name>] source`. */
+  /** Where its code would live, honouring `[workers.<name>] source`. */
   readonly sourceDir: string;
+  /**
+   * Whether anything local actually establishes {@link sourceDir}.
+   *
+   * `sourceDir` is always computable — with no entry it falls back to the default
+   * directory — so it cannot on its own tell a worker whose code is on this
+   * machine from one deployed out of another checkout. Commands that print local
+   * paths need that difference before they state one as fact.
+   */
+  readonly sourceExists: boolean;
+  /**
+   * Whether {@link sourceDir} is the path the project actually names.
+   *
+   * False only when resolution failed and the default directory stood in for a
+   * `source` the entry does name — reporting that fallback as the worker's
+   * source states a path the project never mentioned.
+   */
+  readonly sourceResolved: boolean;
 }
 
 /**
@@ -102,26 +151,67 @@ export interface LegacyResolvedWorker {
  * verdict needs the filesystem: `source` comes from a committed `config.toml`,
  * and a directory inside the project can symlink anywhere outside it.
  */
+/**
+ * As {@link legacyDescribeWorker}, but never failing on the source path.
+ *
+ * For commands that only *report* on local state — `status` and `delete` — where
+ * the source is a detail of the output, not a prerequisite. Making confinement
+ * mandatory there stranded the remote worker: a `source` that resolves outside
+ * the project (an in-project directory that became a symlink, say) failed the
+ * describe before either API call, so `delete` could not remove a worker whose
+ * local files it was never going to touch.
+ *
+ * `push` keeps the strict version, because there the source *is* what gets
+ * packaged and uploaded.
+ */
+export const legacyDescribeWorkerForReporting = Effect.fnUntraced(function* (
+  project: LegacyWorkersProject,
+  name: string,
+) {
+  const described = yield* legacyDescribeWorker(project, name).pipe(Effect.option);
+  if (Option.isSome(described)) {
+    return described.value;
+  }
+  // The path is unusable, which for reporting purposes reads the same as having
+  // nothing local at all. `sourceResolved: false` keeps callers from printing
+  // this stand-in as the source the entry names — it is the default directory,
+  // not the path that failed.
+  return {
+    name,
+    entry: project.section.workers[name],
+    defaultDir: workerDir(project.projectRoot, name),
+    sourceDir: workerDir(project.projectRoot, name),
+    sourceExists: false,
+    sourceResolved: false,
+  } satisfies LegacyResolvedWorker;
+});
+
 export const legacyDescribeWorker = Effect.fnUntraced(function* (
   project: LegacyWorkersProject,
   name: string,
 ) {
+  const fs = yield* FileSystem.FileSystem;
   const entry = project.section.workers[name];
   const defaultDir = workerDir(project.projectRoot, name);
+  const sourceDir = yield* workerSourceDir({
+    projectRoot: project.projectRoot,
+    defaultDir,
+    name,
+    configuredSource: entry?.source,
+  });
+  const info = yield* fs.stat(sourceDir).pipe(Effect.option);
+
   return {
     name,
     entry,
     defaultDir,
-    sourceDir: yield* workerSourceDir({
-      projectRoot: project.projectRoot,
-      defaultDir,
-      name,
-      configuredSource: entry?.source,
-    }),
+    sourceDir,
+    sourceExists: Option.isSome(info) && info.value.type === "Directory",
+    sourceResolved: true,
   } satisfies LegacyResolvedWorker;
 });
 
-/** Reject a name the CLI could never have written, before acting on it. */
+/** Reject a name that could never be a worker, before acting on it. */
 export const legacyValidateWorkerName = Effect.fnUntraced(function* (name: string) {
   const invalid = validateWorkerNameMessage(name);
   if (invalid !== undefined) {
