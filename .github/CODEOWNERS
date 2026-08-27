@@ -11,6 +11,18 @@
 /pnpm-lock.yaml
 /pnpm-workspace.yaml
 
+# The AI review pipeline (workflow, supporting scripts, and prompts/schemas)
+# executes trusted checkout code with API keys and can react to arbitrary
+# comments/PRs; github-scripts-ci.yml tests and type-checks that same code —
+# keep all of it under maintainer review rather than the ownerless Dependabot
+# workflow-files rule above (which would otherwise un-own the two *.yml
+# files here). Last matching pattern wins, so these restore/reassert
+# ownership explicitly, even where the catch-all above already covers a path.
+/.github/workflows/ai-review.yml @supabase/cli
+/.github/workflows/github-scripts-ci.yml @supabase/cli
+/.github/scripts/ai-review/** @supabase/cli
+/.github/ai-review/** @supabase/cli
+
 # Generated code. These ownerless rules override the catch-all above so
 # CI-green sync PRs (e.g. Management API OpenAPI spec) can be auto-merged.
 /apps/cli-go/pkg/api/*.gen.go

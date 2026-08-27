@@ -1,0 +1,61 @@
+name: GitHub Scripts CI
+
+# `.github/scripts/**` ships hand-rolled TypeScript (the AI review pipeline,
+# the contribution gate) with its own `bun:test` suites, but `bun test` skips
+# dot-directories by default and nothing previously type-checked this code in
+# CI. This is a small, non-required check dedicated to that surface — it does
+# not gate branch protection and never runs in `merge_group`.
+on:
+  pull_request:
+    paths:
+      - ".github/scripts/**"
+      - ".github/workflows/github-scripts-ci.yml"
+
+permissions: {}
+
+concurrency:
+  group: github-scripts-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test and type-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The shared setup installs the toolchain (bun/pnpm/node via mise) AND the
+      # workspace dependencies, so the type-check below can resolve
+      # `@tsconfig/bun` + `@types/bun` from `node_modules`. `setup-bun` alone
+      # left those uninstalled, which is what failed this check originally. On
+      # fork PRs the firewall token is empty and the shared setup falls back to
+      # the public npm registry, so this stays fork-safe.
+      - uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Run tests
+        run: |
+          set -uo pipefail
+          # The leading "./" is load-bearing: `bun test .github/scripts`
+          # (without it) silently discovers ZERO tests and still exits 0.
+          # Capture output to a file instead of piping it, so `test_exit`
+          # below is `bun test`'s own exit code, not `tee`/`grep`'s.
+          bun test ./.github/scripts > /tmp/github-scripts-test-output.txt 2>&1
+          test_exit=$?
+          cat /tmp/github-scripts-test-output.txt
+          if [ "$test_exit" -ne 0 ]; then
+            echo "::error ::bun test failed (exit $test_exit)." >&2
+            exit 1
+          fi
+          if ! grep -Eq 'Ran [1-9][0-9]* tests' /tmp/github-scripts-test-output.txt; then
+            echo "::error ::bun test reported no tests ran (missing 'Ran N tests' with N>0) — the leading './' may have been dropped, or test discovery is otherwise broken." >&2
+            exit 1
+          fi
+
+      - name: Type-check
+        run: bun x tsc --noEmit -p .github/scripts/tsconfig.json
