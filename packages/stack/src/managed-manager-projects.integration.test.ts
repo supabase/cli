@@ -41,7 +41,7 @@ describe("managed stack projects journeys", () => {
         const manager = yield* ManagedStackManager;
         const environment = yield* ensureEnvironment(workspace);
         const stackId = deriveStackId(environment.identity, "default");
-        const ownership = yield* acquireControl({ stackId });
+        const ownership = yield* acquireControl({ stackId, maintenanceOperation: "update" });
         if (!isControlOwnership(ownership)) throw new Error("expected stack control ownership");
         const initial = yield* startManagedStack(manager, {
           workspacePath: workspace,
@@ -190,10 +190,14 @@ describe("managed stack projects journeys", () => {
           const owner = yield* acquireControl({
             stackId,
             initialStatus: {
-              protocolVersion: 1,
+              controlProtocol: "supabase-stack-control",
+              controlProtocolVersion: 1,
               ownershipId: stackId,
+              ownerSessionId: "projects-test-session",
+              kind: "supervisor",
               state: "running",
               ready: true,
+              daemonCliVersion: "test",
             },
           });
           if (!isControlOwnership(owner)) throw new Error("status probe took control ownership");

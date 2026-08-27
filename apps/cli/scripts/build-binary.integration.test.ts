@@ -7,6 +7,9 @@ import { fileURLToPath } from "node:url";
 const fixturePath = fileURLToPath(
   new URL("../tests/fixtures/compiled-libpg-query.ts", import.meta.url),
 );
+const versionFixturePath = fileURLToPath(
+  new URL("../tests/fixtures/compiled-cli-version.ts", import.meta.url),
+);
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
@@ -49,5 +52,47 @@ describe("compiled binary assets", () => {
 
     expect(probeExitCode, stderr).toBe(0);
     expect(stdout).toContain("libpg-query.wasm loaded");
+  }, 20_000);
+
+  test("embeds the build version independently of the runtime environment", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "supabase-compiled-version-"));
+    temporaryDirectories.push(directory);
+    const executable = path.join(directory, "version-probe");
+    const bunExecutable = Bun.which("bun");
+    if (!bunExecutable) {
+      throw new Error("Bun executable not found");
+    }
+
+    const build = Bun.spawn(
+      [
+        bunExecutable,
+        "build",
+        versionFixturePath,
+        "--compile",
+        `--define=SUPABASE_CLI_VERSION=${JSON.stringify("7.8.9-beta.1")}`,
+        `--outfile=${executable}`,
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    );
+    const [buildExitCode, buildStderr] = await Promise.all([
+      build.exited,
+      new Response(build.stderr).text(),
+    ]);
+    expect(buildExitCode, buildStderr).toBe(0);
+
+    const probe = Bun.spawn([executable], {
+      cwd: directory,
+      env: { SUPABASE_CLI_VERSION: "9.9.9" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [probeExitCode, stdout, stderr] = await Promise.all([
+      probe.exited,
+      new Response(probe.stdout).text(),
+      new Response(probe.stderr).text(),
+    ]);
+
+    expect(probeExitCode, stderr).toBe(0);
+    expect(stdout.trim()).toBe("7.8.9-beta.1");
   }, 20_000);
 });

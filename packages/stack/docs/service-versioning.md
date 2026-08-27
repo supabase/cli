@@ -35,9 +35,18 @@ The managed document is stored under the global CLI home:
 
 It contains the stack identity, assigned ports and intents, lifecycle, runtime control endpoint,
 and launch metadata. There is no second state or metadata file. Start, status, logs, update,
-services, and stop all go through the managed lifecycle facade and its control protocol. A running
-document without an owned control endpoint is stale and can be reclaimed by the next lifecycle
-operation.
+services, and stop all go through the managed lifecycle facade. The stable cross-build control
+protocol is `GET /owner` plus session-fenced `POST /stop`; runtime operations use same-version
+Effect RPC over HTTP/NDJSON at `POST /rpc`. A running document without an owned control endpoint
+is stale and can be reclaimed by the next lifecycle operation. `/owner` distinguishes versioned
+supervisor ownership from unversioned maintenance ownership, and `/stop` distinguishes an explicit
+user stop from an authorized upgrade replacement.
+
+### Stable control protocol evolution
+
+Once a control wire shape has shipped, any incompatible change to `/owner` or `/stop` requires a
+`CONTROL_PROTOCOL_VERSION` bump. Same-build `/rpc` compatibility is identified by the immutable
+CLI version and is not a substitute for versioning the stable control endpoints.
 
 ## Built-in defaults and remote versions
 
@@ -87,20 +96,26 @@ Start resolves the candidate versions, applies local and command-line overrides,
 resulting launch selection in the managed document. Starting an existing stack reuses its persisted
 launch baseline unless an explicit update or override changes it. Port intent is read from the raw
 project config before defaults are applied so automatic and exact values remain distinguishable.
+After startup, the managed summary is authoritative for launch updates: the caller must not
+overwrite persisted mode, pinned versions, exclusions, or sticky port assignments with defaults from
+the new CLI build.
 
 ### `supabase stack status`
 
-Status reads the managed document and acquires its control ownership before reporting a running
-stack. This prevents a crashed process from being presented as live. It compares the persisted
-launch baseline with the current candidate versions and reports when `supabase stack update` can
-adopt newer linked or default versions.
+Status reads the managed document and probes `/owner` before reporting a running stack. When the
+owner CLI version matches, it may use the runtime RPC projection for detailed service state. A mismatched
+owner is reported as a degraded owner/document summary with an instruction to run `supabase start`;
+status never restarts a live stack and does not attempt runtime RPC against the mismatched version. It
+compares the persisted launch baseline with the current candidate versions and reports when
+`supabase stack update` can adopt newer linked or default versions.
 
 ### `supabase stack update`
 
 Update refreshes the linked cache when the project is linked, computes the candidate baseline, and
-updates `launch.versions` through the managed control route when the stack is running. A stopped
-stack is updated directly through the manager. It does not maintain a project-level copy of pinned
-versions and does not restart the runtime.
+updates `launch.versions` through the same-version `UpdateLaunch` RPC when the stack is running. A
+stopped stack is updated directly through the manager. It does not maintain a project-level copy of
+pinned versions and does not restart the runtime. If the owner CLI version differs, update fails with an
+upgrade-required diagnostic rather than restarting the stack.
 
 ### `supabase stop`
 
@@ -129,7 +144,18 @@ Values in `.supabase/local-versions.json` override the candidate baseline for th
 ### CLI upgrades
 
 New stacks can adopt newer catalog defaults immediately. Existing stacks remain pinned until update
-changes their managed launch metadata.
+changes their managed launch metadata. When `supabase start` encounters an incompatible live owner,
+it performs an explicit stop/start upgrade restart after preflight. The restart is authorized only by that
+explicit operation: it preflights while the old owner is live, stops the exact captured session through
+the stable `ControlClient` with replacement intent, waits for that session to release ownership, and
+launches an ordinary child. A concurrent explicit stop wins and prevents that child from restarting the
+stack.
+Persisted exclusions are reapplied to effective runtime
+service policies before preflight, active-port calculation, allocation, configuration resolution, and
+startup—not merely copied into `stack.json`. The upgrade restart preserves durable stack identity and
+creation metadata, data roots, runtime mode and container runtime, pinned service versions,
+exclusions, and sticky port assignments. It never invokes destructive deletion. Connect-only commands
+never restart the stack; they report the upgrade requirement instead.
 
 ### Team collaboration
 

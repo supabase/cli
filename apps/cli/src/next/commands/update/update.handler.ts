@@ -17,6 +17,7 @@ import { ProjectLinkState } from "../../config/project-link-state.service.ts";
 import { resolveServiceVersionContext } from "../../config/service-version-resolution.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import { CLI_VERSION } from "../../../shared/cli/version.ts";
 import type { UpdateFlags } from "./update.command.ts";
 
 function diffCachedLinkedVersions(
@@ -108,6 +109,7 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
       cwd: runtimeInfo.cwd,
       workspacePath: cliProjectHome.projectRoot,
       stackName: flags.stack,
+      cliVersion: CLI_VERSION,
       launch: {
         versions: serviceVersionContext.candidateBaseline,
         excludedServices: existingSummary.value.launch.excludedServices ?? [],

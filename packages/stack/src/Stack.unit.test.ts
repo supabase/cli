@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { NodeServices } from "@effect/platform-node";
-import { buildGraph } from "@supabase/process-compose";
+import { buildGraph, ServiceNotFoundError } from "@supabase/process-compose";
 import { createHmac } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
@@ -661,6 +661,29 @@ describe("Stack", () => {
       const logs = yield* stack.logHistoryAll();
 
       expect(logs).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects unknown services across every log operation", () => {
+    const { layer } = setupLayer();
+
+    return Effect.gen(function* () {
+      const stack = yield* Stack;
+      const history = yield* stack.logHistory("missing").pipe(Effect.flip);
+      expect(history).toBeInstanceOf(ServiceNotFoundError);
+
+      const historyAll = yield* stack.logHistoryAll(undefined, ["missing"]).pipe(Effect.flip);
+      expect(historyAll).toBeInstanceOf(ServiceNotFoundError);
+
+      const subscription = yield* Stream.runCollect(stack.subscribeLogs("missing")).pipe(
+        Effect.flip,
+      );
+      expect(subscription).toBeInstanceOf(ServiceNotFoundError);
+
+      const subscriptions = yield* Stream.runCollect(stack.subscribeAllLogs(["missing"])).pipe(
+        Effect.flip,
+      );
+      expect(subscriptions).toBeInstanceOf(ServiceNotFoundError);
     }).pipe(Effect.provide(layer));
   });
 
