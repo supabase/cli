@@ -2,14 +2,16 @@ import {
   CliConfigSchema,
   findCliProjectPaths,
   inferFunctionsManifest,
-  loadCliConfig,
-  resolveCliConfigSubtree,
-  resolveCliConfigValue,
   type CliConfig,
   type CliProjectEnvironment,
   type ResolvedCliConfigValue,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config/effect";
+import {
+  loadCliConfig,
+  resolveCliConfigSubtree,
+  resolveCliConfigValue,
+} from "@supabase/config/internal";
 import {
   defaultJwtSecret,
   defaultPublishableKey,

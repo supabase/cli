@@ -5,7 +5,7 @@ Supabase project configuration package built on Effect V4 Schema — owns the ca
 
 ## Entrypoints
 
-Three entrypoints plus a generated artifact (see ADR 0009's 2026-08-24 decision for the full
+Four entrypoints plus a generated artifact (see ADR 0009's 2026-08-24 decision for the full
 rationale):
 
 - `@supabase/config` (`.`) — pure, browser/edge-safe surface. The `CliConfigSchema` and
@@ -18,6 +18,13 @@ rationale):
 - `@supabase/config/effect` — the Effect-native superset. Re-exports everything from `.` plus the
   Effect-returning config-loading/saving programs, `CliConfigStore`/`cliConfigStoreLayer`,
   project-environment resolution, and functions-manifest inference.
+- `@supabase/config/internal` (CLI-2234) — NOT covered by semver. Exists solely for `apps/cli`'s
+  own Go-parity call sites and contract-guard tests: the internal-only `goViperCompat` typings
+  (`InternalLoadCliConfigOptions`/`InternalResolveCliConfigOptions`) and the otherwise-internal
+  registry data (`AUTH_HOOK_NAMES`, `unmappedSecretApiPaths`, `projectConfigMappingRows`,
+  `ProjectConfigMappingRow`, `ProjectConfigApiAttributes`, `ENV_CAPTURE_REGEX`). Unlike `./io`,
+  `apps/cli` IS an expected consumer of this subpath. Anything here can change or vanish in any
+  release.
 - `@supabase/config/schema.json` — generated JSON Schema for `CliConfig` (a `dist/` build
   output).
 
@@ -31,7 +38,11 @@ rationale):
   from `@supabase/config`.
 - `@supabase/config/io` is exclusively for external consumers outside this monorepo that aren't
   Effect-native. Do not add an internal consumer of it.
-- Never deep-import this package's internals (e.g. `@supabase/config/src/io.ts`). Only the four
+- `@supabase/config/internal` is for `apps/cli`'s own Go-parity call sites and contract-guard
+  tests only — a symbol that needs the internal-only `goViperCompat` typings, or the internal
+  registry data, imports it from there; every other symbol in the same import statement stays on
+  its public specifier (`.`/`./effect`).
+- Never deep-import this package's internals (e.g. `@supabase/config/src/io.ts`). Only the five
   entrypoints above are supported import paths.
 
 ## Pure-graph invariant

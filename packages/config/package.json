@@ -5,6 +5,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./internal": "./src/internal.ts",
     "./io": {
       "bun": "./src/bun.ts",
       "node": "./src/node.ts",

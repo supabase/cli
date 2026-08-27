@@ -7,7 +7,9 @@ import { fileURLToPath } from "node:url";
 // ("Monorepo import rule"): `@supabase/config/io` has zero internal
 // consumers by design (it exists only for external, non-Effect-native
 // Node/Bun code), and this package's internals must never be deep-imported
-// (only the `.`/`./io`/`./effect` entrypoints are supported import paths).
+// (only the `.`/`./io`/`./effect`/`./internal` entrypoints are supported
+// import paths — `@supabase/config/internal` is deliberately NOT checked by
+// either rule below: unlike `./io`, `apps/cli` is an expected consumer).
 //
 // A plain substring scan (no parsing) is enough for this — it's fast and the
 // two forbidden specifiers can't appear by accident. The forbidden strings

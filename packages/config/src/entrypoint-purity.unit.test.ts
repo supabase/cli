@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as defaultEntrypoint from "./index.ts";
 import * as effectEntrypoint from "./effect.ts";
+import * as internalEntrypoint from "./internal.ts";
 
 // `src/index.ts` is the entrypoint Studio (a browser bundle) imports
 // directly. It must stay bundlable with no Node/Bun runtime underneath it —
@@ -21,6 +22,7 @@ const packageRoot = join(srcDir, "..");
 const packageJson = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as {
   readonly exports: {
     readonly ".": string;
+    readonly "./internal": string;
     readonly "./io": Readonly<Record<string, string>>;
     readonly "./effect": string;
     readonly "./schema.json": string;
@@ -280,8 +282,8 @@ const expectedPureGraphFiles = [
   "functions-manifest-model.ts",
   "sparse.ts",
   "schema-metadata.ts",
-  "tls.ts",
   "lib/env.ts",
+  "lib/resolve.ts",
   "lib/schema.ts",
   "lib/secret-paths.ts",
   "project-config/api-attributes.ts",
@@ -338,15 +340,12 @@ describe("src/index.ts export surface", () => {
   test("pins the exact set of runtime export names", () => {
     expect(Object.keys(defaultEntrypoint).sort()).toMatchInlineSnapshot(`
       [
-        "AUTH_HOOK_NAMES",
         "CLI_CONFIG_SCHEMA_URL",
         "CliConfigParseError",
         "CliConfigSchema",
         "CliProjectEnvParseError",
         "DuplicateRemoteProjectIdError",
-        "ENV_CAPTURE_REGEX",
         "InvalidRemoteProjectIdError",
-        "KONG_LOCAL_CA_CERT",
         "MissingCliConfigValueError",
         "ProjectConfigParseError",
         "attachApiResponse",
@@ -362,12 +361,12 @@ describe("src/index.ts export surface", () => {
         "getDefaultCliConfig",
         "isComparableProjectConfigPath",
         "omitDefaultValues",
-        "projectConfigMappingRows",
+        "resolveCliConfigSubtree",
+        "resolveCliConfigValue",
         "subtractCliConfig",
         "toCliConfigJsonSchema",
         "toProjectConfig",
         "unmappedApiFields",
-        "unmappedSecretApiPaths",
       ]
     `);
   });
@@ -377,16 +376,13 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
   test("pins the exact set of runtime export names", () => {
     expect(Object.keys(effectEntrypoint).sort()).toMatchInlineSnapshot(`
       [
-        "AUTH_HOOK_NAMES",
         "CLI_CONFIG_SCHEMA_URL",
         "CliConfigParseError",
         "CliConfigSchema",
         "CliConfigStore",
         "CliProjectEnvParseError",
         "DuplicateRemoteProjectIdError",
-        "ENV_CAPTURE_REGEX",
         "InvalidRemoteProjectIdError",
-        "KONG_LOCAL_CA_CERT",
         "MissingCliConfigValueError",
         "ProjectConfigParseError",
         "attachApiResponse",
@@ -412,7 +408,6 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
         "loadCliProjectEnvironment",
         "loadDotEnvFile",
         "omitDefaultValues",
-        "projectConfigMappingRows",
         "resolveCliConfigSubtree",
         "resolveCliConfigValue",
         "saveCliConfig",
@@ -420,12 +415,17 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
         "toCliConfigJsonSchema",
         "toProjectConfig",
         "unmappedApiFields",
-        "unmappedSecretApiPaths",
       ]
     `);
   });
 
-  test("every runtime export key of index.ts is also exported by effect.ts, with an identical (not shadowed) binding", () => {
+  // `resolveCliConfigValue`/`resolveCliConfigSubtree` are the one deliberate
+  // exception (see `effect.ts`'s doc comment): `./effect`'s Effect-typed
+  // variant intentionally shadows `./index.ts`'s plain sync variant, since
+  // explicit named exports win over a star re-export of the same name.
+  const deliberatelyShadowedKeys = new Set(["resolveCliConfigValue", "resolveCliConfigSubtree"]);
+
+  test("every runtime export key of index.ts is also exported by effect.ts, identically bound except the deliberately shadowed resolve helpers", () => {
     const defaultKeys = Object.keys(defaultEntrypoint);
 
     // Guards against both namespace objects being empty due to a broken
@@ -438,10 +438,50 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
       }
       const defaultValue = (defaultEntrypoint as Record<string, unknown>)[key];
       const effectValue = (effectEntrypoint as Record<string, unknown>)[key];
-      return effectValue === defaultValue ? [] : [`mismatched (shadowed): ${key}`];
+      const identical = effectValue === defaultValue;
+      if (deliberatelyShadowedKeys.has(key)) {
+        return identical
+          ? [`expected ${key} to be shadowed on ./effect, but it was identical`]
+          : [];
+      }
+      return identical ? [] : [`mismatched (shadowed): ${key}`];
     });
 
     expect(mismatches).toEqual([]);
+  });
+});
+
+describe("src/internal.ts export surface", () => {
+  test("pins the exact set of runtime export names", () => {
+    expect(Object.keys(internalEntrypoint).sort()).toMatchInlineSnapshot(`
+      [
+        "AUTH_HOOK_NAMES",
+        "ENV_CAPTURE_REGEX",
+        "loadCliConfig",
+        "loadCliConfigFile",
+        "projectConfigMappingRows",
+        "resolveCliConfigSubtree",
+        "resolveCliConfigValue",
+        "unmappedSecretApiPaths",
+      ]
+    `);
+  });
+
+  // `./internal`'s `resolveCliConfigValue`/`resolveCliConfigSubtree`/
+  // `loadCliConfig` are the SAME runtime functions `./effect` exports
+  // (only the accepted options TYPE differs — internal.ts's is the wider,
+  // `goViperCompat`-capable one), so unlike the deliberate shadowing between
+  // `.` and `./effect` above, there is no shadowing to assert here.
+  test("resolveCliConfigValue, resolveCliConfigSubtree, and loadCliConfig are identical to effect.ts's bindings", () => {
+    for (const key of [
+      "resolveCliConfigValue",
+      "resolveCliConfigSubtree",
+      "loadCliConfig",
+    ] as const) {
+      expect((internalEntrypoint as Record<string, unknown>)[key]).toBe(
+        (effectEntrypoint as Record<string, unknown>)[key],
+      );
+    }
   });
 });
 
@@ -458,10 +498,10 @@ describe("package.json exports map", () => {
     }
   });
 
-  test("the '.' and './effect' export targets exist on disk", () => {
+  test("the '.', './effect', and './internal' export targets exist on disk", () => {
     // `./schema.json` is a build output (`dist/schema.json`) and intentionally
     // skipped here — it only exists after running `pnpm run build`.
-    for (const key of [".", "./effect"] as const) {
+    for (const key of [".", "./effect", "./internal"] as const) {
       const target = packageJson.exports[key];
       expect(() => readFileSync(join(packageRoot, target))).not.toThrow();
     }

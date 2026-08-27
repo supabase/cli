@@ -61,19 +61,17 @@ against `packages/config/src/node.ts`/`bun.ts`) are:
 - `loadCliConfig`
 - `saveCliConfig`
 - `loadCliConfigFile`
-- `findCliProjectRootFor`
-- `findCliProjectPathsFor`
-- `loadCliProjectEnvironmentFor`
-- `loadFunctionsManifest`
+- `findCliProjectRoot`
+- `findCliProjectPaths`
+- `loadCliProjectEnvironment`
+- `inferFunctionsManifest`
 
-`loadCliConfig`, `saveCliConfig`, and `loadCliConfigFile` share their name with the `./effect`
-program they wrap (only the return type changes, `Effect` to `Promise`). The other four don't:
-`findCliProjectRootFor`/`findCliProjectPathsFor`/`loadCliProjectEnvironmentFor` add a `For` suffix
-their `./effect` counterparts (`findCliProjectRoot`, `findCliProjectPaths`,
-`loadCliProjectEnvironment`) don't carry, and `loadFunctionsManifest` wraps `./effect`'s
-`inferFunctionsManifest` under an unrelated verb. Settling this naming — the `For` suffix
-convention, and the `loadFunctionsManifest`/`inferFunctionsManifest` divergence — is tracked in
-CLI-2234.
+Every name here matches its `./effect` counterpart one-to-one (only the return type changes,
+`Effect` to `Promise`) — the subpath itself (`/io` vs `/effect`) is what conveys Promise-vs-Effect.
+`findCliProjectRootFor`/`findCliProjectPathsFor`/`loadCliProjectEnvironmentFor`/
+`loadFunctionsManifest` were the pre-CLI-2234 names: the first three carried a `For` suffix their
+`./effect` counterparts didn't, and the fourth wrapped `./effect`'s `inferFunctionsManifest` under
+an unrelated verb. CLI-2234 renamed all four to match.
 
 ## Overview
 
@@ -209,7 +207,10 @@ literal, unresolved `env(NAME)`.
 ## Lazy `env(NAME)` Resolution
 
 A caller can also resolve `env(NAME)` references explicitly, after config is loaded. The package
-exposes two helpers, from `@supabase/config/effect`:
+exposes two helpers, under the same names from both `.` (plain, synchronous — throws instead of
+failing an `Effect`) and `@supabase/config/effect` (Effect-typed; the Effect-typed variant wins
+when both are in scope via `@supabase/config/effect`, since explicit named exports take precedence
+over a star re-export of the same name):
 
 - `resolveCliConfigValue(value, cliProjectEnv, configPath, options?)`
 - `resolveCliConfigSubtree(value, cliProjectEnv, pathPrefix, options?)`
@@ -237,7 +238,10 @@ resolves and redacts leaves nested inside `[remotes.*]` blocks.
 
 An optional `goViperCompat` flag switches the `env(NAME)` matcher from the default, strict
 `SCREAMING_SNAKE_CASE`-only pattern to Go/viper's case-agnostic `^env\((.*)\)$` form; only the
-Go-parity legacy shell sets it.
+Go-parity legacy shell sets it. `goViperCompat` is not part of the public `ResolveCliConfigOptions`
+type on `.`/`./effect` — it is internal-only (CLI-2234), typed on `InternalResolveCliConfigOptions`
+and exported from `@supabase/config/internal`, which `apps/cli`'s Go-parity call sites import from
+instead.
 
 Callers such as `functions serve`/`functions dev`, `secrets set`, and `start` call these resolvers
 on the subtrees they actually need (e.g. `auth`, `edge_runtime`, `functions`), so dormant
