@@ -26,7 +26,6 @@
   },
   "devDependencies": {
     "knip": "catalog:",
-    "nx": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:",
