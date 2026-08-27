@@ -9,6 +9,8 @@ type NormalizedCliError = {
   readonly message: string;
   readonly detail?: string;
   readonly suggestion?: string;
+  readonly sql?: string;
+  readonly files?: ReadonlyArray<unknown>;
 };
 
 type ErrorRecord = Record<string, unknown>;
@@ -180,11 +182,15 @@ export function normalizeCliError(
     // `Fprintln(os.Stderr, CmdSuggestion)`). `readString` would trim exactly
     // that away.
     const suggestion = readRawString(error, "suggestion");
+    const sql = readRawString(error, "sql");
+    const files = error["files"];
     return {
       code,
       message,
       ...(detail && detail !== message ? { detail } : {}),
       ...(suggestion !== undefined && suggestion.length > 0 ? { suggestion } : {}),
+      ...(sql !== undefined && sql.length > 0 ? { sql } : {}),
+      ...(Array.isArray(files) ? { files } : {}),
     };
   }
 

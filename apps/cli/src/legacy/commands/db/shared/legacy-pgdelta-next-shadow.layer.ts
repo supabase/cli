@@ -9,10 +9,7 @@ import {
 } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
-import {
-  LegacyDbConnection,
-  type LegacyDbSession,
-} from "../../../shared/legacy-db-connection.service.ts";
+import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import {
@@ -33,7 +30,6 @@ import {
   legacyRunPlanShadowProvisions,
 } from "./legacy-pgdelta-next-shadow.plan.ts";
 import {
-  legacyConnectShadowDatabase,
   legacyMigrateNextShadowDatabase,
   legacyRemoveShadowDatabase,
   legacyShadowRunInputFromLocalContainerInputs,
@@ -46,6 +42,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import {
   LegacyPgDeltaNextShadow,
   type LegacyPgDeltaNextMigrationsShadow,
+  type LegacyPgDeltaNextPlatformShadow,
   type LegacyPgDeltaNextPlanShadows,
   type LegacyPgDeltaNextShadowInput,
 } from "./legacy-pgdelta-next-shadow.service.ts";
@@ -114,25 +111,6 @@ export function legacyAllowSameDatabaseIdentityForPlanShadows(opts: {
 }): boolean {
   return opts.declarativeRestoredFromPgDataSnapshot && opts.sameSnapshotKey;
 }
-
-/**
- * Removes extensions that the legacy PG14 platform baseline installs implicitly
- * so the declarative shadow reflects only extension declarations in schema files.
- * `pgjwt` has a hard extension dependency on `pgcrypto`, and `storage.objects.id`
- * depends on `uuid-ossp`, so both dependencies must be detached before the
- * user-manageable extensions can be dropped with the default RESTRICT behavior.
- */
-export const legacyPreparePgDeltaNextDeclarativeBaseline = Effect.fnUntraced(function* (
-  session: Pick<LegacyDbSession, "exec">,
-  majorVersion: number,
-) {
-  if (majorVersion === 14) {
-    yield* session.exec("ALTER TABLE storage.objects ALTER COLUMN id DROP DEFAULT");
-    yield* session.exec("DROP EXTENSION IF EXISTS pgjwt");
-  }
-  yield* session.exec("DROP EXTENSION IF EXISTS pgcrypto");
-  yield* session.exec('DROP EXTENSION IF EXISTS "uuid-ossp"');
-});
 
 const setupRunInput = (input: NativeShadowInput, handle: LegacyShadowAcquiredHandle) => ({
   fs: input.base.fs,
@@ -273,6 +251,7 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
       input: NativeShadowInput,
       opts: LegacyShadowCacheOpts,
       onBaselineSeam: Effect.Effect<void> = Effect.void,
+      outputService: typeof Output.Service = output,
     ) =>
       Effect.gen(function* () {
         const handle = yield* acquireShadow(input, opts);
@@ -295,6 +274,17 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
         return {
           migrationsUrl: legacyToPostgresURL(setup.connConfig),
         } satisfies LegacyPgDeltaNextMigrationsShadow;
+      }).pipe(Effect.provide(runtimeWith(outputService)), Effect.mapError(nextShadowError));
+
+    const provisionPlatform = (input: NativeShadowInput, opts: LegacyShadowCacheOpts) =>
+      Effect.gen(function* () {
+        const handle = yield* acquireShadow(input, opts);
+        yield* awaitShadowReady(input, handle);
+        const setup = setupRunInput(input, handle);
+        yield* legacySetupShadowDatabase(input.spawner, setup, {}, handle);
+        return {
+          platformUrl: legacyToPostgresURL(setup.connConfig),
+        } satisfies LegacyPgDeltaNextPlatformShadow;
       }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
 
     const provisionDeclarative = (
@@ -307,15 +297,6 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
         yield* awaitShadowReady(input, handle);
         const setup = setupRunInput(input, handle);
         yield* legacySetupShadowDatabase(input.spawner, setup, { webhooks: "disabled" }, handle);
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const session = yield* legacyConnectShadowDatabase(setup.connConfig);
-            yield* legacyPreparePgDeltaNextDeclarativeBaseline(
-              session,
-              input.base.setup.majorVersion,
-            );
-          }),
-        );
         return {
           declarativeUrl: legacyToPostgresURL(setup.connConfig),
           restoredFromPgDataSnapshot: handle._tag === "warm",
@@ -331,12 +312,31 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
     });
 
     return LegacyPgDeltaNextShadow.of({
-      provisionMigrations: (opts) =>
+      provisionMigrations: (opts, outputService) =>
         Effect.gen(function* () {
           const port = yield* nextPort();
           const built = yield* buildNativeBase(opts);
           const input = buildNativeInput(opts, built, port);
-          return yield* provisionMigrations(input, cacheOpts(opts, "config"));
+          return yield* provisionMigrations(
+            input,
+            cacheOpts(opts, "config"),
+            Effect.void,
+            outputService ?? output,
+          );
+        }).pipe(Effect.mapError(nextShadowError)),
+      provisionPlatform: (opts) =>
+        Effect.gen(function* () {
+          const port = yield* nextPort();
+          const built = yield* buildNativeBase(opts);
+          const input = buildNativeInput(opts, built, port);
+          return yield* provisionPlatform(input, cacheOpts(opts, "config"));
+        }).pipe(Effect.mapError(nextShadowError)),
+      provisionDeclarative: (opts) =>
+        Effect.gen(function* () {
+          const port = yield* nextPort();
+          const built = yield* buildNativeBase(opts);
+          const input = buildNativeInput(opts, built, port);
+          return yield* provisionDeclarative(input, cacheOpts(opts, "disabled"));
         }).pipe(Effect.mapError(nextShadowError)),
       provisionPlan: (opts) =>
         Effect.gen(function* () {

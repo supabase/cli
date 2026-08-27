@@ -8,9 +8,7 @@ import { describe, expect } from "vitest";
 
 import {
   legacyPgDeltaNextAdapterLayerFromLibraries,
-  legacyFilterPgDeltaNextPlatformParameterAclDiagnostics,
   legacyPgDeltaNextProfile,
-  legacyPgDeltaNextUserOwnedParameterAcls,
   legacySummarizePgDeltaNextHazards,
   legacySummarizePgDeltaNextRemovals,
   type LegacyPgDeltaNextLibraries,
@@ -300,66 +298,6 @@ describe("LegacyPgDeltaNextAdapter", () => {
     });
   });
 
-  it("filters platform parameter ACL coverage without hiding user-owned ACLs", () => {
-    const diagnostics = [
-      {
-        origin: "declarativeLoad" as const,
-        code: "unmodeled_kind",
-        severity: "warning" as const,
-        message: "2 unmodeled parameter ACLs",
-        context: {
-          kind: "parameter ACL",
-          count: 2,
-          samples: ["log_min_messages", "work_mem"],
-        },
-      },
-      {
-        origin: "declarativeLoad" as const,
-        code: "unsupported_extension",
-        severity: "warning" as const,
-        message: "extension is externally managed",
-      },
-    ];
-
-    expect(legacyFilterPgDeltaNextPlatformParameterAclDiagnostics(diagnostics, [])).toEqual([
-      diagnostics[1],
-    ]);
-    expect(
-      legacyFilterPgDeltaNextPlatformParameterAclDiagnostics(diagnostics, ["work_mem"]),
-    ).toEqual([
-      {
-        ...diagnostics[0],
-        message:
-          '1 unmodeled "parameter ACL" object not managed by this engine (e.g. work_mem) — v1 detects but does not model this kind',
-        context: { kind: "parameter ACL", count: 1, samples: ["work_mem"] },
-      },
-      diagnostics[1],
-    ]);
-  });
-
-  it("recognizes only the exact Supabase platform parameter grant tuples", () => {
-    expect(
-      legacyPgDeltaNextUserOwnedParameterAcls([
-        { name: "log_min_messages", grantee: "supabase_admin", privilege: "SET" },
-        { name: "log_min_messages", grantee: "app_user", privilege: "SET" },
-        { name: "work_mem", grantee: "supabase_realtime_admin", privilege: "SET" },
-        { name: "work_mem", grantee: "app_user", privilege: "SET" },
-      ]),
-    ).toEqual(["log_min_messages", "work_mem"]);
-    expect(
-      legacyPgDeltaNextUserOwnedParameterAcls([
-        { name: "log_min_messages", grantee: "supabase_admin", privilege: "ALTER SYSTEM" },
-        { name: "log_min_messages", grantee: "supabase_admin", privilege: "SET" },
-        { name: "log_min_messages", grantee: "supabase_realtime_admin", privilege: "SET" },
-      ]),
-    ).toEqual([]);
-    expect(
-      legacyPgDeltaNextUserOwnedParameterAcls([
-        { name: "log_min_messages", grantee: "supabase_realtime_admin", privilege: "ALTER SYSTEM" },
-      ]),
-    ).toEqual(["log_min_messages"]);
-  });
-
   it("renders selected-schema state without leaking other user or platform objects", () => {
     const schemaPublic = { kind: "schema", name: "public" } satisfies StableId;
     const schemaAuth = { kind: "schema", name: "auth" } satisfies StableId;
@@ -543,7 +481,14 @@ describe("LegacyPgDeltaNextAdapter", () => {
           pool: targetPool,
         });
         expect(state.exportInputs[1]).toMatchObject({
-          format: { keywordCase: "lower", maxWidth: 180 },
+          format: {
+            keywordCase: "upper",
+            indent: 2,
+            maxWidth: 180,
+            commaStyle: "trailing",
+            alignColumns: true,
+            alignKeyValues: true,
+          },
         });
 
         const planned = yield* adapter.planDeclarativeSchema({
@@ -558,11 +503,14 @@ describe("LegacyPgDeltaNextAdapter", () => {
         expect(state.declarativeInputs).toHaveLength(1);
         expect(state.declarativeInputs[0]).toMatchObject({
           reorder: true,
+          connectionReuse: "reconnect-on-stuck",
           isolatedShadow: true,
           allowSameDatabaseIdentity: true,
           seedAssumedSchemas: false,
           strictDataStatements: true,
         });
+        expect(state.declarativeInputs[0]).not.toHaveProperty("scope");
+        expect(state.declarativeInputs[0]).not.toHaveProperty("redactSecrets");
         expect(planned.diagnostics.map((diagnostic) => diagnostic.origin)).toEqual([
           "declarativeLoad",
           "declarativeTarget",

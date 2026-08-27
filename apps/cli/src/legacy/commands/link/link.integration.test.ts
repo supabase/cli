@@ -370,6 +370,35 @@ describe("legacy link integration", () => {
       }).pipe(Effect.provide(layer));
     });
 
+    it.live("aligns config.toml major_version to the linked database", () => {
+      const { layer, out, workdir } = setup({
+        project: {
+          ok: {
+            ...HEALTHY_PROJECT,
+            database: { ...HEALTHY_PROJECT.database, version: "17.6.1.090" },
+          },
+        },
+      });
+      mkdirSync(join(workdir, "supabase"), { recursive: true });
+      writeFileSync(
+        join(workdir, "supabase", "config.toml"),
+        'project_id = "x"\n[db]\nmajor_version = 15\n',
+      );
+      return Effect.gen(function* () {
+        yield* legacyLink(flags());
+        expect(readFileSync(join(workdir, "supabase", "config.toml"), "utf8")).toContain(
+          "major_version = 17",
+        );
+        expect(out.messages).toContainEqual(
+          expect.objectContaining({
+            type: "info",
+            message:
+              "Shadow major is now 17 (was 15). The running local database is still 15. Next: supabase db reset",
+          }),
+        );
+      }).pipe(Effect.provide(layer));
+    });
+
     it.live("writes linked-project.json with ref/name/org metadata", () => {
       const { layer, workdir } = setup();
       return Effect.gen(function* () {

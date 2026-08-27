@@ -1,5 +1,6 @@
 import { Context, type Effect, type Scope } from "effect";
 
+import { Output } from "../../../../shared/output/output.service.ts";
 import type { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
 import type { LegacyDbTomlValues } from "../../../shared/legacy-db-config.toml-read.ts";
 import type { LegacyPgDeltaContext } from "../../../shared/legacy-pgdelta.ts";
@@ -8,6 +9,11 @@ import type { LegacyPgDeltaContext } from "../../../shared/legacy-pgdelta.ts";
 export interface LegacyPgDeltaNextMigrationsShadow {
   /** Platform baseline with the project's local migrations applied. */
   readonly migrationsUrl: string;
+}
+
+/** Platform baseline with no project migrations and no declaration-prep drops. */
+export interface LegacyPgDeltaNextPlatformShadow {
+  readonly platformUrl: string;
 }
 
 /** The two live databases needed to plan declarative SQL with pg-delta next. */
@@ -33,11 +39,32 @@ interface LegacyPgDeltaNextShadowShape {
   /**
    * Provisions only the migrated next-engine shadow needed by database diffs.
    * The container is removed when the current Effect scope closes.
+   * Optional Output so schema-first can filter shadow replay without changing live apply.
    */
   readonly provisionMigrations: (
     opts: LegacyPgDeltaNextShadowInput,
+    outputService?: typeof Output.Service,
   ) => Effect.Effect<
     LegacyPgDeltaNextMigrationsShadow,
+    LegacyDeclarativeShadowDbError,
+    Scope.Scope
+  >;
+  /**
+   * Platform baseline only: no project migrations. Shares the migrations cache
+   * key (`webhooks: config`). Removed when the current Effect scope closes.
+   */
+  readonly provisionPlatform: (
+    opts: LegacyPgDeltaNextShadowInput,
+  ) => Effect.Effect<LegacyPgDeltaNextPlatformShadow, LegacyDeclarativeShadowDbError, Scope.Scope>;
+  /**
+   * Platform baseline with webhooks disabled and no project migrations. Image
+   * extensions stay installed; declaration prep runs later when files are known.
+   * Removed when the current Effect scope closes.
+   */
+  readonly provisionDeclarative: (
+    opts: LegacyPgDeltaNextShadowInput,
+  ) => Effect.Effect<
+    { readonly declarativeUrl: string },
     LegacyDeclarativeShadowDbError,
     Scope.Scope
   >;

@@ -17,6 +17,8 @@ import { legacyLinkCommand } from "../commands/link/link.command.ts";
 import { legacyLoginCommand } from "../commands/login/login.command.ts";
 import { legacyLogoutCommand } from "../commands/logout/logout.command.ts";
 import { legacyMigrationCommand } from "../commands/migration/migration.command.ts";
+import { legacyMigrationsCommand } from "../commands/migrations/migrations.command.ts";
+import { legacySchemaCommand } from "../commands/schema/schema.command.ts";
 import { legacyNetworkBansCommand } from "../commands/network-bans/network-bans.command.ts";
 import { legacyNetworkRestrictionsCommand } from "../commands/network-restrictions/network-restrictions.command.ts";
 import { legacyOrgsCommand } from "../commands/orgs/orgs.command.ts";
@@ -78,11 +80,13 @@ export const legacyRoot = Command.make("supabase").pipe(
     legacyLoginCommand,
     legacyLogoutCommand,
     legacyMigrationCommand,
+    legacyMigrationsCommand,
     legacyNetworkBansCommand,
     legacyNetworkRestrictionsCommand,
     legacyOrgsCommand,
     legacyPostgresConfigCommand,
     legacyProjectsCommand,
+    legacySchemaCommand,
     legacySecretsCommand,
     legacySeedCommand,
     legacyServicesCommand,

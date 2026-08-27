@@ -11,6 +11,11 @@ import {
 } from "../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
+import {
+  alignConfigPostgresMajor,
+  formatShadowMajorAlignedMessage,
+  parsePostgresMajor,
+} from "../../../shared/migrations/remote-postgres.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
 import { withAnalyticsContext } from "../../../shared/telemetry/analytics-context.ts";
@@ -351,6 +356,16 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
       const version = project.value.database.version;
       if (version.length > 0) {
         yield* writeTempFile(paths.postgresVersion, version);
+        const remoteMajor = parsePostgresMajor(version);
+        if (remoteMajor !== undefined) {
+          const configPath = path.join(cliConfig.workdir, "supabase", "config.toml");
+          const toml = yield* fs.readFileString(configPath).pipe(Effect.orElseSucceed(() => ""));
+          const aligned = alignConfigPostgresMajor(toml, remoteMajor);
+          if (aligned !== undefined) {
+            yield* fs.writeFileString(configPath, aligned.toml);
+            yield* output.info(formatShadowMajorAlignedMessage(remoteMajor, aligned.previousMajor));
+          }
+        }
       }
     }
 

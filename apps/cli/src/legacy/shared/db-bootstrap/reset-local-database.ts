@@ -40,6 +40,7 @@ import { Data, Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { detectGitBranch } from "../../../shared/git/git-branch.ts";
+import { clearDraftJournalFile } from "../../../shared/schema/clear-draft-journal.ts";
 import {
   LegacyDebugFlag,
   LegacyNetworkIdFlag,
@@ -208,6 +209,8 @@ export const legacyResetLocalDatabase = Effect.fnUntraced(function* (
     // own header.
     setup: { ...setup, experimental },
   });
+
+  yield* clearDraftJournalFile(fs, path, workdir);
 
   // Seed objects from supabase/buckets when storage is up (Go gates buckets on
   // an existing, healthy storage container). Reuses the ported seed-buckets

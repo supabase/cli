@@ -155,8 +155,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/config
       '@supabase/pg-delta':
-        specifier: 1.0.0-alpha.42
-        version: 1.0.0-alpha.42(@supabase/pg-topo@1.0.0-alpha.5)
+        specifier: 1.0.0-alpha.46
+        version: 1.0.0-alpha.46(@supabase/pg-topo@1.0.0-alpha.5)
       '@supabase/pg-topo':
         specifier: 1.0.0-alpha.5
         version: 1.0.0-alpha.5
@@ -1362,6 +1362,13 @@ packages:
     peerDependencies:
       '@emnapi/core': ^1.7.1 || ^2.0.0-alpha.3
       '@emnapi/runtime': ^1.7.1 || ^2.0.0-alpha.3
+
+  '@napi-rs/wasm-runtime@1.2.3':
+    resolution: {integrity: sha512-UMduMbqO5s5zF2NkNacMT/yK5Y5QiKvWr2+50bzIIxFDwVJ2h49b+oyjaCGPhJxd2/gC2x39EHv/gHVuu36x2Q==}
+    engines: {node: ^20.19.0 || ^22.13.0 || >=23.5.0}
+    peerDependencies:
+      '@emnapi/core': ^1.7.1 || ^2.0.0-alpha.4
+      '@emnapi/runtime': ^1.7.1 || ^2.0.0-alpha.4
 
   '@next/env@16.3.0':
     resolution: {integrity: sha512-o9r1S0BNiNreHP9Vs+Qnqd9kviDkJh8xIACY7UFZSmiGbbQRzPBBosvHzAU4TULHOIuOj/18RSsyz2qrREmIFw==}
@@ -2839,8 +2846,8 @@ packages:
     resolution: {integrity: sha512-gfv481mTOVWtZIJgXupxZpni2V2UWPf6jeF/jOK7HdMHdH+mt6sU0sHHwf0POsPip8ltlulu9OUHgwVzl5ddRw==}
     engines: {node: '>=22.0.0'}
 
-  '@supabase/pg-delta@1.0.0-alpha.42':
-    resolution: {integrity: sha512-E1t30VEBu4ZZF6fK90iVfBT3AJTXM70XOfeMnJQ0vh9kRSuVOnVoYXjWh9/Nf/faJ2+kOCRNGKiUDQaTAbzTzQ==}
+  '@supabase/pg-delta@1.0.0-alpha.46':
+    resolution: {integrity: sha512-PaziTZjZk+zMw+wL2iBR0kJB1rOMGPCanYYYjb2pxwINCAr+XMNjnbWxTDMVZjNhPdOYLe34ocpO2lHLv+LK1A==}
     engines: {node: '>=20.0.0'}
     hasBin: true
     peerDependencies:
@@ -8016,17 +8023,17 @@ snapshots:
       '@emnapi/runtime': 1.4.5
       '@tybys/wasm-util': 0.9.0
 
-  '@napi-rs/wasm-runtime@1.2.2(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)':
-    dependencies:
-      '@emnapi/core': 1.11.1
-      '@emnapi/runtime': 1.11.1
-      '@tybys/wasm-util': 0.10.3
-    optional: true
-
   '@napi-rs/wasm-runtime@1.2.2(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.2)':
     dependencies:
       '@emnapi/core': 1.11.2
       '@emnapi/runtime': 1.11.2
+      '@tybys/wasm-util': 0.10.3
+    optional: true
+
+  '@napi-rs/wasm-runtime@1.2.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)':
+    dependencies:
+      '@emnapi/core': 1.11.1
+      '@emnapi/runtime': 1.11.1
       '@tybys/wasm-util': 0.10.3
     optional: true
 
@@ -8997,7 +9004,7 @@ snapshots:
     dependencies:
       '@emnapi/core': 1.11.1
       '@emnapi/runtime': 1.11.1
-      '@napi-rs/wasm-runtime': 1.2.2(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)
+      '@napi-rs/wasm-runtime': 1.2.3(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)
     optional: true
 
   '@rolldown/binding-win32-arm64-msvc@1.1.5':
@@ -9143,7 +9150,7 @@ snapshots:
     dependencies:
       tslib: 2.8.1
 
-  '@supabase/pg-delta@1.0.0-alpha.42(@supabase/pg-topo@1.0.0-alpha.5)':
+  '@supabase/pg-delta@1.0.0-alpha.46(@supabase/pg-topo@1.0.0-alpha.5)':
     dependencies:
       debug: 4.4.3(supports-color@7.2.0)
       pg: 8.23.0
