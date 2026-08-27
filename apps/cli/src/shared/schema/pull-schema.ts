@@ -10,6 +10,7 @@ import { SchemaWorkspace } from "./schema-workspace.service.ts";
 import { PgDeltaSchemaEngine } from "./pg-delta-engine.service.ts";
 import { formatFileSummary, formatNextAction } from "./schema-output.ts";
 import { MigrationRepository } from "../migrations/migration-repository.service.ts";
+import { MigrationRunner } from "../migrations/migration-runner.service.ts";
 
 export type PullSchemaInput = {
   readonly from?: string;
@@ -24,6 +25,7 @@ export const pullSchema = Effect.fn("schema.pull")(function* (input: PullSchemaI
   const engine = yield* PgDeltaSchemaEngine;
   const targets = yield* DatabaseTargetResolver;
   const migrations = yield* MigrationRepository;
+  const runner = yield* MigrationRunner;
 
   const selector = parseTargetSelector(input.from ?? "local");
   const target = yield* targets.resolve(selector);
@@ -58,24 +60,42 @@ export const pullSchema = Effect.fn("schema.pull")(function* (input: PullSchemaI
         });
 
         const localMigrations = yield* migrations.listLocal;
+        const remoteHistory = yield* runner.listRemote(pool);
+        const from = selector.kind === "url" ? "<connection-string>" : selector.kind;
 
         const summary = installed.classification;
-        const nextActions =
-          mode === "output"
+        const nextActions = [
+          ...(mode === "output"
             ? [
                 formatNextAction(
                   "to replace the managed schema",
-                  `supabase schema pull --from ${selector.kind === "url" ? "<connection-string>" : selector.kind} --force`,
+                  `supabase schema pull --from ${from} --force`,
                 ),
               ]
             : localMigrations.length > 0
               ? [formatNextAction("to check they match", "supabase schema generate --dry-run")]
-              : [
-                  formatNextAction(
-                    "to create a baseline",
-                    "supabase schema generate --baseline --name initial_schema",
-                  ),
-                ];
+              : remoteHistory.length > 0
+                ? [
+                    formatNextAction(
+                      "to fetch missing files",
+                      `supabase migrations pull --from ${from}`,
+                    ),
+                  ]
+                : [
+                    formatNextAction(
+                      "to create a baseline",
+                      "supabase schema generate --baseline --name initial_schema",
+                    ),
+                  ]),
+          ...(summary.unmanaged.length > 0
+            ? [
+                formatNextAction(
+                  "to keep hand-authored SQL",
+                  "move those files to supabase/schemas/_custom/",
+                ),
+              ]
+            : []),
+        ];
 
         return {
           status: "clean",

@@ -9,12 +9,33 @@ type GeneratedMigrationUnit = {
   readonly transactional: boolean;
 };
 
+export type FetchedMigrationWrite =
+  | {
+      readonly outcome: "written";
+      readonly file: MigrationFile;
+    }
+  | {
+      readonly outcome: "skipped";
+      readonly file: MigrationFile;
+    }
+  | {
+      readonly outcome: "conflict";
+      readonly file: MigrationFile;
+      readonly remoteCopyPath: string;
+      readonly remoteCopyDisplay: string;
+    };
+
 interface MigrationRepositoryShape {
   readonly listLocal: Effect.Effect<ReadonlyArray<MigrationFile>, SchemaWorkspaceIoError>;
   readonly createEmpty: (
     name: string,
     content?: string,
   ) => Effect.Effect<MigrationFile, SchemaMigrationNameError | SchemaWorkspaceIoError>;
+  readonly writeFetched: (input: {
+    readonly version: string;
+    readonly name: string;
+    readonly sql: string;
+  }) => Effect.Effect<FetchedMigrationWrite, SchemaMigrationNameError | SchemaWorkspaceIoError>;
   readonly writeGenerated: (input: {
     readonly name: string;
     readonly baseMillis: number;

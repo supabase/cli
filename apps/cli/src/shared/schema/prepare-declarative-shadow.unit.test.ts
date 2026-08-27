@@ -1,8 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option } from "effect";
 import {
+  declaredSqlExtensions,
   declarativeBaselinePrepStatements,
   filesForDeclarativeShadowLoad,
+  imageExtensionCatchupAlreadyPresent,
+  isImageExtensionCatchupSql,
   parsePostgresMajorVersion,
   prepareDeclarativeShadow,
 } from "./prepare-declarative-shadow.ts";
@@ -37,6 +40,15 @@ describe("declarativeBaselinePrepStatements", () => {
     ]);
   });
 
+  it("drops image pgjwt when migration SQL recreates it", () => {
+    expect(
+      declarativeBaselinePrepStatements(
+        17,
+        declaredSqlExtensions([{ name: "catchup.sql", sql: "create extension pgjwt;" }]),
+      ),
+    ).toEqual(["DROP EXTENSION IF EXISTS pgjwt"]);
+  });
+
   it("drops declared image defaults on PG15+, pgjwt before pgcrypto", () => {
     expect(
       declarativeBaselinePrepStatements(17, new Set(["pgjwt", "pgcrypto", "uuid-ossp"])),
@@ -62,6 +74,31 @@ describe("filesForDeclarativeShadowLoad", () => {
 
   it("does not restore pgjwt when declarations recreate it", () => {
     expect(filesForDeclarativeShadowLoad(allImageCreates)).toEqual(allImageCreates);
+  });
+});
+
+describe("isImageExtensionCatchupSql", () => {
+  const aliceCatchup = `SET local check_function_bodies = off;
+
+CREATE EXTENSION "pgjwt" SCHEMA "extensions";
+
+COMMENT ON EXTENSION "pgjwt" IS 'JSON Web Token API for Postgresql';
+`;
+
+  it("accepts first-push image-extension catchup", () => {
+    expect(isImageExtensionCatchupSql(aliceCatchup)).toBe(true);
+    expect(imageExtensionCatchupAlreadyPresent(aliceCatchup, new Set(["pgjwt"]))).toBe(true);
+    expect(imageExtensionCatchupAlreadyPresent(aliceCatchup, new Set())).toBe(false);
+  });
+
+  it("rejects catchup that also changes schema objects", () => {
+    expect(
+      isImageExtensionCatchupSql(`${aliceCatchup}\nCREATE TABLE public.todos (id int);\n`),
+    ).toBe(false);
+  });
+
+  it("rejects a non-image extension", () => {
+    expect(isImageExtensionCatchupSql('CREATE EXTENSION "postgis";')).toBe(false);
   });
 });
 

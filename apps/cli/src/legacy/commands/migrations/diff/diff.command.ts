@@ -25,7 +25,7 @@ export const legacyMigrationsDiffCommand = Command.make("diff", config).pipe(
   Command.withDescription(
     "Preview the SQL that would make migration replay match a live database.\n\n" +
       "Does not apply anything. Defaults to the local database.\n\n" +
-      "If the live database has extra shape you want as files, use migrations pull.",
+      "To record a live edit, write --file then `migration repair --status applied` (repair upserts statements and does not run SQL).",
   ),
   Command.withShortDescription("Preview drift between migrations and a database"),
   Command.withExamples([

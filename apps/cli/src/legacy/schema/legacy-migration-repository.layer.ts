@@ -7,7 +7,10 @@ import {
 import { MIGRATION_NO_TRANSACTION_DIRECTIVE } from "../../shared/schema/schema-paths.ts";
 import { SchemaWorkspace } from "../../shared/schema/schema-workspace.service.ts";
 import type { MigrationFile } from "../../shared/migrations/migration-file.ts";
-import { MigrationRepository } from "../../shared/migrations/migration-repository.service.ts";
+import {
+  MigrationRepository,
+  type FetchedMigrationWrite,
+} from "../../shared/migrations/migration-repository.service.ts";
 import {
   legacyFormatMigrationTimestamp,
   legacyGetMigrationPath,
@@ -89,8 +92,72 @@ export const legacyMigrationRepositoryLayer = Layer.effect(
       return Effect.void;
     };
 
+    const historySegmentEscapes = (segment: string) =>
+      /[/\\]/u.test(segment) || segment.split(/[/\\]/u).includes("..");
+
+    const remoteCopiesDir = path.join(path.dirname(workspace.journalPath), "remote-migrations");
+
     return MigrationRepository.of({
       listLocal: readLocal,
+      writeFetched: (input) =>
+        Effect.gen(function* () {
+          if (historySegmentEscapes(input.version) || historySegmentEscapes(input.name)) {
+            return yield* new SchemaMigrationNameError({
+              detail: `Invalid version/name in history table: ${input.version}_${input.name}`,
+              suggestion: "Use a simple identifier without path separators.",
+            });
+          }
+          // Same version, possibly renamed: skip/conflict against that file, never write a second one.
+          const local = yield* readLocal;
+          const existing = local.find((file) => file.version === input.version);
+          const fileName = existing?.fileName ?? `${input.version}_${input.name}.sql`;
+          const absolutePath =
+            existing?.absolutePath ?? path.join(workspace.migrationsDir, fileName);
+          yield* assertInsideMigrations(absolutePath, existing?.name ?? input.name);
+          yield* fs
+            .makeDirectory(workspace.migrationsDir, { recursive: true })
+            .pipe(Effect.mapError((error) => ioError(error.message)));
+          const toFile = (content: string): MigrationFile => ({
+            version: input.version,
+            name: existing?.name ?? input.name,
+            fileName,
+            absolutePath,
+            content,
+            transactional: legacyParseMigrationContent(content).transactionMode === "transactional",
+          });
+          if (existing !== undefined) {
+            if (existing.content === input.sql) {
+              return {
+                outcome: "skipped",
+                file: toFile(existing.content),
+              } satisfies FetchedMigrationWrite;
+            }
+            const remoteCopyName = `${input.version}_${input.name}.sql`;
+            const remoteCopyPath = path.join(remoteCopiesDir, remoteCopyName);
+            yield* fs
+              .makeDirectory(remoteCopiesDir, { recursive: true })
+              .pipe(Effect.mapError((error) => ioError(error.message)));
+            yield* fs
+              .writeFileString(remoteCopyPath, input.sql)
+              .pipe(
+                Effect.mapError((error) =>
+                  ioError(`Failed to write ${remoteCopyName} remote copy: ${error.message}`),
+                ),
+              );
+            return {
+              outcome: "conflict",
+              file: toFile(existing.content),
+              remoteCopyPath,
+              remoteCopyDisplay: path.join(".supabase", "remote-migrations", remoteCopyName),
+            } satisfies FetchedMigrationWrite;
+          }
+          yield* fs
+            .writeFileString(absolutePath, input.sql)
+            .pipe(
+              Effect.mapError((error) => ioError(`Failed to write ${fileName}: ${error.message}`)),
+            );
+          return { outcome: "written", file: toFile(input.sql) } satisfies FetchedMigrationWrite;
+        }),
       createEmpty: (name, content = "") =>
         Effect.gen(function* () {
           yield* assertName(name);

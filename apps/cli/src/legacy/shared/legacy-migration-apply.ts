@@ -475,6 +475,7 @@ export const legacyMarkError = (stat: string, pos: number): string => {
 // PostgreSQL error messages like `type "ltree" does not exist`. Unanchored, so it
 // matches identically inside the rendered `ERROR: … (SQLSTATE …)` head line.
 const TYPE_NAME_PATTERN = /type "([^"]+)" does not exist/;
+const FUNCTION_NAME_PATTERN = /function "?([^\s"(]+)"?\(/;
 
 /**
  * Mirrors `MigrationFile.ExecBatch` error context:
@@ -507,6 +508,14 @@ export const legacyFormatExecBatchError = (
     msg.push("      Use schema-qualified type references to avoid this error:");
     msg.push(`        CREATE TABLE example (col extensions.${typeName});`);
     msg.push("      Learn more: supabase migration new --help");
+  }
+  const functionName = FUNCTION_NAME_PATTERN.exec(e.message)?.[1];
+  if (functionName !== undefined && e.code === "42883" && !functionName.includes(".")) {
+    msg.push("");
+    msg.push("Hint: This function may be defined in a schema that's not in your search_path.");
+    msg.push(`      Hosted Postgres usually has search_path ("$user", public, extensions).`);
+    msg.push(`      Use a schema-qualified call (for example extensions.${functionName})`);
+    msg.push(`      or SET search_path TO "$user", public, extensions.`);
   }
   msg.push(`At statement: ${index}`, marked);
   return formattedExecBatchFailure(`${legacyErrorMessage(e)}\n${msg.join("\n")}`, e);
@@ -805,7 +814,14 @@ const resetConnectionState = <E>(
   session: LegacyDbSession,
   mapError: (message: string) => E,
 ): Effect.Effect<void, E> =>
-  session.exec("RESET ALL").pipe(Effect.mapError((e) => mapError(legacyErrorMessage(e))));
+  Effect.gen(function* () {
+    yield* session.exec("RESET ALL").pipe(Effect.mapError((e) => mapError(legacyErrorMessage(e))));
+    if (session.restoreSearchPathSql !== undefined) {
+      yield* session
+        .exec(session.restoreSearchPathSql)
+        .pipe(Effect.mapError((e) => mapError(legacyErrorMessage(e))));
+    }
+  });
 
 /**
  * Applies a single migration file to the connected database and records it in

@@ -7,7 +7,7 @@ import type { SchemaCommandResult } from "./schema-types.ts";
 function result(overrides: Partial<SchemaCommandResult> = {}): SchemaCommandResult {
   return {
     status: "clean",
-    message: "Compared 4 migration(s) against local:default.",
+    message: "4 migrations applied on the local database. History matches files.",
     data: {},
     nextActions: [],
     mutatedDatabase: false,
@@ -32,7 +32,25 @@ describe("renderSchemaResult", () => {
           type: "info",
           message: "Next: to apply it locally: supabase migrations apply",
         },
-        { type: "outro", message: "Compared 4 migration(s) against local:default." },
+        {
+          type: "outro",
+          message: "4 migrations applied on the local database. History matches files.",
+        },
+      ]);
+    });
+  });
+
+  it.live("skipIntro does not emit a second intro", () => {
+    const out = mockOutput();
+    return Effect.gen(function* () {
+      yield* renderSchemaResult("Push migrations", result(), { skipIntro: true }).pipe(
+        Effect.provide(out.layer),
+      );
+      expect(out.messages).toEqual([
+        {
+          type: "outro",
+          message: "4 migrations applied on the local database. History matches files.",
+        },
       ]);
     });
   });
@@ -43,7 +61,10 @@ describe("renderSchemaResult", () => {
       yield* renderSchemaResult("List migrations", result()).pipe(Effect.provide(out.layer));
       expect(out.messages).toEqual([
         { type: "intro", message: "List migrations" },
-        { type: "outro", message: "Compared 4 migration(s) against local:default." },
+        {
+          type: "outro",
+          message: "4 migrations applied on the local database. History matches files.",
+        },
       ]);
     });
   });
@@ -76,6 +97,55 @@ describe("renderSchemaResult", () => {
         },
         { type: "outro", message: "Declarations already match migration replay." },
       ]);
+    });
+  });
+
+  it.live("writes body as one raw chunk and keeps extra message lines as info", () => {
+    const out = mockOutput();
+    const sql = "CREATE TABLE t (id int);\nALTER TABLE t ADD COLUMN n int;";
+    return Effect.gen(function* () {
+      yield* renderSchemaResult(
+        "Generate schema migrations",
+        result({
+          message: "Dry-run; nothing was written.\n2 statements",
+          body: sql,
+          nextActions: ["to write the migration: supabase schema generate --name <feature>"],
+        }),
+      ).pipe(Effect.provide(out.layer));
+      expect(out.messages).toEqual([
+        { type: "intro", message: "Generate schema migrations" },
+        { type: "info", message: "2 statements" },
+        {
+          type: "info",
+          message: "Next: to write the migration: supabase schema generate --name <feature>",
+        },
+        { type: "outro", message: "Dry-run; nothing was written." },
+      ]);
+      expect(out.rawChunks).toEqual([{ text: `${sql}\n`, stream: "stdout" }]);
+    });
+  });
+
+  it.live("emits JSON from message and data without dumping body", () => {
+    const out = mockOutput({ format: "json" });
+    const sql = "CREATE TABLE t (id int);";
+    return Effect.gen(function* () {
+      yield* renderSchemaResult(
+        "Generate schema migrations",
+        result({
+          message: "2 statements",
+          body: sql,
+          data: { sql, files: [{ name: "schema.sql", sql }] },
+        }),
+      ).pipe(Effect.provide(out.layer));
+      expect(out.messages).toEqual([
+        { type: "intro", message: "Generate schema migrations" },
+        {
+          type: "success",
+          message: "2 statements",
+          data: { sql, files: [{ name: "schema.sql", sql }] },
+        },
+      ]);
+      expect(out.rawChunks).toEqual([]);
     });
   });
 });

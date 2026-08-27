@@ -167,6 +167,28 @@ describe("formatPlanSummary", () => {
     expect(formatPlanSummary({ plan: view([]), verbose: false })).toBe("");
   });
 
+  it("counts statements from plan files when actions are empty", () => {
+    const base = view([]);
+    const text = formatPlanSummary({
+      plan: {
+        ...base,
+        files: [
+          {
+            sequence: 1,
+            suffix: null,
+            sql: "create table t (id int); drop table u;",
+            transactional: true,
+            actionCount: 2,
+          },
+        ],
+        hazards: { ...base.hazards, kinds: ["destructive"], destructive: 1 },
+      },
+      verbose: false,
+    });
+    expect(text).toContain("2 statements");
+    expect(text).toContain("Hazards: 0 rewrite, 1 destructive, 0 coverage gaps");
+  });
+
   it("prints a statements count without a hazards line when all hazard counts are zero", () => {
     const text = formatPlanSummary({
       plan: view([], { actions: [dummyAction, dummyAction, dummyAction, dummyAction] }),

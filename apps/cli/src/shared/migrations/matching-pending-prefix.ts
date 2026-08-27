@@ -11,19 +11,24 @@ export const findMatchingPendingPrefix = Effect.fn("migrations.findMatchingPendi
     livePool: Pool,
     known: ReadonlyArray<MigrationFile>,
     pending: ReadonlyArray<MigrationFile>,
+    opts: { readonly failClosed?: boolean } = {},
   ) {
     const runner = yield* MigrationRunner;
     const engine = yield* PgDeltaSchemaEngine;
     let recorded: ReadonlyArray<MigrationFile> = [];
     for (const [index] of pending.entries()) {
       const prefix = pending.slice(0, index + 1);
-      const applied = yield* runner.applyPending(shadowPool, [...known, ...prefix]).pipe(
-        Effect.catchIf(
-          (error): error is SchemaEngineError =>
-            error._tag === "SchemaEngineError" && error.detail.startsWith("Failed applying"),
-          () => Effect.succeed(undefined),
-        ),
-      );
+      const apply = runner.applyPending(shadowPool, [...known, ...prefix]);
+      const applied =
+        opts.failClosed === true
+          ? yield* apply
+          : yield* apply.pipe(
+              Effect.catchIf(
+                (error): error is SchemaEngineError =>
+                  error._tag === "SchemaEngineError" && error.detail.startsWith("Failed applying"),
+                () => Effect.succeed(undefined),
+              ),
+            );
       if (applied === undefined) {
         break;
       }

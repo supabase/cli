@@ -1,21 +1,29 @@
 import { Clock, Effect } from "effect";
 import { readExportManifest } from "@supabase/pg-delta/frontends";
 import { acquireDatabasePool } from "../database/database-pool.ts";
+import { DatabaseTargetResolver } from "../database/database-target.service.ts";
+import {
+  classifyPrivilegePlan,
+  PRIVILEGE_REFRESH_SUGGESTION,
+} from "../migrations/privilege-offer.ts";
 import { MigrationRepository } from "../migrations/migration-repository.service.ts";
+import { MigrationRunner } from "../migrations/migration-runner.service.ts";
 import { formatMigrationRepairCommand } from "../migrations/migration-repair-suggest.ts";
+import {
+  generateLocalShadowBanner,
+  readConfigPostgresMajor,
+} from "../migrations/remote-postgres.ts";
+import { formatPlanSql } from "./schema-body.ts";
 import { digestVersions } from "./schema-digest.ts";
 import {
   SchemaBaselineMigrationsExistError,
   SchemaDraftConflictError,
   SchemaEngineError,
+  SchemaLinkedConnectionError,
+  SchemaTargetRequiredError,
   SchemaWorkspaceIoError,
 } from "./schema-errors.ts";
-import {
-  formatMigrationFilePath,
-  formatNextAction,
-  withCoverageMessage,
-  withPlanSummary,
-} from "./schema-output.ts";
+import { formatMigrationFilePath, formatNextAction, withPlanSummary } from "./schema-output.ts";
 import { assertPlanActionable } from "./schema-plan-gate.ts";
 import { SchemaStateStore } from "./schema-state.service.ts";
 import type { SchemaCommandResult } from "./schema-types.ts";
@@ -37,6 +45,8 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
   const declarations = yield* workspace.readDeclarationFiles;
   const localMigrations = yield* migrations.listLocal;
   const name = input.name ?? (input.baseline ? "initial_schema" : "schema");
+  const nextName = input.name ?? (input.baseline ? "initial_schema" : "<feature>");
+  const banner = generateLocalShadowBanner(yield* readConfigPostgresMajor());
 
   if (input.baseline && localMigrations.length > 0) {
     return yield* new SchemaBaselineMigrationsExistError({
@@ -44,6 +54,34 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
       suggestion:
         "supabase schema generate --dry-run to preview, or supabase schema generate --name <feature> to add a change. --baseline is only for empty migration history.",
     });
+  }
+
+  if (input.baseline) {
+    const targets = yield* DatabaseTargetResolver;
+    const runner = yield* MigrationRunner;
+    const linked = yield* targets.resolve({ kind: "linked" }).pipe(
+      Effect.catchIf(
+        (error): error is SchemaLinkedConnectionError | SchemaTargetRequiredError =>
+          error._tag === "SchemaLinkedConnectionError" ||
+          error._tag === "SchemaTargetRequiredError",
+        () => Effect.succeed(undefined),
+      ),
+    );
+    if (linked !== undefined) {
+      const remoteHistory = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const pool = yield* acquireDatabasePool(linked.connectionString);
+          return yield* runner.listRemote(pool);
+        }),
+      );
+      if (remoteHistory.length > 0) {
+        return yield* new SchemaBaselineMigrationsExistError({
+          detail: `--baseline cannot run because the linked database already has migration history.`,
+          suggestion:
+            "Remote has migration history. Run supabase migrations pull --from linked, then supabase schema pull --from linked.",
+        });
+      }
+    }
   }
 
   return yield* state.withLock(
@@ -101,15 +139,18 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
             ? [
                 formatNextAction(
                   "to write the migration",
-                  `supabase schema generate --name ${name}`,
+                  `supabase schema generate --name ${nextName}`,
                 ),
               ]
             : [];
+          const sql = formatPlanSql(plan);
+          const statusLine = plan.changes
+            ? "Dry-run; nothing was written."
+            : "Declarations already match migration replay.";
           return {
             status: plan.changes ? "needs_approval" : "clean",
-            message: plan.changes
-              ? withPlanSummary("Dry-run; nothing was written.", plan)
-              : withCoverageMessage("Declarations already match migration replay.", plan),
+            message: `${withPlanSummary(statusLine, plan)}\n${banner}`,
+            ...(plan.changes && sql.length > 0 ? { body: sql } : {}),
             data: {
               status: plan.changes ? "needs_approval" : "clean",
               plan_id: plan.planId,
@@ -117,6 +158,8 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
               desired_fingerprint: plan.desiredFingerprint,
               hazards: plan.hazards,
               files_written: [],
+              sql,
+              files: plan.files,
               mutated_database: false,
               mutated_files: false,
               next_actions: nextActions,
@@ -150,9 +193,16 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
             ...(manifest !== undefined ? { manifest } : {}),
           });
           if (verify.changes) {
+            const aheadKind = yield* classifyPrivilegePlan(verify);
             return yield* new SchemaEngineError({
-              detail: "Generated migrations did not converge to the declared schema.",
-              suggestion: "Inspect the generated files and rerun schema generate.",
+              detail:
+                aheadKind === "not_acl"
+                  ? "Generated migrations did not converge to the declared schema."
+                  : "Generated migrations differ from declarations by privileges only.",
+              suggestion:
+                aheadKind === "not_acl"
+                  ? "Inspect the generated files and rerun schema generate."
+                  : PRIVILEGE_REFRESH_SUGGESTION,
             });
           }
 
@@ -172,10 +222,10 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
 
           return {
             status: "generated",
-            message: withPlanSummary(
+            message: `${withPlanSummary(
               `Wrote ${written.map((file) => formatMigrationFilePath(file.fileName)).join(", ")}`,
               plan,
-            ),
+            )}\n${banner}`,
             data: {
               status: "generated",
               plan_id: plan.planId,
@@ -183,6 +233,8 @@ export const generateSchema = Effect.fn("schema.generate")(function* (input: Gen
               desired_fingerprint: plan.desiredFingerprint,
               hazards: plan.hazards,
               files_written: written.map((file) => file.fileName),
+              sql: formatPlanSql(plan),
+              files: plan.files,
               mutated_database: false,
               mutated_files: true,
               next_actions: nextActions,

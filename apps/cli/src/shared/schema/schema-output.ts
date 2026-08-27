@@ -1,5 +1,6 @@
 import { STRICT_COVERAGE_CODES } from "@supabase/pg-delta/frontends";
 import { explicitBooleanLongFlag } from "../cli/cobra-flag-groups.ts";
+import { planStatementCount } from "./schema-body.ts";
 import { MIGRATIONS_DIRECTORY_NAME } from "./schema-paths.ts";
 import type { SchemaFileSummary, SchemaPlanView } from "./schema-types.ts";
 
@@ -114,7 +115,7 @@ export function formatPlanSummary(input: {
   readonly verbose?: boolean;
 }): string {
   const verbose = coverageVerbose({ verbose: input.verbose });
-  const statements = input.plan.plan.actions.length;
+  const statements = planStatementCount(input.plan);
   const { rewrite, destructive, coverageGaps } = input.plan.hazards;
   const coverage = formatCoverageDiagnostics(input.plan, { verbose: input.verbose });
   const lines: string[] = [];

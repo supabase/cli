@@ -40,6 +40,32 @@ export const declaredSqlExtensions = (
   return declared;
 };
 
+const stripAllowedExtensionCatchup = (sql: string): string =>
+  maskSqlNonCode(sql)
+    .replace(/\bSET\s+[^;]*;/giu, "")
+    .replace(/\bCREATE\s+EXTENSION\s+[^;]*;/giu, "")
+    .replace(/\bCOMMENT\s+ON\s+EXTENSION\s+[^;]*;/giu, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+
+/** First-push catchup that only recreates image-default extensions. */
+export function isImageExtensionCatchupSql(sql: string): boolean {
+  const declared = declaredSqlExtensions([{ name: "catchup.sql", sql }]);
+  if (declared.size === 0) return false;
+  if ([...declared].some((name) => !IMAGE_DEFAULT_EXTENSION_SET.has(name))) return false;
+  return stripAllowedExtensionCatchup(sql) === "";
+}
+
+/** True when that catchup is already installed on the live catalog. */
+export function imageExtensionCatchupAlreadyPresent(
+  sql: string,
+  installed: ReadonlySet<string>,
+): boolean {
+  if (!isImageExtensionCatchupSql(sql)) return false;
+  const declared = declaredSqlExtensions([{ name: "catchup.sql", sql }]);
+  return [...declared].every((name) => installed.has(name));
+}
+
 const declaredImageExtensions = (files: ReadonlyArray<SchemaSqlFile>): ReadonlySet<string> => {
   const declared = new Set<string>();
   for (const name of declaredSqlExtensions(files)) {

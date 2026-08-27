@@ -1,9 +1,12 @@
 import { describe, expect, test } from "vitest";
 import {
   formatHistoryConflict,
+  formatLiveEditCommands,
   formatMigrationRepairCommand,
+  formatMigrationsPullCommand,
+  formatMigrationsPushCommand,
+  formatSchemaPullCommand,
   repairFlagsForTarget,
-  suggestRemoteDriftRepair,
 } from "./migration-repair-suggest.ts";
 
 const linked = {
@@ -115,7 +118,7 @@ describe("repairFlagsForTarget", () => {
 });
 
 describe("formatHistoryConflict", () => {
-  test("prefills reverted repair with target flags", () => {
+  test("points remote-only and pending at migrations pull", () => {
     expect(
       formatHistoryConflict({
         remoteOnly: ["19990101000000"],
@@ -125,56 +128,51 @@ describe("formatHistoryConflict", () => {
     ).toEqual({
       detail:
         "Local and remote migration histories have diverged (remote-only: 19990101000000; pending: 20260819120000).",
-      suggestion: "supabase migration repair --db-url <same-url> --status reverted 19990101000000",
+      suggestion: "supabase migrations pull --from <same-url>",
     });
   });
 });
 
-describe("suggestRemoteDriftRepair", () => {
-  test("suggests pull when nothing matches", () => {
-    expect(suggestRemoteDriftRepair({ remoteOnly: [], matchingPrefix: [] })).toBe(
-      "supabase migrations pull --from linked",
+describe("formatMigrationsPullCommand", () => {
+  test("points remote-only history at fetch-pull without echoing secrets", () => {
+    expect(formatMigrationsPullCommand()).toBe("supabase migrations pull --from linked");
+    expect(formatMigrationsPullCommand({ local: true })).toBe(
+      "supabase migrations pull --from local",
+    );
+    expect(formatMigrationsPullCommand({ dbUrlEnvVar: "DATABASE_URL" })).toBe(
+      'supabase migrations pull --from "$DATABASE_URL"',
+    );
+    expect(formatMigrationsPullCommand({ dbUrlSame: true })).toBe(
+      "supabase migrations pull --from <same-url>",
+    );
+    expect(formatSchemaPullCommand()).toBe("supabase schema pull --from linked");
+    expect(formatSchemaPullCommand({ local: true })).toBe("supabase schema pull --from local");
+  });
+});
+
+describe("formatMigrationsPushCommand", () => {
+  test("keeps linked push bare and preserves URL targets", () => {
+    expect(formatMigrationsPushCommand()).toBe("supabase migrations push");
+    expect(formatMigrationsPushCommand({ projectRef: "abcdefghijklmnop" })).toBe(
+      "supabase migrations push",
+    );
+    expect(formatMigrationsPushCommand({ local: true })).toBe("supabase migrations apply");
+    expect(formatMigrationsPushCommand({ dbUrlSame: true })).toBe(
+      "supabase migrations push --db-url <same-url> --allow-remote",
+    );
+    expect(formatMigrationsPushCommand({ dbUrlEnvVar: "SUPABASE_DB_URL" })).toBe(
+      'supabase migrations push --db-url "$SUPABASE_DB_URL" --allow-remote',
     );
   });
+});
 
-  test("suggests local pull when the target is local", () => {
-    expect(
-      suggestRemoteDriftRepair({
-        remoteOnly: [],
-        matchingPrefix: [],
-        flags: { local: true },
-      }),
-    ).toBe("supabase migrations pull --from local");
-  });
-
-  test("suggests env-url pull without echoing the connection string", () => {
-    expect(
-      suggestRemoteDriftRepair({
-        remoteOnly: [],
-        matchingPrefix: [],
-        flags: { dbUrlEnvVar: "DATABASE_URL" },
-      }),
-    ).toBe('supabase migrations pull --from "$DATABASE_URL"');
-  });
-
-  test("suggests a same-url placeholder for flag URL targets", () => {
-    expect(
-      suggestRemoteDriftRepair({
-        remoteOnly: [],
-        matchingPrefix: [],
-        flags: { dbUrlSame: true },
-      }),
-    ).toBe("supabase migrations pull --from <same-url>");
-  });
-
-  test("suggests reverted then applied", () => {
-    expect(
-      suggestRemoteDriftRepair({
-        remoteOnly: ["19990101000000"],
-        matchingPrefix: ["20260819120000"],
-      }),
-    ).toBe(
-      "supabase migration repair --status reverted 19990101000000\nsupabase migration repair --status applied 20260819120000",
+describe("formatLiveEditCommands", () => {
+  test("names diff then repair, not pull", () => {
+    expect(formatLiveEditCommands()).toBe(
+      [
+        "supabase migrations diff --against linked --file supabase/migrations/<version>_<name>.sql",
+        "supabase migration repair --status applied <version>",
+      ].join("\n"),
     );
   });
 });

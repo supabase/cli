@@ -22,7 +22,7 @@ It is the working spec for the `feat/implement-rfc-schema-first-development` bra
 | - | -------- |
 | 1 | No tracked schema checkpoint sidecar. Export ownership stays in `.pgdelta-export.json`. Draft journal: `.supabase/schema-draft.json` (gitignored). Existing `.schema-checkpoint.json` files are ignored. |
 | 2 | After a successful non-dry `schema generate` (including no-op when `M` already equals `D`), the draft journal is cleared. Local history is never written at generate time. `migrations apply` runs pending SQL, or inserts missing `supabase_migrations` rows for the longest pending prefix whose replay already matches the live catalog. Catalog match is schema-shape only — a pending DML-only file can be recorded without executing. Local `db reset` clears the journal immediately after the database is recreated. Reset is optional rebuild, not required to apply additive files. |
-| 3 | `schema generate --baseline --name <name>` is the existing-database onboarding step. Registering that baseline as already applied on a remote is a separate, explicit history operation: `supabase migration repair --status applied <versions>`. It is not pull, and the CLI does not auto-repair. Push/pull/baseline generate emit copy-pasteable repair (or pull) commands. |
+| 3 | `schema generate --baseline --name <name>` is the existing-database onboarding step. Registering that baseline as already applied on a remote is a separate, explicit history operation: `supabase migration repair --status applied <versions>`. It is not pull, and the CLI does not auto-repair. Push catalog-gap errors emit `migrations diff --against linked` then `migration repair --status applied`. Remote-only versions emit `migrations pull`. |
 | 4 | Manual migration changes during an active ungenerated draft fail closed with generate / reset / discard. No automatic rebase. |
 | 5 | Push does not classify pending files as destructive. Generate still fail-closes on ambiguous rename / coverage gaps. |
 | 6 | Only a running local stack owned by this project is verified-disposable. Every remote/URL target is durable. No environment classification yet. |
@@ -58,8 +58,8 @@ apps/cli/src/legacy/commands/migrations/
 | `migrations list` | files ↔ history | None |
 | `migrations diff` | M → live | Preview (optional `--file`) |
 | `migrations apply` | pending files → L | Local DB + `supabase_migrations` |
-| `migrations push` | pending files → R | Remote DB + history; fail closed on declarations-ahead or drift unless `--skip-verify`. Drift errors prefill `migration repair` / `migrations pull`. |
-| `migrations pull` | R − M → files | Migration files; next action is `migration repair --status applied` for the written versions |
+| `migrations push` | pending files → R | Remote DB + history; fail closed on declarations-ahead or catalog gap unless `--skip-verify`. Remote-only versions → `migrations pull`. Histories aligned + catalog gap → privilege-offer, or `migrations diff --against linked` then `migration repair --status applied`. First push (empty history): privilege-offer if ACL-only; pending files that already match the live catalog → `migration repair --status applied`; otherwise show SQL + confirm, then apply. |
+| `migrations pull` | remote `schema_migrations.statements` → files | Writes `supabase/migrations/<version>_<name>.sql`. Does not execute SQL. Does not catalog-diff. |
 
 Go-parity `db` / singular `migration` commands are unchanged on stable. This prototype does not add `next/` aliases or deprecations.
 

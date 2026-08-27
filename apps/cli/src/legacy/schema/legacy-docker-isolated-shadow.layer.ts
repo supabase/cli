@@ -14,14 +14,29 @@ import { LegacyPgDeltaNextShadow } from "../commands/db/shared/legacy-pgdelta-ne
 import type { LegacyPgDeltaNextShadowInput } from "../commands/db/shared/legacy-pgdelta-next-shadow.service.ts";
 import type { LegacyDeclarativeShadowDbError } from "../commands/db/shared/legacy-pgdelta.errors.ts";
 
-const toEngineError = (error: LegacyDeclarativeShadowDbError) =>
+const LEGACY_SHADOW_DAEMON_HINT = "Start Docker Desktop or Podman, then retry.";
+const LEGACY_SHADOW_RESTORE_HINT =
+  "Retry the command. If it persists, delete ~/.supabase/cache/shadow-baseline and rerun.";
+const LEGACY_SHADOW_RETRY_HINT = "Retry the command.";
+
+/** True only for an existing-tar restore failure — a cold/create miss never uses these phrases. */
+function isShadowBaselineRestoreFailure(message: string): boolean {
+  return (
+    message.includes("failed to restore shadow baseline") ||
+    message.includes("failed to restore archive into container")
+  );
+}
+
+export const legacyIsolatedShadowToEngineError = (error: LegacyDeclarativeShadowDbError) =>
   new SchemaEngineError({
     detail: error.message,
     suggestion:
       error.suggestion ??
       (error.docker === "daemon"
-        ? "Start Docker Desktop or Podman, then retry."
-        : "Retry the command. If it persists, delete ~/.supabase/cache/shadow-baseline and rerun."),
+        ? LEGACY_SHADOW_DAEMON_HINT
+        : isShadowBaselineRestoreFailure(error.message)
+          ? LEGACY_SHADOW_RESTORE_HINT
+          : LEGACY_SHADOW_RETRY_HINT),
   });
 
 const tomlError = (cause: unknown) =>
@@ -60,12 +75,14 @@ export const legacyDockerIsolatedShadowLayer = Layer.effect(
         const opts = yield* shadowInput();
         const shadow = yield* shadows
           .provisionDeclarative(opts)
-          .pipe(Effect.mapError(toEngineError));
+          .pipe(Effect.mapError(legacyIsolatedShadowToEngineError));
         return { url: shadow.declarativeUrl };
       }),
       provisionPlatform: Effect.gen(function* () {
         const opts = yield* shadowInput();
-        const shadow = yield* shadows.provisionPlatform(opts).pipe(Effect.mapError(toEngineError));
+        const shadow = yield* shadows
+          .provisionPlatform(opts)
+          .pipe(Effect.mapError(legacyIsolatedShadowToEngineError));
         return { url: shadow.platformUrl };
       }),
       provisionMigrations: Effect.gen(function* () {
@@ -76,7 +93,7 @@ export const legacyDockerIsolatedShadowLayer = Layer.effect(
         // Isolated replay only; live db start / migrations apply stay unprefixed.
         const shadow = yield* shadows
           .provisionMigrations(opts, wrapped)
-          .pipe(Effect.mapError(toEngineError));
+          .pipe(Effect.mapError(legacyIsolatedShadowToEngineError));
         return { url: shadow.migrationsUrl };
       }),
     });

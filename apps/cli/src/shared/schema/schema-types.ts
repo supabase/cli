@@ -89,6 +89,8 @@ export type SchemaDraftJournal = {
 export type SchemaCommandResult = {
   readonly status: SchemaCommandStatus;
   readonly message: string;
+  /** Unframed SQL or inventory. Rendered with `output.raw`; never put this in `message`. */
+  readonly body?: string;
   readonly data: Record<string, unknown>;
   readonly nextActions: ReadonlyArray<string>;
   readonly mutatedDatabase: boolean;

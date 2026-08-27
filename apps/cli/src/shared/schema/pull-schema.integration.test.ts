@@ -9,6 +9,7 @@ import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import type { DatabaseTargetSelector } from "../database/database-target.ts";
 import { DatabaseTargetResolver } from "../database/database-target.service.ts";
 import { MigrationRepository } from "../migrations/migration-repository.service.ts";
+import { MigrationRunner } from "../migrations/migration-runner.service.ts";
 import { pullSchema } from "./pull-schema.ts";
 import { PgDeltaSchemaEngine } from "./pg-delta-engine.service.ts";
 import { schemaStateLayer } from "./schema-state.layer.ts";
@@ -79,13 +80,31 @@ function mockMigrations() {
     MigrationRepository.of({
       listLocal: Effect.succeed([]),
       createEmpty: () => Effect.die("unused"),
+      writeFetched: () => Effect.die("unused"),
       writeGenerated: () => Effect.die("unused"),
       remove: () => Effect.die("unused"),
     }),
   );
 }
 
-function setup(files = [{ name: "public.sql", sql: "create table public.t (id int);\n" }]) {
+function mockRunner(history: ReadonlyArray<{ version: string; name: string }> = []) {
+  return Layer.succeed(
+    MigrationRunner,
+    MigrationRunner.of({
+      listRemote: () => Effect.succeed(history),
+      listRemoteStatements: () => Effect.succeed([]),
+      showServerVersion: () => Effect.succeed(undefined),
+      listInstalledExtensions: () => Effect.die("unused"),
+      applyPending: () => Effect.die("unused"),
+      markApplied: () => Effect.die("unused"),
+    }),
+  );
+}
+
+function setup(
+  files = [{ name: "public.sql", sql: "create table public.t (id int);\n" }],
+  opts: { readonly history?: ReadonlyArray<{ version: string; name: string }> } = {},
+) {
   const project = tempProject();
   const out = mockOutput({ format: "json", interactive: false });
   const workspace = schemaWorkspaceLayer({
@@ -102,6 +121,7 @@ function setup(files = [{ name: "public.sql", sql: "create table public.t (id in
     mockEngine(files),
     target.layer,
     mockMigrations(),
+    mockRunner(opts.history),
   );
   return { project, layer, target };
 }
@@ -117,6 +137,21 @@ describe("pullSchema", () => {
       expect(result.nextActions).toEqual([
         "to create a baseline: supabase schema generate --baseline --name initial_schema",
       ]);
+    });
+  });
+
+  it.live("points at migrations pull when the source already has history", () => {
+    const { layer } = setup([{ name: "public.sql", sql: "create table public.t (id int);\n" }], {
+      history: [{ version: "20260101000000", name: "alice" }],
+    });
+    return Effect.gen(function* () {
+      const result = yield* pullSchema({ force: false, pruneUnmanaged: false }).pipe(
+        Effect.provide(layer),
+      );
+      expect(result.nextActions).toEqual([
+        "to fetch missing files: supabase migrations pull --from local",
+      ]);
+      expect(result.nextActions.join("\n")).not.toContain("--baseline");
     });
   });
 
@@ -178,7 +213,7 @@ describe("pullSchema", () => {
     });
   });
 
-  it.live("fails closed on unmanaged files unless --prune-unmanaged", () => {
+  it.live("leaves unmanaged files on --force and hints _custom/", () => {
     const { project, layer } = setup([{ name: "kept.sql", sql: "select 1;\n" }]);
     const schemas = join(project.supabaseDir, "schemas");
     mkdirSync(schemas, { recursive: true });
@@ -189,11 +224,12 @@ describe("pullSchema", () => {
       `${JSON.stringify({ formatVersion: 1, files: ["kept.sql"] }, null, 2)}\n`,
     );
     return Effect.gen(function* () {
-      const exit = yield* pullSchema({ from: "local", force: true, pruneUnmanaged: false }).pipe(
+      const result = yield* pullSchema({ from: "local", force: true, pruneUnmanaged: false }).pipe(
         Effect.provide(layer),
-        Effect.exit,
       );
-      expect(Exit.isFailure(exit)).toBe(true);
+      expect(existsSync(join(schemas, "stray.sql"))).toBe(true);
+      expect(result.data["unmanaged"]).toEqual(["stray.sql"]);
+      expect(result.nextActions.join("\n")).toContain("supabase/schemas/_custom/");
     });
   });
 

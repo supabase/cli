@@ -39,7 +39,10 @@ const config = {
 } as const;
 
 export const legacyMigrationRepairCommand = Command.make("repair", config).pipe(
-  Command.withDescription("Repair the migration history table."),
+  Command.withDescription(
+    "Repair the migration history table.\n\n" +
+      "--status applied upserts version, name, and statements from the local file and does not run SQL.",
+  ),
   Command.withShortDescription("Repair the migration history table"),
   Command.withHandler((flags) =>
     legacyMigrationRepair({

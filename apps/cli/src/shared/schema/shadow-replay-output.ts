@@ -2,7 +2,8 @@ import { Effect } from "effect";
 import { Output } from "../output/output.service.ts";
 
 const APPLYING_MIGRATION_PREFIX = "Applying migration ";
-const REPLAY_BANNER = "Replaying migrations on a shadow (not the local database)...\n";
+const REPLAY_BANNER =
+  "Replaying migrations on a shadow to compare catalogs (not a live apply)...\n";
 
 export function wrapShadowReplayOutput(
   real: typeof Output.Service,

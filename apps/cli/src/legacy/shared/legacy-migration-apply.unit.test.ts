@@ -43,6 +43,7 @@ function fakeSession(
     failAfterBatch?: boolean;
     failWith?: { message: string; code?: string; detail?: string; position?: number };
     restoreRoleSql?: string;
+    restoreSearchPathSql?: string;
   } = {},
 ) {
   const calls: Array<{
@@ -53,6 +54,9 @@ function fakeSession(
   }> = [];
   const session: LegacyDbSession = {
     ...(opts.restoreRoleSql === undefined ? {} : { restoreRoleSql: opts.restoreRoleSql }),
+    ...(opts.restoreSearchPathSql === undefined
+      ? {}
+      : { restoreSearchPathSql: opts.restoreSearchPathSql }),
     exec: (sql) => {
       calls.push({ kind: "exec", sql });
       return opts.failOn !== undefined && sql.includes(opts.failOn)
@@ -171,6 +175,28 @@ describe("legacyApplyMigrationFile", () => {
       );
     },
   );
+
+  it.effect("restores platform search_path after RESET ALL on a stepped-down session", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_add_col.sql");
+    writeFileSync(file, "ALTER TABLE a ADD COLUMN b int;");
+    const searchPath = `SET search_path TO "$user", public, extensions`;
+    const { session, calls } = fakeSession({
+      restoreRoleSql: "SET SESSION ROLE postgres",
+      restoreSearchPathSql: searchPath,
+    });
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const execs = executedSql(calls);
+          expect(execs[0]).toBe("RESET ALL");
+          expect(execs[1]).toBe(searchPath);
+          expect(execs.indexOf(searchPath)).toBeLessThan(execs.indexOf("BEGIN"));
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
 
   it.effect("records a versioned empty migration in one batch", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
@@ -977,6 +1003,39 @@ describe("migration failure rendering (Go ExecBatch parity)", () => {
               "At statement: 0\n" +
               "CREATE TABLE test (path ltree NOT NULL)",
           );
+        }),
+      ),
+    );
+  });
+
+  it.effect("hints search_path when an unqualified function is missing", () => {
+    const stat = "SELECT gen_random_bytes(16)";
+    return failing(stat, {
+      message: "ERROR: function gen_random_bytes(integer) does not exist (SQLSTATE 42883)",
+      code: "42883",
+    }).pipe(
+      Effect.tap((message) =>
+        Effect.sync(() => {
+          expect(message).toContain(
+            "Hint: This function may be defined in a schema that's not in your search_path.",
+          );
+          expect(message).toContain("extensions.gen_random_bytes");
+          expect(message).toContain(`SET search_path TO "$user", public, extensions`);
+        }),
+      ),
+    );
+  });
+
+  it.effect("skips the function hint when the name is already schema-qualified", () => {
+    const stat = "SELECT extensions.gen_random_bytes(16)";
+    return failing(stat, {
+      message:
+        "ERROR: function extensions.gen_random_bytes(integer) does not exist (SQLSTATE 42883)",
+      code: "42883",
+    }).pipe(
+      Effect.tap((message) =>
+        Effect.sync(() => {
+          expect(message).not.toContain("Hint: This function may be defined");
         }),
       ),
     );

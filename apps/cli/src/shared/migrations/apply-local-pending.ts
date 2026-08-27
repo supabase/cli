@@ -1,10 +1,15 @@
 import { Effect } from "effect";
 import { acquireDatabasePool } from "../database/database-pool.ts";
 import { SchemaHistoryConflictError } from "../schema/schema-errors.ts";
+import {
+  imageExtensionCatchupAlreadyPresent,
+  prepareDeclarativeShadow,
+} from "../schema/prepare-declarative-shadow.ts";
 import { PgDeltaSchemaEngine } from "../schema/pg-delta-engine.service.ts";
 import type { MigrationFile } from "./migration-file.ts";
 import { findMatchingPendingPrefix } from "./matching-pending-prefix.ts";
 import { formatHistoryConflict } from "./migration-repair-suggest.ts";
+import { emptyPendingMigrationError } from "./privilege-offer.ts";
 import { MigrationRunner, type MigrationApplyResult } from "./migration-runner.service.ts";
 import type { Pool } from "pg";
 
@@ -36,31 +41,53 @@ export const applyLocalPending = Effect.fn("migrations.applyLocalPending")(funct
     );
   }
 
-  const already = local.filter((file) => present.has(file.version));
-  const shadow = yield* engine.provisionPlatform;
-  const shadowPool = yield* acquireDatabasePool(shadow.url);
-  if (already.length > 0) {
-    yield* runner.applyPending(shadowPool, already);
+  const empty = emptyPendingMigrationError(pending);
+  if (empty !== undefined) {
+    return yield* empty;
   }
 
-  const recorded = yield* findMatchingPendingPrefix(shadowPool, pool, already, pending);
+  const already = local.filter((file) => present.has(file.version));
+  const installed = new Set(yield* runner.listInstalledExtensions(pool));
+  // First-push catchup recreates image extensions already on the local catalog.
+  const leftoverCatchup = pending.filter((file) =>
+    imageExtensionCatchupAlreadyPresent(file.content, installed),
+  );
+  const leftoverVersions = new Set(leftoverCatchup.map((file) => file.version));
+  const scanPending = pending.filter((file) => !leftoverVersions.has(file.version));
 
-  if (recorded.length === pending.length) {
-    yield* runner.markApplied(pool, pending);
+  if (scanPending.length === 0) {
+    yield* runner.markApplied(pool, leftoverCatchup);
     return {
       applied: [],
-      recorded: pending.map((file) => file.version),
+      recorded: leftoverCatchup.map((file) => file.version),
       skipped: already.map((file) => file.version),
     } satisfies MigrationApplyResult;
   }
 
-  if (recorded.length > 0) {
-    yield* runner.markApplied(pool, recorded);
+  const shadow = yield* engine.provisionPlatform;
+  const shadowPool = yield* acquireDatabasePool(shadow.url);
+  yield* prepareDeclarativeShadow(
+    shadowPool,
+    [...already, ...scanPending].map((file) => ({ name: file.fileName, sql: file.content })),
+  );
+
+  const recorded = yield* findMatchingPendingPrefix(shadowPool, pool, already, scanPending, {
+    failClosed: true,
+  });
+
+  const toRecord = [...leftoverCatchup, ...recorded];
+  if (toRecord.length > 0) {
+    yield* runner.markApplied(pool, toRecord);
   }
 
-  const result = yield* runner.applyPending(pool, local);
+  const remaining = scanPending.slice(recorded.length);
+  // Full local inventory: applyPending treats a partial list as remote-only history.
+  const result =
+    remaining.length === 0
+      ? { applied: [], skipped: already.map((file) => file.version) }
+      : yield* runner.applyPending(pool, local);
   return {
     ...result,
-    recorded: recorded.map((file) => file.version),
+    recorded: toRecord.map((file) => file.version),
   } satisfies MigrationApplyResult;
 });

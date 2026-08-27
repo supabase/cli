@@ -3,6 +3,7 @@ import { readExportManifest } from "@supabase/pg-delta/frontends";
 import { acquireDatabasePool } from "../database/database-pool.ts";
 import { DatabaseTargetResolver } from "../database/database-target.service.ts";
 import { applyLocalPending } from "../migrations/apply-local-pending.ts";
+import { assertLocalPostgresMajorMatchesConfig } from "../migrations/remote-postgres.ts";
 import { MigrationRepository } from "../migrations/migration-repository.service.ts";
 import type { MigrationApplyResult } from "../migrations/migration-runner.service.ts";
 import { digestUtf8, digestVersions } from "./schema-digest.ts";
@@ -42,6 +43,7 @@ export const applySchema = Effect.fn("schema.apply")(function* () {
     Effect.scoped(
       Effect.gen(function* () {
         const pool = yield* acquireDatabasePool(target.connectionString);
+        yield* assertLocalPostgresMajorMatchesConfig(pool);
         const existingJournal = yield* state.readJournal;
         const ungeneratedDraft =
           existingJournal._tag === "Some" &&

@@ -11,12 +11,12 @@ counterpart exists for this behavior.
 
 ## Files Read
 
-| Path                                 | Format              | When                                                                                                                                                                     |
-| ------------------------------------ | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `supabase/config.toml`               | TOML (`project_id`) | NOT read for ref resolution itself — read by `LegacyCliConfig` for workdir/project-id discovery generally (`--workdir` resolution, `SUPABASE_PROJECT_ID` passthrough)    |
-| `supabase/.temp/linked-project.json` | JSON (`ref` field)  | only when the given `[ref-or-branch]`/`--project-ref` value is not ref-shaped, as the 2nd parent-project candidate for branch-name resolution (CLI-2167, TS-only)        |
-| `supabase/.temp/project-ref`         | plain text          | only when the given `[ref-or-branch]`/`--project-ref` value is not ref-shaped, as the 3rd (last) parent-project candidate for branch-name resolution (CLI-2167, TS-only) |
-| `~/.supabase/access-token`           | plain text          | when `SUPABASE_ACCESS_TOKEN` is unset and the keyring is unavailable                                                                                                     |
+| Path                                 | Format                                  | When                                                                                                                                                                                                    |
+| ------------------------------------ | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `supabase/config.toml`               | TOML (`project_id`, `db.major_version`) | NOT read for ref resolution. `LegacyCliConfig` uses it for workdir/project-id. After writing `postgres-version`, `link` also reads `[db] major_version` so it can align the shadow major to the remote. |
+| `supabase/.temp/linked-project.json` | JSON (`ref` field)                      | only when the given `[ref-or-branch]`/`--project-ref` value is not ref-shaped, as the 2nd parent-project candidate for branch-name resolution (CLI-2167, TS-only)                                       |
+| `supabase/.temp/project-ref`         | plain text                              | only when the given `[ref-or-branch]`/`--project-ref` value is not ref-shaped, as the 3rd (last) parent-project candidate for branch-name resolution (CLI-2167, TS-only)                                |
+| `~/.supabase/access-token`           | plain text                              | when `SUPABASE_ACCESS_TOKEN` is unset and the keyring is unavailable                                                                                                                                    |
 
 > For resolving the final linked ref, the on-disk `supabase/.temp/project-ref` file is **not**
 > read — `link` never falls back to it there. It **is** read for the TS-only branch-name lookup above, which resolves
@@ -45,6 +45,7 @@ All under `<workdir>/supabase/.temp/` (plain text, created with parent dirs as n
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `project-ref`         | always, after services link (mandatory — a write failure fails the command)                                                                                                                                                                                                                                                                                                              |
 | `postgres-version`    | when the project status is 200 and `database.version` is non-empty                                                                                                                                                                                                                                                                                                                       |
+| `../config.toml`      | when `postgres-version` is written and `[db] major_version` differs from the remote major — rewritten in place. Prints `Shadow major is now N (was M). The running local database is still M. Next: supabase db reset`                                                                                                                                                                   |
 | `storage-migration`   | best-effort — storage config `migrationVersion`                                                                                                                                                                                                                                                                                                                                          |
 | `pooler-url`          | best-effort — processed PRIMARY pooler connection string; **removed** when `--skip-pooler`                                                                                                                                                                                                                                                                                               |
 | `rest-version`        | best-effort — PostgREST swagger `info.version`, prefixed `v`                                                                                                                                                                                                                                                                                                                             |
@@ -141,6 +142,8 @@ Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` +
 - spinner: `Resolving branch...` while listing branches for a branch-name lookup (CLI-2167,
   TS-only; suppressed in `json`/`stream-json` mode like every other `output.task`).
 - stdout: `Finished supabase link.`
+- stdout (info): `Shadow major is now N (was M). The running local database is still M. Next: supabase db reset` when
+  `config.toml` `[db] major_version` was rewritten to match the remote.
 
 ### `--output-format json` / `stream-json`
 
@@ -153,10 +156,10 @@ in these modes (stderr in `json`; a structured `log` event in `stream-json`) rat
 
 ## Known divergence
 
-- The cosmetic `WARNING: Local database version differs from the linked project.` message is
-  **not** reproduced: it requires loading the local `config.toml` `[db].major_version` with CLI
-  defaults, which the legacy shell does not surface. The `postgres-version` file (the meaningful
-  side effect) is still written.
+- When `postgres-version` is written and `[db] major_version` in `supabase/config.toml` differs
+  from the remote major, `link` rewrites the TOML and prints
+  `Shadow major is now N (was M). The running local database is still M. Next: supabase db reset`. The old Go CLI only
+  warned that the versions differed.
 - The `Finished supabase link.` line is emitted as **plain text**; the old Go CLI rendered
   `supabase link` in ANSI cyan. This matches the established legacy-port convention (color
   helpers are rendered plain); ANSI-stripping scripts are unaffected.

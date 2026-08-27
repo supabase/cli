@@ -25,14 +25,14 @@ export type LegacySchemaGenerateFlags = CliCommand.Command.Config.Infer<typeof c
 export const legacySchemaGenerateCommand = Command.make("generate", config).pipe(
   Command.withDescription(
     "Turn supabase/schemas into migration files.\n\n" +
-      "Compares a clean replay of supabase/migrations to supabase/schemas. Does not apply anything to a live database.\n\n" +
-      "--dry-run shows the same plan without writing files. --baseline writes the first migration from supabase/schemas when supabase/migrations is empty.",
+      "Compares a clean replay of supabase/migrations to supabase/schemas on a local shadow, not the linked project. Does not apply anything to a live database.\n\n" +
+      "--dry-run prints the plan SQL without writing files. --baseline writes the first migration from supabase/schemas when supabase/migrations is empty.",
   ),
   Command.withShortDescription("Write migrations from supabase/schemas"),
   Command.withExamples([
     {
       command: "supabase schema generate --dry-run",
-      description: "Preview the migration without writing files",
+      description: "Preview the plan SQL without writing files",
     },
     {
       command: "supabase schema generate --name add_billing",

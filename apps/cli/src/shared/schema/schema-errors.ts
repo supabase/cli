@@ -4,6 +4,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../telemetry/error-actionability.ts";
+import type { SchemaScriptFile } from "./schema-body.ts";
 
 function SchemaCliError<Tag extends string>(tag: Tag) {
   return class extends Data.TaggedError(tag)<{
@@ -99,15 +100,73 @@ export class SchemaPlanningBlockedError extends SchemaCliError("SchemaPlanningBl
   }
 }
 
-export class SchemaDeclarationsAheadError extends SchemaCliError("SchemaDeclarationsAheadError") {
+export class SchemaDeclarationsAheadError extends Data.TaggedError("SchemaDeclarationsAheadError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+  readonly sql?: string;
+  readonly files?: ReadonlyArray<SchemaScriptFile>;
+}> {
+  override get message() {
+    return this.detail;
+  }
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.migrationDrift;
   }
 }
 
-export class SchemaRemoteDriftError extends SchemaCliError("SchemaRemoteDriftError") {
+export class SchemaRemoteDriftError extends Data.TaggedError("SchemaRemoteDriftError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+  readonly sql?: string;
+  readonly files?: ReadonlyArray<SchemaScriptFile>;
+}> {
+  override get message() {
+    return this.detail;
+  }
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.migrationDrift;
+  }
+}
+
+export class SchemaPrivilegeOfferError extends Data.TaggedError("SchemaPrivilegeOfferError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+  readonly sql: string;
+  readonly files?: ReadonlyArray<SchemaScriptFile>;
+}> {
+  override get message() {
+    return this.detail;
+  }
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.migrationDrift;
+  }
+}
+
+export class SchemaCatalogAdoptError extends Data.TaggedError("SchemaCatalogAdoptError")<{
+  readonly detail: string;
+  readonly suggestion: string;
+  readonly sql: string;
+  readonly files?: ReadonlyArray<SchemaScriptFile>;
+}> {
+  override get message() {
+    return this.detail;
+  }
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.migrationDrift;
+  }
+}
+
+export class SchemaEmptyHistoryReplayError extends SchemaCliError("SchemaEmptyHistoryReplayError") {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.migrationDrift;
+  }
+}
+
+export class SchemaEmptyMigrationStatementsError extends SchemaCliError(
+  "SchemaEmptyMigrationStatementsError",
+) {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
   }
 }
 
@@ -158,5 +217,13 @@ export class SchemaTargetRequiredError extends SchemaCliError("SchemaTargetRequi
 export class SchemaCancelledError extends SchemaCliError("SchemaCancelledError") {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.cancelled;
+  }
+}
+
+export class SchemaMigrationsPrivilegeError extends SchemaCliError(
+  "SchemaMigrationsPrivilegeError",
+) {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
   }
 }

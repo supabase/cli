@@ -105,6 +105,12 @@ export interface LegacyDbSession {
    * statement: consumers embed it verbatim in batches.
    */
   readonly restoreRoleSql?: string;
+  /**
+   * SQL that restores hosted `postgres` search_path after a CLI-owned `RESET ALL`.
+   * Login-role GUC defaults omit `extensions`; SET ROLE does not adopt postgres
+   * rolconfig. Absent when the caller does not own that restore.
+   */
+  readonly restoreSearchPathSql?: string;
   /** Run a single SQL statement, ignoring any returned rows. */
   readonly exec: (sql: string) => Effect.Effect<void, LegacyDbExecError>;
   /**

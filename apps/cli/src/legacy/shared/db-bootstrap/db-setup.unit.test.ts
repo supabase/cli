@@ -83,7 +83,7 @@ function fakeSession() {
   return { session, calls };
 }
 
-function mockDockerRun(opts: { exitCode?: number } = {}) {
+function mockDockerRun(opts: { exitCode?: number; stderr?: string } = {}) {
   const runs: Array<LegacyDockerRunOpts> = [];
   const captureOptsCalls: Array<{ readonly teeStderr?: boolean } | undefined> = [];
   const layer = Layer.succeed(LegacyDockerRun, {
@@ -94,7 +94,7 @@ function mockDockerRun(opts: { exitCode?: number } = {}) {
       return Effect.succeed({
         exitCode: opts.exitCode ?? 0,
         stdout: new Uint8Array(),
-        stderr: "",
+        stderr: opts.stderr ?? "",
       });
     },
     // `legacyRunStartMigrateJob` (`db-setup.ts`) discards stdout via `runStream` (not
@@ -104,7 +104,7 @@ function mockDockerRun(opts: { exitCode?: number } = {}) {
     runStream: (runOpts, streamOpts) => {
       runs.push(runOpts);
       captureOptsCalls.push({ teeStderr: streamOpts.teeStderr });
-      return Effect.succeed({ exitCode: opts.exitCode ?? 0, stderr: "" });
+      return Effect.succeed({ exitCode: opts.exitCode ?? 0, stderr: opts.stderr ?? "" });
     },
   });
   return { layer, runs, captureOptsCalls };
@@ -622,6 +622,42 @@ describe("legacyRunFreshDbSetup", () => {
         }),
       );
     });
+
+    it.effect(
+      "a non-zero exit includes the last meaningful container stderr line without --debug",
+      () => {
+        const workdir = makeWorkdir();
+        const { session } = fakeSession();
+        const out = mockOutput();
+        const docker = mockDockerRun({
+          exitCode: 1,
+          stderr: [
+            "ulimit: stack size unlimited",
+            "StorageBackendError: Migration fix-search-by-timestamp-sqli not found",
+            "    at Object.InternalError (/app/dist/internal/errors/codes.js:278:34)",
+            "    at /app/dist/internal/database/migrations/migrate.js:572:36",
+            "Node.js v22.14.0",
+            "",
+          ].join("\n"),
+        });
+        const config = decodeConfig({ storage: { enabled: false }, auth: { enabled: false } });
+        return run(
+          baseInput(workdir, session, { majorVersion: 15, config, debug: false }),
+          out,
+          docker,
+        ).pipe(
+          Effect.flip,
+          Effect.map((error) => {
+            expect(error).toBeInstanceOf(LegacyDbSetupError);
+            expect((error as LegacyDbSetupError).message).toBe(
+              "error running container: exit 1:\nStorageBackendError: Migration fix-search-by-timestamp-sqli not found",
+            );
+            expect(docker.captureOptsCalls).toEqual([{ teeStderr: false }]);
+            rmSync(workdir, { recursive: true, force: true });
+          }),
+        );
+      },
+    );
   });
 
   describe("ApplyApiPrivileges tri-state", () => {

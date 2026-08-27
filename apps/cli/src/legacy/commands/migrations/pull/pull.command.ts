@@ -10,23 +10,23 @@ const config = {
     Flag.withDescription("Remote database. Defaults to linked. Also accepts a connection string."),
     Flag.withDefault("linked"),
   ),
-  name: Flag.string("name").pipe(
-    Flag.withDescription("Name for the pulled migration file."),
-    Flag.optional,
-  ),
 } as const;
 
 export type LegacyMigrationsPullFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const legacyMigrationsPullCommand = Command.make("pull", config).pipe(
   Command.withDescription(
-    "Record remote-only schema as local migration files.\n\n" +
-      "Defaults to the linked project. Does not read supabase/schemas.\n\n" +
-      "After writing files, mark those versions applied on the remote with migration repair so they are not re-run.",
+    "Fetch remote migration history files from schema_migrations (version, name, statements).\n\n" +
+      "Defaults to the linked project. Writes supabase/migrations/<version>_<name>.sql. Does not execute SQL.\n\n" +
+      "Same version and SQL is skipped. A SQL mismatch leaves the local file and writes the remote copy under .supabase/remote-migrations/.",
   ),
-  Command.withShortDescription("Record remote drift as migration files"),
+  Command.withShortDescription("Fetch remote migration history files"),
   Command.withExamples([
-    { command: "supabase migrations pull", description: "Record linked-project drift as files" },
+    { command: "supabase migrations pull", description: "Fetch linked-project history files" },
+    {
+      command: "supabase migrations pull --from <db-url>",
+      description: "Fetch history files from a connection string",
+    },
   ]),
   Command.withHandler((flags) =>
     legacyMigrationsPull(flags).pipe(

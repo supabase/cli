@@ -13,7 +13,7 @@ describe("wrapShadowReplayOutput", () => {
       yield* wrapped.raw("Applying migration b.sql...\n", "stderr");
       yield* wrapped.raw("Seeding globals from roles.sql...\n", "stderr");
       expect(out.rawChunks.map((chunk) => chunk.text)).toEqual([
-        "Replaying migrations on a shadow (not the local database)...\n",
+        "Replaying migrations on a shadow to compare catalogs (not a live apply)...\n",
         "Seeding globals from roles.sql...\n",
       ]);
     }).pipe(Effect.provide(out.layer));

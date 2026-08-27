@@ -1,7 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 import { classifyPlanHazards, type Plan } from "@supabase/pg-delta/plan";
-import { Effect, Layer } from "effect";
+import { Effect, Exit, Layer } from "effect";
 import type { Pool } from "pg";
+import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import { SchemaEngineError } from "../schema/schema-errors.ts";
 import { PgDeltaSchemaEngine } from "../schema/pg-delta-engine.service.ts";
 import type { SchemaPlanView } from "../schema/schema-types.ts";
@@ -103,6 +104,9 @@ const runner = Layer.succeed(
   MigrationRunner,
   MigrationRunner.of({
     listRemote: () => Effect.succeed([]),
+    listRemoteStatements: () => Effect.succeed([]),
+    showServerVersion: () => Effect.succeed(undefined),
+    listInstalledExtensions: () => Effect.succeed([]),
     applyPending: (pool, files: ReadonlyArray<MigrationFile>) =>
       Effect.gen(function* () {
         for (const file of files) {
@@ -131,7 +135,7 @@ describe("findMatchingPendingPrefix", () => {
         [second],
       );
       expect(prefix.map((file) => file.version)).toEqual([second.version]);
-    }).pipe(Effect.provide(Layer.mergeAll(runner, engine))),
+    }).pipe(Effect.provide(Layer.mergeAll(runner, engine, mockOutput().layer))),
   );
 
   it.live("stops the prefix scan when a later file cannot replay", () =>
@@ -143,6 +147,19 @@ describe("findMatchingPendingPrefix", () => {
         [first, second],
       );
       expect(prefix.map((file) => file.version)).toEqual([first.version]);
-    }).pipe(Effect.provide(Layer.mergeAll(runner, engine))),
+    }).pipe(Effect.provide(Layer.mergeAll(runner, engine, mockOutput().layer))),
+  );
+
+  it.live("fails closed when local apply cannot swallow a replay error", () =>
+    Effect.gen(function* () {
+      const exit = yield* findMatchingPendingPrefix(
+        historyPool({ failSql: second.content }),
+        historyPool(),
+        [],
+        [first, second],
+        { failClosed: true },
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+    }).pipe(Effect.provide(Layer.mergeAll(runner, engine, mockOutput().layer))),
   );
 });

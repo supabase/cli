@@ -8,7 +8,7 @@ import { legacyMigrationsPush } from "./push.handler.ts";
 const config = {
   yes: Flag.boolean("yes").pipe(
     Flag.withDescription(
-      "Skip confirmation prompts. Still checks target identity and live verify.",
+      "Skip the dirty first-push catalog confirm. Still type the project ref unless --project-ref is set. Live verify still runs.",
     ),
     Flag.withAlias("y"),
   ),
@@ -35,14 +35,18 @@ export type LegacyMigrationsPushFlags = CliCommand.Command.Config.Infer<typeof c
 export const legacyMigrationsPushCommand = Command.make("push", config).pipe(
   Command.withDescription(
     "Apply pending migration files to the linked project.\n\n" +
-      "This is the only CLI command that changes a remote schema.\n\n" +
-      "Fails if supabase/schemas is ahead of the migration files, or if the remote has drifted.",
+      "This is the only CLI command that changes a remote schema. It prints the pending files, then asks you to type the project ref (even with --yes). --yes skips only the dirty-catalog confirm.\n\n" +
+      "Live-verify must pass unless --skip-verify. Remote-only versions: migrations pull. Histories aligned but catalog differs: privilege offer, or migrations diff --against linked then migration repair --status applied.",
   ),
   Command.withShortDescription("Push pending migrations to the linked project"),
   Command.withExamples([
     {
       command: "supabase migrations push",
-      description: "Apply pending files to the linked project",
+      description: "Preview pending files, confirm the project ref, then apply",
+    },
+    {
+      command: "supabase migrations push --yes --project-ref <ref>",
+      description: "Skip the ref prompt by asserting the linked project",
     },
   ]),
   Command.withHandler((flags) =>

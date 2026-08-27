@@ -25,6 +25,51 @@ export function repairFlagsForTarget(
   return projectRef !== undefined ? { projectRef } : {};
 }
 
+function formatAgainstSelector(flags?: MigrationRepairFlags): string {
+  if (flags?.local === true) return "local";
+  if (flags?.dbUrlEnvVar !== undefined) return `"$${flags.dbUrlEnvVar}"`;
+  if (flags?.dbUrlSame === true) return "<same-url>";
+  return "linked";
+}
+
+export function formatMigrationsPushCommand(flags?: MigrationRepairFlags): string {
+  if (flags?.local === true) return "supabase migrations apply";
+  const parts = ["supabase", "migrations", "push"];
+  if (flags?.dbUrlEnvVar !== undefined) {
+    parts.push("--db-url", `"$${flags.dbUrlEnvVar}"`, "--allow-remote");
+  } else if (flags?.dbUrlSame === true) {
+    parts.push("--db-url", "<same-url>", "--allow-remote");
+  }
+  return parts.join(" ");
+}
+
+function formatMigrationsPullFrom(flags?: MigrationRepairFlags): string {
+  return `--from ${formatAgainstSelector(flags)}`;
+}
+
+export function formatMigrationsPullCommand(flags?: MigrationRepairFlags): string {
+  return `supabase migrations pull ${formatMigrationsPullFrom(flags)}`;
+}
+
+export function formatSchemaPullCommand(flags?: MigrationRepairFlags): string {
+  return `supabase schema pull ${formatMigrationsPullFrom(flags)}`;
+}
+
+export function formatMigrationsDiffFileCommand(flags?: MigrationRepairFlags): string {
+  return `supabase migrations diff --against ${formatAgainstSelector(flags)} --file supabase/migrations/<version>_<name>.sql`;
+}
+
+export function formatLiveEditCommands(flags?: MigrationRepairFlags): string {
+  return [
+    formatMigrationsDiffFileCommand(flags),
+    formatMigrationRepairCommand({
+      status: "applied",
+      versions: ["<version>"],
+      flags,
+    }),
+  ].join("\n");
+}
+
 export function formatMigrationRepairCommand(input: {
   readonly status: "applied" | "reverted";
   readonly versions: ReadonlyArray<string>;
@@ -51,49 +96,13 @@ export function formatHistoryConflict(input: {
   readonly pending: ReadonlyArray<string>;
   readonly flags?: MigrationRepairFlags;
 }): { readonly detail: string; readonly suggestion: string } {
+  const remote = input.remoteOnly.join(", ");
+  const detail =
+    input.pending.length > 0
+      ? `Local and remote migration histories have diverged (remote-only: ${remote}; pending: ${input.pending.join(", ")}).`
+      : `Remote history has versions with no local files: ${remote}.`;
   return {
-    detail: `Local and remote migration histories have diverged (remote-only: ${input.remoteOnly.join(", ")}; pending: ${input.pending.join(", ")}).`,
-    suggestion: formatMigrationRepairCommand({
-      status: "reverted",
-      versions: input.remoteOnly,
-      flags: input.flags,
-    }),
+    detail,
+    suggestion: formatMigrationsPullCommand(input.flags),
   };
-}
-
-export function suggestRemoteDriftRepair(input: {
-  readonly remoteOnly: ReadonlyArray<string>;
-  readonly matchingPrefix: ReadonlyArray<string>;
-  readonly flags?: MigrationRepairFlags;
-}): string {
-  const lines: Array<string> = [];
-  if (input.remoteOnly.length > 0) {
-    lines.push(
-      formatMigrationRepairCommand({
-        status: "reverted",
-        versions: input.remoteOnly,
-        flags: input.flags,
-      }),
-    );
-  }
-  if (input.matchingPrefix.length > 0) {
-    lines.push(
-      formatMigrationRepairCommand({
-        status: "applied",
-        versions: input.matchingPrefix,
-        flags: input.flags,
-      }),
-    );
-  } else {
-    const from =
-      input.flags?.local === true
-        ? "--from local"
-        : input.flags?.dbUrlEnvVar !== undefined
-          ? `--from "$${input.flags.dbUrlEnvVar}"`
-          : input.flags?.dbUrlSame === true
-            ? "--from <same-url>"
-            : "--from linked";
-    lines.push(`supabase migrations pull ${from}`);
-  }
-  return lines.join("\n");
 }

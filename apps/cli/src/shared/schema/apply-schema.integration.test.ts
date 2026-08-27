@@ -1,11 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
 import { classifyPlanHazards, type Plan } from "@supabase/pg-delta/plan";
-import { Cause, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import { DatabaseTargetResolver } from "../database/database-target.service.ts";
+import { formatHistoryConflict } from "../migrations/migration-repair-suggest.ts";
 import { MigrationRepository } from "../migrations/migration-repository.service.ts";
 import { MigrationRunner } from "../migrations/migration-runner.service.ts";
 import { applySchema } from "./apply-schema.ts";
+import { SchemaEngineError, SchemaHistoryConflictError } from "./schema-errors.ts";
 import { digestVersions } from "./schema-digest.ts";
 import { PgDeltaSchemaEngine } from "./pg-delta-engine.service.ts";
 import { SchemaStateStore } from "./schema-state.service.ts";
@@ -88,7 +90,12 @@ function setup(
   opts: {
     journal?: SchemaDraftJournal;
     history?: ReadonlyArray<{ version: string; name: string }>;
+    files?: ReadonlyArray<typeof localFile>;
     catalogMatch?: boolean;
+    installedExtensions?: ReadonlyArray<string>;
+    liveServerVersion?: string;
+    configMajor?: number;
+    failApplying?: boolean;
     planChanges?: boolean;
     plan?: Partial<Pick<SchemaPlanView, "coverageBlocked" | "diagnostics" | "renameBlocked">>;
     applyPlan?: SchemaApplyOutcome;
@@ -98,10 +105,22 @@ function setup(
   let applyPending = 0;
   let marked = 0;
   let journaled = false;
+  const liveApplied: string[] = [];
+  const recorded = new Set((opts.history ?? []).map((row) => row.version));
+  const configLayers =
+    opts.configMajor === undefined
+      ? Layer.empty
+      : Layer.mergeAll(
+          Path.layer,
+          FileSystem.layerNoop({
+            readFileString: () => Effect.succeed(`[db]\nmajor_version = ${opts.configMajor}\n`),
+          }),
+        );
   return {
     get applyPending() {
       return applyPending;
     },
+    liveApplied,
     get marked() {
       return marked;
     },
@@ -109,6 +128,7 @@ function setup(
       return journaled;
     },
     layer: Layer.mergeAll(
+      configLayers,
       out.layer,
       Layer.succeed(
         DatabaseTargetResolver,
@@ -157,8 +177,9 @@ function setup(
       Layer.succeed(
         MigrationRepository,
         MigrationRepository.of({
-          listLocal: Effect.succeed([localFile]),
+          listLocal: Effect.succeed(opts.files ?? [localFile]),
           createEmpty: () => Effect.die("unused"),
+          writeFetched: () => Effect.die("unused"),
           writeGenerated: () => Effect.die("unused"),
           remove: () => Effect.die("unused"),
         }),
@@ -167,14 +188,46 @@ function setup(
         MigrationRunner,
         MigrationRunner.of({
           listRemote: () => Effect.succeed(opts.history ?? []),
-          applyPending: () =>
-            Effect.sync(() => {
+          listRemoteStatements: () => Effect.succeed([]),
+          showServerVersion: () => Effect.succeed(opts.liveServerVersion),
+          listInstalledExtensions: () => Effect.succeed(opts.installedExtensions ?? []),
+          applyPending: (pool, files) =>
+            Effect.gen(function* () {
               applyPending += 1;
-              return { applied: [], skipped: [] };
+              const conn = pool.options.connectionString ?? "";
+              if (opts.failApplying === true && !conn.includes("54322")) {
+                return yield* new SchemaEngineError({
+                  detail: 'Failed applying migration: extension "pgjwt" already exists',
+                  suggestion: "Check the database connection and migration SQL, then retry.",
+                });
+              }
+              const leftover = files.filter((file) => !recorded.has(file.version));
+              const remoteOnly = [...recorded].filter(
+                (version) => !files.some((file) => file.version === version),
+              );
+              if (remoteOnly.length > 0 && leftover.length > 0) {
+                return yield* new SchemaHistoryConflictError(
+                  formatHistoryConflict({
+                    remoteOnly,
+                    pending: leftover.map((file) => file.version),
+                    flags: { local: true },
+                  }),
+                );
+              }
+              if (conn.includes("54322")) {
+                liveApplied.splice(0, liveApplied.length, ...leftover.map((file) => file.version));
+              }
+              return {
+                applied: leftover.map((file) => file.version),
+                skipped: files
+                  .filter((file) => recorded.has(file.version))
+                  .map((file) => file.version),
+              };
             }),
-          markApplied: () =>
+          markApplied: (_pool, files) =>
             Effect.sync(() => {
               marked += 1;
+              for (const file of files) recorded.add(file.version);
             }),
         }),
       ),
@@ -217,6 +270,7 @@ describe("applySchema", () => {
       expect(ctx.applyPending).toBe(2);
       expect(ctx.marked).toBe(0);
       expect(ctx.journaled).toBe(false);
+      expect(ctx.liveApplied).toEqual([localFile.version]);
     });
   });
 
@@ -323,6 +377,63 @@ describe("applySchema", () => {
         });
       }
       expect(ctx.journaled).toBe(true);
+    });
+  });
+
+  it.live("fails closed when the prefix scan cannot replay pending SQL", () => {
+    const ctx = setup({ failApplying: true, planChanges: true });
+    return Effect.gen(function* () {
+      const exit = yield* applySchema().pipe(Effect.provide(ctx.layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const failure = Exit.isFailure(exit) ? Cause.findErrorOption(exit.cause) : Option.none();
+      expect(failure._tag).toBe("Some");
+      if (failure._tag === "Some") {
+        expect(failure.value).toBeInstanceOf(SchemaEngineError);
+        expect(failure.value.detail).toContain("pgjwt");
+      }
+      expect(ctx.journaled).toBe(false);
+      expect(ctx.liveApplied).toEqual([]);
+    });
+  });
+
+  it.live("refuses when the local Postgres major does not match config.toml", () => {
+    const ctx = setup({
+      liveServerVersion: "15.8",
+      configMajor: 17,
+      planChanges: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* applySchema().pipe(Effect.provide(ctx.layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("PostgreSQL 15");
+      expect(JSON.stringify(exit)).toContain("major_version is 17");
+      expect(JSON.stringify(exit)).toContain("supabase db reset");
+      expect(ctx.journaled).toBe(false);
+      expect(ctx.applyPending).toBe(0);
+    });
+  });
+
+  it.live("journals a draft after recording leftover pending that already matches", () => {
+    const catchupFile = {
+      version: "20260101000001",
+      name: "catchup",
+      fileName: "20260101000001_catchup.sql",
+      absolutePath: "/tmp/migrations/20260101000001_catchup.sql",
+      content: 'CREATE EXTENSION "pgjwt" SCHEMA "extensions";',
+      transactional: true,
+    };
+    const ctx = setup({
+      files: [localFile, catchupFile],
+      history: [{ version: localFile.version, name: localFile.name }],
+      installedExtensions: ["pgjwt"],
+      planChanges: true,
+    });
+    return Effect.gen(function* () {
+      const result = yield* applySchema().pipe(Effect.provide(ctx.layer));
+      expect(result.status).toBe("draft");
+      expect(ctx.journaled).toBe(true);
+      expect(ctx.marked).toBe(1);
+      expect(ctx.liveApplied).toEqual([]);
     });
   });
 

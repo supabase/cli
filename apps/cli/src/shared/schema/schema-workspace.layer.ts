@@ -250,11 +250,15 @@ export const schemaWorkspaceLayer = (paths: SchemaWorkspacePaths) =>
           }
 
           const classification = yield* classifyProposed(proposed, directory);
-          if (classification.unmanaged.length > 0 && !input.pruneUnmanaged) {
+          if (
+            classification.unmanaged.length > 0 &&
+            !input.pruneUnmanaged &&
+            input.mode !== "force"
+          ) {
             return yield* new SchemaUnmanagedFilesError({
               detail: `Unmanaged declarative files would be left in place: ${classification.unmanaged.join(", ")}`,
               suggestion:
-                "Delete them yourself or pass --prune-unmanaged. _custom/ is never modified.",
+                "Move hand-authored SQL to supabase/schemas/_custom/, or pass --prune-unmanaged to delete.",
               paths: classification.unmanaged,
             });
           }

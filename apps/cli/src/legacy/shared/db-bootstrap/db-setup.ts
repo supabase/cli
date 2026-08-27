@@ -120,9 +120,10 @@ import type { ProjectConfig } from "@supabase/config";
 import { Data, Effect, type FileSystem, Option, type Path, Schedule, type Scope } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
-import type { LocalServiceVersionOverrides } from "../../../shared/services/services.shared.ts";
+import { REVOKE_API_PRIVILEGES_SQL as LEGACY_START_REVOKE_API_PRIVILEGES_SQL } from "../../../shared/migrations/privilege-offer.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import type { LocalServiceVersionOverrides } from "../../../shared/services/services.shared.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -180,21 +181,8 @@ import {
 
 type Spawner = ChildProcessSpawner["Service"];
 
-/**
- * Go's inline `RevokeDefaultDataApiPrivilegesSql` constant (`start.go:405-412`) —
- * NOT a `//go:embed` file (unlike the three large SQL templates), so transcribed
- * directly here rather than as a sibling `templates/*.sql.ts` module. Exported for the
- * shadow baseline cache's embedded-SQL digest (`shadow-cache.ts`), which must re-key
- * whenever this text changes across CLI releases.
- */
-export const LEGACY_START_REVOKE_API_PRIVILEGES_SQL = `
-alter default privileges for role postgres in schema public
-  revoke select, insert, update, delete on tables from anon, authenticated, service_role;
-alter default privileges for role postgres in schema public
-  revoke usage, select on sequences from anon, authenticated, service_role;
-alter default privileges for role postgres in schema public
-  revoke execute on functions from anon, authenticated, service_role;
-`;
+/** Re-export of the shared revoke body so shadow-cache keeps hashing this name. */
+export { LEGACY_START_REVOKE_API_PRIVILEGES_SQL };
 
 /**
  * Exported for the shadow baseline cache's embedded-SQL digest (`shadow-cache.ts`), same as
@@ -212,11 +200,10 @@ const LEGACY_START_REMOVE_DATABASE_WEBHOOKS_SQL = "drop extension if exists pg_n
 
 /**
  * A SQL exec (schema/globals/API-privileges) or one-shot service-migration Docker
- * job failed, or the scratch temp directory/file could not be created. The Docker
- * job branch's message mirrors Go's `DockerRunOnceWithStream` failure shape
- * (`errors.Errorf("error running container: %w", err)`, `apps/cli-go/internal/
- * utils/docker.go:469-487,559-591` — Go discards the container's own stdout/stderr
- * outside `--debug`, so only the exit code is meaningful here too).
+ * job failed, or the scratch temp directory/file could not be created. Container
+ * exits keep the `error running container: exit N` prefix used by `db dump` and
+ * the edge-runtime helper; when stderr was captured, the last meaningful line is
+ * appended (`exit N:\n${line}`) so a migrate miss is visible without `--debug`.
  */
 export class LegacyDbSetupError extends Data.TaggedError("LegacyDbSetupError")<{
   readonly message: string;
@@ -465,10 +452,9 @@ export interface LegacySetupDatabaseInput {
    */
   readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
   /**
-   * `--debug` — threaded to each PG15+ one-shot migrate job (see
-   * {@link legacyRunStartMigrateJob}'s own doc comment) so a failed Realtime/Storage/Auth
-   * migration job's own stderr is visible, matching Go's `initSchema15` passing
-   * `utils.GetDebugLogger()` as the job's stderr writer (`start.go:349-353`).
+   * `--debug` — tees each PG15+ one-shot migrate job's full stderr (see
+   * {@link legacyRunStartMigrateJob}). The last meaningful line is already on
+   * {@link LegacyDbSetupError} without this flag.
    */
   readonly debug: boolean;
   /** `toml.baseline.apiAutoExposeNewTables` — Go's `api.auto_expose_new_tables` tri-state, threaded straight into {@link legacyApplyApiPrivileges}. */
@@ -692,16 +678,30 @@ const legacyStartInitSchemaPre15 = Effect.fnUntraced(function* (
 });
 
 /**
+ * Last non-empty container stderr line that is not a V8/Node stack frame or
+ * `Node.js v…` footer — the migrate miss (`StorageBackendError: …`).
+ */
+function legacyLastMeaningfulStderrLine(stderr: string): string | undefined {
+  const lines = stderr.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i]!.trim();
+    if (line.length === 0 || line.startsWith("at ") || /^Node\.js v\d/u.test(line)) continue;
+    return line;
+  }
+  return undefined;
+}
+
+/**
  * Runs one PG15+ one-shot service-migration job to completion (Go's
  * `utils.DockerRunJob` = `DockerRunOnceWithStream`, `docker.go:457-459,469-487`):
  * foreground, same Docker network as `db`, no entrypoint override (Go's plain
  * `Cmd` field), stdout always discarded (Go's own `stdout` writer here is always
- * `io.Discard`, `start.go:352`) and stderr teed to the parent process's own stderr ONLY
- * under `--debug` — Go passes `logger := utils.GetDebugLogger()` as the job's stderr
- * writer (`os.Stderr` under `--debug`, else `io.Discard`, `logger.go:10-15`) — so a
- * fresh-volume Realtime/Storage/Auth migration job's own diagnostics are visible when
- * `db start --debug`/`supabase start --debug` is used, not just its exit code. A
- * non-zero exit fails with the same shape as Go's `error running container: <cause>`.
+ * `io.Discard`, `start.go:352`). Stderr is always captured for the failure
+ * message (same `result.stderr` as `db dump` / the edge-runtime helper); it is
+ * teed to the parent process only under `--debug` — Go's `utils.GetDebugLogger()`
+ * (`os.Stderr` under `--debug`, else `io.Discard`, `logger.go:10-15`). A non-zero
+ * exit fails with `error running container: exit N` plus the last meaningful
+ * stderr line when one exists.
  *
  * Resolves `opts.image` itself, individually, right here — via `legacyEnsureImagesCached`
  * (NOT `LegacyDockerRun.runStream`'s own ambient-only resolver, which never sees
@@ -781,9 +781,13 @@ const legacyRunStartMigrateJob = Effect.fnUntraced(function* (
       ),
     );
   if (result.exitCode !== 0) {
+    const snippet = legacyLastMeaningfulStderrLine(result.stderr);
     return yield* Effect.fail(
       new LegacyDbSetupError({
-        message: `error running container: exit ${result.exitCode}`,
+        message:
+          snippet === undefined
+            ? `error running container: exit ${result.exitCode}`
+            : `error running container: exit ${result.exitCode}:\n${snippet}`,
         reason: "database",
       }),
     );
