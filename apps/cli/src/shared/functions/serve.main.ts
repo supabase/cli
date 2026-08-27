@@ -275,6 +275,9 @@ export function prepareUserRequest(req: Request): Request {
   return clonedReq;
 }
 
+const servicePathSlugs = new Map<string, string>();
+const servicePathCreateQueues = new Map<string, Promise<void>>();
+
 Deno.serve({
   handler: async (req: Request) => {
     const url = new URL(req.url);
@@ -349,7 +352,6 @@ Deno.serve({
       ([name, _]) => !EXCLUDED_ENVS.includes(name) && !name.startsWith("SUPABASE_INTERNAL_"),
     );
 
-    const forceCreate = false;
     const customModuleRoot = ""; // empty string to allow any local path
     const cpuTimeSoftLimitMs = 1000;
     const cpuTimeHardLimitMs = 2000;
@@ -367,25 +369,45 @@ Deno.serve({
     const staticPatterns = functionsConfig[functionName].staticFiles;
 
     try {
-      const worker = await EdgeRuntime.userWorkers.create({
-        servicePath,
-        memoryLimitMb,
-        workerTimeoutMs,
-        noModuleCache,
-        noNpm: !usePackageJson,
-        importMapPath: functionsConfig[functionName].importMapPath,
-        envVars,
-        forceCreate,
-        customModuleRoot,
-        cpuTimeSoftLimitMs,
-        cpuTimeHardLimitMs,
-        decoratorType,
-        maybeEntrypoint,
-        context: {
-          useReadSyncFileAPI: true,
-        },
-        staticPatterns,
+      let releaseWorkerCreate;
+      const currentWorkerCreate = new Promise((resolve) => {
+        releaseWorkerCreate = resolve;
       });
+      const previousWorkerCreate = servicePathCreateQueues.get(servicePath) ?? Promise.resolve();
+      const queuedWorkerCreate = previousWorkerCreate.then(() => currentWorkerCreate);
+      servicePathCreateQueues.set(servicePath, queuedWorkerCreate);
+      await previousWorkerCreate;
+
+      // Keep this map in step with Edge Runtime's servicePath worker cache.
+      const forceCreate = servicePathSlugs.get(servicePath) !== functionName;
+      let worker;
+      try {
+        worker = await EdgeRuntime.userWorkers.create({
+          servicePath,
+          memoryLimitMb,
+          workerTimeoutMs,
+          noModuleCache,
+          noNpm: !usePackageJson,
+          importMapPath: functionsConfig[functionName].importMapPath,
+          envVars,
+          forceCreate,
+          customModuleRoot,
+          cpuTimeSoftLimitMs,
+          cpuTimeHardLimitMs,
+          decoratorType,
+          maybeEntrypoint,
+          context: {
+            useReadSyncFileAPI: true,
+          },
+          staticPatterns,
+        });
+        servicePathSlugs.set(servicePath, functionName);
+      } finally {
+        releaseWorkerCreate();
+        if (servicePathCreateQueues.get(servicePath) === queuedWorkerCreate) {
+          servicePathCreateQueues.delete(servicePath);
+        }
+      }
 
       const userReq = prepareUserRequest(req);
       return await worker.fetch(userReq);

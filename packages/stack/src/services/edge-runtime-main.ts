@@ -185,30 +185,54 @@ export function buildFunctionEnv(config: any, functionConfig: any, functionName:
   };
 }
 
+const servicePathSlugs = new Map<string, string>();
+const servicePathCreateQueues = new Map<string, Promise<void>>();
+
 async function serveFunction(req: Request, config: any, functionName: string, functionConfig: any) {
   const authError = await verifyRequest(req, config, functionConfig);
   if (authError) return authError;
 
   const envVars = Object.entries(buildFunctionEnv(config, functionConfig, functionName));
+  const servicePath = dirname(functionConfig.entrypointPath);
 
   try {
-    const worker = await EdgeRuntime.userWorkers.create({
-      servicePath: dirname(functionConfig.entrypointPath),
-      memoryLimitMb: 256,
-      workerTimeoutMs: 400000,
-      noModuleCache: false,
-      noNpm: false,
-      importMapPath: functionConfig.importMapPath ?? undefined,
-      envVars,
-      forceCreate: false,
-      customModuleRoot: "",
-      cpuTimeSoftLimitMs: 1000,
-      cpuTimeHardLimitMs: 2000,
-      decoratorType: "tc39",
-      maybeEntrypoint: fileUrl(functionConfig.entrypointPath),
-      context: { useReadSyncFileAPI: true },
-      staticPatterns: functionConfig.staticFiles,
+    let releaseWorkerCreate: () => void;
+    const currentWorkerCreate = new Promise<void>((resolve) => {
+      releaseWorkerCreate = resolve;
     });
+    const previousWorkerCreate = servicePathCreateQueues.get(servicePath) ?? Promise.resolve();
+    const queuedWorkerCreate = previousWorkerCreate.then(() => currentWorkerCreate);
+    servicePathCreateQueues.set(servicePath, queuedWorkerCreate);
+    await previousWorkerCreate;
+
+    // Keep this map in step with Edge Runtime's servicePath worker cache.
+    const forceCreate = servicePathSlugs.get(servicePath) !== functionName;
+    let worker: Awaited<ReturnType<typeof EdgeRuntime.userWorkers.create>>;
+    try {
+      worker = await EdgeRuntime.userWorkers.create({
+        servicePath,
+        memoryLimitMb: 256,
+        workerTimeoutMs: 400000,
+        noModuleCache: false,
+        noNpm: false,
+        importMapPath: functionConfig.importMapPath ?? undefined,
+        envVars,
+        forceCreate,
+        customModuleRoot: "",
+        cpuTimeSoftLimitMs: 1000,
+        cpuTimeHardLimitMs: 2000,
+        decoratorType: "tc39",
+        maybeEntrypoint: fileUrl(functionConfig.entrypointPath),
+        context: { useReadSyncFileAPI: true },
+        staticPatterns: functionConfig.staticFiles,
+      });
+      servicePathSlugs.set(servicePath, functionName);
+    } finally {
+      releaseWorkerCreate!();
+      if (servicePathCreateQueues.get(servicePath) === queuedWorkerCreate) {
+        servicePathCreateQueues.delete(servicePath);
+      }
+    }
     return await worker.fetch(req);
   } catch (error) {
     console.error(`Failed to serve Function ${functionName}`, error);
