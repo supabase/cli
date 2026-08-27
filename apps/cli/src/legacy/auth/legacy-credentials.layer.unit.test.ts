@@ -164,6 +164,7 @@ afterEach(() => {
 
 const VALID_TOKEN = "sbp_" + "a".repeat(40);
 const VALID_OAUTH_TOKEN = "sbp_oauth_" + "b".repeat(40);
+const VALID_V0_TOKEN = "sbp_v0_" + "c".repeat(40);
 const encodeGoKeyringBase64 = (token: string) =>
   `go-keyring-base64:${Buffer.from(token).toString("base64")}`;
 const goWindowsKey = (account: string) => `Supabase CLI:${account}/Supabase CLI/${account}`;
@@ -196,6 +197,14 @@ describe("legacyCredentialsLayer.getAccessToken", () => {
       expectSomeToken(token, VALID_TOKEN);
     }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_ACCESS_TOKEN: VALID_TOKEN } })));
   });
+
+  it.effect("returns a versioned-format (sbp_v0_) env token", () =>
+    Effect.gen(function* () {
+      const { getAccessToken } = yield* LegacyCredentials;
+      const token = yield* getAccessToken;
+      expectSomeToken(token, VALID_V0_TOKEN);
+    }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_ACCESS_TOKEN: VALID_V0_TOKEN } }))),
+  );
 
   it.effect("uses the keyring profile account when env is unset", () => {
     passwords.set("Supabase CLI/supabase", VALID_TOKEN);
@@ -304,6 +313,32 @@ describe("legacyCredentialsLayer.getAccessToken", () => {
     }).pipe(Effect.provide(makeLayer()));
   });
 
+  it.effect("rejects an unknown version prefix (sbp_v1_)", () =>
+    Effect.gen(function* () {
+      const { getAccessToken } = yield* LegacyCredentials;
+      const exit = yield* Effect.exit(getAccessToken);
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag === "Failure") {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidAccessTokenError");
+      }
+    }).pipe(
+      Effect.provide(makeLayer({ env: { SUPABASE_ACCESS_TOKEN: "sbp_v1_" + "c".repeat(40) } })),
+    ),
+  );
+
+  it.effect("rejects a versioned-format (sbp_v0_) token with a truncated payload", () =>
+    Effect.gen(function* () {
+      const { getAccessToken } = yield* LegacyCredentials;
+      const exit = yield* Effect.exit(getAccessToken);
+      expect(exit._tag).toBe("Failure");
+      if (exit._tag === "Failure") {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidAccessTokenError");
+      }
+    }).pipe(
+      Effect.provide(makeLayer({ env: { SUPABASE_ACCESS_TOKEN: "sbp_v0_" + "c".repeat(39) } })),
+    ),
+  );
+
   it.effect("falls back to the filesystem when keyring throws", () => {
     throwOnGetPasswordAccounts.add("Supabase CLI/supabase");
     throwOnGetPasswordAccounts.add("Supabase CLI/access-token");
@@ -335,6 +370,14 @@ describe("legacyCredentialsLayer.saveAccessToken", () => {
       const { saveAccessToken } = yield* LegacyCredentials;
       yield* saveAccessToken(VALID_TOKEN);
       expect(passwords.get("Supabase CLI/supabase")).toBe(VALID_TOKEN);
+    }).pipe(Effect.provide(makeLayer())),
+  );
+
+  it.effect("saves a versioned-format (sbp_v0_) token", () =>
+    Effect.gen(function* () {
+      const { saveAccessToken } = yield* LegacyCredentials;
+      yield* saveAccessToken(VALID_V0_TOKEN);
+      expect(passwords.get("Supabase CLI/supabase")).toBe(VALID_V0_TOKEN);
     }).pipe(Effect.provide(makeLayer())),
   );
 
