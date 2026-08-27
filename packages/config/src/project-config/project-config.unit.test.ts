@@ -2224,6 +2224,82 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
     expect(negative.auth?.sessions?.timebox).toBe("-2562047h47m16.854775808s");
   });
 
+  test("multiple enabled SMS providers converge on the push switch's first-enabled precedence", () => {
+    // The push switch selects the FIRST enabled provider in its fixed order
+    // and sends only that one (auth.sync.ts:2498-2539) — later enabled flags
+    // flip to false and their siblings prune, matching the API arm's report
+    // of the post-push hosted state.
+    const doc = fromConfigDocument({
+      auth: {
+        sms: {
+          twilio: { enabled: true, account_sid: "AC1" },
+          messagebird: { enabled: true, originator: "x" },
+        },
+      },
+    });
+    expect(doc.auth?.sms?.twilio).toEqual({ enabled: true, account_sid: "AC1" });
+    expect(doc.auth?.sms?.messagebird).toEqual({ enabled: false });
+    // Cross-arm equality for that post-push hosted state.
+    const api = fromApiProjectConfig({
+      auth: {
+        sms_provider: "twilio",
+        sms_twilio_account_sid: "AC1",
+        sms_messagebird_originator: "x",
+      },
+    });
+    expect(api.auth?.sms?.twilio).toEqual(doc.auth?.sms?.twilio);
+    expect(api.auth?.sms?.messagebird).toEqual(doc.auth?.sms?.messagebird);
+    // A single enabled provider is untouched.
+    const single = fromConfigDocument({
+      auth: { sms: { vonage: { enabled: true, from: "+1555" } } },
+    });
+    expect(single.auth?.sms?.vonage).toEqual({ enabled: true, from: "+1555" });
+  });
+
+  test("negative unsigned-style document values clamp like the pull direction", () => {
+    // The push mapper sends the local value unchanged (auth.sync.ts:
+    // 2304-2309) and the pull direction clamps what the API reports — a
+    // pushed -1 projects back as 0, so the document spelling converges.
+    const doc = fromConfigDocument({
+      auth: { rate_limit: { anonymous_users: -1 } },
+      api: { enabled: true, max_rows: -5 },
+      storage: { analytics: { enabled: true, max_tables: -3 } },
+    });
+    expect(doc.auth?.rate_limit?.anonymous_users).toBe(0);
+    expect(doc.api?.max_rows).toBe(0);
+    expect(doc.storage?.analytics?.max_tables).toBe(0);
+    const api = fromApiProjectConfig({ auth: { rate_limit_anonymous_users: -1 } });
+    expect(api.auth?.rate_limit?.anonymous_users).toBe(0);
+    // Positive values stay verbatim.
+    const positive = fromConfigDocument({ auth: { rate_limit: { anonymous_users: 30 } } });
+    expect(positive.auth?.rate_limit?.anonymous_users).toBe(30);
+  });
+
+  test("throwing dispatcher source accessors surface as caller misuse", () => {
+    const cases: ReadonlyArray<Parameters<typeof toProjectConfig>[0]> = [
+      {
+        get apiResponse(): unknown {
+          throw new Error("boom");
+        },
+      },
+      {
+        get cliConfig(): EffectiveConfig {
+          throw new Error("boom");
+        },
+      },
+    ];
+    for (const source of cases) {
+      let thrown: unknown;
+      try {
+        toProjectConfig(source);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+      expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
+    }
+  });
+
   test("orphan secret paths validate like isSecret rows before being suppressed", () => {
     // The four unmappedSecretApiPaths are in the consumed set, so without
     // validation a contract-invalid value (string-or-null only) would vanish

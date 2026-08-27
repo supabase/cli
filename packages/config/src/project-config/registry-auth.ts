@@ -541,13 +541,21 @@ function invertedBoolRow(
   };
 }
 
-/** Signed API integer clamped to the schema's unsigned domain (`intToUint`). */
+/**
+ * Signed API integer clamped to the schema's unsigned domain (`intToUint`).
+ * The DOCUMENT side clamps too: the config schema's `Schema.Number` accepts
+ * a negative value and the push mapper sends it unchanged (e.g.
+ * auth.sync.ts:2304-2309), but the pull direction clamps whatever the API
+ * reports — so a pushed `-1` projects back as `0`, and the document spelling
+ * must converge on that same reading.
+ */
 function uintRow(configPath: ReadonlyArray<string>, apiKey: string): ProjectConfigMappingRow {
   const apiPath = ["auth", apiKey];
   return {
     configPath,
     apiPath,
     transform: (value) => (value === null ? undefined : clampToUint(expectInteger(value, apiPath))),
+    normalizeDocument: (value) => (typeof value === "number" ? clampToUint(value) : value),
   };
 }
 

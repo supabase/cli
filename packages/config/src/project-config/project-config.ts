@@ -323,8 +323,47 @@ export function fromConfigDocument(config: EffectiveConfig): unknown {
     }
   }
   applyDocumentNormalizations(result);
+  applySmsProviderPrecedence(result);
   applyDisabledSentinels(result);
   return result;
+}
+
+/**
+ * DOCUMENT-arm only: at most one SMS provider can be live on the platform —
+ * the push switch selects the FIRST enabled provider in its fixed order and
+ * sends only that one (`switch (true)`, auth.sync.ts:2498-2539), so a
+ * document enabling several providers converges, after any push, on a hosted
+ * state where only the first is enabled. Later `enabled: true` flags flip to
+ * `false` here, and the entry sweep in {@link applyDisabledSentinels} (which
+ * runs next) prunes their siblings — matching what `fromApiProjectConfig`
+ * reports for that hosted state. The API arm never needs this: its five
+ * flags all derive from the single `sms_provider` discriminator.
+ */
+const SMS_PROVIDER_PUSH_PRECEDENCE = [
+  "twilio",
+  "twilio_verify",
+  "messagebird",
+  "textlocal",
+  "vonage",
+] as const;
+
+function applySmsProviderPrecedence(result: Record<string, unknown>): void {
+  const sms = readPath(result, ["auth", "sms"]);
+  if (!isObject(sms)) {
+    return;
+  }
+  let selected = false;
+  for (const provider of SMS_PROVIDER_PUSH_PRECEDENCE) {
+    const entry = sms[provider];
+    if (!isObject(entry) || entry["enabled"] !== true) {
+      continue;
+    }
+    if (selected) {
+      entry["enabled"] = false;
+    } else {
+      selected = true;
+    }
+  }
 }
 
 /**
@@ -1112,14 +1151,33 @@ export function toProjectConfig(source: ToProjectConfigSource): ProjectConfig {
         'toProjectConfig source must carry exactly one of an own "cliConfig" or "apiResponse" property, got both',
       );
     }
-    return fromApiProjectConfig(source.apiResponse);
+    return fromApiProjectConfig(readSourceProperty(() => source.apiResponse, "apiResponse"));
   }
   if (hasCliConfig(source)) {
-    return fromConfigDocument(source.cliConfig);
+    return fromConfigDocument(readSourceProperty(() => source.cliConfig, "cliConfig"));
   }
   throw callerMisuseError(
     'toProjectConfig source must carry exactly one of an own "cliConfig" or "apiResponse" property, got neither',
   );
+}
+
+/**
+ * Reads the dispatcher's selected source property through the same guarded
+ * boundary as the envelope reads ({@link readEnvelopeProperty}): plain data
+ * never carries getters, so an accessor that throws here is programmatic
+ * caller input and must surface as the documented failure type — not leak a
+ * raw `Error` past the telemetry classification.
+ */
+function readSourceProperty<T>(read: () => T, key: string): T {
+  try {
+    return read();
+  } catch (cause) {
+    throw new ProjectConfigParseError({
+      message: `reading source property "${key}" threw — toProjectConfig sources must be plain data, not accessor-backed`,
+      cause,
+      reason: "caller_misuse",
+    });
+  }
 }
 
 function pathKey(path: ReadonlyArray<string>): string {

@@ -56,6 +56,17 @@ function remoteDataApiDisabled(attributes: Record<string, unknown>): boolean {
   return isObject(api) && api["db_schema"] === "";
 }
 
+/**
+ * DOCUMENT-side counterpart of `clampToUint` (same convergence rule as the
+ * auth `uintRow`s): the config schema accepts a negative number and the push
+ * mappers send it unchanged, but every pull-direction transform below clamps
+ * what the API reports — so a pushed negative projects back as `0`, and the
+ * document spelling must converge on that reading. Non-numbers stay verbatim.
+ */
+function clampDocumentUint(value: unknown): unknown {
+  return typeof value === "number" ? clampToUint(value) : value;
+}
+
 const apiSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
   {
     configPath: ["api", "schemas"],
@@ -96,6 +107,7 @@ const apiSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
       const rows = clampToUint(expectInteger(value, apiMaxRowsPath));
       return remoteDataApiDisabled(attributes) ? undefined : rows;
     },
+    normalizeDocument: clampDocumentUint,
   },
   // Deliberately unmapped (no config counterpart): api.db_pool,
   // api.db_pool_acquisition_timeout.
@@ -177,9 +189,10 @@ const dbSettingsRows: ReadonlyArray<ProjectConfigMappingRow> = [
   ...DB_SETTINGS_STRING_KEYS.map((key) => dbSettingRow(key, expectString)),
   sessionReplicationRoleRow,
   dbSettingRow("track_commit_timestamp", expectBoolean),
-  ...DB_SETTINGS_UINT_KEYS.map((key) =>
-    dbSettingRow(key, (value, apiPath) => clampToUint(expectInteger(value, apiPath))),
-  ),
+  ...DB_SETTINGS_UINT_KEYS.map((key) => ({
+    ...dbSettingRow(key, (value, apiPath) => clampToUint(expectInteger(value, apiPath))),
+    normalizeDocument: clampDocumentUint,
+  })),
 ];
 
 const networkRestrictionsAllowedCidrsPath = ["database", "network_restrictions", "allowed_cidrs"];
@@ -519,18 +532,21 @@ const storageSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
       clampToUint(
         expectInteger(value, ["storage", "features", "iceberg_catalog", "max_namespaces"]),
       ),
+    normalizeDocument: clampDocumentUint,
   },
   {
     configPath: ["storage", "analytics", "max_tables"],
     apiPath: ["storage", "features", "iceberg_catalog", "max_tables"],
     transform: (value) =>
       clampToUint(expectInteger(value, ["storage", "features", "iceberg_catalog", "max_tables"])),
+    normalizeDocument: clampDocumentUint,
   },
   {
     configPath: ["storage", "analytics", "max_catalogs"],
     apiPath: ["storage", "features", "iceberg_catalog", "max_catalogs"],
     transform: (value) =>
       clampToUint(expectInteger(value, ["storage", "features", "iceberg_catalog", "max_catalogs"])),
+    normalizeDocument: clampDocumentUint,
   },
   {
     configPath: ["storage", "vector", "enabled"],
@@ -541,12 +557,14 @@ const storageSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
     apiPath: ["storage", "features", "vector_buckets", "max_buckets"],
     transform: (value) =>
       clampToUint(expectInteger(value, ["storage", "features", "vector_buckets", "max_buckets"])),
+    normalizeDocument: clampDocumentUint,
   },
   {
     configPath: ["storage", "vector", "max_indexes"],
     apiPath: ["storage", "features", "vector_buckets", "max_indexes"],
     transform: (value) =>
       clampToUint(expectInteger(value, ["storage", "features", "vector_buckets", "max_indexes"])),
+    normalizeDocument: clampDocumentUint,
   },
   // Deliberately unmapped: storage.features.purge_cache.enabled,
   // storage.capabilities.{list_v2,iceberg_catalog}, storage.upstream_target,
