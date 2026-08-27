@@ -1,0 +1,47 @@
+{
+  "$schema": "./node_modules/knip/schema.json",
+  "exclude": ["catalogReferences"],
+  "workspaces": {
+    ".": {
+      "entry": [".github/scripts/**/*.ts", "tools/release/*.ts"],
+      "ignore": [".repos/**", "apps/cli-go/**"],
+      "ignoreBinaries": ["go"],
+      "ignoreDependencies": ["verdaccio"]
+    },
+    "apps/cli": {
+      "entry": [
+        "src/shared/cli/bin.ts",
+        "src/**/*.test.ts",
+        "src/**/*.e2e.test.ts",
+        "src/**/*.live.test.ts"
+      ],
+      "ignore": [
+        "scripts/*.ts",
+        "tests/**/*.ts",
+        "src/shared/telemetry/event-catalog.ts",
+        "src/shared/workers/stacks/**"
+      ],
+      "ignoreBinaries": ["mkfifo"],
+      "ignoreDependencies": ["prettier"]
+    },
+    "apps/cli-e2e": {
+      "entry": ["src/**/*.e2e.test.ts", "tests/**/*.ts"]
+    },
+    "apps/docs": {
+      "entry": ["mdx-components.tsx"]
+    },
+    "packages/api": {
+      "entry": ["src/**/*.test.ts"],
+      "ignoreDependencies": ["undici"]
+    },
+    "packages/process-compose": {
+      "entry": ["src/**/*.test.ts", "tests/**/*.ts"]
+    },
+    "packages/stack": {
+      "entry": ["scripts/**/*.ts", "src/**/*.test.ts", "src/daemon-node.ts", "tests/**/*.ts"]
+    },
+    "packages/cli-test-helpers": {
+      "entry": ["src/**/*.test.ts"]
+    }
+  }
+}

@@ -116,7 +116,7 @@ Also check the following `legacy/` infrastructure before writing equivalent help
 
 | Path                                                    | What it provides                                                                                                                                                                          |
 | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `legacy/config/legacy-cli-config.layer.ts`              | `LegacyCliConfig` — resolves `SUPABASE_PROFILE` (built-in name **or** YAML file path), `--workdir`, `--experimental`, project-id from `supabase/config.toml`                              |
+| `legacy/config/legacy-cli-settings.layer.ts`            | `LegacyCliSettings` — resolves `SUPABASE_PROFILE` (built-in name **or** YAML file path), `--workdir`, `--experimental`, project-id from `supabase/config.toml`                            |
 | `legacy/config/legacy-project-ref.layer.ts`             | `LegacyProjectRefResolver` — `--project-ref` flag → env → `supabase/.temp/project-ref` file → prompt                                                                                      |
 | `legacy/telemetry/legacy-telemetry-state.layer.ts`      | `LegacyTelemetryState.flush` — writes `~/.supabase/telemetry.json`, runs in every command's `Effect.ensuring`                                                                             |
 | `legacy/telemetry/legacy-linked-project-cache.layer.ts` | `LegacyLinkedProjectCache.cache(ref)` — writes `<workdir>/supabase/.temp/linked-project.json` after `--project-ref` resolves; bypasses generated schema validation (uses raw HTTP client) |
@@ -295,7 +295,7 @@ Verify each applicable item when adding or reworking a command:
 
 4. **`SUPABASE_PROFILE` is dual-mode** — accept either a built-in name (`supabase`, `supabase-staging`, `supabase-local`) **or** a filesystem path to a YAML file with `api_url:` / `gotrue_url:` / `db_url:` keys. cli-e2e harness relies on the file-path mode. Reference: commit `288c2937`.
 
-5. **`Layer.provide` does not share to siblings inside `Layer.mergeAll`** — if two sibling layers each require `LegacyCliConfig`, provide it to both explicitly. Smoke-test the bundled binary (`bun run build && ./dist/supabase-legacy …`) when changing production layer wiring; in-process tests don't always catch the missing-service panic. Reference: commit `a816b12e`, `backups.layers.ts:32-46`.
+5. **`Layer.provide` does not share to siblings inside `Layer.mergeAll`** — if two sibling layers each require `LegacyCliSettings`, provide it to both explicitly. Smoke-test the bundled binary (`bun run build && ./dist/supabase-legacy …`) when changing production layer wiring; in-process tests don't always catch the missing-service panic. Reference: commit `a816b12e`, `backups.layers.ts:32-46`.
 
 6. **Both `--output` (legacy machine formats) and `--output-format` must be honored** — `--output` (`pretty|json|yaml|toml|env`) takes priority when set. Pattern in `backups/list/list.handler.ts:85-113`: branch on the `--output` flag first, then fall through to `--output-format` text/json/stream-json.
 
@@ -452,9 +452,9 @@ Rules:
 
 ## Testing
 
-Use `bun run test` (not `bun test`) to run tests. The `package.json` `test` script runs all Vitest projects with coverage enabled for the `core` project.
+Use `pnpm run test` to run tests. The `package.json` `test` script runs the unit, integration, and e2e Vitest projects, with coverage enabled for unit and integration.
 
-Use `bun run test:core` for the main in-process suite, and `bun run test:e2e` for the sequential subprocess suite.
+Use `pnpm run test:unit && pnpm run test:integration` for the main in-process suite, and `pnpm run test:e2e` for the sequential subprocess suite.
 
 Always run the relevant unit and integration tests automatically for the command or workspace you changed.
 Do not run the full e2e suite automatically. Only run e2e when the user asks, or when you need extra confidence for the command you touched.
@@ -484,7 +484,7 @@ Read https://www.effect.solutions/testing for Effect testing patterns. Note that
 - If a test needs multiple service replacements or `Layer.mergeAll(...)`, it likely belongs in `*.integration.test.ts`.
 - Prefer assertions on outputs and accumulated state over spy-heavy interaction tests.
 - Keep `*.e2e.test.ts` focused on golden paths, CLI surface behavior, and subprocess correctness, not branch-by-branch coverage.
-- **Hermeticity:** a test whose layer graph includes a real filesystem (`BunServices.layer`) and code that reads or writes under `RuntimeInfo.homeDir` or `TelemetryRuntime.configDir` must pin those paths to a per-test temp dir — never rely on the mock defaults (`mockRuntimeInfo` / `mockTelemetryRuntime` default to a path that is intentionally never created). Use `useLegacyTempWorkdir` for the temp dir, and `legacyIsolatedHomeLayer` (in `tests/helpers/legacy-mocks.ts`) when the test builds the real `legacyCliConfigLayer` / `legacyCredentialsLayer`, since those also resolve `SUPABASE_HOME` / `SUPABASE_PROFILE` / tokens from ambient `process.env`.
+- **Hermeticity:** a test whose layer graph includes a real filesystem (`BunServices.layer`) and code that reads or writes under `RuntimeInfo.homeDir` or `TelemetryRuntime.configDir` must pin those paths to a per-test temp dir — never rely on the mock defaults (`mockRuntimeInfo` / `mockTelemetryRuntime` default to a path that is intentionally never created). Use `useLegacyTempWorkdir` for the temp dir, and `legacyIsolatedHomeLayer` (in `tests/helpers/legacy-mocks.ts`) when the test builds the real `legacyCliSettingsLayer` / `legacyCredentialsLayer`, since those also resolve `SUPABASE_HOME` / `SUPABASE_PROFILE` / tokens from ambient `process.env`.
 - **Forbidden pattern (do not add):** spawning the CLI to assert that `--help` renders a flag. Help text is dynamic over flag wiring and is exercised by the integration test's flag parser. The two backups e2e files removed alongside this guidance update are the canonical example of what not to write.
 
 ### Live tests (`*.live.test.ts`)
@@ -520,8 +520,9 @@ URLs retain the profile contract `https://<ref>.<project_host>`, with
 Local Docker-stack lifecycle tests (`start`, `stop`, `status`, `db start`,
 `db diff`, declarative sync, and `functions dev`) are `*.e2e.test.ts`, use
 `runSupabase` plus the existing e2e stack cleanup, and require no platform
-credentials. `functions deploy` remains live because its assertion is remote
-deployment and invocation, even though Docker is a runner prerequisite.
+credentials. `functions deploy` and `functions download` remain live because
+their assertions are remote deployment, invocation, and artifact round trips,
+even though Docker is a runner prerequisite.
 
 Setup/teardown may invoke other commands, but assertions stay focused on the
 one command named by the test. The live workflow runs one serial attempt with a
@@ -547,7 +548,7 @@ that run after crashes.
 After finishing any task or refactor, always run all quality checks before considering the work done:
 
 ```sh
-bun run test
+pnpm run test:unit && pnpm run test:integration
 bun run --parallel "*:check"
 ```
 

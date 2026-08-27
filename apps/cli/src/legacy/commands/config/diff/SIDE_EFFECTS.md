@@ -96,7 +96,7 @@ contract (CLI-2156 ticket discussion).
 ## Notes
 
 - Run from the project root (or pass `--workdir`); `config.toml` is read relative to it.
-- **Local operand per target (ADR 0018/0019):** when the resolved target ref matches a
+- **Local operand per target (ADR 0018/0022):** when the resolved target ref matches a
   `[remotes.<name>]` block's `project_id`, the local side is that branch's merged
   effective config; otherwise the base config. The echoed scope line always says which.
 - **Masked credentials:** secret-valued managed properties (the platform returns an HMAC,

@@ -5,7 +5,7 @@ import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { CliConfig } from "../config/cli-config.service.ts";
+import { CliSettings } from "../config/cli-settings.service.ts";
 import { CommandRuntime } from "../../shared/runtime/command-runtime.service.ts";
 import { CurrentAnalyticsContext } from "../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
@@ -42,10 +42,10 @@ function jsonResponse(
   );
 }
 
-function cliConfigLayer(token = Option.none<Redacted.Redacted<string>>()) {
+function cliSettingsLayer(token = Option.none<Redacted.Redacted<string>>()) {
   return Layer.succeed(
-    CliConfig,
-    CliConfig.of({
+    CliSettings,
+    CliSettings.of({
       apiUrl: "https://api.supabase.com",
       dashboardUrl: "https://supabase.com/dashboard",
       projectHost: "supabase.co",
@@ -117,7 +117,7 @@ function mockContextualAnalytics() {
 describe("platformApiLayer", () => {
   it.effect("fails with PlatformAuthRequiredError when no token is available", () => {
     const layer = Layer.unwrap(makePlatformApiServices).pipe(
-      Layer.provide(cliConfigLayer()),
+      Layer.provide(cliSettingsLayer()),
       Layer.provide(credentialsLayer()),
       Layer.provide(commandRuntimeLayer("branches list", "run-no-token")),
       Layer.provide(
@@ -151,7 +151,7 @@ describe("platformApiLayer", () => {
     }> = [];
 
     const layer = Layer.unwrap(makePlatformApiServices).pipe(
-      Layer.provide(cliConfigLayer()),
+      Layer.provide(cliSettingsLayer()),
       Layer.provide(credentialsLayer("stored-token")),
       Layer.provide(commandRuntimeLayer("branches list", "run-headers")),
       Layer.provide(
@@ -210,7 +210,7 @@ describe("platformApiLayer", () => {
     const runtimeLayer = commandRuntimeLayer("branches list", "run-analytics");
 
     const layer = Layer.unwrap(makePlatformApiServices).pipe(
-      Layer.provide(cliConfigLayer()),
+      Layer.provide(cliSettingsLayer()),
       Layer.provide(credentialsLayer("stored-token")),
       Layer.provide(runtimeLayer),
       Layer.provide(

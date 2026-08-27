@@ -22,6 +22,7 @@ The new `supabase` CLI should be compatible with the existing Go CLI's credentia
 ## Context: How Auth Works in the Go CLI
 
 **Login flow** — Browser-based with end-to-end encryption:
+
 1. CLI generates a session UUID and an ECDH P256 keypair
 2. Opens browser to `https://supabase.com/dashboard/cli/login?session_id=...&public_key=...&token_name=cli_<user>@<host>_<timestamp>`
 3. User authenticates in browser; dashboard encrypts the access token with the CLI's public key via ECDH + AES-GCM
@@ -30,10 +31,12 @@ The new `supabase` CLI should be compatible with the existing Go CLI's credentia
 6. Alternative: `supabase login --token <token>` for non-interactive (CI)
 
 **Token storage** — Multi-tier with fallback:
+
 1. **System keyring** (primary) — via `zalando/go-keyring`: macOS Keychain, Linux Secret Service, Windows Credential Manager. Namespace: `"Supabase CLI"`, key: profile name
 2. **Token file** (fallback) — `~/.supabase/access-token`, plain text, `0600` permissions. Used when keyring is unavailable
 
 **Token loading priority**:
+
 1. `SUPABASE_ACCESS_TOKEN` env var (highest)
 2. Keyring for current profile
 3. Legacy keyring key (`"access-token"` — backward compat)

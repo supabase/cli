@@ -26,8 +26,10 @@ These workspaces should generally follow this structure:
 
 - `name`: `@supabase/<package-name>`
 - `type`: `"module"`
-- Standard scripts: `test`, `types:check`, `lint:check`, `lint:fix`, `fmt:check`, `fmt:fix`, `knip:check`, `knip:fix`
-- Standard devDependencies: `@tsconfig/bun`, `@types/bun`, `typescript`, `knip`, `oxfmt`, `oxlint`, `oxlint-tsgolint`
+- Standard scripts: `test`, `types:check`
+- Standard devDependencies: `@tsconfig/bun`, `@types/bun`, `typescript`
+
+Linting (`oxlint`), formatting (`oxfmt`), and unused-code analysis (`knip`) are repo-wide, not per-package: the tools are root devDependencies configured by `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key). The root `check:all`/`fix:all` scripts are the sole repo-wide quality entrypoints and use Turbo to orchestrate the root-owned `lint:*`/`fmt:*`/`knip:*` scripts and package `types:check` targets. Package-local work can run `pnpm types:check` and the package's test scripts; `pnpm exec oxlint`, `pnpm exec oxfmt`, and `pnpm exec knip-bun` from the repo root also work directly.
 
 Expected exceptions:
 
@@ -42,6 +44,28 @@ Expected exceptions:
   "extends": "@tsconfig/bun/tsconfig.json"
 }
 ```
+
+## Config Naming Vocabulary
+
+`@supabase/config` and its CLI consumer use three settled names:
+
+- `CliConfig` — the full config-file document (`supabase/config.toml`/`.json`), the local superset
+  including local-only sections.
+- `ProjectConfig` — the hosted-project subset: a sparse overlay of the hosted sections (api, auth,
+  db, realtime, storage, workers, experimental) describing what a Supabase project looks like on
+  the platform.
+- `CliSettings` — the CLI's own runtime settings (platform `apiUrl`, access token, telemetry flags,
+  `supabaseHome`, …), owned by `apps/cli`.
+
+Use the `Cli*` prefix for the local checkout side and a bare `Project*` name for the hosted
+Supabase project. Config-value helpers follow the config family regardless of their inputs (e.g.
+`resolveCliConfigValue`, `MissingCliConfigValueError`). A symbol that deliberately spans both
+families takes a family-neutral name instead of a misleading prefix (see the ADR 0020 addendum for
+the `EffectiveConfig` precedent).
+
+See [`docs/adr/0020-config-naming-vocabulary.md`](docs/adr/0020-config-naming-vocabulary.md) and
+[`packages/config/docs/cli-config-loading.md`](packages/config/docs/cli-config-loading.md) for the
+full vocabulary.
 
 ## Effect
 
@@ -190,55 +214,59 @@ Inside Effect code, compose schemas through their Effect APIs:
 
 ## Code Quality
 
-Run quality checks from the workspace directory you changed. Do not consider a task complete until all relevant scripts pass.
+Run repo-wide quality checks from the repository root with `pnpm check:all` or `pnpm fix:all`; these root scripts are the only quality entrypoints and delegate orchestration to Turbo. For package-local work, run `pnpm types:check` and the applicable package test scripts from the workspace you changed. Do not consider a task complete until all relevant scripts pass.
 Do not waive or defer failing checks in a changed workspace as "pre-existing". If a required check fails, fix it before closing the task. Only treat a failure as an external blocker when it cannot be resolved within the workspace, and in that case call it out explicitly.
-If you run a workspace check command such as `pnpm types:check && pnpm lint:check && pnpm fmt:check`, you own all failing checks in that workspace for the duration of the task, even if the failing files look unrelated. Do not leave the workspace with unresolved failing checks after running the command.
+If you run a root quality command such as `pnpm check:all`, you own all failing checks it reports for the duration of the task, even if the failing files look unrelated. Do not leave the repository with unresolved failing checks after running the command.
 Do not use TypeScript `as` casts to silence type errors in production code. If a type does not line up, fix the typing or restructure the code until it type-checks cleanly.
 
-For the standard Bun/TypeScript workspaces:
+From the repository root:
 
 ```sh
 pnpm check:all
-pnpm lint:fix && pnpm fmt:fix
+pnpm fix:all
+```
+
+From a changed package workspace:
+
+```sh
+pnpm types:check
 pnpm test
 ```
 
 If a workspace exposes a different script set, use that workspace's `package.json` as the source of truth.
 
-## Nx
+## Workspace graph and task execution
 
-This repo uses Nx for task orchestration. Prefer Nx commands over running scripts directly when working across projects or when you need to understand project structure.
-
-### Exploring the workspace
-
-```sh
-# List all projects
-nx show projects
-
-# Show targets and metadata for a specific project
-nx show project <name> --json
-
-# Visualize the project dependency graph
-nx graph
-```
-
-### Running tasks
+This repo uses pnpm workspaces and Turbo for task execution and dependency
+graph orchestration. Package scripts are the source of truth for leaf
+implementations; root-owned Turbo tasks coordinate build, generation, quality,
+live, and auxiliary workflows. Inspect a task's dependency graph with Turbo's
+JSON dry-run output:
 
 ```sh
-# Run a single target
-nx run <project>:<target>
-
-# Run a target across all projects
-nx run-many -t <target>
-
-# Run a target only on projects affected by current changes
-nx affected -t <target>
-
-# Run multiple targets (e.g. build + test)
-nx run-many -t build test
+pnpm exec turbo run <task> --dry=json
 ```
 
-Use `nx show project <name> --json` to discover available targets before running them — do not guess target names.
+### Running repository workflows
+
+```sh
+# Build all migrated workspaces and their dependencies
+pnpm run build
+
+# Generate API, then documentation artifacts
+pnpm run generate
+
+# Build only the CLI and its Go sidecar
+pnpm exec turbo run supabase#build
+
+# Run the live CLI suite
+pnpm run test:live
+```
+
+Run live and auxiliary workflows through their root Turbo entrypoints, and run
+ordinary tests with the relevant package's declared `pnpm test` scripts. Repo-
+wide quality checks use the repository-root `pnpm check:all` and `pnpm fix:all`
+scripts, which delegate orchestration to Turbo.
 
 ## Pull Requests
 

@@ -1,6 +1,6 @@
 import { Effect, Option } from "effect";
 
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -25,7 +25,7 @@ export const legacyStorageLs = Effect.fn("legacy.storage.ls")(function* (
   flags: LegacyStorageLsFlags,
 ) {
   const output = yield* Output;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const telemetryState = yield* LegacyTelemetryState;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const resolver = yield* LegacyProjectRefResolver;
@@ -53,7 +53,7 @@ export const legacyStorageLs = Effect.fn("legacy.storage.ls")(function* (
 
     // Config is always loaded; a `[remotes.*]` match prints the override
     // line.
-    const loaded = yield* legacyLoadStorageConfig(cliConfig.workdir, projectRef);
+    const loaded = yield* legacyLoadStorageConfig(cliSettings.workdir, projectRef);
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }
@@ -73,7 +73,7 @@ export const legacyStorageLs = Effect.fn("legacy.storage.ls")(function* (
           });
 
     yield* legacyConnectStorageGateway(
-      { projectRef, config: loaded.config, userAgent: cliConfig.userAgent },
+      { projectRef, config: loaded.config, userAgent: cliSettings.userAgent },
       (gateway) =>
         flags.recursive
           ? legacyIterateStoragePathsAll(gateway, output, remotePath, callback)

@@ -5,7 +5,7 @@ import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -25,8 +25,8 @@ function setup(opts: SetupOpts = {}) {
   const api = mockLegacyPlatformApi({
     response: { status: opts.status ?? 200, body: null },
   });
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
-  const layer = buildLegacyTestRuntime({ out, api, cliConfig });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
+  const layer = buildLegacyTestRuntime({ out, api, cliSettings });
   return { layer, out, api };
 }
 
@@ -35,13 +35,13 @@ function setupTracked(opts: SetupOpts = {}) {
   const api = mockLegacyPlatformApi({
     response: { status: opts.status ?? 200, body: null },
   });
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
   });

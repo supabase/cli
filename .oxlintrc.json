@@ -1,0 +1,50 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "options": {
+    "typeAware": true,
+    "denyWarnings": true
+  },
+  "ignorePatterns": [
+    ".repos",
+    "apps/cli-go",
+    "apps/cli-e2e/fixtures",
+    "**/testdata",
+    "**/dist",
+    "**/coverage",
+    "**/.next",
+    "**/.source"
+  ],
+  "rules": {
+    // Spreading an Effect Data.Class instance into its constructor is the
+    // idiomatic copy-with-update pattern (`new State({ ...state, ... })`).
+    "typescript/no-misused-spread": "off",
+    // Effect combinators are passed as references by design, e.g.
+    // `.pipe(semaphore.withPermit)`; they do not rely on `this`.
+    "typescript/unbound-method": "off",
+    // Too strict for CLI string building; `no-base-to-string` still guards
+    // against `[object Object]` interpolation bugs.
+    "typescript/restrict-template-expressions": "off"
+  },
+  "overrides": [
+    {
+      // Legacy CLI is superseded by src/next; not worth the cleanup churn.
+      "files": ["apps/cli/src/legacy/**"],
+      "rules": {
+        "typescript/no-base-to-string": "off"
+      }
+    },
+    {
+      // `.github/scripts` is the only `bun:test` consumer in the repo (every
+      // package test suite uses vitest). `@types/bun`'s test matcher types
+      // reuse the same sync `Matchers<T>` interface for `expect(x).rejects`,
+      // so `.rejects.toThrow(...)` types as returning `void` even though it
+      // must be awaited at runtime — a `@types/bun` typing gap, not a real
+      // `await`-of-non-Promise bug. Verified: `bun test` and `tsc --noEmit`
+      // both pass; removing the `await` would make the assertion racy.
+      "files": [".github/scripts/**"],
+      "rules": {
+        "typescript/await-thenable": "off"
+      }
+    }
+  ]
+}

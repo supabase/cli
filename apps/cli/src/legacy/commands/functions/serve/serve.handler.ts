@@ -1,6 +1,6 @@
 import { Effect } from "effect";
 import { join } from "node:path";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { legacyFunctionsGoConfigCompat } from "../../../shared/legacy-functions-go-config.ts";
 import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../../../shared/legacy/global-flags.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
@@ -20,20 +20,20 @@ export const legacyBuildFunctionsServeInspectArgs = buildFunctionsServeInspectAr
 export const legacyFunctionsServe = Effect.fn("legacy.functions.serve")(function* (
   flags: LegacyFunctionsServeFlags,
 ) {
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const runtimeInfo = yield* RuntimeInfo;
   const telemetryState = yield* LegacyTelemetryState;
   const debug = yield* LegacyDebugFlag;
   const networkId = yield* LegacyNetworkIdFlag;
 
   yield* serveFunctions(flags, {
-    projectRoot: cliConfig.workdir,
-    supabaseDir: join(cliConfig.workdir, "supabase"),
+    projectRoot: cliSettings.workdir,
+    supabaseDir: join(cliSettings.workdir, "supabase"),
     flagCwd: runtimeInfo.cwd,
     platform: runtimeInfo.platform,
     debug,
     networkId,
-    projectIdOverride: cliConfig.projectId,
+    projectIdOverride: cliSettings.projectId,
     goViperCompat: true,
     goConfigCompat: legacyFunctionsGoConfigCompat,
   }).pipe(Effect.ensuring(telemetryState.flush));

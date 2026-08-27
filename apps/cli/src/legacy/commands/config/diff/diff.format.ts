@@ -1,7 +1,7 @@
 import type {
   ConfigChange,
   ConfigChangeSet,
-  ProjectConfigValueOrigin,
+  CliConfigValueOrigin,
   RemoteConfigBlock,
   RemoteProjectConfig,
 } from "@supabase/config";
@@ -49,7 +49,7 @@ export function legacyConfigDiffRemoteBlocks(attributes: {
  * change on such a property can name the variable involved.
  */
 export function legacyConfigDiffEnvReferences(
-  valueOrigins: ReadonlyArray<ProjectConfigValueOrigin> | undefined,
+  valueOrigins: ReadonlyArray<CliConfigValueOrigin> | undefined,
 ): ReadonlyMap<string, string> {
   const references = new Map<string, string>();
   for (const origin of valueOrigins ?? []) {

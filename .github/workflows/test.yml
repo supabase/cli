@@ -67,13 +67,35 @@ jobs:
       - name: Check code quality
         run: pnpm run check:all
 
-  test-core:
+  test-unit:
     if: |
       !startsWith(github.head_ref, 'release-notes/') &&
       (github.event_name == 'merge_group' ||
         inputs.force ||
         github.event.pull_request.draft == false)
-    name: Run unit and integration tests
+    name: Run unit tests
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - name: Run unit tests
+        run: pnpm run test:unit --coverage.enabled
+
+  test-integration:
+    if: |
+      !startsWith(github.head_ref, 'release-notes/') &&
+      (github.event_name == 'merge_group' ||
+        inputs.force ||
+        github.event.pull_request.draft == false)
+    name: Run integration tests
     runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
       - name: Checkout
@@ -85,11 +107,29 @@ jobs:
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
-      - name: Unlock keyring (for cli-go keyring tests)
-        uses: t1m0thyj/unlock-keyring@cbcf205c879ebd86add70bab3a6abfcce59a5cae # v1.2.0
 
-      - name: Run unit and integration tests
-        run: pnpm run test:core
+      - name: Run integration tests
+        run: pnpm run test:integration --coverage.enabled
+
+  test-summary:
+    if: |
+      always() &&
+      !startsWith(github.head_ref, 'release-notes/') &&
+      (github.event_name == 'merge_group' ||
+        inputs.force ||
+        github.event.pull_request.draft == false)
+    name: Run unit and integration tests
+    needs: [test-unit, test-integration]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify unit and integration tests succeeded
+        run: |
+          if [ "${{ needs.test-unit.result }}" = "failure" ] || [ "${{ needs.test-unit.result }}" = "cancelled" ] || \
+            [ "${{ needs.test-integration.result }}" = "failure" ] || [ "${{ needs.test-integration.result }}" = "cancelled" ]; then
+            echo "::error ::Unit or integration tests failed: unit=${{ needs.test-unit.result }}, integration=${{ needs.test-integration.result }}"
+            exit 1
+          fi
+          echo "Unit and integration tests reported: unit=${{ needs.test-unit.result }}, integration=${{ needs.test-integration.result }}"
 
   test-e2e:
     if: |
@@ -102,54 +142,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [ 1, 2, 3 ]
+        shard: [1, 2, 3]
     steps:
       - name: Checkout
         uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1.0.0-beta
         with:
           fetch-depth: 0
 
-      - name: Set base and head SHAs for affected
-        if: github.event.pull_request && !inputs.force
-        uses: nrwl/nx-set-shas@afb73a62d26e41464e9254689e1fd6122ee683c1 # v5.0.1
-
-      # Reusable calls inherit the caller's github context (event_name stays
-      # pull_request). Use the PR payload directly so we do not depend on
-      # nx-set-shas understanding the caller event.
-      - name: Set base and head SHAs for run-ci reusable call
-        if: inputs.force && github.event.pull_request
-        run: |
-          echo "NX_BASE=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_ENV"
-          echo "NX_HEAD=${{ github.event.pull_request.head.sha }}" >> "$GITHUB_ENV"
-
-      - name: Set base and head SHAs for merge queue affected
-        if: github.event_name == 'merge_group'
-        run: |
-          echo "NX_BASE=${{ github.event.merge_group.base_sha }}" >> "$GITHUB_ENV"
-          echo "NX_HEAD=${{ github.event.merge_group.head_sha }}" >> "$GITHUB_ENV"
-
       - name: Setup
         uses: ./.github/actions/setup
         with:
           dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
-      # Detect which e2e suites should run. On PR and merge queue runs we
-      # honour `nx affected` using the event-specific base and head SHAs.
-      - name: Detect affected e2e projects
-        id: detect
-        run: |
-          affected=$(pnpm exec nx show projects --affected --withTarget test:e2e --json | jq -r '.[]')
-          echo "Affected e2e projects:"
-          echo "$affected"
-          cli=false
-          other=false
-          if echo "$affected" | grep -qx '@supabase/cli-e2e'; then cli=true; fi
-          if echo "$affected" | grep -vx '@supabase/cli-e2e' | grep -q .; then other=true; fi
-          echo "cli_e2e=$cli" >> "$GITHUB_OUTPUT"
-          echo "other=$other" >> "$GITHUB_OUTPUT"
-
       - name: Cache Go CLI binary
-        if: steps.detect.outputs.cli_e2e == 'true'
         id: cache-go-binary
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -158,38 +163,21 @@ jobs:
             'apps/cli-go/go.mod', 'apps/cli-go/go.sum') }}
 
       - name: Build Go CLI
-        if: steps.detect.outputs.cli_e2e == 'true' &&
-          steps.cache-go-binary.outputs.cache-hit != 'true'
+        if: steps.cache-go-binary.outputs.cache-hit != 'true'
         run: go build -o supabase-go .
         working-directory: apps/cli-go
 
       # The ts-legacy/ts-next harnesses invoke `node apps/cli/dist/supabase.js`
       # with `SUPABASE_CLI_BINARY_OVERRIDE` pointing at the compiled per-shell
-      # binary in `apps/cli/dist/`. The `nx run @supabase/cli-e2e:test:e2e`
-      # target normally builds the supabase umbrella via `dependsOn`, but we
-      # bypass nx for sharding so we build it explicitly.
+      # binary in `apps/cli/dist/`. Build the CLI explicitly before invoking
+      # every package-local e2e suite.
       - name: Build CLI
-        if: steps.detect.outputs.cli_e2e == 'true'
-        run: pnpm exec nx run supabase:build
+        run: pnpm exec turbo run supabase#build
 
-      # Sharding for cli-e2e (the heavy suite) per
-      # https://vitest.dev/guide/improving-performance.html#sharding.  We invoke
-      # vitest directly because routing `--shard` through `pnpm run / nx run-many
-      # -- --shard=N/3` introduces a stray `--` that vitest treats as a
-      # positional-argument terminator, defeating the shard flag.  Other e2e
-      # suites (process-compose) run unsharded on shard 1.
-      - name: Run cli-e2e end-to-end tests
-        if: steps.detect.outputs.cli_e2e == 'true'
-        run: pnpm --filter @supabase/cli-e2e exec bun --bun vitest run --shard=${{
-          matrix.shard }}/3
+      - name: Run end-to-end tests
+        run: pnpm exec turbo run test:e2e:run --only --concurrency=1 -- --shard=${{ matrix.shard }}/3
         env:
           CLI_HARNESS_TARGET: ts-legacy
-          SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
-
-      - name: Run other e2e tests (shard 1 only)
-        if: matrix.shard == 1 && steps.detect.outputs.other == 'true'
-        run: pnpm exec nx run-many -t test:e2e --exclude=@supabase/cli-e2e
-        env:
           SUPABASE_GO_BINARY: ${{ github.workspace }}/apps/cli-go/supabase-go
 
   # Summary job that gates branch protection.  The matrix `test-e2e` job

@@ -7,7 +7,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import {
-  noteStackProjectHome,
+  noteStackCliProjectHome,
   registerTempHome,
   registerTempStackProject,
 } from "./stack-e2e-cleanup.ts";
@@ -314,7 +314,7 @@ export function spawnSupabase(
 ): SpawnedSupabase {
   const ownHome = options?.home ? null : makeTempHome();
   const homeDir = options?.home ?? ownHome!.dir;
-  noteStackProjectHome(options?.cwd, homeDir);
+  noteStackCliProjectHome(options?.cwd, homeDir);
   const entrypoint = options?.entrypoint ?? "next";
   const usesStartWrapper = args[0] === "start";
   // Exercise the same shim + compiled shell binary handoff that published

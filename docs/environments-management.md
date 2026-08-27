@@ -837,13 +837,13 @@ Edge Functions previously had a separate secrets management system (`supabase se
 
 ### Migration from `supabase secrets`
 
-| Old (`supabase secrets`)                    | New (unified `cli env`)                                       |
-|---------------------------------------------|---------------------------------------------------------------|
-| `supabase secrets set KEY=value`            | `cli env set KEY value --env <environment> [--secret]`        |
-| `supabase secrets set --env-file .env`      | `cli env push` (for standard vars) + `cli env set --secret`  |
-| `supabase secrets list`                     | `cli env list --env <environment>`                            |
-| `supabase secrets unset KEY`                | `cli env unset KEY --env <environment>`                       |
-| `supabase/functions/.env`                   | `supabase/.env` (global, from `development` environment)      |
+| Old (`supabase secrets`)               | New (unified `cli env`)                                     |
+| -------------------------------------- | ----------------------------------------------------------- |
+| `supabase secrets set KEY=value`       | `cli env set KEY value --env <environment> [--secret]`      |
+| `supabase secrets set --env-file .env` | `cli env push` (for standard vars) + `cli env set --secret` |
+| `supabase secrets list`                | `cli env list --env <environment>`                          |
+| `supabase secrets unset KEY`           | `cli env unset KEY --env <environment>`                     |
+| `supabase/functions/.env`              | `supabase/.env` (global, from `development` environment)    |
 
 The `supabase secrets` command group is removed. All variable management goes through `cli env`.
 
@@ -917,21 +917,21 @@ This is consistent with how missing platform variables are handled elsewhere —
 
 ## Summary
 
-| Concept                      | Decision                                                                                                                                                     |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Environments model           | Flat, independent sets — no inheritance                                                                                                                      |
-| Default environments         | `development`, `preview`, and `production` — cannot be deleted                                                                                               |
-| `development` environment    | For local execution only (`cli dev`). Not mapped to a branch. Team-shared local defaults.                                                                    |
-| `preview` / `production`     | For deployed environments. Mapped to branches via `config.json`.                                                                                             |
-| Sharing between environments | Copy/seed at creation time (with interactive review), no live links. Natural progression: development → preview → production.                                |
-| Branch-specific overrides    | Supported on deployed environments — set per variable per project branch, resolved automatically on pull                                                     |
-| Variables                    | Platform variables (implicit binding) + user variables (`env()` syntax)                                                                                      |
-| Secrets                      | A flag on a variable, not a separate system. Set explicitly via `cli env set --secret`. Platform variables auto-classified from config schema. Never pushed from `.env` — always set directly on the platform. |
-| Local files                  | `.env` (pulled from `development`) + `.env.local` (personal), both gitignored                                                                                |
-| Source of truth              | Platform (remote-first) or `.env` file (local-first)                                                                                                         |
-| Sync model                   | `pull`/`push` default to `development`. Pull = full replace, push = diff + upsert (base values only) with optional prune                                     |
-| Branch mapping               | Configured in `config.json`, maps project branch names to environments. Wildcard fallback to `preview`. `development` is not in the mapping.                 |
-| Resolution (local)           | OS env → `.env.local` → `.env` (from `development`). Planned: `cli dev` will sync Git branch switches with project branch activation and environment reload. |
-| Resolution (platform)        | Branch override → base environment variable                                                                                                                  |
+| Concept                      | Decision                                                                                                                                                                                                                                                  |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Environments model           | Flat, independent sets — no inheritance                                                                                                                                                                                                                   |
+| Default environments         | `development`, `preview`, and `production` — cannot be deleted                                                                                                                                                                                            |
+| `development` environment    | For local execution only (`cli dev`). Not mapped to a branch. Team-shared local defaults.                                                                                                                                                                 |
+| `preview` / `production`     | For deployed environments. Mapped to branches via `config.json`.                                                                                                                                                                                          |
+| Sharing between environments | Copy/seed at creation time (with interactive review), no live links. Natural progression: development → preview → production.                                                                                                                             |
+| Branch-specific overrides    | Supported on deployed environments — set per variable per project branch, resolved automatically on pull                                                                                                                                                  |
+| Variables                    | Platform variables (implicit binding) + user variables (`env()` syntax)                                                                                                                                                                                   |
+| Secrets                      | A flag on a variable, not a separate system. Set explicitly via `cli env set --secret`. Platform variables auto-classified from config schema. Never pushed from `.env` — always set directly on the platform.                                            |
+| Local files                  | `.env` (pulled from `development`) + `.env.local` (personal), both gitignored                                                                                                                                                                             |
+| Source of truth              | Platform (remote-first) or `.env` file (local-first)                                                                                                                                                                                                      |
+| Sync model                   | `pull`/`push` default to `development`. Pull = full replace, push = diff + upsert (base values only) with optional prune                                                                                                                                  |
+| Branch mapping               | Configured in `config.json`, maps project branch names to environments. Wildcard fallback to `preview`. `development` is not in the mapping.                                                                                                              |
+| Resolution (local)           | OS env → `.env.local` → `.env` (from `development`). Planned: `cli dev` will sync Git branch switches with project branch activation and environment reload.                                                                                              |
+| Resolution (platform)        | Branch override → base environment variable                                                                                                                                                                                                               |
 | Edge Functions               | `env` block in `config.json` declares per-function variable access. Replaces `supabase secrets`. Functions only see declared `env()` variables + platform defaults (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_DB_URL`). |
-| API design                   | Bulk upsert endpoint to avoid one-at-a-time limitations                                                                                                      |
+| API design                   | Bulk upsert endpoint to avoid one-at-a-time limitations                                                                                                                                                                                                   |

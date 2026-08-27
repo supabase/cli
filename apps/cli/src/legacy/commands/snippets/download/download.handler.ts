@@ -2,7 +2,7 @@ import { Effect, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { resolveLegacyAccessToken } from "../../../shared/legacy-resolve-token.ts";
@@ -148,7 +148,7 @@ export const legacySnippetsDownload = Effect.fn("legacy.snippets.download")(func
 ) {
   const output = yield* Output;
   const httpClient = yield* HttpClient.HttpClient;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
@@ -171,8 +171,8 @@ export const legacySnippetsDownload = Effect.fn("legacy.snippets.download")(func
         ? HttpClientRequest.bearerToken(tokenOpt.value)
         : (req) => req;
       const request = HttpClientRequest.get(
-        `${cliConfig.apiUrl}/v1/snippets/${parsed.canonical}`,
-      ).pipe(authHeader, HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent));
+        `${cliSettings.apiUrl}/v1/snippets/${parsed.canonical}`,
+      ).pipe(authHeader, HttpClientRequest.setHeader("User-Agent", cliSettings.userAgent));
 
       const fetching =
         output.format === "text" ? yield* output.task("Downloading snippet...") : undefined;

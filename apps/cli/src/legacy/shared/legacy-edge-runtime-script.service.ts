@@ -45,9 +45,9 @@ export interface LegacyEdgeRuntimeRunOpts {
    * The caller's authoritative target directory (e.g. `LegacyPgDeltaContext.cwd`),
    * used to resolve the `supabase/.temp/edge-runtime-version` image pin (and, when
    * `denoVersion` is absent, the base-config fallback read). Overrides the layer's
-   * own `LegacyCliConfig.workdir` — needed because that layer is built once, before
+   * own `LegacyCliSettings.workdir` — needed because that layer is built once, before
    * a command's own `process.chdir` (e.g. `bootstrap`, whose real target directory
-   * only exists after its handler runs). Absent → the layer's `LegacyCliConfig.workdir`.
+   * only exists after its handler runs). Absent → the layer's `LegacyCliSettings.workdir`.
    */
   readonly workdir?: string;
 }
@@ -95,16 +95,14 @@ export function legacyBuildEdgeRuntimeStartCmd(opts: {
 
 /**
  * Builds the `sh -c` entrypoint body that writes each file via a here-document
- * (so contents may contain `EOF`) and then runs `cmd`. Byte-for-byte port of
- * `buildEdgeRuntimeEntrypoint` (`apps/cli-go/internal/utils/edgeruntime.go`):
- * all heredoc openers are joined with `&&` before the bodies so the shell stacks
- * them in declaration order; each body ends with a unique sentinel.
+ * (so contents may contain `EOF`) and then `exec`s `cmd` so edge-runtime is
+ * PID 1 and an early `docker stop` reaches it directly.
  */
 export function legacyBuildEdgeRuntimeEntrypoint(
   files: ReadonlyArray<LegacyEdgeRuntimeFile>,
   cmd: string,
 ): string {
-  if (files.length === 0) return `${cmd}\n`;
+  if (files.length === 0) return `exec ${cmd}\n`;
   let head = "";
   let bodies = "";
   files.forEach((file, index) => {
@@ -112,5 +110,5 @@ export function legacyBuildEdgeRuntimeEntrypoint(
     head += `cat <<'${sentinel}' > ${file.name} && `;
     bodies += `${file.content}\n${sentinel}\n`;
   });
-  return `${head}${cmd}\n${bodies}`;
+  return `${head}exec ${cmd}\n${bodies}`;
 }

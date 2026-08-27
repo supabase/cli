@@ -11,7 +11,7 @@ import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   type MockLegacyPlatformApiOpts,
   mockLegacyPlatformApi,
@@ -89,11 +89,11 @@ function apiOpts(opts: SetupOpts): MockLegacyPlatformApiOpts {
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const api = mockLegacyPlatformApi(apiOpts(opts));
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     goOutput: opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
   });
   return { layer, out, api };
@@ -102,13 +102,13 @@ function setup(opts: SetupOpts = {}) {
 function setupTracked(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const api = mockLegacyPlatformApi(apiOpts(opts));
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
   });
@@ -607,7 +607,7 @@ describe("legacy network-restrictions update integration", () => {
 
   // Project ref resolution
 
-  it.live("uses --project-ref flag value over LegacyCliConfig.projectId", () => {
+  it.live("uses --project-ref flag value over LegacyCliSettings.projectId", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
     const { layer, api } = setup({ postResponse: POST_EMPTY_APPLIED });
     return Effect.gen(function* () {

@@ -3,8 +3,8 @@ import {
   edgeFunctionDenoConfigFileName,
   edgeFunctionEntrypointFileName,
   edgeFunctionsDirectoryName,
-  findProjectPaths,
-} from "@supabase/config";
+  findCliProjectPaths,
+} from "@supabase/config/effect";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
@@ -86,9 +86,11 @@ export const functionsNew = Effect.fnUntraced(function* (slugInput: Option.Optio
   const slug = yield* resolveSlug(slugInput);
   yield* validateSlug(slug);
 
-  const projectPaths = yield* findProjectPaths(runtimeInfo.cwd);
+  const cliProjectPaths = yield* findCliProjectPaths(runtimeInfo.cwd);
   const projectRoot =
-    projectPaths === null ? runtimeInfo.cwd : projectRootForConfigPath(projectPaths.configPath);
+    cliProjectPaths === null
+      ? runtimeInfo.cwd
+      : projectRootForConfigPath(cliProjectPaths.configPath);
   const functionDir = path.join(projectRoot, "supabase", edgeFunctionsDirectoryName, slug);
   const entrypointPath = path.join(functionDir, edgeFunctionEntrypointFileName);
   const denoConfigPath = path.join(functionDir, edgeFunctionDenoConfigFileName);

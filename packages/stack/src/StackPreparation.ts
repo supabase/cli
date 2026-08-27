@@ -79,11 +79,13 @@ const RETRYABLE_PULL_PATTERNS = [
 ] as const;
 
 class PullAttemptError extends Error {
-  constructor(
-    readonly detail: string,
-    readonly daemonDown: boolean,
-  ) {
+  readonly detail: string;
+  readonly daemonDown: boolean;
+
+  constructor(detail: string, daemonDown: boolean) {
     super(detail);
+    this.detail = detail;
+    this.daemonDown = daemonDown;
     this.name = "PullAttemptError";
   }
 }

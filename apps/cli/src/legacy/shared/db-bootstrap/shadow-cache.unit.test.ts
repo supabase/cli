@@ -76,7 +76,7 @@ describe("legacyShadowCacheKey", () => {
       { label: "db settings", inputs: { ...base, dbSettings: { max_connections: 200 } } },
       {
         label: "auto expose new tables",
-        inputs: { ...base, autoExposeNewTables: Option.some(true) },
+        inputs: { ...base, autoExposeNewTables: Option.some(false) },
       },
       { label: "effective webhooks / pg_net", inputs: { ...base, webhooksEnabled: false } },
       { label: "roles.sql", inputs: { ...base, rolesSql: "" } },
@@ -160,18 +160,18 @@ describe("legacyShadowCacheKey", () => {
   });
 
   it("collapses auto_expose_new_tables to the behavior legacyApplyApiPrivileges actually takes", () => {
-    // `legacyApplyApiPrivileges` (`db-setup.ts`) returns early ONLY for an explicit `true`; unset
-    // and explicit `false` both exec the revoke SQL, so they bake the identical cluster and must
-    // share a snapshot instead of forcing a ~90MB re-export.
+    // `legacyApplyApiPrivileges` (`db-setup.ts`) returns early for unset AND explicit `true`, so
+    // those two bake the identical cluster and must share a snapshot instead of forcing a ~90MB
+    // re-export; only an explicit `false` execs the revoke SQL and earns its own key.
     const base = baseKeyInputs();
     const unset = legacyShadowCacheKey({ ...base, autoExposeNewTables: Option.none() });
+    const explicitTrue = legacyShadowCacheKey({ ...base, autoExposeNewTables: Option.some(true) });
     const explicitFalse = legacyShadowCacheKey({
       ...base,
       autoExposeNewTables: Option.some(false),
     });
-    const explicitTrue = legacyShadowCacheKey({ ...base, autoExposeNewTables: Option.some(true) });
-    expect(explicitFalse).toBe(unset);
-    expect(explicitTrue).not.toBe(unset);
+    expect(explicitTrue).toBe(unset);
+    expect(explicitFalse).not.toBe(unset);
   });
 
   it("excludes a disabled service's image tag entirely", () => {

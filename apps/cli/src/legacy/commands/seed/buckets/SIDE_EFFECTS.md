@@ -148,7 +148,7 @@ stdout and a terminal `result`/`error` event is emitted.
   `--linked`: passing it without `--linked` (i.e. targeting local) is a hard
   error rather than a silently discarded flag.
 - **Remote (`--linked`) — config override merge.** The project ref is resolved
-  BEFORE config is loaded. `loadProjectConfig` then merges the `[remotes.<name>]`
+  BEFORE config is loaded. `loadCliConfig` then merges the `[remotes.<name>]`
   block whose `project_id` equals the resolved ref over the base config (including
   `storage.buckets`, `storage.vector`, `storage.analytics`).
   Local runs load the base config verbatim with no merge.

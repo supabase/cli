@@ -10,7 +10,7 @@ import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import {
   LEGACY_VALID_TOKEN,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyTelemetryStateTracked,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -254,7 +254,7 @@ function setup(opts: SetupOpts = {}) {
       opts.goOutput === undefined ? Option.none() : Option.some(opts.goOutput),
     ),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
-    mockLegacyCliConfig({
+    mockLegacyCliSettings({
       workdir: opts.workdir ?? "/work/project",
       accessToken: opts.accessToken,
     }),

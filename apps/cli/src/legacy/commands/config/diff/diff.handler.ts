@@ -1,4 +1,5 @@
-import { diffProjectConfig, loadProjectConfig, PROJECT_CONFIG_SCHEMA_URL } from "@supabase/config";
+import { diffProjectConfig, CLI_CONFIG_SCHEMA_URL } from "@supabase/config";
+import { loadCliConfig } from "@supabase/config/effect";
 import { Effect, Option } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
@@ -117,12 +118,12 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     // 1. Load the local config, merging a matching `[remotes.*]` block over
     // the base document when the target ref names a declared branch (ADR
     // 0018). Never writes — this command is read-only by contract.
-    const loaded = yield* loadProjectConfig(runtimeInfo.cwd, {
+    const loaded = yield* loadCliConfig(runtimeInfo.cwd, {
       projectRef: ref,
       goViperCompat: true,
     }).pipe(
       Effect.catchTag(
-        "ProjectConfigParseError",
+        "CliConfigParseError",
         (cause) =>
           new LegacyConfigDiffLoadConfigError({
             message: `failed to parse supabase/config.toml: ${String(cause.cause)}`,
@@ -144,7 +145,7 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
       projectRef: ref,
       branch,
       appliedRemote: loaded.appliedRemote,
-      schemaVersion: loaded.schemaRef ?? PROJECT_CONFIG_SCHEMA_URL,
+      schemaVersion: loaded.schemaRef ?? CLI_CONFIG_SCHEMA_URL,
     };
     yield* output.raw(legacyConfigDiffComparisonLine(context), "stderr");
 

@@ -97,8 +97,7 @@ That pulls `.repos/effect/`, which is the local source of truth for Effect v4 AP
 |   |-- process-compose/      # Effect-based process orchestration library
 |   |-- stack/                # Programmatic local Supabase stack runtime
 |   `-- cli-*/                # Platform-specific CLI binary packages
-|-- tools/
-|   `-- nx-plugins/           # Local Nx inference plugins
+|-- tools/                    # Repository tooling (release scripts, etc.)
 |-- docs/                     # ADRs, design notes, and implementation docs
 `-- .repos/effect/            # Effect v4 reference source
 ```
@@ -135,44 +134,56 @@ Root-level scripts:
 ```sh
 pnpm run repos:install
 pnpm run repos:pull
+pnpm run build       # build CLI, config, and docs artifacts with Turbo
+pnpm run generate    # generate API, then documentation artifacts with Turbo
 pnpm run check:all   # run all checks across every project
 pnpm run fix:all     # run all fixers across every project
 ```
 
 ### Standard package scripts
 
-All standard TypeScript workspaces (`apps/cli`, `packages/api`, `packages/config`, `packages/process-compose`, `packages/stack`) expose the following scripts:
+Standard TypeScript workspaces (`apps/cli-e2e`, `apps/cli`, `packages/api`, `packages/cli-test-helpers`, `packages/config`, `packages/process-compose`, `packages/stack`) declare their package scripts explicitly. Test suites vary by package: unit tests are standard, while integration and e2e tests exist only where applicable.
 
-| Script             | What it does                                                                   |
-| ------------------ | ------------------------------------------------------------------------------ |
-| `test`             | Run the full test suite (unit + integration + e2e)                             |
-| `test:core`        | Run unit and integration tests                                                 |
-| `test:unit`        | Run unit tests _(inferred by Nx plugin)_                                       |
-| `test:integration` | Run integration tests _(inferred by Nx plugin)_                                |
-| `test:e2e`         | Run end-to-end tests _(inferred by Nx plugin)_                                 |
-| `check:all`        | Run all check targets for this project                                         |
-| `fix:all`          | Run all fix targets for this project                                           |
-| `types:check`      | Type-check with `tsc --noEmit` _(inferred by Nx plugin)_                       |
-| `lint:check`       | Check for lint errors with `oxlint` _(inferred by Nx plugin)_                  |
-| `lint:fix`         | Auto-fix lint errors _(inferred by Nx plugin)_                                 |
-| `fmt:check`        | Check formatting with `oxfmt --check` _(inferred by Nx plugin)_                |
-| `fmt:fix`          | Auto-fix formatting _(inferred by Nx plugin)_                                  |
-| `knip:check`       | Find unused exports and dependencies with `knip-bun` _(inferred by Nx plugin)_ |
-| `knip:fix`         | Auto-remove unused exports and dependencies _(inferred by Nx plugin)_          |
+| Script             | What it does                           |
+| ------------------ | -------------------------------------- |
+| `test`             | Run the package's declared test suites |
+| `test:unit`        | Run unit tests                         |
+| `test:integration` | Run integration tests where applicable |
+| `test:e2e`         | Run end-to-end tests where applicable  |
+| `types:check`      | Type-check with `tsc --noEmit`         |
 
-The inferred scripts (`test:unit`, `test:integration`, `test:e2e`, `types:check`, `lint:*`, `fmt:*`, `knip:*`) are not declared in `package.json` — they are injected by local Nx plugins in `tools/nx-plugins/`. They are fully cached and can be discovered via `nx show project <name>`.
+The test and type-check scripts are declared in each package's `package.json`, so package-local commands are directly discoverable and can be sharded independently.
 
-Quality checks are run from the workspace you are changing:
+Linting, formatting, and unused-code analysis are repo-wide rather than per-package: `oxlint`, `oxfmt`, and `knip` read `.oxlintrc.json`, `.oxfmtrc.json`, and `knip.json` at the repo root (knip's config maps each workspace under its `workspaces` key). The root `check:all`/`fix:all` scripts are the sole repo-wide quality entrypoints and use Turbo to run the package type checks and root-owned quality scripts. Package-local work can run `pnpm types:check` and the package's test scripts. Running the tools directly from the repository root also just works:
+
+```sh
+pnpm exec oxlint
+pnpm exec oxfmt
+pnpm exec knip-bun
+```
+
+Package-local type checks and tests can be run from the workspace you are changing:
 
 ```sh
 # From a project directory — scoped to that project only:
+pnpm types:check
+pnpm run test:unit
+# If this package declares an integration suite:
+pnpm run test:integration
+
+# From the workspace root — repo-wide quality and all-project test fan-out:
 pnpm run check:all
 pnpm run fix:all
-pnpm run test
-
-# From the workspace root — runs across all projects:
-pnpm run check:all
+pnpm run test:unit && pnpm run test:integration
 ```
+
+The root unit and integration scripts use Turbo to fan out the package-local
+`test:*:run` tasks across the standard TypeScript/Vitest workspaces. The Go
+workspace remains package-local because its tests run directly through Go:
+`pnpm --dir apps/cli-go run test:unit`. Go tests are covered by the dedicated
+Go CI workflow. Unit and integration tasks are uncached for now; e2e tasks are
+also uncached and run one package at a time. Forward a Vitest shard to every
+e2e package with `pnpm run test:e2e --shard=1/3`.
 
 ## E2E Compatibility Test Suite
 
@@ -199,10 +210,10 @@ from the provisioned project's database metadata.
 
 Live coverage is smoke coverage, not an exhaustive command matrix. Add one representative golden-path test for each user-facing command, colocated beside that command. A live test should assert one target command; setup and teardown may invoke other commands when they prepare or clean up state, but those commands are not asserted in that test. Keep validation, formatting, fallback, error, and matrix details in integration tests unless the remote/runtime boundary itself is the behavior under test. See [ADR 0013](docs/adr/0013-live-e2e-bypasses-replay-server.md) and [`apps/cli/live.env.example`](apps/cli/live.env.example).
 
-To run the live suite locally, copy [`apps/cli/live.env.example`](apps/cli/live.env.example), set the API URL and access token for the target platform, and run the Nx target from the repository root. The target's build dependency prepares the CLI artifacts before Vitest starts:
+To run the live suite locally, copy [`apps/cli/live.env.example`](apps/cli/live.env.example), set the API URL and access token for the target platform, and run the root Turbo entrypoint. Its build dependency prepares the CLI artifacts before Vitest starts:
 
 ```sh
-pnpm exec nx run supabase:test:live
+pnpm run test:live
 ```
 
 Optional `SUPABASE_LIVE_ORG_ID`, `SUPABASE_LIVE_REGION`, and
@@ -216,12 +227,7 @@ Live CI is manual or daily scheduled and is not PR-blocking; run it manually on 
 
 ```sh
 # Replay mode — fast, no credentials needed
-cd apps/cli-e2e
-pnpm test            # ts-legacy target (default and only target)
-pnpm test:legacy     # ts-legacy target (explicit, same as above)
-
-# Or via Nx from the repo root
-nx run @supabase/cli-e2e:test:e2e
+pnpm exec turbo run @supabase/cli-e2e#test:e2e:run   # ts-legacy target
 ```
 
 ### Recording fixtures
@@ -229,8 +235,7 @@ nx run @supabase/cli-e2e:test:e2e
 Recording proxies CLI traffic to the Supabase staging API. Provide a staging access token and a project ref for commands that need one — everything else is baked into the script:
 
 ```sh
-cd apps/cli-e2e
-SUPABASE_ACCESS_TOKEN=<your-staging-token> SUPABASE_TEST_PROJECT_REF=<your-project-ref> SUPABASE_STAGING_URL=<stagingUrl> pnpm record
+SUPABASE_ACCESS_TOKEN=<your-staging-token> SUPABASE_TEST_PROJECT_REF=<your-project-ref> SUPABASE_STAGING_URL=<stagingUrl> pnpm run record
 ```
 
 Review the generated files in `apps/cli-e2e/fixtures/recorded/` before committing — verify that no real tokens, UUIDs, or project refs appear (they should be replaced with `__ACCESS_TOKEN__`, `__UUID__`, `__PROJECT_REF__` placeholders).
@@ -240,7 +245,7 @@ Review the generated files in `apps/cli-e2e/fixtures/recorded/` before committin
 After recording, replay must pass with no changes against the freshly committed fixtures:
 
 ```sh
-pnpm test:legacy
+pnpm exec turbo run @supabase/cli-e2e#test:e2e:run
 ```
 
 A test failing only after a recording session usually means an assertion needs updating to match the CLI's current real-world output, not the fixture.
@@ -334,62 +339,53 @@ supabase --version
 | `npm` / `pnpm` tries to fetch from `localhost:4873` when no registry is running | Stale global registry override left behind by an older version of `local-registry.ts` (the current script never modifies global config). Run `npm config delete registry` and `pnpm config delete registry`. Note that pnpm stores the override in its own global config (`~/Library/Preferences/pnpm/auth.ini` on macOS, `~/.config/pnpm/` on Linux), not `~/.npmrc` — check there if the delete command fails |
 | `npx` resolves from npm instead of local                                        | Pass `--registry http://localhost:4873` explicitly to `npx` / `npm install`                                                                                                                                                                                                                                                                                                                                     |
 
-## Using Nx
+## Using Turbo
 
-Nx is the task runner for this repo. It handles caching, parallelism, and cross-project orchestration. All tasks — whether declared in a project's `package.json` or inferred by a plugin — are invoked the same way.
+Turbo owns repository task execution and dependency graph orchestration. Quality
+checks are root-owned `check:all`/`fix:all` scripts orchestrated with Turbo,
+while ordinary unit, integration, and e2e tests remain package-local scripts;
+see [Standard package scripts](#standard-package-scripts).
 
-**Run a single target:**
-
-```sh
-nx run @supabase/api:knip:check
-nx run supabase:test
-```
-
-**Run a target across all projects:**
+Inspect a task's dependency graph with Turbo's JSON dry-run output:
 
 ```sh
-nx run-many -t knip:check
-nx run-many -t lint:check fmt:check types:check knip:check
+pnpm exec turbo run <task> --dry=json
 ```
 
-**Run only affected projects** (compared to `main`):
+**Build all migrated workspaces:**
 
 ```sh
-nx affected -t test
-nx affected -t lint:check fmt:check types:check knip:check
+pnpm run build
 ```
 
-**Inspect a project's full task configuration** (including inferred targets):
+**Generate API and documentation artifacts:**
 
 ```sh
-nx show project @supabase/api
+pnpm run generate
 ```
 
-This is the best way to see what targets exist on a project, what their inputs and outputs are, and whether they are cached. Some targets are not declared in `package.json` but are injected by local Nx plugins — `knip:check` and `knip:fix` are examples of this.
-
-### Caching
-
-Nx caches task results locally under `.nx/cache`. A target hits the cache when all its inputs are unchanged since the last successful run — inputs include source files, named input sets like `sharedGlobals`, and external dependency versions.
-
-To force a re-run and bypass the cache:
+**Build only the CLI and its Go sidecar:**
 
 ```sh
-nx run @supabase/api:knip:check --skip-nx-cache
+pnpm exec turbo run supabase#build
 ```
 
-To clear all cached results:
+The CLI build names its config and Go build prerequisites explicitly. The
+remaining CLI workspace dependencies intentionally have no build script, so
+strict Turbo task selection does not synthesize no-op `^build` tasks for them.
+
+**Run the live suite:**
+
+The target's uncached build dependency prepares the CLI artifacts before Vitest
+starts; use Turbo for cacheable build outputs.
 
 ```sh
-nx reset
+pnpm run test:live
 ```
 
-### Inferred targets
-
-Several targets in this repo are not explicitly declared in any project file. They are injected by local plugins in `tools/nx-plugins/` that inspect each package's `package.json` and derive targets from the tooling configuration found there.
-
-To see the full list of targets for a project, always use `nx show project` rather than reading the `nx.targets` field in `package.json` directly.
-
-See [`docs/nx-inference-plugins.md`](docs/nx-inference-plugins.md) for how the plugin system works and how to add new plugins.
+Run `pnpm run check:all` or `pnpm run fix:all` from the repository root for
+repo-wide quality checks. Package-local checks use `pnpm types:check` plus the
+package's test scripts.
 
 ## Documentation
 

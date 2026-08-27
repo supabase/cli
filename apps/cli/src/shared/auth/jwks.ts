@@ -74,8 +74,8 @@ export function toPublicJwk(key: JwkLike): JwkLike {
 
 /**
  * One `[auth.third_party.<provider>]` section, structurally matching `@supabase/config`'s
- * `ProjectConfig["auth"]["third_party"]` — both `shared/functions/serve.ts`'s
- * `PlainServeAuthConfig["third_party"]` (itself typed as `ProjectConfig["auth"]["third_party"]`)
+ * `CliConfig["auth"]["third_party"]` — both `shared/functions/serve.ts`'s
+ * `PlainServeAuthConfig["third_party"]` (itself typed as `CliConfig["auth"]["third_party"]`)
  * and `legacy/shared/legacy-local-config-values.ts`'s env-override-resolved third-party object
  * satisfy this shape without conversion.
  */

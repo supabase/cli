@@ -4555,6 +4555,7 @@ func (e V1PgbouncerConfigResponsePoolMode) Valid() bool {
 
 // Defines values for V1ProjectAdvisorsResponseLintsCategories.
 const (
+	HEALTH      V1ProjectAdvisorsResponseLintsCategories = "HEALTH"
 	PERFORMANCE V1ProjectAdvisorsResponseLintsCategories = "PERFORMANCE"
 	SECURITY    V1ProjectAdvisorsResponseLintsCategories = "SECURITY"
 )
@@ -4562,6 +4563,8 @@ const (
 // Valid indicates whether the value is a known member of the V1ProjectAdvisorsResponseLintsCategories enum.
 func (e V1ProjectAdvisorsResponseLintsCategories) Valid() bool {
 	switch e {
+	case HEALTH:
+		return true
 	case PERFORMANCE:
 		return true
 	case SECURITY:
@@ -4609,12 +4612,15 @@ func (e V1ProjectAdvisorsResponseLintsLevel) Valid() bool {
 
 // Defines values for V1ProjectAdvisorsResponseLintsMetadataType.
 const (
-	V1ProjectAdvisorsResponseLintsMetadataTypeAuth       V1ProjectAdvisorsResponseLintsMetadataType = "auth"
-	V1ProjectAdvisorsResponseLintsMetadataTypeCompliance V1ProjectAdvisorsResponseLintsMetadataType = "compliance"
-	V1ProjectAdvisorsResponseLintsMetadataTypeExtension  V1ProjectAdvisorsResponseLintsMetadataType = "extension"
-	V1ProjectAdvisorsResponseLintsMetadataTypeFunction   V1ProjectAdvisorsResponseLintsMetadataType = "function"
-	V1ProjectAdvisorsResponseLintsMetadataTypeTable      V1ProjectAdvisorsResponseLintsMetadataType = "table"
-	V1ProjectAdvisorsResponseLintsMetadataTypeView       V1ProjectAdvisorsResponseLintsMetadataType = "view"
+	V1ProjectAdvisorsResponseLintsMetadataTypeAuth             V1ProjectAdvisorsResponseLintsMetadataType = "auth"
+	V1ProjectAdvisorsResponseLintsMetadataTypeCompliance       V1ProjectAdvisorsResponseLintsMetadataType = "compliance"
+	V1ProjectAdvisorsResponseLintsMetadataTypeExtension        V1ProjectAdvisorsResponseLintsMetadataType = "extension"
+	V1ProjectAdvisorsResponseLintsMetadataTypeForeignTable     V1ProjectAdvisorsResponseLintsMetadataType = "foreign table"
+	V1ProjectAdvisorsResponseLintsMetadataTypeFunction         V1ProjectAdvisorsResponseLintsMetadataType = "function"
+	V1ProjectAdvisorsResponseLintsMetadataTypeHealth           V1ProjectAdvisorsResponseLintsMetadataType = "health"
+	V1ProjectAdvisorsResponseLintsMetadataTypeMaterializedView V1ProjectAdvisorsResponseLintsMetadataType = "materialized view"
+	V1ProjectAdvisorsResponseLintsMetadataTypeTable            V1ProjectAdvisorsResponseLintsMetadataType = "table"
+	V1ProjectAdvisorsResponseLintsMetadataTypeView             V1ProjectAdvisorsResponseLintsMetadataType = "view"
 )
 
 // Valid indicates whether the value is a known member of the V1ProjectAdvisorsResponseLintsMetadataType enum.
@@ -4626,7 +4632,13 @@ func (e V1ProjectAdvisorsResponseLintsMetadataType) Valid() bool {
 		return true
 	case V1ProjectAdvisorsResponseLintsMetadataTypeExtension:
 		return true
+	case V1ProjectAdvisorsResponseLintsMetadataTypeForeignTable:
+		return true
 	case V1ProjectAdvisorsResponseLintsMetadataTypeFunction:
+		return true
+	case V1ProjectAdvisorsResponseLintsMetadataTypeHealth:
+		return true
+	case V1ProjectAdvisorsResponseLintsMetadataTypeMaterializedView:
 		return true
 	case V1ProjectAdvisorsResponseLintsMetadataTypeTable:
 		return true
@@ -4639,6 +4651,7 @@ func (e V1ProjectAdvisorsResponseLintsMetadataType) Valid() bool {
 
 // Defines values for V1ProjectAdvisorsResponseLintsName.
 const (
+	AdvisorCheckUnavailable       V1ProjectAdvisorsResponseLintsName = "advisor_check_unavailable"
 	AuthInsufficientMfaOptions    V1ProjectAdvisorsResponseLintsName = "auth_insufficient_mfa_options"
 	AuthLeakedPasswordProtection  V1ProjectAdvisorsResponseLintsName = "auth_leaked_password_protection"
 	AuthOtpLongExpiry             V1ProjectAdvisorsResponseLintsName = "auth_otp_long_expiry"
@@ -4646,11 +4659,19 @@ const (
 	AuthPasswordPolicyMissing     V1ProjectAdvisorsResponseLintsName = "auth_password_policy_missing"
 	AuthRlsInitplan               V1ProjectAdvisorsResponseLintsName = "auth_rls_initplan"
 	AuthUsersExposed              V1ProjectAdvisorsResponseLintsName = "auth_users_exposed"
+	DbConnectionFailing           V1ProjectAdvisorsResponseLintsName = "db_connection_failing"
+	DbConnectionLimitReached      V1ProjectAdvisorsResponseLintsName = "db_connection_limit_reached"
+	DbNotReachable                V1ProjectAdvisorsResponseLintsName = "db_not_reachable"
 	DuplicateIndex                V1ProjectAdvisorsResponseLintsName = "duplicate_index"
 	ExtensionInPublic             V1ProjectAdvisorsResponseLintsName = "extension_in_public"
 	ForeignTableInApi             V1ProjectAdvisorsResponseLintsName = "foreign_table_in_api"
 	FunctionSearchPathMutable     V1ProjectAdvisorsResponseLintsName = "function_search_path_mutable"
+	InstanceAlertFiring           V1ProjectAdvisorsResponseLintsName = "instance_alert_firing"
+	InstanceDbDown                V1ProjectAdvisorsResponseLintsName = "instance_db_down"
+	InstanceTelemetryLost         V1ProjectAdvisorsResponseLintsName = "instance_telemetry_lost"
 	LeakedServiceKey              V1ProjectAdvisorsResponseLintsName = "leaked_service_key"
+	LogConnectionsNotEnabled      V1ProjectAdvisorsResponseLintsName = "log_connections_not_enabled"
+	LogServiceErrorRateHigh       V1ProjectAdvisorsResponseLintsName = "log_service_error_rate_high"
 	MaterializedViewInApi         V1ProjectAdvisorsResponseLintsName = "materialized_view_in_api"
 	MultiplePermissivePolicies    V1ProjectAdvisorsResponseLintsName = "multiple_permissive_policies"
 	NetworkRestrictionsNotSet     V1ProjectAdvisorsResponseLintsName = "network_restrictions_not_set"
@@ -4659,6 +4680,7 @@ const (
 	PasswordRequirementsMinLength V1ProjectAdvisorsResponseLintsName = "password_requirements_min_length"
 	PitrNotEnabled                V1ProjectAdvisorsResponseLintsName = "pitr_not_enabled"
 	PolicyExistsRlsDisabled       V1ProjectAdvisorsResponseLintsName = "policy_exists_rls_disabled"
+	ProjectNotActive              V1ProjectAdvisorsResponseLintsName = "project_not_active"
 	RlsDisabledInPublic           V1ProjectAdvisorsResponseLintsName = "rls_disabled_in_public"
 	RlsEnabledNoPolicy            V1ProjectAdvisorsResponseLintsName = "rls_enabled_no_policy"
 	RlsReferencesUserMetadata     V1ProjectAdvisorsResponseLintsName = "rls_references_user_metadata"
@@ -4673,6 +4695,8 @@ const (
 // Valid indicates whether the value is a known member of the V1ProjectAdvisorsResponseLintsName enum.
 func (e V1ProjectAdvisorsResponseLintsName) Valid() bool {
 	switch e {
+	case AdvisorCheckUnavailable:
+		return true
 	case AuthInsufficientMfaOptions:
 		return true
 	case AuthLeakedPasswordProtection:
@@ -4687,6 +4711,12 @@ func (e V1ProjectAdvisorsResponseLintsName) Valid() bool {
 		return true
 	case AuthUsersExposed:
 		return true
+	case DbConnectionFailing:
+		return true
+	case DbConnectionLimitReached:
+		return true
+	case DbNotReachable:
+		return true
 	case DuplicateIndex:
 		return true
 	case ExtensionInPublic:
@@ -4695,7 +4725,17 @@ func (e V1ProjectAdvisorsResponseLintsName) Valid() bool {
 		return true
 	case FunctionSearchPathMutable:
 		return true
+	case InstanceAlertFiring:
+		return true
+	case InstanceDbDown:
+		return true
+	case InstanceTelemetryLost:
+		return true
 	case LeakedServiceKey:
+		return true
+	case LogConnectionsNotEnabled:
+		return true
+	case LogServiceErrorRateHigh:
 		return true
 	case MaterializedViewInApi:
 		return true
@@ -4712,6 +4752,8 @@ func (e V1ProjectAdvisorsResponseLintsName) Valid() bool {
 	case PitrNotEnabled:
 		return true
 	case PolicyExistsRlsDisabled:
+		return true
+	case ProjectNotActive:
 		return true
 	case RlsDisabledInPublic:
 		return true
@@ -8683,25 +8725,7 @@ type V1ProfileResponse struct {
 
 // V1ProjectAdvisorsResponse defines model for V1ProjectAdvisorsResponse.
 type V1ProjectAdvisorsResponse struct {
-	Lints []struct {
-		CacheKey    string                                     `json:"cache_key"`
-		Categories  []V1ProjectAdvisorsResponseLintsCategories `json:"categories"`
-		Description string                                     `json:"description"`
-		Detail      string                                     `json:"detail"`
-		Facing      V1ProjectAdvisorsResponseLintsFacing       `json:"facing"`
-		Level       V1ProjectAdvisorsResponseLintsLevel        `json:"level"`
-		Metadata    *struct {
-			Entity      *string                                     `json:"entity,omitempty"`
-			FkeyColumns *[]float32                                  `json:"fkey_columns,omitempty"`
-			FkeyName    *string                                     `json:"fkey_name,omitempty"`
-			Name        *string                                     `json:"name,omitempty"`
-			Schema      *string                                     `json:"schema,omitempty"`
-			Type        *V1ProjectAdvisorsResponseLintsMetadataType `json:"type,omitempty"`
-		} `json:"metadata,omitempty"`
-		Name        V1ProjectAdvisorsResponseLintsName `json:"name"`
-		Remediation string                             `json:"remediation"`
-		Title       string                             `json:"title"`
-	} `json:"lints"`
+	Lints []V1ProjectAdvisorsResponse_Lints_Item `json:"lints"`
 }
 
 // V1ProjectAdvisorsResponseLintsCategories defines model for V1ProjectAdvisorsResponse.Lints.Categories.
@@ -8716,8 +8740,35 @@ type V1ProjectAdvisorsResponseLintsLevel string
 // V1ProjectAdvisorsResponseLintsMetadataType defines model for V1ProjectAdvisorsResponse.Lints.Metadata.Type.
 type V1ProjectAdvisorsResponseLintsMetadataType string
 
+// V1ProjectAdvisorsResponse_Lints_Metadata defines model for V1ProjectAdvisorsResponse.Lints.Metadata.
+type V1ProjectAdvisorsResponse_Lints_Metadata struct {
+	Entity               *string                                     `json:"entity,omitempty"`
+	FkeyColumns          *[]float32                                  `json:"fkey_columns,omitempty"`
+	FkeyName             *string                                     `json:"fkey_name,omitempty"`
+	Name                 *string                                     `json:"name,omitempty"`
+	Schema               *string                                     `json:"schema,omitempty"`
+	Type                 *V1ProjectAdvisorsResponseLintsMetadataType `json:"type,omitempty"`
+	AdditionalProperties map[string]interface{}                      `json:"-"`
+}
+
 // V1ProjectAdvisorsResponseLintsName defines model for V1ProjectAdvisorsResponse.Lints.Name.
 type V1ProjectAdvisorsResponseLintsName string
+
+// V1ProjectAdvisorsResponse_Lints_Item defines model for V1ProjectAdvisorsResponse.lints.Item.
+type V1ProjectAdvisorsResponse_Lints_Item struct {
+	CacheKey             string                                     `json:"cache_key"`
+	Categories           []V1ProjectAdvisorsResponseLintsCategories `json:"categories"`
+	Description          string                                     `json:"description"`
+	Detail               string                                     `json:"detail"`
+	Facing               V1ProjectAdvisorsResponseLintsFacing       `json:"facing"`
+	Level                V1ProjectAdvisorsResponseLintsLevel        `json:"level"`
+	Metadata             *V1ProjectAdvisorsResponse_Lints_Metadata  `json:"metadata,omitempty"`
+	Name                 V1ProjectAdvisorsResponseLintsName         `json:"name"`
+	ObservedAt           *time.Time                                 `json:"observed_at,omitempty"`
+	Remediation          string                                     `json:"remediation"`
+	Title                string                                     `json:"title"`
+	AdditionalProperties map[string]interface{}                     `json:"-"`
+}
 
 // V1ProjectRefResponse defines model for V1ProjectRefResponse.
 type V1ProjectRefResponse struct {
@@ -9091,7 +9142,7 @@ type V1GetProjectFunctionCombinedStatsParamsInterval string
 
 // V1GetProjectLogsParams defines parameters for V1GetProjectLogs.
 type V1GetProjectLogsParams struct {
-	// Sql Custom SQL query to execute on the logs. See [querying logs](/docs/guides/telemetry/logs?queryGroups=product&product=postgres&queryGroups=source&source=edge_logs#querying-with-the-logs-explorer) for more details.
+	// Sql Custom SQL query to execute on the logs. See [querying logs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#querying-with-the-logs-explorer) for more details.
 	Sql               *string    `form:"sql,omitempty" json:"sql,omitempty"`
 	IsoTimestampStart *time.Time `form:"iso_timestamp_start,omitempty" json:"iso_timestamp_start,omitempty"`
 	IsoTimestampEnd   *time.Time `form:"iso_timestamp_end,omitempty" json:"iso_timestamp_end,omitempty"`
@@ -9099,7 +9150,7 @@ type V1GetProjectLogsParams struct {
 
 // V1GetProjectLogsAllParams defines parameters for V1GetProjectLogsAll.
 type V1GetProjectLogsAllParams struct {
-	// Sql Custom SQL query to execute on the logs. See [querying logs](/docs/guides/telemetry/logs?queryGroups=product&product=postgres&queryGroups=source&source=edge_logs#querying-with-the-logs-explorer) for more details.
+	// Sql Custom SQL query to execute on the logs. See [querying logs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#querying-with-the-logs-explorer) for more details.
 	Sql               *string    `form:"sql,omitempty" json:"sql,omitempty"`
 	IsoTimestampStart *time.Time `form:"iso_timestamp_start,omitempty" json:"iso_timestamp_start,omitempty"`
 	IsoTimestampEnd   *time.Time `form:"iso_timestamp_end,omitempty" json:"iso_timestamp_end,omitempty"`
@@ -9646,6 +9697,351 @@ func (a GetProjectDbMetadataResponse_Databases_Item) MarshalJSON() ([]byte, erro
 		if err != nil {
 			return nil, fmt.Errorf("error marshaling 'schemas': %w", err)
 		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// Getter for additional properties for V1ProjectAdvisorsResponse_Lints_Metadata. Returns the specified
+// element and whether it was found
+func (a V1ProjectAdvisorsResponse_Lints_Metadata) Get(fieldName string) (value interface{}, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for V1ProjectAdvisorsResponse_Lints_Metadata
+func (a *V1ProjectAdvisorsResponse_Lints_Metadata) Set(fieldName string, value interface{}) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]interface{})
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for V1ProjectAdvisorsResponse_Lints_Metadata to handle AdditionalProperties
+func (a *V1ProjectAdvisorsResponse_Lints_Metadata) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["entity"]; found {
+		err = json.Unmarshal(raw, &a.Entity)
+		if err != nil {
+			return fmt.Errorf("error reading 'entity': %w", err)
+		}
+		delete(object, "entity")
+	}
+
+	if raw, found := object["fkey_columns"]; found {
+		err = json.Unmarshal(raw, &a.FkeyColumns)
+		if err != nil {
+			return fmt.Errorf("error reading 'fkey_columns': %w", err)
+		}
+		delete(object, "fkey_columns")
+	}
+
+	if raw, found := object["fkey_name"]; found {
+		err = json.Unmarshal(raw, &a.FkeyName)
+		if err != nil {
+			return fmt.Errorf("error reading 'fkey_name': %w", err)
+		}
+		delete(object, "fkey_name")
+	}
+
+	if raw, found := object["name"]; found {
+		err = json.Unmarshal(raw, &a.Name)
+		if err != nil {
+			return fmt.Errorf("error reading 'name': %w", err)
+		}
+		delete(object, "name")
+	}
+
+	if raw, found := object["schema"]; found {
+		err = json.Unmarshal(raw, &a.Schema)
+		if err != nil {
+			return fmt.Errorf("error reading 'schema': %w", err)
+		}
+		delete(object, "schema")
+	}
+
+	if raw, found := object["type"]; found {
+		err = json.Unmarshal(raw, &a.Type)
+		if err != nil {
+			return fmt.Errorf("error reading 'type': %w", err)
+		}
+		delete(object, "type")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]interface{})
+		for fieldName, fieldBuf := range object {
+			var fieldVal interface{}
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for V1ProjectAdvisorsResponse_Lints_Metadata to handle AdditionalProperties
+func (a V1ProjectAdvisorsResponse_Lints_Metadata) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	if a.Entity != nil {
+		object["entity"], err = json.Marshal(a.Entity)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'entity': %w", err)
+		}
+	}
+
+	if a.FkeyColumns != nil {
+		object["fkey_columns"], err = json.Marshal(a.FkeyColumns)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'fkey_columns': %w", err)
+		}
+	}
+
+	if a.FkeyName != nil {
+		object["fkey_name"], err = json.Marshal(a.FkeyName)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'fkey_name': %w", err)
+		}
+	}
+
+	if a.Name != nil {
+		object["name"], err = json.Marshal(a.Name)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'name': %w", err)
+		}
+	}
+
+	if a.Schema != nil {
+		object["schema"], err = json.Marshal(a.Schema)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'schema': %w", err)
+		}
+	}
+
+	if a.Type != nil {
+		object["type"], err = json.Marshal(a.Type)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'type': %w", err)
+		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// Getter for additional properties for V1ProjectAdvisorsResponse_Lints_Item. Returns the specified
+// element and whether it was found
+func (a V1ProjectAdvisorsResponse_Lints_Item) Get(fieldName string) (value interface{}, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for V1ProjectAdvisorsResponse_Lints_Item
+func (a *V1ProjectAdvisorsResponse_Lints_Item) Set(fieldName string, value interface{}) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]interface{})
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for V1ProjectAdvisorsResponse_Lints_Item to handle AdditionalProperties
+func (a *V1ProjectAdvisorsResponse_Lints_Item) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["cache_key"]; found {
+		err = json.Unmarshal(raw, &a.CacheKey)
+		if err != nil {
+			return fmt.Errorf("error reading 'cache_key': %w", err)
+		}
+		delete(object, "cache_key")
+	}
+
+	if raw, found := object["categories"]; found {
+		err = json.Unmarshal(raw, &a.Categories)
+		if err != nil {
+			return fmt.Errorf("error reading 'categories': %w", err)
+		}
+		delete(object, "categories")
+	}
+
+	if raw, found := object["description"]; found {
+		err = json.Unmarshal(raw, &a.Description)
+		if err != nil {
+			return fmt.Errorf("error reading 'description': %w", err)
+		}
+		delete(object, "description")
+	}
+
+	if raw, found := object["detail"]; found {
+		err = json.Unmarshal(raw, &a.Detail)
+		if err != nil {
+			return fmt.Errorf("error reading 'detail': %w", err)
+		}
+		delete(object, "detail")
+	}
+
+	if raw, found := object["facing"]; found {
+		err = json.Unmarshal(raw, &a.Facing)
+		if err != nil {
+			return fmt.Errorf("error reading 'facing': %w", err)
+		}
+		delete(object, "facing")
+	}
+
+	if raw, found := object["level"]; found {
+		err = json.Unmarshal(raw, &a.Level)
+		if err != nil {
+			return fmt.Errorf("error reading 'level': %w", err)
+		}
+		delete(object, "level")
+	}
+
+	if raw, found := object["metadata"]; found {
+		err = json.Unmarshal(raw, &a.Metadata)
+		if err != nil {
+			return fmt.Errorf("error reading 'metadata': %w", err)
+		}
+		delete(object, "metadata")
+	}
+
+	if raw, found := object["name"]; found {
+		err = json.Unmarshal(raw, &a.Name)
+		if err != nil {
+			return fmt.Errorf("error reading 'name': %w", err)
+		}
+		delete(object, "name")
+	}
+
+	if raw, found := object["observed_at"]; found {
+		err = json.Unmarshal(raw, &a.ObservedAt)
+		if err != nil {
+			return fmt.Errorf("error reading 'observed_at': %w", err)
+		}
+		delete(object, "observed_at")
+	}
+
+	if raw, found := object["remediation"]; found {
+		err = json.Unmarshal(raw, &a.Remediation)
+		if err != nil {
+			return fmt.Errorf("error reading 'remediation': %w", err)
+		}
+		delete(object, "remediation")
+	}
+
+	if raw, found := object["title"]; found {
+		err = json.Unmarshal(raw, &a.Title)
+		if err != nil {
+			return fmt.Errorf("error reading 'title': %w", err)
+		}
+		delete(object, "title")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]interface{})
+		for fieldName, fieldBuf := range object {
+			var fieldVal interface{}
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for V1ProjectAdvisorsResponse_Lints_Item to handle AdditionalProperties
+func (a V1ProjectAdvisorsResponse_Lints_Item) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	object["cache_key"], err = json.Marshal(a.CacheKey)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'cache_key': %w", err)
+	}
+
+	if a.Categories != nil {
+		object["categories"], err = json.Marshal(a.Categories)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'categories': %w", err)
+		}
+	}
+
+	object["description"], err = json.Marshal(a.Description)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'description': %w", err)
+	}
+
+	object["detail"], err = json.Marshal(a.Detail)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'detail': %w", err)
+	}
+
+	object["facing"], err = json.Marshal(a.Facing)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'facing': %w", err)
+	}
+
+	object["level"], err = json.Marshal(a.Level)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'level': %w", err)
+	}
+
+	if a.Metadata != nil {
+		object["metadata"], err = json.Marshal(a.Metadata)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'metadata': %w", err)
+		}
+	}
+
+	object["name"], err = json.Marshal(a.Name)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'name': %w", err)
+	}
+
+	if a.ObservedAt != nil {
+		object["observed_at"], err = json.Marshal(a.ObservedAt)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'observed_at': %w", err)
+		}
+	}
+
+	object["remediation"], err = json.Marshal(a.Remediation)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'remediation': %w", err)
+	}
+
+	object["title"], err = json.Marshal(a.Title)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'title': %w", err)
 	}
 
 	for fieldName, field := range a.AdditionalProperties {

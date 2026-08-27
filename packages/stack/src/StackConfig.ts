@@ -65,9 +65,10 @@ export interface PostgresConfig {
   /**
    * When true (default), the bundled initial schema GRANTs that expose new tables, views,
    * sequences, and functions in `public` to the Data API roles (`anon`, `authenticated`,
-   * `service_role`) are kept in place. When false, those default privileges are revoked so the
-   * local stack matches the new cloud default and requires explicit GRANTs to surface entities
-   * through the Data API.
+   * `service_role`) are kept in place, matching the cloud default. When false, those default
+   * privileges are revoked so new entities require explicit GRANTs to surface through the Data
+   * API, matching a cloud project with the "Default privileges for new entities" toggle turned
+   * off.
    */
   readonly autoExposeNewTables?: boolean;
 }

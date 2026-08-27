@@ -1,5 +1,5 @@
-import type { BaseProjectConfig } from "./sparse.ts";
-import { getDefaultProjectConfig } from "./sparse.ts";
+import type { EffectiveConfig } from "./sparse.ts";
+import { getDefaultCliConfig } from "./sparse.ts";
 import { MANAGED_CONFIG_PROPERTIES } from "./config-diff.managed.ts";
 
 /**
@@ -7,7 +7,7 @@ import { MANAGED_CONFIG_PROPERTIES } from "./config-diff.managed.ts";
  * effective remote configuration reported by the Management API
  * (`GET /v2/projects/{ref}/config`). Pure and synchronous: fetching the
  * response, resolving the target, and rendering output are the caller's job
- * (`supabase config diff`, and `config pull` after it). See ADR 0019.
+ * (`supabase config diff`, and `config pull` after it). See ADR 0022.
  */
 
 /** The per-service blocks of the v2 project-config resource. */
@@ -112,7 +112,7 @@ export interface DiffProjectConfigOptions {
    * resolved, and — when the target is a branch with a matching `[remotes.*]`
    * block — merged per ADR 0018.
    */
-  readonly local: BaseProjectConfig;
+  readonly local: EffectiveConfig;
   /**
    * The raw (pre-decode, post-merge) document the config was loaded from.
    * Declares which paths the file actually sets — the decoded config cannot,
@@ -126,7 +126,7 @@ export interface DiffProjectConfigOptions {
    * config's value at the same path is not drift. Defaults to the current
    * schema's default config.
    */
-  readonly defaults?: BaseProjectConfig;
+  readonly defaults?: EffectiveConfig;
   /** Dotted local path → environment variable name, for `env()` reporting. */
   readonly envReferences?: ReadonlyMap<string, string>;
 }
@@ -223,7 +223,7 @@ export function isEqualConfigValue(a: unknown, b: unknown): boolean {
  * dependency on command flags or output formatting.
  */
 export function diffProjectConfig(options: DiffProjectConfigOptions): ConfigChangeSet {
-  const defaults = options.defaults ?? getDefaultProjectConfig();
+  const defaults = options.defaults ?? getDefaultCliConfig();
   const declaredRoot = options.declared ?? {};
   const changes: Array<ConfigChange> = [];
   const masked: Array<string> = [];

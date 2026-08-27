@@ -111,20 +111,6 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
 
-      # ts-legacy shells out to the Go binary for the commands the TS port
-      # still proxies (db diff, db pull, db branch *, db remote *, gen keys,
-      # functions download).
-      - name: Build Go CLI
-        working-directory: apps/cli-go
-        run: go build -o supabase-go .
-
-      - name: Export Go binary path
-        run: echo "SUPABASE_GO_BINARY=${{ github.workspace }}/apps/cli-go/supabase-go" >> "$GITHUB_ENV"
-
-      # The ts-legacy harness runs the compiled supabase binary from apps/cli/dist.
-      - name: Build CLI
-        run: pnpm exec nx run supabase:build
-
       # Docker is a hard requirement for the --use-docker bundler cell.
       - name: Docker preflight
         run: docker info
@@ -133,7 +119,7 @@ jobs:
         timeout-minutes: 20
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_E2E_CLI_LIVE_STAGING_ACCESS_TOKEN }}
-        run: pnpm --filter supabase test:live
+        run: pnpm run test:live
 
       # Backstop: delete any project this job created that survived a crash.
       # The script exits non-zero (failing this step) if any delete failed.

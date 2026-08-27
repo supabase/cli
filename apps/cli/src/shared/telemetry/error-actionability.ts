@@ -99,6 +99,10 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "daemon_protocol",
   "daemon_status",
   "daemon_transport",
+  "daemon_upgrade_required",
+  "daemon_upgrade_preflight",
+  "daemon_upgrade_restart",
+  "daemon_stop_timeout",
   "database",
   "docker_not_running",
   "filesystem",
@@ -126,6 +130,8 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "managed_control_transport",
   "managed_control_protocol",
   "managed_control_address_conflict",
+  "managed_control_stop_conflict",
+  "managed_control_maintenance_busy",
   "managed_document",
   "managed_control_required",
   "managed_attached",
@@ -932,11 +938,32 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   BadArgument: () => ({ ...actionability.impossibleState, fingerprint_suffix: "bad_argument" }),
 
   // @supabase/config
-  ProjectConfigParseError: () => actionability.invalidConfig,
-  ProjectEnvParseError: () => actionability.invalidConfig,
-  MissingProjectConfigValueError: () => actionability.invalidConfig,
+  CliConfigParseError: () => actionability.invalidConfig,
+  CliProjectEnvParseError: () => actionability.invalidConfig,
+  MissingCliConfigValueError: () => actionability.invalidConfig,
   DuplicateRemoteProjectIdError: () => actionability.invalidConfig,
   InvalidRemoteProjectIdError: () => actionability.invalidConfig,
+  // A Management API project-config response that fails to map is a platform
+  // response problem, not a local config-file mistake — the user can't fix
+  // the payload by editing supabase/config.toml. `@supabase/config` now
+  // builds a real `suggestion` (upgrade the CLI, then report it) on every
+  // construction site, so `has_suggestion` flips to true here to match —
+  // `RerunDebug` is the closest existing bucket (same idiom as
+  // `internalPanic`/`impossibleState` below), there being no dedicated
+  // "upgrade the CLI" suggestion type in the closed vocabulary. The
+  // `caller_misuse` reason (a `toProjectConfig`/`attachApiResponse` argument
+  // error — the producer's typed field, never message text) is a programming
+  // error, not an external platform failure: bucketing it as `api_status`
+  // would corrupt the external-failure KPI with caller bugs.
+  ProjectConfigParseError: (error) =>
+    error.reason === "caller_misuse"
+      ? { ...actionability.invalidInput, fingerprint_suffix: "request_input" }
+      : {
+          ...actionability.apiStatus,
+          has_suggestion: true,
+          suggestion_type: CliSuggestionType.RerunDebug,
+          fingerprint_suffix: "api_response",
+        },
 
   // @supabase/api — client construction failed before any request (missing
   // access token / bad configuration); remediation is the token env var.
@@ -1022,7 +1049,32 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   }),
   StackNotRunningError: () => actionability.startStack,
   StackReadinessError: () => actionability.startStack,
+  StackUnavailableError: () => actionability.startStack,
+  StackRpcTransportError: () => ({
+    ...actionability.startStack,
+    fingerprint_suffix: "daemon_transport",
+  }),
+  StackRpcProtocolError: () => ({
+    ...actionability.impossibleState,
+    fingerprint_suffix: "daemon_protocol",
+  }),
   NoRunningStackError: () => actionability.startStack,
+  DaemonUpgradeRequired: () => ({
+    ...actionability.startStack,
+    fingerprint_suffix: "daemon_upgrade_required",
+  }),
+  UpgradePreflightError: () => ({
+    ...actionability.startStack,
+    fingerprint_suffix: "daemon_upgrade_preflight",
+  }),
+  UpgradeRestartError: () => ({
+    ...actionability.startStack,
+    fingerprint_suffix: "daemon_upgrade_restart",
+  }),
+  StopTimeout: () => ({
+    ...actionability.stopStack,
+    fingerprint_suffix: "daemon_stop_timeout",
+  }),
   InvalidControlOwnershipIdError: () => ({
     ...actionability.impossibleState,
     fingerprint_suffix: "managed_control_ownership",
@@ -1032,7 +1084,7 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
     fingerprint_suffix: "managed_control_bind",
   }),
   ControlTransportError: () => ({
-    ...actionability.externalNetwork,
+    ...actionability.startStack,
     fingerprint_suffix: "managed_control_transport",
   }),
   ControlProtocolError: () => ({
@@ -1046,6 +1098,17 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   ControlAddressConflictError: () => ({
     ...actionability.startStack,
     fingerprint_suffix: "managed_control_address_conflict",
+  }),
+  ControlStopConflictError: () => ({
+    ...actionability.impossibleState,
+    fingerprint_suffix: "managed_control_stop_conflict",
+  }),
+  ControlMaintenanceBusyError: () => ({
+    error_kind: CliErrorKind.UserActionable,
+    error_category: CliErrorCategory.InvalidConfig,
+    has_suggestion: true,
+    suggestion_type: CliSuggestionType.RunCommand,
+    fingerprint_suffix: "managed_control_maintenance_busy",
   }),
   InvalidManagedStackDocumentError: () => ({
     ...actionability.invalidConfig,
@@ -1193,7 +1256,7 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
   // @supabase/stack wrapper errors preserve the underlying tagged failure in
   // `cause`; classify it when it is more specific than the wrapper (e.g. a
   // daemon-down DockerPullError inside an asset-preparation StackBuildError,
-  // or a user's ProjectConfigParseError inside a reason-less StackBuildError).
+  // or a user's CliConfigParseError inside a reason-less StackBuildError).
   // Explicit `invalid_config` StackBuildErrors are deliberate user-facing
   // config verdicts and are never overridden by their cause.
   if (

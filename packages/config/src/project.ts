@@ -1,14 +1,14 @@
 import { Effect, FileSystem, Redacted } from "effect";
-import { ProjectConfigSchema } from "./base.ts";
-import { ProjectEnvParseError } from "./errors.ts";
+import { CliProjectEnvParseError } from "./errors.ts";
 import { ENV_CAPTURE_REGEX, ENV_CAPTURE_REGEX_STRICT, isEnvReference } from "./lib/env.ts";
-import { findProjectPaths, type ProjectPaths } from "./paths.ts";
+import { isSecretPath } from "./lib/secret-paths.ts";
+import { findCliProjectPaths, type CliProjectPaths } from "./paths.ts";
 
 const dotEnvLinePattern =
   /^\s*(?:export\s+)?([\w.-]+)(?:\s*=\s*?|:\s+?)(\s*'(?:\\'|[^'])*'|\s*"(?:\\"|[^"])*"|\s*`(?:\\`|[^`])*`|[^#\r\n]+)?\s*(?:#.*)?$/;
 
-export interface ProjectEnvironment {
-  readonly paths: ProjectPaths;
+export interface CliProjectEnvironment {
+  readonly paths: CliProjectPaths;
   readonly values: Readonly<Record<string, string>>;
   readonly loadedPaths: ReadonlyArray<string>;
   readonly sources: Readonly<Record<string, "ambient" | ".env" | ".env.local">>;
@@ -16,18 +16,18 @@ export interface ProjectEnvironment {
 
 type ResolvedString = string | Redacted.Redacted<string>;
 
-export type ResolvedProjectValue<T> = T extends string
+export type ResolvedCliConfigValue<T> = T extends string
   ? ResolvedString
   : T extends ReadonlyArray<infer U>
-    ? ReadonlyArray<ResolvedProjectValue<U>>
+    ? ReadonlyArray<ResolvedCliConfigValue<U>>
     : T extends Array<infer U>
-      ? Array<ResolvedProjectValue<U>>
+      ? Array<ResolvedCliConfigValue<U>>
       : T extends Record<string, infer V>
-        ? { readonly [K in keyof T]: ResolvedProjectValue<T[K]> } & {
-            readonly [key: string]: ResolvedProjectValue<V>;
+        ? { readonly [K in keyof T]: ResolvedCliConfigValue<T[K]> } & {
+            readonly [key: string]: ResolvedCliConfigValue<V>;
           }
         : T extends object
-          ? { readonly [K in keyof T]: ResolvedProjectValue<T[K]> }
+          ? { readonly [K in keyof T]: ResolvedCliConfigValue<T[K]> }
           : T;
 
 function normalizeAmbientEnv(
@@ -96,7 +96,7 @@ function parseDotEnvValue(rawValue: string): string {
 function parseDotEnv(
   path: string,
   contents: string,
-): Effect.Effect<Record<string, string>, ProjectEnvParseError> {
+): Effect.Effect<Record<string, string>, CliProjectEnvParseError> {
   return Effect.gen(function* () {
     const values: Record<string, string> = {};
     const lines = contents.replace(/\r\n?/g, "\n").split("\n");
@@ -148,14 +148,14 @@ function parseDotEnv(
       const match = dotEnvLinePattern.exec(candidate);
 
       if (match === null) {
-        return yield* Effect.fail(new ProjectEnvParseError({ path, line: index + 1 }));
+        return yield* Effect.fail(new CliProjectEnvParseError({ path, line: index + 1 }));
       }
 
       const key = match[1];
       const rawValue = match[2] ?? "";
 
       if (key === undefined) {
-        return yield* Effect.fail(new ProjectEnvParseError({ path, line: index + 1 }));
+        return yield* Effect.fail(new CliProjectEnvParseError({ path, line: index + 1 }));
       }
 
       values[key] = parseDotEnvValue(rawValue);
@@ -187,10 +187,10 @@ function applySource(
   }
 }
 
-export interface LoadProjectEnvironmentOptions {
+export interface LoadCliProjectEnvironmentOptions {
   readonly cwd: string;
   readonly baseEnv?: Readonly<Record<string, string | undefined>>;
-  /** See {@link FindProjectPathsOptions.search}. */
+  /** See {@link FindCliProjectPathsOptions.search}. */
   readonly search?: boolean;
   /**
    * Skip reading/parsing `paths.envLocalPath` (`supabase/.env.local`)
@@ -205,7 +205,7 @@ export interface LoadProjectEnvironmentOptions {
   readonly skipEnvLocal?: boolean;
 }
 
-export interface ResolveProjectOptions {
+export interface ResolveCliConfigOptions {
   /**
    * Opt into Go/viper-parity `env()` matching (case-agnostic
    * `^env\((.*)\)$`). Defaults to `false`, which uses the pre-PR-#5765 strict
@@ -215,11 +215,11 @@ export interface ResolveProjectOptions {
   readonly goViperCompat?: boolean;
 }
 
-export const loadProjectEnvironment = Effect.fnUntraced(function* (
-  options: LoadProjectEnvironmentOptions,
+export const loadCliProjectEnvironment = Effect.fnUntraced(function* (
+  options: LoadCliProjectEnvironmentOptions,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const paths = yield* findProjectPaths(options.cwd, { search: options.search });
+  const paths = yield* findCliProjectPaths(options.cwd, { search: options.search });
 
   if (paths === null) {
     return null;
@@ -250,71 +250,8 @@ export const loadProjectEnvironment = Effect.fnUntraced(function* (
     values,
     loadedPaths,
     sources,
-  } satisfies ProjectEnvironment;
+  } satisfies CliProjectEnvironment;
 });
-
-function collectSecretPathPatterns(
-  node: {
-    readonly annotations?: Record<string, unknown>;
-    readonly propertySignatures?: ReadonlyArray<{
-      readonly name: string;
-      readonly type: unknown;
-    }>;
-    readonly indexSignatures?: ReadonlyArray<{
-      readonly type: unknown;
-    }>;
-  },
-  prefix: ReadonlyArray<string> = [],
-): Array<ReadonlyArray<string>> {
-  const patterns: Array<ReadonlyArray<string>> = [];
-
-  if (node.annotations?.["x-secret"] === true) {
-    patterns.push(prefix);
-  }
-
-  for (const property of node.propertySignatures ?? []) {
-    patterns.push(
-      ...collectSecretPathPatterns(
-        property.type as Parameters<typeof collectSecretPathPatterns>[0],
-        [...prefix, property.name],
-      ),
-    );
-  }
-
-  for (const indexSignature of node.indexSignatures ?? []) {
-    patterns.push(
-      ...collectSecretPathPatterns(
-        indexSignature.type as Parameters<typeof collectSecretPathPatterns>[0],
-        [...prefix, "*"],
-      ),
-    );
-  }
-
-  return patterns;
-}
-
-const secretPathPatterns = collectSecretPathPatterns(ProjectConfigSchema.ast as never);
-
-function matchesPathPattern(
-  pattern: ReadonlyArray<string>,
-  actual: ReadonlyArray<string>,
-): boolean {
-  if (pattern.length !== actual.length) {
-    return false;
-  }
-
-  for (let index = 0; index < pattern.length; index += 1) {
-    if (pattern[index] !== "*" && pattern[index] !== actual[index]) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-function isSecretPath(path: ReadonlyArray<string>): boolean {
-  return secretPathPatterns.some((pattern) => matchesPathPattern(pattern, path));
-}
 
 function interpolateLeafValue(
   value: string,
@@ -401,53 +338,53 @@ function redactValue(value: unknown, path: ReadonlyArray<string>, goViperCompat:
   return value;
 }
 
-function resolveProjectValueAtPath(
+function resolveCliConfigValueAtPath(
   value: unknown,
-  projectEnv: Pick<ProjectEnvironment, "values">,
+  cliProjectEnv: Pick<CliProjectEnvironment, "values">,
   path: ReadonlyArray<string>,
   goViperCompat: boolean,
 ): unknown {
-  const interpolated = interpolateValue(value, projectEnv.values, goViperCompat);
+  const interpolated = interpolateValue(value, cliProjectEnv.values, goViperCompat);
   return redactValue(interpolated, path, goViperCompat);
 }
 
 /**
- * `projectEnv` only needs `.values` (`Pick<ProjectEnvironment, "values">`) —
+ * `cliProjectEnv` only needs `.values` (`Pick<CliProjectEnvironment, "values">`) —
  * a caller that already has a project's env values but not the full
- * `ProjectEnvironment` shape (e.g. `paths`/`loadedPaths`/`sources`) can pass
+ * `CliProjectEnvironment` shape (e.g. `paths`/`loadedPaths`/`sources`) can pass
  * `{ values }` directly instead of threading through the whole loaded object.
  */
-export function resolveProjectValue<T>(
+export function resolveCliConfigValue<T>(
   value: T,
-  projectEnv: Pick<ProjectEnvironment, "values">,
+  cliProjectEnv: Pick<CliProjectEnvironment, "values">,
   configPath: string,
-  options?: ResolveProjectOptions,
-): Effect.Effect<ResolvedProjectValue<T>> {
+  options?: ResolveCliConfigOptions,
+): Effect.Effect<ResolvedCliConfigValue<T>> {
   return Effect.sync(
     () =>
-      resolveProjectValueAtPath(
+      resolveCliConfigValueAtPath(
         value,
-        projectEnv,
+        cliProjectEnv,
         toPathSegments(configPath),
         options?.goViperCompat ?? false,
-      ) as ResolvedProjectValue<T>,
+      ) as ResolvedCliConfigValue<T>,
   );
 }
 
-/** See {@link resolveProjectValue}'s doc comment for why `projectEnv` only needs `.values`. */
-export function resolveProjectSubtree<T>(
+/** See {@link resolveCliConfigValue}'s doc comment for why `cliProjectEnv` only needs `.values`. */
+export function resolveCliConfigSubtree<T>(
   value: T,
-  projectEnv: Pick<ProjectEnvironment, "values">,
+  cliProjectEnv: Pick<CliProjectEnvironment, "values">,
   pathPrefix: string,
-  options?: ResolveProjectOptions,
-): Effect.Effect<ResolvedProjectValue<T>> {
+  options?: ResolveCliConfigOptions,
+): Effect.Effect<ResolvedCliConfigValue<T>> {
   return Effect.sync(
     () =>
-      resolveProjectValueAtPath(
+      resolveCliConfigValueAtPath(
         value,
-        projectEnv,
+        cliProjectEnv,
         toPathSegments(pathPrefix),
         options?.goViperCompat ?? false,
-      ) as ResolvedProjectValue<T>,
+      ) as ResolvedCliConfigValue<T>,
   );
 }

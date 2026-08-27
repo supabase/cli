@@ -13,7 +13,7 @@ import {
   LEGACY_VALID_REF,
   legacyJsonResponse,
   legacyTransportFailure,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -52,6 +52,7 @@ function v2Response(
 ) {
   const attributes: Record<string, unknown> = {
     database: {
+      major_version: 17,
       ssl_enforced: false,
       network_restrictions: {
         entitlement: "allowed",
@@ -190,7 +191,7 @@ function setup(opts: SetupOpts = {}) {
     buildLegacyTestRuntime({
       out,
       api,
-      cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+      cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
       telemetry: telemetry.layer,
       linkedProjectCache: linkedProjectCache.layer,

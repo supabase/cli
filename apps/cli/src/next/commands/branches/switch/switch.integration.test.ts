@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { makeApiClient } from "@supabase/api/effect";
-import { Effect, Exit, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Predicate } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -11,6 +11,10 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { emptyEnv, mockOutput, mockProjectLinkState } from "../../../../../tests/helpers/mocks.ts";
 import { ProjectLinkState } from "../../../config/project-link-state.service.ts";
 import { switchBranch } from "./switch.handler.ts";
+import { makeRunningStackFixture } from "../../../../../tests/helpers/running-stack.ts";
+import { controlTransportLayer } from "@supabase/stack/managed";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -151,7 +155,7 @@ function setup(
   const api = mockPlatformApi(opts.branches ?? [MAIN_BRANCH, DEV_BRANCH], {
     status: opts.status,
   });
-  const layer = Layer.mergeAll(emptyEnv(), out.layer, state, api.layer);
+  const layer = Layer.mergeAll(emptyEnv(), out.layer, state, api.layer, controlTransportLayer);
   return { out, layer, api };
 }
 
@@ -335,7 +339,13 @@ describe("branches switch handler", () => {
       const out = mockOutput({ format: "json" });
       const linkState = mockProjectLinkState(DEFAULT_LINK_STATE);
       const api = mockPlatformApi([MAIN_BRANCH, DEV_BRANCH], { status: 503 });
-      const layer = Layer.mergeAll(emptyEnv(), out.layer, linkState, api.layer);
+      const layer = Layer.mergeAll(
+        emptyEnv(),
+        out.layer,
+        linkState,
+        api.layer,
+        controlTransportLayer,
+      );
 
       yield* switchBranch({ name: Option.some("dev") }).pipe(
         withJsonErrorHandling,
@@ -371,5 +381,91 @@ describe("branches switch handler", () => {
         expect.objectContaining({ type: "info", message: expect.stringContaining("detach mode") }),
       );
     }),
+  );
+
+  it.live("does not stop an incompatible local stack before branch restart", () =>
+    Effect.promise(() =>
+      makeRunningStackFixture({
+        cliVersion: "2.60.0",
+      }),
+    ).pipe(
+      Effect.flatMap((fixture) => {
+        const out = mockOutput();
+        const api = mockPlatformApi([MAIN_BRANCH, DEV_BRANCH]);
+        let linkState = DEFAULT_LINK_STATE;
+        const linkStateLayer = Layer.succeed(
+          ProjectLinkState,
+          ProjectLinkState.of({
+            load: Effect.sync(() => Option.some(linkState)),
+            save: (next) => Effect.sync(() => void (linkState = next)),
+            clear: Effect.void,
+            getActiveBranch: Effect.sync(() => Option.some(linkState.active_branch)),
+            setActiveBranch: (branch) =>
+              Effect.sync(() => {
+                linkState = { ...linkState, active_branch: branch };
+              }),
+          }),
+        );
+        const layer = Layer.mergeAll(fixture.baseLayer, out.layer, linkStateLayer, api.layer);
+        return switchBranch({ name: Option.some("dev") }).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+          Effect.andThen((exit) =>
+            Effect.gen(function* () {
+              expect(Exit.isFailure(exit)).toBe(true);
+              if (Exit.isFailure(exit)) {
+                expect(JSON.stringify(exit.cause)).toContain("DaemonUpgradeRequired");
+              }
+              expect(api.requests).toHaveLength(1);
+              expect(linkState.active_branch.ref).toBe(MAIN_BRANCH.project_ref);
+              expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "success" }));
+              expect(out.messages).not.toContainEqual(
+                expect.objectContaining({
+                  type: "outro",
+                  message: expect.stringContaining("Switched to branch"),
+                }),
+              );
+              expect((yield* Effect.promise(() => fixture.readDocument()))?.lifecycle).toBe(
+                "running",
+              );
+            }),
+          ),
+          Effect.ensuring(Effect.promise(() => fixture.dispose())),
+        );
+      }),
+    ),
+  );
+
+  it.live("recovers a stale running document before restarting for the selected branch", () =>
+    Effect.promise(() => makeRunningStackFixture()).pipe(
+      Effect.flatMap((fixture) => {
+        const out = mockOutput();
+        const api = mockPlatformApi([MAIN_BRANCH, DEV_BRANCH]);
+        const layer = Layer.mergeAll(
+          fixture.baseLayer,
+          out.layer,
+          mockProjectLinkState(DEFAULT_LINK_STATE),
+          api.layer,
+        );
+        return Effect.gen(function* () {
+          yield* Effect.promise(() => fixture.closeControlOwner());
+          expect((yield* Effect.promise(() => fixture.readDocument()))?.lifecycle).toBe("running");
+
+          // Stop before launching a real replacement daemon: malformed config
+          // makes the command fail immediately after stale-owner cleanup.
+          const configDir = join(fixture.projectRoot, "supabase");
+          mkdirSync(configDir, { recursive: true });
+          writeFileSync(join(configDir, "config.toml"), "[invalid\n");
+
+          const exit = yield* switchBranch({ name: Option.some("dev") }).pipe(Effect.exit);
+
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(Predicate.isTagged(Cause.squash(exit.cause), "NoRunningStackError")).toBe(false);
+          }
+          expect((yield* Effect.promise(() => fixture.readDocument()))?.lifecycle).toBe("stopped");
+        }).pipe(Effect.provide(layer), Effect.ensuring(Effect.promise(() => fixture.dispose())));
+      }),
+    ),
   );
 });

@@ -19,7 +19,7 @@ import {
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
 import {
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
   legacySequentialExecBatch,
@@ -430,7 +430,7 @@ function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockLegacyTelemetryStateTracked();
   const analytics = mockAnalytics();
-  const cliConfig = mockLegacyCliConfig({ workdir });
+  const cliSettings = mockLegacyCliSettings({ workdir });
   const child = mockStartContainerCliSpawner(opts.route ?? defaultRoute(), {
     failSpawn: opts.failSpawn,
     onSecretCopy: opts.onSecretCopy,
@@ -456,7 +456,7 @@ function setup(opts: SetupOpts = {}) {
   const layer = Layer.mergeAll(
     BunServices.layer,
     out.layer,
-    cliConfig,
+    cliSettings,
     telemetry.layer,
     analytics.layer,
     child.layer,
@@ -867,7 +867,7 @@ describe("legacy start integration", () => {
           child.spawned
             .filter((spawn) => spawn.args[0] === "stop")
             .map((spawn) => spawn.args[1])
-            .sort(),
+            .sort((left, right) => (left ?? "").localeCompare(right ?? "")),
         ).toEqual(["db-id", "kong-id"]);
         expect(
           child.spawned.some(
@@ -2473,7 +2473,7 @@ content_path = "./supabase/templates/custom_notice.html"
         // registry override that only exists in the project's own `.env` file.
         const workdir = tempRoot.current;
         const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
-        // `loadProjectEnvironment`'s `envPath` is `<workdir>/supabase/.env` (`findProjectPaths`),
+        // `loadCliProjectEnvironment`'s `envPath` is `<workdir>/supabase/.env` (`findCliProjectPaths`),
         // written after `setup()` so the `supabase/` dir (created by `writeConfig`) already exists.
         writeFileSync(
           join(workdir, "supabase", ".env"),

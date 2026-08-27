@@ -6562,7 +6562,7 @@
     "/v1/projects/{ref}/analytics/endpoints/logs.all": {
       "get": {
         "deprecated": true,
-        "description": "Executes a SQL query on the project's logs.\n\nEither the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\nIf both are not provided, only the last 1 minute of logs will be queried.\nThe timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\nNote: Unless the `sql` parameter is provided, only edge_logs will be queried. See the [log query docs](/docs/guides/telemetry/logs?queryGroups=product&product=postgres&queryGroups=source&source=edge_logs#querying-with-the-logs-explorer:~:text=logs%20from%20the-,Sources,-drop%2Ddown%3A) for all available sources.\n",
+        "description": "Executes a SQL query on the project's logs.\n\nEither the `iso_timestamp_start` and `iso_timestamp_end` parameters must be provided.\nIf both are not provided, only the last 1 minute of logs will be queried.\nThe timestamp range must be no more than 24 hours and is rounded to the nearest minute. If the range is more than 24 hours, a validation error will be thrown.\n\nNote: Unless the `sql` parameter is provided, only edge_logs will be queried. See the [log query docs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#logs-explorer) for all available sources.\n",
         "operationId": "v1-get-project-logs-all",
         "parameters": [
           {
@@ -6582,7 +6582,7 @@
             "name": "sql",
             "required": false,
             "in": "query",
-            "description": "Custom SQL query to execute on the logs. See [querying logs](/docs/guides/telemetry/logs?queryGroups=product&product=postgres&queryGroups=source&source=edge_logs#querying-with-the-logs-explorer) for more details.",
+            "description": "Custom SQL query to execute on the logs. See [querying logs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#querying-with-the-logs-explorer) for more details.",
             "schema": {
               "example": "select event_message from edge_logs limit 10",
               "type": "string"
@@ -6648,7 +6648,7 @@
             "position": "after"
           }
         ],
-        "x-endpoint-owners": ["analytics"],
+        "x-endpoint-owners": ["observability"],
         "x-fga-permissions": [["analytics_logs_read"]],
         "x-oauth-scope": "analytics:read"
       }
@@ -6676,7 +6676,7 @@
             "name": "sql",
             "required": false,
             "in": "query",
-            "description": "Custom SQL query to execute on the logs. See [querying logs](/docs/guides/telemetry/logs?queryGroups=product&product=postgres&queryGroups=source&source=edge_logs#querying-with-the-logs-explorer) for more details.",
+            "description": "Custom SQL query to execute on the logs. See [querying logs](https://supabase.com/docs/guides/monitoring-and-debugging/logs#querying-with-the-logs-explorer) for more details.",
             "schema": {
               "example": "select event_message from edge_logs limit 10",
               "type": "string"
@@ -6742,7 +6742,7 @@
             "position": "after"
           }
         ],
-        "x-endpoint-owners": ["analytics"],
+        "x-endpoint-owners": ["observability"],
         "x-fga-permissions": [["analytics_logs_read"]],
         "x-oauth-scope": "analytics:read"
       }
@@ -6806,7 +6806,7 @@
         ],
         "summary": "Gets project's usage api counts",
         "tags": ["Analytics"],
-        "x-endpoint-owners": ["analytics"],
+        "x-endpoint-owners": ["observability"],
         "x-fga-permissions": [["analytics_usage_read"]]
       }
     },
@@ -6859,7 +6859,7 @@
         ],
         "summary": "Gets project's usage api requests count",
         "tags": ["Analytics"],
-        "x-endpoint-owners": ["analytics"],
+        "x-endpoint-owners": ["observability"],
         "x-fga-permissions": [["analytics_usage_read"]]
       }
     },
@@ -6931,7 +6931,7 @@
         ],
         "summary": "Gets a project's function combined statistics",
         "tags": ["Analytics"],
-        "x-endpoint-owners": ["analytics"],
+        "x-endpoint-owners": ["observability"],
         "x-fga-permissions": [["analytics_usage_read"]]
       }
     },
@@ -6999,7 +6999,7 @@
             "position": "after"
           }
         ],
-        "x-endpoint-owners": ["analytics"],
+        "x-endpoint-owners": ["observability"],
         "x-fga-permissions": [["analytics_logs_read"]],
         "x-oauth-scope": "analytics:read"
       }
@@ -11328,7 +11328,7 @@
             "position": "after"
           }
         ],
-        "x-endpoint-owners": ["analytics"],
+        "x-endpoint-owners": ["observability"],
         "x-fga-permissions": [["analytics_config_read"]],
         "x-oauth-scope": "analytics_config:read"
       },
@@ -11439,7 +11439,7 @@
             "position": "after"
           }
         ],
-        "x-endpoint-owners": ["analytics"],
+        "x-endpoint-owners": ["observability"],
         "x-fga-permissions": [["analytics_config_write"]],
         "x-oauth-scope": "analytics_config:write"
       }
@@ -11548,7 +11548,7 @@
             "position": "after"
           }
         ],
-        "x-endpoint-owners": ["analytics"],
+        "x-endpoint-owners": ["observability"],
         "x-fga-permissions": [["analytics_config_write"]],
         "x-oauth-scope": "analytics_config:write"
       },
@@ -11638,9 +11638,90 @@
             "position": "after"
           }
         ],
-        "x-endpoint-owners": ["analytics"],
+        "x-endpoint-owners": ["observability"],
         "x-fga-permissions": [["analytics_config_write"]],
         "x-oauth-scope": "analytics_config:write"
+      }
+    },
+    "/v2/projects/{ref}/advisors/run": {
+      "post": {
+        "operationId": "v2-run-project-advisors",
+        "parameters": [
+          {
+            "name": "ref",
+            "required": true,
+            "in": "path",
+            "description": "Project ref",
+            "schema": {
+              "minLength": 20,
+              "maxLength": 20,
+              "pattern": "^[a-z]+$",
+              "example": "abcdefghijklmnopqrst",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/V2RunProjectAdvisorsBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/V2ProjectAdvisorsResponse_Output"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponseBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Runs the project advisors with the given names",
+        "tags": ["Advisors"],
+        "x-endpoint-owners": ["control-plane"],
+        "x-fga-permissions": [["advisors_read"]]
       }
     },
     "/v2/projects/{ref}/config": {
@@ -19260,6 +19341,7 @@
                     "auth_otp_long_expiry",
                     "auth_otp_short_length",
                     "ssl_not_enforced",
+                    "log_connections_not_enabled",
                     "network_restrictions_not_set",
                     "password_requirements_min_length",
                     "pitr_not_enabled",
@@ -19268,7 +19350,16 @@
                     "auth_password_policy_missing",
                     "leaked_service_key",
                     "no_backup_admin",
-                    "vulnerable_postgres_version"
+                    "vulnerable_postgres_version",
+                    "db_not_reachable",
+                    "db_connection_failing",
+                    "db_connection_limit_reached",
+                    "instance_telemetry_lost",
+                    "instance_db_down",
+                    "instance_alert_firing",
+                    "log_service_error_rate_high",
+                    "project_not_active",
+                    "advisor_check_unavailable"
                   ],
                   "type": "string"
                 },
@@ -19287,8 +19378,9 @@
                   "type": "array",
                   "items": {
                     "type": "string",
-                    "enum": ["PERFORMANCE", "SECURITY"]
-                  }
+                    "enum": ["PERFORMANCE", "SECURITY", "HEALTH"]
+                  },
+                  "x-ignore-array-items-must-be-objects": true
                 },
                 "description": {
                   "type": "string"
@@ -19312,13 +19404,24 @@
                       "type": "string"
                     },
                     "type": {
-                      "type": "string",
-                      "enum": ["table", "view", "auth", "function", "extension", "compliance"]
+                      "enum": [
+                        "table",
+                        "view",
+                        "materialized view",
+                        "foreign table",
+                        "auth",
+                        "function",
+                        "extension",
+                        "compliance",
+                        "health"
+                      ],
+                      "type": "string"
                     },
                     "fkey_name": {
                       "type": "string"
                     },
                     "fkey_columns": {
+                      "x-ignore-array-items-must-be-objects": true,
                       "type": "array",
                       "items": {
                         "type": "number"
@@ -19328,6 +19431,11 @@
                 },
                 "cache_key": {
                   "type": "string"
+                },
+                "observed_at": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
                 }
               },
               "required": [
@@ -19340,7 +19448,8 @@
                 "detail",
                 "remediation",
                 "cache_key"
-              ]
+              ],
+              "additionalProperties": {}
             }
           }
         },
@@ -24008,6 +24117,249 @@
         },
         "required": ["data"]
       },
+      "V2RunProjectAdvisorsBody": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Resource type.",
+                "enum": ["project_advisors"]
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "lints": {
+                    "minItems": 1,
+                    "maxItems": 10,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "enum": [
+                            "unindexed_foreign_keys",
+                            "auth_users_exposed",
+                            "auth_rls_initplan",
+                            "no_primary_key",
+                            "unused_index",
+                            "multiple_permissive_policies",
+                            "policy_exists_rls_disabled",
+                            "rls_enabled_no_policy",
+                            "duplicate_index",
+                            "security_definer_view",
+                            "function_search_path_mutable",
+                            "rls_disabled_in_public",
+                            "extension_in_public",
+                            "rls_references_user_metadata",
+                            "materialized_view_in_api",
+                            "foreign_table_in_api",
+                            "unsupported_reg_types",
+                            "auth_otp_long_expiry",
+                            "auth_otp_short_length",
+                            "ssl_not_enforced",
+                            "log_connections_not_enabled",
+                            "network_restrictions_not_set",
+                            "password_requirements_min_length",
+                            "pitr_not_enabled",
+                            "auth_leaked_password_protection",
+                            "auth_insufficient_mfa_options",
+                            "auth_password_policy_missing",
+                            "leaked_service_key",
+                            "no_backup_admin",
+                            "vulnerable_postgres_version",
+                            "db_not_reachable",
+                            "db_connection_failing",
+                            "db_connection_limit_reached",
+                            "instance_telemetry_lost",
+                            "instance_db_down",
+                            "instance_alert_firing",
+                            "log_service_error_rate_high"
+                          ]
+                        }
+                      },
+                      "required": ["name"],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": ["lints"],
+                "additionalProperties": false
+              }
+            },
+            "required": ["type", "attributes"]
+          }
+        },
+        "required": ["data"]
+      },
+      "V2ProjectAdvisorsResponse_Output": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "description": "Resource type.",
+                "enum": ["project_advisors"]
+              },
+              "attributes": {
+                "type": "object",
+                "properties": {
+                  "lints": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "enum": [
+                            "unindexed_foreign_keys",
+                            "auth_users_exposed",
+                            "auth_rls_initplan",
+                            "no_primary_key",
+                            "unused_index",
+                            "multiple_permissive_policies",
+                            "policy_exists_rls_disabled",
+                            "rls_enabled_no_policy",
+                            "duplicate_index",
+                            "security_definer_view",
+                            "function_search_path_mutable",
+                            "rls_disabled_in_public",
+                            "extension_in_public",
+                            "rls_references_user_metadata",
+                            "materialized_view_in_api",
+                            "foreign_table_in_api",
+                            "unsupported_reg_types",
+                            "auth_otp_long_expiry",
+                            "auth_otp_short_length",
+                            "ssl_not_enforced",
+                            "log_connections_not_enabled",
+                            "network_restrictions_not_set",
+                            "password_requirements_min_length",
+                            "pitr_not_enabled",
+                            "auth_leaked_password_protection",
+                            "auth_insufficient_mfa_options",
+                            "auth_password_policy_missing",
+                            "leaked_service_key",
+                            "no_backup_admin",
+                            "vulnerable_postgres_version",
+                            "db_not_reachable",
+                            "db_connection_failing",
+                            "db_connection_limit_reached",
+                            "instance_telemetry_lost",
+                            "instance_db_down",
+                            "instance_alert_firing",
+                            "log_service_error_rate_high",
+                            "project_not_active",
+                            "advisor_check_unavailable"
+                          ],
+                          "type": "string"
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "level": {
+                          "type": "string",
+                          "enum": ["ERROR", "WARN", "INFO"]
+                        },
+                        "facing": {
+                          "type": "string",
+                          "enum": ["EXTERNAL"]
+                        },
+                        "categories": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["PERFORMANCE", "SECURITY", "HEALTH"]
+                          },
+                          "x-ignore-array-items-must-be-objects": true
+                        },
+                        "description": {
+                          "type": "string"
+                        },
+                        "detail": {
+                          "type": "string"
+                        },
+                        "remediation": {
+                          "type": "string"
+                        },
+                        "metadata": {
+                          "type": "object",
+                          "properties": {
+                            "schema": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "entity": {
+                              "type": "string"
+                            },
+                            "type": {
+                              "enum": [
+                                "table",
+                                "view",
+                                "materialized view",
+                                "foreign table",
+                                "auth",
+                                "function",
+                                "extension",
+                                "compliance",
+                                "health"
+                              ],
+                              "type": "string"
+                            },
+                            "fkey_name": {
+                              "type": "string"
+                            },
+                            "fkey_columns": {
+                              "x-ignore-array-items-must-be-objects": true,
+                              "type": "array",
+                              "items": {
+                                "type": "number"
+                              }
+                            }
+                          },
+                          "additionalProperties": false
+                        },
+                        "cache_key": {
+                          "type": "string"
+                        },
+                        "observed_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+                        }
+                      },
+                      "required": [
+                        "name",
+                        "title",
+                        "level",
+                        "facing",
+                        "categories",
+                        "description",
+                        "detail",
+                        "remediation",
+                        "cache_key"
+                      ],
+                      "additionalProperties": {}
+                    }
+                  }
+                },
+                "required": ["lints"],
+                "additionalProperties": {}
+              }
+            },
+            "required": ["type", "attributes"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["data"],
+        "additionalProperties": false
+      },
       "V2ProjectConfigResponse": {
         "type": "object",
         "properties": {
@@ -25405,7 +25757,9 @@
                     "email": {
                       "type": "string",
                       "format": "email",
-                      "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+                      "description": "Email address of the invitation receipient.",
+                      "example": "hello@example.com"
                     },
                     "role": {
                       "type": "string",
@@ -25415,6 +25769,11 @@
                     },
                     "projects": {
                       "description": "The projects to limit a user to. If omitted, user will have org-wide access with the provided role.",
+                      "examples": [
+                        {
+                          "ref": "abcjuqabhgwjjutfvtpa"
+                        }
+                      ],
                       "minItems": 1,
                       "type": "array",
                       "items": {
@@ -25543,7 +25902,9 @@
                         "email": {
                           "type": "string",
                           "format": "email",
-                          "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                          "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+                          "description": "Email address of the invitation receipient.",
+                          "example": "hello@example.com"
                         }
                       },
                       "required": ["email"]
@@ -25571,7 +25932,9 @@
                     "email": {
                       "type": "string",
                       "format": "email",
-                      "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+                      "description": "Email address of the invitation receipient.",
+                      "example": "hello@example.com"
                     }
                   },
                   "required": ["email"]
@@ -25604,7 +25967,9 @@
                     "email": {
                       "type": "string",
                       "format": "email",
-                      "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+                      "description": "Email address of the invitation receipient.",
+                      "example": "hello@example.com"
                     }
                   },
                   "required": ["email"]
@@ -25635,7 +26000,9 @@
                     "email": {
                       "type": "string",
                       "format": "email",
-                      "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$",
+                      "description": "Email address of the invitation receipient.",
+                      "example": "hello@example.com"
                     }
                   },
                   "required": ["email"]

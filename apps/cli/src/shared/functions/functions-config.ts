@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import { Effect, type FileSystem, type Path } from "effect";
-import { loadProjectConfig, type LoadedProjectConfig } from "@supabase/config";
+import { loadCliConfig, type LoadedCliConfig } from "@supabase/config/effect";
 import { normalizeProjectId } from "./functions-docker.ts";
 
 /**
@@ -8,11 +8,11 @@ import { normalizeProjectId } from "./functions-docker.ts";
  * need from project config resolution, unified across both shells. In the
  * legacy shell this also runs the same `Config.Validate`/dotenv pipeline
  * `start`/`stop`/`status` already go through — see {@link FunctionsGoConfigCompat}.
- * `next` keeps its existing plain `loadProjectConfig` behavior exactly (no
+ * `next` keeps its existing plain `loadCliConfig` behavior exactly (no
  * Go-parity claim there).
  */
-interface FunctionsProjectConfigContext {
-  readonly loaded: LoadedProjectConfig | null;
+interface FunctionsCliConfigContext {
+  readonly loaded: LoadedCliConfig | null;
   /** Go's post-`loadNestedEnv` merged env (ambient-wins). `undefined` in `next`. */
   readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
   /** Go's `Config.ProjectId`, sanitized, after `Config.Validate` in the legacy shell. */
@@ -37,7 +37,7 @@ export interface FunctionsGoConfigCompat {
     readonly projectRef: string | undefined;
   }) => Effect.Effect<
     {
-      readonly loaded: LoadedProjectConfig | null;
+      readonly loaded: LoadedCliConfig | null;
       readonly projectEnvValues: Readonly<Record<string, string>>;
       readonly projectId: string;
       readonly denoVersion: number;
@@ -53,15 +53,15 @@ export interface FunctionsGoConfigCompat {
  * (merging template defaults + env even when the file is absent), and ends in
  * `Config.Validate`, unconditionally, before any Docker/API work. Only the
  * legacy shell (`goConfigCompat` set) runs that Go-parity dotenv/validate
- * pipeline; `next` keeps today's plain `loadProjectConfig` behavior exactly.
+ * pipeline; `next` keeps today's plain `loadCliConfig` behavior exactly.
  */
-export const loadFunctionsProjectConfig = Effect.fnUntraced(function* (input: {
+export const loadFunctionsCliConfig = Effect.fnUntraced(function* (input: {
   readonly projectRoot: string;
   readonly projectRef: string | undefined;
   readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
 }) {
   if (input.goConfigCompat === undefined) {
-    const loaded = yield* loadProjectConfig(input.projectRoot, {
+    const loaded = yield* loadCliConfig(input.projectRoot, {
       ...(input.projectRef === undefined ? {} : { projectRef: input.projectRef }),
       goViperCompat: false,
     });
@@ -84,7 +84,7 @@ export const loadFunctionsProjectConfig = Effect.fnUntraced(function* (input: {
         loaded?.config.project_id ?? input.projectRef ?? basename(input.projectRoot),
       ),
       denoVersion: loaded?.config.edge_runtime.deno_version,
-    } satisfies FunctionsProjectConfigContext;
+    } satisfies FunctionsCliConfigContext;
   }
 
   const context = yield* input.goConfigCompat.load({
@@ -96,5 +96,5 @@ export const loadFunctionsProjectConfig = Effect.fnUntraced(function* (input: {
     projectEnvValues: context.projectEnvValues,
     projectId: context.projectId,
     denoVersion: context.denoVersion,
-  } satisfies FunctionsProjectConfigContext;
+  } satisfies FunctionsCliConfigContext;
 });

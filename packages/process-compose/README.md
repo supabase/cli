@@ -32,8 +32,16 @@ runtime contracts.
 
 ## Development
 
+Repo-wide quality checks run from the repository root:
+
 ```sh
 pnpm check:all
 pnpm fix:all
-pnpm test:core
+```
+
+Package-local checks and tests run from `packages/process-compose`:
+
+```sh
+pnpm types:check
+pnpm run test:unit && pnpm run test:integration
 ```

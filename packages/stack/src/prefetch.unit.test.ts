@@ -22,7 +22,7 @@ import {
   PreparationCompleted,
   StackPreparation,
 } from "./StackPreparation.ts";
-import { DEFAULT_VERSIONS, SERVICE_NAMES } from "./versions.ts";
+import { DEFAULT_VERSIONS, SERVICE_NAMES, dockerImageForService } from "./versions.ts";
 
 const encoder = new TextEncoder();
 const defaultAuthGhcrImage = `ghcr.io/supabase/cli/auth:${DEFAULT_VERSIONS.auth}`;
@@ -263,7 +263,7 @@ describe("prefetch", () => {
       expect(spawner.spawned.every(({ command }) => command === containerRuntime)).toBe(true);
       expect(spawner.spawned).toContainEqual({
         command: containerRuntime,
-        args: ["image", "inspect", `ghcr.io/supabase/cli/${service}:${DEFAULT_VERSIONS[service]}`],
+        args: ["image", "inspect", dockerImageForService(service, DEFAULT_VERSIONS[service])],
       });
     },
   );

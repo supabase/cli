@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { Schema } from "effect";
-import { ProjectConfigSchema } from "./base.ts";
+import { CliConfigSchema } from "./base.ts";
 import {
   diffProjectConfig,
   isEqualConfigValue,
@@ -11,7 +11,7 @@ import {
 import { MANAGED_CONFIG_PATHS, MANAGED_CONFIG_PROPERTIES } from "./config-diff.managed.ts";
 import { normalizeByteSize } from "./config-diff.read.ts";
 
-const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
+const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
 /**
  * Builds the diff input the way the command layer does: `declared` is the raw
@@ -23,7 +23,7 @@ function diffWith(
   extra?: Partial<DiffProjectConfigOptions>,
 ) {
   return diffProjectConfig({
-    local: decodeProjectConfig(declared),
+    local: decodeCliConfig(declared),
     declared,
     remote,
     ...extra,
@@ -40,7 +40,7 @@ describe("managed surface", () => {
   });
 
   test("every managed path resolves to a real schema path in the default config", () => {
-    const defaults: unknown = decodeProjectConfig({});
+    const defaults: unknown = decodeCliConfig({});
     for (const path of MANAGED_CONFIG_PATHS) {
       let current: unknown = defaults;
       for (const segment of path.split(".")) {
@@ -74,7 +74,7 @@ describe("managed surface", () => {
 describe("diffProjectConfig classification", () => {
   test("an undefined declared document means nothing is declared", () => {
     const result = diffProjectConfig({
-      local: decodeProjectConfig({}),
+      local: decodeCliConfig({}),
       declared: undefined,
       remote: { api: { max_rows: 250 } },
     });

@@ -8,14 +8,14 @@ import {
 } from "@supabase/stack/effect";
 import { Effect, Layer } from "effect";
 import { start } from "./start.handler.ts";
-import { StartVersionState } from "./start.command.ts";
+import { startVersionStateLaunch, StartVersionState } from "./start.command.ts";
 import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
 import { inkLayer } from "../../../shared/runtime/ink.layer.ts";
 import {
   mockOutput,
   mockProcessControl,
   mockProjectLinkState,
-  mockProjectLocalServiceVersions,
+  mockCliProjectLocalServiceVersions,
 } from "../../../../tests/helpers/mocks.ts";
 import { makeRunningStackFixture } from "../../../../tests/helpers/running-stack.ts";
 
@@ -25,6 +25,7 @@ describe("start handler", () => {
       Effect.promise(() => makeRunningStackFixture()).pipe(
         Effect.flatMap((fixture) =>
           connectLayer({
+            cliVersion: fixture.cliVersion,
             cacheRoot: fixture.homeDir,
             cwd: fixture.projectRoot,
             projectDir: fixture.projectRoot,
@@ -38,8 +39,13 @@ describe("start handler", () => {
                 pinnedBaseline: versions,
                 candidateBaseline: versions,
               });
+              const postStartLaunch = {
+                ...fixture.launch,
+                versions: { postgres: "17.7.0" },
+                excludedServices: ["analytics", "future-service"],
+              } as const;
               const state = StartVersionState.of({
-                launch: fixture.launch,
+                launch: startVersionStateLaunch({ launch: postStartLaunch }),
                 serviceVersionContext: {
                   ...serviceVersionContext,
                   updateFingerprint: "new-fingerprint",
@@ -49,6 +55,7 @@ describe("start handler", () => {
                   workspacePath: fixture.projectRoot,
                   stackName: fixture.stackName,
                   cwd: fixture.projectRoot,
+                  cliVersion: fixture.cliVersion,
                 },
                 drift: [
                   {
@@ -74,7 +81,7 @@ describe("start handler", () => {
                 Layer.succeed(StartVersionState, state),
                 mockProcessControl().layer,
                 mockProjectLinkState(),
-                mockProjectLocalServiceVersions(),
+                mockCliProjectLocalServiceVersions(),
                 BunServices.layer,
                 inkLayer,
               );
@@ -83,13 +90,17 @@ describe("start handler", () => {
                 mode: "docker",
                 exclude: [],
                 serviceVersion: [],
-                detach: false,
+                detach: true,
               }).pipe(
                 Effect.provide(layer),
                 Effect.tap(
                   Effect.promise(async () => {
                     const document = await fixture.readDocument();
-                    expect(document?.launch?.lastNotifiedUpdateFingerprint).toBe("new-fingerprint");
+                    expect(document?.launch).toMatchObject({
+                      versions: { postgres: "17.7.0" },
+                      excludedServices: ["analytics", "future-service"],
+                      lastNotifiedUpdateFingerprint: "new-fingerprint",
+                    });
                   }),
                 ),
                 Effect.ensuring(Effect.promise(() => fixture.dispose())),

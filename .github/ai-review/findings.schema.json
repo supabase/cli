@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/supabase/cli/.github/ai-review/findings.schema.json",
+  "title": "AI review findings (Claude)",
+  "description": "Structured output contract for the one-shot Claude review pass. Kept in sync by hand with the `assertFindings` validator in .github/scripts/ai-review/post-review.ts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "findings"],
+  "properties": {
+    "summary": {
+      "type": "string",
+      "description": "An honest executive summary of the review. An empty `findings` array with a summary explaining the diff is clean is a valid, correct result."
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "file", "line", "severity", "category", "claim", "evidence"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable short identifier for this finding, e.g. `claude-1`."
+          },
+          "file": {
+            "type": "string",
+            "description": "Repository-relative path of the file the finding applies to. Must not contain a backtick, `<`, or an ASCII control character (enforced by the runtime `assertFindings` validator, not this schema)."
+          },
+          "line": {
+            "type": "integer",
+            "description": "1-based line number on the new (RIGHT) side of the diff."
+          },
+          "end_line": {
+            "type": "integer",
+            "description": "Optional 1-based end line, for findings spanning a range."
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "major", "minor", "nit"],
+            "description": "critical = security issue or breaks users; major = likely bug or data loss; minor = correctness/quality concern; nit = style/polish."
+          },
+          "category": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "description": "Kebab-case category, e.g. `security`, `error-handling`, `test-coverage`."
+          },
+          "claim": {
+            "type": "string",
+            "description": "The finding itself, stated as a concrete claim."
+          },
+          "evidence": {
+            "type": "string",
+            "description": "Concrete file:line evidence backing the claim, verified against the surrounding code, not just the diff."
+          },
+          "suggested_fix": {
+            "type": "string",
+            "description": "Optional concrete suggestion for how to address the finding."
+          }
+        }
+      }
+    }
+  }
+}

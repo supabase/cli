@@ -12,7 +12,7 @@ import {
   mockTelemetryRuntime,
   mockTty,
 } from "../../../tests/helpers/mocks.ts";
-import { LEGACY_VALID_TOKEN, mockLegacyCliConfig } from "../../../tests/helpers/legacy-mocks.ts";
+import { LEGACY_VALID_TOKEN, mockLegacyCliSettings } from "../../../tests/helpers/legacy-mocks.ts";
 import {
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
@@ -53,7 +53,7 @@ function buildResolver(
   } = {},
 ) {
   const deps = Layer.mergeAll(
-    mockLegacyCliConfig({
+    mockLegacyCliSettings({
       workdir,
       projectHost: opts.projectHost ?? "supabase.co",
       poolerHost: opts.poolerHost,

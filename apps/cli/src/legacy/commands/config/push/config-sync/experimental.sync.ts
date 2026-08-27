@@ -1,4 +1,4 @@
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 
 /**
  * Push-subset of the `experimental` config. Webhooks are the only pushed
@@ -6,7 +6,7 @@ import type { ProjectConfig } from "@supabase/config";
  * is true the command simply POSTs to enable database webhooks
  * (`V1EnableDatabaseWebhook`).
  */
-export function experimentalWebhooksEnabled(config: ProjectConfig): boolean {
+export function experimentalWebhooksEnabled(config: CliConfig): boolean {
   const webhooks = config.experimental?.webhooks;
   return webhooks !== undefined && webhooks.enabled;
 }
