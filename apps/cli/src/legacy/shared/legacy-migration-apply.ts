@@ -64,6 +64,9 @@ const REINDEX_CONCURRENTLY_PATTERN = /^REINDEX(?:\s|\().*\sCONCURRENTLY(?:\s|$)/
 const VACUUM_PATTERN = /^VACUUM(?:\s|\(|$)/u;
 const ALTER_SYSTEM_PATTERN = /^ALTER\s+SYSTEM(?:\s|$)/u;
 const CLUSTER_PATTERN = /^CLUSTER(?:\s|$)/u;
+const DATABASE_DDL_PATTERN = /^(?:CREATE|DROP)\s+DATABASE(?:\s|$)/u;
+const TABLESPACE_DDL_PATTERN = /^(?:CREATE|DROP)\s+TABLESPACE(?:\s|$)/u;
+const REINDEX_DATABASE_PATTERN = /^REINDEX(?:\s+\([^)]*\))?\s+(?:DATABASE|SYSTEM)(?:\s|$)/u;
 const TRANSACTION_CONTROL_PATTERN =
   /^(?:BEGIN|START\s+TRANSACTION|COMMIT|END|ABORT|PREPARE\s+TRANSACTION)(?:\s|$)/u;
 
@@ -97,10 +100,13 @@ const legacyTrimLeadingSqlComments = (sql: string): string => {
 /**
  * Whether a migration statement cannot run inside a transaction block — `CREATE
  * [UNIQUE] INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`,
- * `VACUUM`, `ALTER SYSTEM`, `CLUSTER`. Such statements fail with SQLSTATE 25001
- * inside the transaction
+ * `VACUUM`, `ALTER SYSTEM`, `CLUSTER`, `CREATE`/`DROP DATABASE`,
+ * `CREATE`/`DROP TABLESPACE`, `REINDEX DATABASE`/`SYSTEM`. Such statements fail with
+ * SQLSTATE 25001 inside the transaction
  * created by a migration batch, so `execMigrationBatch` runs them standalone.
- * Port of `isPipelineIncompatible` (`pkg/migration/file.go`, supabase/cli#5156).
+ * Port of `isPipelineIncompatible` (`pkg/migration/file.go`, supabase/cli#5156),
+ * extended with the remaining statement kinds PostgreSQL refuses inside the
+ * explicit transaction the batch runs in since supabase/cli#6347.
  */
 export const legacyIsPipelineIncompatible = (sql: string): boolean => {
   const upper = legacyTrimLeadingSqlComments(sql).toUpperCase();
@@ -110,7 +116,10 @@ export const legacyIsPipelineIncompatible = (sql: string): boolean => {
     REINDEX_CONCURRENTLY_PATTERN.test(upper) ||
     VACUUM_PATTERN.test(upper) ||
     ALTER_SYSTEM_PATTERN.test(upper) ||
-    CLUSTER_PATTERN.test(upper)
+    CLUSTER_PATTERN.test(upper) ||
+    DATABASE_DDL_PATTERN.test(upper) ||
+    TABLESPACE_DDL_PATTERN.test(upper) ||
+    REINDEX_DATABASE_PATTERN.test(upper)
   );
 };
 
