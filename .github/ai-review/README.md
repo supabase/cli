@@ -78,13 +78,22 @@ The pipeline currently runs only on-demand (`workflow_dispatch` or
    <https://chatgpt.com/codex/settings/code-review> so PRs aren't
    double-reviewed.
 
+`merged-review.schema.json` uses `pattern` (on `category`) and `minItems` (on
+`sources`); some OpenAI structured-output strict-mode implementations have
+historically rejected those keywords. Both are redundant with the runtime
+`assertMergedReview` validator in `post-review.ts`. If the first live Codex
+run 400s on the output schema because of this, drop `pattern`/`minItems` from
+`merged-review.schema.json` and rely on the validator alone.
+
 ## Required secrets
 
 - `ANTHROPIC_API_KEY` — recommend a **dedicated, spend-capped, rotatable** key
   for this workflow rather than sharing the release-notes pipeline's key: this
   workflow runs against every PR (including, eventually, external ones via
   `/ai-review`) and posts model text into a public review, so its blast radius
-  and cost profile differ from the release-notes use case.
+  and cost profile differ from the release-notes use case. Model output is
+  also secret-scrubbed before it's posted or uploaded (see below) as
+  defense-in-depth, but the dedicated key is the real containment.
 - `OPENAI_API_KEY` — **must be added** before `codex-review` can run.
 
 ## Security model
@@ -113,6 +122,16 @@ The pipeline currently runs only on-demand (`workflow_dispatch` or
   purely from `pr.diff` and `claude-findings.json` under `/tmp`, both
   regenerated from the GitHub API. Neither job can push, comment, or
   otherwise mutate anything.
+- **`bun` never runs with a cwd inside the untrusted `pr` checkout.** `bun`
+  auto-loads `bunfig.toml` (whose `preload` runs arbitrary code) and `.env`
+  from its cwd, so a `pr`-cwd `bun` invocation would let a PR-authored
+  `pr/bunfig.toml` execute attacker code in a step holding
+  `ANTHROPIC_API_KEY`. `claude-review`'s "Run Claude review" step keeps
+  `working-directory: trusted` for the whole step and wraps only the `claude`
+  invocation in a `( cd .../pr && claude ... )` subshell — `claude` is a
+  standalone binary, not run via `bun`, so `bunfig.toml` never applies to it.
+  Every `bun` process in the pipeline (`validate-findings`, `redact`,
+  `validate-merged`, `post`) runs from a trusted checkout.
 - **Codex's sandbox.** `codex-review` sets `safety-strategy: drop-sudo`
   (removes sudo from the process running Codex — the action's own docs call
   out that a sudo-capable process can read secrets like `OPENAI_API_KEY` out
@@ -134,10 +153,25 @@ The pipeline currently runs only on-demand (`workflow_dispatch` or
   the PR head, so a malicious PR cannot smuggle a change into the one job
   that can write back to it.
 - **Model text is sanitized before it's rendered.** `sanitizeModelText()`
-  strips HTML comments (so injected diff content can't forge the hidden
-  dedup/supersede markers) and neutralizes `@mentions`/`#issue-refs` in every
-  model-provided string (`summary`, `claim`, `evidence`, `suggested_fix`,
-  `adjudication.reason`) before it's posted.
+  redacts secret-shaped substrings (`redactSecrets()`; see below), strips HTML
+  comments (so injected diff content can't forge the hidden dedup/supersede
+  markers), and neutralizes `@mentions`/`#issue-refs` in every model-provided
+  string (`summary`, `claim`, `evidence`, `suggested_fix`,
+  `adjudication.reason`) before it's posted. `file` is separately validated at
+  parse time (`assertFindings`/`assertMergedReview` reject a backtick,
+  newline, control character, `<`, or a reserved marker string in it) and
+  re-sanitized at every render site, since it's rendered inside `` `code` ``
+  spans a plain string field otherwise couldn't safely occupy.
+- **Model output is secret-scrubbed before it's posted or uploaded.**
+  `redactSecrets()` replaces common credential shapes (Anthropic/OpenAI API
+  keys, GitHub personal-access/app/OAuth/Actions tokens) with `«redacted»`;
+  it's composed into `sanitizeModelText()` for the posted review, and the
+  `redact <path>` subcommand applies it to `claude-findings.json`/
+  `claude-raw.json`/`merged-review.json` in place before each is uploaded as
+  an artifact. This is defense-in-depth against a prompt-injected model
+  `Read`-ing a secret-bearing path (e.g. `/proc/self/environ`) and echoing a
+  key back in a finding — the dedicated `ANTHROPIC_API_KEY` above is the real
+  containment.
 - **Prompt-injection guards.** Both prompts explicitly instruct the model to
   treat the PR title, body, diff, code, and code comments as review subject
   matter, not instructions, and to ignore anything embedded in them that

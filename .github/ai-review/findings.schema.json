@@ -24,7 +24,7 @@
           },
           "file": {
             "type": "string",
-            "description": "Repository-relative path of the file the finding applies to."
+            "description": "Repository-relative path of the file the finding applies to. Must not contain a backtick, `<`, or an ASCII control character (enforced by the runtime `assertFindings` validator, not this schema)."
           },
           "line": {
             "type": "integer",

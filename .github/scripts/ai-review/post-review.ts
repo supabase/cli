@@ -3,7 +3,7 @@
  * produce, and posts the ONE consolidated PR review the pipeline is allowed
  * to post per run.
  *
- * Three subcommands, dispatched from `argv`:
+ * Four subcommands, dispatched from `argv`:
  *   - `validate-findings <path>` — checks a Claude findings JSON file against
  *     the shape `.github/ai-review/findings.schema.json` describes. The
  *     `--json-schema` flag passed to `claude` is a hint to the model, not a
@@ -11,6 +11,12 @@
  *     before it is trusted.
  *   - `validate-merged <path>` — same idea for the Codex-adjudicated merged
  *     review, against `.github/ai-review/merged-review.schema.json`.
+ *   - `redact <path>` — reads a JSON file, deep-walks every string value
+ *     through `redactSecrets`, and writes it back in place. Run on every
+ *     model-output JSON file before it's uploaded as a (public-repo)
+ *     artifact, so a prompt-injected `Read` of a secret-bearing path can't
+ *     smuggle a credential out through the artifact even though the posted
+ *     review is already scrubbed at render time.
  *   - `post` — reads `$MODE` (`review` | `too-large`) and posts either a
  *     "diff too large" notice or the consolidated review, THEN best-effort
  *     supersedes any prior AI review on the PR (the marker/dedup guard in
@@ -21,12 +27,13 @@
  *
  * `parseDiffAnchors`, `partitionFindings`, `renderReviewBody`,
  * `renderInlineComment`, `buildReviewPayload`, `foldInlineCommentsIntoBody`,
- * `supersededBody`, and `isSuperseded` are pure and exported for tests.
- * `postTooLargeNotice` and `postConsolidatedReview` are the I/O orchestration
- * functions for the `post` subcommand's two modes; they're exported so a test
- * can drive them against an injected `ReviewIo` fake without the network, the
- * same way `resolveDecision` is tested in `resolve.ts`. `main()` wires up the
- * real GitHub I/O and argv dispatch.
+ * `supersededBody`, `isSuperseded`, `sanitizeFilePath`, and `redactSecrets`
+ * are pure and exported for tests. `postTooLargeNotice` and
+ * `postConsolidatedReview` are the I/O orchestration functions for the `post`
+ * subcommand's two modes; they're exported so a test can drive them against
+ * an injected `ReviewIo` fake without the network, the same way
+ * `resolveDecision` is tested in `resolve.ts`. `main()` wires up the real
+ * GitHub I/O and argv dispatch.
  *
  * Run in CI as: `bun .github/scripts/ai-review/post-review.ts <command>`.
  */
@@ -208,6 +215,32 @@ function expectCategory(value: unknown, path: string, context: string): string {
   return str;
 }
 
+/** `file` is model-controlled and rendered inside `` `code` `` spans at
+ * several sites; a backtick, newline, other ASCII control char, or `<` in it
+ * could break out of the span (markdown/HTML injection, mention/#ref pings)
+ * or forge one of the hidden HTML-comment markers. Reject those at parse
+ * time as the primary defense; `sanitizeFilePath` neutralizes the same
+ * characters again at render time in case a caller ever skips validation. */
+// eslint-disable-next-line no-control-regex -- matching control characters is the point of this pattern
+const FILE_PATH_FORBIDDEN_PATTERN = /[`<\x00-\x1f\x7f]/;
+
+function expectFile(value: unknown, path: string, context: string): string {
+  const str = expectString(value, path, context);
+  // Checked before the generic char-class rejection below so a marker string
+  // (which already contains a forbidden `<`) is rejected with a specific,
+  // reachable message instead of always falling through to the generic one.
+  if (str.includes(AI_REVIEW_MARKER) || str.includes(SUPERSEDED_MARKER)) {
+    throw new Error(`Invalid ${context} at ${path}: file path contains a reserved marker string`);
+  }
+  if (FILE_PATH_FORBIDDEN_PATTERN.test(str)) {
+    throw new Error(
+      `Invalid ${context} at ${path}: file path contains a disallowed character ` +
+        `(backtick, "<", or an ASCII control character)`,
+    );
+  }
+  return str;
+}
+
 const FINDING_KEYS = [
   "id",
   "file",
@@ -227,7 +260,7 @@ function parseFinding(value: unknown, path: string): Finding {
   assertNoExtraKeys(value, FINDING_KEYS, "findings document", path);
   const finding: Finding = {
     id: expectString(value.id, `${path}.id`, "findings document"),
-    file: expectString(value.file, `${path}.file`, "findings document"),
+    file: expectFile(value.file, `${path}.file`, "findings document"),
     line: expectInteger(value.line, `${path}.line`, "findings document"),
     severity: expectSeverity(value.severity, `${path}.severity`, "findings document"),
     category: expectCategory(value.category, `${path}.category`, "findings document"),
@@ -299,7 +332,7 @@ function parseMergedFinding(value: unknown, path: string): MergedFinding {
   assertNoExtraKeys(value, MERGED_FINDING_KEYS, "merged review", path);
   return {
     id: expectString(value.id, `${path}.id`, "merged review"),
-    file: expectString(value.file, `${path}.file`, "merged review"),
+    file: expectFile(value.file, `${path}.file`, "merged review"),
     line: expectInteger(value.line, `${path}.line`, "merged review"),
     end_line: expectNullableInteger(value.end_line, `${path}.end_line`, "merged review"),
     severity: expectSeverity(value.severity, `${path}.severity`, "merged review"),
@@ -471,20 +504,84 @@ const MENTION_PATTERN = /@(?=\w)/g;
 const ISSUE_REF_PATTERN = /#(?=\d)/g;
 const HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
 
+const REDACTED_SECRET = "«redacted»";
+
+/** Credential shapes commonly seen in Anthropic/OpenAI API keys and GitHub
+ * personal-access/app/OAuth/Actions tokens. Not exhaustive — this is
+ * defense-in-depth alongside a dedicated, spend-capped, rotatable
+ * `ANTHROPIC_API_KEY` (see the README); the dedicated key is the real
+ * containment. */
+const SECRET_PATTERNS: readonly RegExp[] = [
+  /sk-ant-[A-Za-z0-9_-]{20,}/g,
+  /sk-[A-Za-z0-9]{20,}/g,
+  /ghp_[A-Za-z0-9]{36}/g,
+  /github_pat_[A-Za-z0-9_]{22,}/g,
+  // GitHub App/OAuth/Actions tokens (gho_, ghu_, ghs_, ghr_) share this
+  // prefix+length shape with `ghp_` personal access tokens.
+  /gh[oprsu]_[A-Za-z0-9]{36,}/g,
+];
+
+/**
+ * Replaces common credential formats with a redaction marker. Pure; composed
+ * into `sanitizeModelText` below so every model-provided string rendered into
+ * the posted review is scrubbed, and applied again (via the `redact`
+ * subcommand) to the raw JSON artifacts before upload. Defense-in-depth
+ * against a prompt-injected model `Read`-ing a secret-bearing path (e.g.
+ * `/proc/self/environ`) and echoing the value back in a finding.
+ */
+export function redactSecrets(text: string): string {
+  return SECRET_PATTERNS.reduce((acc, pattern) => acc.replace(pattern, REDACTED_SECRET), text);
+}
+
+/** Deep-walks an arbitrary JSON value, redacting every string it contains.
+ * Exported for tests; the `redact` subcommand (see `runRedact` below) is the
+ * thin file-I/O wrapper around it that scrubs the raw JSON artifacts before
+ * they're uploaded. */
+export function redactSecretsDeep(value: unknown): unknown {
+  if (typeof value === "string") {
+    return redactSecrets(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => redactSecretsDeep(item));
+  }
+  if (isRecord(value)) {
+    const result: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      result[key] = redactSecretsDeep(entry);
+    }
+    return result;
+  }
+  return value;
+}
+
 /**
  * Neutralizes a model-provided string before it's rendered into a
- * `github-actions[bot]` review: strips HTML comments first (so injected diff
- * content can't forge the hidden `AI_REVIEW_MARKER`/`SUPERSEDED_MARKER`
- * comments), then breaks `@mention`/`#123` syntax with a zero-width HTML
- * comment so GitHub never renders them as a live mention or issue reference.
- * Pure; apply to every model-provided string (`summary`, `claim`, `evidence`,
- * `suggested_fix`, `adjudication.reason`) at render time.
+ * `github-actions[bot]` review: redacts secret-shaped substrings first, strips
+ * HTML comments (so injected diff content can't forge the hidden
+ * `AI_REVIEW_MARKER`/`SUPERSEDED_MARKER` comments), then breaks
+ * `@mention`/`#123` syntax with a zero-width HTML comment so GitHub never
+ * renders them as a live mention or issue reference. Pure; apply to every
+ * model-provided string (`summary`, `claim`, `evidence`, `suggested_fix`,
+ * `adjudication.reason`) at render time.
  */
 export function sanitizeModelText(text: string): string {
-  return text
+  return redactSecrets(text)
     .replace(HTML_COMMENT_PATTERN, "")
     .replace(MENTION_PATTERN, "@<!---->")
     .replace(ISSUE_REF_PATTERN, "#<!---->");
+}
+
+/** Neutralizes the same characters `expectFile` rejects at parse time
+ * (backtick, `<`, ASCII control chars) inside a model-provided `file` path
+ * before it's rendered into a `` `code` `` span. Every finding reaching a
+ * render site will already have passed `expectFile`; this is defense-in-depth
+ * for any caller that renders a `MergedFinding` without going through
+ * `assertMergedReview` first. */
+// eslint-disable-next-line no-control-regex -- matching control characters is the point of this pattern
+const FILE_PATH_UNSAFE_CHARS = /[`<\x00-\x1f\x7f]/g;
+
+export function sanitizeFilePath(file: string): string {
+  return file.replace(FILE_PATH_UNSAFE_CHARS, "");
 }
 
 const SEVERITY_BADGES: Record<Severity, string> = {
@@ -546,7 +643,7 @@ export function renderReviewBody(
   if (posted.length > 0) {
     const rows = posted.map(
       (finding) =>
-        `| ${SEVERITY_BADGES[finding.severity]} | \`${finding.file}:${finding.line}\` | \`${finding.category}\` | ` +
+        `| ${SEVERITY_BADGES[finding.severity]} | \`${sanitizeFilePath(finding.file)}:${finding.line}\` | \`${finding.category}\` | ` +
         `${finding.sources.join("+")} | ${sanitizeModelText(finding.claim)} |`,
     );
     sections.push(
@@ -565,7 +662,7 @@ export function renderReviewBody(
   if (partitioned.nonAnchorable.length > 0) {
     const items = partitioned.nonAnchorable.map(
       (finding) =>
-        `- **${SEVERITY_BADGES[finding.severity]}** \`${finding.file}:${finding.line}\` — ${sanitizeModelText(finding.claim)}`,
+        `- **${SEVERITY_BADGES[finding.severity]}** \`${sanitizeFilePath(finding.file)}:${finding.line}\` — ${sanitizeModelText(finding.claim)}`,
     );
     sections.push(["### Findings outside the diff", "", ...items].join("\n"));
   }
@@ -573,7 +670,7 @@ export function renderReviewBody(
   if (partitioned.refuted.length > 0) {
     const items = partitioned.refuted.map(
       (finding) =>
-        `- \`${finding.file}:${finding.line}\` (${finding.category}): ${sanitizeModelText(finding.claim)}\n  **Refuted:** ${sanitizeModelText(finding.adjudication.reason)}`,
+        `- \`${sanitizeFilePath(finding.file)}:${finding.line}\` (${finding.category}): ${sanitizeModelText(finding.claim)}\n  **Refuted:** ${sanitizeModelText(finding.adjudication.reason)}`,
     );
     sections.push(
       [
@@ -691,7 +788,11 @@ export function buildReviewPayload(
   const partitioned = partitionFindings(review.findings, anchors);
   const comments = partitioned.anchorable.map((finding) => buildInlineComment(finding, anchors));
   const body = renderReviewBody(review, partitioned, footer);
-  return { event: "COMMENT", body, comments };
+  // A body-only review (many non-anchorable findings, few or no inline
+  // comments) has no fold-retry path to truncate it on a 422 — truncate the
+  // very first payload too, so an oversized body posts truncated instead of
+  // throwing when GitHub rejects it for exceeding the review body cap.
+  return { event: "COMMENT", body: truncateReviewBody(body, footer.runUrl), comments };
 }
 
 /** Folds every inline comment into the review body, for the 422-retry path when GitHub rejects an anchor. */
@@ -703,16 +804,17 @@ export function foldInlineCommentsIntoBody(payload: ReviewPayload): ReviewPayloa
     "### Inline comments (GitHub rejected one or more anchors; folded into the body)",
     "",
     ...payload.comments.map(
-      (comment) => `**\`${comment.path}:${comment.line}\`**\n\n${comment.body}`,
+      (comment) => `**\`${sanitizeFilePath(comment.path)}:${comment.line}\`**\n\n${comment.body}`,
     ),
   ].join("\n\n");
   return { ...payload, comments: [], body: `${payload.body}\n\n${folded}` };
 }
 
 /** Truncates a review body to GitHub's 65536-char review body cap, appending
- * an explicit truncation marker + the workflow run URL. Only the folded
- * 422-retry body (every inline comment stuffed into one body) can plausibly
- * exceed the cap. */
+ * an explicit truncation marker + the workflow run URL. Applied to both the
+ * very first payload (`buildReviewPayload`) and the folded 422-retry body
+ * (every inline comment stuffed into one body), a no-op when the body is
+ * already under the cap. */
 export function truncateReviewBody(body: string, runUrl: string): string {
   if (body.length <= GITHUB_REVIEW_BODY_MAX) {
     return body;
@@ -1150,6 +1252,15 @@ async function runPost(): Promise<void> {
   console.log(`Posted AI review on PR #${prNumber} (${raw.findings.length} finding(s)).`);
 }
 
+/** Reads a JSON file, redacts every string value in place through
+ * `redactSecretsDeep`, and writes it back — the `redact` subcommand's I/O. */
+async function runRedact(path: string): Promise<void> {
+  const raw: unknown = JSON.parse(await Bun.file(path).text());
+  const redacted = redactSecretsDeep(raw);
+  await Bun.write(path, `${JSON.stringify(redacted, null, 2)}\n`);
+  console.log(`OK: redacted secrets in ${path}.`);
+}
+
 function requireArg(value: string | undefined, command: string): string {
   if (!value) {
     throw new Error(`Usage: bun .github/scripts/ai-review/post-review.ts ${command} <path>`);
@@ -1177,12 +1288,17 @@ async function main(): Promise<void> {
       );
       return;
     }
+    case "redact": {
+      const path = requireArg(arg, "redact");
+      await runRedact(path);
+      return;
+    }
     case "post":
       await runPost();
       return;
     default:
       throw new Error(
-        `Unknown command: ${command ?? "<none>"}. Expected one of: validate-findings, validate-merged, post.`,
+        `Unknown command: ${command ?? "<none>"}. Expected one of: validate-findings, validate-merged, redact, post.`,
       );
   }
 }

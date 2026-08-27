@@ -32,7 +32,23 @@ jobs:
           bun-version-file: ".bun-version"
 
       - name: Run tests
-        run: bun test ./.github/scripts
+        run: |
+          set -uo pipefail
+          # The leading "./" is load-bearing: `bun test .github/scripts`
+          # (without it) silently discovers ZERO tests and still exits 0.
+          # Capture output to a file instead of piping it, so `test_exit`
+          # below is `bun test`'s own exit code, not `tee`/`grep`'s.
+          bun test ./.github/scripts > /tmp/github-scripts-test-output.txt 2>&1
+          test_exit=$?
+          cat /tmp/github-scripts-test-output.txt
+          if [ "$test_exit" -ne 0 ]; then
+            echo "::error ::bun test failed (exit $test_exit)." >&2
+            exit 1
+          fi
+          if ! grep -Eq 'Ran [1-9][0-9]* tests' /tmp/github-scripts-test-output.txt; then
+            echo "::error ::bun test reported no tests ran (missing 'Ran N tests' with N>0) — the leading './' may have been dropped, or test discovery is otherwise broken." >&2
+            exit 1
+          fi
 
       - name: Type-check
         run: bun x tsc --noEmit -p .github/scripts/tsconfig.json

@@ -14,13 +14,17 @@ import {
   postConsolidatedReview,
   postTooLargeNotice,
   type PrStats,
+  redactSecrets,
+  redactSecretsDeep,
   renderInlineComment,
   renderReviewBody,
   renderTooLargeNotice,
   type ReviewFooterInfo,
   type ReviewIo,
   type ReviewPayload,
+  sanitizeFilePath,
   supersededBody,
+  truncateReviewBody,
 } from "./post-review.ts";
 
 // A single hunk touching file.ts lines 10-14 on the new side: line 10 is
@@ -248,6 +252,26 @@ describe("assertFindings", () => {
       { summary: "s", findings: [{ ...VALID_FINDING, confidence: 0.9 }] },
       /unexpected property "confidence"/,
     ],
+    [
+      "a finding whose file contains a backtick",
+      { summary: "s", findings: [{ ...VALID_FINDING, file: "src/a.ts`; touch pwned`" }] },
+      /file path contains a disallowed character/,
+    ],
+    [
+      "a finding whose file contains a newline",
+      { summary: "s", findings: [{ ...VALID_FINDING, file: "src/a.ts\nmalicious line" }] },
+      /file path contains a disallowed character/,
+    ],
+    [
+      "a finding whose file contains an ASCII control character",
+      { summary: "s", findings: [{ ...VALID_FINDING, file: `src/a.ts${String.fromCharCode(7)}` }] },
+      /file path contains a disallowed character/,
+    ],
+    [
+      "a finding whose file contains the AI review marker",
+      { summary: "s", findings: [{ ...VALID_FINDING, file: `src/a.ts${AI_REVIEW_MARKER}` }] },
+      /file path contains a reserved marker string/,
+    ],
   ])("rejects %s", (_label, doc, expectedMessage) => {
     expect(() => assertFindings(doc)).toThrow(expectedMessage);
   });
@@ -345,6 +369,24 @@ describe("assertMergedReview", () => {
       "an unexpected top-level property",
       { ...VALID_DOC, extra: true },
       /unexpected property "extra"/,
+    ],
+    [
+      "a finding whose file contains a backtick",
+      { ...VALID_DOC, findings: [{ ...VALID_FINDING, file: "src/a.ts`; touch pwned`" }] },
+      /file path contains a disallowed character/,
+    ],
+    [
+      "a finding whose file contains a newline",
+      { ...VALID_DOC, findings: [{ ...VALID_FINDING, file: "src/a.ts\nmalicious line" }] },
+      /file path contains a disallowed character/,
+    ],
+    [
+      "a finding whose file contains the superseded marker",
+      {
+        ...VALID_DOC,
+        findings: [{ ...VALID_FINDING, file: "src/a.ts<!-- supabase-ai-review:superseded -->" }],
+      },
+      /file path contains a reserved marker string/,
     ],
   ])("rejects %s", (_label, doc, expectedMessage) => {
     expect(() => assertMergedReview(doc)).toThrow(expectedMessage);
@@ -593,6 +635,48 @@ describe("renderReviewBody", () => {
     expect(body).not.toContain("#456");
     expect(body).toContain("@<!---->user");
   });
+
+  test("neutralizes a backtick-bearing file at every code-span render site", () => {
+    const maliciousFile = "src/a.ts`<script>alert(1)</script>`";
+    const anchorable = makeFinding({
+      id: "f-anchorable",
+      file: maliciousFile,
+      adjudication: { verdict: "confirmed", reason: "r" },
+    });
+    const nonAnchorable = makeFinding({
+      id: "f-nonanchorable",
+      file: maliciousFile,
+      adjudication: { verdict: "confirmed", reason: "r" },
+    });
+    const refuted = makeFinding({
+      id: "f-refuted",
+      file: maliciousFile,
+      adjudication: { verdict: "refuted", reason: "r" },
+    });
+    const review = makeMergedReview({ findings: [anchorable, nonAnchorable, refuted] });
+    const body = renderReviewBody(
+      review,
+      { anchorable: [anchorable], nonAnchorable: [nonAnchorable], refuted: [refuted] },
+      footer,
+    );
+    expect(body).not.toContain(maliciousFile);
+    expect(body).not.toContain("`src/a.ts`");
+  });
+
+  test("redacts a secret-shaped substring embedded in model-provided text", () => {
+    const finding = makeFinding({
+      claim: "Found ANTHROPIC_API_KEY=sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345 in the diff.",
+      adjudication: { verdict: "confirmed", reason: "r" },
+    });
+    const review = makeMergedReview({ findings: [finding] });
+    const body = renderReviewBody(
+      review,
+      { anchorable: [], nonAnchorable: [finding], refuted: [] },
+      footer,
+    );
+    expect(body).not.toContain("sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345");
+    expect(body).toContain("«redacted»");
+  });
 });
 
 describe("renderTooLargeNotice", () => {
@@ -752,6 +836,20 @@ describe("buildReviewPayload", () => {
     );
     expect(claimOrder).toEqual([...claimOrder].sort((a, b) => a - b));
   });
+
+  test("truncates the very first payload's body when it already exceeds the cap with zero comments to fold", () => {
+    // Not anchorable (line 999 is outside the diff hunk), so this produces a
+    // body-only payload with no inline comments — the 422-retry fold path
+    // never runs, so only truncating `buildReviewPayload`'s own body catches
+    // an oversized initial POST.
+    const finding = makeFinding({ file: "file.ts", line: 999, claim: "x".repeat(70_000) });
+    const review = makeMergedReview({ findings: [finding] });
+    const payload = buildReviewPayload(review, anchors, footer);
+    expect(payload.comments).toEqual([]);
+    expect(payload.body.length).toBeLessThanOrEqual(65536);
+    expect(payload.body).toContain("truncated");
+    expect(payload.body).toContain(footer.runUrl);
+  });
 });
 
 describe("foldInlineCommentsIntoBody", () => {
@@ -785,6 +883,18 @@ describe("foldInlineCommentsIntoBody", () => {
     expect(folded.body).toContain(first.claim);
     expect(folded.body).toContain(second.claim);
   });
+
+  test("neutralizes a backtick-bearing file when folding a comment's path into the body", () => {
+    const maliciousFile = "file.ts`<!-- supabase-ai-review -->`";
+    const maliciousAnchors = new Map([[maliciousFile, new Set([10])]]);
+    const finding = makeFinding({ id: "f-1", file: maliciousFile, line: 10 });
+    const review = makeMergedReview({ findings: [finding] });
+    const payload = buildReviewPayload(review, maliciousAnchors, footer);
+    expect(payload.comments).toHaveLength(1);
+
+    const folded = foldInlineCommentsIntoBody(payload);
+    expect(folded.body).not.toContain(maliciousFile);
+  });
 });
 
 describe("supersededBody and isSuperseded", () => {
@@ -815,6 +925,79 @@ describe("supersededBody and isSuperseded", () => {
     expect(isSuperseded("Superseded by a newer AI review (but no hidden marker present)")).toBe(
       false,
     );
+  });
+});
+
+describe("sanitizeFilePath", () => {
+  test("strips backticks so a file path can't break out of a code span", () => {
+    expect(sanitizeFilePath("src/a.ts`injected`")).toBe("src/a.tsinjected");
+  });
+
+  test("strips '<', ASCII control characters, and DEL", () => {
+    expect(
+      sanitizeFilePath(`src/a.ts<!--${String.fromCharCode(7)}-->${String.fromCharCode(127)}`),
+    ).toBe("src/a.ts!---->");
+  });
+
+  test("leaves an ordinary repo-relative path untouched", () => {
+    expect(sanitizeFilePath("apps/cli/src/commands/login/index.ts")).toBe(
+      "apps/cli/src/commands/login/index.ts",
+    );
+  });
+});
+
+describe("redactSecrets", () => {
+  test.each([
+    ["an Anthropic API key", "sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345"],
+    ["a generic OpenAI-shaped API key", "sk-abcdefghijklmnopqrstuvwxyz012345"],
+    ["a GitHub personal access token", `ghp_${"a".repeat(36)}`],
+    ["a GitHub fine-grained PAT", `github_pat_${"a".repeat(30)}`],
+    ["a GitHub Actions server-to-server token", `ghs_${"a".repeat(36)}`],
+  ])("redacts %s", (_label, secret) => {
+    const redacted = redactSecrets(`before ${secret} after`);
+    expect(redacted).not.toContain(secret);
+    expect(redacted).toBe("before «redacted» after");
+  });
+
+  test("leaves ordinary text untouched", () => {
+    expect(redactSecrets("Nothing sensitive here.")).toBe("Nothing sensitive here.");
+  });
+
+  test("redacts every occurrence, not just the first", () => {
+    const secret = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345";
+    expect(redactSecrets(`${secret} and again ${secret}`)).toBe("«redacted» and again «redacted»");
+  });
+});
+
+describe("redactSecretsDeep", () => {
+  test("redacts strings nested in objects and arrays, leaving other types untouched", () => {
+    const secret = "sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345";
+    const input = {
+      summary: `leaked ${secret}`,
+      findings: [{ claim: `also ${secret}`, line: 10, ok: true, fix: null }],
+    };
+    const result = redactSecretsDeep(input);
+    expect(JSON.stringify(result)).not.toContain(secret);
+    expect(result).toEqual({
+      summary: "leaked «redacted»",
+      findings: [{ claim: "also «redacted»", line: 10, ok: true, fix: null }],
+    });
+  });
+});
+
+describe("truncateReviewBody", () => {
+  const runUrl = "https://example.com/run/1";
+
+  test("returns the body unchanged when it's under the cap", () => {
+    expect(truncateReviewBody("short body", runUrl)).toBe("short body");
+  });
+
+  test("truncates and appends a marker with the run URL when over the cap", () => {
+    const body = "x".repeat(70_000);
+    const truncated = truncateReviewBody(body, runUrl);
+    expect(truncated.length).toBeLessThanOrEqual(65536);
+    expect(truncated).toContain("truncated");
+    expect(truncated).toContain(runUrl);
   });
 });
 
@@ -1056,5 +1239,19 @@ describe("post flow via injected ReviewIo", () => {
     expect(foldedBody.length).toBeLessThanOrEqual(65536);
     expect(foldedBody).toContain("truncated");
     expect(foldedBody).toContain(footer.runUrl);
+  });
+
+  test("posts a truncated body on the very first attempt for an oversized body-only review (no comments to fold)", async () => {
+    // Not anchorable, so there's no inline comment for GitHub to 422 on — the
+    // old behavior threw here instead of posting a truncated body.
+    const finding = makeFinding({ file: "file.ts", line: 999, claim: "x".repeat(70_000) });
+    const review = makeMergedReview({ findings: [finding] });
+    const { io, postedReviews } = makeReviewIo({ diff: SINGLE_HUNK_DIFF });
+
+    await postConsolidatedReview(io, 42, review, footer);
+
+    expect(postedReviews).toHaveLength(1);
+    expect(postedReviews[0]?.body.length).toBeLessThanOrEqual(65536);
+    expect(postedReviews[0]?.body).toContain("truncated");
   });
 });

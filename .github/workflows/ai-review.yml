@@ -168,29 +168,42 @@ jobs:
           npm install -g --userconfig /dev/null --globalconfig /dev/null \
             --registry=https://registry.npmjs.org/ @anthropic-ai/claude-code@2.1.247
 
+      # SECURITY-CRITICAL invariant: PR code is only ever READ by `claude`,
+      # via the `( cd .../pr && claude ... )` subshell below — nothing else in
+      # this step, and no `bun` process anywhere in this job, ever runs with
+      # a cwd inside `pr`. `bun` auto-loads `bunfig.toml` (`preload` runs
+      # arbitrary code) and `.env` from its cwd; a `pr`-cwd `bun` invocation
+      # would let a PR-authored `pr/bunfig.toml` execute attacker code in a
+      # step that holds `ANTHROPIC_API_KEY`. `claude` is a standalone binary
+      # (not run via `bun`), so `bunfig.toml` never applies to it; `--bare`
+      # already disables hooks/MCP/CLAUDE.md, and `--strict-mcp-config` is
+      # belt-and-suspenders against a future CLI regression. The step's own
+      # `working-directory: trusted` keeps `jq` and `bun` on the trusted
+      # checkout for everything outside that one subshell.
       - name: Run Claude review
-        working-directory: pr
+        working-directory: trusted
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           set -uo pipefail
           success=false
           for attempt in 1 2; do
-            claude --bare -p "$(cat "$GITHUB_WORKSPACE/trusted/.github/ai-review/claude-review-prompt.md")" \
-              --model "$CLAUDE_MODEL" \
-              --output-format json \
-              --json-schema "$(jq -c 'del(.["$schema"])' "$GITHUB_WORKSPACE/trusted/.github/ai-review/findings.schema.json")" \
-              --allowedTools "Read,Grep,Glob" \
-              --max-turns 200 \
-              > /tmp/ai-review/claude-raw.json
+            (
+              cd "$GITHUB_WORKSPACE/pr" &&
+              claude --bare --strict-mcp-config -p "$(cat "$GITHUB_WORKSPACE/trusted/.github/ai-review/claude-review-prompt.md")" \
+                --model "$CLAUDE_MODEL" \
+                --output-format json \
+                --json-schema "$(jq -c 'del(.["$schema"])' "$GITHUB_WORKSPACE/trusted/.github/ai-review/findings.schema.json")" \
+                --allowedTools "Read,Grep,Glob" \
+                --max-turns 200
+            ) > /tmp/ai-review/claude-raw.json
             cli_exit=$?
 
             # `--json-schema` makes the CLI populate `.structured_output` on a
             # genuine success; it stays null on a hard failure such as
-            # `error_max_turns`. Fall back to parsing `.result` as JSON only
-            # once we've confirmed the run didn't hard-fail — a truncated
-            # max-turns response shouldn't be trusted just because some text
-            # happens to end up in `.result`.
+            # `error_max_turns` — a truncated max-turns response shouldn't be
+            # trusted just because some text happens to end up in `.result`,
+            # so there's no `.result`-parsing fallback here.
             is_error="true"
             structured_output_is_null="true"
             if [ "$cli_exit" -eq 0 ]; then
@@ -199,8 +212,8 @@ jobs:
             fi
 
             if [ "$cli_exit" -eq 0 ] && [ "$is_error" = "false" ] && [ "$structured_output_is_null" = "false" ] &&
-              jq -c '.structured_output // (.result | fromjson)' /tmp/ai-review/claude-raw.json > /tmp/ai-review/claude-findings.json 2>/dev/null &&
-              bun "$GITHUB_WORKSPACE/trusted/.github/scripts/ai-review/post-review.ts" validate-findings /tmp/ai-review/claude-findings.json
+              jq -c '.structured_output' /tmp/ai-review/claude-raw.json > /tmp/ai-review/claude-findings.json 2>/dev/null &&
+              bun .github/scripts/ai-review/post-review.ts validate-findings /tmp/ai-review/claude-findings.json
             then
               success=true
               break
@@ -212,6 +225,25 @@ jobs:
             echo "::error ::Claude review failed after 2 attempts." >&2
             exit 1
           fi
+
+      # Scrubs any secret-shaped substring a prompt-injected model might have
+      # echoed back (e.g. from `Read`-ing a secret-bearing path) out of the
+      # raw JSON before it's uploaded as a (public-repo) artifact; the posted
+      # review is scrubbed separately at render time. `if: always()` so a
+      # partial `claude-raw.json` from a failed attempt is still scrubbed
+      # before the always-on upload step below; guarded because
+      # `claude-findings.json` may not exist if every attempt failed before
+      # the extraction step. Runs from the trusted cwd, same as every other
+      # `bun` invocation in this job.
+      - name: Redact secrets from Claude findings
+        if: always()
+        working-directory: trusted
+        run: |
+          for f in /tmp/ai-review/claude-findings.json /tmp/ai-review/claude-raw.json; do
+            if [ -f "$f" ]; then
+              bun .github/scripts/ai-review/post-review.ts redact "$f"
+            fi
+          done
 
       - name: Upload Claude findings
         if: always()
@@ -312,6 +344,20 @@ jobs:
 
       - name: Validate merged review
         run: bun .github/scripts/ai-review/post-review.ts validate-merged /tmp/ai-review/merged-review.json
+
+      # Same defense-in-depth as claude-review's redact step: scrubs any
+      # secret-shaped substring out of the merged review before it's uploaded
+      # as a (public-repo) artifact. `if: always()` + existence guard so a
+      # `merged-review.json` produced before a failing validation is still
+      # scrubbed ahead of the always-on upload step below. This job's cwd is
+      # already the trusted checkout (its only checkout), same as every other
+      # `bun` invocation here.
+      - name: Redact secrets from merged review
+        if: always()
+        run: |
+          if [ -f /tmp/ai-review/merged-review.json ]; then
+            bun .github/scripts/ai-review/post-review.ts redact /tmp/ai-review/merged-review.json
+          fi
 
       - name: Upload merged review
         if: always()
