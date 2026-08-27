@@ -107,7 +107,10 @@ Long-running raw log / error events only; there is no terminal `result` event on
 - Each restart re-reads config, rebuilds per-function bind mounts, recreates the `supabase_edge_runtime_<project>` container, and best-effort reloads Kong afterwards.
 - The command creates or reuses Docker resources derived from the resolved project id:
   - container: `supabase_edge_runtime_<project>`
-  - named volume: `supabase_edge_runtime_<project>`
+  - named volume: `supabase_edge_runtime_<project>` (mounted at `/root/.cache/deno`), or
+    `supabase_edge_runtime_slim_<project>` (mounted over `/home/nonroot`) under
+    `SUPABASE_USE_SLIM_IMAGES` — a docker.io-seeded volume is root-owned and unwritable
+    by the slim image's uid 65532, so the two families never share a name
   - network: `supabase_network_<project>` unless `--network-id` overrides it
 - Inspector mode exposes the configured `edge_runtime.inspector_port` on the host and sets `SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=0`.
 - Config `env()` interpolation uses a project environment resolved by the command itself (ambient `process.env` layered under `.env.<env>.local` / `.env.local` / `.env.<env>` / `.env`) and passed into `loadCliConfig`. The command does not move/hide any project files. One `process.env` mutation exists: the shared config pipeline (`legacyLoadLocalProjectContext`, shared with `deploy`/`download`/`start`) installs a project-dotenv-only `BITBUCKET_CLONE_DIR` into `process.env`.

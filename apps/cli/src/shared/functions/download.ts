@@ -1,6 +1,6 @@
 import { operationDefinitions, SupabaseApiInputError, type ApiClient } from "@supabase/api/effect";
 import { randomUUID } from "node:crypto";
-import { mkdir, open, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Effect, FileSystem, Option } from "effect";
@@ -17,18 +17,21 @@ import {
 import { legacyDescribeContainerCliFailure } from "../../legacy/shared/legacy-container-cli.ts";
 import { legacyViperEnvStringWithProjectFallback } from "../legacy/legacy-viper-env.ts";
 import {
+  buildFunctionsDockerCreateArgs,
   buildFunctionsDockerRunArgs,
+  containerArchiveFiles,
+  edgeRuntimeCacheVolume,
   ensureDockerNamedVolume,
   ensureDockerNetwork,
   isDockerRunning,
-  localDockerId,
   resolveDockerNetworkMode,
   resolveEdgeRuntimeVersion,
   resolveFunctionsDockerImage,
   runChildProcess,
+  runChildProcessBinaryStdout,
 } from "./functions-docker.ts";
-import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
 import { usesSlimImageRuntime } from "../services/slim-images.ts";
+import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
 import {
   edgeRuntimeImage,
   FUNCTIONS_BUNDLER_MUTEX_GROUP,
@@ -50,12 +53,17 @@ const legacyEntrypointPath = "file:///src/index.ts";
 // deploy's `toDockerPath` host-mirroring scheme.
 const DOCKER_DENO_DIR = "/home/deno";
 const dockerIoEszipDir = "/root/eszips";
+// Slim (uid 65532) counterparts: `/tmp` is the one image directory writable
+// and traversable by the non-root user on every published slim tag (older
+// slim images ship `/root` as 0700), so the eszip bind and the unbundle
+// output both live under it. The output deliberately is NOT a bind: `docker
+// cp` reads it back after the container exits (binds and volumes are
+// invisible to `cp` on a stopped container), which is what keeps uid 65532
+// from ever writing into the host `supabase/functions` directory — on native
+// Linux that bind write EACCESes whenever the host directory belongs to a
+// different uid.
 const slimEszipDir = "/tmp/eszips";
-const dockerIoDenoCacheDir = "/root/.cache/deno";
-// Slim HOME `/home/nonroot` is 0700 uid 65532. A named volume inherits that
-// owner only when the mount path already exists; `/tmp/.cache/deno` does not,
-// so Deno's default `$HOME/.cache/deno` never used a /tmp bind.
-const slimDenoCacheDir = "/home/nonroot";
+const slimUnbundleDir = "/tmp/unbundle";
 
 export interface DownloadFunctionsOptions {
   readonly functionName: Option.Option<string>;
@@ -1072,10 +1080,19 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
   const { projectId, denoVersion, image, projectEnvValues } = edgeRuntimeImage;
   const functionsDir = resolve(dependencies.projectRoot, "supabase", "functions");
   const hostEszipPath = resolve(eszipPath);
+  // The slim edge-runtime image runs as uid 65532, which cannot write into
+  // the host `supabase/functions` bind the docker.io (root) flow extracts
+  // straight into — on native Linux that write EACCESes whenever the host
+  // directory belongs to a different uid. The slim flow therefore keeps the
+  // container's filesystem as the only write target and copies the extracted
+  // files out with `docker cp` afterwards, writing them host-side as the
+  // invoking user. See `slimEszipDir`'s doc for the path choices.
   const slim = usesSlimImageRuntime(image);
+  const cacheVolume = edgeRuntimeCacheVolume(projectId, slim);
   const dockerEszipPath = posix.join(slim ? slimEszipDir : dockerIoEszipDir, eszipFileName);
-  const dockerOutputPath = posix.join(DOCKER_DENO_DIR, slug);
-  const dockerDenoCacheDir = slim ? slimDenoCacheDir : dockerIoDenoCacheDir;
+  const dockerOutputPath = slim
+    ? posix.join(slimUnbundleDir, slug)
+    : posix.join(DOCKER_DENO_DIR, slug);
 
   // Go: `viper.GetString("network-id")` else `NetId` (`docker.go:379-383`) —
   // `--network-id` is a persistent root flag (`cmd/root.go:328`), not
@@ -1100,7 +1117,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
     yield* ensureDockerNetwork(networkMode, projectId).pipe(
       Effect.mapError(withLegacyBundleSuggestion(slug, styleAqua)),
     );
-    yield* ensureDockerNamedVolume(localDockerId("edge_runtime", projectId), projectId).pipe(
+    yield* ensureDockerNamedVolume(cacheVolume.name, projectId).pipe(
       Effect.mapError(withLegacyBundleSuggestion(slug, styleAqua)),
     );
 
@@ -1110,21 +1127,20 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
     // explicit creation — `docker run -v <name>:...` would otherwise still
     // implicitly create the named volume, which Bitbucket's restricted Docker
     // environment doesn't allow, same carve-out as `deploy.ts`'s
-    // `buildDockerBinds`.
+    // `buildDockerBinds`. The slim flow drops the `supabase/functions` bind:
+    // its output stays container-local and is copied out below instead.
     const binds = [
-      ...(process.env["BITBUCKET_CLONE_DIR"] === undefined
-        ? [`${localDockerId("edge_runtime", projectId)}:${dockerDenoCacheDir}:rw`]
-        : []),
+      ...(process.env["BITBUCKET_CLONE_DIR"] === undefined ? [cacheVolume.bind] : []),
       `${hostEszipPath}:${dockerEszipPath}:ro`,
-      `${functionsDir}:${DOCKER_DENO_DIR}:rw`,
+      ...(slim ? [] : [`${functionsDir}:${DOCKER_DENO_DIR}:rw`]),
     ];
-    const command = buildFunctionsDockerRunArgs({
+    const spec = {
       image,
       projectId,
       networkMode,
       binds,
       containerArgs: ["unbundle", "--eszip", dockerEszipPath, "--output", dockerOutputPath],
-    });
+    };
 
     // Go pipes the container's stdout/stderr straight to `os.Stdout`/`getErrorLogger()`
     // while the container runs (`DockerRunOnceWithConfig`, copied live via the
@@ -1134,49 +1150,198 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
     // (`download.go:279`); machine-output modes must keep stdout
     // payload-only (CLI-1546), so this mirrors `deploy.ts`'s own
     // `bundleFunctionWithDocker` routing.
-    const result = yield* runChildProcess("docker", command, {
-      stdout: "pipe",
-      stderr: "pipe",
-      onStdout: (chunk) => output.raw(chunk, output.format === "text" ? "stdout" : "stderr"),
-      onStderr: (chunk) => output.raw(chunk, "stderr"),
+    const runUnbundleContainer = (command: ReadonlyArray<string>) =>
+      Effect.gen(function* () {
+        const result = yield* runChildProcess("docker", [...command], {
+          stdout: "pipe",
+          stderr: "pipe",
+          onStdout: (chunk) => output.raw(chunk, output.format === "text" ? "stdout" : "stderr"),
+          onStderr: (chunk) => output.raw(chunk, "stderr"),
+        }).pipe(
+          Effect.mapError(
+            withDockerStepFailure(
+              "failed to run the edge-runtime unbundle container",
+              slug,
+              styleAqua,
+            ),
+          ),
+        );
+
+        if (result.exitCode !== 0) {
+          // Go's `getErrorLogger` (deno-v1 only) sets `CmdSuggestion =
+          // suggestDenoV2()` (assignment) as soon as a full stderr line reads
+          // "invalid eszip v2" (case-insensitive), then `downloadWithDockerUnbundle`
+          // appends `suggestLegacyBundle` (`+=`) once extraction has failed
+          // (`download.go:213,284-304`). Go's own implementation races these two
+          // goroutines (the pipe writer is never closed) — this resolves that
+          // race deterministically to the common (non-race) ordering instead of
+          // reproducing the nondeterminism. The line match is exact (not a
+          // substring) to match Go's `strings.EqualFold(line, "invalid eszip v2")`.
+          const invalidEszipV2 =
+            denoVersion === 1 &&
+            result.stderr
+              .split(/\r?\n/)
+              .some((line) => line.trim().toLowerCase() === "invalid eszip v2");
+          const suggestion =
+            (invalidEszipV2 ? suggestDenoV2(styleEmphasis) : "") +
+            suggestLegacyBundle(slug, styleAqua);
+          return yield* Effect.fail(
+            Object.assign(new Error(`error running container: exit ${result.exitCode}`), {
+              suggestion,
+            }),
+          );
+        }
+      });
+
+    if (!slim) {
+      yield* runUnbundleContainer(buildFunctionsDockerRunArgs(spec));
+      // Go: `downloadWithDockerUnbundle` has no final "Downloaded Function ..."
+      // print, unlike `RunLegacy`/`downloadWithServerSideUnbundle` — its only
+      // stdout/stderr text is "Downloading function: ..." above plus whatever
+      // the `unbundle` container itself wrote.
+      return slug;
+    }
+
+    // Slim: `create` → `start --attach` → `cp` out → `rm -f`, instead of a
+    // single `docker run --rm` — the extracted files live on the container's
+    // own filesystem, so the container must still exist after it exits for
+    // `docker cp` to read them.
+    const containerName = `supabase_unbundle_${slug}_${randomUUID().slice(0, 8)}`;
+    yield* Effect.gen(function* () {
+      const created = yield* runChildProcess(
+        "docker",
+        buildFunctionsDockerCreateArgs(containerName, spec),
+        { stdout: "ignore", stderr: "pipe" },
+      ).pipe(
+        Effect.mapError(
+          withDockerStepFailure(
+            "failed to create the edge-runtime unbundle container",
+            slug,
+            styleAqua,
+          ),
+        ),
+      );
+      if (created.exitCode !== 0) {
+        return yield* Effect.fail(
+          Object.assign(
+            new Error(
+              `failed to create the edge-runtime unbundle container: ${
+                created.stderr.trim().length > 0
+                  ? created.stderr.trim()
+                  : `exit ${created.exitCode}`
+              }`,
+            ),
+            { suggestion: suggestLegacyBundle(slug, styleAqua) },
+          ),
+        );
+      }
+
+      yield* runUnbundleContainer(["start", "--attach", containerName]);
+
+      const copied = yield* runChildProcessBinaryStdout("docker", [
+        "cp",
+        `${containerName}:${dockerOutputPath}`,
+        "-",
+      ]).pipe(
+        Effect.mapError(
+          withDockerStepFailure(
+            "failed to copy the extracted Function files out of the unbundle container",
+            slug,
+            styleAqua,
+          ),
+        ),
+      );
+      if (copied.exitCode !== 0) {
+        return yield* Effect.fail(
+          Object.assign(
+            new Error(
+              `failed to copy the extracted Function files out of the unbundle container: ${
+                copied.stderr.trim().length > 0 ? copied.stderr.trim() : `exit ${copied.exitCode}`
+              }`,
+            ),
+            { suggestion: suggestLegacyBundle(slug, styleAqua) },
+          ),
+        );
+      }
+
+      yield* writeUnbundledArchive(copied.stdout, functionsDir, slug);
     }).pipe(
-      Effect.mapError(
-        withDockerStepFailure("failed to run the edge-runtime unbundle container", slug, styleAqua),
+      // Same cleanup guarantee `--rm` gives the docker.io flow: the
+      // container is removed on every path out of the lifecycle above,
+      // including a failed start or copy. Removal failures are swallowed —
+      // an orphaned stopped container must not mask the real error.
+      Effect.ensuring(
+        runChildProcess("docker", ["rm", "--force", containerName], {
+          stdout: "ignore",
+          stderr: "ignore",
+        }).pipe(Effect.ignore),
       ),
     );
 
-    if (result.exitCode !== 0) {
-      // Go's `getErrorLogger` (deno-v1 only) sets `CmdSuggestion =
-      // suggestDenoV2()` (assignment) as soon as a full stderr line reads
-      // "invalid eszip v2" (case-insensitive), then `downloadWithDockerUnbundle`
-      // appends `suggestLegacyBundle` (`+=`) once extraction has failed
-      // (`download.go:213,284-304`). Go's own implementation races these two
-      // goroutines (the pipe writer is never closed) — this resolves that
-      // race deterministically to the common (non-race) ordering instead of
-      // reproducing the nondeterminism. The line match is exact (not a
-      // substring) to match Go's `strings.EqualFold(line, "invalid eszip v2")`.
-      const invalidEszipV2 =
-        denoVersion === 1 &&
-        result.stderr
-          .split(/\r?\n/)
-          .some((line) => line.trim().toLowerCase() === "invalid eszip v2");
-      const suggestion =
-        (invalidEszipV2 ? suggestDenoV2(styleEmphasis) : "") + suggestLegacyBundle(slug, styleAqua);
-      return yield* Effect.fail(
-        Object.assign(new Error(`error running container: exit ${result.exitCode}`), {
-          suggestion,
-        }),
-      );
-    }
-
-    // Go: `downloadWithDockerUnbundle` has no final "Downloaded Function ..."
-    // print, unlike `RunLegacy`/`downloadWithServerSideUnbundle` — its only
-    // stdout/stderr text is "Downloading function: ..." above plus whatever
-    // the `unbundle` container itself wrote.
     return slug;
   });
 
   return yield* extract.pipe(Effect.ensuring(cleanupEszip));
+});
+
+/**
+ * Writes the `docker cp`-exported unbundle output (a tar rooted at the slug
+ * directory) into `<functionsRoot>/<slug>`, merging over existing files the
+ * same way the docker.io flow's direct bind write does — but host-side, as
+ * the invoking user, which is the whole point of the slim copy-out flow.
+ * Entry paths originate from a container run over a remote eszip, so each
+ * destination is containment-checked against `functionsRoot` (resolved and
+ * realpath'd like `downloadSingle`'s multipart writes) before anything is
+ * written.
+ */
+const writeUnbundledArchive = Effect.fnUntraced(function* (
+  archive: Uint8Array,
+  functionsRoot: string,
+  slug: string,
+) {
+  const files = yield* Effect.tryPromise({
+    try: () => containerArchiveFiles(archive),
+    catch: (cause) =>
+      new Error(
+        `failed to read the extracted Function files: ${cause instanceof Error ? cause.message : String(cause)}`,
+      ),
+  });
+
+  const functionDir = join(functionsRoot, slug);
+  const mapMkdirError = (cause: unknown) =>
+    new Error(`failed to mkdir: ${cause instanceof Error ? cause.message : String(cause)}`);
+  yield* Effect.tryPromise({
+    try: () => mkdir(functionDir, { recursive: true }),
+    catch: mapMkdirError,
+  });
+  const realFunctionsRoot = yield* Effect.tryPromise({
+    try: () => realpath(functionsRoot),
+    catch: mapMkdirError,
+  });
+
+  for (const [name, body] of files) {
+    // `docker cp <container>:<dir> -` roots every entry at the copied
+    // directory's basename — the slug.
+    const segments = name.replace(/^\.\//, "").split("/");
+    const parts = segments[0] === slug ? segments.slice(1) : segments;
+    if (parts.every((part) => part.length === 0)) {
+      continue;
+    }
+
+    const destination = resolve(functionDir, ...parts);
+    yield* ensureContainedPath(resolve(functionsRoot), destination, name);
+    const parent = dirname(destination);
+    yield* Effect.tryPromise({
+      try: () => mkdir(parent, { recursive: true }),
+      catch: mapMkdirError,
+    });
+    // A pre-existing symlinked subdirectory must not let a crafted entry
+    // path escape the functions root once resolved on disk.
+    yield* Effect.tryPromise({ try: () => realpath(parent), catch: mapMkdirError }).pipe(
+      Effect.flatMap((realParent) => ensureContainedPath(realFunctionsRoot, realParent, name)),
+    );
+    yield* writeFileWithoutFollowingSymlinks(destination, body, name);
+  }
 });
 
 const downloadSingle = Effect.fnUntraced(function* (

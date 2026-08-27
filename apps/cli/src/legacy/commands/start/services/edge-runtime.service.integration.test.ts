@@ -374,6 +374,17 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         expect(createArgs).toContain("--main-service=/tmp");
         expect(createArgs).not.toContain("--main-service=/root");
 
+        // Slim runs ensure their own Deno-cache volume (mounted over the
+        // nonroot home by the per-function binds): the shared docker.io
+        // volume mounts at /root/.cache/deno, which uid 65532 neither reaches
+        // nor uses (Deno caches under $HOME), and a docker.io-seeded volume
+        // is root-owned anyway. This input serves no functions, so no cache
+        // bind appears at all — the per-function bind itself is covered by
+        // `buildDockerBinds`' own slim test (`deploy.unit.test.ts`).
+        const volumeCreate = mock.calls.find((call) => call.args[0] === "volume");
+        expect(volumeCreate?.args.at(-1)).toBe("supabase_edge_runtime_slim_proj");
+        expect(createArgs).not.toContain("supabase_edge_runtime_proj:/root/.cache/deno:rw");
+
         const cp = mock.calls.find((call) => call.args[0] === "cp");
         expect(cp?.args).toEqual(["cp", "-", "supabase_edge_runtime_proj:/"]);
         const stdin = cp?.stdin;

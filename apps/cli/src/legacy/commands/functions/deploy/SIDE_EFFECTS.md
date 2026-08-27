@@ -32,7 +32,12 @@
 | `docker run --rm ... --label com.supabase.cli.project=<id> --label com.docker.compose.project=<id> ...` | when Docker bundling is selected/available; labeled so orphaned containers can be associated with the project                              |
 
 Docker bundling may pull or run the configured edge-runtime image and uses the
-`supabase_edge_runtime_<project_id>` Deno cache volume.
+`supabase_edge_runtime_<project_id>` Deno cache volume (mounted at
+`/root/.cache/deno`). Under `SUPABASE_USE_SLIM_IMAGES` it uses the slim-only
+`supabase_edge_runtime_slim_<project_id>` volume instead, mounted over the slim
+image's `/home/nonroot` home so uid 65532's `$HOME`-relative deno/npm caches
+persist — a docker.io-seeded volume is root-owned and unwritable by that uid,
+so the two families never share a name.
 
 ## API Routes
 

@@ -64,6 +64,7 @@ import {
 import {
   containerArchiveBytes,
   dockerProjectLabels,
+  edgeRuntimeCacheVolume,
   ensureDockerNamedVolume,
   ensureDockerNetwork,
   localDockerId,
@@ -1655,6 +1656,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     const watchableBinds = new Map<string, DockerBind>();
     const emittedScopeWarnings = new Set<string>();
     const functionsConfig: Record<string, ServeFunctionContainerConfig> = {};
+    const slimEdgeRuntime = usesSlimImageRuntime(input.image);
 
     for (const config of functionConfigs) {
       if (!config.enabled) {
@@ -1709,7 +1711,10 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
 
     const binds = [...functionBinds.values()];
 
-    yield* ensureDockerNamedVolume(localDockerId("edge_runtime", projectId), projectId);
+    yield* ensureDockerNamedVolume(
+      edgeRuntimeCacheVolume(projectId, slimEdgeRuntime).name,
+      projectId,
+    );
     yield* ensureDockerNetwork(networkMode, projectId);
 
     const env = [
@@ -1762,7 +1767,6 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       });
 
       const labels = dockerProjectLabels(projectId);
-      const slimEdgeRuntime = usesSlimImageRuntime(input.image);
       const serveMainDir = slimEdgeRuntime ? slimServeMainDir : dockerIoServeMainDir;
       const serveMainFile = `${serveMainDir}/index.ts`;
       const runtimeCommand = [

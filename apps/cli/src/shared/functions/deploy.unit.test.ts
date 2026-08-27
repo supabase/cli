@@ -646,23 +646,45 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
   });
 });
 
-describe("buildDockerBinds — slim deno cache path", () => {
+describe("buildDockerBinds — edge-runtime Deno-cache volume selection", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
 
-  it("mounts the named cache volume at /home/nonroot on a slim image", async () => {
+  it("mounts the shared volume at /root/.cache/deno by default", async () => {
+    const { root, functionsDir, outputDir, config } = await createHelloFunctionProject(
+      {},
+      'Deno.serve(() => new Response("ok"));\n',
+    );
+
+    try {
+      const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config);
+      expect(binds.map(formatDockerBind)).toContain(
+        "supabase_edge_runtime_test-project:/root/.cache/deno:rw",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("mounts the slim-only volume over /home/nonroot when the image is slim", async () => {
+    // The slim (uid 65532) edge-runtime resolves Deno's cache under its own
+    // $HOME, and a docker.io-seeded volume is root-owned — so slim runs get a
+    // separate volume mounted over the nonroot home (see
+    // `edgeRuntimeCacheVolume`).
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const { root, functionsDir, outputDir, config } = await createHelloFunctionProject(
       {},
       'Deno.serve(() => new Response("ok"));\n',
     );
+
     try {
       const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config, {
         image: "ghcr.io/supabase/cli/edge-runtime:v1.74.3",
       });
-      expect(binds.some((bind) => bind.containerPath === "/home/nonroot")).toBe(true);
-      expect(binds.some((bind) => bind.containerPath === "/root/.cache/deno")).toBe(false);
+      const formatted = binds.map(formatDockerBind);
+      expect(formatted).toContain("supabase_edge_runtime_slim_test-project:/home/nonroot:rw");
+      expect(formatted).not.toContain("supabase_edge_runtime_test-project:/root/.cache/deno:rw");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

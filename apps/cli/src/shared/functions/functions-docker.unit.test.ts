@@ -5,11 +5,15 @@ import { Deferred, Effect, Layer, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
+  buildFunctionsDockerCreateArgs,
   buildFunctionsDockerRunArgs,
   containerArchiveBytes,
+  containerArchiveFiles,
+  edgeRuntimeCacheVolume,
   localDockerId,
   resolveDockerNetworkMode,
   runChildProcess,
+  runChildProcessBinaryStdout,
   toDockerPath,
 } from "./functions-docker.ts";
 
@@ -211,6 +215,47 @@ describe("buildFunctionsDockerRunArgs", () => {
   });
 });
 
+describe("edgeRuntimeCacheVolume", () => {
+  it("keeps the shared volume at /root/.cache/deno for docker.io images", () => {
+    expect(edgeRuntimeCacheVolume("my-project", false)).toEqual({
+      name: "supabase_edge_runtime_my-project",
+      containerPath: "/root/.cache/deno",
+      bind: "supabase_edge_runtime_my-project:/root/.cache/deno:rw",
+    });
+  });
+
+  it("uses a slim-only volume mounted over the nonroot home for slim images", () => {
+    // A docker.io-seeded volume is root-owned and can never be made writable
+    // by uid 65532 by remounting it, so the two image families must never
+    // share a volume name — see the helper's doc comment.
+    expect(edgeRuntimeCacheVolume("my-project", true)).toEqual({
+      name: "supabase_edge_runtime_slim_my-project",
+      containerPath: "/home/nonroot",
+      bind: "supabase_edge_runtime_slim_my-project:/home/nonroot:rw",
+    });
+  });
+});
+
+describe("buildFunctionsDockerCreateArgs", () => {
+  it("emits create --name with the same tail as the run variant", () => {
+    const spec = {
+      image: "ghcr.io/supabase/cli/edge-runtime:v1.2.3",
+      projectId: "my-project",
+      networkMode: "supabase_network_my-project",
+      binds: ["/host/a:/container/a:ro"],
+      containerArgs: ["unbundle", "--eszip", "/tmp/eszips/x.eszip"],
+      platform: "darwin" as const,
+    };
+
+    expect(buildFunctionsDockerCreateArgs("supabase_unbundle_x_1234", spec)).toEqual([
+      "create",
+      "--name",
+      "supabase_unbundle_x_1234",
+      ...buildFunctionsDockerRunArgs(spec).slice(2),
+    ]);
+  });
+});
+
 describe("containerArchiveBytes", () => {
   // Regular-file tar entries parsed straight from the ustar headers.
   function tarRegularFileEntries(archive: Uint8Array): ReadonlyArray<[string, number]> {
@@ -244,6 +289,28 @@ describe("containerArchiveBytes", () => {
     expect(tarRegularFileEntries(archive)).toEqual([["root/index.ts", 0o644]]);
     const files = await new Bun.Archive(archive).files();
     expect(await files.get("root/index.ts")?.text()).toBe("export const x = 1;\n");
+  });
+
+  it("accepts binary file bodies", async () => {
+    const body = new Uint8Array([0x00, 0x01, 0xfe, 0xff]);
+    const archive = await containerArchiveBytes({ "/tmp/eszips/output.eszip": body });
+    const files = await new Bun.Archive(archive).files();
+    expect(new Uint8Array(await files.get("tmp/eszips/output.eszip")!.arrayBuffer())).toEqual(body);
+  });
+});
+
+describe("containerArchiveFiles", () => {
+  it("round-trips file entries, preserving binary bodies", async () => {
+    const binary = new Uint8Array([0x00, 0x80, 0xff, 0x10]);
+    const archive = await containerArchiveBytes({
+      "myfn/index.ts": "console.log(1)\n",
+      "myfn/nested/util.bin": binary,
+    });
+
+    const files = await containerArchiveFiles(archive);
+    expect([...files.keys()].sort()).toEqual(["myfn/index.ts", "myfn/nested/util.bin"]);
+    expect(new TextDecoder().decode(files.get("myfn/index.ts"))).toBe("console.log(1)\n");
+    expect(files.get("myfn/nested/util.bin")).toEqual(binary);
   });
 });
 
@@ -357,6 +424,27 @@ describe("runChildProcess", () => {
       // Neither stream's tee ever observes so much as a fragment of the other.
       expect(stdoutTee.some((chunk) => chunk.includes("stderr"))).toBe(false);
       expect(stderrTee.some((chunk) => chunk.includes("stdout"))).toBe(false);
+    }),
+  );
+});
+
+describe("runChildProcessBinaryStdout", () => {
+  it.effect("returns stdout as raw bytes, immune to UTF-8 decoding corruption", () =>
+    Effect.gen(function* () {
+      // 0x80/0xFF are invalid UTF-8 lead bytes — text decoding would replace
+      // them (U+FFFD), corrupting a tar stream. The binary collector must
+      // return them verbatim, across chunk boundaries.
+      const chunk1 = new Uint8Array([0x00, 0x80]);
+      const chunk2 = new Uint8Array([0xff, 0x42]);
+
+      const result = yield* runChildProcessBinaryStdout("docker", [
+        "cp",
+        "container:/tmp/unbundle/x",
+        "-",
+      ]).pipe(Effect.provide(mockStreamingChildProcessLayer({ stdout: [chunk1, chunk2] })));
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toEqual(new Uint8Array([0x00, 0x80, 0xff, 0x42]));
     }),
   );
 });

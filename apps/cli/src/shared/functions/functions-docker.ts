@@ -30,6 +30,42 @@ export function localDockerId(name: string, projectId: string) {
 }
 
 /**
+ * The slim edge-runtime image's home directory (distroless `nonroot`, uid
+ * 65532) — same layout contract the slim Storage volume mount relies on
+ * (`legacy/commands/start/services/storage.service.ts`).
+ */
+const SLIM_EDGE_RUNTIME_HOME = "/home/nonroot";
+
+/**
+ * The Deno-cache volume bind for an edge-runtime container.
+ *
+ * docker.io edge-runtime runs as root, so the shared
+ * `supabase_edge_runtime_<projectId>` volume mounts at `/root/.cache/deno`
+ * (Deno's cache under root's `$HOME`) and its contents end up root-owned.
+ *
+ * The slim image runs as uid 65532 with `$HOME=/home/nonroot`, which breaks
+ * that contract twice over: Deno resolves its cache under `/home/nonroot`,
+ * not `/root`, and a volume already seeded root-owned by a docker.io run can
+ * never be made writable by 65532 by remounting it. So slim runs use their
+ * OWN volume (`supabase_edge_runtime_slim_<projectId>`) mounted over the
+ * home directory: Docker seeds a fresh volume from the image's
+ * `/home/nonroot` (owned by 65532), so `$HOME`-relative caches (deno, npm)
+ * land inside it writable — the same mount-the-owned-home-dir pattern the
+ * slim Storage container uses. The two volume families never share a name,
+ * so no cross-family ownership probe is needed; both carry the
+ * `com.supabase.cli.project` label `supabase stop --no-backup` prunes by.
+ */
+export function edgeRuntimeCacheVolume(projectId: string, slim: boolean) {
+  const name = localDockerId(slim ? "edge_runtime_slim" : "edge_runtime", projectId);
+  const containerPath = slim ? SLIM_EDGE_RUNTIME_HOME : "/root/.cache/deno";
+  return {
+    name,
+    containerPath,
+    bind: `${name}:${containerPath}:rw`,
+  };
+}
+
+/**
  * Go: `DockerStart`'s network selection (`internal/utils/docker.go:379-383`)
  * combined with root's `viper.BindPFlags`/`AutomaticEnv` for the persistent
  * `--network-id` flag (`cmd/root.go:316-334`). viper's `find()` resolves a
@@ -87,7 +123,7 @@ export function toDockerPath(hostPath: string) {
  * carry its `0644` default.
  */
 export function containerArchiveBytes(
-  files: Readonly<Record<string, string>>,
+  files: Readonly<Record<string, string | Uint8Array>>,
 ): Promise<Uint8Array> {
   return new Bun.Archive(
     Object.fromEntries(
@@ -97,6 +133,26 @@ export function containerArchiveBytes(
       ]),
     ),
   ).bytes();
+}
+
+/**
+ * Inverse of {@link containerArchiveBytes}: decodes a `docker cp
+ * <container>:<path> -` tar stream into entry-name → file-bytes. Directory
+ * entries (trailing `/`) are dropped — callers recreate parents from the
+ * file paths themselves.
+ */
+export async function containerArchiveFiles(
+  archive: Uint8Array,
+): Promise<ReadonlyMap<string, Uint8Array>> {
+  const entries = await new Bun.Archive(archive).files();
+  const files = new Map<string, Uint8Array>();
+  for (const [name, blob] of entries) {
+    if (name.endsWith("/")) {
+      continue;
+    }
+    files.set(name, new Uint8Array(await blob.arrayBuffer()));
+  }
+  return files;
 }
 
 export interface FunctionsDockerRunSpec {
@@ -131,7 +187,28 @@ export interface FunctionsDockerRunSpec {
  * associate an orphaned container with the project.
  */
 export function buildFunctionsDockerRunArgs(spec: FunctionsDockerRunSpec): Array<string> {
-  const command = ["run", "--rm", ...spec.binds.flatMap((bind) => ["-v", bind])];
+  return buildFunctionsDockerContainerArgs(["run", "--rm"], spec);
+}
+
+/**
+ * `docker create --name <containerName>` variant of
+ * {@link buildFunctionsDockerRunArgs} — for one-shot containers whose
+ * filesystem must be reachable by `docker cp` after they exit (a `--rm` run
+ * removes it before anything can be copied out). The caller owns the
+ * `start -a` / `cp` / `rm -f` lifecycle around it.
+ */
+export function buildFunctionsDockerCreateArgs(
+  containerName: string,
+  spec: FunctionsDockerRunSpec,
+): Array<string> {
+  return buildFunctionsDockerContainerArgs(["create", "--name", containerName], spec);
+}
+
+function buildFunctionsDockerContainerArgs(
+  head: ReadonlyArray<string>,
+  spec: FunctionsDockerRunSpec,
+): Array<string> {
+  const command = [...head, ...spec.binds.flatMap((bind) => ["-v", bind])];
   command.push("--network", spec.networkMode);
   if ((spec.platform ?? process.platform) === "linux") {
     command.push("--add-host", "host.docker.internal:host-gateway");
@@ -227,6 +304,52 @@ export const runChildProcess = Effect.fnUntraced(function* (
         ],
         { concurrency: "unbounded" },
       );
+      return { exitCode, stdout, stderr };
+    }),
+  );
+});
+
+/**
+ * {@link runChildProcess} variant whose stdout is collected as raw bytes
+ * instead of decoded text — for `docker cp <container>:<path> -`, whose
+ * stdout is a tar archive that UTF-8 decoding would corrupt. stderr stays
+ * text (it only ever carries diagnostics).
+ */
+export const runChildProcessBinaryStdout = Effect.fnUntraced(function* (
+  command: string,
+  args: ReadonlyArray<string>,
+) {
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const child = yield* spawnContainerCli(spawner, [...args], {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        extendEnv: command === "docker",
+      });
+
+      const stdoutChunks: Array<Uint8Array> = [];
+      const [, stderr, exitCode] = yield* Effect.all(
+        [
+          Stream.runForEach(child.stdout, (chunk) =>
+            Effect.sync(() => {
+              stdoutChunks.push(chunk);
+            }),
+          ),
+          collectByteStream(child.stderr),
+          child.exitCode.pipe(Effect.map(Number)),
+        ],
+        { concurrency: "unbounded" },
+      );
+
+      const total = stdoutChunks.reduce((size, chunk) => size + chunk.length, 0);
+      const stdout = new Uint8Array(total);
+      let offset = 0;
+      for (const chunk of stdoutChunks) {
+        stdout.set(chunk, offset);
+        offset += chunk.length;
+      }
       return { exitCode, stdout, stderr };
     }),
   );
