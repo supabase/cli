@@ -2,17 +2,45 @@
   "name": "@supabase/config",
   "version": "0.1.0",
   "private": true,
+  "files": [
+    "src",
+    "!src/**/*.test.ts",
+    "dist",
+    "docs"
+  ],
   "type": "module",
+  "sideEffects": false,
   "exports": {
-    ".": "./src/index.ts",
-    "./internal": "./src/internal.ts",
+    ".": {
+      "types": "./dist/index.d.ts",
+      "bun": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./internal": {
+      "types": "./dist/internal.d.ts",
+      "bun": "./src/internal.ts",
+      "default": "./dist/internal.js"
+    },
     "./io": {
       "bun": "./src/bun.ts",
-      "node": "./src/node.ts",
-      "browser": "./src/io-browser.ts",
-      "default": "./src/node.ts"
+      "node": {
+        "types": "./dist/node.d.ts",
+        "default": "./dist/node.js"
+      },
+      "browser": {
+        "types": "./dist/io-browser.d.ts",
+        "default": "./dist/io-browser.js"
+      },
+      "default": {
+        "types": "./dist/node.d.ts",
+        "default": "./dist/node.js"
+      }
     },
-    "./effect": "./src/effect.ts",
+    "./effect": {
+      "types": "./dist/effect.d.ts",
+      "bun": "./src/effect.ts",
+      "default": "./dist/effect.js"
+    },
     "./schema.json": "./dist/schema.json",
     "./project-schema.json": "./dist/project-schema.json"
   },
@@ -24,6 +52,7 @@
     "test:unit:run": "bun --bun vitest run --project unit --coverage.reportsDirectory=coverage/unit"
   },
   "dependencies": {
+    "@standard-schema/spec": "^1.1.0",
     "dedent": "^1.7.2",
     "smol-toml": "^1.8.0"
   },

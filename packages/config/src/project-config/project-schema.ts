@@ -1,3 +1,4 @@
+import type { StandardSchemaV1 } from "@standard-schema/spec";
 import { Schema, SchemaAST } from "effect";
 import { CliConfigSchema } from "../base.ts";
 import { HOSTED_SECTION_KEYS } from "./hosted-sections.ts";
@@ -208,8 +209,19 @@ type ProjectConfigSchemaType = Omit<ProjectConfig, "_apiResponse">;
  * (decode/encode, `.ast`, …) and a spec-compliant Standard Schema
  * (`~standard`), since {@link Schema.toStandardSchemaV1} augments and returns
  * the SAME object rather than wrapping it in a second value.
+ *
+ * Annotated explicitly (rather than left inferred) because the inferred type
+ * names `StandardSchemaV1` from `@standard-schema/spec` — a package reachable
+ * only transitively through `effect` under pnpm's strict `node_modules`
+ * isolation — which tsc's declaration emit refuses to synthesize into
+ * `project-schema.d.ts` as non-portable. Explicitly importing the type here
+ * pins `@standard-schema/spec` as a direct dependency instead.
  */
-export const ProjectConfigSchema = Schema.toStandardSchemaV1(
+export const ProjectConfigSchema: StandardSchemaV1<
+  ProjectConfigSchemaType,
+  ProjectConfigSchemaType
+> &
+  Schema.Codec<ProjectConfigSchemaType> = Schema.toStandardSchemaV1(
   Schema.make<Schema.Codec<ProjectConfigSchemaType>>(projectConfigAst),
 );
 

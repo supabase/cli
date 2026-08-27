@@ -19,12 +19,29 @@ import * as internalEntrypoint from "./internal.ts";
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = join(srcDir, "..");
+
+interface DistConditions {
+  readonly types: string;
+  readonly default: string;
+}
+
+interface TypesBunDefaultExport {
+  readonly types: string;
+  readonly bun: string;
+  readonly default: string;
+}
+
 const packageJson = JSON.parse(readFileSync(join(packageRoot, "package.json"), "utf8")) as {
   readonly exports: {
-    readonly ".": string;
-    readonly "./internal": string;
-    readonly "./io": Readonly<Record<string, string>>;
-    readonly "./effect": string;
+    readonly ".": TypesBunDefaultExport;
+    readonly "./internal": TypesBunDefaultExport;
+    readonly "./io": {
+      readonly bun: string;
+      readonly node: DistConditions;
+      readonly browser: DistConditions;
+      readonly default: DistConditions;
+    };
+    readonly "./effect": TypesBunDefaultExport;
     readonly "./schema.json": string;
     readonly "./project-schema.json": string;
   };
@@ -498,19 +515,33 @@ describe("package.json exports map", () => {
     expect(Object.keys(ioExports)).toEqual(["bun", "node", "browser", "default"]);
   });
 
-  test("every ./io condition target file exists on disk", () => {
-    const ioExports = packageJson.exports["./io"];
-    for (const target of Object.values(ioExports)) {
-      expect(() => readFileSync(join(packageRoot, target))).not.toThrow();
+  test("'types' is the first key in every conditional export object (CLI-2232)", () => {
+    const conditionObjects = [
+      packageJson.exports["."],
+      packageJson.exports["./effect"],
+      packageJson.exports["./internal"],
+      packageJson.exports["./io"].node,
+      packageJson.exports["./io"].browser,
+      packageJson.exports["./io"].default,
+    ];
+    for (const conditions of conditionObjects) {
+      expect(Object.keys(conditions)[0]).toBe("types");
     }
   });
 
-  test("the '.', './effect', and './internal' export targets exist on disk", () => {
-    // `./schema.json`/`./project-schema.json` are build outputs
-    // (`dist/schema.json`/`dist/project-schema.json`) and intentionally
-    // skipped here — they only exist after running `pnpm run build`.
+  // The `types`/`default` conditions of `.`/`./effect`/`./internal`/`./io`
+  // (node, browser, default) all point at `dist/` build outputs, which only
+  // exist after `pnpm run build` — intentionally NOT checked here so this
+  // test stays build-independent. `src/api-report.unit.test.ts` and
+  // `scripts/build.ts`'s tree-shake/Node-consumer smoke test own dist
+  // correctness instead (CLI-2232).
+  test("the ./io bun condition target exists on disk (its only src target)", () => {
+    expect(() => readFileSync(join(packageRoot, packageJson.exports["./io"].bun))).not.toThrow();
+  });
+
+  test("the '.', './effect', and './internal' bun condition targets exist on disk", () => {
     for (const key of [".", "./effect", "./internal"] as const) {
-      const target = packageJson.exports[key];
+      const target = packageJson.exports[key].bun;
       expect(() => readFileSync(join(packageRoot, target))).not.toThrow();
     }
   });

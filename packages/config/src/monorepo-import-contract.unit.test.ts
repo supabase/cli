@@ -15,8 +15,9 @@ import { fileURLToPath } from "node:url";
 // two forbidden specifiers can't appear by accident. The forbidden strings
 // below are built by concatenation so this file's own source can never
 // self-match (on top of the directory exclusion below, which already keeps
-// this package's `src/` — where those specifier strings legitimately appear
-// in test fixtures — out of the walk).
+// this whole package — where those specifier strings legitimately appear in
+// doc comments, generated `api-report/` declarations, and the build script's
+// own Node-consumer smoke-test source string — out of the walk).
 //
 const srcDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(srcDir, "..", "..", "..");
@@ -26,14 +27,14 @@ const forbiddenIoSpecifier = `${configPackageName}/io`;
 const forbiddenDeepImportPrefix = `${configPackageName}/src/`;
 
 const EXCLUDED_DIR_NAMES = new Set(["node_modules", "dist", ".repos"]);
-const thisPackageSrcDir = srcDir;
+const thisPackageDir = join(srcDir, "..");
 
 function collectTsFiles(dir: string, into: string[]): void {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const fullPath = join(dir, entry.name);
 
     if (entry.isDirectory()) {
-      if (EXCLUDED_DIR_NAMES.has(entry.name) || fullPath === thisPackageSrcDir) {
+      if (EXCLUDED_DIR_NAMES.has(entry.name) || fullPath === thisPackageDir) {
         continue;
       }
       collectTsFiles(fullPath, into);

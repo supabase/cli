@@ -34,6 +34,10 @@
       "entry": ["src/**/*.test.ts"],
       "ignoreDependencies": ["undici"]
     },
+    "packages/config": {
+      "entry": ["src/**/*.test.ts"],
+      "ignore": ["api-report/**"]
+    },
     "packages/process-compose": {
       "entry": ["src/**/*.test.ts", "tests/**/*.ts"]
     },

@@ -12,6 +12,7 @@
     "packages/process-compose",
     "**/testdata",
     "**/dist",
+    "**/api-report",
     "**/coverage",
     "**/.next",
     "**/.source"
