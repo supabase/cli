@@ -243,16 +243,22 @@ function removePathAndEmptiedAncestors(
   path: ReadonlyArray<string>,
 ): void {
   const containers: Array<Record<string, unknown>> = [output];
-  for (let index = 0; index < path.length - 1; index++) {
-    const next = containers[containers.length - 1][path[index]];
+  let cursor: Record<string, unknown> = output;
+  for (const segment of path.slice(0, -1)) {
+    const next = cursor[segment];
     if (!isObject(next)) {
       return;
     }
     containers.push(next);
+    cursor = next;
   }
   for (let index = path.length - 1; index >= 0; index--) {
     const container = containers[index];
-    delete container[path[index]];
+    const segment = path[index];
+    if (container === undefined || segment === undefined) {
+      return;
+    }
+    delete container[segment];
     if (Object.keys(container).length > 0 || index === 0) {
       return;
     }
