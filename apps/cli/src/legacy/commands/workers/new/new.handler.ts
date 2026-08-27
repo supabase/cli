@@ -37,7 +37,7 @@ import {
   WorkerDirectoryExistsError,
 } from "../../../../shared/workers/workers.errors.ts";
 import {
-  legacyLoadWorkersProject,
+  legacyLoadWorkersProjectForEntryWrite,
   legacyValidateWorkerName,
   type LegacyWorkersProject,
 } from "../workers.shared.ts";
@@ -179,7 +179,7 @@ export const legacyWorkersNew = Effect.fn("legacy.workers.new")(function* (
 
   // The telemetry state file is written on every invocation, success or failure.
   yield* Effect.gen(function* () {
-    const project = yield* legacyLoadWorkersProject();
+    const project = yield* legacyLoadWorkersProjectForEntryWrite();
 
     // `-o` leaves `output.format` as `text`, and the prompts go through Clack,
     // which writes its terminal UI to stdout with no stream override — so a

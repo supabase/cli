@@ -37,6 +37,30 @@ export class MissingWorkerNameError extends Data.TaggedError("MissingWorkerNameE
   }
 }
 
+/**
+ * A symlink in the worker source points outside the build context.
+ *
+ * The archive is everything the server gets — it runs no install step and has
+ * no view of the surrounding repository — so a link whose target is not also
+ * packaged arrives dangling. The catalog runtimes then boot without the
+ * dependency and a Dockerfile build fails on the `COPY`, both of them minutes
+ * later and with nothing naming the cause. Refused here instead.
+ *
+ * The common source is a package manager that hoists: a worker directory that
+ * is a pnpm workspace member links its dependencies at the repository root
+ * rather than under its own `node_modules`.
+ */
+export class WorkerSourceEscapingLinkError extends Data.TaggedError(
+  "WorkerSourceEscapingLinkError",
+)<{
+  readonly detail: string;
+  readonly suggestion: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
+
 /** A bare `push` found no workers to deploy — none named, none in the project. */
 export class NoWorkersToDeployError extends Data.TaggedError("NoWorkersToDeployError")<{
   readonly detail: string;

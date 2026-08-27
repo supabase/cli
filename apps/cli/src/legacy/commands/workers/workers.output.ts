@@ -22,16 +22,22 @@ import { LegacyWorkersEnvNotSupportedError } from "./workers.errors.ts";
 /**
  * Which `-o` values these commands answer with a payload.
  *
- * `pretty` is the human default. `table` and `csv` are accepted by the global
- * flag because `db query` reads them, and every resource command is meant to
- * ignore them and fall through to its own text rendering — so treating them as
- * machine output emitted TOML for `-o table`, and would now suppress the text
- * rendering without putting anything in its place.
+ * An allowlist, because the emitter's last branch is TOML: a denylist made every
+ * value it had not heard of serialise as TOML, so the next format the global
+ * flag learns would silently emit TOML from every workers command until somebody
+ * remembered to exclude it. `pretty` is the human default, and `table`/`csv` are
+ * accepted by the global flag only because `db query` reads them — every
+ * resource command falls through to its own text rendering for those, which is
+ * what an unrecognised value should do too.
+ *
+ * `env` is in the set so it reaches the refusal below rather than falling
+ * through to text: it is a format these commands *recognise* and cannot encode,
+ * which is a different answer from one they have never heard of.
  */
+const PAYLOAD_FORMATS = new Set(["json", "yaml", "toml", "env"]);
+
 function emitsPayloadFor(goFormat: string | undefined): boolean {
-  return (
-    goFormat !== undefined && goFormat !== "pretty" && goFormat !== "table" && goFormat !== "csv"
-  );
+  return goFormat !== undefined && PAYLOAD_FORMATS.has(goFormat);
 }
 
 export const legacyEmitWorkersMachineOutput = Effect.fnUntraced(function* (
@@ -90,3 +96,18 @@ export const legacyRejectWorkersEnvOutput = Effect.fnUntraced(function* () {
     });
   }
 });
+
+/**
+ * The `--project-ref` a retry suggestion has to carry, or `""` when the ref came
+ * from the link.
+ *
+ * A suggested command is copy-pasted verbatim, so one that drops an explicit
+ * `--project-ref` re-resolves to whatever *this* checkout is linked to. On
+ * `delete --yes` that is a same-named worker in a project the user never named,
+ * removed without a prompt.
+ *
+ * Keyed off the flag rather than the resolved ref: when the link supplied it,
+ * appending it again is noise on a command that already resolves correctly.
+ */
+export const legacyWorkersProjectRefSuffix = (projectRef: Option.Option<string>): string =>
+  Option.isSome(projectRef) ? ` --project-ref ${projectRef.value}` : "";

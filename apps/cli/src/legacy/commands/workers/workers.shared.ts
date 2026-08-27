@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { loadCliConfig } from "@supabase/config/effect";
-import { Effect, FileSystem, Option } from "effect";
+import { Effect, FileSystem, Option, Predicate } from "effect";
 import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
 import {
   readWorkersSection,
@@ -32,25 +32,23 @@ export interface LegacyWorkersProject {
   readonly workersDir: string;
 }
 
-export const legacyLoadWorkersProject = Effect.fnUntraced(function* () {
+const loadWorkersProject = Effect.fnUntraced(function* (options: { readonly tomlOnly: boolean }) {
   const settings = yield* LegacyCliSettings;
   const projectRoot = settings.workdir;
   const supabaseDir = join(projectRoot, "supabase");
 
-  // `tomlOnly`: the entry writer is a TOML text editor. Without this the loader
-  // prefers `supabase/config.json` when one exists, `configPath` becomes the
-  // JSON file, and `commitWorkerEntry` appends a `[workers.<name>]` table to it
-  // — leaving the project config unparseable after the scaffold is on disk.
-  // `functions new` avoids the same trap by resolving `supabase/config.toml`
-  // directly; this is that, through the loader.
-  //
-  // A JSON project therefore gets a `config.toml` written beside its
-  // `config.json`, which the default loader lists in `ignoredPaths`. That is a
-  // known gap: workers are TOML-only until config writing is overhauled.
+  // `search: false`: `settings.workdir` is already an authoritative project
+  // root — `--workdir`/`SUPABASE_WORKDIR` as given, else the one ancestor walk
+  // Go's `getProjectRoot` performs — so letting the loader climb again resolves
+  // `configPath` to an *ancestor* project while every path derived from
+  // `projectRoot` stays put. `workers new api --workdir ./bare-dir` inside
+  // another project is the case in point: the entry lands in the ancestor's
+  // `config.toml` recording `source = "supabase/workers/api"`, which resolves
+  // against the ancestor root to a directory the scaffold never created.
   //
   // `loadCliConfig` returns null when the directory holds no project yet,
   // which is what lets `workers new` scaffold into a bare one.
-  const loaded = yield* loadCliConfig(projectRoot, { tomlOnly: true });
+  const loaded = yield* loadCliConfig(projectRoot, { tomlOnly: options.tomlOnly, search: false });
   const section = readWorkersSection(loaded?.config.workers);
 
   return {
@@ -58,6 +56,66 @@ export const legacyLoadWorkersProject = Effect.fnUntraced(function* () {
     supabaseDir,
     configPath: loaded?.path ?? join(supabaseDir, "config.toml"),
     section,
+    workersDir: workersDir(projectRoot),
+  } satisfies LegacyWorkersProject;
+});
+
+/**
+ * The project as a reader sees it, following the loader's normal
+ * JSON-over-TOML selection. `config.json` is a supported project format, so a
+ * command that only reads `[workers.*]` has to honour it — otherwise a JSON
+ * project deploys with a guessed runtime and default size and instance counts
+ * instead of the ones it configured, and a worker whose `source` sits outside
+ * `supabase/workers/` is not discovered at all.
+ */
+export const legacyLoadWorkersProject = () => loadWorkersProject({ tomlOnly: false });
+
+/**
+ * The project as the `[workers.<name>]` entry writer needs to see it: TOML
+ * only.
+ *
+ * `commitWorkerEntry` is a TOML text editor. Without `tomlOnly` the loader
+ * prefers `supabase/config.json` when one exists, `configPath` becomes the JSON
+ * file, and the writer appends a `[workers.<name>]` table to it — leaving the
+ * project config unparseable after the scaffold is already on disk.
+ * `functions new` avoids the same trap by resolving `supabase/config.toml`
+ * directly; this is that, through the loader.
+ *
+ * A JSON project therefore gets a `config.toml` written beside its
+ * `config.json`, which the loader lists in `ignoredPaths`. That gap is the
+ * writer's alone — reads go through {@link legacyLoadWorkersProject} — and it
+ * closes when config writing is overhauled.
+ */
+export const legacyLoadWorkersProjectForEntryWrite = () => loadWorkersProject({ tomlOnly: true });
+
+/**
+ * As {@link legacyLoadWorkersProject}, but never failing on the project config.
+ *
+ * For commands that only *report* on local state — `status` and `delete` —
+ * which act on the remote worker and consult the project purely to add the
+ * optional source detail. Making it a prerequisite stranded a deployed worker
+ * behind an unrelated local parse error, even when `--project-ref` named the
+ * project explicitly and nothing local was going to be touched.
+ *
+ * A config that will not load reads the same as a project with no
+ * `[workers.*]` entries: no entry, no configured source, so no source row.
+ * Same degrade-rather-than-fail shape as
+ * {@link legacyDescribeWorkerForReporting}, which does it for the source path.
+ */
+export const legacyLoadWorkersProjectForReporting = Effect.fnUntraced(function* () {
+  const loaded = yield* legacyLoadWorkersProject().pipe(Effect.option);
+  if (Option.isSome(loaded)) {
+    return loaded.value;
+  }
+
+  const settings = yield* LegacyCliSettings;
+  const projectRoot = settings.workdir;
+  const supabaseDir = join(projectRoot, "supabase");
+  return {
+    projectRoot,
+    supabaseDir,
+    configPath: join(supabaseDir, "config.toml"),
+    section: readWorkersSection(undefined),
     workersDir: workersDir(projectRoot),
   } satisfies LegacyWorkersProject;
 });
@@ -78,6 +136,14 @@ export interface LegacyResolvedWorker {
    * paths need that difference before they state one as fact.
    */
   readonly sourceExists: boolean;
+  /**
+   * Whether {@link sourceDir} is the path the project actually names.
+   *
+   * False only when resolution failed and the default directory stood in for a
+   * `source` the entry does name — reporting that fallback as the worker's
+   * source states a path the project never mentioned.
+   */
+  readonly sourceResolved: boolean;
 }
 
 /**
@@ -107,13 +173,16 @@ export const legacyDescribeWorkerForReporting = Effect.fnUntraced(function* (
     return described.value;
   }
   // The path is unusable, which for reporting purposes reads the same as having
-  // nothing local at all.
+  // nothing local at all. `sourceResolved: false` keeps callers from printing
+  // this stand-in as the source the entry names — it is the default directory,
+  // not the path that failed.
   return {
     name,
     entry: project.section.workers[name],
     defaultDir: workerDir(project.projectRoot, name),
     sourceDir: workerDir(project.projectRoot, name),
     sourceExists: false,
+    sourceResolved: false,
   } satisfies LegacyResolvedWorker;
 });
 
@@ -138,6 +207,7 @@ export const legacyDescribeWorker = Effect.fnUntraced(function* (
     defaultDir,
     sourceDir,
     sourceExists: Option.isSome(info) && info.value.type === "Directory",
+    sourceResolved: true,
   } satisfies LegacyResolvedWorker;
 });
 
@@ -167,11 +237,32 @@ export const legacyDiscoverWorkerNames = Effect.fnUntraced(function* (
   project: LegacyWorkersProject,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const entries = yield* fs.readDirectory(project.workersDir).pipe(Effect.orElseSucceed(() => []));
+
+  // No workers root at all is a project that has never scaffolded one, and the
+  // config entries below may still name workers living elsewhere — so absence
+  // reads as nothing here. Any other reason propagates: a root the CLI cannot
+  // list is not a project with no workers in it, and answering a bare `push`
+  // with "deployed everything" after silently skipping them is the worst
+  // possible reading of it.
+  const entries = yield* fs
+    .readDirectory(project.workersDir)
+    .pipe(
+      Effect.catchTag("PlatformError", (error) =>
+        Predicate.isTagged(error.reason, "NotFound")
+          ? Effect.succeed<ReadonlyArray<string>>([])
+          : Effect.fail(error),
+      ),
+    );
 
   const scaffolded: Array<string> = [];
   for (const entry of entries) {
-    const info = yield* fs.stat(join(project.workersDir, entry)).pipe(Effect.option);
+    // Only a name that vanished between the listing and this stat is skipped.
+    const info = yield* fs.stat(join(project.workersDir, entry)).pipe(
+      Effect.map(Option.some),
+      Effect.catchTag("PlatformError", (error) =>
+        Predicate.isTagged(error.reason, "NotFound") ? Effect.succeedNone : Effect.fail(error),
+      ),
+    );
     if (Option.isSome(info) && info.value.type === "Directory") {
       scaffolded.push(entry);
     }

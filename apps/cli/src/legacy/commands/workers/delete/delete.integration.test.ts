@@ -15,6 +15,7 @@ import {
   WorkerNotDeployedError,
   WorkersApiUnexpectedStatusError,
 } from "../../../../shared/workers/workers.errors.ts";
+import { LegacyWorkersEnvNotSupportedError } from "../workers.errors.ts";
 import { legacyWorkersDelete } from "./delete.handler.ts";
 
 const CONFIG = `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsize = "2gb"\n`;
@@ -75,6 +76,115 @@ describe("legacy workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // The refusal used to live at emit time, which on this command is *after* the
+  // DELETE: `--yes -o env` removed the worker and then exited non-zero with no
+  // payload, which a script reads as "the delete failed" and may retry.
+  // Deletion never touches local files, so a malformed local config has no
+  // business standing between the user and a worker they named explicitly.
+  it.live("deletes a remote worker despite an unparseable local config", () => {
+    const repo = project("project_id = [unclosed\n");
+    const otherRef = "qrstuvwxyzabcdefghij";
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      yes: true,
+      routes: {
+        [`GET /v2/projects/${otherRef}/workers/api`]: {
+          status: 200,
+          body: { data: workerResource({ name: "api" }) },
+        },
+        [`DELETE /v2/projects/${otherRef}/workers/api`]: { status: 204 },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersDelete({ name: "api", projectRef: Option.some(otherRef) });
+
+      expect(http.routeKeys).toContain(`DELETE /v2/projects/${otherRef}/workers/api`);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The API grants `edge_functions:read` for the GET and `edge_functions:write`
+  // for the DELETE separately, so a credential holding only write could not
+  // delete a worker it is entitled to delete.
+  it.live("deletes with --yes when the credential may not read the worker", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      yes: true,
+      routes: {
+        [getRoute]: { status: 403, body: { message: "insufficient scope" } },
+        [deleteRoute]: { status: 204 },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersDelete({ name: "api", projectRef: Option.none() });
+
+      expect(http.routeKeys).toEqual([getRoute, deleteRoute]);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("still confirms interactively when the worker cannot be read", () => {
+    const repo = project();
+    const { layer, out, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      promptTextResponses: ["api"],
+      routes: {
+        [getRoute]: { status: 403, body: { message: "insufficient scope" } },
+        [deleteRoute]: { status: 204 },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersDelete({ name: "api", projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("permanently deletes");
+      // No count is quoted: the read that would have supplied one was refused.
+      expect(out.stdoutText).not.toContain("will be terminated");
+      expect(http.routeKeys).toEqual([getRoute, deleteRoute]);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // A refusal is not an absence: only a real 404 means there was nothing there.
+  it.live("reports an unreadable worker as deleted, not as nothing to delete", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      yes: true,
+      routes: {
+        [getRoute]: { status: 403, body: { message: "insufficient scope" } },
+        [deleteRoute]: { status: 204 },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersDelete({ name: "api", projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("Deleted Worker");
+      expect(out.stdoutText).not.toContain("nothing to delete");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("refuses -o env before deleting anything", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes,
+      yes: true,
+      goOutput: "env",
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* legacyWorkersDelete({
+        name: "api",
+        projectRef: Option.none(),
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(LegacyWorkersEnvNotSupportedError);
+      expect(http.routeKeys).toEqual([]);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("deletes nothing when the confirmation does not match", () => {
     const repo = project();
     const { layer, http } = setupLegacyWorkers({
@@ -94,6 +204,79 @@ describe("legacy workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // The suggested retry is copy-pasted verbatim and carries `--yes`, so dropping
+  // an explicit ref points a no-prompt delete at whatever this checkout is
+  // linked to — a same-named worker in a project the user never named.
+  it.live("keeps an explicit --project-ref in the retry it suggests", () => {
+    const repo = project();
+    const otherRef = "qrstuvwxyzabcdefghij";
+    const { layer } = setupLegacyWorkers({
+      workdir: repo.dir,
+      format: "json",
+      routes: {
+        [`GET /v2/projects/${otherRef}/workers/api`]: {
+          status: 200,
+          body: { data: workerResource({ name: "api" }) },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* legacyWorkersDelete({
+        name: "api",
+        projectRef: Option.some(otherRef),
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerDeleteConfirmationRequiredError);
+      const suggestion =
+        error instanceof WorkerDeleteConfirmationRequiredError ? error.suggestion : "";
+      expect(suggestion).toContain(`--project-ref ${otherRef}`);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("leaves the retry bare when the ref came from the link", () => {
+    const repo = project();
+    const { layer } = setupLegacyWorkers({ workdir: repo.dir, format: "json", routes });
+
+    return Effect.gen(function* () {
+      const error = yield* legacyWorkersDelete({
+        name: "api",
+        projectRef: Option.none(),
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerDeleteConfirmationRequiredError);
+      const suggestion =
+        error instanceof WorkerDeleteConfirmationRequiredError ? error.suggestion : "";
+      expect(suggestion).not.toContain("--project-ref");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("keeps an explicit --project-ref in the confirmation-mismatch retry", () => {
+    const repo = project();
+    const otherRef = "qrstuvwxyzabcdefghij";
+    const { layer } = setupLegacyWorkers({
+      workdir: repo.dir,
+      promptTextResponses: ["nope"],
+      routes: {
+        [`GET /v2/projects/${otherRef}/workers/api`]: {
+          status: 200,
+          body: { data: workerResource({ name: "api" }) },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* legacyWorkersDelete({
+        name: "api",
+        projectRef: Option.some(otherRef),
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerDeleteNotConfirmedError);
+      const suggestion = error instanceof WorkerDeleteNotConfirmedError ? error.suggestion : "";
+      expect(suggestion).toContain(`--project-ref ${otherRef}`);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("skips the confirmation with --yes", () => {
     const repo = project();
     const { layer, out, http } = setupLegacyWorkers({ workdir: repo.dir, routes, yes: true });
@@ -103,6 +286,29 @@ describe("legacy workers delete", () => {
 
       expect(http.routeKeys).toEqual([getRoute, deleteRoute]);
       expect(out.stdoutText).not.toContain("permanently deletes");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // `printf 'api\n' | supabase workers delete api`: stdout is still a TTY, so
+  // `output.interactive` stayed true and the prompt read the worker name off the
+  // pipe — a confirmation the user never typed.
+  it.live("refuses to read the confirmation off a piped stdin", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes,
+      stdinIsTty: false,
+      promptTextResponses: ["api"],
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* legacyWorkersDelete({
+        name: "api",
+        projectRef: Option.none(),
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerDeleteConfirmationRequiredError);
+      expect(http.routeKeys).not.toContain(deleteRoute);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -172,7 +378,54 @@ describe("legacy workers delete", () => {
       }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerNotDeployedError);
+      // Not `workers push`: somebody deleting "api" does not want to deploy it.
+      const suggestion = error instanceof WorkerNotDeployedError ? error.suggestion : "";
+      expect(suggestion).toContain("supabase workers list");
+      expect(suggestion).not.toContain("workers push");
       expect(out.messages.filter((message) => message.type === "warn")).toHaveLength(0);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // `deleteWorker` already treats a DELETE 404 as done; the pre-flight GET used
+  // to contradict that, so a teardown script run twice failed the second time
+  // for a worker in exactly the state it asked for.
+  it.live("succeeds under --yes when the worker is already gone", () => {
+    const repo = project();
+    const { layer, out, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: { [getRoute]: { status: 404, body: { message: "worker not found" } } },
+      yes: true,
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersDelete({ name: "api", projectRef: Option.none() });
+
+      // Nothing to delete, so nothing is asked of the API beyond the lookup.
+      expect(http.routeKeys).toEqual([getRoute]);
+      expect(out.stdoutText).toContain("nothing to delete");
+      expect(out.stdoutText).not.toContain("Deleted Worker");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("emits the same payload shape for a no-op delete", () => {
+    const repo = project();
+    const { layer, out, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: { [getRoute]: { status: 404, body: { message: "worker not found" } } },
+      yes: true,
+      goOutput: "json",
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersDelete({ name: "api", projectRef: Option.none() });
+
+      const parsed: unknown = JSON.parse(out.stdoutText);
+      expect(parsed).toMatchObject({
+        worker_name: "api",
+        project_ref: WORKERS_PROJECT_REF,
+        kept_config_entry: true,
+      });
+      expect(http.routeKeys).toEqual([getRoute]);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 

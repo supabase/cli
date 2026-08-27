@@ -93,8 +93,17 @@ describe("legacy workers list", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // A local directory with no `[workers.<name>]` entry: pushable, and the
+  // runtime is the only thing a push would have to work out for itself.
   it.live("calls out a deployed worker that config.toml does not know about", () => {
-    const repo = project(`project_id = "demo"\n`);
+    const created = makeWorkersProject({
+      "supabase/config.toml": `project_id = "demo"\n`,
+      "supabase/workers/stray/index.js": "export default {};\n",
+    });
+    const repo = {
+      dir: created.dir,
+      cleanup: () => rmSync(created.dir, { recursive: true, force: true }),
+    };
     const { layer, out } = setupLegacyWorkers({
       workdir: repo.dir,
       routes: {
@@ -110,6 +119,29 @@ describe("legacy workers list", () => {
 
       expect(out.stderrText).toContain("stray");
       expect(out.stderrText).toContain("guess the runtime");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Nothing local at all: `deployOneWorker` checks the source directory before
+  // it ever infers a runtime, so "would have to guess the runtime" named the
+  // wrong prerequisite for this one.
+  it.live("tells a worker with no local source to restore it, not to expect a guess", () => {
+    const repo = project(`project_id = "demo"\n`);
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [listRoute]: {
+          status: 200,
+          body: { data: [workerResource({ name: "stray", runtime: "node" })] },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersList({ projectRef: Option.none() });
+
+      expect(out.stderrText).toContain("no source in this project");
+      expect(out.stderrText).not.toContain("guess the runtime");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -200,9 +232,9 @@ describe("legacy workers list", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  it.live("refuses -o env, which cannot represent the worker list", () => {
+  it.live("refuses -o env before making any request at all", () => {
     const repo = project();
-    const { layer } = setupLegacyWorkers({
+    const { layer, http } = setupLegacyWorkers({
       workdir: repo.dir,
       goOutput: "env",
       routes: { [listRoute]: { status: 200, body: { data: [] } } },
@@ -212,6 +244,7 @@ describe("legacy workers list", () => {
       const error = yield* legacyWorkersList({ projectRef: Option.none() }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(LegacyWorkersEnvNotSupportedError);
+      expect(http.routeKeys).toEqual([]);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -327,18 +360,20 @@ describe("legacy workers list", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `table` and `csv` are accepted by the global flag for `db query`'s benefit;
-  // every resource command is meant to ignore them and render text. They used to
-  // fall through to the TOML encoder.
-  it.live.each(["table", "csv"] as const)("renders text rather than TOML for -o %s", (goOutput) => {
+  // An undeployed worker has no `size`/`instances` and a private one no `url`,
+  // so a realistic inventory hands the encoder a payload full of holes. Pins
+  // that they are omitted rather than rendered or thrown on.
+  it.live("encodes TOML for an inventory holding undeployed and private workers", () => {
     const repo = project();
     const { layer, out } = setupLegacyWorkers({
       workdir: repo.dir,
-      goOutput,
+      goOutput: "toml",
       routes: {
         [listRoute]: {
           status: 200,
-          body: { data: [workerResource({ name: "api", runtime: "node" })] },
+          body: {
+            data: [workerResource({ name: "api", runtime: "node", exposure: "private" })],
+          },
         },
       },
     });
@@ -346,10 +381,38 @@ describe("legacy workers list", () => {
     return Effect.gen(function* () {
       yield* legacyWorkersList({ projectRef: Option.none() });
 
-      expect(out.stdoutText).toContain("NAME");
-      expect(out.stdoutText).not.toContain("project_ref = ");
+      expect(out.stdoutText).toContain("project_ref = ");
+      expect(out.stdoutText).not.toContain("undefined");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
+
+  // `pretty` is the human default; `table` and `csv` are accepted by the global
+  // flag for `db query`'s benefit, and every resource command is meant to ignore
+  // them and render text. All three used to fall through to the TOML encoder,
+  // which is the trap the payload allowlist closes.
+  it.live.each(["pretty", "table", "csv"] as const)(
+    "renders text rather than TOML for -o %s",
+    (goOutput) => {
+      const repo = project();
+      const { layer, out } = setupLegacyWorkers({
+        workdir: repo.dir,
+        goOutput,
+        routes: {
+          [listRoute]: {
+            status: 200,
+            body: { data: [workerResource({ name: "api", runtime: "node" })] },
+          },
+        },
+      });
+
+      return Effect.gen(function* () {
+        yield* legacyWorkersList({ projectRef: Option.none() });
+
+        expect(out.stdoutText).toContain("NAME");
+        expect(out.stdoutText).not.toContain("project_ref = ");
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    },
+  );
 
   it.live("flushes telemetry when the project config cannot be loaded", () => {
     const repo = project("project_id = [unclosed\n");

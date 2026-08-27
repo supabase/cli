@@ -1,4 +1,5 @@
-import { Effect, FileSystem, Option, type Schedule } from "effect";
+import { Effect, FileSystem, Option, Predicate, type Schedule } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import {
@@ -12,6 +13,7 @@ import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.t
 import { classifyWorkerDir } from "../../../../shared/workers/worker-classify.ts";
 import { formatBytes, packageWorkerDirectory } from "../../../../shared/workers/worker-package.ts";
 import { displayPath } from "../../../../shared/workers/worker-paths.ts";
+import type { WorkerEntry } from "../../../../shared/workers/worker-config.ts";
 import {
   apiSizeFor,
   DEFAULT_WORKER_INSTANCES,
@@ -130,6 +132,45 @@ function resolveInstances(options: {
   return Option.getOrElse(options.override, () => options.recorded ?? DEFAULT_WORKER_INSTANCES);
 }
 
+/**
+ * What to do about a worker whose source directory is not there at all.
+ *
+ * `supabase workers new` is only an answer for a name the config has never
+ * heard of — `new` refuses any name already under `[workers.<name>]`, so
+ * offering it to a configured worker would answer with a second error. A
+ * configured worker is missing a directory, not a config entry, and when the
+ * entry pins an explicit `source` the path itself is as likely to be the
+ * mistake as the absent directory.
+ */
+function missingSourceSuggestion(input: {
+  readonly name: string;
+  readonly sourceDisplay: string;
+  readonly configPath: string;
+  readonly entry: WorkerEntry | undefined;
+}): string {
+  if (input.entry === undefined) {
+    return `Scaffold it with \`supabase workers new ${input.name}\`.`;
+  }
+  if (input.entry.source !== undefined) {
+    return `Create ${input.sourceDisplay}, or correct \`source\` under [workers.${input.name}] in ${input.configPath}.`;
+  }
+  return `Create ${input.sourceDisplay} and add your worker's code, then run this command again.`;
+}
+
+/**
+ * What to do about a source directory that exists but holds nothing to deploy.
+ *
+ * Deliberately does not point at `supabase workers new`. That command refuses
+ * any name already present in `config.toml`, which is where a pushed worker
+ * almost always comes from, and it refuses a directory that exists and is not
+ * empty — so for both callers here it would answer with a second error rather
+ * than a fix. The directory is already in place and already wired up; the only
+ * thing missing is the code.
+ */
+function addYourCode(sourceDisplay: string): string {
+  return `Add your worker's code to ${sourceDisplay}, then run this command again.`;
+}
+
 const deployOneWorker = Effect.fnUntraced(function* (input: {
   readonly project: LegacyWorkersProject;
   readonly name: string;
@@ -155,24 +196,54 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
   // guessed. Doing that first meant reporting an inference about a path that
   // does not exist, and only then failing on the path.
   {
-    const stat = yield* fs.stat(worker.sourceDir).pipe(Effect.option);
-    if (Option.isNone(stat) || stat.value.type !== "Directory") {
+    const sourceMissing = new WorkerSourceMissingError({
+      detail: `There is no worker source at ${sourceDisplay}.`,
+      suggestion: missingSourceSuggestion({
+        name,
+        sourceDisplay,
+        configPath: displayPath(project.projectRoot, project.configPath),
+        entry: worker.entry,
+      }),
+    });
+    // Only "no such path" means the worker was never scaffolded. A permission
+    // or I/O error on the directory is a different problem with a different
+    // fix, and answering it with "there is no worker source, run `workers new`"
+    // both misdiagnoses it and points at a directory that already exists — so
+    // every other reason propagates as itself.
+    const info = yield* fs
+      .stat(worker.sourceDir)
+      .pipe(
+        Effect.catchTag("PlatformError", (error) =>
+          Predicate.isTagged(error.reason, "NotFound")
+            ? Effect.fail<WorkerSourceMissingError | PlatformError>(sourceMissing)
+            : Effect.fail(error),
+        ),
+      );
+    // Something is there, it is just not a directory. Reporting that as "there
+    // is no worker source" is false twice over: the path is occupied, and
+    // `workers new` refuses a destination that exists and is not a directory,
+    // so the scaffold suggestion would answer with a second error.
+    if (info.type !== "Directory") {
       return yield* Effect.fail(
         new WorkerSourceMissingError({
-          detail: `There is no worker source at ${sourceDisplay}.`,
-          suggestion: `Scaffold it with \`supabase workers new ${name}\`.`,
+          detail: `${sourceDisplay} is not a directory.`,
+          suggestion: `Replace it with a directory holding your worker's code, then run this command again.`,
         }),
       );
     }
     // An empty directory packages and deploys perfectly happily, producing an
     // image with nothing in it — a success message for a worker that cannot
     // serve anything. Refuse before uploading rather than after.
-    const contents = yield* fs.readDirectory(worker.sourceDir).pipe(Effect.orElseSucceed(() => []));
+    //
+    // Read errors propagate rather than reading as empty: a directory the CLI
+    // cannot open is not a directory with nothing in it, and the two want
+    // opposite things from the user.
+    const contents = yield* fs.readDirectory(worker.sourceDir);
     if (contents.length === 0) {
       return yield* Effect.fail(
         new WorkerSourceMissingError({
           detail: `${sourceDisplay} is empty, so there is nothing to deploy.`,
-          suggestion: `Add your code there, or re-scaffold it with \`supabase workers new ${name} --force\`.`,
+          suggestion: addYourCode(sourceDisplay),
         }),
       );
     }
@@ -217,7 +288,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
       return yield* Effect.fail(
         new WorkerSourceMissingError({
           detail: `${sourceDisplay} holds no files to deploy, only empty directories.`,
-          suggestion: `Add your code there, or re-scaffold it with \`supabase workers new ${name} --force\`.`,
+          suggestion: addYourCode(sourceDisplay),
         }),
       );
     }

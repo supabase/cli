@@ -49,11 +49,15 @@ import { legacyPrepareShadowSource } from "../commands/db/shared/legacy-shadow-s
 type Spawner = ChildProcessSpawnerType["Service"];
 
 /**
- * Declarative catalog-cache key builders + on-disk catalog resolution, ported
- * 1:1 from Go (`apps/cli-go/internal/db/declarative/declarative.go` +
- * `internal/db/pgcache/cache.go`). Byte-stable parity matters: caches under
- * `supabase/.temp/pgdelta/` are shared with the Go binary, so a drifting key
- * would silently miss (re-provision) or over-hit (reuse a stale snapshot).
+ * Declarative catalog-cache key builders + on-disk catalog resolution, based on
+ * Go (`apps/cli-go/internal/db/declarative/declarative.go` +
+ * `internal/db/pgcache/cache.go`). Byte-stable keys still matter for this CLI's
+ * own cache reuse under `supabase/.temp/pgdelta/` across runs — a drifting key
+ * would silently miss (re-provision) or over-hit (reuse a stale snapshot). Keys
+ * now intentionally diverge from the old Go binary for configs with
+ * `api.auto_expose_new_tables` unset: the effective value flipped to `true`, the
+ * baked cluster genuinely differs, and reusing a Go-era snapshot would mean
+ * reusing one with revoked grants.
  *
  * Beyond the pure key/path builders, this file also owns the migrations-catalog
  * RESOLUTION path for both `db diff --from/--to migrations` and `db schema
@@ -84,7 +88,7 @@ export interface LegacySetupInputs {
   readonly authEnabled: boolean;
   readonly storageEnabled: boolean;
   readonly realtimeEnabled: boolean;
-  /** Effective `api.auto_expose_new_tables` (unset and false both → false). */
+  /** Effective `api.auto_expose_new_tables` (unset and `true` both → `true`). */
   readonly autoExpose: boolean;
   /** `[db.vault]` secret names (sorted before hashing). */
   readonly vaultNames: ReadonlyArray<string>;
@@ -187,8 +191,7 @@ export const legacyResolveSetupInputs = Effect.fnUntraced(function* (
     authEnabled: baseline.authEnabled,
     storageEnabled: baseline.storageEnabled,
     realtimeEnabled: baseline.realtimeEnabled,
-    autoExpose:
-      Option.isSome(baseline.apiAutoExposeNewTables) && baseline.apiAutoExposeNewTables.value,
+    autoExpose: Option.getOrElse(baseline.apiAutoExposeNewTables, () => true),
     vaultNames: baseline.vaultNames,
     rolesSql,
   } satisfies LegacySetupInputs;

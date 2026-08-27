@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun run generate && next dev",
+    "dev": "next dev",
     "generate": "bun ../../apps/cli/scripts/generate-docs.ts",
-    "build": "bun run generate && next build",
+    "build": "next build",
     "types:check": "pnpm exec fumadocs-mdx source.config.ts .source && tsc --noEmit --incremental false"
   },
   "dependencies": {
@@ -28,36 +28,6 @@
       "supabase"
     ],
     "targets": {
-      "generate": {
-        "executor": "nx:run-commands",
-        "options": {
-          "command": "pnpm run generate",
-          "cwd": "{projectRoot}"
-        },
-        "inputs": [
-          "{projectRoot}/**/*",
-          "{workspaceRoot}/apps/cli/src/**/*",
-          "{workspaceRoot}/apps/cli/scripts/generate-docs.ts",
-          "sharedGlobals"
-        ],
-        "outputs": [
-          "{workspaceRoot}/apps/docs/content/docs/commands",
-          "{workspaceRoot}/apps/docs/public"
-        ]
-      },
-      "build": {
-        "executor": "nx:run-commands",
-        "options": {
-          "command": "pnpm run build",
-          "cwd": "{projectRoot}"
-        },
-        "dependsOn": [
-          "generate"
-        ],
-        "outputs": [
-          "{projectRoot}/.next"
-        ]
-      },
       "types:check": {
         "executor": "nx:run-commands",
         "cache": true,
@@ -77,13 +47,6 @@
         "outputs": [
           "{projectRoot}/.source"
         ]
-      },
-      "dev": {
-        "executor": "nx:run-commands",
-        "options": {
-          "command": "pnpm run dev",
-          "cwd": "{projectRoot}"
-        }
       }
     }
   }

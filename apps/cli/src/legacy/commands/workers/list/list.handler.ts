@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { renderGlamourTable } from "../../../output/legacy-glamour-table.ts";
-import { legacyEmitWorkersMachineOutput } from "../workers.output.ts";
+import { legacyEmitWorkersMachineOutput, legacyRejectWorkersEnvOutput } from "../workers.output.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { formatApiSize } from "../../../../shared/workers/worker-runtimes.ts";
@@ -98,6 +98,11 @@ export const legacyWorkersList = Effect.fn("legacy.workers.list")(function* (
   yield* Effect.gen(function* () {
     const project = yield* legacyLoadWorkersProject();
 
+    // Up front, like the rest of the family: this payload always carries a
+    // `workers` array, so `-o env` can never encode it, and finding that out at
+    // emit time means failing after the fetch has already been paid for.
+    yield* legacyRejectWorkersEnvOutput();
+
     const fetching = yield* output.task("Fetching workers...");
     const deployed = yield* listWorkers(api, projectRef).pipe(
       Effect.tapError(() => fetching.fail()),
@@ -165,16 +170,32 @@ export const legacyWorkersList = Effect.fn("legacy.workers.list")(function* (
 
     yield* output.raw(renderGlamourTable([...HEADERS], rows.map(toCells)));
 
-    // Deployed *and* unconfigured: a bare local directory is also unconfigured,
-    // and has not been deployed at all.
-    const orphans = rows
-      .filter((row) => row.deployed !== undefined && !row.configured)
+    // Two different problems, and they need different advice. A worker with a
+    // local directory but no entry can be pushed — the runtime is the only
+    // unknown. One with nothing local at all cannot: `deployOneWorker` checks
+    // the source directory *before* inferring a runtime and fails with
+    // `WorkerSourceMissingError`, so telling that user about runtime guessing
+    // points them at the wrong prerequisite.
+    const unconfigured = rows
+      .filter((row) => row.deployed !== undefined && !row.configured && row.local)
       .map((row) => row.name);
-    if (orphans.length > 0) {
+    if (unconfigured.length > 0) {
       yield* output.raw(
-        `${orphans.join(", ")} ${
-          orphans.length === 1 ? "is" : "are"
+        `${unconfigured.join(", ")} ${
+          unconfigured.length === 1 ? "is" : "are"
         } deployed but absent from supabase/config.toml: pushing from here would have to guess the runtime.\n`,
+        "stderr",
+      );
+    }
+
+    const remoteOnly = rows
+      .filter((row) => row.deployed !== undefined && !row.local)
+      .map((row) => row.name);
+    if (remoteOnly.length > 0) {
+      yield* output.raw(
+        `${remoteOnly.join(", ")} ${
+          remoteOnly.length === 1 ? "is" : "are"
+        } deployed but ${remoteOnly.length === 1 ? "has" : "have"} no source in this project: scaffold or restore it before pushing from here.\n`,
         "stderr",
       );
     }

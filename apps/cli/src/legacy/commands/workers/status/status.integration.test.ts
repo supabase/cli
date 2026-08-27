@@ -13,6 +13,7 @@ import {
   InvalidWorkerNameError,
   WorkerNotDeployedError,
 } from "../../../../shared/workers/workers.errors.ts";
+import { LegacyWorkersEnvNotSupportedError } from "../workers.errors.ts";
 import { legacyWorkersStatus } from "./status.handler.ts";
 
 const CONFIG = `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsize = "2gb"\n`;
@@ -138,6 +139,66 @@ describe("legacy workers status", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // Mid-scale the snapshot and the desired spec disagree; reading the numerator
+  // from one and the denominator from the other rendered fractions like
+  // `3/1 ready`.
+  it.live("reads the whole tally from one snapshot while scaling", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [getRoute]: {
+          status: 200,
+          body: {
+            data: workerResource({
+              name: "api",
+              runtime: "node",
+              instances: 1,
+              instanceCounts: { declared: 3, live: 3, ready: 3, stale: 0 },
+            }),
+          },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("3/3 ready");
+      expect(out.stdoutText).not.toContain("3/1 ready");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Deletion is asynchronous, so pushing here races the tombstone or resurrects
+  // the worker the user is removing.
+  it.live("withholds the build retry while the worker is being deleted", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [getRoute]: {
+          status: 200,
+          body: {
+            data: workerResource({
+              name: "api",
+              runtime: "node",
+              buildState: "failed",
+              stateReason: "exit status 1",
+              deleting: true,
+            }),
+          },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("deleting");
+      expect(out.stdoutText).not.toContain("re-run supabase workers push");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("points a failed build at the retry, with the reason", () => {
     const repo = project();
     const { layer, out } = setupLegacyWorkers({
@@ -199,7 +260,8 @@ describe("legacy workers status", () => {
       }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerNotDeployedError);
-      expect((error as WorkerNotDeployedError).suggestion).toContain("supabase workers push api");
+      const suggestion = error instanceof WorkerNotDeployedError ? error.suggestion : "";
+      expect(suggestion).toContain("supabase workers push api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -237,6 +299,31 @@ describe("legacy workers status", () => {
       yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
 
       expect(out.stdoutText).toContain(join("packages", "api"));
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // A `source` that escapes the project cannot be resolved, so the describe
+  // falls back to the default directory. Printing that named a path the entry
+  // does not, presenting a guess as established local state.
+  it.live("omits the source when the configured one cannot be resolved", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsource = "../../elsewhere"\n`,
+    });
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [getRoute]: {
+          status: 200,
+          body: { data: workerResource({ name: "api", runtime: "node" }) },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("active");
+      expect(out.stdoutText).not.toContain("Source");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -328,9 +415,9 @@ describe("legacy workers status", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
-  // `root` is only unusable *locally*, because `[workers] root` occupies the key.
-  // The API accepts it as a DNS label, and `status` writes no config, so it has
-  // no business refusing a worker `workers list` will happily show.
+  // `root` is an ordinary worker name: a valid DNS label, and `[workers]` has no
+  // reserved keys — `readWorkersSection` reads every table under it as a worker.
+  // Here as a guard against the name picking up a special case it never had.
   it.live("inspects a deployed worker named root", () => {
     const repo = project();
     const { layer, out, http } = setupLegacyWorkers({
@@ -348,6 +435,72 @@ describe("legacy workers status", () => {
 
       expect(out.stdoutText).toContain("active");
       expect(http.routeKeys).toEqual([`GET ${workersRoute("/root")}`]);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // `state_reason`, `image_version`, `deleting` and `instances_error` are all
+  // optional, so a healthy worker's payload is mostly holes. Pins that they are
+  // omitted rather than rendered.
+  it.live("encodes TOML for a worker whose optional fields are absent", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      goOutput: "toml",
+      routes: {
+        [getRoute]: {
+          status: 200,
+          body: { data: workerResource({ name: "api", runtime: "node", exposure: "private" }) },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("worker_name = ");
+      expect(out.stdoutText).not.toContain("undefined");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The project is consulted only for the optional Source row, so an unrelated
+  // local parse error should not stand between the user and a remote worker
+  // they named explicitly.
+  it.live("inspects a remote worker despite an unparseable local config", () => {
+    const repo = project({ "supabase/config.toml": "project_id = [unclosed\n" });
+    const otherRef = "qrstuvwxyzabcdefghij";
+    const { layer, out, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [`GET /v2/projects/${otherRef}/workers/api`]: {
+          status: 200,
+          body: { data: workerResource({ name: "api", runtime: "node" }) },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersStatus({ name: "api", projectRef: Option.some(otherRef) });
+
+      expect(http.routeKeys).toEqual([`GET /v2/projects/${otherRef}/workers/api`]);
+      expect(out.stdoutText).toContain("active");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("refuses -o env before making any request at all", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      goOutput: "env",
+      routes: { [getRoute]: { status: 200, body: { data: workerResource({ name: "api" }) } } },
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() }).pipe(
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(LegacyWorkersEnvNotSupportedError);
+      expect(http.routeKeys).toEqual([]);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 

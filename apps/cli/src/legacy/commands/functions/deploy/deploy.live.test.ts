@@ -20,6 +20,10 @@ async function cleanupFunction(
   }
 }
 
+function codeSafeJson(value: string) {
+  return JSON.stringify(value).replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
+}
+
 describe("functions deploy (live)", () => {
   test("deploys a function that responds over HTTP", async ({
     cli,
@@ -32,7 +36,7 @@ describe("functions deploy (live)", () => {
     await mkdir(directory, { recursive: true });
     await writeFile(
       join(directory, "index.ts"),
-      `Deno.serve(() => Response.json({ case: ${JSON.stringify(slug)}, ok: true }));\n`,
+      `Deno.serve(() => Response.json({ case: ${codeSafeJson(slug)}, ok: true }));\n`,
     );
     await writeFile(join(directory, "deno.json"), '{\n  "imports": {}\n}\n');
 

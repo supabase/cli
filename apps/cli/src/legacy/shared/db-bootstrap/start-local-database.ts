@@ -142,17 +142,6 @@ export const legacyStartLocalDatabase = Effect.fnUntraced(function* (fromBackupF
   // same way.
   const debug = yield* legacyResolveDebugWithProjectEnv(dbTomlValues.projectEnv);
 
-  // This warning is printed unconditionally, right after the `project_id` check and BEFORE
-  // any `api.enabled`/`auth.enabled` gate — so it fires regardless of those flags, and
-  // regardless of whether Postgres is already running, matching config validation running
-  // before the already-running check.
-  if (Option.getOrElse(dbTomlValues.baseline.apiAutoExposeNewTables, () => false)) {
-    yield* output.raw(
-      "WARN: api.auto_expose_new_tables is deprecated and will be removed on 2026-10-30. Remove the field or set it to false to adopt the new default of revoking Data API privileges on new entities in the public schema.\n",
-      "stderr",
-    );
-  }
-
   // The rest of config loading — full config decode/resolution (`legacyLoadLocalProjectContext`)
   // plus the eager duration-field validation right below — ALSO runs before the
   // already-running check, so a malformed `auth.*` duration field must fail this call even

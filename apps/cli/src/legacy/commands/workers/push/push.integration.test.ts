@@ -1,7 +1,7 @@
-import { rmSync } from "node:fs";
+import { chmodSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option, Schedule } from "effect";
+import { Effect, Option, Predicate, Schedule } from "effect";
 import {
   makeWorkersProject,
   setupLegacyWorkers,
@@ -11,9 +11,11 @@ import {
   type WorkersHttpRoutes,
 } from "../../../../../tests/helpers/legacy-workers.ts";
 import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
+import { LegacyWorkersEnvNotSupportedError } from "../workers.errors.ts";
 import {
   NoWorkersToDeployError,
   WorkerBuildFailedError,
+  WorkerBuildTimeoutError,
   WorkerProjectNotFoundError,
   WorkersUnavailableError,
   WorkerSourceMissingError,
@@ -81,13 +83,17 @@ function routes(overrides: WorkersHttpRoutes = {}): WorkersHttpRoutes {
 }
 
 /**
- * The `_tag` of a failure, for a channel that also carries plain `Error`
- * subclasses — `TarPathTooLongError` has no tag.
+ * Whether the current user can still list `path` after it was chmod-ed shut.
+ * Root ignores the permission bits, and CI sometimes runs as root, so the
+ * permission test below asserts the opposite outcome instead of skipping.
  */
-function tagOf(error: unknown): string | undefined {
-  return typeof error === "object" && error !== null && "_tag" in error
-    ? String((error as { _tag: unknown })._tag)
-    : undefined;
+function listableAsCurrentUser(path: string): boolean {
+  try {
+    readdirSync(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function push(flagOverrides: Partial<LegacyWorkersPushFlags> = {}) {
@@ -310,7 +316,7 @@ describe("legacy workers push", () => {
         Effect.flip,
       );
 
-      expect(tagOf(error)).toBe("WorkerBuildTimeoutError");
+      expect(error).toBeInstanceOf(WorkerBuildTimeoutError);
       expect((error as { suggestion: string }).suggestion).toContain("supabase workers status api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
@@ -326,6 +332,64 @@ describe("legacy workers push", () => {
       const error = yield* push().pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerUploadFailedError);
+      expect(http.routeKeys).not.toContain(`POST ${workersRoute("/api/deploy")}`);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // `config.json` is a supported project format. `push` only reads the workers
+  // section, so it has to honour one: loading TOML-only left the section empty,
+  // which meant a guessed runtime and default size and instance count for a
+  // worker that had configured all three.
+  it.live("deploys a worker configured in config.json, not just config.toml", () => {
+    const created = makeWorkersProject({
+      "supabase/config.json": JSON.stringify({
+        project_id: "demo",
+        workers: { api: { runtime: "node", size: "2gb", instances: 3 } },
+      }),
+      "supabase/workers/api/index.js": "export default { fetch: () => new Response('ok') };\n",
+    });
+    const repo = {
+      dir: created.dir,
+      cleanup: () => rmSync(created.dir, { recursive: true, force: true }),
+    };
+    const { layer, http, out } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      yield* push();
+
+      const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
+      expect(JSON.parse(deploy?.body ?? "{}").data.attributes.spec).toEqual({
+        runtime: "node",
+        size: "2gb-1vcpu",
+        exposure: "public",
+        instances: 3,
+      });
+      // Every value came from config, so nothing was inferred from the files.
+      expect(out.stderrText).not.toContain("guessed");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The presigned URL's query string is a write-capable credential, so it must
+  // not ride along in the error text — which rules out the library's own
+  // `HttpClientError.message`, since that appends the method and URL that
+  // failed. A transport failure is the case that would carry it.
+  it.live("keeps the presigned signature out of an upload transport failure", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: routes({
+        "PUT /deploy-context/api.tar.gz": { transportError: "connection reset by peer" },
+      }),
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* push().pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerUploadFailedError);
+      const failure = error as WorkerUploadFailedError;
+      expect(failure.detail).toContain("connection reset by peer");
+      expect(failure.detail).not.toContain("signed");
+      expect(failure.detail).not.toContain(UPLOAD_URL);
       expect(http.routeKeys).not.toContain(`POST ${workersRoute("/api/deploy")}`);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
@@ -404,7 +468,12 @@ describe("legacy workers push", () => {
       const error = yield* push().pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerSourceMissingError);
-      expect((error as WorkerSourceMissingError).suggestion).toContain("supabase workers new api");
+      // `api` is under `[workers.api]`, and `new` refuses a name the config
+      // already carries — so the answer is the absent directory, not a scaffold.
+      expect((error as WorkerSourceMissingError).suggestion).not.toContain("workers new");
+      expect((error as WorkerSourceMissingError).suggestion).toContain(
+        "supabase/workers/api and add your worker's code",
+      );
       expect(http.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
@@ -419,8 +488,133 @@ describe("legacy workers push", () => {
 
       expect(error).toBeInstanceOf(WorkerSourceMissingError);
       expect((error as WorkerSourceMissingError).detail).toContain("is empty");
+      // `workers new` defines no `--force`, and refuses both a name already in
+      // `config.toml` and a directory that is not empty — so recovery advice
+      // that names it would answer with a second error instead of a fix.
+      expect((error as WorkerSourceMissingError).suggestion).not.toContain("--force");
+      expect((error as WorkerSourceMissingError).suggestion).not.toContain("workers new");
       expect(http.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The one case `workers new` really does answer: a name that reached `push`
+  // from argv alone, with no `[workers.<name>]` entry and nothing on disk.
+  // Names are only validated as DNS labels before dispatch, so this is
+  // reachable — a typo, or a worker nobody has scaffolded yet.
+  it.live("offers to scaffold a worker the config has never heard of", () => {
+    const repo = project({ "supabase/config.toml": 'project_id = "demo"\n' });
+    rmSync(join(repo.dir, "supabase", "workers", "api"), { recursive: true, force: true });
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      const error = yield* push().pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerSourceMissingError);
+      expect((error as WorkerSourceMissingError).suggestion).toContain("supabase workers new api");
+      expect(http.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // A worker whose `source` points somewhere that is not there: the path in
+  // config is as likely to be the mistake as the absent directory, so the
+  // suggestion names both.
+  it.live("points at the config entry when a configured source is missing", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsource = "./services/api"\n`,
+    });
+    rmSync(join(repo.dir, "supabase", "workers", "api"), { recursive: true, force: true });
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      const error = yield* push().pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerSourceMissingError);
+      const failure = error as WorkerSourceMissingError;
+      expect(failure.suggestion).not.toContain("workers new");
+      expect(failure.suggestion).toContain("[workers.api]");
+      expect(failure.suggestion).toContain("source");
+      expect(http.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // A file sitting where the source directory should be is not a missing
+  // worker: the path is occupied, and `workers new` refuses a destination that
+  // exists and is not a directory, so pointing there would answer with a second
+  // error.
+  it.live("reports a file at the source path as not a directory", () => {
+    const repo = project({});
+    const source = join(repo.dir, "supabase", "workers", "api");
+    rmSync(source, { recursive: true, force: true });
+    writeFileSync(source, "not a directory");
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      const error = yield* push().pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerSourceMissingError);
+      const failure = error as WorkerSourceMissingError;
+      expect(failure.detail).toContain("is not a directory");
+      expect(failure.detail).not.toContain("There is no worker source");
+      expect(failure.suggestion).not.toContain("workers new");
+      expect(http.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // "Cannot read it" and "it is not there" want opposite things from the user,
+  // and `Effect.option` on the stat collapsed them into the second — so an
+  // unreadable source was reported as an unscaffolded worker, with a suggestion
+  // to run `workers new` over a path that is already occupied. A symlink loop
+  // is the cheapest stat failure that is not a missing path, and unlike a
+  // chmod it behaves the same when the suite runs as root.
+  it.live("reports an unstattable source rather than calling it missing", () => {
+    const repo = project({});
+    const source = join(repo.dir, "supabase", "workers", "api");
+    rmSync(source, { recursive: true, force: true });
+    symlinkSync("api", source);
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      const error = yield* push().pipe(Effect.flip);
+
+      expect(error).not.toBeInstanceOf(WorkerSourceMissingError);
+      expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
+      expect(http.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Same rule one line down: `orElseSucceed([])` on the read reported a
+  // directory the CLI cannot open as a directory with nothing in it.
+  it.live("reports an unreadable source rather than calling it empty", () => {
+    const repo = project({});
+    const source = join(repo.dir, "supabase", "workers", "api");
+    chmodSync(source, 0o000);
+    // Probed before the run, not inside it: root ignores the permission bits, so
+    // the deploy would succeed, and `Effect.flip` turns a success into a failure
+    // — the branch below would never be reached to handle that case.
+    const unreadable = !listableAsCurrentUser(source);
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      if (!unreadable) {
+        yield* push();
+        expect(http.requests.length).toBeGreaterThan(0);
+        return;
+      }
+
+      const error = yield* push().pipe(Effect.flip);
+
+      expect(error).not.toBeInstanceOf(WorkerSourceMissingError);
+      expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
+      expect(http.requests).toHaveLength(0);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(
+        Effect.sync(() => {
+          chmodSync(source, 0o700);
+          repo.cleanup();
+        }),
+      ),
+    );
   });
 
   it.live("rides out a transient failure while polling the build", () => {
@@ -503,6 +697,40 @@ describe("legacy workers push", () => {
       );
       expect(out.stdoutText).toContain("web");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // A bare `push` promises to deploy every worker in the project, and a worker
+  // with no config entry is known only by its directory. Reading an unlistable
+  // workers root as "no workers here" therefore answers a real filesystem
+  // problem with "nothing to deploy" — the same absence-versus-unreadable
+  // confusion as the source-directory guards, one level up.
+  it.live("fails rather than reporting an unlistable workers root as empty", () => {
+    const repo = project({ "supabase/config.toml": 'project_id = "demo"\n' });
+    const workersRoot = join(repo.dir, "supabase", "workers");
+    chmodSync(workersRoot, 0o000);
+    const listable = listableAsCurrentUser(workersRoot);
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      const error = yield* push({ names: [] }).pipe(Effect.flip);
+
+      if (listable) {
+        // Root ignores the permission bits, so the root lists and `api` is found.
+        expect(error).not.toBeInstanceOf(NoWorkersToDeployError);
+      } else {
+        expect(error).not.toBeInstanceOf(NoWorkersToDeployError);
+        expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
+        expect(http.requests).toHaveLength(0);
+      }
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(
+        Effect.sync(() => {
+          chmodSync(workersRoot, 0o700);
+          repo.cleanup();
+        }),
+      ),
+    );
   });
 
   it.live("fails when there are no workers to deploy at all", () => {
@@ -590,7 +818,7 @@ describe("legacy workers push", () => {
     return Effect.gen(function* () {
       const error = yield* push().pipe(Effect.flip);
 
-      expect(tagOf(error)).toBe("LegacyWorkersEnvNotSupportedError");
+      expect(error).toBeInstanceOf(LegacyWorkersEnvNotSupportedError);
       expect(http.routeKeys).toEqual([]);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
@@ -608,6 +836,8 @@ describe("legacy workers push", () => {
       const error = yield* push().pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerSourceMissingError);
+      expect((error as WorkerSourceMissingError).suggestion).not.toContain("--force");
+      expect((error as WorkerSourceMissingError).suggestion).not.toContain("workers new");
       expect(http.routeKeys).toEqual([]);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });

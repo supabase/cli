@@ -1,7 +1,11 @@
 import { Effect, Option } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
-import { legacyEmitWorkersMachineOutput } from "../workers.output.ts";
+import {
+  legacyEmitWorkersMachineOutput,
+  legacyRejectWorkersEnvOutput,
+  legacyWorkersProjectRefSuffix,
+} from "../workers.output.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { displayPath } from "../../../../shared/workers/worker-paths.ts";
@@ -14,7 +18,7 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import {
   legacyDescribeWorkerForReporting,
-  legacyLoadWorkersProject,
+  legacyLoadWorkersProjectForReporting,
   legacyValidateWorkerName,
 } from "../workers.shared.ts";
 import type { LegacyWorkersStatusFlags } from "./status.command.ts";
@@ -41,11 +45,16 @@ export const legacyWorkersStatus = Effect.fn("legacy.workers.status")(function* 
   // validating the name, resolving the worker — belongs inside, so those
   // failures still flush telemetry. Same shape as `config/push`.
   const projectRef = yield* resolver.resolve(flags.projectRef);
+  const refSuffix = legacyWorkersProjectRefSuffix(flags.projectRef);
 
   yield* Effect.gen(function* () {
-    const project = yield* legacyLoadWorkersProject();
+    const project = yield* legacyLoadWorkersProjectForReporting();
     const name = yield* legacyValidateWorkerName(flags.name);
     const worker = yield* legacyDescribeWorkerForReporting(project, name);
+
+    // Up front, like the rest of the family: discovering an unencodable format
+    // at emit time means failing after the fetch has already been paid for.
+    yield* legacyRejectWorkersEnvOutput();
 
     const fetching = yield* output.task("Fetching worker...");
     const found = yield* getWorker(api, projectRef, name).pipe(
@@ -57,7 +66,7 @@ export const legacyWorkersStatus = Effect.fn("legacy.workers.status")(function* 
       return yield* Effect.fail(
         new WorkerNotDeployedError({
           detail: `Nothing is deployed for "${name}" in project ${projectRef}.`,
-          suggestion: `Deploy it with \`supabase workers push ${name}\`.`,
+          suggestion: `Deploy it with \`supabase workers push ${name}${refSuffix}\`.`,
         }),
       );
     }
@@ -70,8 +79,12 @@ export const legacyWorkersStatus = Effect.fn("legacy.workers.status")(function* 
     // Reported only when an entry or the directory establishes it. With neither,
     // the path is an inference about a worker that may have been deployed from
     // another checkout.
+    //
+    // `sourceResolved` matters for the entry half: when the configured `source`
+    // could not be resolved, `sourceDir` is the *default* directory standing in
+    // for it, and printing that would name a path the entry does not.
     const sourceDisplay =
-      worker.entry !== undefined || worker.sourceExists
+      (worker.entry !== undefined && worker.sourceResolved) || worker.sourceExists
         ? displayPath(project.projectRoot, worker.sourceDir)
         : undefined;
 
@@ -115,9 +128,12 @@ export const legacyWorkersStatus = Effect.fn("legacy.workers.status")(function* 
       ["Image", record.imageVersion ?? ""],
       ["Access", record.spec.exposure],
       [
+        // Every number in the tally line comes from the tally: mixing
+        // `instances.ready` with `spec.instances` compares a snapshot against
+        // the desired count, which mid-scale renders fractions like `3/1 ready`.
         "Instances",
         record.instances !== undefined
-          ? `${record.instances.ready}/${record.spec.instances} ready, ${record.instances.live} live, ${record.instances.stale} stale`
+          ? `${record.instances.ready}/${record.instances.declared} ready, ${record.instances.live} live, ${record.instances.stale} stale`
           : `${record.spec.instances} declared`,
       ],
       ["URL", url ?? ""],
@@ -132,8 +148,10 @@ export const legacyWorkersStatus = Effect.fn("legacy.workers.status")(function* 
     if (record.instances === undefined && record.instancesError !== undefined) {
       yield* output.raw(`Instance counts could not be read: ${record.instancesError}\n`, "stderr");
     }
-    if (record.buildState === "failed") {
-      yield* output.raw(`Fix the issue, then re-run supabase workers push ${name}.\n`);
+    // Not while it is being torn down: deletion is asynchronous, so a push here
+    // races the tombstone or resurrects the very worker the user is removing.
+    if (record.buildState === "failed" && record.deleting !== true) {
+      yield* output.raw(`Fix the issue, then re-run supabase workers push ${name}${refSuffix}.\n`);
     }
   }).pipe(
     Effect.ensuring(linkedProjectCache.cache(projectRef)),
