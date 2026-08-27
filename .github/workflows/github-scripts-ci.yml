@@ -21,7 +21,11 @@ jobs:
   test:
     name: Test and type-check
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # The shared setup installs the full workspace + Go toolchain via mise, which
+    # runs ~9-10 min; a 10-minute cap raced the install and got cancelled on a
+    # cold cache. 20 gives that install headroom. (This check is heavier than it
+    # needs to be for two scripts — slimming the setup is a possible follow-up.)
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
