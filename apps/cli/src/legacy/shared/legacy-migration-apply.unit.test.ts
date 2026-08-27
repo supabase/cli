@@ -1152,6 +1152,9 @@ describe("legacyIsPipelineIncompatible", () => {
     ["create subscription", "CREATE SUBSCRIPTION sub CONNECTION 'host=h' PUBLICATION pub", true],
     ["drop subscription", "DROP SUBSCRIPTION IF EXISTS sub", true],
     ["alter subscription", "ALTER SUBSCRIPTION sub DISABLE", false],
+    ["alter subscription refresh", "ALTER SUBSCRIPTION sub REFRESH PUBLICATION", true],
+    ["alter subscription set publication", "ALTER SUBSCRIPTION sub SET PUBLICATION p", true],
+    ["alter subscription set options", "ALTER SUBSCRIPTION sub SET (slot_name = 's')", false],
     ["discard all", "DISCARD ALL", true],
     ["discard temp", "DISCARD TEMP", false],
     [
