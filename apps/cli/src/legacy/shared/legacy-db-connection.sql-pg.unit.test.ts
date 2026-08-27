@@ -5,6 +5,7 @@ import type * as Pg from "pg";
 import { describe, expect, it } from "vitest";
 
 import { ErrorActionabilityId } from "../../shared/telemetry/error-actionability.ts";
+import { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import { LEGACY_SUGGEST_LOCAL_STACK } from "./legacy-connect-errors.ts";
 import {
   legacyAcquireProbedPool,
@@ -792,7 +793,7 @@ describe("legacyBatchFailureError", () => {
       true,
     );
 
-    expect(error._tag).toBe("LegacyDbExecError");
+    expect(error).toBeInstanceOf(LegacyDbExecError);
     expect(error).toMatchObject({
       message:
         "failed to begin the batch transaction: " +
@@ -805,7 +806,7 @@ describe("legacyBatchFailureError", () => {
       { completed: 0, outcome: "submitted", began: false },
       true,
     );
-    expect(lost._tag).toBe("LegacyDbExecError");
+    expect(lost).toBeInstanceOf(LegacyDbExecError);
     expect(lost.message).toBe("Error: Connection terminated unexpectedly");
 
     const terminated = legacyBatchFailureError(
@@ -822,7 +823,7 @@ describe("legacyBatchFailureError", () => {
       { completed: 0, outcome: "submitted", began: false },
       true,
     );
-    expect(terminated._tag).toBe("LegacyDbExecError");
+    expect(terminated).toBeInstanceOf(LegacyDbExecError);
     expect(terminated.message).toBe(
       "FATAL: terminating connection due to idle-session timeout (SQLSTATE 57P05)",
     );
@@ -832,7 +833,7 @@ describe("legacyBatchFailureError", () => {
       { completed: 0, outcome: "poisoned", began: false },
       true,
     );
-    expect(poisoned._tag).toBe("LegacyDbExecError");
+    expect(poisoned).toBeInstanceOf(LegacyDbExecError);
     expect(poisoned.message).toBe(
       "ERROR: canceling statement due to statement timeout (SQLSTATE 57014)",
     );
