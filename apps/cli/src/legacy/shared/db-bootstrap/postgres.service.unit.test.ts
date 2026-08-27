@@ -533,7 +533,7 @@ describe("slim Postgres image spec", () => {
       { containerPath: "/etc/postgresql-custom/pgsodium_root.key", content: "custom-root-key" },
       {
         containerPath: "/etc/postgresql.schema.sql",
-        content: `${LEGACY_START_DB_SCHEMA_SQL}\n${LEGACY_START_DB_WEBHOOK_SQL}\n${LEGACY_START_DB_SUPABASE_SQL}\nALTER ROLE postgres WITH SUPERUSER;\nCREATE EXTENSION IF NOT EXISTS vector;\n`,
+        content: `${LEGACY_START_DB_SCHEMA_SQL}\n${LEGACY_START_DB_WEBHOOK_SQL}\n${LEGACY_START_DB_SUPABASE_SQL}`,
       },
     ]);
   });
