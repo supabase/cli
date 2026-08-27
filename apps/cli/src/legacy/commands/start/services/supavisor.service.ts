@@ -41,6 +41,10 @@
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 import {
+  legacySlimBusyboxWgetHealthcheck,
+  legacyUsesSlimRuntime,
+} from "../../../shared/db-bootstrap/slim-runtime.ts";
+import {
   legacyRenderStartPoolerExs,
   type LegacyStartPoolerExsFields,
 } from "../lib/template-render.ts";
@@ -159,6 +163,10 @@ export function legacyBuildSupavisorContainerSpec(
       PROXY_PORT_SESSION: LEGACY_SUPAVISOR_SESSION_PORT,
       PROXY_PORT_TRANSACTION: LEGACY_SUPAVISOR_TRANSACTION_PORT,
       DATABASE_URL: `ecto://${input.dbUser}:${input.dbPassword}@${input.dbHost}:${input.dbPort}/_supabase`,
+      // Supavisor's internal metadata Ecto pool defaults to 25 connections —
+      // half of the slim image's local-dev max_connections=50. A handful is
+      // plenty for the single local tenant.
+      DB_POOL_SIZE: "5",
       CLUSTER_POSTGRES: "true",
       SECRET_KEY_BASE: LEGACY_SUPAVISOR_SECRET_KEY_BASE,
       VAULT_ENC_KEY: LEGACY_SUPAVISOR_ENCRYPTION_KEY,
@@ -180,20 +188,23 @@ export function legacyBuildSupavisorContainerSpec(
       { containerPort: LEGACY_SUPAVISOR_TRANSACTION_PORT },
     ],
     ports: [{ hostPort: String(input.port), containerPort: dockerPort }],
-    healthcheck: {
-      test: [
-        "CMD",
-        "curl",
-        "-sSfL",
-        "--head",
-        "-o",
-        "/dev/null",
-        "http://127.0.0.1:4000/api/health",
-      ],
-      intervalSeconds: 10,
-      timeoutSeconds: 2,
-      retries: 3,
-    },
+    // The slim supavisor image is distroless plus /bin/busybox (no curl).
+    healthcheck: legacyUsesSlimRuntime(input.image)
+      ? legacySlimBusyboxWgetHealthcheck("http://127.0.0.1:4000/api/health")
+      : {
+          test: [
+            "CMD",
+            "curl",
+            "-sSfL",
+            "--head",
+            "-o",
+            "/dev/null",
+            "http://127.0.0.1:4000/api/health",
+          ],
+          intervalSeconds: 10,
+          timeoutSeconds: 2,
+          retries: 3,
+        },
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
     networkAliases: [LEGACY_SUPAVISOR_CONTAINER_SUFFIX],
