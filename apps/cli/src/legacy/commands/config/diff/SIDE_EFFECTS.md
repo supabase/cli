@@ -100,8 +100,13 @@ contract (CLI-2156 ticket discussion).
   `[remotes.<name>]` block's `project_id`, the local side is that branch's merged
   effective config; otherwise the base config. The echoed scope line always says which.
 - **Masked credentials:** secret-valued managed properties (the platform returns an HMAC,
-  never plaintext) are treated as "present, unknown" — never reported as differences and
-  never counted for `--exit-code`; they are surfaced via the masked note / `masked[]`.
+  never plaintext; the registry's `isSecret` rows) are treated as "present, unknown" — never
+  reported as differences and never counted for `--exit-code`; they are surfaced via the
+  masked note / `masked[]`.
+- **Values are convergence projections (ADR 0021):** both sides are normalized through
+  `@supabase/config`'s `fromConfigDocument`/`fromApiProjectConfig`, so a reported "local"
+  value is what pushing the file would produce hosted (canonicalized durations/byte sizes,
+  push-gated omissions), not necessarily the file's literal spelling.
 - **Partial responses:** a managed property the response does not carry is `local_only`
   when the file declares it and silent otherwise; a missing block is called out on the
   scope line rather than treated as an error.

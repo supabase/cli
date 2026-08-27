@@ -1,47 +1,28 @@
-import type {
-  ConfigChange,
-  ConfigChangeSet,
-  CliConfigValueOrigin,
-  RemoteConfigBlock,
-  RemoteProjectConfig,
-} from "@supabase/config";
-import { REMOTE_CONFIG_BLOCKS } from "@supabase/config";
+import type { ConfigChange, ConfigChangeSet, CliConfigValueOrigin } from "@supabase/config";
 
 /**
  * Pure formatters, payload builders, and input adapters for `config diff` —
  * no Effect, no services, unit-testable in isolation.
  */
 
+/** The per-service blocks of the v2 project-config resource. */
+const REMOTE_CONFIG_BLOCKS = ["api", "auth", "database", "pooler", "realtime", "storage"] as const;
+
+export type LegacyConfigDiffScope = ReadonlyArray<(typeof REMOTE_CONFIG_BLOCKS)[number]>;
+
 function isRemoteBlockRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function asRemoteBlock(value: unknown): Readonly<Record<string, unknown>> | undefined {
-  return isRemoteBlockRecord(value) ? value : undefined;
-}
-
 /**
- * Adapts the generated client's decoded `data.attributes` to the loose
- * per-block records the comparison core reads. Non-record values (which the
- * generated schema should never produce, but the core must not trust) read as
- * "block not returned".
+ * Which per-service blocks the response's `data.attributes` actually carried
+ * — echoed to the user so a partially-populated response is never mistaken
+ * for a clean bill of health.
  */
-export function legacyConfigDiffRemoteBlocks(attributes: {
-  readonly api: unknown;
-  readonly auth: unknown;
-  readonly database: unknown;
-  readonly pooler: unknown;
-  readonly realtime: unknown;
-  readonly storage: unknown;
-}): RemoteProjectConfig {
-  return {
-    api: asRemoteBlock(attributes.api),
-    auth: asRemoteBlock(attributes.auth),
-    database: asRemoteBlock(attributes.database),
-    pooler: asRemoteBlock(attributes.pooler),
-    realtime: asRemoteBlock(attributes.realtime),
-    storage: asRemoteBlock(attributes.storage),
-  };
+export function legacyConfigDiffScope(
+  attributes: Readonly<Record<string, unknown>>,
+): LegacyConfigDiffScope {
+  return REMOTE_CONFIG_BLOCKS.filter((block) => isRemoteBlockRecord(attributes[block]));
 }
 
 /**
@@ -101,7 +82,7 @@ export function legacyConfigDiffComparisonLine(context: LegacyConfigDiffContext)
 }
 
 /** The scope-echo line, printed to stderr once the response arrived. */
-export function legacyConfigDiffScopeLine(scope: ReadonlyArray<RemoteConfigBlock>): string {
+export function legacyConfigDiffScopeLine(scope: LegacyConfigDiffScope): string {
   const present = scope.length === 0 ? "(none)" : scope.join(", ");
   const missing = REMOTE_CONFIG_BLOCKS.filter((block) => !scope.includes(block));
   const suffix = missing.length === 0 ? "" : ` (not returned: ${missing.join(", ")})`;
@@ -145,6 +126,7 @@ export function legacyRenderConfigDiffText(changeSet: ConfigChangeSet): string {
  */
 export function legacyConfigDiffPayload(
   changeSet: ConfigChangeSet,
+  scope: LegacyConfigDiffScope,
   context: LegacyConfigDiffContext,
 ): Record<string, unknown> {
   const valueEntry = (key: string, value: unknown): Record<string, unknown> => ({
@@ -160,7 +142,7 @@ export function legacyConfigDiffPayload(
       local_scope:
         context.appliedRemote === undefined ? "base" : `remotes.${context.appliedRemote}`,
     },
-    scope: changeSet.scope,
+    scope,
     changes: changeSet.changes.map((change) => ({
       path: change.path,
       class: change.class,

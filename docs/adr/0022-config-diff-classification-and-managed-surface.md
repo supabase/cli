@@ -1,7 +1,7 @@
 # 0022. Config Diff Classification and Managed Surface
 
 **Status**: proposed
-**Date**: 2026-08-20
+**Date**: 2026-08-20 (registry consolidation 2026-08-28)
 
 ## Problem Statement
 
@@ -11,32 +11,41 @@
 2. **Managed vs. unmanaged.** Most of `config.toml` configures the _local_ stack — `[studio]`, ports, image pins, `[db.migrations]` — and has no platform counterpart. Reporting those as drift is noise; deciding which properties the platform manages needs a source of truth that cannot drift from the code that reads the response.
 3. **Incomparable values.** The platform masks secrets (HMAC, never plaintext), reports byte counts where the file writes `"50MiB"`, comma-joins arrays, and types some scalars differently than the schema. Comparing representations instead of meanings misreports drift; silently skipping them misreports cleanliness.
 
+This ADR was first accepted with a self-contained translation table inside `config-diff.ts` (a `read`-function-per-managed-path port of the Go CLI's `FromRemoteAuthConfig` at `7b469f5b3`). CLI-2230 (PR supabase/cli#6339) then landed the registry-driven `ProjectConfig` convergence normalizers — the same translation, shared with Studio, governed by ADR 0019 (passthrough), ADR 0020 (naming), and ADR 0021 (convergence semantics). Keeping two translations would have been exactly the parallel code path the repo's refactoring policy forbids, so the classifier now consumes the registry; this revision records the consolidated design.
+
 ## Decision
 
-`@supabase/config` owns the whole comparison core as pure, synchronous functions (`config-diff*.ts`), with no dependency on `@supabase/api`, output formatting, or command flags:
+`@supabase/config` owns the comparison core as pure, synchronous functions (`config-diff.ts`), with no dependency on `@supabase/api`, output formatting, or command flags — layered on CLI-2230's registry rather than a translation of its own:
 
-- **The managed surface is defined by the translation table.** `MANAGED_CONFIG_PROPERTIES` is a table of entries, one per local schema path the v2 resource can report, each carrying a `read` function that descends the structurally-typed response (`RemoteProjectConfig`, all six blocks as loose records) and coerces the wire value to the local schema's type. A schema path with no entry is _unmanaged by construction_ — the managed set and the response-reading code are the same artifact and cannot drift apart. The auth table is ported from the Go CLI's `FromRemoteAuthConfig` (commit `7b469f5b3`), including its inversions (`enable_signup` ← `!disable_signup`), duration/enum transforms, and provider fan-out.
-- **Four-way classification per managed path**, driven by _declared_ presence (the raw pre-decode document) on the local side and `read` presence on the remote side: `update` (declared + returned, values differ), `remote_only` (returned, undeclared, and differing from the baseline default — equal-to-default values are suppressed, which is what CLI-2155's defaults reference exists for), `local_only` (declared, not returned — parsed-but-never-pushed attributes and permission-truncated responses), and unmanaged (never reported). The local operand follows ADR 0018: the branch's merged effective config when the target ref matches a `[remotes.*]` block's `project_id`, the base config otherwise.
-- **Equality is meaning-based**: arrays compare as multisets, scalars tolerate string/number and string/boolean representation skew, and per-entry `normalize` hooks canonicalize (byte sizes via `RAMInBytes` semantics, Go-duration strings) before comparison while reported values stay un-normalized.
-- **Secrets are "present, unknown".** Entries marked `secret` (the union of the schema's `x-secret` fields and Go's `Secret` machinery) are never compared and never counted; locally-declared ones are surfaced in `ConfigChangeSet.masked` so a clean change list is visibly a partial claim. Likewise `scope` records which blocks the response actually carried, so partially-populated responses degrade to `local_only` + an explicit scope note instead of an error or silent omission.
+- **Both operands are `ProjectConfig` convergence projections (ADR 0021).** The caller builds the local operand with `fromConfigDocument({config, document})` — raw-presence-masked, canonicalized, secret-omitting — and the remote operand with `fromApiProjectConfig(response)`. All wire-shape knowledge (renames, inversions, unit conversions, the GoTrue key table) lives in `projectConfigMappingRows`, once, shared with Studio and the future push mapper.
+- **The managed surface is the registry's.** The classifier walks the union of both operands' leaf paths filtered by `isComparableProjectConfigPath` — a path with no registry row is _unmanaged by construction_ and never reported (`[studio]`, ports, image pins, `[realtime]` locals, `workers`).
+- **Three-way classification per comparable path**, driven by _declared_ presence (the raw pre-decode document), which a decoded config cannot recover: `update` (declared + reported, values differ), `remote_only` (reported while undeclared — or while push cannot communicate the declared state — and differing from the suppression baseline), `local_only` (a declared local projection value the response did not account for: parsed-but-never-pushed attributes and permission-truncated responses). The local operand follows ADR 0018: the branch's merged effective config when the target ref matches a `[remotes.*]` block's `project_id`, the base config otherwise.
+- **`remote_only` suppression baseline**: the default config's own convergence projection, falling back — for push-gated containers the projection is silent on — to the raw default config's value (`db.network_restrictions`' allow-all default IS the platform's unconfigured state), then to the type's zero value. An unconfigured project therefore diffs clean instead of flooding with platform-default noise.
+- **Equality is meaning-based**: the normalizers canonicalize representations (durations, byte sizes, comma-joins) per ADR 0021, and the classifier's residual equality compares arrays as multisets and tolerates string/number and string/boolean scalar skew.
+- **Secrets are "present, unknown".** Both normalizers omit secret leaves (the platform only reports HMAC digests), so secrets can never classify; the registry's `isSecret` rows define the masked surface, and locally-declared ones are surfaced in `ConfigChangeSet.masked` so a clean change list is visibly a partial claim. The command layer separately echoes which response blocks were carried, so partially-populated responses degrade to `local_only` + an explicit scope note instead of an error or silent omission.
 - The interpolation pipeline records the resolving env var name on `"environment"` value origins, so a change on an `env()`-fed property can name the variable involved.
 
-The command layer (`apps/cli/src/legacy/commands/config/diff/`) only resolves the target, fetches, and renders.
+The command layer (`apps/cli/src/legacy/commands/config/diff/`) only resolves the target, fetches, projects, and renders. Per ADR 0021's rendering rule, reported "local" values are the convergence projection — what pushing the file would produce hosted — not the file's literal spelling.
 
 ## Considered Alternatives
 
 1. **Derive the managed set from the response keys** (the POC's approach): whatever the remote returns is what's compared. Structurally blind to `local_only`, and a permission-truncated response silently shrinks the comparison.
-2. **Schema annotations (`x-managed`) on each property**: keeps the knowledge in the schema, but the annotation and the response-reading code can disagree, and the annotation cannot express per-property wire transforms (comma-splits, inversions, unit conversions) that the table entry's `read` carries anyway.
-3. **Reuse `config push`'s `config-sync` diffing** (`apps/cli/src/legacy/commands/config/push/config-sync/`): those helpers produce per-service unified-diff _text_ against the v1 per-service endpoints for push previews, not a typed change set, and they live in the CLI app. They remain the Go-parity push path; the classification core is the reusable engine `pull` needs. Consolidating push onto the core is possible later but out of scope here.
+2. **Schema annotations (`x-managed`) on each property**: keeps the knowledge in the schema, but the annotation and the response-reading code can disagree, and the annotation cannot express per-property wire transforms that the registry rows carry.
+3. **The original self-contained translation table** (this ADR's first accepted form): correct, but once CLI-2230 landed the registry it became a ~600-line parallel implementation of the same mapping with independently-drifting transforms. Superseded by the consolidation above.
+4. **Reuse `config push`'s `config-sync` diffing** (`apps/cli/src/legacy/commands/config/push/config-sync/`): those helpers produce per-service unified-diff _text_ against the v1 per-service endpoints for push previews, not a typed change set, and they live in the CLI app. They remain the Go-parity push path; the registry rows were themselves mined from them (CLI-2230), and a shared push mapper is that ticket's tracked follow-up.
 
 ## Consequences
 
-- `config pull` gets its comparison engine for free: the change set is typed data, and the same translation produces the local representation of any remote value it needs to write.
-- Adding a newly platform-managed property is one table entry; forgetting it means the property is silently unmanaged (never misreported as drift), which fails safe.
-- The structural `RemoteProjectConfig` type mirrors the v2 wire shape; if the API reshapes a block, the readers' runtime guards degrade to "not returned" (`local_only`/silent) rather than crashing, and the live test is the tripwire.
+- `config pull` gets its comparison engine for free: the change set is typed data, and `fromApiProjectConfig` already produces the local representation of any remote value it needs to write.
+- Adding a newly platform-managed property is one registry row (shared with Studio); forgetting it means the property is silently unmanaged (never misreported as drift), which fails safe.
+- The wire shape is pinned by `apps/cli`'s `project-config-api-drift.unit.test.ts` type-drift guard plus the registry's lenient decode (ADR 0019); API evolution degrades to "not reported" rather than crashing, and the live test is the tripwire.
 - Platform defaults that diverge from schema defaults surface as `remote_only` drift by design — the file's meaning is defined by the schema defaults reference (ADR 0018), not by what the platform would have picked.
+- The classifier inherits ADR 0021's limits verbatim: ADR 0021's "honest-but-push-unactionable" residual category (unconditionally-mapped fields with no local-silence signal, tracked on CLI-2266) surfaces here as `remote_only` entries a user cannot fix by editing their file.
 
 ## Related Decisions
 
 - [ADR 0018](0018-sparse-config-subtraction.md): Sparse Config Subtraction — the defaults baseline and merged-remote-block local operand this classification builds on.
+- [ADR 0019](0019-config-api-response-passthrough.md): Raw API-Response Passthrough — the leniency boundary and `_apiResponse` escape hatch of the remote operand.
+- [ADR 0020](0020-config-naming-vocabulary.md): Config Naming Vocabulary — `CliConfig` vs `ProjectConfig`.
+- [ADR 0021](0021-projectconfig-convergence-semantics.md): ProjectConfig Convergence Semantics — what the two operand-producing normalizers compute, and why comparing them structurally is meaningful.
 - [ADR 0006](0006-environment-management.md): Environment Management — remote blocks and branch mapping semantics.

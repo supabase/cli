@@ -1,4 +1,9 @@
-import { diffProjectConfig, CLI_CONFIG_SCHEMA_URL } from "@supabase/config";
+import {
+  CLI_CONFIG_SCHEMA_URL,
+  diffProjectConfig,
+  fromApiProjectConfig,
+  fromConfigDocument,
+} from "@supabase/config";
 import { loadCliConfig } from "@supabase/config/effect";
 import { Effect, Option } from "effect";
 
@@ -22,7 +27,7 @@ import {
   legacyConfigDiffComparisonLine,
   legacyConfigDiffEnvReferences,
   legacyConfigDiffPayload,
-  legacyConfigDiffRemoteBlocks,
+  legacyConfigDiffScope,
   legacyConfigDiffScopeLine,
   legacyRenderConfigDiffText,
   type LegacyConfigDiffContext,
@@ -165,29 +170,44 @@ export const legacyConfigDiff = Effect.fn("legacy.config.diff")(function* (
     );
     yield* fetching?.clear() ?? Effect.void;
 
-    // 3. Classify. `declared` is the raw merged document (key presence);
-    // `local` is the decoded effective config; env-resolved leaves carry the
-    // resolving variable's name for the output.
+    // 3. Project both sides through CLI-2230's convergence normalizers (ADR
+    // 0021): `fromConfigDocument` gets the loaded config WITH its raw
+    // document so raw-presence masking applies, and `fromApiProjectConfig`
+    // canonicalizes the response into the same post-push shape. A response
+    // the registry cannot narrow (out-of-domain mapped values) is an API
+    // problem, not a transport one.
+    const remote = yield* Effect.try({
+      try: () => fromApiProjectConfig(response),
+      catch: (cause) =>
+        new LegacyConfigDiffReadNetworkError({
+          message: `failed to read project config: ${String(cause)}`,
+          decode: true,
+        }),
+    });
+
+    // 4. Classify. `declared` is the raw merged document (key presence);
+    // env-resolved leaves carry the resolving variable's name for the output.
     const changeSet = diffProjectConfig({
-      local: loaded.config,
+      local: fromConfigDocument(loaded),
+      remote,
       declared: loaded.document,
-      remote: legacyConfigDiffRemoteBlocks(response.data.attributes),
       envReferences: legacyConfigDiffEnvReferences(loaded.valueOrigins),
     });
 
-    yield* output.raw(legacyConfigDiffScopeLine(changeSet.scope), "stderr");
+    const scope = legacyConfigDiffScope(response.data.attributes);
+    yield* output.raw(legacyConfigDiffScopeLine(scope), "stderr");
 
-    // 4. Emit: `--output-format json|stream-json` structured payload, or text.
+    // 5. Emit: `--output-format json|stream-json` structured payload, or text.
     if (output.format !== "text") {
       const total = changeSet.changes.length;
       const message =
         total === 0 ? "No config differences found." : `${total} config difference(s) found.`;
-      yield* output.success(message, legacyConfigDiffPayload(changeSet, context));
+      yield* output.success(message, legacyConfigDiffPayload(changeSet, scope, context));
     } else {
       yield* output.raw(legacyRenderConfigDiffText(changeSet));
     }
 
-    // 5. `--exit-code`: differences flip the exit status after the payload is
+    // 6. `--exit-code`: differences flip the exit status after the payload is
     // out, without an error envelope corrupting machine output.
     if (flags.exitCode && changeSet.changes.length > 0) {
       yield* processControl.setExitCode(1);

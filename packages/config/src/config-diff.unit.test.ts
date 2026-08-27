@@ -6,26 +6,26 @@ import {
   isEqualConfigValue,
   type ConfigChange,
   type DiffProjectConfigOptions,
-  type RemoteProjectConfig,
 } from "./config-diff.ts";
-import { MANAGED_CONFIG_PATHS, MANAGED_CONFIG_PROPERTIES } from "./config-diff.managed.ts";
-import { normalizeByteSize } from "./config-diff.read.ts";
+import { fromApiProjectConfig, fromConfigDocument } from "./project-config/project-config.ts";
 
 const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
 /**
- * Builds the diff input the way the command layer does: `declared` is the raw
- * document (key presence), `local` is its decoded effective config.
+ * Builds the diff input the way the command layer does: the local operand is
+ * `fromConfigDocument` over the decoded config WITH its raw document (so
+ * raw-presence masking applies), the remote operand is `fromApiProjectConfig`
+ * over bare v2 `data.attributes`, and `declared` is the raw document.
  */
 function diffWith(
   declared: Record<string, unknown>,
-  remote: RemoteProjectConfig,
+  attributes: Record<string, unknown>,
   extra?: Partial<DiffProjectConfigOptions>,
 ) {
   return diffProjectConfig({
-    local: decodeCliConfig(declared),
+    local: fromConfigDocument({ config: decodeCliConfig(declared), document: declared }),
+    remote: fromApiProjectConfig(attributes),
     declared,
-    remote,
     ...extra,
   });
 }
@@ -34,58 +34,18 @@ function changeAt(changes: ReadonlyArray<ConfigChange>, path: string): ConfigCha
   return changes.find((change) => change.path === path);
 }
 
-describe("managed surface", () => {
-  test("declares no duplicate paths", () => {
-    expect(MANAGED_CONFIG_PATHS.size).toBe(MANAGED_CONFIG_PROPERTIES.length);
-  });
-
-  test("every managed path resolves to a real schema path in the default config", () => {
-    const defaults: unknown = decodeCliConfig({});
-    for (const path of MANAGED_CONFIG_PATHS) {
-      let current: unknown = defaults;
-      for (const segment of path.split(".")) {
-        if (typeof current !== "object" || current === null) {
-          throw new Error(`managed path ${path} leaves the schema at ${segment}`);
-        }
-        // Optional-key subtrees (db.settings, storage.image_transformation,
-        // auth provider entries…) are absent from the default config; their
-        // presence in the schema is asserted by the entries' unit coverage
-        // below instead.
-        if (!Object.hasOwn(current, segment)) {
-          current = undefined;
-          break;
-        }
-        current = (current as Record<string, unknown>)[segment];
-      }
-    }
-  });
-
-  test("local-only sections are unmanaged by construction", () => {
-    for (const prefix of ["studio.", "local_smtp.", "edge_runtime.", "analytics.", "realtime."]) {
-      for (const path of MANAGED_CONFIG_PATHS) {
-        expect(path.startsWith(prefix)).toBe(false);
-      }
-    }
-    expect(MANAGED_CONFIG_PATHS.has("api.port")).toBe(false);
-    expect(MANAGED_CONFIG_PATHS.has("db.port")).toBe(false);
-  });
-});
-
 describe("diffProjectConfig classification", () => {
   test("an undefined declared document means nothing is declared", () => {
     const result = diffProjectConfig({
-      local: decodeCliConfig({}),
+      local: fromConfigDocument(decodeCliConfig({})),
+      remote: fromApiProjectConfig({ api: { max_rows: 250 } }),
       declared: undefined,
-      remote: { api: { max_rows: 250 } },
     });
     expect(changeAt(result.changes, "api.max_rows")).toMatchObject({ class: "remote_only" });
   });
 
   test("declared value differing from remote is an update", () => {
-    const result = diffWith(
-      { api: { max_rows: 500 } },
-      { api: { max_rows: 1000, db_schema: "public,graphql_public" } },
-    );
+    const result = diffWith({ api: { max_rows: 500 } }, { api: { max_rows: 1000 } });
     const change = changeAt(result.changes, "api.max_rows");
     expect(change).toMatchObject({ class: "update", local: 500, remote: 1000 });
     expect(result.counts.update).toBe(1);
@@ -108,18 +68,12 @@ describe("diffProjectConfig classification", () => {
     expect(change).toMatchObject({ class: "remote_only", local: undefined, remote: 250 });
   });
 
-  test("optional-key paths with no materialized default suppress zero-valued remotes", () => {
-    // db.ssl_enforcement and auth providers are optionalKey — absent from the
-    // default config — and the platform reports their unconfigured state as
-    // zero values. Those are not drift; a non-zero value is.
-    const clean = diffWith(
-      {},
-      {
-        database: { ssl_enforced: false },
-        auth: { external_github_enabled: false, external_github_client_id: "" },
-      },
-    );
-    expect(clean.changes).toEqual([]);
+  test("raw-presence-masked sections suppress zero-valued remotes", () => {
+    // db.ssl_enforcement is raw-presence-masked on the document arm (ADR
+    // 0021), so its local projection is silent when the file never declares
+    // it; the platform reporting the unconfigured state is not drift.
+    const clean = diffWith({}, { database: { ssl_enforced: false } });
+    expect(changeAt(clean.changes, "db.ssl_enforcement.enabled")).toBeUndefined();
 
     const drifted = diffWith({}, { database: { ssl_enforced: true } });
     expect(changeAt(drifted.changes, "db.ssl_enforcement.enabled")).toMatchObject({
@@ -128,14 +82,59 @@ describe("diffProjectConfig classification", () => {
     });
   });
 
+  test("push-gated containers fall back to the raw schema default as baseline", () => {
+    // The registry maps network-restriction CIDRs unconditionally, but push
+    // gates them on the local `enabled` toggle, so the default projection is
+    // silent on them. The raw schema default (allow-all) IS the platform's
+    // unconfigured state — reporting it would flag every untouched project.
+    const clean = diffWith(
+      {},
+      {
+        database: {
+          network_restrictions: {
+            allowed_cidrs: [
+              { address: "0.0.0.0/0", type: "v4" },
+              { address: "::/0", type: "v6" },
+            ],
+          },
+        },
+      },
+    );
+    expect(clean.changes).toEqual([]);
+
+    const drifted = diffWith(
+      {},
+      {
+        database: {
+          network_restrictions: { allowed_cidrs: [{ address: "10.0.0.0/8", type: "v4" }] },
+        },
+      },
+    );
+    expect(changeAt(drifted.changes, "db.network_restrictions.allowed_cidrs")).toMatchObject({
+      class: "remote_only",
+      remote: ["10.0.0.0/8"],
+    });
+  });
+
+  test("undeclared providers reporting their unconfigured state are not drift", () => {
+    const result = diffWith(
+      {},
+      { auth: { external_github_enabled: false, external_github_client_id: "" } },
+    );
+    expect(result.changes.filter((change) => change.path.includes("github"))).toEqual([]);
+  });
+
   test("declared value the response does not carry is local_only", () => {
     const result = diffWith(
-      { api: { max_rows: 500 } },
-      // api block present but without max_rows, and no other blocks at all.
-      { api: { db_schema: "public" } },
+      { auth: { site_url: "https://local.example.com" } },
+      // auth block present but without site_url.
+      { auth: {} },
     );
-    const change = changeAt(result.changes, "api.max_rows");
-    expect(change).toMatchObject({ class: "local_only", local: 500, remote: undefined });
+    expect(changeAt(result.changes, "auth.site_url")).toMatchObject({
+      class: "local_only",
+      local: "https://local.example.com",
+      remote: undefined,
+    });
   });
 
   test("a wholly absent block turns its declared properties local_only", () => {
@@ -144,7 +143,6 @@ describe("diffProjectConfig classification", () => {
       class: "local_only",
       local: 120,
     });
-    expect(result.scope).toEqual([]);
   });
 
   test("unmanaged declared properties are never reported", () => {
@@ -165,86 +163,32 @@ describe("diffProjectConfig classification", () => {
       { api: { schemas: ["graphql_public", "public"] } },
       { api: { db_schema: "public,graphql_public" } },
     );
-    expect(result.changes).toEqual([]);
+    expect(changeAt(result.changes, "api.schemas")).toBeUndefined();
   });
 
-  test("comma-joined remote strings trim around separators", () => {
-    const result = diffWith(
-      { api: { extra_search_path: ["public", "extensions"] } },
-      { api: { db_extra_search_path: "public, extensions" } },
-    );
-    expect(result.changes).toEqual([]);
-  });
-
-  test("scalar comparison is type-aware across string/number and string/boolean", () => {
-    const result = diffWith(
-      {
-        db: {
-          settings: { max_connections: 120, track_commit_timestamp: true },
-        },
-      },
-      {
-        database: {
-          postgres_settings: { max_connections: "120", track_commit_timestamp: "true" },
-        },
-      },
-    );
-    expect(result.changes).toEqual([]);
-  });
-
-  test("byte-size values compare canonically across representations", () => {
+  test("byte-size values converge across representations", () => {
+    // Local "50MiB" and the wire's byte count both canonicalize through the
+    // convergence normalizers (ADR 0021), so they compare equal.
     const equal = diffWith(
       { storage: { file_size_limit: "50MiB" } },
       { storage: { file_size_limit: 52428800 } },
     );
-    expect(equal.changes).toEqual([]);
+    expect(changeAt(equal.changes, "storage.file_size_limit")).toBeUndefined();
 
     const differing = diffWith(
       { storage: { file_size_limit: "50MiB" } },
       { storage: { file_size_limit: 1048576 } },
     );
-    // The reader coerces the wire's byte count to the local schema's string
-    // kind before comparison, so the reported remote value is the coerced form.
     expect(changeAt(differing.changes, "storage.file_size_limit")).toMatchObject({
       class: "update",
-      local: "50MiB",
-      remote: "1048576",
-    });
-  });
-
-  test("network restriction CIDRs split by address family", () => {
-    const result = diffWith(
-      {
-        db: {
-          network_restrictions: {
-            enabled: true,
-            allowed_cidrs: ["10.0.0.0/8"],
-            allowed_cidrs_v6: [],
-          },
-        },
-      },
-      {
-        database: {
-          network_restrictions: {
-            allowed_cidrs: [
-              { address: "10.0.0.0/8", type: "v4" },
-              { address: "fd00::/8", type: "v6" },
-            ],
-          },
-        },
-      },
-    );
-    expect(changeAt(result.changes, "db.network_restrictions.allowed_cidrs")).toBeUndefined();
-    expect(changeAt(result.changes, "db.network_restrictions.allowed_cidrs_v6")).toMatchObject({
-      class: "update",
-      local: [],
-      remote: ["fd00::/8"],
     });
   });
 
   test("declared secret values are masked, never compared, never counted", () => {
     const declared = {
-      auth: { external: { github: { enabled: true, client_id: "id", secret: "shh" } } },
+      auth: {
+        external: { github: { enabled: true, client_id: "id", secret: "env(GITHUB_SECRET)" } },
+      },
     };
     const result = diffWith(declared, {
       auth: { external_github_enabled: true, external_github_client_id: "id" },
@@ -260,11 +204,6 @@ describe("diffProjectConfig classification", () => {
     expect(result.changes.filter((change) => change.path.includes("pass"))).toEqual([]);
   });
 
-  test("scope lists exactly the blocks the response carried, in order", () => {
-    const result = diffWith({}, { storage: {}, api: {}, database: {} });
-    expect(result.scope).toEqual(["api", "database", "storage"]);
-  });
-
   test("env references annotate the change for the involved variable", () => {
     const result = diffWith(
       { api: { max_rows: 500 } },
@@ -278,8 +217,8 @@ describe("diffProjectConfig classification", () => {
 
   test("changes are ordered by path and counts add up", () => {
     const result = diffWith(
-      { api: { max_rows: 5 }, storage: { file_size_limit: "1MiB" } },
-      { api: { max_rows: 6 }, database: { postgres_settings: { work_mem: "64MB" } } },
+      { api: { max_rows: 5 }, auth: { site_url: "https://local.example.com" } },
+      { api: { max_rows: 6 }, auth: {}, database: { postgres_settings: { work_mem: "64MB" } } },
     );
     const paths = result.changes.map((change) => change.path);
     expect(paths).toEqual([...paths].sort());
@@ -305,22 +244,5 @@ describe("isEqualConfigValue", () => {
     expect(isEqualConfigValue("", 0)).toBe(false);
     expect(isEqualConfigValue("8080x", 8080)).toBe(false);
     expect(isEqualConfigValue(undefined, "")).toBe(false);
-  });
-});
-
-describe("normalizeByteSize", () => {
-  test("parses 1024-based human sizes case-insensitively", () => {
-    expect(normalizeByteSize("50MiB")).toBe(52428800);
-    expect(normalizeByteSize("50MB")).toBe(52428800);
-    expect(normalizeByteSize("50mb")).toBe(52428800);
-    expect(normalizeByteSize("1GiB")).toBe(1073741824);
-    expect(normalizeByteSize("500")).toBe(500);
-    expect(normalizeByteSize("0.5k")).toBe(512);
-  });
-
-  test("passes through numbers and unparseable strings", () => {
-    expect(normalizeByteSize(52428800)).toBe(52428800);
-    expect(normalizeByteSize("not-a-size")).toBe("not-a-size");
-    expect(normalizeByteSize(true)).toBe(true);
   });
 });

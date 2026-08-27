@@ -1,86 +1,45 @@
-import type { EffectiveConfig } from "./sparse.ts";
+import {
+  fromConfigDocument,
+  isComparableProjectConfigPath,
+  type ProjectConfig,
+} from "./project-config/project-config.ts";
+import { projectConfigMappingRows } from "./project-config/registry.ts";
 import { getDefaultCliConfig } from "./sparse.ts";
-import { MANAGED_CONFIG_PROPERTIES } from "./config-diff.managed.ts";
 
 /**
- * Config drift classification between a local project config and the
+ * Config drift classification between the local project config and the
  * effective remote configuration reported by the Management API
  * (`GET /v2/projects/{ref}/config`). Pure and synchronous: fetching the
  * response, resolving the target, and rendering output are the caller's job
  * (`supabase config diff`, and `config pull` after it). See ADR 0022.
+ *
+ * Both operands are `ProjectConfig` values from CLI-2230's convergence
+ * normalizers (ADR 0021): the caller builds `local` with
+ * `fromConfigDocument({config, document})` (raw-presence-masked,
+ * canonicalized, secrets omitted) and `remote` with
+ * `fromApiProjectConfig(response)`. The comparable surface is the mapping
+ * registry's — a path with no registry row is unmanaged by construction —
+ * and the raw document's declared-key set drives `update` vs `remote_only`,
+ * since a decoded config cannot distinguish "the file wrote the default"
+ * from "the file is silent".
  */
-
-/** The per-service blocks of the v2 project-config resource. */
-export type RemoteConfigBlock = "api" | "auth" | "database" | "pooler" | "realtime" | "storage";
-
-export const REMOTE_CONFIG_BLOCKS: ReadonlyArray<RemoteConfigBlock> = [
-  "api",
-  "auth",
-  "database",
-  "pooler",
-  "realtime",
-  "storage",
-];
-
-/**
- * Structural shape of the v2 response's `data.attributes`. Deliberately loose
- * (`Record<string, unknown>` per block): the wire format is owned by the
- * Management API and may grow keys at any time, and every read below descends
- * with runtime guards. This package must not import `@supabase/api` — the
- * caller passes whatever the generated client decoded.
- */
-export interface RemoteProjectConfig {
-  readonly api?: Readonly<Record<string, unknown>> | undefined;
-  readonly auth?: Readonly<Record<string, unknown>> | undefined;
-  readonly database?: Readonly<Record<string, unknown>> | undefined;
-  readonly pooler?: Readonly<Record<string, unknown>> | undefined;
-  readonly realtime?: Readonly<Record<string, unknown>> | undefined;
-  readonly storage?: Readonly<Record<string, unknown>> | undefined;
-}
-
-/**
- * One remotely-managed local schema property. The managed surface is *defined*
- * by the table of these entries (`config-diff.managed.ts`): a schema path with
- * no entry is unmanaged by construction and never appears in a change set.
- */
-export interface ManagedConfigProperty {
-  /** Dotted local schema path, e.g. `"api.max_rows"`. Always a leaf. */
-  readonly path: string;
-  /** Which v2 block reports this property. */
-  readonly block: RemoteConfigBlock;
-  /**
-   * Secret-valued: the platform reports an HMAC (or omits the value), never
-   * plaintext. The property is "present, unknown" — excluded from comparison
-   * and surfaced via {@link ConfigChangeSet.masked} instead.
-   */
-  readonly secret?: boolean;
-  /**
-   * Reads this property's value from the response, coerced to the local
-   * schema's type. `undefined` means the response did not carry it.
-   */
-  readonly read: (remote: RemoteProjectConfig) => unknown;
-  /**
-   * Canonicalizes a value before equality on both sides (e.g. byte-size
-   * strings to byte counts). Reported values stay un-normalized.
-   */
-  readonly normalize?: (value: unknown) => unknown;
-}
 
 export type ConfigChangeClass = "update" | "remote_only" | "local_only";
 
 export interface ConfigChange {
-  /** Dotted local schema path. */
+  /** Dotted config path within the hosted subset, e.g. `"api.max_rows"`. */
   readonly path: string;
   /**
-   * `update`: declared locally and returned remotely, values differ.
-   * `remote_only`: returned remotely, not declared in the file, and differing
-   * from the schema default. `local_only`: declared in the file but the
-   * response did not account for it.
+   * `update`: declared locally and reported remotely, values differ.
+   * `remote_only`: reported remotely while the file does not declare it (or
+   * push cannot communicate the declared state), and differing from the
+   * default config's own convergence projection. `local_only`: the local
+   * projection carries a declared value the response did not account for.
    */
   readonly class: ConfigChangeClass;
-  /** Effective local value; `undefined` when the file does not declare it. */
+  /** Local convergence-projected value; `undefined` when absent. */
   readonly local: unknown;
-  /** Remote value; `undefined` when the response did not return it. */
+  /** Remote value; `undefined` when the response did not report it. */
   readonly remote: unknown;
   /** Environment variable a local `env()` reference resolved from, if any. */
   readonly envVariable?: string | undefined;
@@ -96,37 +55,37 @@ export interface ConfigChangeSet {
   /** Reportable differences, ordered by path. */
   readonly changes: ReadonlyArray<ConfigChange>;
   /**
-   * Managed secret paths the file sets a value for. These were never compared
-   * (the platform masks them), so a clean `changes` list is still only a
-   * partial claim — callers must surface this.
+   * Managed secret paths the file sets a value for (the registry's
+   * `isSecret` rows). These were never compared — the platform reports HMAC
+   * digests, and both normalizers omit secret leaves — so a clean `changes`
+   * list is still only a partial claim; callers must surface this.
    */
   readonly masked: ReadonlyArray<string>;
-  /** Blocks the response actually carried, ordered per {@link REMOTE_CONFIG_BLOCKS}. */
-  readonly scope: ReadonlyArray<RemoteConfigBlock>;
   readonly counts: ConfigChangeCounts;
 }
 
 export interface DiffProjectConfigOptions {
   /**
-   * The *effective* local config: decoded with defaults filled, `env()`
-   * resolved, and — when the target is a branch with a matching `[remotes.*]`
-   * block — merged per ADR 0018.
+   * The local operand: `fromConfigDocument({config, document})`'s prediction
+   * of the post-push hosted state (pass the loaded config WITH its raw
+   * document so raw-presence masking applies — ADR 0021's remedy).
    */
-  readonly local: EffectiveConfig;
+  readonly local: ProjectConfig;
+  /** The remote operand: `fromApiProjectConfig(response)`. */
+  readonly remote: ProjectConfig;
   /**
    * The raw (pre-decode, post-merge) document the config was loaded from.
    * Declares which paths the file actually sets — the decoded config cannot,
-   * because decoding materializes every default. `undefined` (a file that did
-   * not parse to an object) means nothing is declared.
+   * because decoding materializes every default. `undefined` (a file that
+   * did not parse to an object) means nothing is declared.
    */
   readonly declared: Readonly<Record<string, unknown>> | undefined;
-  readonly remote: RemoteProjectConfig;
   /**
    * Baseline for `remote_only` suppression: a remote value equal to this
-   * config's value at the same path is not drift. Defaults to the current
-   * schema's default config.
+   * projection's value at the same path is not drift. Defaults to the
+   * default config's own convergence projection.
    */
-  readonly defaults?: EffectiveConfig;
+  readonly defaults?: ProjectConfig;
   /** Dotted local path → environment variable name, for `env()` reporting. */
   readonly envReferences?: ReadonlyMap<string, string>;
 }
@@ -161,12 +120,31 @@ function isDeclaredAtPath(root: Readonly<Record<string, unknown>>, path: string)
   return true;
 }
 
+/** Collects dotted leaf paths (arrays are leaves; records recurse). */
+function collectLeafPaths(root: ProjectConfig): Array<string> {
+  const leaves: Array<string> = [];
+  const walk = (value: unknown, prefix: ReadonlyArray<string>): void => {
+    if (isPlainRecord(value)) {
+      for (const [key, child] of Object.entries(value)) {
+        walk(child, [...prefix, key]);
+      }
+      return;
+    }
+    if (prefix.length > 0) {
+      leaves.push(prefix.join("."));
+    }
+  };
+  walk(root, []);
+  return leaves;
+}
+
 function scalarEqual(a: unknown, b: unknown): boolean {
   if (a === b) {
     return true;
   }
-  // Type-aware comparison: the response may carry "8080" where the schema
-  // types the property as a number (or vice versa) — that is not drift.
+  // Type-aware comparison: both operands are already canonicalized by the
+  // convergence normalizers, but representation skew across schema versions
+  // ("8080" vs 8080, "true" vs true) is still not drift.
   if (typeof a === "string" && typeof b === "number") {
     const parsed = Number(a.trim());
     return a.trim() !== "" && Number.isFinite(parsed) && parsed === b;
@@ -218,69 +196,87 @@ export function isEqualConfigValue(a: unknown, b: unknown): boolean {
   return scalarEqual(a, b);
 }
 
+/** Deduped dotted config paths of the registry's secret (`isSecret`) rows. */
+const secretConfigPaths: ReadonlyArray<string> = [
+  ...new Set(
+    projectConfigMappingRows
+      .filter((row) => row.isSecret === true)
+      .map((row) => row.configPath.join(".")),
+  ),
+];
+
+// The default config's own convergence projection — the `remote_only`
+// suppression baseline. Lazy so importing this module never pays for a full
+// schema decode + projection up front.
+let defaultProjectionMemo: ProjectConfig | undefined;
+function defaultProjection(): ProjectConfig {
+  defaultProjectionMemo ??= fromConfigDocument(getDefaultCliConfig());
+  return defaultProjectionMemo;
+}
+
 /**
- * Classifies every managed property into the change set. Pure: no I/O, no
+ * Classifies every comparable path into the change set. Pure: no I/O, no
  * dependency on command flags or output formatting.
  */
 export function diffProjectConfig(options: DiffProjectConfigOptions): ConfigChangeSet {
-  const defaults = options.defaults ?? getDefaultCliConfig();
+  const defaults = options.defaults ?? defaultProjection();
   const declaredRoot = options.declared ?? {};
   const changes: Array<ConfigChange> = [];
-  const masked: Array<string> = [];
 
-  for (const property of MANAGED_CONFIG_PROPERTIES) {
-    const declared = isDeclaredAtPath(declaredRoot, property.path);
-
-    if (property.secret === true) {
-      if (declared) {
-        masked.push(property.path);
-      }
+  const paths = new Set([...collectLeafPaths(options.local), ...collectLeafPaths(options.remote)]);
+  for (const path of paths) {
+    if (!isComparableProjectConfigPath(path.split("."))) {
       continue;
     }
+    const localValue = valueAtPath(options.local, path);
+    const remoteValue = valueAtPath(options.remote, path);
+    const declared = isDeclaredAtPath(declaredRoot, path);
+    const envVariable = options.envReferences?.get(path);
 
-    const remoteValue = property.read(options.remote);
-    const localValue = valueAtPath(options.local, property.path);
-    const normalize = property.normalize ?? ((value: unknown) => value);
-    const envVariable = options.envReferences?.get(property.path);
-
-    if (remoteValue !== undefined && declared) {
-      if (!isEqualConfigValue(normalize(localValue), normalize(remoteValue))) {
-        changes.push({
-          path: property.path,
-          class: "update",
-          local: localValue,
-          remote: remoteValue,
-          ...(envVariable === undefined ? {} : { envVariable }),
-        });
+    if (localValue !== undefined && remoteValue !== undefined) {
+      if (isEqualConfigValue(localValue, remoteValue)) {
+        continue;
       }
+      // A declared value differing from the remote is an update; an
+      // undeclared one is remote-side drift against the (materialized)
+      // default the local projection carries.
+      changes.push(
+        declared
+          ? {
+              path,
+              class: "update",
+              local: localValue,
+              remote: remoteValue,
+              ...(envVariable === undefined ? {} : { envVariable }),
+            }
+          : { path, class: "remote_only", local: undefined, remote: remoteValue },
+      );
       continue;
     }
 
     if (remoteValue !== undefined) {
-      const defaultValue = valueAtPath(defaults, property.path);
-      // Optional-key sections (db.ssl_enforcement, db.settings, auth
-      // providers…) never materialize in the default config, so their paths
-      // have no baseline value. The platform still reports the unconfigured
-      // state for them as the type's zero value (false / "" / 0 / []) — an
-      // undeclared feature reporting its zero value is not drift.
+      // The local projection is silent: the file doesn't declare it, or push
+      // cannot communicate the declared state (ADR 0021's unmanaged-by-push
+      // families). Suppress the remote value when it matches the default
+      // config's own projection; for paths that projection is also silent on
+      // (push-gated containers), fall back to the raw default config's value
+      // (e.g. `db.network_restrictions.allowed_cidrs`'s allow-all default is
+      // exactly the platform's unconfigured state), then to the type's zero
+      // value (the platform's report of an unconfigured feature).
+      const baseline = valueAtPath(defaults, path) ?? valueAtPath(getDefaultCliConfig(), path);
       const suppressed =
-        defaultValue === undefined
+        baseline === undefined
           ? isZeroValue(remoteValue)
-          : isEqualConfigValue(normalize(defaultValue), normalize(remoteValue));
+          : isEqualConfigValue(baseline, remoteValue);
       if (!suppressed) {
-        changes.push({
-          path: property.path,
-          class: "remote_only",
-          local: undefined,
-          remote: remoteValue,
-        });
+        changes.push({ path, class: "remote_only", local: undefined, remote: remoteValue });
       }
       continue;
     }
 
     if (declared) {
       changes.push({
-        path: property.path,
+        path,
         class: "local_only",
         local: localValue,
         remote: undefined,
@@ -290,12 +286,12 @@ export function diffProjectConfig(options: DiffProjectConfigOptions): ConfigChan
   }
 
   changes.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  masked.sort();
+
+  const masked = secretConfigPaths.filter((path) => isDeclaredAtPath(declaredRoot, path)).sort();
 
   return {
     changes,
     masked,
-    scope: REMOTE_CONFIG_BLOCKS.filter((block) => isPlainRecord(options.remote[block])),
     counts: {
       update: changes.filter((change) => change.class === "update").length,
       remote_only: changes.filter((change) => change.class === "remote_only").length,

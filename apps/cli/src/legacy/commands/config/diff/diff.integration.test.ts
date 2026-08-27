@@ -481,6 +481,33 @@ describe("legacy config diff integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("an out-of-domain mapped value in the response maps to a decode error", () => {
+    // Wire-valid but semantically impossible: the registry's typed throw
+    // (ADR 0021 API-arm family) surfaces as a decode-flagged read error.
+    const { layer } = setup({
+      toml: 'project_id = "test"\n',
+      v2: {
+        status: 200,
+        body: v2Response({
+          attributes: (attributes) => ({
+            ...attributes,
+            storage: {
+              ...(attributes["storage"] as Record<string, unknown>),
+              file_size_limit: -1,
+            },
+          }),
+        }),
+      },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyConfigDiff(noFlags).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      const rendered = JSON.stringify(exit);
+      expect(rendered).toContain("LegacyConfigDiffReadNetworkError");
+      expect(rendered).toContain("failed to read project config");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("a remote config error status maps to the read status error", () => {
     const { layer } = setup({
       toml: 'project_id = "test"\n',

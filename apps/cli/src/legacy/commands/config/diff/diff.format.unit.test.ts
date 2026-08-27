@@ -2,26 +2,21 @@ import { describe, expect, test } from "vitest";
 
 import {
   legacyConfigDiffEnvReferences,
-  legacyConfigDiffRemoteBlocks,
+  legacyConfigDiffScope,
   legacyConfigDiffScopeLine,
 } from "./diff.format.ts";
 
-describe("legacyConfigDiffRemoteBlocks", () => {
-  test("keeps record blocks and drops non-record ones", () => {
-    const blocks = legacyConfigDiffRemoteBlocks({
-      api: { max_rows: 5 },
-      auth: {},
-      database: null,
-      pooler: undefined,
-      realtime: [1],
-      storage: "nope",
-    });
-    expect(blocks.api).toEqual({ max_rows: 5 });
-    expect(blocks.auth).toEqual({});
-    expect(blocks.database).toBeUndefined();
-    expect(blocks.pooler).toBeUndefined();
-    expect(blocks.realtime).toBeUndefined();
-    expect(blocks.storage).toBeUndefined();
+describe("legacyConfigDiffScope", () => {
+  test("lists record blocks the response carried, dropping non-records", () => {
+    expect(
+      legacyConfigDiffScope({
+        api: { max_rows: 5 },
+        auth: {},
+        database: null,
+        realtime: [1],
+        storage: "nope",
+      }),
+    ).toEqual(["api", "auth"]);
   });
 });
 
