@@ -660,6 +660,35 @@ describe("fromApiProjectConfig — db section", () => {
     });
   });
 
+  // Codex round 31, THREAD B — deliberate, not a gap: a consumed path prunes
+  // its WHOLE subtree at apiPath granularity, so a platform-added key nested
+  // inside a consumed array's element (here, `comment` on a cidr entry) is
+  // never itemized by unmappedApiFields — full fidelity lives in
+  // `_apiResponse` instead (unmappedApiFields's own docstring, and the
+  // alsoConsumes design comment above consumedApiPathKeys).
+  test("an extra key inside a consumed allowed_cidrs entry maps fine, is absent from unmappedApiFields, and survives in _apiResponse", () => {
+    const result = fromApiProjectConfig({
+      database: {
+        network_restrictions: {
+          allowed_cidrs: [{ address: "1.2.3.4/32", type: "v4", comment: "office" }],
+        },
+      },
+    });
+    // Both allowed_cidrs/allowed_cidrs_v6 rows read this same apiPath and
+    // filter by `type` (registry.ts's own `filterCidrAddresses`), so a
+    // v4-only entry still produces an (empty) v6 array.
+    expect(result.db?.network_restrictions).toEqual({
+      allowed_cidrs: ["1.2.3.4/32"],
+      allowed_cidrs_v6: [],
+    });
+    expect(unmappedApiFields(result)).toEqual({});
+    expect(result._apiResponse?.["database"]).toEqual({
+      network_restrictions: {
+        allowed_cidrs: [{ address: "1.2.3.4/32", type: "v4", comment: "office" }],
+      },
+    });
+  });
+
   test.each([
     ["missing address", { type: "v4" }],
     ["missing type", { address: "1.2.3.4/32" }],
@@ -1964,6 +1993,45 @@ describe("review round: non-JSON primitives, tiny hours, readonly report, whole-
     // Sanitizing produces a FRESH copy — unlike the all-finite case above,
     // this is no longer the shared frozen `_apiResponse` reference.
     expect(report["brand_new"]).not.toBe(result._apiResponse?.["brand_new"]);
+  });
+
+  // Codex round 31, THREAD C — unmappedApiFields must guard its own input
+  // boundary the same way the other public entry points do (toProjectConfig,
+  // attachApiResponse), rather than reading `config._apiResponse` directly
+  // and leaking a raw TypeError/Error past this package's typed contract.
+  test("a non-object operand throws the typed caller-misuse error", () => {
+    let thrown: unknown;
+    try {
+      unmappedApiFields(null as unknown as ProjectConfig);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
+  });
+
+  test("an object with a throwing _apiResponse getter throws the typed caller-misuse error, wrapping the accessor error", () => {
+    const poisoned: ProjectConfig = Object.defineProperty({}, "_apiResponse", {
+      get(): never {
+        throw new Error("boom");
+      },
+      enumerable: true,
+      configurable: true,
+    });
+    let thrown: unknown;
+    try {
+      unmappedApiFields(poisoned);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
+    expect((thrown as ProjectConfigParseError).cause).toBeInstanceOf(Error);
+    expect(((thrown as ProjectConfigParseError).cause as Error).message).toBe("boom");
+  });
+
+  test("a plain object without _apiResponse still returns an empty report", () => {
+    expect(unmappedApiFields({})).toEqual({});
   });
 
   test("document frequency durations quantize to whole seconds like the legacy push", () => {

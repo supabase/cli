@@ -77,6 +77,56 @@ Concrete behavior families, by normalizer:
   (`unmappedSecretApiPaths`) is still validated as string-or-null, even though its value is never
   emitted (`applyMappingRows`'s trailing loop, `project-config.ts:811-821`).
 
+## Limits (presence-relativity)
+
+The convergence prediction above is exact only for fields the INPUT actually speaks for — it degrades
+for `fromConfigDocument` specifically because the legacy push pipeline reads a signal `@supabase/config`
+decode discards: whether the raw `config.toml`/`.json` FILE literally wrote a key, as opposed to a
+decoded value merely holding that key's schema default. Verified directly (`getDefaultCliConfig()`, a
+fully-materialized decoded `CliConfig`, is the common real `fromConfigDocument` operand — its exported
+type accepts any `EffectiveConfig`, and a full `CliConfig` is one):
+
+- `auth.external` materializes all 19 provider entries after decode (`apple`, `azure`, `bitbucket`, …),
+  each defaulting to `{enabled: false, client_id: "", …}`, regardless of whether the raw file mentions
+  any of them. The legacy push mapper (`authSubsetFromConfig`,
+  `apps/cli/src/legacy/commands/config/push/config-sync/auth.sync.ts:1075-1084`) instead tracks which
+  providers the raw file actually declared (a `presence.externalProviders` set built from the raw
+  TOML/JSON walk, not from a decoded value) and only ever emits `apple` plus that set — never all 19.
+- `auth.email.smtp` decodes to `{enabled: false}` when the raw file never declares `[auth.email.smtp]`
+  at all (`Schema.optionalKey` on the field itself, but `enabled` inside it carries its own default).
+  The push mapper instead gates the ENTIRE smtp subset on raw presence (`!presence.smtp ||
+smtpConfig === undefined` skips it, `auth.sync.ts:1020-1024`) — a decoded document cannot distinguish
+  "the file never mentioned SMTP" from "the file wrote `enabled = false`" once decode has run, because
+  both read back identically.
+- The one field this could plausibly break today, `rate_limit.email_sent`, does not currently diverge:
+  push only sends it when `local.email.smtp !== undefined && local.email.smtp.enabled`
+  (`auth.sync.ts:2310-2313`), and since a decoded document's `smtp.enabled` is always `true` or `false`
+  (never `undefined`), this package's own cross-section rule (`applyDisabledSentinels`, gated on an
+  EXPLICIT `smtp.enabled === false`, above) already agrees with push in both the "raw file absent" and
+  "raw file declared, disabled" cases. The general principle — decode cannot recover "the file never
+  mentioned this" — still holds; this field simply doesn't have a push-side branch that depends on the
+  distinction, unlike the provider set above.
+
+Practical guidance: `fromConfigDocument`'s convergence claim holds EXACTLY for a genuinely sparse
+`EffectiveConfig` operand — one built to carry only the keys the caller means to speak for (e.g. a
+literal `{ api: { max_rows: 100 } }`, or one already run through `omitDefaultValues`). It holds only
+"exact modulo schema defaults" for a fully-materialized decoded document, the common case in practice.
+A caller composing `fromConfigDocument`'s output with the ADR 0018 subtraction core for a genuine
+local-vs-remote diff (CLI-2156) must first strip schema defaults with `omitDefaultValues` and intersect
+to the fields both operands actually speak for (the existing `ProjectConfig` docstring rule,
+`comparableProjectConfigPaths`/`isComparableProjectConfigPath`) — neither step is new to this ADR, but
+this is why both are load-bearing rather than optional cleanup. The residual categories this cannot
+fully resolve — an unmentioned provider push never manages showing up as if it were a locally-declared
+`enabled: false`; `email_sent` reads as declared even when push would have skipped it on raw absence —
+are honest-but-push-unactionable drift: real per the convergence definition above, but not something a
+user can act on by editing their file, since push was never going to touch that field either way.
+Tracked on CLI-2266, not fixed here.
+
+Raw-presence tracking or default-omission INSIDE `fromConfigDocument` itself is deliberately out of
+scope: `@supabase/config`'s public surface operates on decoded `CliConfig`/`EffectiveConfig` values,
+never raw file text, and the distinction above is not recoverable once decode has already run — there
+is no "was this key written in the file" bit left on a plain decoded object to read.
+
 ## Rationale
 
 - The alternative — verbatim projection on both sides — is what motivated every one of the 29 rounds'
@@ -155,7 +205,7 @@ config-sync/` rather than derived from a push mapper this package owns; a push-m
 ## See Also
 
 - Linear: CLI-2230 (PR supabase/cli#6339, `toProjectConfig`), CLI-2156 (`config diff`, the motivating
-  consumer)
+  consumer), CLI-2266 (the presence-relativity drift categories the Limits section defers)
 - `packages/config/src/project-config/registry-row.ts` — the `inverse` field's own note that a
   push-mapper sharing this registry is a follow-up, not yet implemented
 - Decided by Colum Ferry via drift-audit adjudication on PR supabase/cli#6339, 2026-08-27

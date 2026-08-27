@@ -303,6 +303,19 @@ function removePathAndEmptiedAncestors(
  * predicts what the hosted config will look like AFTER pushing `config`, not
  * `config`'s own declared hosted-section values — do not render it to a user
  * as "your local config".
+ *
+ * The convergence prediction is exact for a genuinely sparse `config` — one
+ * that only carries the keys the caller means to speak for. It holds only
+ * "exact modulo schema defaults" for a fully-materialized decoded document
+ * (the common case, since a full `CliConfig` is a valid operand): decode
+ * cannot recover whether the raw file actually wrote a key or merely
+ * inherited its schema default, a distinction the legacy push pipeline DOES
+ * read (e.g. it emits only the external providers the raw file declared,
+ * never every provider a decoded document defaults to). A caller diffing
+ * this function's output against a remote `ProjectConfig` should first strip
+ * schema defaults with `omitDefaultValues` and intersect to the fields both
+ * operands actually speak for — see ADR 0021's "Limits" section for the
+ * verified boundary and the residual drift categories it defers (CLI-2266).
  */
 export function fromConfigDocument(config: EffectiveConfig): ProjectConfig;
 // The implementation signature stays untyped for the same reason as
@@ -1275,6 +1288,14 @@ function pathKey(path: ReadonlyArray<string>): string {
  * gap: the alternative (only suppress when the anchor row actually fired)
  * would report the sibling as "unmapped" even though a future run where the
  * anchor IS present would fold it in identically, which is noise, not signal.
+ * Consumption is subtree-wide, not leaf-only, for the same reason: a
+ * platform-added key nested INSIDE a consumed value's own structure (e.g. a
+ * `comment` field added to an entry of `database.network_restrictions.
+ * allowed_cidrs`, itself one row's `apiPath`) is never itemized either —
+ * `walkUnmapped` prunes the whole subtree at the row's declared `apiPath`
+ * before ever descending into it, so a mapped container's internal shape is
+ * this registry version's business, not `unmappedApiFields`'s to re-report
+ * field-by-field; `_apiResponse` still carries it verbatim.
  */
 const consumedApiPathKeys: ReadonlySet<string> = (() => {
   const keys = new Set<string>();
@@ -1444,29 +1465,74 @@ function walkUnmapped(value: unknown, path: ReadonlyArray<string>, depth = 0): u
  * having no row at all). Empty objects are pruned from the result, so a
  * subtree that is entirely mapped never shows up as `{}` noise.
  *
+ * Reports at REGISTRY `apiPath` granularity, not full recursive fidelity: a
+ * key nested INSIDE a consumed subtree — including inside an element of a
+ * consumed array, e.g. an unexpected `comment` field on a
+ * `database.network_restrictions.allowed_cidrs` entry — is not itemized here
+ * either, since the whole subtree at that `apiPath` is already "known" to
+ * this registry version (`consumedApiPathKeys`'s own docstring). This is
+ * never lossy for the CALLER, only for this report: `_apiResponse` still
+ * carries every such key verbatim, so a consumer that needs full recursive
+ * fidelity reads it directly instead of relying on this helper.
+ *
  * The result can include the HMAC digest the API reports for a secret-typed
  * key neither a row nor `unmappedSecretApiPaths` knows about yet — a future
  * GoTrue secret, say, added on the platform side before this package's
  * `isSecret` rows catch up. Callers must not render this result blindly — an
  * HMAC digest is not a value a user should see echoed back at them. Throws
  * {@link ProjectConfigParseError} if `_apiResponse` is nested more than 64
- * levels deep.
+ * levels deep, or if `config` is not a plain object (`reason:
+ * "caller_misuse"`).
  */
 export function unmappedApiFields(config: ProjectConfig): {
   readonly [key: string]: ReadonlyJsonValue;
 };
-// The report's containers are rebuilt fresh, but leaf arrays/objects are
-// shared BY REFERENCE with the deep-frozen `_apiResponse` — a mutable return
-// type would compile `.push(...)` that throws at runtime. Same typed-overload
-// pattern as the normalizers above: the implementation stays untyped because
-// TypeScript cannot verify the structural walk.
-export function unmappedApiFields(config: ProjectConfig): unknown {
-  const rawAttributes = config._apiResponse;
+// Untyped for the same reason as `attachApiResponse` above (a JavaScript
+// caller can hand this public reader anything despite the compile-time
+// type), AND because the report's containers are rebuilt fresh while its
+// leaf arrays/objects are shared BY REFERENCE with the deep-frozen
+// `_apiResponse` — a mutable return type would compile `.push(...)` that
+// throws at runtime. TypeScript cannot verify the structural walk either
+// way; the overload above is the contract, pinned by the unit tests.
+export function unmappedApiFields(config: unknown): unknown {
+  // Guards the same boundary the other public entry points do: a non-object
+  // operand (or one whose `_apiResponse` getter throws, translated by
+  // `readApiResponseProperty` below) must surface as the documented typed
+  // failure instead of a raw TypeError/Error escaping this package's
+  // contract.
+  if (!isObject(config)) {
+    throw callerMisuseError(
+      `unmappedApiFields config must be an object, got ${nonObjectDescription(config)}`,
+    );
+  }
+  const rawAttributes = readApiResponseProperty(config);
   if (rawAttributes === undefined) {
     return {};
   }
   const result = walkUnmapped(rawAttributes, []);
   return isObject(result) ? result : {};
+}
+
+/**
+ * Reads `config._apiResponse` through the same guarded pattern as the
+ * envelope/dispatcher reads ({@link readEnvelopeProperty},
+ * {@link readSourceProperty}): plain data never carries getters, so an
+ * accessor that throws here is programmatic caller input (e.g. a foreign
+ * object with a throwing `_apiResponse` getter) and must surface as the
+ * documented failure type rather than a raw `Error` escaping past the
+ * telemetry classification.
+ */
+function readApiResponseProperty(config: Record<string, unknown>): unknown {
+  try {
+    return config["_apiResponse"];
+  } catch (cause) {
+    throw new ProjectConfigParseError({
+      message:
+        'reading "_apiResponse" threw — unmappedApiFields operands must be plain data, not accessor-backed',
+      cause,
+      reason: "caller_misuse",
+    });
+  }
 }
 
 /**
