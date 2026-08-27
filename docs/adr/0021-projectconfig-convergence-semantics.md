@@ -49,11 +49,14 @@ Concrete behavior families, by normalizer:
   function also carries the cross-section `rate_limit.email_sent` rule, gated on an EXPLICIT
   `smtp.enabled === false`, never on absence).
 - CSV re-splitting (`canonicalizeCommaJoinedArray`), uint clamping (`clampToUint`/`clampDocumentUint`),
-  `test_otp` map canonicalization (`canonicalizeTestOtpMap`), and duration/byte-size re-quantization
-  (`canonicalizeDurationString`, `canonicalizeWholeSecondsDurationString`, `canonicalizeFileSizeLimit`,
-  all in `registry-auth.ts`/`registry.ts`) — each replays the push pipeline's own
-  serialize-then-parse or unit conversion so a document spelling and the API's post-push spelling of
-  the same logical value converge on one representation.
+  `test_otp` map canonicalization (`canonicalizeTestOtpMap`), duration/byte-size re-quantization
+  (`canonicalizeDurationString`, `canonicalizeWholeSecondsDurationString`, `canonicalizeFileSizeLimit`),
+  and `smtp.port`'s `String`→`parseUint16` round trip (mirroring the push wrapper's own
+  `String(local.email.smtp.port)`, so a fractional or out-of-range document port is REMOVED rather
+  than kept, matching what the API arm reports for the same pushed state) — all in
+  `registry-auth.ts`/`registry.ts` — each replays the push pipeline's own serialize-then-parse or unit
+  conversion so a document spelling and the API's post-push spelling of the same logical value
+  converge on one representation.
 
 **`fromApiProjectConfig`** (`registry-auth.ts`, `registry.ts`, `project-config.ts`):
 

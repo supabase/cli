@@ -248,6 +248,51 @@ describe("fromConfigDocument", () => {
     expect(Object.hasOwn(projected.auth?.captcha ?? {}, "secret")).toBe(false);
   });
 
+  // Drift-audit fix (round 30, ADR 0021): the schema types `smtp.port` as an
+  // unrestricted number, but the push wrapper stringifies it
+  // (`String(local.email.smtp.port)`, auth.sync.ts:2390) and the API arm's
+  // own row only ever reports a value `parseUint16` accepts — so without a
+  // matching document-side round trip, a fractional/out-of-range document
+  // port would disagree with what the API arm reports for the same pushed
+  // state.
+  test("a fractional smtp.port is omitted (String->parseUint16 round trip), the rest of the block survives", () => {
+    const projected = fromConfigDocument({
+      auth: {
+        email: {
+          smtp: {
+            enabled: true,
+            host: "smtp.example.com",
+            port: 25.5,
+            user: "u",
+            admin_email: "a@b.c",
+            sender_name: "S",
+          },
+        },
+      },
+    });
+    expect(projected.auth?.email?.smtp).toEqual({
+      enabled: true,
+      host: "smtp.example.com",
+      user: "u",
+      admin_email: "a@b.c",
+      sender_name: "S",
+    });
+  });
+
+  test("an integer smtp.port survives the round trip unchanged", () => {
+    const projected = fromConfigDocument({
+      auth: { email: { smtp: { enabled: true, host: "smtp.example.com", port: 25 } } },
+    });
+    expect(projected.auth?.email?.smtp?.port).toBe(25);
+  });
+
+  test("an out-of-range smtp.port (past uint16) is omitted, matching the API arm's own bound", () => {
+    const projected = fromConfigDocument({
+      auth: { email: { smtp: { enabled: true, host: "smtp.example.com", port: 70_000 } } },
+    });
+    expect(Object.hasOwn(projected.auth?.email?.smtp ?? {}, "port")).toBe(false);
+  });
+
   test("prunes an empty container left behind by secret stripping, rather than keeping it as litter", () => {
     // `auth.captcha` here declares nothing but its secret leaf — a sparse
     // `EffectiveConfig` literal, not a decoded document (decoding would

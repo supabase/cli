@@ -850,6 +850,17 @@ const smtpRows: ReadonlyArray<ProjectConfigMappingRow> = [
       const port = parseUint16(expectString(value, smtpPortPath));
       return smtpExplicitlyDisabledInAttributes(attributes) ? undefined : port;
     },
+    // DOCUMENT-side round-trip (ADR 0021 drift-audit fix): the config schema
+    // types `smtp.port` as an unrestricted `Schema.Number`, but the push
+    // wrapper stringifies it verbatim (`String(local.email.smtp.port)`,
+    // auth.sync.ts:2390) and the row above only ever produces a value
+    // `parseUint16` accepts — so a fractional or out-of-range document port
+    // (`25.5`, `70000`) would push as a string this API arm's own row omits,
+    // while the unmirrored document side kept it. Replaying the exact
+    // String→parseUint16 round trip predicts that: `25` survives unchanged,
+    // `25.5`/out-of-range omit the field (REMOVED, not left verbatim — an
+    // omitted key is what the API arm reports for the same pushed state).
+    normalizeDocument: (value) => (typeof value === "number" ? parseUint16(String(value)) : value),
   },
   smtpSiblingStringRow(["auth", "email", "smtp", "user"], "smtp_user"),
   smtpSiblingStringRow(["auth", "email", "smtp", "admin_email"], "smtp_admin_email"),
