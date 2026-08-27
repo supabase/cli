@@ -7,11 +7,15 @@
 
 ## Files Read
 
-| Path                                     | Format     | When                                                                                                        |
-| ---------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`         | TOML       | always, to report the source directory it kept                                                              |
-| `<SUPABASE_HOME or ~/.supabase>/profile` | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set — names the profile, defaulting to `supabase`        |
-| `<SUPABASE_PROFILE>` (YAML)              | YAML       | when `SUPABASE_PROFILE` is a filesystem path rather than a built-in name; a read failure aborts the command |
+| Path                                          | Format     | When                                                                                                                                                                            |
+| --------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.json`              | JSON       | when present — preferred over `config.toml`; the source directory it kept. Best-effort: a config that will not load degrades to "nothing local" rather than failing the command |
+| `<workdir>/supabase/config.toml`              | TOML       | when no `config.json` exists — the same, on the same best-effort terms                                                                                                          |
+| `<worker source>/`                            | directory  | canonicalised and stat'd, to decide whether the kept-source line is stated at all                                                                                               |
+| `<SUPABASE_HOME or ~/.supabase>/access-token` | plain text | when `SUPABASE_ACCESS_TOKEN` is unset and the keyring holds no credential                                                                                                       |
+| `<workdir>/supabase/.temp/project-ref`        | plain text | when neither `--project-ref` nor `SUPABASE_PROJECT_ID` is set — names the linked project                                                                                        |
+| `<SUPABASE_HOME or ~/.supabase>/profile`      | plain text | when neither `--profile` nor `SUPABASE_PROFILE` is set — names the profile, defaulting to `supabase`                                                                            |
+| `<SUPABASE_PROFILE>` (YAML)                   | YAML       | when `SUPABASE_PROFILE` is a filesystem path rather than a built-in name; a read failure aborts the command                                                                     |
 
 ## Files Written
 
@@ -37,6 +41,7 @@ rather than deleting unasked.
 | -------- | ----------------------------------- | ------------ | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET`    | `/v2/projects/{ref}/workers/{name}` | Bearer token | none         | `instances.live` when present, else `spec.instances` (for the confirmation). A `403` is tolerated: the worker is treated as unknown and the `DELETE` still runs, since the two endpoints are granted separately (`edge_functions:read` vs `edge_functions:write`) |
 | `DELETE` | `/v2/projects/{ref}/workers/{name}` | Bearer token | none         | status only                                                                                                                                                                                                                                                       |
+| `GET`    | `/v1/projects`                      | Bearer token | none         | `id`, `name`, `organization_slug`, `region` — only when no ref resolved and the session is interactive, to populate the project picker                                                                                                                            |
 
 ## Exit Codes
 
@@ -52,13 +57,14 @@ rather than deleting unasked.
 
 ## Environment Variables
 
-| Variable                | Purpose                                              | Required?                                               |
-| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)  |
-| `SUPABASE_WORKDIR`      | project directory the command acts on                | no (falls back to `--workdir`, then the ancestor walk)  |
-| `SUPABASE_HOME`         | directory holding `telemetry.json`                   | no (falls back to `~/.supabase`)                        |
-| `SUPABASE_YES`          | auto-confirms the deletion, as `--yes` does          | no (defaults to prompting)                              |
+| Variable                | Purpose                                              | Required?                                                        |
+| ----------------------- | ---------------------------------------------------- | ---------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`)          |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)           |
+| `SUPABASE_PROJECT_ID`   | project ref, consulted after `--project-ref`         | no (falls back to `supabase/.temp/project-ref`, then the picker) |
+| `SUPABASE_WORKDIR`      | project directory the command acts on                | no (falls back to `--workdir`, then the ancestor walk)           |
+| `SUPABASE_HOME`         | directory holding `telemetry.json`                   | no (falls back to `~/.supabase`)                                 |
+| `SUPABASE_YES`          | auto-confirms the deletion, as `--yes` does          | no (defaults to prompting)                                       |
 
 ## Telemetry Events Fired
 
@@ -68,3 +74,14 @@ rather than deleting unasked.
 
 No custom events — only the `cli_command_executed` that the instrumentation
 wrapper emits for every command.
+
+## Output Formats
+
+| Mode                          | stdout                                                                                        | stderr                                        |
+| ----------------------------- | --------------------------------------------------------------------------------------------- | --------------------------------------------- |
+| text (default)                | the confirmation prompt, then what was deleted and kept                                       | that nothing local was kept, when nothing was |
+| `--output-format json`        | one structured result carrying `worker_name`, `project_ref`, `kept_*`                         | as above                                      |
+| `--output-format stream-json` | the same result as a single terminal event                                                    | as above                                      |
+| `-o json` / `yaml` / `toml`   | the same payload in that encoding, and nothing else                                           | as above                                      |
+| `-o pretty` / `table` / `csv` | the text rendering — these fall through rather than encoding                                  | as above                                      |
+| `-o env`                      | refused **before** the DELETE; discovering it at emit time deleted the worker and then failed | the error                                     |
