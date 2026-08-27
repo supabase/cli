@@ -310,10 +310,30 @@ function canonicalizeDurationString(value: unknown): unknown {
     return value;
   }
   try {
-    return durationString(truncateLikePushFormatter(parseDuration(value)));
+    return durationString(
+      roundTripThroughHoursPayload(truncateLikePushFormatter(parseDuration(value))),
+    );
   } catch {
     return value;
   }
+}
+
+/**
+ * The push payload's OWN float quantization, applied after
+ * {@link truncateLikePushFormatter}: the session fields travel as fractional
+ * HOURS — `durationToHours` is a bare `parseDuration(s) / 3.6e12`
+ * (auth.sync.ts:2621-2627) — and {@link hoursToDurationString} maps the
+ * hosted float back with `Math.round(|hours| * 3.6e12)`. That ns→hours→ns
+ * trip is not always exact ("1024h4s" = 3,686,404,000,000,000 ns comes back
+ * 1 ns high, rendering "1024h0m4.000000001s"), so the canonical document
+ * spelling must ride the same round trip to land on the value the API arm
+ * will actually report after a push. The arithmetic here mirrors
+ * `hoursToDurationString` exactly (magnitude first, sign second).
+ */
+function roundTripThroughHoursPayload(ns: number): number {
+  const hours = ns / NS_PER_HOUR;
+  const magnitudeNs = Math.round(Math.abs(hours) * NS_PER_HOUR);
+  return hours < 0 ? -magnitudeNs : magnitudeNs;
 }
 
 /**

@@ -2383,6 +2383,23 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
     }
   });
 
+  test("session canonicalization rides the push payload's hours round-trip", () => {
+    // Sessions travel as fractional hours (durationToHours = parse / 3.6e12,
+    // auth.sync.ts:2621-2627) and map back via Math.round(|hours| * 3.6e12) —
+    // "1024h4s" comes back one nanosecond high, so the canonical document
+    // spelling predicts that exact post-push reading.
+    const doc = fromConfigDocument({ auth: { sessions: { timebox: "1024h4s" } } });
+    expect(doc.auth?.sessions?.timebox).toBe("1024h0m4.000000001s");
+    // Cross-arm equality with the hosted hours value the push would store.
+    const api = fromApiProjectConfig({
+      auth: { sessions_timebox: 3_686_404_000_000_000 / 3_600_000_000_000 },
+    });
+    expect(api.auth?.sessions?.timebox).toBe(doc.auth?.sessions?.timebox);
+    // Values whose hours trip is exact stay untouched.
+    const exact = fromConfigDocument({ auth: { sessions: { timebox: "8760h30m" } } });
+    expect(exact.auth?.sessions?.timebox).toBe("8760h30m0s");
+  });
+
   test("orphan secret paths validate like isSecret rows before being suppressed", () => {
     // The four unmappedSecretApiPaths are in the consumed set, so without
     // validation a contract-invalid value (string-or-null only) would vanish
