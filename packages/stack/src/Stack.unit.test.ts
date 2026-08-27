@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-date-in-effect, effecttsgo/new-promise, effecttsgo/node-builtin-import, effecttsgo/prefer-schema-over-json, effecttsgo/run-effect-inside-effect -- Stack tests exercise native HTTP/filesystem fixtures and use direct runtime evaluation for synchronous lifecycle assertions.
+
 import { describe, expect, it } from "@effect/vitest";
 import { NodeServices } from "@effect/platform-node";
 import { buildGraph, ServiceNotFoundError } from "@supabase/process-compose";

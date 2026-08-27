@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/global-date-in-effect, effecttsgo/node-builtin-import, effecttsgo/prefer-schema-over-json -- Integration tests inspect native binary metadata, timestamps, and JSON manifests at the filesystem boundary.
+
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { zstdCompressSync } from "node:zlib";

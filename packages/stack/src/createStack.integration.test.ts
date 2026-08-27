@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/new-promise, effecttsgo/node-builtin-import -- Integration tests await the public stack facade and coordinate native process fixtures.
+
 import { createServer } from "node:net";
 import { existsSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";

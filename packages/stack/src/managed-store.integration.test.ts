@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/node-builtin-import, effecttsgo/prefer-schema-over-json -- Store integration tests use native temporary paths and inspect persisted JSON at the storage boundary.
+
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, PlatformError, Predicate } from "effect";

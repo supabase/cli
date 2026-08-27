@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import -- E2e warmup invokes the native package manager/process boundary.
+
 import { execSync } from "node:child_process";
 import { prefetch, type PrefetchOptions, type PrefetchResult } from "../../src/node.ts";
 

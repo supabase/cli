@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/node-builtin-import -- Postgres e2e tests drive native subprocess and filesystem fixtures through Vitest's Promise callbacks.
+
 import { execSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
