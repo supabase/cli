@@ -3,7 +3,7 @@ import { Effect } from "effect";
 import { legacyAqua } from "../shared/legacy-colors.ts";
 import { LegacyInvalidAccessTokenError } from "./legacy-errors.ts";
 
-export const LEGACY_ACCESS_TOKEN_PATTERN = /^sbp_(oauth_)?[a-f0-9]{40}$/;
+export const LEGACY_ACCESS_TOKEN_PATTERN = /^sbp_(oauth_|v\d+_)?[a-f0-9]{40}$/;
 
 /**
  * Message shown when no access token is available, passing `supabase login`

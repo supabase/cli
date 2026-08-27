@@ -28,6 +28,12 @@ describe("validateToken", () => {
       }),
     );
 
+    it.live("accepts sbp_v0_ prefix with 40 lowercase hex chars", () =>
+      Effect.gen(function* () {
+        yield* validateToken(`sbp_v0_${VALID_HEX_40}`);
+      }),
+    );
+
     it.live("accepts all valid hex characters (a-f, 0-9)", () =>
       Effect.gen(function* () {
         yield* validateToken("sbp_abcdef0123456789abcdef0123456789abcdef01");
