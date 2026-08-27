@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/supabase/cli/.github/ai-review/merged-review.schema.json",
+  "title": "AI review merged findings (Codex adjudication)",
+  "description": "Structured output contract for the Codex adjudication pass, passed as `output-schema-file` to `openai/codex-action`. Follows OpenAI structured-output strict-mode rules: every property is listed in `required`, `additionalProperties` is false at every level, and optional fields are expressed as nullable rather than omitted. Kept in sync by hand with the `assertMergedReview` validator in .github/scripts/ai-review/post-review.ts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "findings", "stats"],
+  "properties": {
+    "summary": {
+      "type": "string",
+      "description": "An honest executive summary of the merged review, after Codex's own independent pass and adjudication of every Claude finding."
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "file",
+          "line",
+          "end_line",
+          "severity",
+          "category",
+          "claim",
+          "evidence",
+          "suggested_fix",
+          "sources",
+          "adjudication"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Stable short identifier for this finding, e.g. `claude-1` or `codex-3`."
+          },
+          "file": {
+            "type": "string",
+            "description": "Repository-relative path of the file the finding applies to."
+          },
+          "line": {
+            "type": "integer",
+            "description": "1-based line number on the new (RIGHT) side of the diff."
+          },
+          "end_line": {
+            "type": ["integer", "null"],
+            "description": "1-based end line for findings spanning a range, or null."
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["critical", "major", "minor", "nit"],
+            "description": "critical = security issue or breaks users; major = likely bug or data loss; minor = correctness/quality concern; nit = style/polish."
+          },
+          "category": {
+            "type": "string",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "description": "Kebab-case category, e.g. `security`, `error-handling`, `test-coverage`."
+          },
+          "claim": {
+            "type": "string",
+            "description": "The finding itself, stated as a concrete claim."
+          },
+          "evidence": {
+            "type": "string",
+            "description": "Concrete file:line evidence backing the claim."
+          },
+          "suggested_fix": {
+            "type": ["string", "null"],
+            "description": "Concrete suggestion for how to address the finding, or null."
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["claude", "codex"]
+            },
+            "description": "Which review(s) surfaced this finding. Codex-originated findings use [\"codex\"]."
+          },
+          "adjudication": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["verdict", "reason"],
+            "properties": {
+              "verdict": {
+                "type": "string",
+                "enum": ["confirmed", "refuted", "uncertain"],
+                "description": "confirmed = Codex verified the evidence; refuted = Codex found concrete counter-evidence; uncertain = could not verify either way. Codex-originated findings are always \"confirmed\"."
+              },
+              "reason": {
+                "type": "string",
+                "description": "Why the finding was confirmed, refuted (with concrete counter-evidence), or left uncertain."
+              }
+            }
+          }
+        }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claude_total", "codex_total", "confirmed", "refuted", "uncertain"],
+      "properties": {
+        "claude_total": { "type": "integer", "description": "Number of findings Claude reported." },
+        "codex_total": {
+          "type": "integer",
+          "description": "Number of additional findings Codex's own independent pass surfaced."
+        },
+        "confirmed": {
+          "type": "integer",
+          "description": "Number of findings adjudicated confirmed."
+        },
+        "refuted": { "type": "integer", "description": "Number of findings adjudicated refuted." },
+        "uncertain": {
+          "type": "integer",
+          "description": "Number of findings adjudicated uncertain."
+        }
+      }
+    }
+  }
+}

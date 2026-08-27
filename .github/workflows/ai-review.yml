@@ -1,0 +1,257 @@
+name: AI Review
+
+# One-shot AI code review: replaces the Codex GitHub App's automatic
+# per-push reviews (which churned 30-40 short rounds per PR) with a single
+# exhaustive pass that runs at most once per PR. See
+# .github/ai-review/README.md for the full design and security model.
+#
+# Two ways to trigger a run today:
+#   - workflow_dispatch, for testing / ad-hoc runs against any PR number.
+#   - an internal maintainer commenting `/ai-review` on a PR.
+# The `pull_request` trigger below is intentionally commented out (shadow
+# mode) until the prompts are tuned against real PRs — see the README.
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "PR number to review"
+        required: true
+        type: string
+  issue_comment:
+    types:
+      - created
+  # Shadow-mode rollout: uncomment once the prompts have been tuned against
+  # recent real PRs (see .github/ai-review/README.md), and disable the Codex
+  # GitHub App's automatic reviews (chatgpt.com/codex/settings/code-review)
+  # in the same change so the two don't double-review every PR.
+  # pull_request:
+  #   types:
+  #     - opened
+  #     - ready_for_review
+
+permissions: {}
+
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number || github.event.issue.number || inputs.pr }}
+  cancel-in-progress: true
+
+jobs:
+  resolve:
+    name: Resolve
+    runs-on: ubuntu-latest
+    # For issue_comment events, only PR comments starting with /ai-review
+    # reach this job at all — deeper authorization (is the commenter an
+    # internal maintainer?) happens inside resolve.ts.
+    if: >
+      github.event_name != 'issue_comment' ||
+      (github.event.issue.pull_request != null && startsWith(github.event.comment.body, '/ai-review'))
+    permissions:
+      pull-requests: read
+      contents: read
+    outputs:
+      should_run: ${{ steps.resolve.outputs.should_run }}
+      skip_reason: ${{ steps.resolve.outputs.skip_reason }}
+      pr_number: ${{ steps.resolve.outputs.pr_number }}
+      head_ref: ${{ steps.resolve.outputs.head_ref }}
+      mode: ${{ steps.resolve.outputs.mode }}
+      trigger: ${{ steps.resolve.outputs.trigger }}
+    steps:
+      # Base repo, default ref — this job only ever reads PR metadata over
+      # the API, so it runs trusted repository code exclusively, never a
+      # PR's own code.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: ".bun-version"
+      - name: Resolve
+        id: resolve
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ inputs.pr || github.event.issue.number || github.event.pull_request.number }}
+          COMMENT_ID: ${{ github.event.comment.id }}
+          COMMENT_AUTHOR_LOGIN: ${{ github.event.comment.user.login }}
+          COMMENT_AUTHOR_ASSOCIATION: ${{ github.event.comment.author_association }}
+        run: bun .github/scripts/ai-review/resolve.ts
+
+  claude-review:
+    name: Claude review
+    needs: resolve
+    if: needs.resolve.outputs.should_run == 'true' && needs.resolve.outputs.mode == 'review'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # This job checks out the PR's own code, so it is deliberately locked
+    # down: read-only repo permissions, a read-only Claude tool allowlist
+    # (no write/edit tools, no arbitrary Bash), and no secrets beyond
+    # ANTHROPIC_API_KEY. The PR title, body, diff, and code are untrusted
+    # review subject matter, not something this job trusts with more access.
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.head_ref }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: ".bun-version"
+
+      - name: Fetch PR diff and metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.resolve.outputs.pr_number }}
+        run: |
+          mkdir -p /tmp/ai-review
+          gh pr diff "$PR" > /tmp/ai-review/pr.diff
+          gh pr view "$PR" --json number,title,body,baseRefName,headRefName,additions,deletions,changedFiles \
+            > /tmp/ai-review/pr.json
+
+      # Pin the exact published version so a new Claude Code release can't
+      # silently change review behavior mid-rollout; bump deliberately.
+      - name: Install Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code@2.1.247
+
+      - name: Run Claude review
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          set -uo pipefail
+          success=false
+          for attempt in 1 2; do
+            if claude -p "$(cat .github/ai-review/claude-review-prompt.md)" \
+              --model claude-fable-5 \
+              --output-format json \
+              --json-schema .github/ai-review/findings.schema.json \
+              --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)" \
+              --max-turns 50 \
+              > /tmp/ai-review/claude-raw.json &&
+              jq -e '.structured_output // (.result | fromjson)' /tmp/ai-review/claude-raw.json \
+                > /tmp/ai-review/claude-findings.json &&
+              bun .github/scripts/ai-review/post-review.ts validate-findings /tmp/ai-review/claude-findings.json
+            then
+              success=true
+              break
+            fi
+            echo "Claude review attempt $attempt failed; retrying..." >&2
+          done
+          if [ "$success" != "true" ]; then
+            echo "::error ::Claude review failed after 2 attempts." >&2
+            exit 1
+          fi
+
+      - name: Upload Claude findings
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: claude-findings
+          path: /tmp/ai-review/claude-findings.json
+          retention-days: 14
+
+  codex-review:
+    name: Codex review and adjudication
+    needs:
+      - resolve
+      - claude-review
+    # Same threat model as claude-review above: this job also checks out the
+    # PR's own untrusted code, so it stays read-only (`contents: read`,
+    # `safety-strategy: read-only` for Codex) with no write permissions.
+    permissions:
+      contents: read
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.head_ref }}
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: ".bun-version"
+
+      - name: Download Claude findings
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: claude-findings
+          path: /tmp/ai-review
+
+      - name: Fetch PR diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.resolve.outputs.pr_number }}
+        run: |
+          mkdir -p /tmp/ai-review
+          gh pr diff "$PR" > /tmp/ai-review/pr.diff
+
+      - name: Run Codex adjudication
+        uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e # v1.12
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: .github/ai-review/codex-adjudicate-prompt.md
+          model: gpt-5.6-sol
+          effort: high
+          output-schema-file: .github/ai-review/merged-review.schema.json
+          output-file: /tmp/ai-review/merged-review.json
+          safety-strategy: read-only
+          codex-args: "--sandbox read-only --ask-for-approval never"
+
+      - name: Validate merged review
+        run: bun .github/scripts/ai-review/post-review.ts validate-merged /tmp/ai-review/merged-review.json
+
+      - name: Upload merged review
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: merged-review
+          path: /tmp/ai-review/merged-review.json
+          retention-days: 14
+
+  post-review:
+    name: Post review
+    needs:
+      - resolve
+      - codex-review
+    # Runs when the diff was too large to review (codex-review never ran, it
+    # was skipped by its own dependency chain) or when codex-review actually
+    # succeeded. `!cancelled()` is required here because an explicit `if`
+    # replaces the default "all needed jobs succeeded" check, and codex-review
+    # is legitimately skipped (not successful) on the too-large path.
+    if: ${{ !cancelled() && needs.resolve.outputs.should_run == 'true' && (needs.resolve.outputs.mode == 'too-large' || needs.codex-review.result == 'success') }}
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      # SECURITY-CRITICAL: this is the only job with write permission, so it
+      # must only ever execute trusted base-branch code — never the PR head.
+      # Checking out `develop` explicitly (never `needs.resolve.outputs.head_ref`)
+      # keeps a malicious PR from smuggling a workflow-file or script change
+      # into the one job that can write back to the PR.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: develop
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: ".bun-version"
+
+      - name: Download merged review
+        if: needs.resolve.outputs.mode == 'review'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: merged-review
+          path: /tmp/ai-review
+
+      - name: Post review
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
+          MODE: ${{ needs.resolve.outputs.mode }}
+          MERGED_REVIEW_PATH: /tmp/ai-review/merged-review.json
+          TRIGGER: ${{ needs.resolve.outputs.trigger }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: bun .github/scripts/ai-review/post-review.ts post
