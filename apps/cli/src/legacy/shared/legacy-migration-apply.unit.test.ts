@@ -1124,6 +1124,9 @@ describe("legacyIsPipelineIncompatible", () => {
     ["reindex system with options", "REINDEX (VERBOSE) SYSTEM postgres", true],
     ["reindex table non-concurrent", "REINDEX TABLE public.widgets", false],
     ["alter database", "ALTER DATABASE demo SET search_path = public", false],
+    ["create subscription", "CREATE SUBSCRIPTION sub CONNECTION 'host=h' PUBLICATION pub", true],
+    ["drop subscription", "DROP SUBSCRIPTION IF EXISTS sub", true],
+    ["alter subscription", "ALTER SUBSCRIPTION sub DISABLE", false],
     [
       "lower-case create index concurrently",
       "create index concurrently widgets_id_idx on public.widgets(id)",

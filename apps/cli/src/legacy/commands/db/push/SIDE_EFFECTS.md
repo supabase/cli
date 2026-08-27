@@ -119,7 +119,8 @@ stdout is payload-only. A single `result` object is emitted:
   and does not resolve or decrypt their configured values.
 - **Pipeline-incompatible statements**: `CREATE [UNIQUE] INDEX CONCURRENTLY`,
   `DROP INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM`, `CLUSTER`,
-  `CREATE`/`DROP DATABASE`, `CREATE`/`DROP TABLESPACE`, and `REINDEX DATABASE`/`SYSTEM`
+  `CREATE`/`DROP DATABASE`, `CREATE`/`DROP TABLESPACE`, `REINDEX DATABASE`/`SYSTEM`, and
+  `CREATE`/`DROP SUBSCRIPTION`
   cannot run inside a
   transaction block (SQLSTATE 25001). The apply flushes (commits) the open batch, runs
   the statement standalone outside any transaction, then resumes batching; the history
