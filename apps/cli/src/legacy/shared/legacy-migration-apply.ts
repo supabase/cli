@@ -68,6 +68,7 @@ const DATABASE_DDL_PATTERN = /^(?:CREATE|DROP)\s+DATABASE(?:\s|$)/u;
 const TABLESPACE_DDL_PATTERN = /^(?:CREATE|DROP)\s+TABLESPACE(?:\s|$)/u;
 const REINDEX_DATABASE_PATTERN = /^REINDEX(?:\s+\([^)]*\))?\s+(?:DATABASE|SYSTEM)(?:\s|$)/u;
 const SUBSCRIPTION_DDL_PATTERN = /^(?:CREATE|DROP)\s+SUBSCRIPTION(?:\s|$)/u;
+const DISCARD_ALL_PATTERN = /^DISCARD\s+ALL(?:\s|$)/u;
 const TRANSACTION_CONTROL_PATTERN =
   /^(?:BEGIN|START\s+TRANSACTION|COMMIT|END|ABORT|PREPARE\s+TRANSACTION)(?:\s|$)/u;
 
@@ -103,7 +104,7 @@ const legacyTrimLeadingSqlComments = (sql: string): string => {
  * [UNIQUE] INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`,
  * `VACUUM`, `ALTER SYSTEM`, `CLUSTER`, `CREATE`/`DROP DATABASE`,
  * `CREATE`/`DROP TABLESPACE`, `REINDEX DATABASE`/`SYSTEM`,
- * `CREATE`/`DROP SUBSCRIPTION`. Such statements fail with
+ * `CREATE`/`DROP SUBSCRIPTION`, `DISCARD ALL`. Such statements fail with
  * SQLSTATE 25001 inside the transaction
  * created by a migration batch, so `execMigrationBatch` runs them standalone.
  * Port of `isPipelineIncompatible` (`pkg/migration/file.go`, supabase/cli#5156),
@@ -122,7 +123,8 @@ export const legacyIsPipelineIncompatible = (sql: string): boolean => {
     DATABASE_DDL_PATTERN.test(upper) ||
     TABLESPACE_DDL_PATTERN.test(upper) ||
     REINDEX_DATABASE_PATTERN.test(upper) ||
-    SUBSCRIPTION_DDL_PATTERN.test(upper)
+    SUBSCRIPTION_DDL_PATTERN.test(upper) ||
+    DISCARD_ALL_PATTERN.test(upper)
   );
 };
 
@@ -787,6 +789,13 @@ const execMigrationBatch = <E>(
           yield* session
             .exec(statement)
             .pipe(Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, statement)));
+          if (restoreRole !== undefined && legacyRevertsToLoginRole(statement)) {
+            yield* session
+              .exec(restoreRole)
+              .pipe(
+                Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, restoreRole)),
+              );
+          }
           executed += 1;
         } else {
           pending.push(statement);

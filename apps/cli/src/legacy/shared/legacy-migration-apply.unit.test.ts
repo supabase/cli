@@ -854,6 +854,29 @@ describe("legacyApplyMigrationFile", () => {
     );
   });
 
+  it.effect("re-asserts postgres right after a standalone role-reverting statement", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_discard.sql");
+    writeFileSync(file, "select 1;\nDISCARD ALL;\nselect 2;");
+    const { session, calls } = fakeSession({ restoreRoleSql: "SET SESSION ROLE postgres" });
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const execs = calls.filter((call) => call.kind === "exec").map((call) => call.sql);
+          expect(execs.slice(-2)).toEqual(["DISCARD ALL", "SET SESSION ROLE postgres"]);
+          const batches = calls.filter((call) => call.kind === "batch");
+          expect(batches[0]?.statements?.map(({ sql }) => sql)).toEqual(["select 1"]);
+          expect(batches[1]?.statements?.map(({ sql }) => sql)).toEqual([
+            "select 2",
+            "SET SESSION ROLE postgres",
+            expect.stringContaining("supabase_migrations.schema_migrations"),
+          ]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("reports a mid-file restore's own failure at its host statement", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
     const file = join(dir, "20240101120000_fail.sql");
@@ -1127,6 +1150,8 @@ describe("legacyIsPipelineIncompatible", () => {
     ["create subscription", "CREATE SUBSCRIPTION sub CONNECTION 'host=h' PUBLICATION pub", true],
     ["drop subscription", "DROP SUBSCRIPTION IF EXISTS sub", true],
     ["alter subscription", "ALTER SUBSCRIPTION sub DISABLE", false],
+    ["discard all", "DISCARD ALL", true],
+    ["discard temp", "DISCARD TEMP", false],
     [
       "lower-case create index concurrently",
       "create index concurrently widgets_id_idx on public.widgets(id)",
