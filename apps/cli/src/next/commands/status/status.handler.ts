@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect";
+import { Context, Effect, Layer, Option, Predicate } from "effect";
 import { loadCliConfig } from "@supabase/config/effect";
 import {
   connectLayer,
@@ -12,10 +12,59 @@ import { CliProjectHome } from "../../config/cli-project-home.service.ts";
 import { resolveServiceVersionContext } from "../../config/service-version-resolution.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import { CLI_VERSION } from "../../../shared/cli/version.ts";
 import type { StatusFlags } from "./status.command.ts";
 import { managedPortIntents } from "../../config/managed-port-intents.ts";
 import { isExcludedStackService, toStartStackConfig } from "../../config/stack-config.ts";
 import { formatPortDriftWarning } from "../../stack/port-drift.ts";
+
+const renderUpgradeRequiredStatus = Effect.fnUntraced(function* (input: {
+  readonly summary: StackSummary;
+  readonly error: {
+    readonly oldCliVersion: string;
+    readonly newCliVersion: string;
+    readonly state: "starting" | "running" | "stopping" | "deleting" | "failed";
+    readonly ready: boolean;
+  };
+}) {
+  const output = yield* Output;
+  const message = "Local Supabase stack is managed by a different CLI version.";
+  const running = input.error.state === "running" && input.error.ready;
+  const data = {
+    stack: input.summary.name,
+    running,
+    state: input.error.state,
+    ready: input.error.ready,
+    degraded: true,
+    reason: "daemon_upgrade_required" as const,
+    daemon_cli_version: input.error.oldCliVersion,
+    cli_version: input.error.newCliVersion,
+    ports: input.summary.ports,
+    versions: input.summary.versions,
+    launch: input.summary.launch,
+    instruction: "Run `supabase start` to restart the stack with the current CLI.",
+  };
+
+  if (output.format !== "text") {
+    yield* output.success(message, data);
+    return;
+  }
+
+  yield* output.warn(message);
+  yield* output.info(`Stack: ${input.summary.name}`);
+  yield* output.info(`Daemon CLI: ${input.error.oldCliVersion}`);
+  yield* output.info(`Current CLI: ${input.error.newCliVersion}`);
+  yield* output.info(`State: ${input.error.state}`);
+  yield* output.info(`Ready: ${String(input.error.ready)}`);
+  yield* output.info(formatPortsLine(input.summary.ports));
+  yield* output.info(`Runtime mode: ${input.summary.launch.mode}`);
+  for (const [name, version] of Object.entries(input.summary.versions).sort(([a], [b]) =>
+    a.localeCompare(b),
+  )) {
+    yield* output.info(`${name} version: ${version}`);
+  }
+  yield* output.info(data.instruction);
+});
 
 function formatServiceStateLine(service: {
   readonly name: string;
@@ -85,23 +134,37 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
 
   yield* output.intro("Show local Supabase stack status");
 
-  const layer = yield* connectLayer({
+  const summaryInput = {
+    cacheRoot: cliSettings.supabaseHome,
+    projectDir: cliProjectHome.projectRoot,
+    cwd: runtimeInfo.cwd,
+    name: _flags.stack,
+  };
+  const layerResult = yield* connectLayer({
+    cliVersion: CLI_VERSION,
     cwd: runtimeInfo.cwd,
     cacheRoot: cliSettings.supabaseHome,
     projectDir: cliProjectHome.projectRoot,
     name: _flags.stack,
   }).pipe(
-    Effect.map(Option.some),
-    Effect.catchTag("NoRunningStackError", () => Effect.succeed(Option.none())),
+    Effect.map((layer) => ({ _tag: "live" as const, layer })),
+    Effect.catchTag("DaemonUpgradeRequired", (error) =>
+      Effect.succeed({ _tag: "upgrade" as const, error }),
+    ),
+    Effect.catchTag("NoRunningStackError", () => Effect.succeed({ _tag: "none" as const })),
   );
 
-  if (Option.isNone(layer)) {
-    const summary = yield* resolveConfiguredSummary({
-      cacheRoot: cliSettings.supabaseHome,
-      projectDir: cliProjectHome.projectRoot,
-      cwd: runtimeInfo.cwd,
-      name: _flags.stack,
-    }).pipe(
+  if (Predicate.isTagged(layerResult, "upgrade")) {
+    // An incompatible daemon is authoritative for its own managed summary.
+    // Do not parse the current checkout's config before rendering this status:
+    // a newer CLI may have introduced config that this CLI cannot decode.
+    const summary = yield* resolveStackSummary(summaryInput);
+    yield* renderUpgradeRequiredStatus({ summary, error: layerResult.error });
+    return;
+  }
+
+  if (Predicate.isTagged(layerResult, "none")) {
+    const summary = yield* resolveConfiguredSummary(summaryInput).pipe(
       Effect.map(Option.some),
       Effect.catchTag("NoRunningStackError", () => Effect.succeed(Option.none())),
     );
@@ -153,15 +216,29 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
     return;
   }
 
-  const summary = yield* resolveConfiguredSummary({
-    cacheRoot: cliSettings.supabaseHome,
-    projectDir: cliProjectHome.projectRoot,
-    cwd: runtimeInfo.cwd,
-    name: _flags.stack,
-  });
+  const stackResult = yield* Effect.scoped(
+    Effect.gen(function* () {
+      const context = yield* Layer.build(layerResult.layer);
+      const stack = Context.get(context, Stack);
+      const [info, services] = yield* Effect.all([stack.getInfo(), stack.getAllStates()]);
+      return { _tag: "live" as const, info, services };
+    }),
+  ).pipe(
+    Effect.catchTag("DaemonUpgradeRequired", (error) =>
+      Effect.succeed({ _tag: "upgrade" as const, error }),
+    ),
+  );
+  if (Predicate.isTagged(stackResult, "upgrade")) {
+    // Layer construction performs the second owner/version handshake. As with
+    // the initial connect path, render the daemon's managed document directly
+    // so an incompatible checkout config cannot prevent upgrade guidance.
+    const summary = yield* resolveStackSummary(summaryInput);
+    yield* renderUpgradeRequiredStatus({ summary, error: stackResult.error });
+    return;
+  }
 
-  const stack = yield* Effect.provide(Stack, layer.value);
-  const [info, services] = yield* Effect.all([stack.getInfo(), stack.getAllStates()]);
+  const summary = yield* resolveConfiguredSummary(summaryInput);
+  const { info, services } = stackResult;
   const serviceVersionContext = yield* resolveServiceVersionContext(
     [],
     fillServiceVersionManifest(summary.versions),

@@ -51,6 +51,8 @@ export interface ManagedStackDocument {
   };
   readonly ports: ReadonlyArray<ManagedPortAssignment>;
   readonly lifecycle: ManagedStackDocumentLifecycle;
+  /** A durable fence written by the identity-scoped public stop operation. */
+  readonly stopIntent?: "explicit";
   readonly runtime?: {
     readonly pid: number;
     readonly controlEndpoint: string;
@@ -104,6 +106,7 @@ const managedStackDocumentSchema = Schema.Struct({
   }),
   ports: Schema.Array(managedPortAssignmentSchema),
   lifecycle: Schema.Literals(["stopped", "starting", "running", "deleting", "failed"]),
+  stopIntent: Schema.optionalKey(Schema.Literal("explicit")),
   runtime: Schema.optionalKey(
     Schema.Struct({
       pid: Schema.Number,

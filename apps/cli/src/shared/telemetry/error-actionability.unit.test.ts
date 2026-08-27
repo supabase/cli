@@ -489,6 +489,56 @@ describe("classifyCliErrorActionability", () => {
     expect(readiness.suggested_command).toBe("supabase start");
   });
 
+  it("classifies control stop conflicts as a sanitized internal invariant failure", () => {
+    const result = classifyCliErrorActionability({
+      _tag: "ControlStopConflictError",
+      endpoint: "http://127.0.0.1:54321",
+    });
+
+    expect(result).toEqual({
+      error_kind: "internal_bug",
+      error_category: "impossible_state",
+      error_fingerprint: "tag:ControlStopConflictError:managed_control_stop_conflict",
+      has_suggestion: true,
+      suggestion_type: "rerun_debug",
+    });
+    expect(JSON.stringify(result)).not.toContain("127.0.0.1");
+  });
+
+  it("classifies maintenance contention as a retryable user action", () => {
+    const result = classifyCliErrorActionability({
+      _tag: "ControlMaintenanceBusyError",
+      endpoint: "http://127.0.0.1:54321",
+    });
+
+    expect(result).toEqual({
+      error_kind: "user_actionable",
+      error_category: "invalid_config",
+      error_fingerprint: "tag:ControlMaintenanceBusyError:managed_control_maintenance_busy",
+      has_suggestion: true,
+      suggestion_type: "run_command",
+    });
+    expect(JSON.stringify(result)).not.toContain("127.0.0.1");
+  });
+
+  it("classifies loopback control transport failures as local stack failures", () => {
+    const result = classifyCliErrorActionability({
+      _tag: "ControlTransportError",
+      endpoint: "http://127.0.0.1:54321",
+      reason: "unreachable",
+    });
+
+    expect(result).toEqual({
+      error_kind: "user_actionable",
+      error_category: "invalid_config",
+      error_fingerprint: "tag:ControlTransportError:managed_control_transport",
+      has_suggestion: true,
+      suggestion_type: "run_command",
+      suggested_command: "supabase start",
+    });
+    expect(JSON.stringify(result)).not.toContain("127.0.0.1");
+  });
+
   it("splits docker pull failures from a stopped docker daemon", () => {
     const daemonDown = classifyCliErrorActionability({
       _tag: "DockerPullError",
@@ -817,6 +867,15 @@ describe("classifyCliErrorActionability", () => {
     expect(status.error_category).toBe("invalid_config");
     expect(status.suggested_command).toBe("supabase stop");
     expect(status.error_fingerprint).toBe("tag:HttpTransportClientError:daemon_transport");
+  });
+
+  it("classifies loopback stack RPC transport failures as a recoverable local stack failure", () => {
+    const result = classifyCliErrorActionability({ _tag: "StackRpcTransportError" });
+
+    expect(result.error_kind).toBe("user_actionable");
+    expect(result.error_category).toBe("invalid_config");
+    expect(result.suggested_command).toBe("supabase start");
+    expect(result.error_fingerprint).toBe("tag:StackRpcTransportError:daemon_transport");
   });
 
   it("keeps daemon status and protocol failures in the internal-bug bucket", () => {

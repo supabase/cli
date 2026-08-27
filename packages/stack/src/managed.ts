@@ -33,6 +33,7 @@ export {
   ControlProtocolMismatchError,
   ControlTransportError,
   InvalidControlOwnershipIdError,
+  isControlOwnership,
 } from "./managed/control.ts";
 export type {
   ControlAcquisition,

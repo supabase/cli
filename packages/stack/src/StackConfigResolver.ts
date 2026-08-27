@@ -422,7 +422,7 @@ const enabledServiceConfig = <Config extends object>(
   config: Config | false | undefined,
 ): Config | undefined => (enabled && config !== false ? config : undefined);
 
-const rawServiceEnabled = (config: StackConfig, service: ServiceName): boolean => {
+export const rawServiceEnabled = (config: StackConfig, service: ServiceName): boolean => {
   switch (service) {
     case "postgres":
       return true;

@@ -25,8 +25,9 @@
     "cli-release": "bun tools/release/local-release.ts"
   },
   "devDependencies": {
+    "@tsconfig/bun": "catalog:",
+    "@types/bun": "catalog:",
     "knip": "catalog:",
-    "nx": "catalog:",
     "oxfmt": "catalog:",
     "oxlint": "catalog:",
     "oxlint-tsgolint": "catalog:",

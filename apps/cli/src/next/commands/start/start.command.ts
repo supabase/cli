@@ -3,6 +3,7 @@ import { loadCliConfig } from "@supabase/config/effect";
 import {
   DEFAULT_MANAGED_STACK_NAME,
   daemonLayer,
+  restartManagedStackForUpgrade,
   fillServiceVersionManifest,
   resolveStackSummary,
   type StackSummary,
@@ -35,6 +36,7 @@ import { inkLayer } from "../../../shared/runtime/ink.layer.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { withCommandInstrumentation } from "../../../shared/telemetry/command-instrumentation.ts";
 import { start } from "./start.handler.ts";
+import { CLI_VERSION } from "../../../shared/cli/version.ts";
 
 export const excludeFlag = Flag.choice("exclude", excludedStackServices).pipe(
   Flag.atMost(excludedStackServices.length),
@@ -64,7 +66,12 @@ interface StartVersionStateShape {
   readonly launch: {
     readonly mode?: StartMode;
     readonly versions: Readonly<Record<string, string>>;
-    readonly excludedServices: ReadonlyArray<ExcludedStackService>;
+    /**
+     * Preserve the managed document's raw exclusions. The document may contain
+     * service names introduced by a newer CLI; narrowing is only appropriate
+     * when deriving the current runtime configuration.
+     */
+    readonly excludedServices: ReadonlyArray<string>;
   };
   readonly previousUpdateFingerprint?: string;
   readonly drift?: NonNullable<StackSummary["drift"]>;
@@ -74,12 +81,28 @@ interface StartVersionStateShape {
     readonly workspacePath: string;
     readonly stackName: string;
     readonly cwd: string;
+    readonly cliVersion: string;
   };
 }
 
 export class StartVersionState extends Context.Service<StartVersionState, StartVersionStateShape>()(
   "supabase/commands/start/StartVersionState",
 ) {}
+
+/**
+ * Project the managed launch metadata observed after daemon startup into the
+ * state consumed by the start handler. The post-start summary is authoritative:
+ * an incompatible-owner upgrade restart may preserve selections from the existing
+ * daemon even when this invocation supplied different flags or version defaults.
+ * @internal
+ */
+export const startVersionStateLaunch = (
+  summary: Pick<StackSummary, "launch">,
+): StartVersionStateShape["launch"] => ({
+  mode: summary.launch.mode,
+  versions: summary.launch.versions,
+  excludedServices: summary.launch.excludedServices ?? [],
+});
 
 const flags = {
   stack: Flag.string("stack").pipe(
@@ -197,7 +220,8 @@ export const startCommand = Command.make("start", flags).pipe(
           : { lastNotifiedUpdateFingerprint: existingSummary.lastNotifiedUpdateFingerprint }),
       };
 
-      const stackLayer = yield* daemonLayer({
+      const managedInput = {
+        cliVersion: CLI_VERSION,
         cacheRoot: cliSettings.supabaseHome,
         cwd: runtimeInfo.cwd,
         projectDir: cliProjectHome.projectRoot,
@@ -205,7 +229,20 @@ export const startCommand = Command.make("start", flags).pipe(
         portIntents,
         launch,
         ...stackConfig,
-      });
+      };
+      const stackLayer = yield* daemonLayer(managedInput).pipe(
+        Effect.catchTag("DaemonUpgradeRequired", (error) =>
+          output
+            .warn(
+              [
+                `Local stack was started with CLI v${error.oldCliVersion}. Restarting it with CLI v${error.newCliVersion}.`,
+                "Database and storage data, pinned service versions, and sticky ports will be preserved.",
+                "Existing connections will briefly disconnect.",
+              ].join("\n"),
+            )
+            .pipe(Effect.andThen(restartManagedStackForUpgrade(managedInput, error))),
+        ),
+      );
       const summary = yield* resolveStackSummary({
         cacheRoot: cliSettings.supabaseHome,
         projectDir: cliProjectHome.projectRoot,
@@ -215,11 +252,7 @@ export const startCommand = Command.make("start", flags).pipe(
       return {
         stackLayer,
         startVersionState: StartVersionState.of({
-          launch: {
-            mode: summary.launch.mode,
-            versions: serviceVersionContext.pinnedBaseline,
-            excludedServices: flags.exclude,
-          },
+          launch: startVersionStateLaunch(summary),
           ...(summary.lastNotifiedUpdateFingerprint === undefined
             ? {}
             : { previousUpdateFingerprint: summary.lastNotifiedUpdateFingerprint }),
@@ -232,6 +265,7 @@ export const startCommand = Command.make("start", flags).pipe(
             workspacePath: cliProjectHome.projectRoot,
             stackName: flags.stack,
             cwd: runtimeInfo.cwd,
+            cliVersion: CLI_VERSION,
           },
         }),
       };

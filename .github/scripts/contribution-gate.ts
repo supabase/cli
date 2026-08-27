@@ -46,8 +46,11 @@ export const INTERNAL_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]
  * external contributor. The legacy REST `permission` field collapses the
  * `maintain` role to `write`, so `admin`/`write` covers every push-capable
  * role.
+ *
+ * Exported for `resolve.ts`, which requires the same write-permission bar to
+ * authorize a `/ai-review` command.
  */
-const WRITE_PERMISSIONS = new Set(["admin", "write"]);
+export const WRITE_PERMISSIONS = new Set(["admin", "write"]);
 
 /**
  * Decide whether a PR author is internal (exempt from the gate). Combines the

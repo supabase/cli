@@ -1,7 +1,7 @@
 import { Effect, FileSystem, Redacted } from "effect";
-import { CliConfigSchema } from "./base.ts";
 import { CliProjectEnvParseError } from "./errors.ts";
 import { ENV_CAPTURE_REGEX, ENV_CAPTURE_REGEX_STRICT, isEnvReference } from "./lib/env.ts";
+import { isSecretPath } from "./lib/secret-paths.ts";
 import { findCliProjectPaths, type CliProjectPaths } from "./paths.ts";
 
 const dotEnvLinePattern =
@@ -252,69 +252,6 @@ export const loadCliProjectEnvironment = Effect.fnUntraced(function* (
     sources,
   } satisfies CliProjectEnvironment;
 });
-
-function collectSecretPathPatterns(
-  node: {
-    readonly annotations?: Record<string, unknown>;
-    readonly propertySignatures?: ReadonlyArray<{
-      readonly name: string;
-      readonly type: unknown;
-    }>;
-    readonly indexSignatures?: ReadonlyArray<{
-      readonly type: unknown;
-    }>;
-  },
-  prefix: ReadonlyArray<string> = [],
-): Array<ReadonlyArray<string>> {
-  const patterns: Array<ReadonlyArray<string>> = [];
-
-  if (node.annotations?.["x-secret"] === true) {
-    patterns.push(prefix);
-  }
-
-  for (const property of node.propertySignatures ?? []) {
-    patterns.push(
-      ...collectSecretPathPatterns(
-        property.type as Parameters<typeof collectSecretPathPatterns>[0],
-        [...prefix, property.name],
-      ),
-    );
-  }
-
-  for (const indexSignature of node.indexSignatures ?? []) {
-    patterns.push(
-      ...collectSecretPathPatterns(
-        indexSignature.type as Parameters<typeof collectSecretPathPatterns>[0],
-        [...prefix, "*"],
-      ),
-    );
-  }
-
-  return patterns;
-}
-
-const secretPathPatterns = collectSecretPathPatterns(CliConfigSchema.ast as never);
-
-function matchesPathPattern(
-  pattern: ReadonlyArray<string>,
-  actual: ReadonlyArray<string>,
-): boolean {
-  if (pattern.length !== actual.length) {
-    return false;
-  }
-
-  for (let index = 0; index < pattern.length; index += 1) {
-    if (pattern[index] !== "*" && pattern[index] !== actual[index]) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-function isSecretPath(path: ReadonlyArray<string>): boolean {
-  return secretPathPatterns.some((pattern) => matchesPathPattern(pattern, path));
-}
 
 function interpolateLeafValue(
   value: string,
