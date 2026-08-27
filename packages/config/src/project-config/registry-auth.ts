@@ -1167,7 +1167,11 @@ const smsCredentialRows: ReadonlyArray<ProjectConfigMappingRow> = [
 // HOOKS ×6 (auth.sync.ts:1319-1379; top-level config key is `hook`, singular
 // — see ../auth/hooks.ts)
 
-const AUTH_HOOK_NAMES = [
+// Exported so `../project-config.ts`'s raw-presence mask (human review round
+// on PR #6339, thread 1) can walk the same six names rather than keeping a
+// second hand-copied list — mirrors `SMS_PROVIDER_PUSH_PRECEDENCE`'s own
+// export/reuse for the same reason.
+export const AUTH_HOOK_NAMES = [
   "mfa_verification_attempt",
   "password_verification_attempt",
   "custom_access_token",

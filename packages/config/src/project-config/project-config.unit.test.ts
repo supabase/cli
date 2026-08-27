@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { CliConfigSchema } from "../base.ts";
+import type { LoadedCliConfig } from "../config-document.ts";
 import { ProjectConfigParseError } from "../errors.ts";
 import { isSecretPath, secretPathPatterns } from "../lib/secret-paths.ts";
 import { getDefaultCliConfig, omitDefaultValues, subtractCliConfig } from "../sparse.ts";
@@ -2173,11 +2174,36 @@ describe("review round: Go-range sessions, SMTP/provider/storage disabled sentin
     expect(unmappedApiFields(sparse)).toEqual({});
   });
 
-  test("disabled storage features project only their toggle", () => {
+  // Thread 3 (human review round on PR #6339): storageToUpdateBody only
+  // emits Iceberg/Vector inside a truthy `if (local.analytics.enabled)`
+  // branch (storage.sync.ts:287-300) — a disabled container is push-
+  // unmanaged, not confirmed-off, so the DOCUMENT arm omits it entirely
+  // rather than projecting `{enabled: false}`. The API arm is unaffected:
+  // its own `{enabled: false}` reflects real hosted state GoTrue reports.
+  test("a disabled storage.analytics/vector container is omitted entirely on the document arm, but the API arm still projects its toggle", () => {
     const projected = fromConfigDocument({
-      storage: { analytics: { enabled: false, max_tables: 10 } },
+      storage: {
+        analytics: { enabled: false, max_tables: 10 },
+        vector: { enabled: false, max_buckets: 5 },
+      },
     });
-    expect(projected.storage?.analytics).toEqual({ enabled: false });
+    expect(Object.hasOwn(projected.storage ?? {}, "analytics")).toBe(false);
+    expect(Object.hasOwn(projected.storage ?? {}, "vector")).toBe(false);
+
+    const enabledDoc = fromConfigDocument({
+      storage: { analytics: { enabled: true, max_tables: 10, max_namespaces: 1, max_catalogs: 1 } },
+    });
+    expect(enabledDoc.storage?.analytics).toEqual({
+      enabled: true,
+      max_tables: 10,
+      max_namespaces: 1,
+      max_catalogs: 1,
+    });
+
+    const api = fromApiProjectConfig({
+      storage: { features: { iceberg_catalog: { enabled: false, max_tables: 10 } } },
+    });
+    expect(api.storage?.analytics).toEqual({ enabled: false });
   });
 
   test("disabled external providers project only their toggle", () => {
@@ -2475,19 +2501,58 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
     // The push mapper sends the local value unchanged (auth.sync.ts:
     // 2304-2309) and the pull direction clamps what the API reports — a
     // pushed -1 projects back as 0, so the document spelling converges.
+    // `api.max_rows` is the one exception (thread 2, human review round on
+    // PR #6339): push OMITS max_rows entirely when non-positive
+    // (api.sync.ts:141), so the document arm omits rather than clamps —
+    // see the dedicated max_rows tests below for the full omit/keep matrix.
     const doc = fromConfigDocument({
       auth: { rate_limit: { anonymous_users: -1 } },
       api: { enabled: true, max_rows: -5 },
       storage: { analytics: { enabled: true, max_tables: -3 } },
     });
     expect(doc.auth?.rate_limit?.anonymous_users).toBe(0);
-    expect(doc.api?.max_rows).toBe(0);
+    expect(Object.hasOwn(doc.api ?? {}, "max_rows")).toBe(false);
     expect(doc.storage?.analytics?.max_tables).toBe(0);
     const api = fromApiProjectConfig({ auth: { rate_limit_anonymous_users: -1 } });
     expect(api.auth?.rate_limit?.anonymous_users).toBe(0);
     // Positive values stay verbatim.
     const positive = fromConfigDocument({ auth: { rate_limit: { anonymous_users: 30 } } });
     expect(positive.auth?.rate_limit?.anonymous_users).toBe(30);
+  });
+
+  // Thread 2 (human review round on PR #6339): api.sync.ts:141 only sends
+  // max_rows when strictly positive — the document arm mirrors that by
+  // omitting rather than clamping. The API arm is unaffected (hosted `0` is
+  // real, reported state).
+  test.each([
+    ["0", 0],
+    ["-0", -0],
+    ["negative", -5],
+    ["-Infinity", Number.NEGATIVE_INFINITY],
+    // TOML's `nan` literal is a real reachable document value here —
+    // `smol-toml` (this package's TOML parser, `io.ts`) parses
+    // `max_rows = nan` to `Number.NaN` — and `NaN <= 0` is `false`, which
+    // would have let a NaN slip past a naive non-positive check (engineer
+    // review round on PR #6339): `!(value > 0)` catches it because
+    // `NaN > 0` is also `false`.
+    ["NaN", Number.NaN],
+  ])("api.max_rows: %s is omitted on the document arm", (_description, value) => {
+    const doc = fromConfigDocument({ api: { enabled: true, max_rows: value } });
+    expect(Object.hasOwn(doc.api ?? {}, "max_rows")).toBe(false);
+  });
+
+  test.each([
+    ["Infinity", Number.POSITIVE_INFINITY],
+    ["a fraction", 0.5],
+    ["a whole positive", 100],
+  ])("api.max_rows: %s is kept on the document arm", (_description, value) => {
+    const doc = fromConfigDocument({ api: { enabled: true, max_rows: value } });
+    expect(doc.api?.max_rows).toBe(value);
+  });
+
+  test("api.max_rows: 0 is still reported on the API arm (real hosted state)", () => {
+    const api = fromApiProjectConfig({ api: { db_schema: "public", max_rows: 0 } });
+    expect(api.api?.max_rows).toBe(0);
   });
 
   test("throwing dispatcher source accessors surface as caller misuse", () => {
@@ -2502,6 +2567,19 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
           throw new Error("boom");
         },
       },
+      // The toProjectConfig-nested variant (engineer review round on PR
+      // #6339, item 2): the dispatcher's own `cliConfig` read succeeds fine
+      // (it just returns this plain object reference) — the throw happens
+      // one level deeper, inside fromConfigDocument's own { config,
+      // document } unwrapping, which used to read `input["config"]"`/
+      // `input["document"]` unguarded.
+      {
+        cliConfig: {
+          get config(): EffectiveConfig {
+            throw new Error("boom");
+          },
+        },
+      },
     ];
     for (const source of cases) {
       let thrown: unknown;
@@ -2513,6 +2591,42 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
       expect(thrown).toBeInstanceOf(ProjectConfigParseError);
       expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
     }
+  });
+
+  // Direct fromConfigDocument calls (not routed through the toProjectConfig
+  // dispatcher above) — engineer review round on PR #6339, item 2: both the
+  // "config" and "document" properties of the { config, document } pair
+  // shape must be read through the same guarded boundary as every other
+  // accessor-backed operand this file handles.
+  test("a throwing config or document getter on the { config, document } pair surfaces as caller misuse", () => {
+    const throwingConfig = {
+      get config(): EffectiveConfig {
+        throw new Error("boom");
+      },
+    };
+    let configThrown: unknown;
+    try {
+      fromConfigDocument(throwingConfig);
+    } catch (error) {
+      configThrown = error;
+    }
+    expect(configThrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((configThrown as ProjectConfigParseError).reason).toBe("caller_misuse");
+
+    const throwingDocument = {
+      config: {},
+      get document(): Record<string, unknown> {
+        throw new Error("boom");
+      },
+    };
+    let documentThrown: unknown;
+    try {
+      fromConfigDocument(throwingDocument);
+    } catch (error) {
+      documentThrown = error;
+    }
+    expect(documentThrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((documentThrown as ProjectConfigParseError).reason).toBe("caller_misuse");
   });
 
   test("an explicitly empty schemas array normalizes to unmanaged absence", () => {
@@ -2663,15 +2777,27 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
 });
 
 describe("review round: oauth_server disabled sentinel (CLI-2230)", () => {
-  test("a disabled OAuth server projects only its toggle on both arms", () => {
+  test("a disabled OAuth server projects only its toggle on the API arm (real hosted state)", () => {
     const api = fromApiProjectConfig({
       auth: { oauth_server_enabled: false, oauth_server_authorization_path: "/stale" },
     });
     expect(api.auth?.oauth_server).toEqual({ enabled: false });
-    const doc = fromConfigDocument({
+  });
+
+  // Thread 3 (human review round on PR #6339): authToUpdateBody has NO
+  // oauth_server handling at all, so the whole subtree is unconditionally
+  // unmanaged by push — the document arm omits it entirely, regardless of
+  // `enabled`, superseding the round-17 disabled-sentinel treatment that
+  // used to keep `{enabled: false}` here.
+  test("auth.oauth_server is omitted entirely on the document arm, enabled or not", () => {
+    const disabled = fromConfigDocument({
       auth: { oauth_server: { enabled: false, authorization_url_path: "/stale" } },
     });
-    expect(doc.auth?.oauth_server).toEqual({ enabled: false });
+    expect(Object.hasOwn(disabled.auth ?? {}, "oauth_server")).toBe(false);
+    const enabledDoc = fromConfigDocument({
+      auth: { oauth_server: { enabled: true, allow_dynamic_registration: true } },
+    });
+    expect(Object.hasOwn(enabledDoc.auth ?? {}, "oauth_server")).toBe(false);
   });
 });
 
@@ -2772,5 +2898,177 @@ describe("review round: fractional-addition exactness (CLI-2230)", () => {
       auth: { sessions: { timebox: "9000000000000.001ms" } },
     });
     expect(projected.auth?.sessions?.timebox).toBe("9000000000000.001ms");
+  });
+});
+
+describe("fromConfigDocument — raw-presence masking (CliConfigWithRawPresence, thread 1, human review round on PR #6339)", () => {
+  // Engineer review round on PR #6339, item 6: pins the collision
+  // `unwrapConfigDocumentSource`'s shape-sniffing relies on — no top-level
+  // `CliConfig` field is literally named "config" or "document", so a real
+  // decoded document can never be misread as the { config, document } pair
+  // shape. A future top-level `[config]`/`[document]` section would
+  // silently reroute every bare-operand call into the pair arm; this test
+  // fails loudly the moment one is added, rather than the collision
+  // surfacing as a confusing runtime misread.
+  test("no top-level CliConfig field is named config or document (the shape-sniffing collision this relies on)", () => {
+    const topLevelKeys = Object.keys(CliConfigSchema.fields);
+    expect(topLevelKeys).not.toContain("config");
+    expect(topLevelKeys).not.toContain("document");
+  });
+
+  test("without a document, decode-materialized defaults leak through (the presence-relativity limit ADR 0021 documents)", () => {
+    const config = decodeCliConfig({});
+    const projected = fromConfigDocument(config);
+    // All 19 providers present with their schema-defaulted shape — this is
+    // exactly the limit CliConfigWithRawPresence exists to close.
+    expect(Object.keys(projected.auth?.external ?? {}).length).toBeGreaterThan(1);
+  });
+
+  test("a raw-absent provider is omitted once document is supplied; apple always survives; a raw-present provider keeps its decoded value", () => {
+    const document = {
+      auth: { external: { google: { enabled: true, client_id: "google-client" } } },
+    };
+    const config = decodeCliConfig(document);
+    const projected = fromConfigDocument({ config, document });
+    expect(Object.keys(projected.auth?.external ?? {}).sort()).toEqual(["apple", "google"]);
+    // Declared with only client_id — the rest still comes from the DECODED
+    // schema-defaulted shape, masking only decides presence, not values.
+    expect(projected.auth?.external?.google).toEqual(config.auth.external.google);
+    // Apple is schema-defaulted `enabled: false` here (never raw-declared),
+    // so the pre-existing disabled-sentinel sweep (unrelated to presence
+    // masking) still prunes its siblings down to the toggle alone — apple
+    // "always sent" means always PRESENT, not exempt from that sweep.
+    expect(projected.auth?.external?.apple).toEqual({ enabled: false });
+  });
+
+  test("raw-absent auth.captcha is omitted with a document, present (schema-defaulted) without one", () => {
+    const document = {};
+    const config = decodeCliConfig(document);
+    expect(fromConfigDocument(config).auth?.captcha).toBeDefined();
+    const projected = fromConfigDocument({ config, document });
+    expect(Object.hasOwn(projected.auth ?? {}, "captcha")).toBe(false);
+  });
+
+  // Engineer review round on PR #6339, item 3: an own key set to an
+  // EXPLICIT `undefined` must read as absent, matching `legacyPresenceIn`'s
+  // own `x?.["key"] !== undefined` predicate exactly (a value comparison,
+  // not `Object.hasOwn`) — the degenerate case a naive `Object.hasOwn`
+  // check would get wrong.
+  test("an own key set to explicit undefined reads as absent, same as omitted entirely", () => {
+    // `document` need not itself be schema-decodable — it's the raw
+    // presence signal, independent of `config` — so this deliberately
+    // malformed-looking `{ captcha: undefined }` shape is paired with an
+    // ordinary fully-defaulted decoded config instead of decoding itself.
+    const document = { auth: { captcha: undefined } };
+    expect(Object.hasOwn(document.auth, "captcha")).toBe(true);
+    const config = decodeCliConfig({});
+    const projected = fromConfigDocument({ config, document });
+    expect(Object.hasOwn(projected.auth ?? {}, "captcha")).toBe(false);
+  });
+
+  test("each raw-absent auth.hook.<name> is omitted; a raw-present one survives with its decoded value", () => {
+    const document = {
+      auth: { hook: { send_email: { enabled: true, uri: "https://example.com/hook" } } },
+    };
+    const config = decodeCliConfig(document);
+    const projected = fromConfigDocument({ config, document });
+    expect(Object.keys(projected.auth?.hook ?? {})).toEqual(["send_email"]);
+    expect(projected.auth?.hook?.send_email).toEqual({
+      enabled: true,
+      uri: "https://example.com/hook",
+    });
+  });
+
+  test("raw-absent auth.email.smtp omits the smtp block AND auth.rate_limit.email_sent, but keeps email_sent's siblings", () => {
+    const document = {};
+    const config = decodeCliConfig(document);
+    const projected = fromConfigDocument({ config, document });
+    expect(Object.hasOwn(projected.auth?.email ?? {}, "smtp")).toBe(false);
+    expect(Object.hasOwn(projected.auth?.rate_limit ?? {}, "email_sent")).toBe(false);
+    expect(projected.auth?.rate_limit?.sms_sent).toBe(config.auth.rate_limit.sms_sent);
+  });
+
+  test("raw-absent db.ssl_enforcement / storage.image_transformation / storage.s3_protocol are omitted", () => {
+    const document = {};
+    const config = decodeCliConfig(document);
+    const projected = fromConfigDocument({ config, document });
+    expect(Object.hasOwn(projected.db ?? {}, "ssl_enforcement")).toBe(false);
+    expect(Object.hasOwn(projected.storage ?? {}, "image_transformation")).toBe(false);
+    expect(Object.hasOwn(projected.storage ?? {}, "s3_protocol")).toBe(false);
+  });
+
+  test("a raw-present db.ssl_enforcement / storage.image_transformation / storage.s3_protocol survives with its decoded value", () => {
+    const document = {
+      db: { ssl_enforcement: { enabled: true } },
+      storage: { image_transformation: { enabled: true }, s3_protocol: { enabled: false } },
+    };
+    const config = decodeCliConfig(document);
+    const projected = fromConfigDocument({ config, document });
+    expect(projected.db?.ssl_enforcement).toEqual({ enabled: true });
+    expect(projected.storage?.image_transformation).toEqual({ enabled: true });
+    expect(projected.storage?.s3_protocol).toEqual({ enabled: false });
+  });
+
+  test("a LoadedCliConfig value is accepted directly, without a cast", () => {
+    const document = { api: { max_rows: 5 } };
+    const config = decodeCliConfig(document);
+    const loaded: LoadedCliConfig = {
+      path: "supabase/config.toml",
+      format: "toml",
+      config,
+      document,
+      ignoredPaths: [],
+    };
+    // No `as` cast anywhere above or below — this is the compile-time half
+    // of "LoadedCliConfig is structurally assignable without a cast".
+    const projected = fromConfigDocument(loaded);
+    expect(projected.api?.max_rows).toBe(5);
+  });
+
+  test("toProjectConfig({ cliConfig: loaded }) applies the same masking through the dispatcher", () => {
+    const document = {};
+    const config = decodeCliConfig(document);
+    const projected = toProjectConfig({ cliConfig: { config, document } });
+    expect(Object.hasOwn(projected.auth ?? {}, "captcha")).toBe(false);
+  });
+
+  // Engineer review round on PR #6339, item 4: absent/explicit-undefined
+  // `document` is legal (no masking, asserted elsewhere in this file); a
+  // PRESENT but non-object `document` is a different, caller-error case —
+  // silently disabling masking with no signal would be asymmetric with the
+  // throwing guard `config` already gets.
+  test.each([
+    ["null", null],
+    ["a string", "oops"],
+    ["an array", []],
+  ])(
+    "a present but non-object document (%s) throws the typed caller-misuse error",
+    (_description, document) => {
+      const config = decodeCliConfig({});
+      let thrown: unknown;
+      try {
+        // A JavaScript caller can hand a non-object `document` despite the
+        // compile-time type — same rationale as this file's other
+        // `as unknown as` runtime-misuse pins (e.g. `unmappedApiFields(null as
+        // unknown as ProjectConfig)` above).
+        fromConfigDocument({ config, document } as unknown as EffectiveConfig);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+      expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
+    },
+  );
+
+  test("saveCliConfig's LoadedCliConfig shape (no document field at all) falls back to the un-remedied, unmasked behavior", () => {
+    // Mirrors io.ts's saveCliConfig return literal exactly: no `document`
+    // key at all, not even `undefined` — there is no raw file to re-read on
+    // a save.
+    const config = decodeCliConfig({});
+    const saved = { path: "supabase/config.toml", format: "toml", config, ignoredPaths: [] };
+    const projected = fromConfigDocument(saved);
+    // Unmasked: the schema-defaulted captcha section survives, same as the
+    // "without a document" behavior pinned earlier in this file.
+    expect(projected.auth?.captcha).toBeDefined();
   });
 });

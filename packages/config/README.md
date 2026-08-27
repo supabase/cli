@@ -58,7 +58,16 @@ The hosted-project subset — `ProjectConfig` — and its normalizers live on th
   [ADR 0021](../../docs/adr/0021-projectconfig-convergence-semantics.md), the result also
   applies SMS-provider push precedence and disabled-sentinel pruning, so it predicts what the
   hosted config will look like _after_ pushing the document, not the document's own declared
-  values.
+  values. **RECOMMENDED for a file-sourced config**: pass `{ config, document }` instead of a
+  bare `cliConfig` whenever a raw `document` is available (`LoadedCliConfig`'s own shape —
+  `@supabase/config/io`'s loaders return one, and it is structurally assignable here without a
+  cast). With `document`, the projection additionally mirrors the legacy push pipeline's own
+  raw-presence gates (a raw-absent `auth.captcha`, an un-raw-declared external provider, …), which
+  a bare `cliConfig` operand cannot — see ADR 0021's "Limits" section for exactly which fields
+  this closes and which residual gap remains even with `document` supplied. `@supabase/config/io`'s
+  `loadCliConfig` supplies a `document`; `saveCliConfig`'s returned `LoadedCliConfig` does NOT
+  (there is no raw file being re-read on a save), so passing that result straight into
+  `fromConfigDocument` silently falls back to the un-remedied, bare-`cliConfig` behavior.
 - `fromApiProjectConfig(input)` — translation of a Management API v2 project-config response
   (the full envelope, its `data` object, or bare `data.attributes`): registry-driven renames, boolean inversions, and
   unit conversions; lenient toward API keys this package version doesn't know; secret fields
@@ -94,7 +103,10 @@ import {
 } from "@supabase/config";
 
 const remote = toProjectConfig({ apiResponse }); // Management API v2 project-config response
-const local = toProjectConfig({ cliConfig }); // decoded supabase/config.toml document
+// `loaded` here is whatever `@supabase/config/io`'s loader returned (a
+// `LoadedCliConfig`) — passing it directly (not just `loaded.config`) is the
+// RECOMMENDED form: it unlocks the raw-presence masking described above.
+const local = toProjectConfig({ cliConfig: loaded });
 
 // `overlay` is what `local` says that `remote` doesn't already agree with.
 const overlay = subtractCliConfig(local, remote);

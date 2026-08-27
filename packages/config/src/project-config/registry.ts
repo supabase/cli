@@ -67,6 +67,34 @@ function clampDocumentUint(value: unknown): unknown {
   return typeof value === "number" ? clampToUint(value) : value;
 }
 
+/**
+ * DOCUMENT-side counterpart for `api.max_rows` specifically — NOT
+ * `clampDocumentUint` (human review round on PR #6339, thread 2): the push
+ * mapper only sends `max_rows` when it is strictly positive
+ * (`apiToUpdateBody`, api.sync.ts:141, `if (local.max_rows > 0)`), so a
+ * non-positive document value (`0` included, not just negative) is
+ * unmanaged — push never communicates it, and projecting it (even clamped to
+ * `0`) would assert a value that survives push as drift. Omit rather than
+ * clamp; a positive value stays verbatim (this row's `configPath` is the
+ * same one `clampToUint`/`expectInteger` narrow on the API arm, so a
+ * document-side fractional value is already an edge case neither arm
+ * canonicalizes further here). CLI-2266 item 3 tracks flipping this back to
+ * a plain clamp once push starts sending `max_rows` explicitly regardless of
+ * sign (e.g. as an explicit "unset" value).
+ *
+ * `!(value > 0)`, not `value <= 0` (engineer review round on PR #6339): the
+ * two are NOT equivalent for `NaN` — `NaN <= 0` is `false` (NaN keeps, push
+ * omits) while `!(NaN > 0)` is `true` (both omit) — and TOML can genuinely
+ * produce a NaN document value (`max_rows = nan`, which `smol-toml` parses
+ * to `Number.NaN`). An unfiltered NaN would ride into `ProjectConfig` and
+ * poison every downstream comparison (`NaN !== NaN`, permanent phantom
+ * drift). `!(value > 0)` is the exact negation of push's own `value > 0`
+ * gate, so it agrees with push on every float, NaN included.
+ */
+function normalizeDocumentMaxRows(value: unknown): unknown {
+  return typeof value === "number" && !(value > 0) ? undefined : value;
+}
+
 const apiSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
   {
     configPath: ["api", "schemas"],
@@ -117,7 +145,7 @@ const apiSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
       const rows = clampToUint(expectInteger(value, apiMaxRowsPath));
       return remoteDataApiDisabled(attributes) ? undefined : rows;
     },
-    normalizeDocument: clampDocumentUint,
+    normalizeDocument: normalizeDocumentMaxRows,
   },
   // Deliberately unmapped (no config counterpart): api.db_pool,
   // api.db_pool_acquisition_timeout.

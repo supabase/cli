@@ -56,6 +56,7 @@ export {
 export { KONG_LOCAL_CA_CERT } from "./tls.ts";
 export { ENV_CAPTURE_REGEX } from "./lib/env.ts";
 export {
+  type CliConfigWithRawPresence,
   type ProjectConfig,
   type ReadonlyJsonValue,
   type ToProjectConfigSource,
@@ -70,4 +71,4 @@ export {
 export { type ProjectConfigApiAttributes } from "./project-config/api-attributes.ts";
 export { type ProjectConfigMappingRow } from "./project-config/registry-row.ts";
 export { projectConfigMappingRows } from "./project-config/registry.ts";
-export { unmappedSecretApiPaths } from "./project-config/registry-auth.ts";
+export { AUTH_HOOK_NAMES, unmappedSecretApiPaths } from "./project-config/registry-auth.ts";

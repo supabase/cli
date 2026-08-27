@@ -338,6 +338,7 @@ describe("src/index.ts export surface", () => {
   test("pins the exact set of runtime export names", () => {
     expect(Object.keys(defaultEntrypoint).sort()).toMatchInlineSnapshot(`
       [
+        "AUTH_HOOK_NAMES",
         "CLI_CONFIG_SCHEMA_URL",
         "CliConfigParseError",
         "CliConfigSchema",
@@ -376,6 +377,7 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
   test("pins the exact set of runtime export names", () => {
     expect(Object.keys(effectEntrypoint).sort()).toMatchInlineSnapshot(`
       [
+        "AUTH_HOOK_NAMES",
         "CLI_CONFIG_SCHEMA_URL",
         "CliConfigParseError",
         "CliConfigSchema",

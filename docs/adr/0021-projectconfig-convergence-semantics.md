@@ -57,6 +57,30 @@ Concrete behavior families, by normalizer:
   `registry-auth.ts`/`registry.ts` — each replays the push pipeline's own serialize-then-parse or unit
   conversion so a document spelling and the API's post-push spelling of the same logical value
   converge on one representation.
+- **Unmanaged-by-push containers omitted on the document arm** (threads 1 and 3 of a human review round
+  on PR #6339) — a family of DOCUMENT-ARM-ONLY omissions, none applied to the API arm, whose common
+  thread is "push structurally cannot communicate this state, so projecting a decoded value for it
+  would assert something that survives push as drift":
+  - `api.max_rows`: `apiToUpdateBody` only sends it when strictly positive (api.sync.ts:141) — a
+    non-positive document value is OMITTED rather than clamped to `0` (`normalizeDocumentMaxRows`,
+    `registry.ts`).
+  - `storage.analytics`/`storage.vector`: `storageToUpdateBody` only emits Iceberg/Vector inside a
+    truthy `if (local.analytics.enabled)`/`if (local.vector.enabled)` branch (storage.sync.ts:287-300,
+    never a `{enabled: false}` shape) — a disabled container is OMITTED entirely rather than projected
+    as `{enabled: false}` (`applyPushUnmanagedOmissions`, `project-config.ts`).
+  - `auth.oauth_server`: `authToUpdateBody` has no oauth_server handling at all — the whole subtree is
+    OMITTED unconditionally, regardless of `enabled` (`applyPushUnmanagedOmissions`, superseding the
+    round-17 `DISABLED_SENTINEL_PRUNES` entry for this arm specifically).
+  - The full raw-presence-gated set from thread 1 (`db.ssl_enforcement`, `storage.image_transformation`,
+    `storage.s3_protocol`, `auth.captcha`, each of the six `auth.hook.<name>` entries, `auth.email.smtp`
+    plus `auth.rate_limit.email_sent`, and non-`apple` `auth.external` providers) — see the "Limits"
+    section below for the full mechanism (`applyRawPresenceMask`, needs a `document` operand).
+
+  CLI-2266's lockstep rule covers this whole family: if push ever gains the ability to communicate one
+  of these states explicitly (e.g. an explicit `max_rows: 0`/"unset" sentinel, oauth_server fields, a
+  presence-independent smtp signal), the corresponding omission here must flip in the same change that
+  ships the push-side capability — an omission this family models is a statement about push's CURRENT
+  limitations, not a permanent semantic ceiling.
 
 **`fromApiProjectConfig`** (`registry-auth.ts`, `registry.ts`, `project-config.ts`):
 
@@ -77,7 +101,25 @@ Concrete behavior families, by normalizer:
   (`unmappedSecretApiPaths`) is still validated as string-or-null, even though its value is never
   emitted (`applyMappingRows`'s trailing loop, `project-config.ts:811-821`).
 
-## Limits (presence-relativity)
+## Limits (presence-relativity) — now with a first-class remedy
+
+**Update (2026-08-27, thread 1 of a human review round on PR #6339)**: the limit this section
+originally documented as unfixable now has a first-class remedy. `fromConfigDocument` accepts a
+second operand shape, `CliConfigWithRawPresence` (`{ config, document }` — `LoadedCliConfig`,
+`packages/config/src/config-document.ts`, is structurally assignable to it without a cast), and when
+`document` is supplied it applies `applyRawPresenceMask`, mirroring the legacy push pipeline's own
+raw-presence gates (`apps/cli/src/legacy/commands/config/push/push.raw-presence.ts`'s
+`legacyPresenceIn`, `config-sync/auth.sync.ts`'s `AuthPresence`) exactly: `db.ssl_enforcement`,
+`storage.image_transformation`, `storage.s3_protocol`, `auth.captcha`, each of the six
+`auth.hook.<name>` entries, `auth.email.smtp` (and, as a consequence, `auth.rate_limit.email_sent`),
+and `auth.external` (kept to raw-declared providers plus the always-sent `apple`) are all now omitted
+from the projection exactly when the raw file never declared them — closing the `auth.external`/
+`auth.email.smtp` gaps this section originally described as open. **The original analysis below is
+retained for its verified boundary and its rationale for why the fix could not live inside a bare
+`EffectiveConfig` operand** — the same analysis is what motivated the `document`-based remedy;
+without a `document` (i.e. a bare `EffectiveConfig`/`CliConfig` operand, still a fully supported
+input), the limit as originally described still applies in full, and the guidance below (strip
+defaults, intersect comparable paths) still stands as the fallback.
 
 The convergence prediction above is exact only for fields the INPUT actually speaks for — it degrades
 for `fromConfigDocument` specifically because the legacy push pipeline reads a signal `@supabase/config`
@@ -107,25 +149,36 @@ smtpConfig === undefined` skips it, `auth.sync.ts:1020-1024`) — a decoded docu
   mentioned this" — still holds; this field simply doesn't have a push-side branch that depends on the
   distinction, unlike the provider set above.
 
+Raw-presence tracking or default-omission from decoded values ALONE remains impossible, and always
+will be — the distinction above is not recoverable once decode has already run on a value with no
+further context, and `@supabase/config`'s decoded `CliConfig`/`EffectiveConfig` type carries none.
+That is exactly why the remedy takes the raw document as a SEPARATE, explicit operand
+(`CliConfigWithRawPresence.document`) rather than trying to infer presence from `config` alone: the
+"was this key written in the file" bit lives only on the raw, pre-decode object, and a caller must
+supply it if it wants this class of drift closed. A caller with no `document` available (a config
+constructed in-memory, e.g. `getDefaultCliConfig()`'s own memo, which never had a raw file to begin
+with) is not a regression — it simply reduces to the pre-remedy behavior this section originally
+described in full.
+
 Practical guidance: `fromConfigDocument`'s convergence claim holds EXACTLY for a genuinely sparse
 `EffectiveConfig` operand — one built to carry only the keys the caller means to speak for (e.g. a
-literal `{ api: { max_rows: 100 } }`, or one already run through `omitDefaultValues`). It holds only
-"exact modulo schema defaults" for a fully-materialized decoded document, the common case in practice.
-A caller composing `fromConfigDocument`'s output with the ADR 0018 subtraction core for a genuine
+literal `{ api: { max_rows: 100 } }`, or one already run through `omitDefaultValues`) — and, as of the
+remedy above, for a fully-materialized decoded document too, PROVIDED its `document` is supplied
+alongside it. Without a `document`, it holds only "exact modulo schema defaults", and a caller
+composing `fromConfigDocument`'s output with the ADR 0018 subtraction core for a genuine
 local-vs-remote diff (CLI-2156) must first strip schema defaults with `omitDefaultValues` and intersect
 to the fields both operands actually speak for (the existing `ProjectConfig` docstring rule,
 `comparableProjectConfigPaths`/`isComparableProjectConfigPath`) — neither step is new to this ADR, but
-this is why both are load-bearing rather than optional cleanup. The residual categories this cannot
-fully resolve — an unmentioned provider push never manages showing up as if it were a locally-declared
-`enabled: false`; `email_sent` reads as declared even when push would have skipped it on raw absence —
-are honest-but-push-unactionable drift: real per the convergence definition above, but not something a
-user can act on by editing their file, since push was never going to touch that field either way.
-Tracked on CLI-2266, not fixed here.
+this is why both are load-bearing rather than optional cleanup in that fallback case.
 
-Raw-presence tracking or default-omission INSIDE `fromConfigDocument` itself is deliberately out of
-scope: `@supabase/config`'s public surface operates on decoded `CliConfig`/`EffectiveConfig` values,
-never raw file text, and the distinction above is not recoverable once decode has already run — there
-is no "was this key written in the file" bit left on a plain decoded object to read.
+The one residual category the remedy does NOT resolve even WITH a `document` is an
+unconditionally-mapped field with no "the local document is silent here" signal at all — the finer,
+per-path granularity gap `ProjectConfig`'s own docstring already documents, distinct from raw presence
+entirely (there is no raw key whose absence could gate it, since the registry maps it regardless). That
+is honest-but-push-unactionable drift: real per the convergence definition above, but not something a
+user can act on by editing their file. Tracked on CLI-2266, not fixed here. The `api.max_rows > 0` push
+gate this category used to include is a plain VALUE gate rather than a raw-presence one, and IS now
+modeled — see the "unmanaged-by-push containers" family above.
 
 ## Rationale
 
@@ -168,11 +221,11 @@ config-sync/` rather than derived from a push mapper this package owns; a push-m
   that both directions share is the tracked follow-up (CLI-2230's own `inverse`/push-mapper note in
   `registry-row.ts`) and, until it lands, a change to the legacy push pipeline's behavior can silently
   desync this package's prediction from what push actually does.
-- **Known incompleteness**: the `api.max_rows` push gate (the legacy pipeline manages `max_rows` only
-  while `max_rows > 0`, per the API's own push-direction convention) is not modeled by either
-  normalizer today — a value like `max_rows: 0` still projects on both arms rather than being treated
-  as unmanaged. This is a gap in the convergence prediction, not a decision that `max_rows: 0` is
-  meaningful; closing it is deferred rather than blocking this ADR.
+- **Resolved incompleteness** (originally recorded here, now modeled — human review round on PR #6339,
+  thread 2): the `api.max_rows` push gate (the legacy pipeline manages `max_rows` only while
+  `max_rows > 0`, per the API's own push-direction convention) is now modeled on the DOCUMENT arm —
+  see the "unmanaged-by-push containers" family above. The API arm is unaffected (`0`/negative there is
+  real, reported hosted state, not a push-gate artifact).
 
 ## Alternatives Considered
 
@@ -205,7 +258,10 @@ config-sync/` rather than derived from a push mapper this package owns; a push-m
 ## See Also
 
 - Linear: CLI-2230 (PR supabase/cli#6339, `toProjectConfig`), CLI-2156 (`config diff`, the motivating
-  consumer), CLI-2266 (the presence-relativity drift categories the Limits section defers)
+  consumer), CLI-2266 (the presence-relativity drift categories the Limits section defers), CLI-2267
+  ("Pin @supabase/config's replicated legacy parsers with parity fixtures in apps/cli" — the
+  `project-config-presence-parity.unit.test.ts` cross-check this ADR's remedy added is a stopgap for
+  this issue's proper fixture set)
 - `packages/config/src/project-config/registry-row.ts` — the `inverse` field's own note that a
   push-mapper sharing this registry is a follow-up, not yet implemented
 - Decided by Colum Ferry via drift-audit adjudication on PR supabase/cli#6339, 2026-08-27

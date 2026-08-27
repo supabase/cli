@@ -12,7 +12,7 @@ import {
   ProjectConfigApiAttributesSchema,
   type ProjectConfigApiAttributes,
 } from "./api-attributes.ts";
-import { unmappedSecretApiPaths } from "./registry-auth.ts";
+import { AUTH_HOOK_NAMES, unmappedSecretApiPaths } from "./registry-auth.ts";
 import { expectString } from "./registry-row.ts";
 import { projectConfigMappingRows } from "./registry.ts";
 
@@ -115,6 +115,13 @@ export type ReadonlyJsonValue =
  * {@link comparableProjectConfigPaths}/{@link isComparableProjectConfigPath}
  * to restrict a comparison to exactly the fields `fromApiProjectConfig` can
  * actually speak for, rather than hand-maintaining an equivalent field list.
+ * The gap runs the other direction too: `auth.oauth_server`, and
+ * `storage.analytics`/`storage.vector` when disabled, ARE comparable paths
+ * (`fromApiProjectConfig` maps them) that `fromConfigDocument` can be
+ * silent on entirely, since push cannot communicate that state at all — see
+ * ADR 0021's "unmanaged-by-push containers" family — so the same
+ * both-operands-speak-for restriction applies symmetrically, not only for
+ * the API arm's unconditional fields above.
  *
  * Per ADR 0021, a `ProjectConfig` value is NOT a verbatim projection of
  * whichever operand produced it — both {@link fromConfigDocument} and
@@ -275,6 +282,100 @@ function removePathAndEmptiedAncestors(
 }
 
 /**
+ * A `{ config, document }` pair {@link fromConfigDocument} accepts as an
+ * alternative to a bare {@link EffectiveConfig} (human review round on PR
+ * #6339, thread 1): `document` is the raw, pre-decode document object
+ * (`LoadedCliConfig.document`, `../config-document.ts` — post-`env()`,
+ * remotes-merged, retained precisely so a caller can inspect key presence a
+ * decoded value loses to schema defaults) and unlocks raw-presence masking
+ * ({@link applyRawPresenceMask}) a bare `EffectiveConfig` operand cannot,
+ * since decode has already erased the distinction between "the file
+ * declared this with a default value" and "the file never mentioned this at
+ * all". `LoadedCliConfig` is structurally assignable to this interface
+ * WITHOUT a cast — its `config: CliConfig` fits `EffectiveConfig` (a
+ * `CliConfig` is one), its `document?: Record<string, unknown>` matches
+ * exactly. Declared independently rather than importing `LoadedCliConfig`
+ * by name: not for pure-runtime-graph reasons (`config-document.ts` is
+ * already reachable from this package's pure entrypoint, and this very file
+ * already imports `isObject` from it), but so `fromConfigDocument`'s public
+ * contract doesn't couple its parameter shape to the loader's own type name
+ * — this type is local-checkout-side on its own terms (ADR 0020's `Cli*`
+ * convention), independent of which loader happens to produce a matching
+ * shape.
+ */
+export interface CliConfigWithRawPresence {
+  readonly config: EffectiveConfig;
+  readonly document?: Record<string, unknown>;
+}
+
+/**
+ * Reads one property off the `{ config, document }` pair shape through the
+ * same guarded boundary as the dispatcher's source reads
+ * ({@link readSourceProperty}) and the envelope reads
+ * ({@link readEnvelopeProperty}): plain data never carries getters, so an
+ * accessor that throws here — e.g. `toProjectConfig({ cliConfig: { get
+ * config() { throw ... } } })` — is programmatic caller input and must
+ * surface as the documented failure type, not a raw `Error` escaping past
+ * the telemetry classification (a bug an earlier round of this file left
+ * open: the pair shape's own property reads were unguarded).
+ */
+function readConfigDocumentSourceProperty(input: Record<string, unknown>, key: string): unknown {
+  try {
+    return input[key];
+  } catch (cause) {
+    throw new ProjectConfigParseError({
+      message: `reading "${key}" threw — fromConfigDocument's { config, document } pair must be plain data, not accessor-backed`,
+      cause,
+      reason: "caller_misuse",
+    });
+  }
+}
+
+/**
+ * Unwraps the two shapes {@link fromConfigDocument} accepts: a bare
+ * `EffectiveConfig` operand, or a {@link CliConfigWithRawPresence} pair.
+ * Presence of an own `config` key decides which shape was intended — no key
+ * on `CliConfigSchema` (`../base.ts`) is literally named `config`, so a real
+ * decoded document can never collide with the pair shape today. Same
+ * one-own-key shape-sniffing pattern as {@link unwrapApiResponse}'s envelope
+ * detection below, including that function's own documented trade: a
+ * hypothetical future top-level section literally named `config` would be
+ * misread as the pair shape instead of a plain operand — closing that
+ * off would need an explicit discriminator key, which would break every
+ * existing bare-`EffectiveConfig` call site for a collision this
+ * vanishingly unlikely.
+ *
+ * `document` is genuinely OPTIONAL — absent, or present with an explicit
+ * `undefined` value, both mean "no masking" and are equally legal. A
+ * PRESENT `document` that isn't a plain object (`null`, a string, an array,
+ * …) is different: unlike absence, it's a caller handing over a value this
+ * function cannot use, so it throws rather than silently degrading to
+ * unmasked output with no signal that masking was skipped.
+ */
+function unwrapConfigDocumentSource(input: Record<string, unknown>): {
+  readonly config: unknown;
+  readonly document: Record<string, unknown> | undefined;
+} {
+  if (!Object.hasOwn(input, "config")) {
+    return { config: input, document: undefined };
+  }
+  const config = readConfigDocumentSourceProperty(input, "config");
+  if (!Object.hasOwn(input, "document")) {
+    return { config, document: undefined };
+  }
+  const document = readConfigDocumentSourceProperty(input, "document");
+  if (document === undefined) {
+    return { config, document: undefined };
+  }
+  if (!isObject(document)) {
+    throw callerMisuseError(
+      `fromConfigDocument operand's "document" property must be an object when present, got ${nonObjectDescription(document)}`,
+    );
+  }
+  return { config, document };
+}
+
+/**
  * Projects a {@link CliConfig} document (or any {@link EffectiveConfig}
  * operand — a full `CliConfig` is one) down to its hosted-section subset.
  * Copies each hosted section deeply and only when own-present on `config`,
@@ -307,30 +408,67 @@ function removePathAndEmptiedAncestors(
  * The convergence prediction is exact for a genuinely sparse `config` — one
  * that only carries the keys the caller means to speak for. It holds only
  * "exact modulo schema defaults" for a fully-materialized decoded document
- * (the common case, since a full `CliConfig` is a valid operand): decode
- * cannot recover whether the raw file actually wrote a key or merely
- * inherited its schema default, a distinction the legacy push pipeline DOES
- * read (e.g. it emits only the external providers the raw file declared,
- * never every provider a decoded document defaults to). A caller diffing
- * this function's output against a remote `ProjectConfig` should first strip
- * schema defaults with `omitDefaultValues` and intersect to the fields both
- * operands actually speak for — see ADR 0021's "Limits" section for the
- * verified boundary and the residual drift categories it defers (CLI-2266).
+ * passed BARE (the common case, since a full `CliConfig` is a valid
+ * operand): decode cannot recover whether the raw file actually wrote a key
+ * or merely inherited its schema default, a distinction the legacy push
+ * pipeline DOES read (e.g. it emits only the external providers the raw
+ * file declared, never every provider a decoded document defaults to).
+ *
+ * **This limit has a first-class remedy**: pass a {@link
+ * CliConfigWithRawPresence} pair instead of a bare `config` — this is the
+ * RECOMMENDED form whenever a `document` is available (i.e. whenever the
+ * config came from `loadCliConfig` rather than being constructed in-memory,
+ * e.g. `getDefaultCliConfig()`'s memo). With `document` present, this
+ * function additionally applies {@link applyRawPresenceMask}, mirroring the
+ * legacy push pipeline's own raw-presence gates
+ * (`apps/cli/src/legacy/commands/config/push/push.raw-presence.ts`) exactly,
+ * closing the gap for the fields those gates cover. Without `document`, this
+ * function's behavior is unchanged, and a caller diffing its output against
+ * a remote `ProjectConfig` should still first strip schema defaults with
+ * `omitDefaultValues` and intersect to the fields both operands actually
+ * speak for — see ADR 0021's "Limits" section for the verified boundary,
+ * which fields the presence mask covers, and the residual drift categories
+ * that remain deferred to CLI-2266 even with a `document` supplied.
+ * `@supabase/config/io`'s `loadCliConfig` supplies a `document`;
+ * `saveCliConfig`'s returned `LoadedCliConfig` does NOT (there is no raw
+ * file being re-read on a save) — passing that result here silently falls
+ * back to the un-remedied, bare-`config` behavior.
  */
 export function fromConfigDocument(config: EffectiveConfig): ProjectConfig;
+export function fromConfigDocument(loaded: CliConfigWithRawPresence): ProjectConfig;
+// A third, union-typed overload purely for internal callers that already
+// hold a `EffectiveConfig | CliConfigWithRawPresence` value (the dispatcher
+// below): TypeScript does not distribute an overload set over a union-typed
+// argument the way it does for a generic conditional type, so a call site
+// typed exactly as the union needs a matching overload of its own — the two
+// above stay the documented public contract for callers with a concrete
+// operand type.
+export function fromConfigDocument(
+  source: EffectiveConfig | CliConfigWithRawPresence,
+): ProjectConfig;
 // The implementation signature stays untyped for the same reason as
 // `subtractCliConfig` (`../sparse.ts`): TypeScript cannot verify that a
 // structural pick over dynamically-iterated keys reconstructs a
-// `ProjectConfig`; the overload above is the contract, pinned by the unit
+// `ProjectConfig`; the overloads above are the contract, pinned by the unit
 // tests.
-export function fromConfigDocument(config: EffectiveConfig): unknown {
+export function fromConfigDocument(input: unknown): unknown {
   // A JavaScript caller can hand this public normalizer null/undefined/an
   // array despite the compile-time type; guarding before Object.hasOwn keeps
   // the failure inside the documented typed-error contract (with the
   // caller-misuse reason) instead of a native TypeError or a silent `{}`.
-  if (!isObject(config)) {
+  if (!isObject(input)) {
     throw callerMisuseError(
-      `fromConfigDocument operand must be an object, got ${nonObjectDescription(config)}`,
+      `fromConfigDocument operand must be an object, got ${nonObjectDescription(input)}`,
+    );
+  }
+  const { config, document } = unwrapConfigDocumentSource(input);
+  if (!isObject(config)) {
+    // The OPERAND was an object (checked above) — it's specifically its
+    // "config" property, in the { config, document } pair shape, that
+    // isn't. A bare EffectiveConfig operand (no own "config" key) can never
+    // reach this branch, since `config` is then `input` itself.
+    throw callerMisuseError(
+      `fromConfigDocument operand's "config" property must be an object, got ${nonObjectDescription(config)}`,
     );
   }
   const result: Record<string, unknown> = {};
@@ -374,6 +512,10 @@ export function fromConfigDocument(config: EffectiveConfig): unknown {
   applyDocumentNormalizations(result);
   applySmsProviderPrecedence(result);
   applyDisabledSentinels(result);
+  applyPushUnmanagedOmissions(result);
+  if (document !== undefined) {
+    applyRawPresenceMask(result, document);
+  }
   return result;
 }
 
@@ -452,11 +594,25 @@ export const DISABLED_SENTINEL_PRUNES: ReadonlyArray<{
   // No push precedent (the section postdates the legacy mappers) — gated for
   // family consistency: every other enabled-flagged container prunes its
   // unmanaged siblings, and a platform-retained authorization path behind a
-  // disabled OAuth server is the same phantom-drift shape.
+  // disabled OAuth server is the same phantom-drift shape. Still meaningful
+  // for the API arm (GoTrue reports real hosted oauth_server state
+  // independent of push). On the DOCUMENT arm specifically, this entry's
+  // effect is superseded by {@link applyPushUnmanagedOmissions}, which drops
+  // the WHOLE `auth.oauth_server` subtree unconditionally — `authToUpdateBody`
+  // has no oauth_server handling at all, so even this entry's own
+  // `dropKeys` premise ("push manages the container while its toggle is on")
+  // does not hold for that arm.
   {
     containerPath: ["auth", "oauth_server"],
     dropKeys: ["allow_dynamic_registration", "authorization_url_path"],
   },
+  // Still meaningful on both arms for `enabled: true` (untouched) and on the
+  // API arm for `enabled: false` (real hosted state). On the DOCUMENT arm
+  // specifically, an `enabled: false` container is pruned further, to
+  // NOTHING, by {@link applyPushUnmanagedOmissions}: `storageToUpdateBody`
+  // only emits Iceberg/Vector inside a truthy `if (local.analytics.enabled)`
+  // branch (storage.sync.ts:287-300), never a `{enabled: false}` shape, so
+  // a disabled container reflects an unmanaged (not confirmed-off) state.
   {
     containerPath: ["storage", "analytics"],
     dropKeys: ["max_namespaces", "max_tables", "max_catalogs"],
@@ -535,6 +691,140 @@ function applyDisabledSentinels(result: Record<string, unknown>): void {
       // pruning is unmanaged noise, unlike an originally-empty one.
       if (Object.keys(authSection).length === 0) {
         delete result["auth"];
+      }
+    }
+  }
+}
+
+/**
+ * DOCUMENT-ARM ONLY (human review round on PR #6339, thread 3) — never
+ * called from {@link fromApiProjectConfig}. Distinct from
+ * {@link applyDisabledSentinels} (drops SIBLINGS of an explicitly-disabled
+ * container, both arms, keyed on the DOCUMENT's own `enabled` reading) and
+ * {@link applyRawPresenceMask} (drops a container push skips because the
+ * RAW FILE never declared it, needs `document` and mirrors a different
+ * legacy signal entirely): this drops a container `storageToUpdateBody`/
+ * `authToUpdateBody` structurally cannot communicate to the platform AT
+ * ALL, independent of both the document's own `enabled` value and raw
+ * presence.
+ *
+ * - `storage.analytics`/`storage.vector`: `storageToUpdateBody` only emits
+ *   `icebergCatalog`/`vectorBuckets` inside a truthy `if (local.analytics.
+ *   enabled)`/`if (local.vector.enabled)` branch (storage.sync.ts:287-300)
+ *   — there is no `{enabled: false}` shape it ever sends. A document with
+ *   the feature disabled therefore has NOTHING pushed for it (unmanaged),
+ *   unlike the API arm's own `enabled: false`, which is a confirmed hosted
+ *   reading. Dropped entirely rather than left as `{enabled: false}`.
+ * - `auth.oauth_server`: `authToUpdateBody` has no oauth_server handling
+ *   whatsoever — the whole subtree is unconditionally unmanaged by push,
+ *   regardless of its `enabled` value. Dropped unconditionally, which
+ *   supersedes `DISABLED_SENTINEL_PRUNES`'s own `["auth","oauth_server"]`
+ *   entry for this arm specifically (that entry stays meaningful for the
+ *   API arm — see its own comment).
+ */
+function applyPushUnmanagedOmissions(result: Record<string, unknown>): void {
+  for (const containerPath of [
+    ["storage", "analytics"],
+    ["storage", "vector"],
+  ] as const) {
+    const container = readPath(result, containerPath);
+    if (isObject(container) && container["enabled"] === false) {
+      removePathAndEmptiedAncestors(result, containerPath);
+    }
+  }
+  removePathAndEmptiedAncestors(result, ["auth", "oauth_server"]);
+}
+
+/**
+ * DOCUMENT-ARM ONLY, and only when {@link fromConfigDocument} was called
+ * with a {@link CliConfigWithRawPresence} pair (human review round on PR
+ * #6339, thread 1) — never called from {@link fromApiProjectConfig}, which
+ * has no analogous raw-document concept. Mirrors the legacy push pipeline's
+ * own raw-presence gates exactly: `apps/cli/src/legacy/commands/config/
+ * push/push.raw-presence.ts`'s `legacyPresenceIn` (db.ssl_enforcement,
+ * storage.image_transformation, storage.s3_protocol) and `config-sync/
+ * auth.sync.ts`'s `AuthPresence` (captcha `:927`, the six hooks
+ * `:951-960`, smtp `:1023`, external providers `:1075-1084` — `apple`
+ * ALWAYS sent regardless of presence). Distinct from
+ * {@link applyDisabledSentinels} (reads the DECODED `enabled` flag — can
+ * only ever say "explicitly disabled", never "never mentioned", and runs
+ * even without a `document`) and {@link applyPushUnmanagedOmissions} (drops
+ * a container push can never emit at all, independent of presence): this
+ * drops a container/entry push skips specifically because the RAW FILE
+ * never declared it — a stronger, independent signal only available with
+ * `document`, so it runs last and can remove a subtree either of the other
+ * two mechanisms already touched or left alone.
+ *
+ * Values that DO survive still come from the DECODED `result` — masking
+ * only decides presence/absence of a subtree, never substitutes a raw
+ * value: push sends the decoded subset for any section the raw file
+ * declares (e.g. a document that declares `[auth.external.google]` with
+ * only `client_id` set still pushes `google`'s decoded `enabled: false`
+ * default alongside it).
+ */
+function applyRawPresenceMask(
+  result: Record<string, unknown>,
+  document: Record<string, unknown>,
+): void {
+  // Matches `legacyPresenceIn`/`authPresenceIn`'s own predicate EXACTLY
+  // (`x?.["key"] !== undefined`) — a VALUE comparison, not `Object.hasOwn`
+  // (engineer review round on PR #6339, item 3): a raw document with an own
+  // key set to an explicit `undefined` (`{ auth: { captcha: undefined } }`)
+  // reads as ABSENT on both sides this way, keeping the docstring's
+  // "mirrors ... exactly" claim literally true.
+  const isPresent = (container: unknown, key: string): boolean =>
+    isObject(container) && container[key] !== undefined;
+
+  const db = document["db"];
+  if (!isPresent(db, "ssl_enforcement")) {
+    removePathAndEmptiedAncestors(result, ["db", "ssl_enforcement"]);
+  }
+
+  const storage = document["storage"];
+  if (!isPresent(storage, "image_transformation")) {
+    removePathAndEmptiedAncestors(result, ["storage", "image_transformation"]);
+  }
+  if (!isPresent(storage, "s3_protocol")) {
+    removePathAndEmptiedAncestors(result, ["storage", "s3_protocol"]);
+  }
+
+  const auth = document["auth"];
+  if (!isPresent(auth, "captcha")) {
+    removePathAndEmptiedAncestors(result, ["auth", "captcha"]);
+  }
+
+  const hook = isObject(auth) ? auth["hook"] : undefined;
+  for (const name of AUTH_HOOK_NAMES) {
+    if (!isPresent(hook, name)) {
+      removePathAndEmptiedAncestors(result, ["auth", "hook", name]);
+    }
+  }
+
+  const email = isObject(auth) ? auth["email"] : undefined;
+  if (!isPresent(email, "smtp")) {
+    removePathAndEmptiedAncestors(result, ["auth", "email", "smtp"]);
+    // The push mapper skips `rate_limit_email_sent` too when the raw file
+    // never declares `[auth.email.smtp]` at all (auth.sync.ts:2310-2313) —
+    // with raw presence available, this is exact, where the
+    // `applyDisabledSentinels` explicit-false rule above can only ever say
+    // "explicitly disabled", never "never mentioned".
+    removePathAndEmptiedAncestors(result, ["auth", "rate_limit", "email_sent"]);
+  }
+
+  // Every provider decodes present (schema-defaulted `enabled: false`), but
+  // push only ever sends the raw-declared providers PLUS the always-sent
+  // `apple` default (auth.sync.ts:1075-1084) — keep exactly that set.
+  // `Object.keys`, not `isPresent`, deliberately: `authPresenceIn`'s own
+  // `externalProviders: Object.keys(external)` line uses own-key existence
+  // here too, unlike its five `!== undefined` checks above — this is the
+  // one gate that is genuinely keyed on `Object.hasOwn` semantics upstream.
+  const external = isObject(auth) ? auth["external"] : undefined;
+  const declaredProviders = isObject(external) ? new Set(Object.keys(external)) : new Set<string>();
+  const projectedExternal = readPath(result, ["auth", "external"]);
+  if (isObject(projectedExternal)) {
+    for (const provider of Object.keys(projectedExternal)) {
+      if (provider !== "apple" && !declaredProviders.has(provider)) {
+        removePathAndEmptiedAncestors(result, ["auth", "external", provider]);
       }
     }
   }
@@ -1174,13 +1464,14 @@ export function attachApiResponse(
 
 /**
  * Either operand `toProjectConfig` accepts: a local {@link EffectiveConfig}
- * (a full `CliConfig` document fits, since it's assignable to it) to project
- * down to the hosted subset, or a raw, not-yet-decoded Management API v2
- * project-config response (in any of the three envelope shapes
- * {@link fromApiProjectConfig} accepts) to map.
+ * — or a {@link CliConfigWithRawPresence} pair, the RECOMMENDED form
+ * whenever a `document` is available (see {@link fromConfigDocument}'s own
+ * docstring) — to project down to the hosted subset, or a raw,
+ * not-yet-decoded Management API v2 project-config response (in any of the
+ * three envelope shapes {@link fromApiProjectConfig} accepts) to map.
  */
 export type ToProjectConfigSource =
-  | { readonly cliConfig: EffectiveConfig }
+  | { readonly cliConfig: EffectiveConfig | CliConfigWithRawPresence }
   | { readonly apiResponse: unknown };
 
 function hasApiResponse(
@@ -1191,7 +1482,7 @@ function hasApiResponse(
 
 function hasCliConfig(
   source: ToProjectConfigSource,
-): source is { readonly cliConfig: EffectiveConfig } {
+): source is { readonly cliConfig: EffectiveConfig | CliConfigWithRawPresence } {
   return Object.hasOwn(source, "cliConfig");
 }
 
