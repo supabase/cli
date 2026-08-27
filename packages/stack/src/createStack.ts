@@ -68,9 +68,9 @@ export interface ForegroundStackHandle {
   serviceReady(name: string, opts?: ReadyOptions): Effect.Effect<void, StackError>;
   getStatus(): Effect.Effect<ReadonlyArray<StackServiceState>, StackError>;
   getServiceStatus(name: string): Effect.Effect<StackServiceState, StackError>;
-  statusChanges(): Stream.Stream<StackServiceState>;
-  logs(): Stream.Stream<LogEntry>;
-  serviceLogs(name: string): Stream.Stream<LogEntry>;
+  statusChanges(): Stream.Stream<StackServiceState, StackError>;
+  logs(): Stream.Stream<LogEntry, StackError>;
+  serviceLogs(name: string): Stream.Stream<LogEntry, StackError>;
   logHistory(name: string, limit?: number): Effect.Effect<ReadonlyArray<LogEntry>, StackError>;
 }
 
@@ -234,9 +234,10 @@ const createStackAttempt = (
             run(localStack.waitReady(name, opts)),
           getStatus: () => run(localStack.getAllStates()),
           getServiceStatus: (name: string) => run(localStack.getState(name)),
-          statusChanges: () => localStack.allStateChanges(),
-          logs: () => localStack.subscribeAllLogs(),
-          serviceLogs: (name: string) => localStack.subscribeLogs(name),
+          statusChanges: () => localStack.allStateChanges().pipe(Stream.mapError(toStackError)),
+          logs: () => localStack.subscribeAllLogs().pipe(Stream.mapError(toStackError)),
+          serviceLogs: (name: string) =>
+            localStack.subscribeLogs(name).pipe(Stream.mapError(toStackError)),
           logHistory: (name: string, limit?: number) => run(localStack.logHistory(name, limit)),
         } satisfies ForegroundStackHandle;
       });

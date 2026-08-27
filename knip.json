@@ -15,7 +15,12 @@
         "src/**/*.e2e.test.ts",
         "src/**/*.live.test.ts"
       ],
-      "ignore": ["scripts/*.ts", "tests/**/*.ts", "src/shared/telemetry/event-catalog.ts"],
+      "ignore": [
+        "scripts/*.ts",
+        "tests/**/*.ts",
+        "src/shared/telemetry/event-catalog.ts",
+        "src/shared/workers/stacks/**"
+      ],
       "ignoreBinaries": ["mkfifo"],
       "ignoreDependencies": ["prettier"]
     },

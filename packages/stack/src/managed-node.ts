@@ -10,6 +10,7 @@ import { gitConfigStoreLayer } from "./managed/git.ts";
 import { controlTransportLayer } from "./platform-node.ts";
 
 export * from "./managed.ts";
+export { controlTransportLayer };
 export { managedDaemonEntryPoint };
 export type { ManagedDaemonStartInput } from "./supervisor.ts";
 

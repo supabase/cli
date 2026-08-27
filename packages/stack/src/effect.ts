@@ -10,6 +10,7 @@ export {
   BinaryNotFoundError,
   BinaryRuntimeError,
   ChecksumMismatchError,
+  DaemonUpgradeRequired,
   DockerPullError,
   DownloadError,
   isDockerDaemonDownMessage,
@@ -18,11 +19,19 @@ export {
   StackError,
   StackNotRunningError,
   StackReadinessError,
+  StackRpcProtocolError,
+  StackRpcTransportError,
+  StackUnavailableError,
+  StopTimeout,
+  UpgradePreflightError,
+  UpgradeRestartError,
   toStackError,
 } from "./errors.ts";
 
 export type { NativeTarget, PlatformInfo } from "./Platform.ts";
 export { detectPlatform, nativeTargetForPlatform } from "./Platform.ts";
+
+export { expandExcludedServices } from "./ServiceExclusions.ts";
 
 export type { ContainerRuntime, StackRuntimeSelection } from "./ContainerRuntime.ts";
 export { selectStackRuntime, validateStackRuntime } from "./ContainerRuntime.ts";

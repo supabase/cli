@@ -19,21 +19,57 @@ write a second StateManager metadata file.
 
 ## Detached owner cleanup
 
-The managed supervisor owns the port lease, service processes, and local control
-endpoint. It records `starting`, `running`, `failed`, and `stopped` in
-`stack.json`. Graceful stop calls the owner through `RemoteStack` and waits for
-the document to become `stopped` before a caller may delete it.
+The managed supervisor owns the port lease, service processes, and one complete
+loopback HTTP application. It records `starting`, `running`, `failed`, and
+`stopped` in `stack.json`. `SupervisorSession` owns one command queue and actor
+fiber; stop requests from HTTP, signals, startup failure, and explicit disposal
+all join that serialized state machine.
+
+The application is assembled before the deterministic listener binds and has
+only three routes:
+
+- `GET /owner` projects either a supervisor lifecycle/version or a maintenance
+  operation;
+- `POST /stop` accepts an ownership id, exact owner session id, and explicit or
+  replacement intent, returns a flushed `202` for a supervisor and `423` for a
+  maintenance lease, and lets the caller wait for that session to end; and
+- `POST /rpc` serves same-version Effect RPC over framed NDJSON when
+  `SupervisorSession.runtimeStack` has published the runtime. Requests carry
+  the expected ownership id and owner session; a stale session fence is
+  rejected before a handler runs. Before runtime publication, handlers
+  fail fast with typed `StackUnavailableError`.
+
+Graceful remote stop therefore uses the stable session-fenced control route,
+waits for the targeted owner session and document transition, then lets the
+owner dispose the runtime before releasing control. A stale delayed stop gets
+`409` from the new owner and cannot tear it down.
+
+Every shutdown source submits to one session actor. The first accepted intent
+wins. Once accepted, the actor
+publishes `stopping`, interrupts and joins startup, attempts runtime stop and
+disposal, closes the runtime scope, persists terminal state, and closes the
+ownership listener last, even when an earlier step fails. The same idempotent
+cleanup transaction is also registered as the session-scope finalizer, so scope
+closure remains a liveness backstop if the actor fiber exits unexpectedly.
+Explicit stop succeeds after teardown and logs every non-interruption cleanup
+failure; startup and runtime failures retain their original `Cause` after the
+same teardown completes. Active RPC streams observe the actor's stop-accepted
+gate and finish before the listener closes. Node and Bun close listeners
+gracefully after flushing the
+accepted `202`; the stable client drains that response and then polls the exact
+session fence, so listener shutdown cannot be stranded by an unread body.
+Explicit stop intent is persisted before listener release; replacement intent
+keeps the stopped document eligible for the authorized upgrade start.
 
 If the owner is gone, the next lifecycle operation acquires control for the
 stack id, force-removes deterministic Docker containers, reconciles persisted
 assignments, and records `stopped`. It does not probe PIDs or trust stale
-runtime artifacts.
-The control endpoint is deterministic from the stack id and is validated before
-an attached client connects.
+runtime artifacts. The control endpoint is deterministic from the stack id and
+is validated before an attached client connects.
 
-The child uses `DaemonServer` over the deterministic loopback TCP control
-transport. The endpoint is runtime coordination state, not the public API
-proxy URL.
+The endpoint is runtime coordination state, not the public API proxy URL. Node,
+Bun, and compiled-Bun children use the same static application and lifecycle
+composition; the same server owns every lifecycle phase.
 
 ## Process supervision
 
@@ -57,9 +93,13 @@ waits for disposal to begin before interrupting the main Effect. Direct
 ## Regression coverage
 
 Integration tests cover manager port/document cleanup, detached supervisor
-startup/reattach/launch-update/stop, stale-owner recovery, and delete. The
-process-compose and stack suites cover supervised child trees, Docker cleanup
-hooks, and one-shot exit observation. Leak helpers compare managed document and
+startup/reattach/launch-update over RPC, stop during every startup phase,
+session-fenced stop, upgrade restart with actual
+excluded-service and sticky-port preservation, cancellation, failed-step
+cleanup, and delete. The process-compose and stack suites cover supervised
+child trees, Docker cleanup hooks, one-shot exit observation, and
+Node/Bun/compiled-Bun re-entry. Node and Bun control adapters exercise the
+same conflict classification. Leak helpers compare managed document and
 runtime roots, temporary Postgres paths, processes, and containers before and
 after each journey.
 

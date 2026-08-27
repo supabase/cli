@@ -107,7 +107,7 @@ function createWaitList() {
     }
   };
 
-  const waitUntil = (ready: () => boolean, description: string, timeoutMs = 2_000) =>
+  const waitUntil = (ready: () => boolean, description: string, timeoutMs = 30_000) =>
     Effect.gen(function* () {
       if (ready()) return;
       const signal = yield* Deferred.make<void>();

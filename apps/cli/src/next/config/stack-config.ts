@@ -1,4 +1,8 @@
-import type { StackConfig, VersionManifest } from "@supabase/stack/effect";
+import {
+  expandExcludedServices,
+  type StackConfig,
+  type VersionManifest,
+} from "@supabase/stack/effect";
 
 export const excludedStackServices = [
   "auth",
@@ -24,18 +28,18 @@ export function toStartStackConfig(
   exclude: ReadonlyArray<ExcludedStackService>,
   mode?: StartMode,
 ): StackConfig {
-  const excluded = new Set(exclude);
+  const excluded = expandExcludedServices(exclude);
   const native = mode === "native";
   return {
     ...(mode === undefined ? {} : { mode }),
     realtime: native || excluded.has("realtime") ? false : {},
     storage: native || excluded.has("storage") ? false : {},
-    imgproxy: native || excluded.has("imgproxy") || excluded.has("storage") ? false : {},
+    imgproxy: native || excluded.has("imgproxy") ? false : {},
     mailpit: native || excluded.has("mailpit") ? false : {},
     pgmeta: native || excluded.has("pgmeta") ? false : {},
-    studio: native || excluded.has("studio") || excluded.has("pgmeta") ? false : {},
+    studio: native || excluded.has("studio") ? false : {},
     analytics: native || excluded.has("analytics") ? false : {},
-    vector: native || excluded.has("vector") || excluded.has("analytics") ? false : {},
+    vector: native || excluded.has("vector") ? false : {},
     pooler: native || excluded.has("pooler") ? false : {},
     ...(excluded.has("auth") ? { auth: false } : {}),
     ...(excluded.has("postgrest") ? { postgrest: false } : {}),

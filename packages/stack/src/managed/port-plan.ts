@@ -55,6 +55,8 @@ export interface ManagedPortPlanInput {
    * defaults, which sticky reuse later re-reserves exactly.
    */
   readonly preferCatalogDefaults?: boolean;
+  /** Replacements keep the target stack's existing sticky assignments. */
+  readonly preservePersisted?: boolean;
 }
 
 const automaticSelection = (preferred: number | undefined): PortSelection =>
@@ -78,7 +80,15 @@ export const planManagedPorts = (input: ManagedPortPlanInput): ManagedPortPlan =
       const configured = intentsByField.get(field);
       const persistedAssignment = persistedByKey.get(entry.configKey);
       const intent = configured?.intent ?? "automatic";
-      if (configured?.intent === "exact") {
+      if (input.preservePersisted && persistedAssignment !== undefined) {
+        durable.push({
+          field,
+          key: entry.configKey,
+          intent: persistedAssignment.intent,
+          selection: { kind: "exact", port: persistedAssignment.port },
+          newlyAllocatedAutomatic: false,
+        });
+      } else if (configured?.intent === "exact") {
         durable.push({
           field,
           key: entry.configKey,

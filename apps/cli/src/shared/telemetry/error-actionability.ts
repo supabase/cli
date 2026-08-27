@@ -99,6 +99,10 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "daemon_protocol",
   "daemon_status",
   "daemon_transport",
+  "daemon_upgrade_required",
+  "daemon_upgrade_preflight",
+  "daemon_upgrade_restart",
+  "daemon_stop_timeout",
   "database",
   "docker_not_running",
   "filesystem",
@@ -126,6 +130,8 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "managed_control_transport",
   "managed_control_protocol",
   "managed_control_address_conflict",
+  "managed_control_stop_conflict",
+  "managed_control_maintenance_busy",
   "managed_document",
   "managed_control_required",
   "managed_attached",
@@ -1022,7 +1028,32 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   }),
   StackNotRunningError: () => actionability.startStack,
   StackReadinessError: () => actionability.startStack,
+  StackUnavailableError: () => actionability.startStack,
+  StackRpcTransportError: () => ({
+    ...actionability.startStack,
+    fingerprint_suffix: "daemon_transport",
+  }),
+  StackRpcProtocolError: () => ({
+    ...actionability.impossibleState,
+    fingerprint_suffix: "daemon_protocol",
+  }),
   NoRunningStackError: () => actionability.startStack,
+  DaemonUpgradeRequired: () => ({
+    ...actionability.startStack,
+    fingerprint_suffix: "daemon_upgrade_required",
+  }),
+  UpgradePreflightError: () => ({
+    ...actionability.startStack,
+    fingerprint_suffix: "daemon_upgrade_preflight",
+  }),
+  UpgradeRestartError: () => ({
+    ...actionability.startStack,
+    fingerprint_suffix: "daemon_upgrade_restart",
+  }),
+  StopTimeout: () => ({
+    ...actionability.stopStack,
+    fingerprint_suffix: "daemon_stop_timeout",
+  }),
   InvalidControlOwnershipIdError: () => ({
     ...actionability.impossibleState,
     fingerprint_suffix: "managed_control_ownership",
@@ -1032,7 +1063,7 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
     fingerprint_suffix: "managed_control_bind",
   }),
   ControlTransportError: () => ({
-    ...actionability.externalNetwork,
+    ...actionability.startStack,
     fingerprint_suffix: "managed_control_transport",
   }),
   ControlProtocolError: () => ({
@@ -1046,6 +1077,17 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   ControlAddressConflictError: () => ({
     ...actionability.startStack,
     fingerprint_suffix: "managed_control_address_conflict",
+  }),
+  ControlStopConflictError: () => ({
+    ...actionability.impossibleState,
+    fingerprint_suffix: "managed_control_stop_conflict",
+  }),
+  ControlMaintenanceBusyError: () => ({
+    error_kind: CliErrorKind.UserActionable,
+    error_category: CliErrorCategory.InvalidConfig,
+    has_suggestion: true,
+    suggestion_type: CliSuggestionType.RunCommand,
+    fingerprint_suffix: "managed_control_maintenance_busy",
   }),
   InvalidManagedStackDocumentError: () => ({
     ...actionability.invalidConfig,
