@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- Bun platform tests call native fetch and Promise callbacks to validate the transport implementation.
 import { Cause, Deferred, Effect, Exit, Layer, Predicate, Scope } from "effect";
 import { describe, expect, test } from "vitest";
 import {
@@ -294,6 +295,8 @@ describe("Bun control transport", () => {
       expect(response.status).toBe(202);
       expect(body).toBe(JSON.stringify({ ok: true }));
       await Effect.runPromise(Deferred.succeed(release, undefined));
+      // SupervisorSession exposes an aggregate cleanup channel for arbitrary owner failures.
+      // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
       await Effect.runPromise(lifecycle.awaitShutdown);
       await expect(fetch(`http://127.0.0.1:${address.port}/owner`)).rejects.toThrow();
     } finally {
@@ -366,6 +369,8 @@ describe("Bun control transport", () => {
           ).pipe(Effect.provide(controlTransportLayer), Effect.exit),
         );
         expect(Exit.isSuccess(stopExit)).toBe(true);
+        // SupervisorSession exposes an aggregate cleanup channel for arbitrary owner failures.
+        // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
         await Effect.runPromise(lifecycle.awaitShutdown);
         await expect(fetch(`http://127.0.0.1:${address.port}/owner`)).rejects.toThrow();
       } finally {

@@ -1,9 +1,12 @@
-import { Cause, Deferred, Effect, Exit, Fiber, Predicate, Scope, Stream } from "effect";
+// oxlint-disable effecttsgo/async-function -- Session integration tests use Vitest's Promise callback boundary.
+import { Cause, Data, Deferred, Effect, Exit, Fiber, Predicate, Scope, Stream } from "effect";
 import { describe, expect, it } from "vitest";
 import type { Stack } from "./Stack.ts";
 import { StackServiceState } from "./StackServiceState.ts";
 import { SupervisorSession } from "./SupervisorSession.ts";
 import { makeTestStack } from "./testing.ts";
+
+class PublishFailedError extends Data.TaggedError("PublishFailedError")<{}> {}
 
 const state = new StackServiceState({
   name: "auth",
@@ -61,6 +64,7 @@ describe("SupervisorSession", () => {
       const events: Array<string> = [];
       const startupEntered = Deferred.makeUnsafe<void>();
       const run = Effect.runFork(
+        // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- SupervisorSession.run aggregates arbitrary cleanup failures by contract.
         controller.run({
           startup: () =>
             Deferred.succeed(startupEntered, undefined).pipe(Effect.andThen(Effect.never)),
@@ -85,6 +89,7 @@ describe("SupervisorSession", () => {
       const running = Deferred.makeUnsafe<void>();
       const stack = makeStack(events);
       const run = Effect.runFork(
+        // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- SupervisorSession.run aggregates arbitrary cleanup failures by contract.
         controller.run({
           startup: () => Effect.succeed(stack),
           stack: (runtime) => runtime,
@@ -118,6 +123,7 @@ describe("SupervisorSession", () => {
           ),
       );
       const run = Effect.runFork(
+        // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- SupervisorSession.run aggregates arbitrary cleanup failures by contract.
         controller.run({
           startup: () => startup,
           stack: (stack: Stack["Service"]) => stack,
@@ -139,6 +145,7 @@ describe("SupervisorSession", () => {
         ready: false,
       });
       await Effect.runPromise(Deferred.succeed(releaseFinalizer, undefined));
+      // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- The joined session fiber exposes its declared aggregate cleanup channel.
       await Effect.runPromise(Fiber.join(run));
       expect(events).toEqual(["startup-finalizer", "persist-stopped", "close-owner"]);
     }));
@@ -148,6 +155,7 @@ describe("SupervisorSession", () => {
       const events: Array<string> = [];
       const stack = makeStack(events);
       const run = await Effect.runPromise(
+        // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- SupervisorSession.run aggregates arbitrary cleanup failures by contract.
         controller
           .run({
             startup: () =>
@@ -156,7 +164,7 @@ describe("SupervisorSession", () => {
               ),
             stack: (runtime) => runtime,
             awaitDisposed: () => Effect.never,
-            onRunning: () => Effect.fail(new Error("publish failed")),
+            onRunning: () => Effect.fail(new PublishFailedError()),
             onStopped: () => Effect.void,
             onFailure: () => Effect.sync(() => events.push("persist-failed")),
             closeOwner: Effect.sync(() => events.push("close-owner")),
@@ -180,6 +188,7 @@ describe("SupervisorSession", () => {
       const running = Deferred.makeUnsafe<void>();
       const stack = makeStack(events);
       const run = Effect.runFork(
+        // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- SupervisorSession.run aggregates arbitrary cleanup failures by contract.
         controller.run({
           startup: () =>
             Effect.addFinalizer(() => Effect.die("runtime finalizer failed")).pipe(
@@ -207,6 +216,7 @@ describe("SupervisorSession", () => {
       const events: Array<string> = [];
       const startupFailure = new Error("startup failed");
       const exit = await Effect.runPromise(
+        // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- SupervisorSession.run aggregates arbitrary cleanup failures by contract.
         controller
           .run({
             startup: () =>
@@ -234,11 +244,12 @@ describe("SupervisorSession", () => {
       const terminalEntered = Deferred.makeUnsafe<void>();
       const releaseTerminal = Deferred.makeUnsafe<void>();
       const run = Effect.runFork(
+        // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- SupervisorSession.run aggregates arbitrary cleanup failures by contract.
         controller.run({
           startup: () => Effect.succeed(makeStack([])),
           stack: (runtime) => runtime,
           awaitDisposed: () => Effect.never,
-          onRunning: () => Effect.fail(new Error("publish failed")),
+          onRunning: () => Effect.fail(new PublishFailedError()),
           onStopped: () => Effect.void,
           onFailure: () =>
             Deferred.succeed(terminalEntered, undefined).pipe(
@@ -267,6 +278,7 @@ describe("SupervisorSession", () => {
       const running = Deferred.makeUnsafe<void>();
       const disposed = Deferred.makeUnsafe<void>();
       const run = Effect.runFork(
+        // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context -- SupervisorSession.run aggregates arbitrary cleanup failures by contract.
         controller.run({
           startup: () => Effect.succeed(makeStack([])),
           stack: (runtime) => runtime,

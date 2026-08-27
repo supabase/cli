@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch-in-effect, effecttsgo/node-builtin-import -- Control-server tests call the native HTTP client from Vitest callbacks to exercise the wire boundary.
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { Effect, Layer, ManagedRuntime, Predicate } from "effect";
 import { HttpServer } from "effect/unstable/http";

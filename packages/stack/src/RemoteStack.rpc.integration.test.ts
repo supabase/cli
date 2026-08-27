@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/node-builtin-import -- RPC tests intentionally exercise native HTTP handlers at the transport boundary.
 import { it } from "@effect/vitest";
 import {
   Cause,
@@ -103,7 +104,7 @@ const startStubServer = (handler: RequestListener) =>
         server.off("error", onError);
         const address = server.address();
         if (address === null || typeof address === "string") {
-          resume(Effect.fail(new Error("test server did not expose a TCP address")));
+          resume(Effect.die("test server did not expose a TCP address"));
           return;
         }
         resume(
@@ -357,11 +358,7 @@ it.live("executes every Stack operation over the same-version RPC endpoint", () 
           },
         }).pipe(Layer.provide(recordingTransportLayer));
         const mismatchExit = yield* Effect.exit(
-          Effect.scoped(
-            Effect.gen(function* () {
-              yield* Stack;
-            }),
-          ).pipe(Effect.provide(mismatchLayer)),
+          Effect.scoped(Stack).pipe(Effect.provide(mismatchLayer)),
         );
         expect(Exit.isFailure(mismatchExit)).toBe(true);
         expect(rpcPaths).toEqual(["/owner"]);
@@ -660,13 +657,7 @@ it.effect("reports the HTTP status when the owner probe is non-successful", () =
         }),
       ),
     );
-    const exit = yield* Effect.exit(
-      Effect.scoped(
-        Effect.gen(function* () {
-          yield* Stack;
-        }).pipe(Effect.provide(layer)),
-      ),
-    );
+    const exit = yield* Effect.exit(Effect.scoped(Stack).pipe(Effect.provide(layer)));
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
       const failure = Cause.findErrorOption(exit.cause);
@@ -809,6 +800,8 @@ it.live("closes an owner while another client still consumes an RPC stream", () 
               ownerSessionId,
               intent: "explicit",
             });
+            // SupervisorSession exposes an aggregate cleanup channel for arbitrary owner failures.
+            // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
             return yield* lifecycle.awaitShutdown.pipe(Effect.timeout("2 seconds"), Effect.exit);
           }).pipe(Effect.provide(layer)),
         );
@@ -889,6 +882,8 @@ it.live("terminates an active stream with the stopping reason", () =>
               Effect.exit,
             );
             yield* Deferred.succeed(stopRelease, undefined);
+            // SupervisorSession exposes an aggregate cleanup channel for arbitrary owner failures.
+            // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
             yield* lifecycle.awaitShutdown;
             yield* Deferred.await(streamReleased);
             return streamExit;

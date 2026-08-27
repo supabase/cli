@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/any-unknown-in-error-context -- SupervisorSession intentionally aggregates arbitrary owner cleanup failures in this test fixture.
 import { Cause, Deferred, Effect, Fiber, Ref } from "effect";
 import type { Stack } from "../../src/Stack.ts";
 import { SupervisorSession } from "../../src/SupervisorSession.ts";

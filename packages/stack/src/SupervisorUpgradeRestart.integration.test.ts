@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/node-builtin-import -- Upgrade tests exercise native supervisor process services.
 import { NodeServices } from "@effect/platform-node";
 import { it } from "@effect/vitest";
 import { Cause, Effect, Exit, Fiber, Option } from "effect";
@@ -273,7 +274,7 @@ describe("incompatible supervisor upgrade restart", () => {
           inspectStack: () =>
             inspections++ === 0
               ? context.manager.inspectStack(context.stackId)
-              : Effect.succeed(undefined),
+              : Effect.void.pipe(Effect.as(undefined)),
         },
         controlTransport: context.transport,
       }).pipe(Effect.exit);

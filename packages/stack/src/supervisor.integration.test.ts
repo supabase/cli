@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch, effecttsgo/global-timers, effecttsgo/new-promise, effecttsgo/node-builtin-import, effecttsgo/process-env -- Supervisor integration tests exercise native child-process, HTTP, timer, environment, and filesystem boundaries from Vitest's Promise harness.
 import { Cause, Context, Effect, Exit, Layer, Predicate, Schema } from "effect";
 import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
 import { fork, type ChildProcess } from "node:child_process";
@@ -331,9 +332,7 @@ const restartThroughManagedStart = (
         controlTransport,
       });
     }).pipe(
-      Effect.provide(managerLayer),
-      Effect.provide(NodeServices.layer),
-      Effect.provide(controlTransportLayer),
+      Effect.provide(Layer.mergeAll(managerLayer, NodeServices.layer, controlTransportLayer)),
     ),
   ).then((prepared) =>
     spawnChild({
@@ -417,12 +416,21 @@ const stopViaManagedFacade = async (roots: {
   await Effect.runPromise(
     stopManagedStack({ workspacePath: roots.root }).pipe(
       Effect.scoped,
-      Effect.provide(managedStackManagerLayer({ stateRoot: roots.stateRoot })),
-      Effect.provide(NodeFileSystem.layer),
-      Effect.provide(NodePath.layer),
-      Effect.provide(gitConfigStoreLayer),
-      Effect.provide(controlTransportLayer),
-      Effect.provide(httpTransportClientLayer),
+      Effect.provide(
+        Layer.mergeAll(
+          managedStackManagerLayer({ stateRoot: roots.stateRoot }).pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                NodeFileSystem.layer,
+                NodePath.layer,
+                gitConfigStoreLayer,
+                controlTransportLayer,
+              ),
+            ),
+          ),
+          httpTransportClientLayer,
+        ),
+      ),
     ),
   );
 };
@@ -718,8 +726,7 @@ describe("detached supervisor child journeys", () => {
     try {
       const exit = await Effect.runPromiseExit(
         managedDaemonLayer(messageFor(roots, { stackName: "bad\nname" }), childEntryPoint).pipe(
-          Effect.provide(httpTransportClientLayer),
-          Effect.provide(NodeFileSystem.layer),
+          Effect.provide(Layer.mergeAll(httpTransportClientLayer, NodeFileSystem.layer)),
         ),
       );
       expect(Exit.isFailure(exit)).toBe(true);
@@ -738,8 +745,7 @@ describe("detached supervisor child journeys", () => {
     try {
       const exit = await Effect.runPromiseExit(
         managedDaemonLayer(messageFor(roots), errorChildEntryPoint).pipe(
-          Effect.provide(httpTransportClientLayer),
-          Effect.provide(NodeFileSystem.layer),
+          Effect.provide(Layer.mergeAll(httpTransportClientLayer, NodeFileSystem.layer)),
         ),
       );
       expect(Exit.isFailure(exit)).toBe(true);
@@ -761,8 +767,7 @@ describe("detached supervisor child journeys", () => {
     try {
       const exit = await Effect.runPromiseExit(
         managedDaemonLayer(messageFor(roots), nonReadyChildEntryPoint).pipe(
-          Effect.provide(httpTransportClientLayer),
-          Effect.provide(NodeFileSystem.layer),
+          Effect.provide(Layer.mergeAll(httpTransportClientLayer, NodeFileSystem.layer)),
         ),
       );
       expect(Exit.isFailure(exit)).toBe(true);

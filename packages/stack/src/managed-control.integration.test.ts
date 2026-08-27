@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/global-fetch-in-effect, effecttsgo/new-promise, effecttsgo/node-builtin-import, effecttsgo/prefer-schema-over-json -- Managed-control tests use native HTTP/JSON protocol payloads at the integration boundary.
 import { it } from "@effect/vitest";
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Predicate, Result, Stream } from "effect";
 import * as TestClock from "effect/testing/TestClock";
@@ -65,7 +66,7 @@ const makeStack = (started: { value: boolean }): Stack["Service"] => ({
 
 const makeStaticOwner = (stackId: string, stack: Stack["Service"]) =>
   Effect.gen(function* () {
-    const ownerSessionId = crypto.randomUUID();
+    const ownerSessionId = `static-owner-${stackId}`;
     const lifecycle = yield* makeSupervisorSessionFixture({
       ownershipId: stackId,
       ownerSessionId,
@@ -250,7 +251,7 @@ describe("managed control endpoint", () => {
           Effect.gen(function* () {
             const lifecycle = yield* makeSupervisorSessionFixture({
               ownershipId: STACK_ID,
-              ownerSessionId: crypto.randomUUID(),
+              ownerSessionId: "static-listener-session",
               daemonCliVersion: "test",
               close: Effect.void,
             });
@@ -307,6 +308,8 @@ describe("managed control endpoint", () => {
           );
           expect(response.status).toBe(202);
           expect(yield* Effect.promise(() => response.json())).toEqual({ ok: true });
+          // SupervisorSession exposes an aggregate cleanup channel for arbitrary owner failures.
+          // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
           yield* lifecycle.awaitShutdown;
           expect(stopCalls.value).toBe(1);
         }),
@@ -384,9 +387,7 @@ describe("managed control endpoint", () => {
           }),
         );
         const next = yield* Effect.scoped(
-          Effect.gen(function* () {
-            return yield* acquireControl({ stackId: STACK_ID, maintenanceOperation: "update" });
-          }),
+          acquireControl({ stackId: STACK_ID, maintenanceOperation: "update" }),
         );
         expect(isControlOwnership(next)).toBe(true);
       }),

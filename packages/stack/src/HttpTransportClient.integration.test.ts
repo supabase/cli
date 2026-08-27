@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-timers, effecttsgo/new-promise, effecttsgo/node-builtin-import -- Transport tests coordinate native HTTP sockets and readiness callbacks through Vitest's Promise boundary.
 import { Effect, Fiber, ManagedRuntime } from "effect";
 import type { Socket } from "node:net";
 import { createServer, type Server } from "node:http";

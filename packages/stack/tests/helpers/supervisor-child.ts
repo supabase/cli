@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/node-builtin-import, effecttsgo/process-env, effecttsgo/process-env-in-effect -- The child fixture is a native subprocess boundary that composes platform layers and forwards its environment to the supervisor.
 import { NodeFileSystem, NodePath, NodeServices } from "@effect/platform-node";
 import { Deferred, Effect, Layer, Stream, Duration } from "effect";
 import { createServer, type Server } from "node:net";
@@ -197,6 +198,8 @@ const testRuntime = ({
     }
     yield* Effect.addFinalizer(() => closeTestPorts(servers));
     if (mode === "fail-after-bind") {
+      // Returning the failed yield exits this fixture before the success layer is constructed.
+      // oxlint-disable-next-line effecttsgo/unnecessary-fail-yieldable-error
       return yield* Effect.fail(
         new SupervisorStartError({ message: "Supervisor test runtime failed after binding" }),
       );
@@ -311,13 +314,19 @@ export const runTestSupervisor = (): void => {
       runtimeLayer: testRuntime,
       resolutionTimeout: resolutionTimeout(),
     };
+    // runSupervisor's runtime layers are provided in dependency order: the decorated manager
+    // and transport layers must be built before the platform services are attached.
+    // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
     const program = runSupervisor(supervisorPlatform).pipe(
+      // oxlint-disable-next-line effecttsgo/multiple-effect-provide
       Effect.provide(gitConfigStoreLayer),
       Effect.provide(testControlTransportLayer(nodeControlTransportLayer)),
       Effect.provide(NodeServices.layer),
       Effect.provide(NodeFileSystem.layer),
       Effect.provide(NodePath.layer),
     );
+    // The child process is intentionally launched at this native Promise boundary.
+    // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
     void Effect.runPromise(program);
     return;
   }
@@ -344,12 +353,18 @@ export const runTestSupervisor = (): void => {
       runtimeLayer: testRuntime,
       resolutionTimeout: resolutionTimeout(),
     };
+    // runSupervisor's runtime layers are provided in dependency order: the decorated manager
+    // and transport layers must be built before the platform services are attached.
+    // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
     const program = runSupervisor(supervisorPlatform).pipe(
+      // oxlint-disable-next-line effecttsgo/multiple-effect-provide
       Effect.provide(gitConfigStoreLayer),
       Effect.provide(testControlTransportLayer(bunPlatform.controlTransportLayer)),
       Effect.provide(bunServices.layer),
       Effect.provide(bunFileSystem.layer),
     );
+    // The child process is intentionally launched at this native Promise boundary.
+    // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
     return Effect.runPromise(program);
   });
 };
