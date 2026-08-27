@@ -66,7 +66,7 @@ const ALTER_SYSTEM_PATTERN = /^ALTER\s+SYSTEM(?:\s|$)/u;
 const CLUSTER_PATTERN = /^CLUSTER(?:\s|$)/u;
 const DATABASE_DDL_PATTERN = /^(?:CREATE|DROP)\s+DATABASE(?:\s|$)/u;
 const TABLESPACE_DDL_PATTERN = /^(?:CREATE|DROP)\s+TABLESPACE(?:\s|$)/u;
-const REINDEX_DATABASE_PATTERN = /^REINDEX(?:\s+\([^)]*\))?\s+(?:DATABASE|SYSTEM)(?:\s|$)/u;
+const REINDEX_DATABASE_PATTERN = /^REINDEX(?:\s+\([^)]*\))?\s+(?:DATABASE|SYSTEM|SCHEMA)(?:\s|$)/u;
 const SUBSCRIPTION_DDL_PATTERN = /^(?:CREATE|DROP)\s+SUBSCRIPTION(?:\s|$)/u;
 const DISCARD_ALL_PATTERN = /^DISCARD\s+ALL(?:\s|$)/u;
 const TRANSACTION_CONTROL_PATTERN =
@@ -103,7 +103,7 @@ const legacyTrimLeadingSqlComments = (sql: string): string => {
  * Whether a migration statement cannot run inside a transaction block — `CREATE
  * [UNIQUE] INDEX CONCURRENTLY`, `DROP INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`,
  * `VACUUM`, `ALTER SYSTEM`, `CLUSTER`, `CREATE`/`DROP DATABASE`,
- * `CREATE`/`DROP TABLESPACE`, `REINDEX DATABASE`/`SYSTEM`,
+ * `CREATE`/`DROP TABLESPACE`, `REINDEX DATABASE`/`SYSTEM`/`SCHEMA`,
  * `CREATE`/`DROP SUBSCRIPTION`, `DISCARD ALL`. Such statements fail with
  * SQLSTATE 25001 inside the transaction
  * created by a migration batch, so `execMigrationBatch` runs them standalone.

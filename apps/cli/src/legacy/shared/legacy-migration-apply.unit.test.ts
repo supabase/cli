@@ -1145,6 +1145,7 @@ describe("legacyIsPipelineIncompatible", () => {
     ["drop tablespace", "DROP TABLESPACE ts", true],
     ["reindex database", "REINDEX DATABASE postgres", true],
     ["reindex system with options", "REINDEX (VERBOSE) SYSTEM postgres", true],
+    ["reindex schema", "REINDEX SCHEMA public", true],
     ["reindex table non-concurrent", "REINDEX TABLE public.widgets", false],
     ["alter database", "ALTER DATABASE demo SET search_path = public", false],
     ["create subscription", "CREATE SUBSCRIPTION sub CONNECTION 'host=h' PUBLICATION pub", true],
