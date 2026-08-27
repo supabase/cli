@@ -70,11 +70,12 @@
           },
           "sources": {
             "type": "array",
+            "minItems": 1,
             "items": {
               "type": "string",
               "enum": ["claude", "codex"]
             },
-            "description": "Which review(s) surfaced this finding. Codex-originated findings use [\"codex\"]."
+            "description": "Which review(s) surfaced this finding, never empty. Codex-originated findings use [\"codex\"]."
           },
           "adjudication": {
             "type": "object",
@@ -98,21 +99,13 @@
     "stats": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["claude_total", "codex_total", "confirmed", "refuted", "uncertain"],
+      "required": ["claude_total", "codex_total"],
+      "description": "Only these two counts come from the model. `confirmed`/`refuted`/`uncertain` are computed deterministically by the posting script from the merged findings' verdicts, never taken from the model.",
       "properties": {
         "claude_total": { "type": "integer", "description": "Number of findings Claude reported." },
         "codex_total": {
           "type": "integer",
           "description": "Number of additional findings Codex's own independent pass surfaced."
-        },
-        "confirmed": {
-          "type": "integer",
-          "description": "Number of findings adjudicated confirmed."
-        },
-        "refuted": { "type": "integer", "description": "Number of findings adjudicated refuted." },
-        "uncertain": {
-          "type": "integer",
-          "description": "Number of findings adjudicated uncertain."
         }
       }
     }

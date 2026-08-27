@@ -11,6 +11,12 @@
 /pnpm-lock.yaml
 /pnpm-workspace.yaml
 
+# ai-review.yml executes trusted checkout code with API keys and can react to
+# arbitrary comments/PRs — keep it under maintainer review rather than the
+# ownerless Dependabot workflow-files rule above. Last matching pattern wins,
+# so this restores ownership for this one file specifically.
+/.github/workflows/ai-review.yml @supabase/cli
+
 # Generated code. These ownerless rules override the catch-all above so
 # CI-green sync PRs (e.g. Management API OpenAPI spec) can be auto-merged.
 /apps/cli-go/pkg/api/*.gen.go

@@ -17,20 +17,28 @@
  *
  * `resolveDecision` is the pure orchestration function (I/O injected, like
  * `evaluateAllOpenPrs` in `contribution-gate.ts`) that a test can drive
- * without the network; `main()` wires up the real GitHub I/O and writes the
- * step outputs `should_run`, `skip_reason`, `pr_number`, `head_ref`, `mode`,
- * and `trigger` to `$GITHUB_OUTPUT`.
+ * without the network; `main()` wires up the real GitHub I/O, writes the
+ * step outputs `should_run`, `pr_number`, `head_ref`, `mode`, and `trigger`
+ * to `$GITHUB_OUTPUT`, and surfaces the skip reason (if any) in
+ * `$GITHUB_STEP_SUMMARY`.
  *
  * Run in CI as: `bun .github/scripts/ai-review/resolve.ts`.
  */
 
 import { appendFileSync } from "node:fs";
 
-import { fetchAuthorPermission, isInternalAuthor } from "../contribution-gate.ts";
+import { fetchAuthorPermission, WRITE_PERMISSIONS } from "../contribution-gate.ts";
+import { AI_REVIEW_MARKER, formatDiffStats } from "./post-review.ts";
 
-/** Hidden marker every posted AI review carries. Duplicated (not imported)
- * in `post-review.ts`, which owns posting; keep the two literals in sync. */
-export const AI_REVIEW_MARKER = "<!-- supabase-ai-review -->";
+// Re-export so existing consumers (tests, this file's own dedup check) can
+// keep importing the marker from `resolve.ts`; `post-review.ts` — which owns
+// posting — is the single source of truth for the literal.
+export { AI_REVIEW_MARKER };
+
+/** Login every review/comment posted by this workflow carries. Duplicated
+ * (not imported) from `post-review.ts`'s `WORKFLOW_BOT_LOGIN`; keep the two
+ * literals in sync. */
+const WORKFLOW_BOT_LOGIN = "github-actions[bot]";
 
 /** Diff size above which a review is deferred to a "too large" notice instead
  * of burning a Claude + Codex pass on a diff nobody will read end to end. */
@@ -45,6 +53,9 @@ export interface TriggeringComment {
   id: number;
   authorLogin: string;
   authorAssociation: string;
+  /** Full comment body, needed to check the command matches `/ai-review`
+   * exactly (the workflow's `if:` only pre-filters on `startsWith`). */
+  body: string;
 }
 
 export interface ResolveInput {
@@ -72,6 +83,7 @@ export interface PrDetails {
 /** A prior review or issue comment, checked for the dedup marker. */
 export interface MarkedBody {
   body: string;
+  authorLogin: string;
 }
 
 /** Injected GitHub I/O so `resolveDecision` can be unit-tested without the network. */
@@ -102,9 +114,7 @@ function sizeGuardMode(pr: PrDetails): Mode {
 function tooLargeResult(pr: PrDetails, trigger: Trigger): ResolveResult {
   return {
     shouldRun: true,
-    skipReason:
-      `PR is too large for a full AI review ` +
-      `(+${pr.additions}/-${pr.deletions} lines across ${pr.changedFiles} files).`,
+    skipReason: `PR is too large for a full AI review (${formatDiffStats(pr)}).`,
     mode: "too-large",
     trigger,
   };
@@ -139,24 +149,50 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
       if (!comment) {
         throw new Error("issue_comment trigger requires comment details");
       }
-      let permission: string | undefined;
-      let isInternal = isInternalAuthor(comment.authorAssociation, undefined);
-      if (!isInternal) {
-        permission = await io.fetchPermission(comment.authorLogin);
-        isInternal = isInternalAuthor(comment.authorAssociation, permission);
-      }
-      if (!isInternal) {
+
+      // Authoritative command match: the workflow's job `if:` only
+      // pre-filters on `startsWith('/ai-review')`, so `/ai-reviewers` or
+      // `/ai-review-please` would otherwise also reach here.
+      const firstLine = comment.body.split("\n")[0]?.trim() ?? "";
+      if (firstLine !== "/ai-review") {
         return {
           shouldRun: false,
-          skipReason:
-            `Commenter @${comment.authorLogin} is not an internal maintainer ` +
-            `(author_association=${comment.authorAssociation}, permission=${permission ?? "n/a"}); ` +
-            `only maintainers can trigger /ai-review.`,
+          skipReason: `Comment is not the exact /ai-review command (first line: ${JSON.stringify(firstLine)}).`,
           mode: "review",
           trigger,
         };
       }
-      await io.reactToComment(comment.id);
+
+      // Authoritative authorization: always resolve the commenter's
+      // effective repository permission and require write/admin. Only the
+      // repository OWNER may short-circuit that requirement — any other
+      // association (including MEMBER/COLLABORATOR, which merely mean "in
+      // the org"/"added as a collaborator", not necessarily push-capable)
+      // must pass the permission check. Mirrors `contribution-gate.ts`'s
+      // `WRITE_PERMISSIONS`.
+      const permission = await io.fetchPermission(comment.authorLogin);
+      const authorized =
+        comment.authorAssociation === "OWNER" ||
+        (permission !== undefined && WRITE_PERMISSIONS.has(permission));
+      if (!authorized) {
+        return {
+          shouldRun: false,
+          skipReason:
+            `Commenter @${comment.authorLogin} is not authorized to run /ai-review ` +
+            `(author_association=${comment.authorAssociation}, permission=${permission ?? "n/a"}); ` +
+            `requires repository write access (or being the repository owner).`,
+          mode: "review",
+          trigger,
+        };
+      }
+
+      // Cosmetic feedback only — a 403/rate-limit here must never fail an
+      // otherwise-authorized run.
+      try {
+        await io.reactToComment(comment.id);
+      } catch (error) {
+        console.warn(`Could not react to comment ${comment.id}: ${String(error)}`);
+      }
     }
     // A maintainer explicitly asked, so the marker/dedup guard and the
     // draft/fork/bot skips below don't apply — only the size guard does.
@@ -184,8 +220,11 @@ export async function resolveDecision(input: ResolveInput, io: ResolveIo): Promi
     io.listReviews(pr.number),
     io.listIssueComments(pr.number),
   ]);
-  const alreadyReviewed = [...reviews, ...comments].some((entry) =>
-    entry.body.includes(AI_REVIEW_MARKER),
+  // Only a marker posted BY the workflow bot counts — otherwise anyone could
+  // paste the (invisible) marker into a comment to permanently suppress the
+  // auto review of their own PR.
+  const alreadyReviewed = [...reviews, ...comments].some(
+    (entry) => entry.authorLogin === WORKFLOW_BOT_LOGIN && entry.body.includes(AI_REVIEW_MARKER),
   );
   if (alreadyReviewed) {
     return {
@@ -242,9 +281,64 @@ interface RestPullRequest {
   changed_files: number;
 }
 
+function isRecordEntry(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The validated boundary between `Response.json()` (typed `Promise<unknown>`
+ * under `@tsconfig/bun`) and this file's typed shapes: `assert` narrows the
+ * parsed value to `T` before any caller reads a field off it.
+ */
+async function githubJson<T>(
+  response: Response,
+  assert: (value: unknown) => asserts value is T,
+): Promise<T> {
+  const value: unknown = await response.json();
+  assert(value);
+  return value;
+}
+
+function assertRestPullRequest(value: unknown): asserts value is RestPullRequest {
+  if (
+    !isRecordEntry(value) ||
+    typeof value.number !== "number" ||
+    (value.state !== "open" && value.state !== "closed") ||
+    typeof value.draft !== "boolean" ||
+    !(value.user === null || (isRecordEntry(value.user) && typeof value.user.type === "string")) ||
+    !isRecordEntry(value.head) ||
+    !(
+      value.head.repo === null ||
+      (isRecordEntry(value.head.repo) && typeof value.head.repo.full_name === "string")
+    ) ||
+    !isRecordEntry(value.base) ||
+    !isRecordEntry(value.base.repo) ||
+    typeof value.base.repo.full_name !== "string" ||
+    typeof value.additions !== "number" ||
+    typeof value.deletions !== "number" ||
+    typeof value.changed_files !== "number"
+  ) {
+    throw new Error("Malformed GitHub pull request response: missing or mistyped required fields.");
+  }
+}
+
+function assertMarkedEntries(
+  value: unknown,
+): asserts value is Array<{ body: string | null; user: { login: string } | null }> {
+  const isEntry = (
+    entry: unknown,
+  ): entry is { body: string | null; user: { login: string } | null } =>
+    isRecordEntry(entry) &&
+    (entry.body === null || typeof entry.body === "string") &&
+    (entry.user === null || (isRecordEntry(entry.user) && typeof entry.user.login === "string"));
+  if (!Array.isArray(value) || !value.every(isEntry)) {
+    throw new Error("Malformed GitHub response: expected an array of {body, user} entries.");
+  }
+}
+
 async function fetchPullRequest(token: string, base: string, prNumber: number): Promise<PrDetails> {
   const response = await githubFetch(`${base}/pulls/${prNumber}`, token);
-  const pr: RestPullRequest = await response.json();
+  const pr = await githubJson(response, assertRestPullRequest);
   return {
     number: pr.number,
     state: pr.state,
@@ -258,12 +352,15 @@ async function fetchPullRequest(token: string, base: string, prNumber: number): 
   };
 }
 
-async function listAllPages(token: string, url: string): Promise<Array<{ body: string | null }>> {
-  const entries: Array<{ body: string | null }> = [];
+async function listAllPages(
+  token: string,
+  url: string,
+): Promise<Array<{ body: string | null; user: { login: string } | null }>> {
+  const entries: Array<{ body: string | null; user: { login: string } | null }> = [];
   for (let page = 1; ; page++) {
     const separator = url.includes("?") ? "&" : "?";
     const response = await githubFetch(`${url}${separator}per_page=100&page=${page}`, token);
-    const batch: Array<{ body: string | null }> = await response.json();
+    const batch = await githubJson(response, assertMarkedEntries);
     entries.push(...batch);
     if (batch.length < 100) {
       break;
@@ -274,7 +371,10 @@ async function listAllPages(token: string, url: string): Promise<Array<{ body: s
 
 async function listReviews(token: string, base: string, prNumber: number): Promise<MarkedBody[]> {
   const entries = await listAllPages(token, `${base}/pulls/${prNumber}/reviews`);
-  return entries.map((entry) => ({ body: entry.body ?? "" }));
+  return entries.map((entry) => ({
+    body: entry.body ?? "",
+    authorLogin: entry.user?.login ?? "",
+  }));
 }
 
 async function listIssueComments(
@@ -283,7 +383,10 @@ async function listIssueComments(
   prNumber: number,
 ): Promise<MarkedBody[]> {
   const entries = await listAllPages(token, `${base}/issues/${prNumber}/comments`);
-  return entries.map((entry) => ({ body: entry.body ?? "" }));
+  return entries.map((entry) => ({
+    body: entry.body ?? "",
+    authorLogin: entry.user?.login ?? "",
+  }));
 }
 
 async function reactToComment(token: string, base: string, commentId: number): Promise<void> {
@@ -293,19 +396,40 @@ async function reactToComment(token: string, base: string, commentId: number): P
   });
 }
 
+/** Writes each `$GITHUB_OUTPUT` value using the heredoc/delimiter form (with
+ * a random delimiter per line) rather than `name=value`, defensively — none
+ * of today's values can contain a newline, but a future value shouldn't be
+ * able to inject extra output lines either. */
 function writeOutputs(result: ResolveResult, prNumber: number): void {
   const outputFile = requireEnv("GITHUB_OUTPUT");
-  const lines = [
-    `should_run=${result.shouldRun}`,
-    `skip_reason=${result.skipReason ?? ""}`,
-    `pr_number=${prNumber}`,
-    `head_ref=refs/pull/${prNumber}/head`,
-    `mode=${result.mode}`,
-    `trigger=${result.trigger}`,
-  ];
+  const entries: Record<string, string> = {
+    should_run: String(result.shouldRun),
+    pr_number: String(prNumber),
+    head_ref: `refs/pull/${prNumber}/head`,
+    mode: result.mode,
+    trigger: result.trigger,
+  };
+  const lines = Object.entries(entries).map(([name, value]) => {
+    const delimiter = `ghadelim_${crypto.randomUUID()}`;
+    return `${name}<<${delimiter}\n${value}\n${delimiter}`;
+  });
   // Append rather than overwrite: $GITHUB_OUTPUT may already carry lines from
   // earlier steps in the same job.
   appendFileSync(outputFile, `${lines.join("\n")}\n`);
+}
+
+/** Surfaces the skip reason (if any) in the job's step summary — the only
+ * place it's actually read; it's not exposed as a job `outputs:` because
+ * nothing downstream consumes it there. */
+function writeStepSummary(result: ResolveResult): void {
+  if (!result.skipReason) {
+    return;
+  }
+  const summaryFile = process.env.GITHUB_STEP_SUMMARY;
+  if (!summaryFile) {
+    return;
+  }
+  appendFileSync(summaryFile, `${result.skipReason}\n`);
 }
 
 function parseEventName(value: string): EventName {
@@ -332,6 +456,7 @@ async function main(): Promise<void> {
       id: Number(requireEnv("COMMENT_ID")),
       authorLogin: requireEnv("COMMENT_AUTHOR_LOGIN"),
       authorAssociation: requireEnv("COMMENT_AUTHOR_ASSOCIATION"),
+      body: requireEnv("COMMENT_BODY"),
     };
   }
 
@@ -351,6 +476,7 @@ async function main(): Promise<void> {
   );
 
   writeOutputs(result, prNumber);
+  writeStepSummary(result);
 }
 
 if (import.meta.main) {

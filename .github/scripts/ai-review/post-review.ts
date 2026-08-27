@@ -12,10 +12,12 @@
  *   - `validate-merged <path>` — same idea for the Codex-adjudicated merged
  *     review, against `.github/ai-review/merged-review.schema.json`.
  *   - `post` — reads `$MODE` (`review` | `too-large`) and posts either a
- *     "diff too large" notice or the consolidated review, superseding any
- *     prior AI review on the PR first (the marker/dedup guard in
+ *     "diff too large" notice or the consolidated review, THEN best-effort
+ *     supersedes any prior AI review on the PR (the marker/dedup guard in
  *     `resolve.ts` should normally prevent a second run, but `/ai-review`
- *     lets a maintainer force one).
+ *     lets a maintainer force one; posting before superseding, and treating
+ *     the supersede as best-effort, means a cosmetic supersede failure can
+ *     never cost the real review).
  *
  * `parseDiffAnchors`, `partitionFindings`, `renderReviewBody`,
  * `renderInlineComment`, `buildReviewPayload`, `foldInlineCommentsIntoBody`,
@@ -31,8 +33,13 @@
 
 export const AI_REVIEW_MARKER = "<!-- supabase-ai-review -->";
 const SUPERSEDED_SUMMARY = "Superseded by a newer AI review";
+/** Hidden marker `isSuperseded` looks for. Kept out of the human-readable
+ * `SUPERSEDED_SUMMARY` text and stripped by `sanitizeModelText` so a model
+ * can't forge or evade a supersede by echoing the visible text into a
+ * `claim`/`summary` field. */
+const SUPERSEDED_MARKER = "<!-- supabase-ai-review:superseded -->";
 const WORKFLOW_BOT_LOGIN = "github-actions[bot]";
-const MODELS_FOOTER = "`claude-fable-5` + `gpt-5.6-sol`";
+const GITHUB_REVIEW_BODY_MAX = 65536;
 
 // --- Shared types (mirror the two schema files by hand; keep in sync) ---
 
@@ -76,6 +83,11 @@ export interface MergedFinding {
 export interface MergedReviewStats {
   claude_total: number;
   codex_total: number;
+}
+
+/** Verdict counts computed locally from the merged findings, never taken from
+ * the model — the README promises a deterministic script decides output. */
+export interface VerdictCounts {
   confirmed: number;
   refuted: number;
   uncertain: number;
@@ -177,6 +189,11 @@ function expectSource(value: unknown, path: string, context: string): Source {
 function expectSources(value: unknown, path: string, context: string): Source[] {
   if (!Array.isArray(value)) {
     throw new Error(`Invalid ${context} at ${path}: expected an array`);
+  }
+  if (value.length === 0) {
+    throw new Error(
+      `Invalid ${context} at ${path}: expected at least one source, got an empty array`,
+    );
   }
   return value.map((item, index) => expectSource(item, `${path}[${index}]`, context));
 }
@@ -303,18 +320,10 @@ function parseStats(value: unknown, path: string): MergedReviewStats {
   if (!isRecord(value)) {
     throw new Error(`Invalid merged review at ${path}: expected an object`);
   }
-  assertNoExtraKeys(
-    value,
-    ["claude_total", "codex_total", "confirmed", "refuted", "uncertain"],
-    "merged review",
-    path,
-  );
+  assertNoExtraKeys(value, ["claude_total", "codex_total"], "merged review", path);
   return {
     claude_total: expectInteger(value.claude_total, `${path}.claude_total`, "merged review"),
     codex_total: expectInteger(value.codex_total, `${path}.codex_total`, "merged review"),
-    confirmed: expectInteger(value.confirmed, `${path}.confirmed`, "merged review"),
-    refuted: expectInteger(value.refuted, `${path}.refuted`, "merged review"),
-    uncertain: expectInteger(value.uncertain, `${path}.uncertain`, "merged review"),
   };
 }
 
@@ -341,6 +350,7 @@ export function assertMergedReview(value: unknown): asserts value is MergedRevie
 
 // --- Diff anchoring ---
 
+const DIFF_GIT_HEADER = /^diff --git /;
 const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
 const NEW_FILE_HEADER = /^\+\+\+ (?:b\/(.+)|\/dev\/null)$/;
 
@@ -353,25 +363,46 @@ function addAnchor(anchors: Map<string, Set<number>>, file: string, line: number
   lines.add(line);
 }
 
+/** Git appends a literal TAB after a `---`/`+++` path that needs quoting
+ * (e.g. one containing a space); strip it so the anchored path matches the
+ * real repo-relative path a finding would cite. */
+function stripTrailingTab(path: string): string {
+  return path.endsWith("\t") ? path.slice(0, -1) : path;
+}
+
 /**
  * Parses a unified diff into, for each file, the set of new-side (RIGHT) line
  * numbers present in the diff — i.e. the lines a PR review comment can
  * anchor to. Context and `+` lines advance the RIGHT counter and are
  * anchorable; `-` lines don't exist on the new side and are skipped.
+ *
+ * Tracks whether we're inside a hunk so a `+++ ` file header is only ever
+ * recognized between a `diff --git` boundary and that file's first `@@`
+ * hunk — otherwise an added/context line whose literal content happens to
+ * start with `+++ ` (a `+++`-lookalike) could hijack `currentFile`.
  */
 export function parseDiffAnchors(diff: string): Map<string, Set<number>> {
   const anchors = new Map<string, Set<number>>();
   let currentFile: string | undefined;
   let rightLine = 0;
+  let inHunk = false;
 
   for (const line of diff.split("\n")) {
-    const fileMatch = NEW_FILE_HEADER.exec(line);
-    if (fileMatch) {
-      currentFile = fileMatch[1];
+    if (DIFF_GIT_HEADER.test(line)) {
+      currentFile = undefined;
+      inHunk = false;
       continue;
+    }
+    if (!inHunk) {
+      const fileMatch = NEW_FILE_HEADER.exec(line);
+      if (fileMatch) {
+        currentFile = fileMatch[1] === undefined ? undefined : stripTrailingTab(fileMatch[1]);
+        continue;
+      }
     }
     const hunkMatch = HUNK_HEADER.exec(line);
     if (hunkMatch) {
+      inHunk = true;
       rightLine = Number(hunkMatch[1]);
       continue;
     }
@@ -383,7 +414,7 @@ export function parseDiffAnchors(diff: string): Map<string, Set<number>> {
       rightLine++;
     }
     // `-` lines don't exist on the new side and don't advance rightLine;
-    // any other line (diff --git, index, ---, "\ No newline...") is metadata.
+    // any other line (index, ---, "\ No newline...") is metadata.
   }
 
   return anchors;
@@ -426,6 +457,36 @@ export function partitionFindings(
   return { anchorable, nonAnchorable, refuted };
 }
 
+/** Computes verdict counts locally from the merged findings, never trusting
+ * the model's own tally. */
+export function computeVerdictCounts(findings: MergedFinding[]): VerdictCounts {
+  const counts: VerdictCounts = { confirmed: 0, refuted: 0, uncertain: 0 };
+  for (const finding of findings) {
+    counts[finding.adjudication.verdict]++;
+  }
+  return counts;
+}
+
+const MENTION_PATTERN = /@(?=\w)/g;
+const ISSUE_REF_PATTERN = /#(?=\d)/g;
+const HTML_COMMENT_PATTERN = /<!--[\s\S]*?-->/g;
+
+/**
+ * Neutralizes a model-provided string before it's rendered into a
+ * `github-actions[bot]` review: strips HTML comments first (so injected diff
+ * content can't forge the hidden `AI_REVIEW_MARKER`/`SUPERSEDED_MARKER`
+ * comments), then breaks `@mention`/`#123` syntax with a zero-width HTML
+ * comment so GitHub never renders them as a live mention or issue reference.
+ * Pure; apply to every model-provided string (`summary`, `claim`, `evidence`,
+ * `suggested_fix`, `adjudication.reason`) at render time.
+ */
+export function sanitizeModelText(text: string): string {
+  return text
+    .replace(HTML_COMMENT_PATTERN, "")
+    .replace(MENTION_PATTERN, "@<!---->")
+    .replace(ISSUE_REF_PATTERN, "#<!---->");
+}
+
 const SEVERITY_BADGES: Record<Severity, string> = {
   critical: "🔴 CRITICAL",
   major: "🟠 MAJOR",
@@ -444,15 +505,18 @@ export function renderInlineComment(finding: MergedFinding): string {
   const lines = [
     `**${SEVERITY_BADGES[finding.severity]}** · \`${finding.category}\` · _source: ${finding.sources.join("+")}_`,
     "",
-    finding.claim,
+    sanitizeModelText(finding.claim),
     "",
-    `**Evidence:** ${finding.evidence}`,
+    `**Evidence:** ${sanitizeModelText(finding.evidence)}`,
   ];
   if (finding.suggested_fix !== null) {
-    lines.push("", `**Suggested fix:** ${finding.suggested_fix}`);
+    lines.push("", `**Suggested fix:** ${sanitizeModelText(finding.suggested_fix)}`);
   }
   if (finding.adjudication.verdict === "uncertain") {
-    lines.push("", `**Adjudication (uncertain):** ${finding.adjudication.reason}`);
+    lines.push(
+      "",
+      `**Adjudication (uncertain):** ${sanitizeModelText(finding.adjudication.reason)}`,
+    );
   }
   return lines.join("\n");
 }
@@ -460,6 +524,10 @@ export function renderInlineComment(finding: MergedFinding): string {
 export interface ReviewFooterInfo {
   trigger: Trigger;
   runUrl: string;
+  /** e.g. `` `claude-fable-5` + `gpt-5.6-sol` ``. Passed in from the workflow's
+   * `CLAUDE_MODEL`/`CODEX_MODEL` env vars instead of being hardcoded here, so
+   * the model names have one source of truth. */
+  modelsFooter: string;
 }
 
 /** Renders the full review body: summary, findings table, out-of-diff section, refuted details, stats, and footer. */
@@ -471,14 +539,15 @@ export function renderReviewBody(
   const posted = [...partitioned.anchorable, ...partitioned.nonAnchorable].sort(
     (a, b) => severityRank(a.severity) - severityRank(b.severity),
   );
+  const verdicts = computeVerdictCounts(review.findings);
 
-  const sections: string[] = [`## 🤖 AI Review\n\n${review.summary}`];
+  const sections: string[] = [`## 🤖 AI Review\n\n${sanitizeModelText(review.summary)}`];
 
   if (posted.length > 0) {
     const rows = posted.map(
       (finding) =>
         `| ${SEVERITY_BADGES[finding.severity]} | \`${finding.file}:${finding.line}\` | \`${finding.category}\` | ` +
-        `${finding.sources.join("+")} | ${finding.claim} |`,
+        `${finding.sources.join("+")} | ${sanitizeModelText(finding.claim)} |`,
     );
     sections.push(
       [
@@ -496,7 +565,7 @@ export function renderReviewBody(
   if (partitioned.nonAnchorable.length > 0) {
     const items = partitioned.nonAnchorable.map(
       (finding) =>
-        `- **${SEVERITY_BADGES[finding.severity]}** \`${finding.file}:${finding.line}\` — ${finding.claim}`,
+        `- **${SEVERITY_BADGES[finding.severity]}** \`${finding.file}:${finding.line}\` — ${sanitizeModelText(finding.claim)}`,
     );
     sections.push(["### Findings outside the diff", "", ...items].join("\n"));
   }
@@ -504,7 +573,7 @@ export function renderReviewBody(
   if (partitioned.refuted.length > 0) {
     const items = partitioned.refuted.map(
       (finding) =>
-        `- \`${finding.file}:${finding.line}\` (${finding.category}): ${finding.claim}\n  **Refuted:** ${finding.adjudication.reason}`,
+        `- \`${finding.file}:${finding.line}\` (${finding.category}): ${sanitizeModelText(finding.claim)}\n  **Refuted:** ${sanitizeModelText(finding.adjudication.reason)}`,
     );
     sections.push(
       [
@@ -523,14 +592,14 @@ export function renderReviewBody(
       "### Stats",
       "",
       `Claude findings: ${review.stats.claude_total} · Codex findings: ${review.stats.codex_total} · ` +
-        `Confirmed: ${review.stats.confirmed} · Refuted: ${review.stats.refuted} · Uncertain: ${review.stats.uncertain}`,
+        `Confirmed: ${verdicts.confirmed} · Refuted: ${verdicts.refuted} · Uncertain: ${verdicts.uncertain}`,
     ].join("\n"),
   );
 
   sections.push(
     [
       "---",
-      `Models: ${MODELS_FOOTER} · Trigger: \`${footer.trigger}\` · [Workflow run](${footer.runUrl})`,
+      `Models: ${footer.modelsFooter} · Trigger: \`${footer.trigger}\` · [Workflow run](${footer.runUrl})`,
       "",
       "This review runs once per PR. A maintainer can request another with a `/ai-review` comment.",
       "",
@@ -539,6 +608,17 @@ export function renderReviewBody(
   );
 
   return sections.join("\n\n");
+}
+
+/** Renders the `+X/-Y lines across Z files` fragment shared by the "too
+ * large" skip reason (`resolve.ts`) and the posted notice below — the one
+ * source of truth for that phrasing. */
+export function formatDiffStats(stats: {
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+}): string {
+  return `+${stats.additions}/-${stats.deletions} lines across ${stats.changedFiles} files`;
 }
 
 /** Renders the notice posted instead of a review when the diff exceeds the size guard. */
@@ -550,8 +630,7 @@ export function renderTooLargeNotice(stats: {
   return [
     "## 🤖 AI Review",
     "",
-    `This PR is too large for a full AI review ` +
-      `(+${stats.additions}/-${stats.deletions} lines across ${stats.changedFiles} files).`,
+    `This PR is too large for a full AI review (${formatDiffStats(stats)}).`,
     "",
     "A maintainer can request a review anyway with a `/ai-review` comment.",
     "",
@@ -579,7 +658,14 @@ function buildInlineComment(
   anchors: Map<string, Set<number>>,
 ): InlineReviewComment {
   const body = renderInlineComment(finding);
-  if (finding.end_line !== null && isAnchorable(anchors, finding.file, finding.end_line)) {
+  // GitHub requires `start_line < line` for the range form; `end_line ===
+  // line` is a likely model output (the schema marks `end_line` required),
+  // and using the range form for it 422s the whole review POST.
+  if (
+    finding.end_line !== null &&
+    finding.end_line > finding.line &&
+    isAnchorable(anchors, finding.file, finding.end_line)
+  ) {
     return {
       path: finding.file,
       start_line: finding.line,
@@ -623,9 +709,21 @@ export function foldInlineCommentsIntoBody(payload: ReviewPayload): ReviewPayloa
   return { ...payload, comments: [], body: `${payload.body}\n\n${folded}` };
 }
 
+/** Truncates a review body to GitHub's 65536-char review body cap, appending
+ * an explicit truncation marker + the workflow run URL. Only the folded
+ * 422-retry body (every inline comment stuffed into one body) can plausibly
+ * exceed the cap. */
+export function truncateReviewBody(body: string, runUrl: string): string {
+  if (body.length <= GITHUB_REVIEW_BODY_MAX) {
+    return body;
+  }
+  const marker = `\n\n… (truncated — see workflow run: ${runUrl})`;
+  return body.slice(0, GITHUB_REVIEW_BODY_MAX - marker.length) + marker;
+}
+
 /** Whether a previously-posted review/comment body has already been wrapped as superseded. */
 export function isSuperseded(body: string): boolean {
-  return body.includes(SUPERSEDED_SUMMARY);
+  return body.includes(SUPERSEDED_MARKER);
 }
 
 /** Wraps a prior AI review/comment body in a collapsed `<details>` marking it superseded. */
@@ -637,6 +735,8 @@ export function supersededBody(oldBody: string): string {
     oldBody,
     "",
     "</details>",
+    "",
+    SUPERSEDED_MARKER,
   ].join("\n");
 }
 
@@ -661,8 +761,14 @@ export interface ReviewIo {
   listIssueComments: (prNumber: number) => Promise<MarkedEntry[]>;
   updateReviewBody: (prNumber: number, reviewId: number, body: string) => Promise<void>;
   updateIssueCommentBody: (commentId: number, body: string) => Promise<void>;
-  /** Posts the review; returns the response status so the caller can detect a 422 (bad anchor) and retry. */
-  postReview: (prNumber: number, payload: ReviewPayload) => Promise<{ status: number }>;
+  /** Posts the review; returns the response status so the caller can detect a
+   * 422 (bad anchor) and retry, and the response body for a non-2xx status
+   * so a second failure can surface GitHub's actual error instead of being
+   * silently swallowed. */
+  postReview: (
+    prNumber: number,
+    payload: ReviewPayload,
+  ) => Promise<{ status: number; body?: string }>;
   postIssueComment: (prNumber: number, body: string) => Promise<void>;
 }
 
@@ -696,9 +802,21 @@ async function supersedePriorRuns(io: ReviewIo, prNumber: number): Promise<void>
   }
 }
 
+/** Best-effort wrapper around `supersedePriorRuns`: a cosmetic failure here
+ * (e.g. a transient 404 on a review that was deleted mid-run) must never
+ * fail the pipeline after the real review/notice has already been posted. */
+async function supersedePriorRunsBestEffort(io: ReviewIo, prNumber: number): Promise<void> {
+  try {
+    await supersedePriorRuns(io, prNumber);
+  } catch (error) {
+    console.warn(`Could not supersede prior AI review runs on PR #${prNumber}: ${String(error)}`);
+  }
+}
+
 export async function postTooLargeNotice(io: ReviewIo, prNumber: number): Promise<void> {
   const stats = await io.fetchPrStats(prNumber);
   await io.postIssueComment(prNumber, renderTooLargeNotice(stats));
+  await supersedePriorRunsBestEffort(io, prNumber);
 }
 
 export async function postConsolidatedReview(
@@ -709,17 +827,31 @@ export async function postConsolidatedReview(
 ): Promise<void> {
   const diff = await io.fetchPrDiff(prNumber);
   const anchors = parseDiffAnchors(diff);
-
-  await supersedePriorRuns(io, prNumber);
-
   const payload = buildReviewPayload(review, anchors, footer);
+
   const result = await io.postReview(prNumber, payload);
-  if (result.status === 422) {
+  if (result.status === 422 && payload.comments.length > 0) {
     console.warn(
       "Review POST rejected an inline anchor (422); retrying once with comments folded into the body.",
     );
-    await io.postReview(prNumber, foldInlineCommentsIntoBody(payload));
+    const folded = foldInlineCommentsIntoBody(payload);
+    const retryResult = await io.postReview(prNumber, {
+      ...folded,
+      body: truncateReviewBody(folded.body, footer.runUrl),
+    });
+    if (retryResult.status < 200 || retryResult.status >= 300) {
+      throw new Error(
+        `Review POST failed even after folding inline comments into the body ` +
+          `(status ${retryResult.status}): ${retryResult.body ?? "<no response body>"}`,
+      );
+    }
+  } else if (result.status < 200 || result.status >= 300) {
+    throw new Error(
+      `Review POST failed (status ${result.status}): ${result.body ?? "<no response body>"}`,
+    );
   }
+
+  await supersedePriorRunsBestEffort(io, prNumber);
 }
 
 // --- Real GitHub I/O (only runs when executed directly) ---
@@ -774,6 +906,62 @@ interface RestIssueComment {
   user: { login: string } | null;
 }
 
+function isRecordEntry(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The validated boundary between `Response.json()` (typed `Promise<unknown>`
+ * under `@tsconfig/bun`) and this file's typed shapes: `assert` narrows the
+ * parsed value to `T` before any caller reads a field off it.
+ */
+async function githubJson<T>(
+  response: Response,
+  assert: (value: unknown) => asserts value is T,
+): Promise<T> {
+  const value: unknown = await response.json();
+  assert(value);
+  return value;
+}
+
+function assertRestPullRequest(value: unknown): asserts value is RestPullRequest {
+  if (
+    !isRecordEntry(value) ||
+    typeof value.additions !== "number" ||
+    typeof value.deletions !== "number" ||
+    typeof value.changed_files !== "number"
+  ) {
+    throw new Error("Malformed GitHub pull request response: missing or mistyped stats fields.");
+  }
+}
+
+function isIdBodyUserEntry(
+  value: unknown,
+): value is { id: number; body: string | null; user: { login: string } | null } {
+  return (
+    isRecordEntry(value) &&
+    typeof value.id === "number" &&
+    (value.body === null || typeof value.body === "string") &&
+    (value.user === null || (isRecordEntry(value.user) && typeof value.user.login === "string"))
+  );
+}
+
+function assertRestReviews(value: unknown): asserts value is RestReview[] {
+  if (!Array.isArray(value) || !value.every(isIdBodyUserEntry)) {
+    throw new Error(
+      "Malformed GitHub reviews response: expected an array of {id, body, user} entries.",
+    );
+  }
+}
+
+function assertRestIssueComments(value: unknown): asserts value is RestIssueComment[] {
+  if (!Array.isArray(value) || !value.every(isIdBodyUserEntry)) {
+    throw new Error(
+      "Malformed GitHub issue comments response: expected an array of {id, body, user} entries.",
+    );
+  }
+}
+
 async function fetchPrDiff(token: string, base: string, prNumber: number): Promise<string> {
   const response = await githubFetch(
     `${base}/pulls/${prNumber}`,
@@ -786,16 +974,20 @@ async function fetchPrDiff(token: string, base: string, prNumber: number): Promi
 
 async function fetchPrStats(token: string, base: string, prNumber: number): Promise<PrStats> {
   const response = await githubFetch(`${base}/pulls/${prNumber}`, token);
-  const pr: RestPullRequest = await response.json();
+  const pr = await githubJson(response, assertRestPullRequest);
   return { additions: pr.additions, deletions: pr.deletions, changedFiles: pr.changed_files };
 }
 
-async function listAllPages<T>(token: string, url: string): Promise<T[]> {
+async function listAllPages<T>(
+  token: string,
+  url: string,
+  assertBatch: (value: unknown) => asserts value is T[],
+): Promise<T[]> {
   const entries: T[] = [];
   for (let page = 1; ; page++) {
     const separator = url.includes("?") ? "&" : "?";
     const response = await githubFetch(`${url}${separator}per_page=100&page=${page}`, token);
-    const batch: T[] = await response.json();
+    const batch = await githubJson(response, assertBatch);
     entries.push(...batch);
     if (batch.length < 100) {
       break;
@@ -805,7 +997,11 @@ async function listAllPages<T>(token: string, url: string): Promise<T[]> {
 }
 
 async function listReviews(token: string, base: string, prNumber: number): Promise<MarkedEntry[]> {
-  const reviews = await listAllPages<RestReview>(token, `${base}/pulls/${prNumber}/reviews`);
+  const reviews = await listAllPages<RestReview>(
+    token,
+    `${base}/pulls/${prNumber}/reviews`,
+    assertRestReviews,
+  );
   return reviews.map((review) => ({
     id: review.id,
     body: review.body ?? "",
@@ -821,6 +1017,7 @@ async function listIssueComments(
   const comments = await listAllPages<RestIssueComment>(
     token,
     `${base}/issues/${prNumber}/comments`,
+    assertRestIssueComments,
   );
   return comments.map((comment) => ({
     id: comment.id,
@@ -859,7 +1056,7 @@ async function postReview(
   base: string,
   prNumber: number,
   payload: ReviewPayload,
-): Promise<{ status: number }> {
+): Promise<{ status: number; body?: string }> {
   const response = await githubFetch(
     `${base}/pulls/${prNumber}/reviews`,
     token,
@@ -867,6 +1064,12 @@ async function postReview(
     "application/vnd.github+json",
     [422],
   );
+  // `githubFetch` only returns without throwing for a 2xx or the allowed
+  // 422; read the body for the 422 case too so a second failed retry can
+  // surface it instead of discarding it.
+  if (response.status === 422) {
+    return { status: response.status, body: await response.text() };
+  }
   return { status: response.status };
 }
 
@@ -930,11 +1133,20 @@ async function runPost(): Promise<void> {
   const trigger = parseTrigger(requireEnv("TRIGGER"));
   const runUrl = requireEnv("RUN_URL");
   const mergedReviewPath = requireEnv("MERGED_REVIEW_PATH");
+  // Sourced from the workflow's top-level `env:` block (the same values fed
+  // to the `claude`/`codex-action` invocations), not hardcoded here, so the
+  // model names have one source of truth.
+  const claudeModel = requireEnv("CLAUDE_MODEL");
+  const codexModel = requireEnv("CODEX_MODEL");
 
   const raw: unknown = JSON.parse(await Bun.file(mergedReviewPath).text());
   assertMergedReview(raw);
 
-  await postConsolidatedReview(io, prNumber, raw, { trigger, runUrl });
+  await postConsolidatedReview(io, prNumber, raw, {
+    trigger,
+    runUrl,
+    modelsFooter: `\`${claudeModel}\` + \`${codexModel}\``,
+  });
   console.log(`Posted AI review on PR #${prNumber} (${raw.findings.length} finding(s)).`);
 }
 

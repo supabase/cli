@@ -32,6 +32,19 @@
       "rules": {
         "typescript/no-base-to-string": "off"
       }
+    },
+    {
+      // `.github/scripts` is the only `bun:test` consumer in the repo (every
+      // package test suite uses vitest). `@types/bun`'s test matcher types
+      // reuse the same sync `Matchers<T>` interface for `expect(x).rejects`,
+      // so `.rejects.toThrow(...)` types as returning `void` even though it
+      // must be awaited at runtime — a `@types/bun` typing gap, not a real
+      // `await`-of-non-Promise bug. Verified: `bun test` and `tsc --noEmit`
+      // both pass; removing the `await` would make the assertion racy.
+      "files": [".github/scripts/**"],
+      "rules": {
+        "typescript/await-thenable": "off"
+      }
     }
   ]
 }

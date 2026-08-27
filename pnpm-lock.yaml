@@ -68,6 +68,12 @@ importers:
 
   .:
     devDependencies:
+      '@tsconfig/bun':
+        specifier: 'catalog:'
+        version: 1.0.11
+      '@types/bun':
+        specifier: 'catalog:'
+        version: 1.4.0
       knip:
         specifier: 'catalog:'
         version: 6.32.2

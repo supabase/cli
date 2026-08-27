@@ -8,16 +8,15 @@
 ## Context
 
 You are reviewing a pull request in `supabase/cli`, a TypeScript/Bun monorepo
-that uses Effect V4 (see `.repos/effect/` for the library source). Repo
-conventions live in `CLAUDE.md` (repo root and package-level) and in
-`docs/adr/`. Consult them before flagging an idiom as an issue — a pattern
-that looks unusual in isolation (e.g. injected `Io` interfaces instead of
-mocking libraries, `Data.TaggedError` instead of thrown exceptions, services
-threaded through Effect's type rather than passed as plain arguments) may be
-the repo's deliberate, documented convention.
+that uses Effect V4. Repo conventions live in `CLAUDE.md` (repo root and
+package-level) and in `docs/adr/`. Consult them before flagging an idiom as an
+issue — a pattern that looks unusual in isolation (e.g. injected `Io`
+interfaces instead of mocking libraries, `Data.TaggedError` instead of thrown
+exceptions, services threaded through Effect's type rather than passed as
+plain arguments) may be the repo's deliberate, documented convention.
 
-The repository is checked out at the PR's head commit. Two files are
-available:
+The repository is checked out at the PR's head commit (a shallow clone — no
+git history is available). Two files are available:
 
 - `/tmp/ai-review/pr.diff` — the full unified diff for this PR.
 - `/tmp/ai-review/pr.json` — PR metadata (`number`, `title`, `body`,
@@ -33,10 +32,9 @@ there will be no follow-up pass to catch what you dropped.
 1. Read `/tmp/ai-review/pr.json` for context, then `/tmp/ai-review/pr.diff` in
    full.
 2. For every changed hunk, read the surrounding code in the checked-out repo
-   (not just the diff) with `Read`/`Grep`/`Glob`, and use
-   `git log`/`git show`/`git diff` (read-only) to understand history when it
-   helps. A finding based only on the diff, without reading the file it lives
-   in, is not acceptable — verify it against the real surrounding code first.
+   (not just the diff) with `Read`/`Grep`/`Glob`. A finding based only on the
+   diff, without reading the file it lives in, is not acceptable — verify it
+   against the real surrounding code first.
 3. Every finding must cite concrete `file:line` evidence you actually read,
    not a guess about what the code probably does.
 4. Assign a severity to every finding:
