@@ -29,14 +29,12 @@ export const stackRpcFenceHeaders = (fence: StackRpcFence): Readonly<Record<stri
 export const matchesStackRpcFence = (
   headers: Readonly<Record<string, string>>,
   expected: StackRpcFence,
-): boolean =>
-  matchesControlSession(
-    {
-      ownershipId: headers[STACK_RPC_FENCE_HEADERS.ownershipId] ?? "",
-      ownerSessionId: headers[STACK_RPC_FENCE_HEADERS.ownerSessionId] ?? "",
-    },
-    expected,
-  );
+): boolean => {
+  const ownershipId = headers[STACK_RPC_FENCE_HEADERS.ownershipId];
+  const ownerSessionId = headers[STACK_RPC_FENCE_HEADERS.ownerSessionId];
+  if (ownershipId === undefined || ownerSessionId === undefined) return false;
+  return matchesControlSession({ ownershipId, ownerSessionId }, expected);
+};
 
 const StackUnavailableErrorSchema = Schema.TaggedStruct("StackUnavailableError", {
   phase: Schema.Literals(["starting", "stopping", "failed"]),
