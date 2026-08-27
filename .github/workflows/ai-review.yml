@@ -20,14 +20,20 @@ on:
   issue_comment:
     types:
       - created
-  # Shadow-mode rollout: uncomment once the prompts have been tuned against
-  # recent real PRs (see .github/ai-review/README.md), and disable the Codex
-  # GitHub App's automatic reviews (chatgpt.com/codex/settings/code-review)
-  # in the same change so the two don't double-review every PR.
-  # pull_request:
-  #   types:
-  #     - opened
-  #     - ready_for_review
+  # ⚠️ TEMPORARY SELF-TEST TRIGGER — REMOVE BEFORE THIS PR MERGES. ⚠️
+  # Enabled ONLY so the pipeline runs against THIS PR (every push = synchronize)
+  # to verify it works end-to-end without merging each fix to develop first.
+  # Leaving this on develop would auto-review EVERY PR (real go-live), which must
+  # not happen until the prompts are tuned and the Codex app's automatic reviews
+  # are disabled. Before merge, restore the commented shadow-mode block:
+  #   # pull_request:
+  #   #   types: [opened, ready_for_review]
+  # See .github/ai-review/README.md for the real rollout steps.
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
 
 permissions: {}
 
@@ -172,7 +178,14 @@ jobs:
       - name: Install Claude Code CLI
         working-directory: trusted
         run: |
-          npm install -g --userconfig /dev/null --globalconfig /dev/null \
+          # Isolate npm config with two DISTINCT empty paths — npm rejects the
+          # same path for --userconfig and --globalconfig ("double-loading
+          # config '/dev/null'"). These paths don't exist, so npm uses empty
+          # user/global config; running from `trusted/` already avoids the
+          # untrusted `pr` checkout's project `.npmrc`.
+          npm install -g \
+            --userconfig "${RUNNER_TEMP}/ai-review-npmrc-user" \
+            --globalconfig "${RUNNER_TEMP}/ai-review-npmrc-global" \
             --registry=https://registry.npmjs.org/ @anthropic-ai/claude-code@2.1.247
 
       # SECURITY-CRITICAL invariant: PR code is only ever READ by `claude`,
