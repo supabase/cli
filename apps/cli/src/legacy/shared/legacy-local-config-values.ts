@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 
-import { ENV_CAPTURE_REGEX, type ProjectConfig } from "@supabase/config";
+import { ENV_CAPTURE_REGEX, type CliConfig } from "@supabase/config";
 import { defaultJwtSecret, defaultPublishableKey, defaultSecretKey } from "@supabase/stack/effect";
 import { Schema } from "effect";
 
@@ -385,7 +385,7 @@ export class LegacyInvalidAnalyticsBackendEnvOverrideError extends Error {
  * conflicting `SUPABASE_ANALYTICS_BACKEND` the same way every other gated field in that function
  * does (review: PRRT_kwDOErm0O86W30n6). Threaded as a parameter (rather than gating at the call
  * site with a bare ternary) so the single validation check below still narrows `configured`
- * itself to the return type on the remote-wins path — `ProjectConfig["analytics"]["backend"]`'s
+ * itself to the return type on the remote-wins path — `CliConfig["analytics"]["backend"]`'s
  * declared type is a plain `string`, not the literal union, so a call-site ternary would
  * re-widen the result.
  */
@@ -747,7 +747,7 @@ export function legacyResolveAuthEmailSmtp(
  */
 export function legacyResolveAuthCaptcha(
   authDocument: Readonly<Record<string, unknown>> | undefined,
-  captcha: ProjectConfig["auth"]["captcha"],
+  captcha: CliConfig["auth"]["captcha"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   /**
    * Same remote-over-env precedence as {@link legacyResolveConfiguredSigningKeys}'s own
@@ -941,7 +941,7 @@ function loadSigningKeys(workdir: string, signingKeysPath: string): ReadonlyArra
  * env value the override tier should silently ignore (review: PRRT_kwDOErm0O86W30n6).
  */
 export function legacyResolveConfiguredSigningKeys(
-  config: ProjectConfig,
+  config: CliConfig,
   workdir: string,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
@@ -1030,12 +1030,12 @@ interface LegacyResolvedAuthEmailNotification {
 }
 
 /**
- * {@link legacyResolveAuthEmail}'s return type — identical to `ProjectConfig["auth"]["email"]`
+ * {@link legacyResolveAuthEmail}'s return type — identical to `CliConfig["auth"]["email"]`
  * except each `template`/`notification` entry's `subject` is `string | undefined` instead of a
  * plain `string`.
  */
 export type LegacyResolvedAuthEmail = Omit<
-  ProjectConfig["auth"]["email"],
+  CliConfig["auth"]["email"],
   "template" | "notification"
 > & {
   readonly template: Readonly<Record<string, LegacyResolvedAuthEmailTemplate>>;
@@ -1067,7 +1067,7 @@ export type LegacyResolvedAuthEmail = Omit<
  * `resolveGotrueEnvInput` in `start.handler.ts`, which both need the post-override email config.
  */
 export function legacyResolveAuthEmail(
-  email: ProjectConfig["auth"]["email"],
+  email: CliConfig["auth"]["email"],
   authDocument: Record<string, unknown> | undefined,
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   // `remoteOverrideKeys` (default empty, so `start.handler.ts`/`db/start/start.handler.ts` —
@@ -1491,10 +1491,10 @@ function legacyEnvOverrideSessionReplicationRole(
  * call already computed, via `legacyBuildLocalDbContainerInputs`.
  */
 export function legacyResolveDbSettingsEnvOverrides(
-  settings: ProjectConfig["db"]["settings"],
+  settings: CliConfig["db"]["settings"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
-): NonNullable<ProjectConfig["db"]["settings"]> {
+): NonNullable<CliConfig["db"]["settings"]> {
   const remoteWins = legacyMakeRemoteWins(remoteOverrideKeys);
   return {
     effective_cache_size: remoteWins("db.settings.effective_cache_size")
@@ -1800,7 +1800,7 @@ export type LegacyResolvedAuthHooks = {
  */
 export function legacyResolveAuthHooks(
   authDocument: Readonly<Record<string, unknown>> | undefined,
-  hook: ProjectConfig["auth"]["hook"],
+  hook: CliConfig["auth"]["hook"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   /**
    * Same remote-over-env precedence as {@link legacyResolveConfiguredSigningKeys}'s own
@@ -1870,7 +1870,7 @@ export function legacyResolveAuthHooks(
  * env) resolve the SAME effective values.
  */
 export function legacyResolveAuthMfa(
-  mfa: ProjectConfig["auth"]["mfa"],
+  mfa: CliConfig["auth"]["mfa"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   /**
    * Same remote-over-env precedence as {@link legacyResolveConfiguredSigningKeys}'s own
@@ -1886,7 +1886,7 @@ export function legacyResolveAuthMfa(
    * `[remotes.<ref>]` block for this read.
    */
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
-): ProjectConfig["auth"]["mfa"] {
+): CliConfig["auth"]["mfa"] {
   const remoteWins = legacyMakeRemoteWins(remoteOverrideKeys);
   return {
     totp: {
@@ -1991,9 +1991,9 @@ export function legacyResolveAuthMfa(
  * `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate".
  */
 export function legacyResolveGotrueRateLimit(
-  rateLimit: ProjectConfig["auth"]["rate_limit"],
+  rateLimit: CliConfig["auth"]["rate_limit"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): ProjectConfig["auth"]["rate_limit"] {
+): CliConfig["auth"]["rate_limit"] {
   return {
     anonymous_users: legacyEnvOverrideUint(
       "SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS",
@@ -2060,9 +2060,9 @@ export function legacyResolveGotrueRateLimit(
  * `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate".
  */
 export function legacyResolveGotrueSessions(
-  sessions: ProjectConfig["auth"]["sessions"],
+  sessions: CliConfig["auth"]["sessions"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): ProjectConfig["auth"]["sessions"] {
+): CliConfig["auth"]["sessions"] {
   const timebox = legacyEnvOverride(
     "SUPABASE_AUTH_SESSIONS_TIMEBOX",
     sessions?.timebox,
@@ -2175,9 +2175,9 @@ export function legacyResolveGotruePasskeyWebauthn(
  * Duplicate".
  */
 export function legacyResolveGotrueWeb3(
-  web3: ProjectConfig["auth"]["web3"],
+  web3: CliConfig["auth"]["web3"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): ProjectConfig["auth"]["web3"] {
+): CliConfig["auth"]["web3"] {
   return {
     solana: {
       enabled: legacyEnvOverrideBool(
@@ -2209,9 +2209,9 @@ export function legacyResolveGotrueWeb3(
  * Duplicate".
  */
 export function legacyResolveGotrueOAuthServer(
-  oauthServer: ProjectConfig["auth"]["oauth_server"],
+  oauthServer: CliConfig["auth"]["oauth_server"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
-): ProjectConfig["auth"]["oauth_server"] {
+): CliConfig["auth"]["oauth_server"] {
   return {
     enabled: legacyEnvOverrideBool(
       "SUPABASE_AUTH_OAUTH_SERVER_ENABLED",
@@ -2257,7 +2257,7 @@ export function legacyResolveGotrueOAuthServer(
  * `auth.enabled` bug class (review: PRRT_kwDOErm0O86W30n6).
  */
 export function legacyResolveThirdPartyProviders(
-  thirdParty: ProjectConfig["auth"]["third_party"],
+  thirdParty: CliConfig["auth"]["third_party"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): ReadonlyArray<LegacyThirdPartyInput> {
@@ -2429,7 +2429,7 @@ const LEGACY_SMS_PROVIDER_ORDER = [
  */
 export function legacyResolveAuthSms(
   authDocument: Readonly<Record<string, unknown>> | undefined,
-  sms: ProjectConfig["auth"]["sms"],
+  sms: CliConfig["auth"]["sms"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   /**
    * Same remote-over-env precedence as every other gated resolver in this file. Reachable from
@@ -2447,7 +2447,7 @@ export function legacyResolveAuthSms(
    * resolve a `[remotes.<ref>]` block for this config read.
    */
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
-): ProjectConfig["auth"]["sms"] {
+): CliConfig["auth"]["sms"] {
   const smsDoc = asRecord(authDocument?.["sms"]);
   const remoteWins = legacyMakeRemoteWins(remoteOverrideKeys);
 
@@ -2646,7 +2646,7 @@ export function legacyResolveAuthSms(
  */
 function validateAuthSmsProviders(
   authDocument: Record<string, unknown> | undefined,
-  sms: ProjectConfig["auth"]["sms"],
+  sms: CliConfig["auth"]["sms"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): void {
@@ -2793,7 +2793,7 @@ export function legacyStrToArr(value: string): Array<string> {
 
 export function legacyResolveAuthExternalProviders(
   authDocument: Readonly<Record<string, unknown>> | undefined,
-  external: ProjectConfig["auth"]["external"],
+  external: CliConfig["auth"]["external"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   /**
    * Same remote-over-env precedence as every other gated resolver in this file —
@@ -2919,13 +2919,13 @@ export function legacyResolveAuthExternalProviders(
  * every enabled entry regardless of name. `@supabase/config`'s `external` schema only models the
  * ~20 known provider ids and silently drops anything else at decode time
  * (`packages/config/src/auth/providers.ts`), so an unmodeled provider's required-field check
- * must run against the RAW `authDocument` instead of the decoded `ProjectConfig` — same
+ * must run against the RAW `authDocument` instead of the decoded `CliConfig` — same
  * document-based approach as {@link readAuthEmailTemplateContent}/the passkey/smtp checks above.
  * Known providers are already covered by the schema's own `requiredWhenEnabled` check at decode
  * time, so in practice this only ever fires for a name the schema doesn't model, but it runs
  * over every raw key unconditionally, matching Go's own map iteration rather than special-casing
  * "unknown" a different way. `authDocument`'s values are already post-`env()`-interpolation (see
- * `LoadedProjectConfig.document`), so no `legacyExpandEnv`-style resolution is needed here,
+ * `LoadedCliConfig.document`), so no `legacyExpandEnv`-style resolution is needed here,
  * unlike D's raw pre-interpolation document.
  *
  * `auth.external.<name>.*` is env-bindable like every other nested field once
@@ -2937,7 +2937,7 @@ export function legacyResolveAuthExternalProviders(
  */
 function validateAuthExternalProviders(
   authDocument: Record<string, unknown> | undefined,
-  external: ProjectConfig["auth"]["external"],
+  external: CliConfig["auth"]["external"],
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): void {
@@ -3014,12 +3014,12 @@ function validateAuthExternalProviders(
  * original position, per-caller, rather than being folded into that single call).
  */
 export function legacyResolveLocalConfigValues(
-  config: ProjectConfig,
+  config: CliConfig,
   hostname: string,
   workdir: string,
-  projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
+  projectEnvValues?: Readonly<Record<string, string>>,
   /**
-   * `LoadedProjectConfig.document` (`packages/config/src/io.ts`) — the raw,
+   * `LoadedCliConfig.document` (`packages/config/src/io.ts`) — the raw,
    * pre-schema-default TOML document `config` was decoded from. Lets checks
    * that hinge on TOML-section PRESENCE (not the decoded, always-defaulted
    * value) inspect the file directly — see `legacyValidateResolvedConfig`'s
@@ -3028,7 +3028,7 @@ export function legacyResolveLocalConfigValues(
    * existing unit tests); those checks are then simply skipped rather than
    * guessed at.
    */
-  document: Readonly<Record<string, unknown>> | undefined = undefined,
+  document?: Readonly<Record<string, unknown>>,
   /**
    * Config keys a matched `[remotes.<ref>]` block contributed at override tier (applied ABOVE
    * the ambient env tier) — see
@@ -3285,7 +3285,7 @@ export function legacyResolveLocalConfigValues(
   // Same remote-over-env precedence as `apiPort`/`dbPort` above — `rootKey` reaches the
   // shadow's own Postgres container spec (`legacyBuildLocalDbContainerInputs`). `rawRootKeyValue`
   // already reflects a matched remote's `db.root_key` (`document` is the remote-merged raw doc —
-  // see `LoadedProjectConfig.document`'s own doc comment), so `remoteWins` here just means
+  // see `LoadedCliConfig.document`'s own doc comment), so `remoteWins` here just means
   // "don't let a conflicting `SUPABASE_DB_ROOT_KEY` clobber that already-merged value."
   const rawRootKey = remoteWins("db.root_key")
     ? rawRootKeyValue
@@ -3511,7 +3511,7 @@ export function legacyResolveLocalConfigValues(
         config.auth.password_requirements,
         projectEnvValues,
       );
-  // `LoadedProjectConfig.document` (the raw, pre-schema-default TOML `config` was decoded from) —
+  // `LoadedCliConfig.document` (the raw, pre-schema-default TOML `config` was decoded from) —
   // hoisted here (rather than inside the `authEnabled` block below, where it used to live) because
   // the captcha presence check right below needs it too. `undefined` for callers that haven't
   // threaded `document` through yet, in which case presence-based checks are simply skipped.
@@ -3558,7 +3558,7 @@ export function legacyResolveLocalConfigValues(
     // `@supabase/config`'s auth schema has no `passkey`/`webauthn` fields at all (see
     // `config-sync/auth.sync.ts`'s "not in `@supabase/config` schema" note), so passkey/webauthn
     // are read from the RAW, post-`env()`-interpolation TOML document (`authDocument`, hoisted
-    // above) instead of the decoded `ProjectConfig` — same document-based approach already used
+    // above) instead of the decoded `CliConfig` — same document-based approach already used
     // on the `db`/migration config-load path (`legacy-db-config.toml-read.ts`'s
     // `legacyValidateAuthConfig`, section A6). `authDocument` is `undefined` when a caller hasn't
     // threaded `document` through yet, in which case passkey/smtp presence-based checks are
@@ -3796,9 +3796,9 @@ export function legacyResolveLocalConfigValues(
   // only so it can be turned on, never explicitly off. This hinges on PRESENCE of the TOML
   // section, not the decoded `enabled` value — `@supabase/config`'s decode-time default
   // (`packages/config/src/experimental.ts`'s `withDecodingDefaultKey(Effect.succeed({}))`) fills
-  // in `experimental.webhooks = { enabled: false }` on the DECODED `ProjectConfig` even when the
+  // in `experimental.webhooks = { enabled: false }` on the DECODED `CliConfig` even when the
   // TOML section is entirely absent — verified empirically, this default-fill erases exactly the
-  // presence signal this check needs. So this reads `LoadedProjectConfig.document` (the raw,
+  // presence signal this check needs. So this reads `LoadedCliConfig.document` (the raw,
   // pre-default TOML) instead, same as the passkey/smtp checks above.
   const experimentalDocument = asRecord(document?.["experimental"]);
   const webhooksPresent = asRecord(experimentalDocument?.["webhooks"]) !== undefined;
@@ -4078,10 +4078,10 @@ export function legacyResolveLocalConfigValues(
  * (review: PRRT_kwDOErm0O86W3Ox_).
  */
 export async function legacyResolveLocalJwks(
-  config: ProjectConfig,
+  config: CliConfig,
   workdir: string,
   jwtSecret: string,
-  projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
+  projectEnvValues?: Readonly<Record<string, string>>,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): Promise<string> {
   const remoteWins = legacyMakeRemoteWins(remoteOverrideKeys);

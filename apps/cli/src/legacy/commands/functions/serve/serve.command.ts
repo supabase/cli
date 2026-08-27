@@ -6,16 +6,16 @@ import {
   FUNCTIONS_SERVE_INSPECT_MODES,
   serveFileWatcherLayer,
 } from "../../../../shared/functions/serve.ts";
-import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
+import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 import { legacyFunctionsServe } from "./serve.handler.ts";
 
-const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const legacyFunctionsServeRuntimeLayer = Layer.mergeAll(
   serveFileWatcherLayer,
-  cliConfig,
+  cliSettings,
   legacyDebugLoggerLayer,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["functions", "serve"]),
@@ -36,13 +36,17 @@ const config = {
     Flag.withDescription("Path to import map file."),
     Flag.optional,
   ),
-  inspect: Flag.boolean("inspect").pipe(Flag.withDescription("Alias of --inspect-mode brk.")),
+  inspect: Flag.boolean("inspect").pipe(
+    Flag.withDescription("Alias of --inspect-mode brk."),
+    Flag.withDefault(false),
+  ),
   inspectMode: Flag.choice("inspect-mode", FUNCTIONS_SERVE_INSPECT_MODES).pipe(
     Flag.withDescription("Activate inspector capability for debugging."),
     Flag.optional,
   ),
   inspectMain: Flag.boolean("inspect-main").pipe(
     Flag.withDescription("Allow inspecting the main worker."),
+    Flag.withDefault(false),
   ),
   all: Flag.boolean("all").pipe(
     Flag.withDescription("Serve all Functions."),

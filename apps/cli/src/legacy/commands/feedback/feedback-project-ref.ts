@@ -4,7 +4,7 @@ import { legacyReadProjectRefFile } from "../../shared/legacy-temp-paths.ts";
 
 // Mirrors the soft-load half of `LegacyProjectRefResolver.resolveOptional`
 // (`legacy-project-ref.layer.ts`): the caller-supplied override (`--project-ref`
-// and/or `SUPABASE_PROJECT_ID`, captured by `LegacyCliConfig`) →
+// and/or `SUPABASE_PROJECT_ID`, captured by `LegacyCliSettings`) →
 // `<workdir>/supabase/.temp/project-ref`, the file `supabase link` writes. The
 // file is read directly rather than via the full resolver because that layer
 // requires `LegacyPlatformApiFactory` for its prompt path, and feedback must

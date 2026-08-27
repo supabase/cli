@@ -4,7 +4,7 @@ import { Effect, Layer, Option, Stdio } from "effect";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import {
   buildLegacyTestRuntime,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -30,7 +30,7 @@ describe("legacy functions delete", () => {
     const layer = buildLegacyTestRuntime({
       out,
       api,
-      cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+      cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       linkedProjectCache: linkedProjectCache.layer,
       telemetry: telemetry.layer,
     });
@@ -62,7 +62,7 @@ describe("legacy functions delete", () => {
     const layer = buildLegacyTestRuntime({
       out,
       api,
-      cliConfig: mockLegacyCliConfig({
+      cliSettings: mockLegacyCliSettings({
         workdir: tempRoot.current,
         projectId: Option.none(),
       }),
@@ -88,7 +88,7 @@ describe("legacy functions delete", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           analytics,
         }),
         commandRuntimeLayer(["functions", "delete"]),

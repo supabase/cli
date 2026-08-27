@@ -1,4 +1,4 @@
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 
 import { diff } from "./config-sync.diff.ts";
 import { encodeToml, type TomlField, type TomlValue } from "./config-sync.toml.ts";
@@ -58,7 +58,7 @@ const SETTINGS_KEYS: ReadonlyArray<string> = SETTINGS_FIELDS.map((f) => f.key);
 /** Remote `V1GetPostgresConfig` response (subset Go reads). */
 export type RemotePostgresConfig = { readonly [k: string]: string | number | boolean | undefined };
 
-export function dbSettingsFromConfig(config: ProjectConfig): SettingsValue {
+export function dbSettingsFromConfig(config: CliConfig): SettingsValue {
   const settings = (config.db.settings ?? {}) as SettingsValue;
   const value: Record<string, TomlValue | undefined> = {};
   for (const key of SETTINGS_KEYS) {
@@ -131,7 +131,7 @@ export interface RemoteNetworkRestrictions {
   };
 }
 
-export function networkRestrictionsFromConfig(config: ProjectConfig): NetworkRestrictionsSubset {
+export function networkRestrictionsFromConfig(config: CliConfig): NetworkRestrictionsSubset {
   const nr = config.db.network_restrictions;
   return {
     enabled: nr.enabled,
@@ -223,7 +223,7 @@ export interface RemoteSslEnforcement {
  * is treated as absent unless it was actually declared.
  */
 export function sslEnforcementFromConfig(
-  config: ProjectConfig,
+  config: CliConfig,
   present: boolean,
 ): SslEnforcementSubset | undefined {
   const ssl = config.db.ssl_enforcement;

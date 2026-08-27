@@ -4,7 +4,7 @@
 
 | Path                                            | Format                              | When                                                                                                                                                                                   |
 | ----------------------------------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `~/.supabase/profile`                           | plain text (profile name)           | when `--profile` and `SUPABASE_PROFILE` are unset (profile resolution via `legacyCliConfigLayer`)                                                                                      |
+| `~/.supabase/profile`                           | plain text (profile name)           | when `--profile` and `SUPABASE_PROFILE` are unset (profile resolution via `legacyCliSettingsLayer`)                                                                                    |
 | `$SUPABASE_PROFILE`                             | YAML (`api_url:` / `gotrue_url:` …) | when `SUPABASE_PROFILE` is set to a file path instead of a built-in profile name                                                                                                       |
 | `<workdir>/supabase/.temp/project-ref`          | plain text (project ref)            | when `--project-ref` and `SUPABASE_PROJECT_ID` are unset — supplies the `x-feedback-project-ref` context. Absent, blank, or unreadable → header omitted (never fails the command)      |
 | `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON (telemetry state)              | read at startup by the shared telemetry runtime — its `distinct_id` (gotrue user id stamped at login) supplies the `x-feedback-user-id` context. Absent or logged-out → header omitted |
@@ -43,7 +43,7 @@ appear in shareable debug output.
 | ----------------------- | -------------------------------------------------------------- | ------------------------------------------------------------------- |
 | `SUPABASE_PROFILE`      | built-in profile name or YAML file path                        | no (falls back to `~/.supabase/profile` → `supabase`)               |
 | `SUPABASE_WORKDIR`      | project directory override                                     | no (falls back to `--workdir` → cwd)                                |
-| `SUPABASE_ACCESS_TOKEN` | access token captured by `legacyCliConfigLayer`                | no (unused by this command)                                         |
+| `SUPABASE_ACCESS_TOKEN` | access token captured by `legacyCliSettingsLayer`              | no (unused by this command)                                         |
 | `SUPABASE_PROJECT_ID`   | supplies the project-ref context when `--project-ref` is unset | no (falls back to `<workdir>/supabase/.temp/project-ref` → omitted) |
 | `SUPABASE_YES`          | auto-confirms the deletion prompt, same as `--yes`             | no                                                                  |
 

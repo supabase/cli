@@ -15,7 +15,9 @@ console.log((await stack.getInfo()).url);
 
 `createStack` resolves configuration, reserves ports, and builds a scoped
 handle. `stack.start()` starts services; disposing the handle stops them and
-releases its lease.
+releases its lease. When `mode` is omitted, creation uses Docker mode with a
+usable Docker or Podman service and otherwise selects native mode. An explicit
+mode never falls back to the other one.
 
 ## Managed stack
 
@@ -43,18 +45,46 @@ import { daemonLayer, connectLayer, stopDaemon } from "@supabase/stack/effect";
 const runtime =
   yield *
   daemonLayer({
-    cacheRoot: cliConfig.supabaseHome,
+    cacheRoot: cliSettings.supabaseHome,
     projectDir: projectRoot,
     name: "default",
     portIntents,
-    launch: { mode: "auto", versions: {}, excludedServices: [] },
+    launch: { mode: "docker", versions: {}, excludedServices: [] },
   });
 ```
 
 `daemonLayer` starts the managed supervisor and returns a remote `Stack` layer;
+`restartManagedStackForUpgrade` is the explicit stop/start operation used by
+`supabase start` when the owner was started by another CLI version;
 `connectLayer` reattaches through the deterministic control endpoint;
 `stopDaemon` and the discovery helpers delegate to the managed lifecycle
 facade. No CLI metadata file or PID polling is involved.
+
+Managed ownership is exposed by one deterministic loopback HTTP listener. The
+stable cross-build control protocol is `GET /owner` plus session-fenced
+`POST /stop`; runtime operations use same-version Effect RPC over framed NDJSON
+at `POST /rpc`. The complete application is installed before the listener
+binds, and runtime RPC is available only after the supervisor publishes a
+running lifecycle state. Owner discovery distinguishes a versioned supervisor
+from an unversioned maintenance lease. Stop requests carry either explicit-user
+or upgrade-replacement intent so a user stop cannot be undone by a delayed
+replacement child.
+
+The CLI version must exactly match the daemon CLI version before a remote
+runtime client is constructed. Released and preview CLI versions are immutable
+and unique, so the version is the compatibility identity. An incompatible owner is never spoken to
+over RPC: connect-only commands report an actionable upgrade requirement, and
+only an explicit `supabase start` may preflight, stop the exact old owner
+session, and start the current version. Upgrade restart preserves the managed
+identity and launch metadata, data roots, runtime mode, pinned service
+versions, exclusions, and sticky port assignments; it never deletes the
+managed stack. Existing connections briefly disconnect during this normal
+stop/start upgrade restart.
+
+After a managed supervisor claims a stack, its persisted Docker, Podman, or
+native selection remains pinned even if startup later fails. Retry after
+restoring or starting that runtime; delete and recreate the stack to choose a
+different execution mode. Deletion removes the stack's managed data.
 
 For the end-to-end lifecycle, identity, ports, service execution, transport,
 compiled-Bun re-entry, and testing boundary, see [How `@supabase/stack` works](docs/architecture.md).

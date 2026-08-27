@@ -8,7 +8,12 @@ import { afterEach, describe, expect } from "vitest";
 import { ManagedStackManager } from "./managed/manager.ts";
 import { ManagedExactPortOccupiedError } from "./managed/model.ts";
 import { gitConfigStoreLayer } from "./managed/git.ts";
-import { acquireControl, CONTROL_PORT_RANGE, controlEndpoint } from "./managed/control.ts";
+import {
+  acquireControl,
+  CONTROL_PORT_RANGE,
+  controlEndpoint,
+  isControlOwnership,
+} from "./managed/control.ts";
 import { controlTransportLayer } from "./platform-node.ts";
 import { reservePortSet } from "./PortAllocator.ts";
 import {
@@ -24,7 +29,7 @@ import {
   listenExternal,
   releaseLease,
   setupManagedManager,
-  startWithOwner,
+  startManagedStack,
 } from "../tests/helpers/managed-manager.ts";
 
 const roots: Array<string> = [];
@@ -38,14 +43,14 @@ describe("managed stack ports journeys", () => {
       Effect.gen(function* () {
         const manager = yield* ManagedStackManager;
         const { workspace, ownership } = yield* acquireWorkspaceControl(base);
-        if (ownership._tag !== "Owned") throw new Error("expected stack control ownership");
-        const first = yield* manager.startStack({
+        if (!isControlOwnership(ownership)) throw new Error("expected stack control ownership");
+        const first = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: { activeFields: ["apiPort", "dbPort"], document: {} },
           ownership,
         });
         yield* releaseLease(first);
-        const second = yield* manager.startStack({
+        const second = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: {
             activeFields: [],
@@ -67,6 +72,41 @@ describe("managed stack ports journeys", () => {
     );
   });
 
+  it.live("can preserve sticky ports while a replacement request changes its exact intent", () => {
+    const { layer, workspace: base } = setup();
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const manager = yield* ManagedStackManager;
+        const { workspace, ownership } = yield* acquireWorkspaceControl(base);
+        if (!isControlOwnership(ownership)) throw new Error("expected stack control ownership");
+        const first = yield* startManagedStack(manager, {
+          workspacePath: workspace,
+          portDocument: automaticDocument(),
+          ownership,
+          lifecycle: "stopped",
+        });
+        const api = first.stack.ports.find((assignment) => assignment.key === "api.port");
+        if (api === undefined) throw new Error("expected API assignment");
+        yield* releaseLease(first);
+        const second = yield* startManagedStack(manager, {
+          workspacePath: workspace,
+          portDocument: exactDocument("apiPort", api.port === 65_000 ? 65_001 : 65_000),
+          ownership,
+          lifecycle: "stopped",
+          preservePersistedPorts: true,
+        });
+        expect(second.stack.ports).toContainEqual(api);
+        yield* releaseLease(second);
+      }),
+    ).pipe(
+      Effect.provide(layer),
+      Effect.provide(NodeFileSystem.layer),
+      Effect.provide(NodePath.layer),
+      Effect.provide(gitConfigStoreLayer),
+      Effect.provide(controlTransportLayer),
+    );
+  });
+
   it.live("reserves exact durable and automatic runtime ports through one lease", () => {
     const { layer, workspace: base } = setup();
     return Effect.scoped(
@@ -74,8 +114,8 @@ describe("managed stack ports journeys", () => {
         const manager = yield* ManagedStackManager;
         const apiPort = yield* freePort();
         const { workspace, ownership } = yield* acquireWorkspaceControl(base);
-        if (ownership._tag !== "Owned") throw new Error("expected ownership");
-        const started = yield* manager.startStack({
+        if (!isControlOwnership(ownership)) throw new Error("expected ownership");
+        const started = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: {
             activeFields: ["apiPort", "dbPort", "authPort"],
@@ -98,38 +138,44 @@ describe("managed stack ports journeys", () => {
   });
 
   it.live("allows stopped exact siblings and rejects a live owner", () => {
-    const { layer } = setup();
+    const { layer, workspace: base } = setup();
     return Effect.scoped(
       Effect.gen(function* () {
         const manager = yield* ManagedStackManager;
         const port = yield* freePort();
-        const firstWorkspace = setup().workspace;
-        const secondWorkspace = setup().workspace;
-        const first = yield* startWithOwner(
-          manager,
-          firstWorkspace,
-          exactDocument("apiPort", port),
-        );
+        const firstOwner = yield* acquireWorkspaceControl(base, "first");
+        if (!isControlOwnership(firstOwner.ownership)) throw new Error("expected first ownership");
+        const first = yield* startManagedStack(manager, {
+          workspacePath: firstOwner.workspace,
+          portDocument: exactDocument("apiPort", port),
+          ownership: firstOwner.ownership,
+        });
         yield* releaseLease(first);
-        const second = yield* startWithOwner(
-          manager,
-          secondWorkspace,
-          exactDocument("apiPort", port),
-        );
+        const secondOwner = yield* acquireWorkspaceControl(base, "second");
+        if (!isControlOwnership(secondOwner.ownership))
+          throw new Error("expected second ownership");
+        const second = yield* startManagedStack(manager, {
+          workspacePath: secondOwner.workspace,
+          portDocument: exactDocument("apiPort", port),
+          ownership: secondOwner.ownership,
+        });
         yield* releaseLease(second);
-        const liveWorkspace = setup().workspace;
-        const live = yield* startWithOwner(
-          manager,
-          liveWorkspace,
-          exactDocument("apiPort", port),
-          "running",
-        );
-        const rejectedWorkspace = setup().workspace;
-        const rejected = yield* startWithOwner(
-          manager,
-          rejectedWorkspace,
-          exactDocument("apiPort", port),
-        ).pipe(Effect.exit);
+        const liveOwner = yield* acquireWorkspaceControl(base, "live");
+        if (!isControlOwnership(liveOwner.ownership)) throw new Error("expected live ownership");
+        const live = yield* startManagedStack(manager, {
+          workspacePath: liveOwner.workspace,
+          portDocument: exactDocument("apiPort", port),
+          ownership: liveOwner.ownership,
+          lifecycle: "running",
+        });
+        const rejectedOwner = yield* acquireWorkspaceControl(base, "rejected");
+        if (!isControlOwnership(rejectedOwner.ownership))
+          throw new Error("expected rejected ownership");
+        const rejected = yield* startManagedStack(manager, {
+          workspacePath: rejectedOwner.workspace,
+          portDocument: exactDocument("apiPort", port),
+          ownership: rejectedOwner.ownership,
+        }).pipe(Effect.exit);
         expect(Exit.isFailure(rejected)).toBe(true);
         if (Exit.isFailure(rejected)) {
           expect(Cause.squash(rejected.cause)).toBeInstanceOf(ManagedExactPortOccupiedError);
@@ -151,9 +197,9 @@ describe("managed stack ports journeys", () => {
       Effect.gen(function* () {
         const manager = yield* ManagedStackManager;
         const { workspace, ownership } = yield* acquireWorkspaceControl(base);
-        if (ownership._tag !== "Owned") throw new Error("expected stack ownership");
+        if (!isControlOwnership(ownership)) throw new Error("expected stack ownership");
         const port = ownership.endpoint.port === 15_432 ? 15_433 : 15_432;
-        const started = yield* manager.startStack({
+        const started = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: exactDocument("apiPort", port),
           ownership,
@@ -182,8 +228,8 @@ describe("managed stack ports journeys", () => {
           stackId: otherStackId,
           ownership: otherOwnership,
         } = yield* acquireWorkspaceControl(base, "other");
-        if (otherOwnership._tag !== "Owned") throw new Error("expected other stack ownership");
-        const other = yield* manager.startStack({
+        if (!isControlOwnership(otherOwnership)) throw new Error("expected other stack ownership");
+        const other = yield* startManagedStack(manager, {
           workspacePath: otherWorkspace,
           portDocument: automaticDocument(),
           ownership: otherOwnership,
@@ -194,14 +240,12 @@ describe("managed stack ports journeys", () => {
         const otherEndpoint = yield* controlEndpoint(otherStackId);
 
         const { workspace, ownership } = yield* acquireWorkspaceControl(base);
-        if (ownership._tag !== "Owned") throw new Error("expected stack ownership");
-        const rejected = yield* manager
-          .startStack({
-            workspacePath: workspace,
-            portDocument: exactDocument("apiPort", otherEndpoint.port),
-            ownership,
-          })
-          .pipe(Effect.exit);
+        if (!isControlOwnership(ownership)) throw new Error("expected stack ownership");
+        const rejected = yield* startManagedStack(manager, {
+          workspacePath: workspace,
+          portDocument: exactDocument("apiPort", otherEndpoint.port),
+          ownership,
+        }).pipe(Effect.exit);
 
         expect(Exit.isFailure(rejected)).toBe(true);
         if (Exit.isFailure(rejected)) {
@@ -234,14 +278,12 @@ describe("managed stack ports journeys", () => {
         expect(external.listening).toBe(true);
 
         const { workspace, ownership } = yield* acquireWorkspaceControl(base);
-        if (ownership._tag !== "Owned") throw new Error("expected stack ownership");
-        const rejected = yield* manager
-          .startStack({
-            workspacePath: workspace,
-            portDocument: exactDocument("apiPort", port),
-            ownership,
-          })
-          .pipe(Effect.exit);
+        if (!isControlOwnership(ownership)) throw new Error("expected stack ownership");
+        const rejected = yield* startManagedStack(manager, {
+          workspacePath: workspace,
+          portDocument: exactDocument("apiPort", port),
+          ownership,
+        }).pipe(Effect.exit);
 
         expect(Exit.isFailure(rejected)).toBe(true);
         if (Exit.isFailure(rejected)) {
@@ -277,14 +319,14 @@ describe("managed stack ports journeys", () => {
           stackId,
           ownership,
         } = yield* acquireWorkspaceControl(root, "first");
-        if (ownership._tag !== "Owned") throw new Error("expected ownership");
-        const exact = yield* manager.startStack({
+        if (!isControlOwnership(ownership)) throw new Error("expected ownership");
+        const exact = yield* startManagedStack(manager, {
           workspacePath: firstWorkspace,
           portDocument: exactCoreDocument(apiPort, dbPort),
           ownership,
         });
         yield* releaseLease(exact);
-        const first = yield* manager.startStack({
+        const first = yield* startManagedStack(manager, {
           workspacePath: firstWorkspace,
           portDocument: automaticRuntimeDocument(),
           ownership,
@@ -335,13 +377,11 @@ describe("managed stack ports journeys", () => {
         const external = yield* reservePortSet([
           { field: "apiPort", selection: { kind: "exact", port: firstPort } },
         ]);
-        const restart = yield* manager
-          .startStack({
-            workspacePath: firstWorkspace,
-            portDocument: automaticRuntimeDocument(),
-            ownership,
-          })
-          .pipe(Effect.exit);
+        const restart = yield* startManagedStack(manager, {
+          workspacePath: firstWorkspace,
+          portDocument: automaticRuntimeDocument(),
+          ownership,
+        }).pipe(Effect.exit);
         expect(Exit.isFailure(restart)).toBe(true);
         if (Exit.isFailure(restart)) {
           expect(Cause.squash(restart.cause)).toMatchObject({
@@ -351,8 +391,8 @@ describe("managed stack ports journeys", () => {
         yield* external.releaseAll;
         const { workspace: secondWorkspace, ownership: secondOwnership } =
           yield* acquireWorkspaceControl(root, "second");
-        if (secondOwnership._tag !== "Owned") throw new Error("expected second ownership");
-        const second = yield* manager.startStack({
+        if (!isControlOwnership(secondOwnership)) throw new Error("expected second ownership");
+        const second = yield* startManagedStack(manager, {
           workspacePath: secondWorkspace,
           portDocument: automaticRuntimeDocument(),
           ownership: secondOwnership,
@@ -385,8 +425,8 @@ describe("managed stack ports journeys", () => {
           stackId,
           ownership: initialOwnership,
         } = yield* acquireWorkspaceControl(root);
-        if (initialOwnership._tag !== "Owned") throw new Error("expected ownership");
-        const running = yield* manager.startStack({
+        if (!isControlOwnership(initialOwnership)) throw new Error("expected ownership");
+        const running = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: exactCoreDocument(original, dbPort),
           ownership: initialOwnership,
@@ -407,9 +447,9 @@ describe("managed stack ports journeys", () => {
         yield* releaseLease(running);
         yield* manager.recordLifecycle(initialOwnership, { stackId, lifecycle: "stopped" });
         yield* initialOwnership.close;
-        const ownership = yield* acquireControl({ stackId });
-        if (ownership._tag !== "Owned") throw new Error("expected ownership");
-        const stopped = yield* manager.startStack({
+        const ownership = yield* acquireControl({ stackId, maintenanceOperation: "update" });
+        if (!isControlOwnership(ownership)) throw new Error("expected ownership");
+        const stopped = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: exactCoreDocument(changed, dbPort),
           ownership,
@@ -436,14 +476,14 @@ describe("managed stack ports journeys", () => {
         const manager = yield* ManagedStackManager;
         const port = yield* freePort();
         const { workspace, ownership } = yield* acquireWorkspaceControl(root);
-        if (ownership._tag !== "Owned") throw new Error("expected ownership");
-        const first = yield* manager.startStack({
+        if (!isControlOwnership(ownership)) throw new Error("expected ownership");
+        const first = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: exactDocument("studioPort", port),
           ownership,
         });
         yield* releaseLease(first);
-        const disabled = yield* manager.startStack({
+        const disabled = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: { activeFields: [], disabledFields: ["studioPort"], document: {} },
           ownership,
@@ -452,7 +492,7 @@ describe("managed stack ports journeys", () => {
           disabled.stack.ports.filter((assignment) => assignment.key === "studio.port"),
         ).toEqual([{ key: "studio.port", port, intent: "exact" }]);
         yield* releaseLease(disabled);
-        const removed = yield* manager.startStack({
+        const removed = yield* startManagedStack(manager, {
           workspacePath: workspace,
           portDocument: { activeFields: [], document: {} },
           ownership,

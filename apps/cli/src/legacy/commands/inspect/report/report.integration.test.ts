@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 import { mockOutput, mockRuntimeInfo, mockTty } from "../../../../../tests/helpers/mocks.ts";
 import {
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyTelemetryStateTracked,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
@@ -151,7 +151,7 @@ function setupLegacyReport(opts: SetupOpts = {}) {
     telemetry.layer,
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     Layer.succeed(CliArgs, { args: opts.cliArgs ?? [] }),
-    mockLegacyCliConfig({ workdir }),
+    mockLegacyCliSettings({ workdir }),
     mockRuntimeInfo({ cwd: opts.cwd ?? tempDir("supabase-report-cwd-") }),
     mockTty({ stdoutIsTty: opts.stdoutIsTty ?? false }),
     BunServices.layer,

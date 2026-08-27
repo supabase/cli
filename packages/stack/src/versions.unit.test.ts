@@ -6,7 +6,6 @@ import {
 import {
   DEFAULT_VERSIONS,
   diffPinnedAndAvailableVersions,
-  dockerImageCandidatesForService,
   dockerImageForService,
   fillServiceVersionManifest,
   normalizeServiceVersion,
@@ -52,7 +51,7 @@ describe("syncDefaultVersionsSource", () => {
       'name: "postgres",\n    configKey: "example",\n    defaultVersion: "17.0.0.1"',
     );
     expect(updated).toContain(
-      'name: "edge-runtime",\n    configKey: "example",\n    defaultVersion: "1.70.0"',
+      'name: "edge-runtime",\n    configKey: "example",\n    defaultVersion: "v1.70.0"',
     );
     expect(updated).toContain(
       'name: "mailpit",\n    configKey: "example",\n    defaultVersion: "v1.2.3"',
@@ -82,72 +81,89 @@ describe("dockerImageForService", () => {
 
   it("returns correct image for postgres", () => {
     expect(dockerImageForService("postgres", DEFAULT_VERSIONS.postgres)).toBe(
-      `public.ecr.aws/supabase/postgres:${DEFAULT_VERSIONS.postgres}`,
+      `ghcr.io/supabase/cli/postgres:${DEFAULT_VERSIONS.postgres}`,
     );
   });
 
   it("returns correct image for postgrest (with v prefix)", () => {
     expect(dockerImageForService("postgrest", DEFAULT_VERSIONS.postgrest)).toBe(
-      `public.ecr.aws/supabase/postgrest:v${DEFAULT_VERSIONS.postgrest}`,
+      `ghcr.io/supabase/cli/postgrest:${DEFAULT_VERSIONS.postgrest}`,
     );
   });
 
   it("returns correct image for auth (with v prefix)", () => {
     expect(dockerImageForService("auth", DEFAULT_VERSIONS.auth)).toBe(
-      `public.ecr.aws/supabase/gotrue:v${DEFAULT_VERSIONS.auth}`,
+      `ghcr.io/supabase/cli/auth:${DEFAULT_VERSIONS.auth}`,
     );
   });
 
   it("returns correct image for edge-runtime (with v prefix)", () => {
     expect(dockerImageForService("edge-runtime", DEFAULT_VERSIONS["edge-runtime"])).toBe(
-      `public.ecr.aws/supabase/edge-runtime:v${DEFAULT_VERSIONS["edge-runtime"]}`,
+      `ghcr.io/supabase/cli/edge-runtime:${DEFAULT_VERSIONS["edge-runtime"]}`,
     );
   });
 
-  it("returns ECR, Docker Hub, and GHCR candidates for Supabase-owned images", () => {
-    expect(dockerImageCandidatesForService("auth", DEFAULT_VERSIONS.auth)).toEqual([
-      `public.ecr.aws/supabase/gotrue:v${DEFAULT_VERSIONS.auth}`,
-      `supabase/gotrue:v${DEFAULT_VERSIONS.auth}`,
-      `ghcr.io/supabase/gotrue:v${DEFAULT_VERSIONS.auth}`,
-    ]);
+  it("uses canonical GHCR for every service", () => {
+    expect(dockerImageForService("imgproxy", DEFAULT_VERSIONS.imgproxy)).toBe(
+      `ghcr.io/supabase/cli/imgproxy:${DEFAULT_VERSIONS.imgproxy}`,
+    );
   });
 
-  it("does not add fallback registries for third-party images", () => {
-    expect(dockerImageCandidatesForService("imgproxy", DEFAULT_VERSIONS.imgproxy)).toEqual([
-      `darthsim/imgproxy:${DEFAULT_VERSIONS.imgproxy}`,
-    ]);
+  it("uses the upstream mirror repositories for vector and pooler", () => {
+    expect(dockerImageForService("vector", DEFAULT_VERSIONS.vector)).toBe(
+      "ghcr.io/supabase/vector:0.53.0-alpine",
+    );
+    expect(dockerImageForService("pooler", DEFAULT_VERSIONS.pooler)).toBe(
+      "ghcr.io/supabase/supavisor:2.9.7",
+    );
+  });
+
+  it("preserves upstream mirror repositories for explicit vector and pooler versions", () => {
+    expect(dockerImageForService("vector", "0.52.0-alpine")).toBe(
+      "ghcr.io/supabase/vector:0.52.0-alpine",
+    );
+    expect(dockerImageForService("pooler", "2.9.6")).toBe("ghcr.io/supabase/supavisor:2.9.6");
   });
 
   it("keeps non-managed services Docker-only", () => {
     expect(SERVICE_CATALOG.imgproxy).toMatchObject({
       runtimeSupport: "docker-only",
-      artifact: { docker: { ownership: "upstream", repository: "darthsim/imgproxy" } },
+      artifact: { docker: { repository: "imgproxy" } },
     });
     expect(SERVICE_CATALOG.mailpit).toMatchObject({
       runtimeSupport: "docker-only",
-      artifact: { docker: { ownership: "upstream", repository: "axllent/mailpit" } },
+      artifact: { docker: { repository: "mailpit" } },
     });
     expect(SERVICE_CATALOG.vector).toMatchObject({
       runtimeSupport: "docker-only",
-      artifact: { docker: { ownership: "upstream", repository: "timberio/vector" } },
+      artifact: { docker: { repository: "vector" } },
     });
   });
 });
 
 describe("normalizeServiceVersion", () => {
-  it("strips v prefix for services with IMAGE_TAG_PREFIX 'v'", () => {
-    expect(normalizeServiceVersion("postgrest", "v14.5")).toBe("14.5");
-    expect(normalizeServiceVersion("auth", "v2.188.0")).toBe("2.188.0");
-    expect(normalizeServiceVersion("edge-runtime", "v1.73.0")).toBe("1.73.0");
+  it("preserves frozen leading v tags", () => {
+    expect(normalizeServiceVersion("postgrest", "v14.5")).toBe("v14.5");
+    expect(normalizeServiceVersion("auth", "v2.188.0")).toBe("v2.188.0");
+    expect(normalizeServiceVersion("edge-runtime", "v1.73.0")).toBe("v1.73.0");
   });
 
-  it("ensures v prefix for services whose defaults start with v", () => {
+  it("normalizes bare versions for services with v-prefixed catalog releases", () => {
     expect(normalizeServiceVersion("mailpit", "1.30.2")).toBe("v1.30.2");
     expect(normalizeServiceVersion("imgproxy", "3.8.0")).toBe("v3.8.0");
+    expect(normalizeServiceVersion("mailpit", "V1.30.2")).toBe("v1.30.2");
   });
 
   it("passes through other services unchanged", () => {
     expect(normalizeServiceVersion("postgres", "17.6.1.090")).toBe("17.6.1.090");
+  });
+
+  it("normalizes a prefixed pgmeta override to its catalog tag", () => {
+    expect(normalizeServiceVersion("pgmeta", "v0.98.0")).toBe("0.98.0");
+    expect(normalizeServiceVersion("pgmeta", "V0.98.0")).toBe("0.98.0");
+    expect(dockerImageForService("pgmeta", normalizeServiceVersion("pgmeta", "v0.98.0"))).toBe(
+      "ghcr.io/supabase/cli/pgmeta:v0.98.0",
+    );
   });
 });
 

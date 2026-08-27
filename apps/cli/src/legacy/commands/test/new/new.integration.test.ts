@@ -8,7 +8,7 @@ import { badArgument } from "effect/PlatformError";
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -48,10 +48,13 @@ function failingFsLayer(op: "writeFileString" | "makeDirectory") {
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
   const telemetry = mockLegacyTelemetryStateTracked();
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current, projectId: Option.none() });
+  const cliSettings = mockLegacyCliSettings({
+    workdir: tempRoot.current,
+    projectId: Option.none(),
+  });
   const layer = Layer.mergeAll(
     out.layer,
-    cliConfig,
+    cliSettings,
     telemetry.layer,
     // BunServices provides FileSystem + Path; when forcing a failure the failing
     // layer is appended last so it overrides FileSystem (Path still comes from

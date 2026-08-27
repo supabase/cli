@@ -24,9 +24,11 @@ export interface LegacyVaultSecret {
   readonly resolved: boolean;
 }
 
-const READ_VAULT_KV = "SELECT id, name FROM vault.secrets WHERE name = ANY($1)";
-const UPDATE_VAULT_KV = "SELECT vault.update_secret($1, $2)";
-const CREATE_VAULT_KV = "SELECT vault.create_secret($1, $2)";
+// Exported for the shadow baseline cache's embedded-SQL digest (`shadow-cache.ts`), which must
+// re-key whenever the SQL this module bakes into a baseline changes across CLI releases.
+export const LEGACY_READ_VAULT_KV = "SELECT id, name FROM vault.secrets WHERE name = ANY($1)";
+export const LEGACY_UPDATE_VAULT_KV = "SELECT vault.update_secret($1, $2)";
+export const LEGACY_CREATE_VAULT_KV = "SELECT vault.create_secret($1, $2)";
 
 /**
  * Upserts `[db.vault]` secrets into `vault.secrets`. Port of Go's
@@ -46,7 +48,7 @@ export const legacyUpsertVaultSecrets = (
     yield* output.raw("Updating vault secrets...\n", "stderr");
 
     const existing = yield* session
-      .query(READ_VAULT_KV, [resolved.map((secret) => secret.name)])
+      .query(LEGACY_READ_VAULT_KV, [resolved.map((secret) => secret.name)])
       .pipe(
         Effect.mapError(
           (cause) =>
@@ -63,9 +65,9 @@ export const legacyUpsertVaultSecrets = (
       for (const secret of resolved) {
         const id = existingByName.get(secret.name);
         if (id !== undefined) {
-          yield* session.query(UPDATE_VAULT_KV, [id, secret.value]);
+          yield* session.query(LEGACY_UPDATE_VAULT_KV, [id, secret.value]);
         } else {
-          yield* session.query(CREATE_VAULT_KV, [secret.value, secret.name]);
+          yield* session.query(LEGACY_CREATE_VAULT_KV, [secret.value, secret.name]);
         }
       }
       yield* session.exec("COMMIT");

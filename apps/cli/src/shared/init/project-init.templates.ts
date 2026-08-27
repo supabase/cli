@@ -18,9 +18,8 @@ extra_search_path = ["public", "extensions"]
 max_rows = 1000
 # Controls whether new tables, views, sequences and functions created in the \`public\` schema by
 # \`postgres\` are reachable through the Data API roles (\`anon\`, \`authenticated\`, \`service_role\`)
-# without explicit GRANTs. When unset, new entities are NOT auto-exposed, matching the new cloud
-# default. Set to \`true\` to keep the legacy behaviour of auto-exposing new entities; this is
-# deprecated and the field is removed on 2026-10-30 once the always-revoked behaviour is permanent.
+# without explicit GRANTs, matching the cloud default. Set to \`false\` to require explicit GRANTs
+# instead. Left unset, a fresh project falls back to \`true\`.
 # auto_expose_new_tables = true
 
 [api.tls]
@@ -465,7 +464,7 @@ export const INTELLIJ_DENO_TEMPLATE = `<?xml version="1.0" encoding="UTF-8"?>
 
 const ORIOLE_DB_VERSION = "15.1.0.150";
 
-export function renderProjectConfigTemplate(projectId: string, useOrioledb: boolean): string {
+export function renderCliConfigTemplate(projectId: string, useOrioledb: boolean): string {
   return CONFIG_TEMPLATE_RAW.replace("__PROJECT_ID__", projectId).replace(
     "__ORIOLEDB_VERSION__",
     useOrioledb ? ORIOLE_DB_VERSION : "",

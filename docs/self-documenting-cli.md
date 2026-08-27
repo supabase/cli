@@ -8,10 +8,10 @@ See [ADR 0003](adr/0003-self-documenting-cli.md) for the original design rationa
 
 Three global flags power the documentation pipeline:
 
-| Flag | Purpose |
-|------|---------|
-| `--usage` | Output the full CLI spec in [usage](https://usage.jdx.dev) format (KDL) and exit |
-| `--skill` | Auto-detect installed AI agents and write SKILL.md files to each agent's skills directory |
+| Flag                 | Purpose                                                                                      |
+| -------------------- | -------------------------------------------------------------------------------------------- |
+| `--usage`            | Output the full CLI spec in [usage](https://usage.jdx.dev) format (KDL) and exit             |
+| `--skill`            | Auto-detect installed AI agents and write SKILL.md files to each agent's skills directory    |
 | `--skill-dir <path>` | Write SKILL.md files to a custom directory (useful when no agent is detected or for testing) |
 
 These flags are defined in `apps/cli/src/lib/global-flags.ts` and work from any subcommand position. For example, both `supabase --usage` and `supabase login --usage` emit the same full CLI spec.
@@ -34,12 +34,12 @@ When invoked from a subcommand (e.g. `supabase login --skill`), only that subtre
 
 Key files:
 
-| File | Role |
-|------|------|
-| `apps/cli/src/lib/agent-detect.ts` | Filesystem-based agent detection (40+ agents) |
-| `apps/cli/src/lib/skill-writer.ts` | Writes `SKILL.md` files with YAML frontmatter |
+| File                                 | Role                                                 |
+| ------------------------------------ | ---------------------------------------------------- |
+| `apps/cli/src/lib/agent-detect.ts`   | Filesystem-based agent detection (40+ agents)        |
+| `apps/cli/src/lib/skill-writer.ts`   | Writes `SKILL.md` files with YAML frontmatter        |
 | `apps/cli/src/lib/guide-injector.ts` | Injects auto-generated sections into guide templates |
-| `apps/cli/src/lib/guide-registry.ts` | Maps command paths to guide entries |
+| `apps/cli/src/lib/guide-registry.ts` | Maps command paths to guide entries                  |
 
 ## Guide files
 
@@ -116,7 +116,11 @@ A [Fumadocs](https://fumadocs.dev) site at `apps/docs` serves the command refere
 
 ### How generation works
 
-The script `apps/docs/scripts/generate-docs.ts` runs at build time (`bun run generate`) and:
+The script `apps/cli/scripts/generate-docs.ts` runs as the docs `generate`
+task before the docs `build` task when invoked through Turbo (for example,
+`pnpm run build` from the repository root). The package's `build` script is a
+leaf `next build`; running `pnpm run generate` directly remains available for
+local docs development. The generator:
 
 1. Walks the command tree via `collectCommands()` to find all leaf commands
 2. For each command, extracts a `HelpDoc` (description, flags, args, examples)
@@ -124,6 +128,7 @@ The script `apps/docs/scripts/generate-docs.ts` runs at build time (`bun run gen
 4. Writes each command as `content/docs/commands/<slug>.mdx` with frontmatter
 5. Generates `content/docs/commands/index.mdx` — a command reference index with a table linking to every command page
 6. Generates `content/docs/commands/meta.json` to control page ordering in the sidebar
+7. Generates `public/cli/config.schema.json` for the CLI configuration reference
 
 ### Site structure
 
@@ -143,18 +148,22 @@ apps/docs/
 │       ├── index.mdx           ← Command table (generated)
 │       ├── meta.json           ← Command page order (generated)
 │       └── login.mdx           ← Individual command page (generated)
-├── scripts/
-│   └── generate-docs.ts        ← Docs generation script
 └── lib/
     └── source.ts               ← Fumadocs content source loader
 ```
 
+The generator is maintained alongside the CLI at
+`apps/cli/scripts/generate-docs.ts` and writes the generated command content
+and schema asset into `apps/docs`.
+
 ### Running the docs site
 
 ```sh
-cd apps/docs
-bun run generate   # Generate command pages from CLI source
-bun run dev        # Start dev server (also runs generate first)
+# From the repository root:
+pnpm run dev:docs    # Generate command pages, then start the Next.js dev server
+
+# To generate pages without starting the server:
+pnpm --filter @supabase/docs run generate
 ```
 
 ## Adding a new command's documentation
@@ -163,4 +172,4 @@ bun run dev        # Start dev server (also runs generate first)
 2. Optionally create a `<command>.guide.md` with narrative content and injection markers
 3. If a guide exists, register it in `guide-registry.ts` with a skill name and description
 4. Run `supabase <command> --skill-dir /tmp/test` to verify the generated skill output
-5. Run `cd apps/docs && bun run generate` to regenerate the docs website — the new command appears automatically in the command index and sidebar
+5. Run `cd apps/docs && pnpm run generate` to regenerate the docs website — the new command appears automatically in the command index and sidebar

@@ -1,4 +1,4 @@
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 import { describe, expect, test } from "vitest";
 
 import { LEGACY_START_DB_RESTORE_SH } from "./templates/db-restore.sh.ts";
@@ -19,7 +19,7 @@ import {
 
 const POSTGRES_CONFIG_HEADER = "\n# supabase [db.settings] configuration\n";
 
-function baseDb(overrides: Partial<ProjectConfig["db"]> = {}): ProjectConfig["db"] {
+function baseDb(overrides: Partial<CliConfig["db"]> = {}): CliConfig["db"] {
   return {
     port: 54322,
     shadow_port: 54320,
@@ -41,8 +41,8 @@ function baseDb(overrides: Partial<ProjectConfig["db"]> = {}): ProjectConfig["db
 }
 
 function baseExperimental(
-  overrides: Partial<ProjectConfig["experimental"]> = {},
-): ProjectConfig["experimental"] {
+  overrides: Partial<CliConfig["experimental"]> = {},
+): CliConfig["experimental"] {
   return {
     webhooks: { enabled: false },
     pgdelta: { enabled: false },
@@ -79,7 +79,7 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
       "\n" +
         "cat <<'EOF' > /etc/postgresql.schema.sql && \\\n" +
         "cat <<'EOF' >> /etc/postgresql/postgresql.conf && \\\n" +
-        "docker-entrypoint.sh postgres -D /etc/postgresql \n" +
+        "exec docker-entrypoint.sh postgres -D /etc/postgresql \n" +
         `${LEGACY_START_DB_SCHEMA_SQL}\n` +
         `${LEGACY_START_DB_WEBHOOK_SQL}\n` +
         `${LEGACY_START_DB_SUPABASE_SQL}\n` +
@@ -108,7 +108,7 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
       "\n" +
         "cat <<'EOF' > /docker-entrypoint-initdb.d/supabase_schema.sql && \\\n" +
         "cat <<'EOF' >> /etc/postgresql/postgresql.conf && \\\n" +
-        "docker-entrypoint.sh postgres -D /etc/postgresql \n" +
+        "exec docker-entrypoint.sh postgres -D /etc/postgresql \n" +
         `${LEGACY_START_DB_SUPABASE_SQL}\n` +
         "EOF\n" +
         `${POSTGRES_CONFIG_HEADER}\n` +
@@ -252,7 +252,7 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
         "cat <<'EOF' > /etc/postgresql.schema.sql && \\\n" +
         "cat <<'EOF' > /docker-entrypoint-initdb.d/migrate.sh && \\\n" +
         "cat <<'EOF' >> /etc/postgresql/postgresql.conf && \\\n" +
-        "docker-entrypoint.sh postgres -D /etc/postgresql\n" +
+        "exec docker-entrypoint.sh postgres -D /etc/postgresql\n" +
         `${LEGACY_START_DB_SCHEMA_SQL}\n` +
         `${LEGACY_START_DB_SUPABASE_SQL}\n` +
         "EOF\n" +
@@ -405,7 +405,7 @@ describe("legacyBuildShadowPostgresContainerSpec", () => {
     );
     const script = spec.cmd?.[1];
     expect(script).toContain(
-      `docker-entrypoint.sh postgres -D /etc/postgresql ${LEGACY_SHADOW_ENTRYPOINT_ARGS}\n`,
+      `exec docker-entrypoint.sh postgres -D /etc/postgresql ${LEGACY_SHADOW_ENTRYPOINT_ARGS}\n`,
     );
     expect(spec.secretFiles).toEqual([
       {
@@ -422,7 +422,7 @@ describe("legacyBuildShadowPostgresContainerSpec", () => {
     );
     const script = spec.cmd?.[1];
     expect(script).toContain(
-      `docker-entrypoint.sh postgres -D /etc/postgresql ${LEGACY_SHADOW_ENTRYPOINT_ARGS}\n`,
+      `exec docker-entrypoint.sh postgres -D /etc/postgresql ${LEGACY_SHADOW_ENTRYPOINT_ARGS}\n`,
     );
     expect(spec.secretFiles).toBeUndefined();
     expect(spec.tmpfs).toEqual({ "/docker-entrypoint-initdb.d": "" });

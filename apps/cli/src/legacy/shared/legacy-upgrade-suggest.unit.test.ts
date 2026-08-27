@@ -8,7 +8,7 @@ import {
   LEGACY_VALID_REF,
   buildLegacyTestRuntime,
   legacyJsonResponse,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyPlatformApi,
   useLegacyTempWorkdir,
 } from "../../../tests/helpers/legacy-mocks.ts";
@@ -64,7 +64,7 @@ function setup(opts: SetupOpts = {}) {
 
   const out = mockOutput({ format: opts.format ?? "text" });
   const analytics = mockAnalytics();
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
 
   const api = mockLegacyPlatformApi({
     handler: (request) =>
@@ -95,7 +95,7 @@ function setup(opts: SetupOpts = {}) {
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     analytics,
   });
 

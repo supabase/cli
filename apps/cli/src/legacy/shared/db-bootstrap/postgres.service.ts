@@ -20,7 +20,7 @@
  *    up by each caller's own handler.
  */
 
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 
 import { localDbContainerId } from "../legacy-docker-ids.ts";
 import { legacyToDockerPath } from "../legacy-docker-path.ts";
@@ -65,9 +65,9 @@ const LEGACY_POSTGRES_CONFIG_HEADER = "\n# supabase [db.settings] configuration\
 
 export interface LegacyPostgresStartServiceInput {
   /** Decoded `[db]` section — every field this builder needs (`port`, `major_version`, `settings`) lives here. */
-  readonly db: ProjectConfig["db"];
+  readonly db: CliConfig["db"];
   /** Decoded `[experimental]` section — only the OrioleDB/S3 fields are read. */
-  readonly experimental: ProjectConfig["experimental"];
+  readonly experimental: CliConfig["experimental"];
   /** Already-resolved (default-or-configured, decrypted) `auth.jwt_secret` — same shape `legacyResolveLocalConfigValues` produces. */
   readonly jwtSecret: string;
   /** `config.auth.jwt_expiry`. */
@@ -127,7 +127,7 @@ export interface LegacyPostgresStartServiceInput {
  * result in empty string" case) — so the empty-settings case is special-cased
  * below instead of delegated to `encodeToml`.
  *
- * `settings` itself is typed optional (`ProjectConfig["db"]["settings"]`
+ * `settings` itself is typed optional (`CliConfig["db"]["settings"]`
  * includes `undefined`) because `db.ts` wraps the whole `[db.settings]` table
  * in `Schema.optionalKey` — in practice the schema's own `withDecodingDefaultKey`
  * always fills in `{}` when the section is absent, but this stays defensive
@@ -135,7 +135,7 @@ export interface LegacyPostgresStartServiceInput {
  * (never-nil) struct value.
  */
 export function legacyPostgresSettingsToPostgresConfig(
-  settings: ProjectConfig["db"]["settings"],
+  settings: CliConfig["db"]["settings"],
 ): string {
   const defined = Object.fromEntries(
     Object.entries(settings ?? {}).filter(([, value]) => value !== undefined),
@@ -220,7 +220,7 @@ export function legacyPostgresImageVersionTag(image: string): string {
  * `else if`, so at most one of the two ever fires.
  */
 function legacyPostgresExtraEnv(
-  experimental: ProjectConfig["experimental"],
+  experimental: CliConfig["experimental"],
   image: string,
 ): Readonly<Record<string, string>> {
   if (experimental.orioledb_version !== undefined && experimental.orioledb_version.length > 0) {
@@ -258,6 +258,14 @@ function legacyPostgresExtraEnv(
  * {@link legacyBuildPostgresStartContainerSpec}), so it never appears in this
  * process's own `docker create` argv (CWE-214/522).
  *
+ * The final command is `exec`'d — a deliberate divergence from Go's script
+ * (which leaves `sh` as PID 1, so SIGTERM is never forwarded and every
+ * `docker stop` burns the full 10s grace period before SIGKILL; with `exec`,
+ * Postgres is PID 1 and stops in ~1s). Applies to all three entrypoint
+ * variants below. Timing is not part of the Go-parity surface (ADR 0016);
+ * see `shadow-cache.ts`'s own doc comment for why fast shutdown matters to the shadow baseline
+ * cache's cold path.
+ *
  * Otherwise byte-for-byte derived from Go's raw-string concatenation —
  * `NewContainerConfig(args ...string)` splices `strings.Join(args, " ")`
  * straight after the literal trailing space following `/etc/postgresql`
@@ -276,7 +284,7 @@ function legacyPostgresEntrypointScriptPg15(postgresConfig: string, args = ""): 
     "\n" +
     "cat <<'EOF' > /etc/postgresql.schema.sql && \\\n" +
     "cat <<'EOF' >> /etc/postgresql/postgresql.conf && \\\n" +
-    `docker-entrypoint.sh postgres -D /etc/postgresql ${args}\n` +
+    `exec docker-entrypoint.sh postgres -D /etc/postgresql ${args}\n` +
     `${LEGACY_START_DB_SCHEMA_SQL}\n` +
     `${LEGACY_START_DB_WEBHOOK_SQL}\n` +
     `${LEGACY_START_DB_SUPABASE_SQL}\n` +
@@ -301,7 +309,7 @@ function legacyPostgresEntrypointScriptPg14(postgresConfig: string, args = ""): 
     "\n" +
     "cat <<'EOF' > /docker-entrypoint-initdb.d/supabase_schema.sql && \\\n" +
     "cat <<'EOF' >> /etc/postgresql/postgresql.conf && \\\n" +
-    `docker-entrypoint.sh postgres -D /etc/postgresql ${args}\n` +
+    `exec docker-entrypoint.sh postgres -D /etc/postgresql ${args}\n` +
     `${LEGACY_START_DB_SUPABASE_SQL}\n` +
     "EOF\n" +
     `${postgresConfig}\n` +
@@ -328,7 +336,7 @@ function legacyPostgresEntrypointScriptRestore(postgresConfig: string): string {
     "cat <<'EOF' > /etc/postgresql.schema.sql && \\\n" +
     "cat <<'EOF' > /docker-entrypoint-initdb.d/migrate.sh && \\\n" +
     "cat <<'EOF' >> /etc/postgresql/postgresql.conf && \\\n" +
-    "docker-entrypoint.sh postgres -D /etc/postgresql\n" +
+    "exec docker-entrypoint.sh postgres -D /etc/postgresql\n" +
     `${LEGACY_START_DB_SCHEMA_SQL}\n` +
     `${LEGACY_START_DB_SUPABASE_SQL}\n` +
     "EOF\n" +
@@ -434,8 +442,8 @@ export const LEGACY_SHADOW_ENTRYPOINT_ARGS = "-c max_worker_processes=0";
  * backup) plus the shadow's own host port.
  */
 export interface LegacyShadowPostgresContainerSpecInput {
-  readonly db: Pick<ProjectConfig["db"], "major_version" | "settings">;
-  readonly experimental: ProjectConfig["experimental"];
+  readonly db: Pick<CliConfig["db"], "major_version" | "settings">;
+  readonly experimental: CliConfig["experimental"];
   readonly jwtSecret: string;
   readonly jwtExpiry: number;
   readonly networkId: string;

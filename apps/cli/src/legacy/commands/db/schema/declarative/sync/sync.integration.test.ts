@@ -20,10 +20,11 @@ import {
   mockTty,
 } from "../../../../../../../tests/helpers/mocks.ts";
 import {
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApiService,
   mockLegacyTelemetryStateTracked,
+  useLegacyShadowCacheDisabled,
   useLegacyTempWorkdir,
 } from "../../../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../../../shared/cli/cli-args.service.ts";
@@ -347,7 +348,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     engine,
     dbConn,
     resolver,
-    mockLegacyCliConfig({ workdir, projectId: opts.projectId ?? Option.some("test") }),
+    mockLegacyCliSettings({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     mockStdin(opts.stdinIsTty ?? false),
     experimentalFlag,
@@ -452,6 +453,7 @@ const legacyUuidLoadError = () =>
 
 describe("legacy db schema declarative sync integration", () => {
   const tmp = useLegacyTempWorkdir();
+  useLegacyShadowCacheDisabled();
 
   it.effect("gate: fails when pg-delta is not enabled", () => {
     seedDeclarative(tmp.current);
@@ -1420,7 +1422,7 @@ describe("legacy db schema declarative sync integration", () => {
       seedDeclarative(tmp.current);
       // `legacyResetLocalDatabase`'s container-recreate resolves its own project id
       // from `@supabase/config` (config.toml / real env), independently of the
-      // mocked `LegacyCliConfig.projectId` — pin it to "test" so the recreated
+      // mocked `LegacyCliSettings.projectId` — pin it to "test" so the recreated
       // container name matches the spawner route's assumption.
       writeFileSync(join(tmp.current, "supabase", "config.toml"), 'project_id = "test"\n');
       const s = setup(tmp.current, {

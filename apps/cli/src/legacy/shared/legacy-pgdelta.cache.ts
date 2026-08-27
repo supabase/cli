@@ -22,15 +22,18 @@ import {
   legacyBuildLocalDbContainerInputs,
   type LegacyLocalDbContainerInputs,
 } from "./db-bootstrap/local-container-inputs.ts";
-import { legacyWaitForHealthyServices } from "./db-bootstrap/health-check.ts";
+import { legacyWaitForShadowReady } from "./db-bootstrap/health-check.ts";
 import {
-  legacyCreateShadowDatabase,
-  legacyRemoveShadowDatabase,
+  legacyWithShadowDatabase,
+  type LegacyShadowAcquiredHandle,
+  type LegacyShadowCacheOpts,
+} from "./db-bootstrap/shadow-cache.ts";
+import {
   legacySetupShadowDatabase,
   legacyShadowRunInputFromLocalContainerInputs,
-  type LegacyShadowDatabaseHandle,
   type LegacyShadowSetupInput,
 } from "./db-bootstrap/shadow-database.ts";
+import { legacyPgDeltaTempPath } from "./legacy-pgdelta.paths.ts";
 import { legacyCompareUtf8Bytes } from "./legacy-glob.ts";
 import { LegacyMigrationsReadError } from "./legacy-migration.errors.ts";
 import { legacyToPostgresURL } from "./legacy-postgres-url.ts";
@@ -46,11 +49,15 @@ import { legacyPrepareShadowSource } from "../commands/db/shared/legacy-shadow-s
 type Spawner = ChildProcessSpawnerType["Service"];
 
 /**
- * Declarative catalog-cache key builders + on-disk catalog resolution, ported
- * 1:1 from Go (`apps/cli-go/internal/db/declarative/declarative.go` +
- * `internal/db/pgcache/cache.go`). Byte-stable parity matters: caches under
- * `supabase/.temp/pgdelta/` are shared with the Go binary, so a drifting key
- * would silently miss (re-provision) or over-hit (reuse a stale snapshot).
+ * Declarative catalog-cache key builders + on-disk catalog resolution, based on
+ * Go (`apps/cli-go/internal/db/declarative/declarative.go` +
+ * `internal/db/pgcache/cache.go`). Byte-stable keys still matter for this CLI's
+ * own cache reuse under `supabase/.temp/pgdelta/` across runs — a drifting key
+ * would silently miss (re-provision) or over-hit (reuse a stale snapshot). Keys
+ * now intentionally diverge from the old Go binary for configs with
+ * `api.auto_expose_new_tables` unset: the effective value flipped to `true`, the
+ * baked cluster genuinely differs, and reusing a Go-era snapshot would mean
+ * reusing one with revoked grants.
  *
  * Beyond the pure key/path builders, this file also owns the migrations-catalog
  * RESOLUTION path for both `db diff --from/--to migrations` and `db schema
@@ -81,7 +88,7 @@ export interface LegacySetupInputs {
   readonly authEnabled: boolean;
   readonly storageEnabled: boolean;
   readonly realtimeEnabled: boolean;
-  /** Effective `api.auto_expose_new_tables` (unset and false both → false). */
+  /** Effective `api.auto_expose_new_tables` (unset and `true` both → `true`). */
   readonly autoExpose: boolean;
   /** `[db.vault]` secret names (sorted before hashing). */
   readonly vaultNames: ReadonlyArray<string>;
@@ -184,8 +191,7 @@ export const legacyResolveSetupInputs = Effect.fnUntraced(function* (
     authEnabled: baseline.authEnabled,
     storageEnabled: baseline.storageEnabled,
     realtimeEnabled: baseline.realtimeEnabled,
-    autoExpose:
-      Option.isSome(baseline.apiAutoExposeNewTables) && baseline.apiAutoExposeNewTables.value,
+    autoExpose: Option.getOrElse(baseline.apiAutoExposeNewTables, () => true),
     vaultNames: baseline.vaultNames,
     rolesSql,
   } satisfies LegacySetupInputs;
@@ -225,11 +231,6 @@ export function legacyDeclarativeCatalogFileName(
   timestampMillis: number,
 ): string {
   return `catalog-${legacySanitizedCatalogPrefix(prefix)}-declarative-${hash}-${timestampMillis}.json`;
-}
-
-/** `supabase/.temp/pgdelta` — where catalog snapshots + debug bundles live. */
-export function legacyPgDeltaTempPath(path: Path.Path, workdir: string): string {
-  return path.join(workdir, "supabase", ".temp", "pgdelta");
 }
 
 /**
@@ -768,10 +769,12 @@ const exportViaShadowCatalog = <E, R, EP = never, RP = never>(
   built: LegacyShadowCatalogInputs,
   provision: (
     spawner: Spawner,
-    handle: LegacyShadowDatabaseHandle,
+    handle: LegacyShadowAcquiredHandle,
     shadowInput: LegacyShadowSetupInput<LegacyDbConfigLoadError>,
   ) => Effect.Effect<LegacyProvisionedShadow, EP, RP>,
   persist: (snapshot: string) => Effect.Effect<string, E, R>,
+  // No default: every caller must declare its provisioner's effective webhooks policy.
+  shadowCacheOpts: LegacyShadowCacheOpts,
 ) =>
   Effect.gen(function* () {
     const { spawner, localInputs } = built;
@@ -783,8 +786,16 @@ const exportViaShadowCatalog = <E, R, EP = never, RP = never>(
       fs,
       path,
     );
-    const written = yield* Effect.acquireUseRelease(
-      legacyCreateShadowDatabase(spawner, shadowInput),
+    // `legacyWithShadowDatabase` (`db-bootstrap/shadow-cache.ts`) rather than a bare
+    // `legacyCreateShadowDatabase`/`legacyRemoveShadowDatabase` pair — see its doc comment: with
+    // `SUPABASE_SHADOW_CACHE` unset it IS that pair (identical Docker argv, identical labels), and
+    // with it set a catalog cache miss restores a key-matching PGDATA snapshot into the fresh
+    // shadow instead of paying the full cold provision — the same swap `db diff`/`db pull`'s own
+    // call sites make. `shadowCacheOpts` carries `sync --no-cache`'s bypass and the
+    // caller's effective Webhooks policy — see `LegacyShadowCacheOpts`.
+    const written = yield* legacyWithShadowDatabase(
+      spawner,
+      shadowInput,
       (handle) =>
         Effect.gen(function* () {
           const shadow = yield* provision(spawner, handle, shadowInput);
@@ -794,7 +805,7 @@ const exportViaShadowCatalog = <E, R, EP = never, RP = never>(
           });
           return yield* persist(snapshot);
         }),
-      (handle) => legacyRemoveShadowDatabase(spawner, handle.containerId),
+      shadowCacheOpts,
     );
     return path.relative(ctx.cwd, written);
   });
@@ -811,7 +822,7 @@ const legacyProvisionMigrationsShadow = (
   ctx: LegacyPgDeltaContext,
   toml: LegacyDbTomlValues,
   spawner: Spawner,
-  handle: LegacyShadowDatabaseHandle,
+  handle: LegacyShadowAcquiredHandle,
   shadowInput: LegacyShadowSetupInput<LegacyDbConfigLoadError>,
 ) =>
   legacyPrepareShadowSource(spawner, handle, {
@@ -881,6 +892,10 @@ export const legacyResolveMigrationsCatalogRef = Effect.fnUntraced(function* (
           timestamp,
         );
       }),
+    // `legacyProvisionMigrationsShadow` migrates via `legacyMigrateShadowDatabase`, which forces
+    // `pg_net` on — the key must record that, not the config-following default (no `bypassCache`:
+    // `db diff` has no `--no-cache` on this path).
+    { webhooks: "enabled" },
   );
 });
 
@@ -988,6 +1003,8 @@ export const legacyGetMigrationsCatalogRef = Effect.fnUntraced(function* (
           timestamp,
         );
       }),
+    // `--no-cache` must also bypass the baseline snapshot, not just the catalog.
+    { bypassCache: params.noCache, webhooks: "enabled" },
   );
 });
 
@@ -1050,13 +1067,10 @@ const legacyProvisionBaselineShadow = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   ctx: LegacyPgDeltaContext,
-  handle: LegacyShadowDatabaseHandle,
+  handle: LegacyShadowAcquiredHandle,
   shadowInput: LegacyShadowSetupInput<LegacyDbConfigLoadError>,
 ) =>
   Effect.gen(function* () {
-    yield* legacyWaitForHealthyServices(spawner, [handle.containerId], {
-      timeoutSeconds: shadowInput.healthTimeoutSeconds,
-    });
     const connConfig: LegacyPgConnInput = {
       host: shadowInput.hostname,
       port: shadowInput.shadowPort,
@@ -1064,16 +1078,25 @@ const legacyProvisionBaselineShadow = (
       password: shadowInput.password,
       database: "postgres",
     };
-    yield* legacySetupShadowDatabase(spawner, {
-      fs,
-      path,
-      workdir: ctx.cwd,
-      projectId: shadowInput.projectId,
-      container: handle.containerId,
-      networkId: shadowInput.networkId,
-      connConfig,
-      setup: shadowInput.setup,
+    yield* legacyWaitForShadowReady(spawner, handle.containerId, connConfig, {
+      timeoutSeconds: shadowInput.healthTimeoutSeconds,
+      image: shadowInput.image,
     });
+    yield* legacySetupShadowDatabase(
+      spawner,
+      {
+        fs,
+        path,
+        workdir: ctx.cwd,
+        projectId: shadowInput.projectId,
+        container: handle.containerId,
+        networkId: shadowInput.networkId,
+        connConfig,
+        setup: shadowInput.setup,
+      },
+      {},
+      handle,
+    );
     return { sourceUrl: legacyToPostgresURL(connConfig) } satisfies LegacyProvisionedShadow;
   });
 
@@ -1092,13 +1115,10 @@ const legacyProvisionDeclarativeShadow = (
   ctx: LegacyPgDeltaContext,
   declarativeDirAbs: string,
   declarativeDirRel: string,
-  handle: LegacyShadowDatabaseHandle,
+  handle: LegacyShadowAcquiredHandle,
   shadowInput: LegacyShadowSetupInput<LegacyDbConfigLoadError>,
 ) =>
   Effect.gen(function* () {
-    yield* legacyWaitForHealthyServices(spawner, [handle.containerId], {
-      timeoutSeconds: shadowInput.healthTimeoutSeconds,
-    });
     const connConfig: LegacyPgConnInput = {
       host: shadowInput.hostname,
       port: shadowInput.shadowPort,
@@ -1106,16 +1126,25 @@ const legacyProvisionDeclarativeShadow = (
       password: shadowInput.password,
       database: "postgres",
     };
-    yield* legacySetupShadowDatabase(spawner, {
-      fs,
-      path,
-      workdir: ctx.cwd,
-      projectId: shadowInput.projectId,
-      container: handle.containerId,
-      networkId: shadowInput.networkId,
-      connConfig,
-      setup: shadowInput.setup,
+    yield* legacyWaitForShadowReady(spawner, handle.containerId, connConfig, {
+      timeoutSeconds: shadowInput.healthTimeoutSeconds,
+      image: shadowInput.image,
     });
+    yield* legacySetupShadowDatabase(
+      spawner,
+      {
+        fs,
+        path,
+        workdir: ctx.cwd,
+        projectId: shadowInput.projectId,
+        container: handle.containerId,
+        networkId: shadowInput.networkId,
+        connConfig,
+        setup: shadowInput.setup,
+      },
+      {},
+      handle,
+    );
     const targetUrl = legacyToPostgresURL(connConfig);
     yield* legacyApplyDeclarativePgDelta(ctx, {
       fs,
@@ -1202,6 +1231,7 @@ export const legacyExportBaselineCatalogRef = (
               snapshot,
             )
           : legacyWriteCatalogFile(fs, tempDir, cachePath, snapshot),
+      { bypassCache: params.noCache, webhooks: "config" },
     );
   });
 
@@ -1292,5 +1322,6 @@ export const legacyExportDeclarativeCatalogRef = (
                 timestamp,
               );
             }),
+      { bypassCache: params.noCache, webhooks: "config" },
     );
   });

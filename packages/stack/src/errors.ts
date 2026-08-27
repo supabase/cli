@@ -1,4 +1,5 @@
-import { Data } from "effect";
+import { Data, Predicate } from "effect";
+import type { ControlOwnerState } from "./DaemonProtocol.ts";
 
 export class BinaryNotFoundError extends Data.TaggedError("BinaryNotFoundError")<{
   readonly service: string;
@@ -14,6 +15,21 @@ export class ChecksumMismatchError extends Data.TaggedError("ChecksumMismatchErr
   readonly url: string;
   readonly expected: string;
   readonly actual: string;
+}> {}
+
+export class BinaryManifestError extends Data.TaggedError("BinaryManifestError")<{
+  readonly url: string;
+  readonly detail: string;
+}> {}
+
+export class BinaryRuntimeError extends Data.TaggedError("BinaryRuntimeError")<{
+  readonly path: string;
+  readonly detail: string;
+}> {}
+
+export class BinaryHostCompatibilityError extends Data.TaggedError("BinaryHostCompatibilityError")<{
+  readonly target: string;
+  readonly detail: string;
 }> {}
 
 export class DockerPullError extends Data.TaggedError("DockerPullError")<{
@@ -43,6 +59,8 @@ export const isDockerDaemonDownMessage = (message: string): boolean => {
     normalized.includes("docker daemon is not running") ||
     normalized.includes("docker desktop is not running") ||
     normalized.includes("is the docker daemon running") ||
+    normalized.includes("cannot connect to podman") ||
+    normalized.includes("error during connect") ||
     // Spawn succeeds but the socket is not accessible (e.g. a Linux user
     // missing docker group membership) — a local setup problem, not a
     // registry failure.
@@ -63,6 +81,27 @@ export class StackBuildError extends Data.TaggedError("StackBuildError")<{
   readonly reason?: "invalid_config" | "docker_not_running" | "asset_preparation";
 }> {}
 
+/** Runtime RPC is unavailable until the supervisor publishes a running stack. */
+export class StackUnavailableError extends Data.TaggedError("StackUnavailableError")<{
+  readonly phase: "starting" | "stopping" | "failed";
+  readonly detail?: string;
+}> {}
+
+/** A remote RPC request could not reach the owner endpoint. */
+export class StackRpcTransportError extends Data.TaggedError("StackRpcTransportError")<{
+  readonly endpoint: string;
+  readonly procedure: string;
+  readonly cause: unknown;
+}> {}
+
+/** A same-version RPC response violated the framed/schema protocol. */
+export class StackRpcProtocolError extends Data.TaggedError("StackRpcProtocolError")<{
+  readonly endpoint: string;
+  readonly procedure: string;
+  readonly detail: string;
+  readonly cause?: unknown;
+}> {}
+
 export class StackNotRunningError extends Data.TaggedError("StackNotRunningError")<{
   readonly phase: string;
 }> {}
@@ -71,6 +110,38 @@ export class StackReadinessError extends Data.TaggedError("StackReadinessError")
   readonly target: string;
   readonly timeoutMs: number;
   readonly detail: string;
+}> {}
+
+/** The owner is healthy but belongs to another immutable CLI version. */
+export class DaemonUpgradeRequired extends Data.TaggedError("DaemonUpgradeRequired")<{
+  readonly stackId: string;
+  readonly oldCliVersion: string;
+  readonly newCliVersion: string;
+  readonly state: ControlOwnerState;
+  readonly ready: boolean;
+}> {}
+
+export class SupervisorStartError extends Data.TaggedError("SupervisorStartError")<{
+  readonly message: string;
+}> {}
+
+export class UpgradePreflightError extends Data.TaggedError("UpgradePreflightError")<{
+  readonly stackId: string;
+  readonly oldCliVersion: string;
+  readonly newCliVersion: string;
+  readonly detail: string;
+}> {}
+
+export class UpgradeRestartError extends Data.TaggedError("UpgradeRestartError")<{
+  readonly stackId: string;
+  readonly newCliVersion: string;
+  readonly detail: string;
+}> {}
+
+export class StopTimeout extends Data.TaggedError("StopTimeout")<{
+  readonly endpoint: string;
+  readonly ownerSessionId: string;
+  readonly lastState?: string;
 }> {}
 
 export class PortConflictError extends Data.TaggedError("PortConflictError")<{
@@ -87,81 +158,48 @@ export class StackError extends Error {
   }
 }
 
+const taggedStackErrorCodes = [
+  ["ServiceNotFoundError", "SERVICE_NOT_FOUND"],
+  ["StackBuildError", "BUILD_ERROR"],
+  ["StackNotRunningError", "STACK_NOT_RUNNING"],
+  ["StackReadinessError", "STACK_READINESS_TIMEOUT"],
+  ["StackUnavailableError", "STACK_UNAVAILABLE"],
+  ["StackRpcTransportError", "STACK_RPC_TRANSPORT"],
+  ["StackRpcProtocolError", "STACK_RPC_PROTOCOL"],
+  ["DaemonUpgradeRequired", "DAEMON_UPGRADE_REQUIRED"],
+  ["UpgradePreflightError", "UPGRADE_PREFLIGHT"],
+  ["UpgradeRestartError", "UPGRADE_RESTART"],
+  ["StopTimeout", "STOP_TIMEOUT"],
+  ["BinaryNotFoundError", "BINARY_NOT_FOUND"],
+  ["ChecksumMismatchError", "CHECKSUM_MISMATCH"],
+  ["BinaryManifestError", "BINARY_MANIFEST"],
+  ["BinaryRuntimeError", "BINARY_RUNTIME"],
+  ["BinaryHostCompatibilityError", "BINARY_HOST"],
+  ["DownloadError", "DOWNLOAD_ERROR"],
+  ["DockerPullError", "DOCKER_PULL_ERROR"],
+  ["PortConflictError", "PORT_CONFLICT"],
+  ["PortAllocationError", "PORT_ALLOCATION"],
+  ["ServiceReadyError", "SERVICE_NOT_READY"],
+] as const;
+
+const messageForUnknownError = (error: unknown): string => {
+  if (error instanceof Error && error.message.length > 0) return error.message;
+  if (error !== null && typeof error === "object" && "detail" in error) {
+    const detail = error.detail;
+    if (typeof detail === "string" && detail.length > 0) return detail;
+  }
+  return String(error);
+};
+
 export function toStackError(err: unknown): StackError {
   if (err instanceof StackError) return err;
-  if (err != null && typeof err === "object" && "_tag" in err) {
-    const tagged = err as { _tag: string; message?: string; detail?: string };
-    const taggedMessage =
-      (tagged.message !== undefined && tagged.message.length > 0 ? tagged.message : undefined) ??
-      tagged.detail ??
-      String(err);
-    switch (tagged._tag) {
-      case "ServiceNotFoundError":
-        return new StackError({
-          code: "SERVICE_NOT_FOUND",
-          message: taggedMessage,
-          cause: err,
-        });
-      case "StackBuildError":
-        return new StackError({
-          code: "BUILD_ERROR",
-          message: taggedMessage,
-          cause: err,
-        });
-      case "StackNotRunningError":
-        return new StackError({
-          code: "STACK_NOT_RUNNING",
-          message: taggedMessage,
-          cause: err,
-        });
-      case "StackReadinessError":
-        return new StackError({
-          code: "STACK_READINESS_TIMEOUT",
-          message: taggedMessage,
-          cause: err,
-        });
-      case "BinaryNotFoundError":
-        return new StackError({
-          code: "BINARY_NOT_FOUND",
-          message: taggedMessage,
-          cause: err,
-        });
-      case "DownloadError":
-        return new StackError({
-          code: "DOWNLOAD_ERROR",
-          message: taggedMessage,
-          cause: err,
-        });
-      case "DockerPullError":
-        return new StackError({
-          code: "DOCKER_PULL_ERROR",
-          message: taggedMessage,
-          cause: err,
-        });
-      case "PortConflictError":
-        return new StackError({
-          code: "PORT_CONFLICT",
-          message: taggedMessage,
-          cause: err,
-        });
-      case "PortAllocationError":
-        return new StackError({
-          code: "PORT_ALLOCATION",
-          message: taggedMessage,
-          cause: err,
-        });
-      case "ServiceReadyError":
-        return new StackError({
-          code: "SERVICE_NOT_READY",
-          message: taggedMessage,
-          cause: err,
-        });
-      default:
-        return new StackError({
-          code: tagged._tag,
-          message: taggedMessage,
-          cause: err,
-        });
+  for (const [tag, code] of taggedStackErrorCodes) {
+    if (Predicate.isTagged(err, tag)) {
+      return new StackError({
+        code,
+        message: messageForUnknownError(err),
+        cause: err,
+      });
     }
   }
   if (err instanceof Error) {

@@ -16,6 +16,9 @@ export type {
   RealtimeConfig,
   ReadinessPolicy,
   ReadyOptions,
+  ServicePolicy,
+  ServicePolicyManifest,
+  StackMode,
   StackConfig,
   StorageConfig,
   StudioConfig,
@@ -23,9 +26,9 @@ export type {
 } from "./StackConfig.ts";
 
 export type { ServiceName, VersionManifest } from "./versions.ts";
-export type { ServiceResolution } from "./StackPreparation.ts";
+export type { ServiceResolution, StackPreparationError } from "./StackPreparation.ts";
 export type { PrefetchOptions, PrefetchResult } from "./prefetch.ts";
-export type { StackHandle } from "./createStack.ts";
+export type { StackHandle } from "./stackHandle.ts";
 export type {
   FunctionsReloadConfig,
   FunctionsRuntimeConfig,

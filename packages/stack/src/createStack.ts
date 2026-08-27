@@ -1,10 +1,24 @@
 import type { LogEntry } from "@supabase/process-compose";
-import { Context, Effect, FileSystem, type Layer, ManagedRuntime, Path, Stream } from "effect";
+import {
+  Cause,
+  Context,
+  Deferred,
+  Effect,
+  Exit,
+  FileSystem,
+  type Layer,
+  ManagedRuntime,
+  Option,
+  Path,
+  Result,
+  Stream,
+} from "effect";
 import { HttpServer } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { ApiProxy } from "./ApiProxy.ts";
+import type { StackRuntimeSelection } from "./ContainerRuntime.ts";
 import { candidateCleanupTargets, cleanupAutoManagedPaths, dockerForceRemove } from "./cleanup.ts";
-import { toStackError } from "./errors.ts";
+import { toStackError, type StackError } from "./errors.ts";
 import type { FunctionsReloadConfig } from "./functions.ts";
 import { foregroundLayer } from "./layers.ts";
 import { LocalStackLifecycle } from "./LocalStack.ts";
@@ -12,7 +26,7 @@ import { reservePortSet, type PortLease } from "./PortAllocator.ts";
 import { Stack } from "./Stack.ts";
 import type { EdgeRuntimeReloadConfig } from "./Stack.ts";
 import type { ReadyOptions, ResolvedStackConfig, StackConfig } from "./StackConfig.ts";
-import { resolveConfig } from "./StackConfigResolver.ts";
+import { portRequestsForConfig, type ResolveConfigOptions } from "./StackConfigResolver.ts";
 import type { StackServiceState } from "./StackServiceState.ts";
 
 type PlatformServices =
@@ -22,6 +36,7 @@ type PlatformServices =
   | HttpServer.HttpServer;
 
 type PlatformLayer = Layer.Layer<PlatformServices>;
+
 /** Supplies the platform HTTP server used by the stack and HTTP proxy. */
 interface PlatformFactoryOptions {
   readonly apiPort: number;
@@ -30,141 +45,234 @@ interface PlatformFactoryOptions {
 
 export type PlatformFactory = (options: PlatformFactoryOptions) => PlatformLayer;
 
-/** @internal Converts operation failures and closes a terminal foreground runtime. */
-export async function runForegroundOperation<A>(
-  operation: Promise<A>,
-  isDisposed: () => Promise<boolean>,
-  dispose: () => Promise<void>,
-): Promise<A> {
-  try {
-    return await operation;
-  } catch (error: unknown) {
-    const stackError = toStackError(error);
-    if (await isDisposed()) {
-      await dispose();
-    }
-    throw stackError;
-  }
-}
+export type ResolveConfigEffect = (
+  input: StackConfig | undefined,
+  options: ResolveConfigOptions,
+) => Effect.Effect<ResolvedStackConfig, unknown, FileSystem.FileSystem>;
 
-export interface StackHandle extends AsyncDisposable {
+/** The internal foreground handle; public adapters live at the package edge. */
+export interface ForegroundStackHandle {
   readonly url: string;
   readonly dbUrl: string;
   readonly publishableKey: string;
   readonly secretKey: string;
-  start(): Promise<void>;
-  stop(): Promise<void>;
-  dispose(): Promise<void>;
-  startService(name: string): Promise<void>;
-  stopService(name: string): Promise<void>;
-  restartService(name: string): Promise<void>;
-  reloadFunctions(opts?: FunctionsReloadConfig): Promise<void>;
-  reloadEdgeRuntime(opts: EdgeRuntimeReloadConfig): Promise<void>;
-  ready(opts?: ReadyOptions): Promise<void>;
-  serviceReady(name: string, opts?: ReadyOptions): Promise<void>;
-  getStatus(): Promise<ReadonlyArray<StackServiceState>>;
-  getServiceStatus(name: string): Promise<StackServiceState>;
-  statusChanges(): AsyncIterable<StackServiceState>;
-  logs(): AsyncIterable<LogEntry>;
-  serviceLogs(name: string): AsyncIterable<LogEntry>;
-  logHistory(name: string, limit?: number): Promise<ReadonlyArray<LogEntry>>;
+  start(): Effect.Effect<void, StackError>;
+  stop(): Effect.Effect<void, StackError>;
+  dispose(): Effect.Effect<void>;
+  startService(name: string): Effect.Effect<void, StackError>;
+  stopService(name: string): Effect.Effect<void, StackError>;
+  restartService(name: string): Effect.Effect<void, StackError>;
+  reloadFunctions(opts?: FunctionsReloadConfig): Effect.Effect<void, StackError>;
+  reloadEdgeRuntime(opts: EdgeRuntimeReloadConfig): Effect.Effect<void, StackError>;
+  ready(opts?: ReadyOptions): Effect.Effect<void, StackError>;
+  serviceReady(name: string, opts?: ReadyOptions): Effect.Effect<void, StackError>;
+  getStatus(): Effect.Effect<ReadonlyArray<StackServiceState>, StackError>;
+  getServiceStatus(name: string): Effect.Effect<StackServiceState, StackError>;
+  statusChanges(): Stream.Stream<StackServiceState, StackError>;
+  logs(): Stream.Stream<LogEntry, StackError>;
+  serviceLogs(name: string): Stream.Stream<LogEntry, StackError>;
+  logHistory(name: string, limit?: number): Effect.Effect<ReadonlyArray<LogEntry>, StackError>;
 }
 
-export async function createStack(
+/** @internal Converts operation failures and closes a terminal foreground runtime. */
+export function runForegroundOperation<A, E>(
+  operation: Effect.Effect<A, E>,
+  isDisposed: Effect.Effect<boolean>,
+  dispose: Effect.Effect<void>,
+): Effect.Effect<A, StackError> {
+  return operation.pipe(
+    Effect.catch((error) =>
+      Effect.uninterruptible(
+        Effect.gen(function* () {
+          if (yield* isDisposed) {
+            yield* dispose;
+          }
+          return yield* Effect.fail(toStackError(error));
+        }),
+      ),
+    ),
+  );
+}
+
+const MAX_AUTOMATIC_API_PORT_HANDOFF_ATTEMPTS = 3;
+
+/**
+ * The port lease is intentionally released just before the HTTP server binds.
+ * Another process can claim that port in the small handoff window, so a new
+ * foreground stack may retry its automatic API-port allocation. Explicit API
+ * ports never enter this retry path.
+ */
+const isAddressInUse = (error: unknown, depth = 0): boolean => {
+  if (depth > 8 || typeof error !== "object" || error === null) return false;
+  if ("code" in error && Reflect.get(error, "code") === "EADDRINUSE") return true;
+  if ("cause" in error) return isAddressInUse(Reflect.get(error, "cause"), depth + 1);
+  return false;
+};
+
+const causeIsAddressInUse = (cause: Cause.Cause<unknown>): boolean => {
+  const failure = Cause.findErrorOption(cause);
+  if (Option.isSome(failure)) return isAddressInUse(failure.value);
+  const defect = Cause.findDefect(cause);
+  return Result.isSuccess(defect) && isAddressInUse(defect.success);
+};
+
+const createStackAttempt = (
   config: StackConfig | undefined,
   platformFactory: PlatformFactory,
-): Promise<StackHandle> {
-  let portLease: PortLease | undefined;
-  let resolved: ResolvedStackConfig;
-  try {
-    resolved = await resolveConfig(config, {
-      portAllocator: (requests, options) =>
-        reservePortSet(requests, options).pipe(
-          Effect.tap((lease) =>
-            Effect.sync(() => {
-              portLease = lease;
-            }),
+  runtimeSelection: StackRuntimeSelection,
+  resolveConfig: ResolveConfigEffect,
+  preferredApiPort?: number,
+): Effect.Effect<ForegroundStackHandle, unknown, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    let portLease: PortLease | undefined;
+    let resolved: ResolvedStackConfig | undefined;
+    let disposeRuntime: Effect.Effect<void> | undefined;
+
+    const cleanup = Effect.uninterruptible(
+      Effect.gen(function* () {
+        if (disposeRuntime !== undefined) {
+          yield* disposeRuntime.pipe(Effect.ignore);
+        }
+        if (portLease !== undefined) {
+          yield* portLease.releaseAll.pipe(Effect.ignore);
+        }
+        if (resolved === undefined) {
+          return;
+        }
+        if (resolved.runtime.mode === "docker") {
+          yield* dockerForceRemove(
+            resolved.runtime.containerRuntime,
+            candidateCleanupTargets(resolved).dockerContainerNames,
+          ).pipe(Effect.ignore);
+        }
+        yield* cleanupAutoManagedPaths(resolved!.autoManagedPaths);
+      }),
+    );
+
+    const attempt = Effect.gen(function* () {
+      const requests = yield* portRequestsForConfig(config, {
+        runtime: runtimeSelection,
+        ...(preferredApiPort === undefined
+          ? {}
+          : { preferredPorts: { apiPort: preferredApiPort } }),
+      });
+      const lease = yield* reservePortSet(requests);
+      portLease = lease;
+      resolved = yield* resolveConfig(config, {
+        runtime: runtimeSelection,
+        ports: lease.ports,
+      });
+
+      const fullLayer = foregroundLayer(resolved, platformFactory, lease);
+      const managedRuntime = ManagedRuntime.make(fullLayer);
+      disposeRuntime = managedRuntime.disposeEffect;
+      return yield* Effect.gen(function* () {
+        const services = yield* managedRuntime.contextEffect;
+        const localStack = Context.get(services, Stack);
+        const apiProxy = Context.get(services, ApiProxy);
+        const lifecycle = Context.get(services, LocalStackLifecycle);
+        const info = yield* Effect.provideContext(localStack.getInfo(), services);
+
+        const disposalCompletion = Deferred.makeUnsafe<Exit.Exit<void, never>>();
+        let disposalStarted = false;
+        const awaitDisposal = Deferred.await(disposalCompletion).pipe(
+          Effect.flatMap((exit) =>
+            Exit.isSuccess(exit) ? Effect.void : Effect.failCause(exit.cause),
           ),
-          Effect.map((lease) => lease.ports),
-        ),
-    });
-  } catch (error: unknown) {
-    if (portLease !== undefined) {
-      await Effect.runPromise(portLease.releaseAll);
-    }
-    throw error;
-  }
+        );
+        const dispose = Effect.uninterruptibleMask((restore) =>
+          Effect.suspend(() => {
+            if (disposalStarted) {
+              return restore(awaitDisposal);
+            }
+            disposalStarted = true;
+            return Effect.forkDetach(
+              managedRuntime.disposeEffect.pipe(
+                Effect.uninterruptible,
+                Effect.exit,
+                Effect.flatMap((exit) => Deferred.succeed(disposalCompletion, exit)),
+                Effect.asVoid,
+              ),
+              { startImmediately: true },
+            ).pipe(Effect.asVoid, Effect.andThen(restore(awaitDisposal)));
+          }),
+        );
+        const run = <A, E>(effect: Effect.Effect<A, E>) =>
+          runForegroundOperation(
+            Effect.provideContext(effect, services),
+            Effect.provideContext(lifecycle.isDisposed, services),
+            dispose,
+          );
 
-  if (portLease === undefined) {
-    throw new Error("Stack port allocation completed without a port lease");
-  }
-
-  try {
-    const fullLayer = foregroundLayer(resolved, platformFactory, portLease);
-    const runtime = ManagedRuntime.make(fullLayer);
-
-    try {
-      const services = await runtime.context();
-      const localStack = Context.get(services, Stack);
-      const apiProxy = Context.get(services, ApiProxy);
-      const lifecycle = Context.get(services, LocalStackLifecycle);
-      const info = await runtime.runPromise(localStack.getInfo());
-
-      let disposal: Promise<void> | undefined;
-      const gracefulDispose = () => {
-        disposal ??= runtime.dispose().catch(() => {});
-        return disposal;
-      };
-      const run = <A>(effect: Effect.Effect<A, unknown>) =>
-        runForegroundOperation(
-          runtime.runPromise(effect),
-          () => runtime.runPromise(lifecycle.isDisposed),
-          gracefulDispose,
+        // The HTTP module has no response-flushed hook. Give the proxy's final
+        // 503 response a brief opportunity to leave the socket before closing
+        // the runtime after terminal lazy activation.
+        managedRuntime.runFork(
+          apiProxy.awaitTerminalFailure.pipe(
+            Effect.andThen(Effect.sleep("25 millis")),
+            Effect.andThen(dispose),
+            Effect.catchCause(() => Effect.void),
+          ),
         );
 
-      // The HTTP module has no response-flushed hook. Give the proxy's final
-      // 503 response a brief opportunity to leave the socket before closing
-      // the runtime after terminal lazy activation.
-      void runtime
-        .runPromise(apiProxy.awaitTerminalFailure.pipe(Effect.andThen(Effect.sleep("25 millis"))))
-        .then(gracefulDispose)
-        .catch(() => {});
+        return {
+          url: info.url,
+          dbUrl: info.dbUrl,
+          publishableKey: info.publishableKey,
+          secretKey: info.secretKey,
+          start: () => run(localStack.start()),
+          stop: () => run(localStack.stop()),
+          dispose: () => dispose,
+          startService: (name: string) => run(localStack.startService(name)),
+          stopService: (name: string) => run(localStack.stopService(name)),
+          restartService: (name: string) => run(localStack.restartService(name)),
+          reloadFunctions: (opts?: FunctionsReloadConfig) => run(localStack.reloadFunctions(opts)),
+          reloadEdgeRuntime: (opts: EdgeRuntimeReloadConfig) =>
+            run(localStack.reloadEdgeRuntime(opts)),
+          ready: (opts?: ReadyOptions) => run(localStack.waitAllReady(opts)),
+          serviceReady: (name: string, opts?: ReadyOptions) =>
+            run(localStack.waitReady(name, opts)),
+          getStatus: () => run(localStack.getAllStates()),
+          getServiceStatus: (name: string) => run(localStack.getState(name)),
+          statusChanges: () => localStack.allStateChanges().pipe(Stream.mapError(toStackError)),
+          logs: () => localStack.subscribeAllLogs().pipe(Stream.mapError(toStackError)),
+          serviceLogs: (name: string) =>
+            localStack.subscribeLogs(name).pipe(Stream.mapError(toStackError)),
+          logHistory: (name: string, limit?: number) => run(localStack.logHistory(name, limit)),
+        } satisfies ForegroundStackHandle;
+      });
+    });
 
-      const stack: StackHandle = {
-        url: info.url,
-        dbUrl: info.dbUrl,
-        publishableKey: info.publishableKey,
-        secretKey: info.secretKey,
-        start: () => run(localStack.start()),
-        stop: () => run(localStack.stop()),
-        dispose: gracefulDispose,
-        startService: (name) => run(localStack.startService(name)),
-        stopService: (name) => run(localStack.stopService(name)),
-        restartService: (name) => run(localStack.restartService(name)),
-        reloadFunctions: (opts) => run(localStack.reloadFunctions(opts)),
-        reloadEdgeRuntime: (opts) => run(localStack.reloadEdgeRuntime(opts)),
-        ready: (opts) => run(localStack.waitAllReady(opts)),
-        serviceReady: (name, opts) => run(localStack.waitReady(name, opts)),
-        getStatus: () => run(localStack.getAllStates()),
-        getServiceStatus: (name) => run(localStack.getState(name)),
-        statusChanges: () => Stream.toAsyncIterableWith(localStack.allStateChanges(), services),
-        logs: () => Stream.toAsyncIterableWith(localStack.subscribeAllLogs(), services),
-        serviceLogs: (name) => Stream.toAsyncIterableWith(localStack.subscribeLogs(name), services),
-        logHistory: (name, limit) => run(localStack.logHistory(name, limit)),
-        [Symbol.asyncDispose]: gracefulDispose,
-      };
-
-      return stack;
-    } catch (error: unknown) {
-      await runtime.dispose().catch(() => {});
-      throw error;
-    }
-  } catch (error: unknown) {
-    await Effect.runPromise(portLease.releaseAll);
-    await Effect.runPromise(
-      dockerForceRemove(candidateCleanupTargets(resolved).dockerContainerNames),
+    return yield* attempt.pipe(
+      Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : cleanup)),
     );
-    cleanupAutoManagedPaths(resolved);
-    throw toStackError(error);
-  }
+  });
+
+export function createStack(
+  config: StackConfig | undefined,
+  platformFactory: PlatformFactory,
+  runtime: StackRuntimeSelection,
+  resolveConfig: ResolveConfigEffect,
+): Effect.Effect<ForegroundStackHandle, StackError, FileSystem.FileSystem> {
+  const automaticApiPort = config?.port === undefined;
+  const loop = (
+    attempt: number,
+  ): Effect.Effect<ForegroundStackHandle, unknown, FileSystem.FileSystem> =>
+    createStackAttempt(
+      config,
+      platformFactory,
+      runtime,
+      resolveConfig,
+      attempt === 0 ? undefined : 0,
+    ).pipe(
+      Effect.catchCause((cause) =>
+        automaticApiPort &&
+        causeIsAddressInUse(cause) &&
+        attempt + 1 < MAX_AUTOMATIC_API_PORT_HANDOFF_ATTEMPTS
+          ? Effect.suspend(() => loop(attempt + 1))
+          : Effect.failCause(cause),
+      ),
+    );
+
+  return loop(0).pipe(Effect.mapError(toStackError));
 }

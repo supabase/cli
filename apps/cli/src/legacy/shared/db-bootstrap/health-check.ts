@@ -10,7 +10,7 @@
  * and only the final timeout's failures surface to the caller.
  */
 
-import { Data, Effect, Schedule, Stream } from "effect";
+import { Data, Duration, Effect, Schedule, Stream } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
@@ -24,6 +24,7 @@ import {
   legacySpawnContainerCliWithRuntime,
   type LegacyContainerRuntime,
 } from "../legacy-container-cli.ts";
+import { LegacyDbConnection, type LegacyPgConnInput } from "../legacy-db-connection.service.ts";
 import { legacyInspectContainerState } from "../legacy-docker-lifecycle.ts";
 import { legacyKongAuthHeaders } from "../legacy-kong-auth.ts";
 
@@ -429,6 +430,134 @@ export function legacyWaitForHealthyServices(
                 .map((failure) => `${failure.containerId} ${failure.reason}`)
                 .join("\n"),
               unhealthy: probeError.failures,
+              ...(suggestion === undefined ? {} : { suggestion }),
+            }),
+          );
+        }),
+      ),
+    );
+  });
+}
+
+/** Caps a hung dial so one probe cannot swallow the whole poll budget. */
+const LEGACY_SHADOW_READY_CONNECT_TIMEOUT_SECONDS = 2;
+
+/**
+ * One round's verdict. `fatal` is what makes an exited container fail fast
+ * instead of burning the remaining budget: nothing about a dead container can
+ * change on a later round, whereas a refused connect (or a transient `docker
+ * container inspect` failure) is just "not ready yet".
+ */
+interface LegacyShadowReadyFailure {
+  readonly reason: string;
+  readonly fatal: boolean;
+}
+
+const legacyShadowNotReady = (reason: string): LegacyShadowReadyFailure => ({
+  reason,
+  fatal: false,
+});
+
+/**
+ * A single short-lived connect attempt against the shadow, dialled exactly the
+ * way `legacyConnectShadowDatabase` (`shadow-database.ts`) dials it — same
+ * `isLocal`/`dnsResolver` pair, so a config that authenticates for the probe
+ * authenticates for the real connection too. `Effect.scoped` closes the session
+ * the moment the probe resolves: the caller opens (and owns) its own connection
+ * afterwards through `legacyConnectShadowDatabase`.
+ */
+const legacyProbeShadowConnect = (
+  connConfig: LegacyPgConnInput,
+): Effect.Effect<void, LegacyShadowReadyFailure, LegacyDbConnection> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const dbConnection = yield* LegacyDbConnection;
+      yield* dbConnection.connect(
+        { ...connConfig, connectTimeoutSeconds: LEGACY_SHADOW_READY_CONNECT_TIMEOUT_SECONDS },
+        { isLocal: true, dnsResolver: "native" },
+      );
+    }),
+  ).pipe(Effect.mapError((cause) => legacyShadowNotReady(cause.message)));
+
+export interface LegacyWaitForShadowReadyOptions {
+  readonly timeoutSeconds?: number;
+  /** The shadow container's already-resolved postgres image, named in the exec-format recovery hint. */
+  readonly image?: string;
+}
+
+/**
+ * Shadow readiness: inspect + connect probe, polled every 500ms. Docker's
+ * healthcheck is `interval=10s` with no start period, so Postgres is connectable
+ * ~6.5s before `Health.Status` flips. Same error shape as the health gate,
+ * plus a wall-clock cap so a hung 2s dial cannot overrun the retry budget.
+ */
+export function legacyWaitForShadowReady(
+  spawner: Spawner,
+  containerId: string,
+  connConfig: LegacyPgConnInput,
+  opts: LegacyWaitForShadowReadyOptions = {},
+): Effect.Effect<void, LegacyHealthCheckTimeoutError, LegacyDbConnection> {
+  const timeoutSeconds = opts.timeoutSeconds ?? LEGACY_HEALTH_CHECK_TIMEOUT_SECONDS;
+
+  // Twice the second-counted budget: 500ms spacing would otherwise exhaust
+  // `timeoutSeconds` retries in half the wall time of the old 1s poll.
+  const schedule = Schedule.max([
+    Schedule.spaced("500 millis"),
+    Schedule.recurs(timeoutSeconds * 2),
+  ]);
+  const boundSeconds = timeoutSeconds + LEGACY_SHADOW_READY_CONNECT_TIMEOUT_SECONDS;
+
+  // Per-evaluation state: the retry rounds within one evaluation share the latest failure for
+  // the timeout diagnostic, while re-evaluating the returned Effect starts from a fresh slot.
+  return Effect.suspend(() => {
+    let lastFailure: LegacyShadowReadyFailure | undefined;
+
+    const probe: Effect.Effect<void, LegacyShadowReadyFailure, LegacyDbConnection> = Effect.gen(
+      function* () {
+        const state = yield* legacyInspectContainerState(spawner, containerId).pipe(
+          Effect.mapError((cause) => legacyShadowNotReady(cause.message)),
+        );
+        if (!state.running) {
+          return yield* Effect.fail({
+            reason: `container is not running: ${state.status}`,
+            fatal: true,
+          });
+        }
+        yield* legacyProbeShadowConnect(connConfig);
+      },
+    ).pipe(
+      Effect.tapError((failure) =>
+        Effect.sync(() => {
+          lastFailure = failure;
+        }),
+      ),
+    );
+
+    return probe.pipe(
+      Effect.retry({ schedule, while: (failure) => !failure.fatal }),
+      Effect.timeoutOrElse({
+        duration: Duration.seconds(boundSeconds),
+        orElse: () =>
+          Effect.fail(
+            lastFailure ??
+              legacyShadowNotReady(`not ready after ${boundSeconds}s: connection attempt hung`),
+          ),
+      }),
+      Effect.catch((failure) =>
+        Effect.gen(function* () {
+          const scan = yield* legacyDumpContainerLogs(spawner, containerId);
+          const suggestion =
+            scan.found && opts.image !== undefined
+              ? legacyExecFormatRecoveryHint(
+                  [containerId],
+                  new Map([[containerId, opts.image]]),
+                  scan.runtime ?? "docker",
+                )
+              : undefined;
+          return yield* Effect.fail(
+            new LegacyHealthCheckTimeoutError({
+              message: `${containerId} ${failure.reason}`,
+              unhealthy: [{ containerId, reason: failure.reason }],
               ...(suggestion === undefined ? {} : { suggestion }),
             }),
           );

@@ -1,12 +1,12 @@
 import {
-  loadProjectConfig,
-  loadProjectEnvironment,
-  resolveProjectSubtree,
-  type ProjectConfig,
-} from "@supabase/config";
+  loadCliConfig,
+  loadCliProjectEnvironment,
+  resolveCliConfigSubtree,
+  type CliConfig,
+} from "@supabase/config/effect";
 import type { EdgeRuntimeConfig } from "@supabase/stack/effect";
 import { Data, Effect, Redacted } from "effect";
-import { ProjectHome } from "../../../config/project-home.service.ts";
+import { CliProjectHome } from "../../../config/cli-project-home.service.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -17,8 +17,8 @@ type ResolvedSecretValue = string | Redacted.Redacted<string>;
 type EdgeRuntimePolicy = "oneshot" | "per_worker";
 
 interface ResolvedProjectEdgeRuntimeConfig {
-  readonly enabled: ProjectConfig["edge_runtime"]["enabled"];
-  readonly inspector_port: ProjectConfig["edge_runtime"]["inspector_port"];
+  readonly enabled: CliConfig["edge_runtime"]["enabled"];
+  readonly inspector_port: CliConfig["edge_runtime"]["inspector_port"];
   readonly policy: ResolvedSecretValue;
   readonly secrets?: Readonly<Record<string, ResolvedSecretValue>>;
 }
@@ -92,8 +92,8 @@ function toStackEdgeRuntimeConfig(config: ResolvedProjectEdgeRuntimeConfig): Edg
 }
 
 export const resolveFunctionsDevEdgeRuntimeConfig = Effect.fnUntraced(function* () {
-  const projectHome = yield* ProjectHome;
-  const loadedConfig = yield* loadProjectConfig(projectHome.projectRoot);
+  const cliProjectHome = yield* CliProjectHome;
+  const loadedConfig = yield* loadCliConfig(cliProjectHome.projectRoot);
 
   if (loadedConfig === null) {
     const config = {};
@@ -103,8 +103,8 @@ export const resolveFunctionsDevEdgeRuntimeConfig = Effect.fnUntraced(function* 
     };
   }
 
-  const projectEnv = yield* loadProjectEnvironment({
-    cwd: projectHome.projectRoot,
+  const projectEnv = yield* loadCliProjectEnvironment({
+    cwd: cliProjectHome.projectRoot,
     baseEnv: process.env,
   });
 
@@ -116,7 +116,7 @@ export const resolveFunctionsDevEdgeRuntimeConfig = Effect.fnUntraced(function* 
     };
   }
 
-  const resolved = yield* resolveProjectSubtree(
+  const resolved = yield* resolveCliConfigSubtree(
     loadedConfig.config.edge_runtime,
     projectEnv,
     "edge_runtime",

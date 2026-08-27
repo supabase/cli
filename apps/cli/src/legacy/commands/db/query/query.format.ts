@@ -5,7 +5,7 @@ import { legacyStringWidth } from "../../../shared/legacy-rune-width.ts";
 
 // `JSON.rawJSON` (ES2025, present in Bun) wraps a string so `JSON.stringify` emits it
 // verbatim as a number/literal token — used to serialize int8/bigint exactly, beyond
-// JS number precision. tsgo's bundled lib does not yet declare it.
+// JS number precision. TypeScript's bundled lib does not yet declare it.
 declare global {
   interface JSON {
     rawJSON(text: string): unknown;

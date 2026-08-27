@@ -33,6 +33,7 @@ export {
   ControlProtocolMismatchError,
   ControlTransportError,
   InvalidControlOwnershipIdError,
+  isControlOwnership,
 } from "./managed/control.ts";
 export type {
   ControlAcquisition,
@@ -67,8 +68,9 @@ export type {
   AllocateManagedPortsRequest,
   ReadStackRequest,
   StartStackRequest,
-  ManagedStackLaunchUpdate,
+  ManagedStackLaunchUpdateRequest,
 } from "./managed/manager.ts";
+export type { ManagedStackLaunchUpdate } from "./managed/document.ts";
 export {
   connectManagedStack,
   deleteManagedStack,

@@ -10,7 +10,7 @@ import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { detectGitBranch } from "../../../../shared/git/git-branch.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
 import {
@@ -30,6 +30,7 @@ import { legacyFindDropStatements } from "../../../shared/legacy-sql-split.ts";
 import { legacyBuildLocalDbContainerInputs } from "../../../shared/db-bootstrap/local-container-inputs.ts";
 import { legacyIsLocalDbRunning } from "../../../shared/db-bootstrap/local-db-running.ts";
 import { legacyWaitForHealthyServices } from "../../../shared/db-bootstrap/health-check.ts";
+import { legacyWithShadowDatabase } from "../../../shared/db-bootstrap/shadow-cache.ts";
 import {
   legacyCreateShadowDatabase,
   legacyMigrateShadowDatabase,
@@ -137,7 +138,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
   const resolver = yield* LegacyDbConfigResolver;
   const pgDelta = yield* LegacyPgDeltaEngine;
   const proxy = yield* LegacyGoProxy;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const telemetryState = yield* LegacyTelemetryState;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const fs = yield* FileSystem.FileSystem;
@@ -263,8 +264,8 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // before the merge), else the base config.
       let cfg =
         mergedLinkedRef !== undefined
-          ? yield* legacyReadDbToml(fs, path, cliConfig.workdir, mergedLinkedRef)
-          : yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+          ? yield* legacyReadDbToml(fs, path, cliSettings.workdir, mergedLinkedRef)
+          : yield* legacyReadDbToml(fs, path, cliSettings.workdir);
       // Each ref resolves in order; the `linked` branch re-merges the matching
       // `[remotes.<ref>]` block so a later `local` ref read and the trailing
       // `pgDeltaFormatOptions()` see the override. Thread the merged config through.
@@ -298,7 +299,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
               if (ref2 !== undefined) {
                 linkedRefForCache = ref2;
                 mergedLinkedRef = ref2;
-                cfg = yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref2);
+                cfg = yield* legacyReadDbToml(fs, path, cliSettings.workdir, ref2);
               }
               return {
                 kind: "database",
@@ -335,8 +336,8 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       const source = yield* resolveRef(from);
       const desired = yield* resolveRef(to);
       const explicitCtx: LegacyPgDeltaContext = {
-        projectId: legacyResolvePgDeltaProjectId(cliConfig.projectId, cfg, cliConfig.workdir),
-        cwd: cliConfig.workdir,
+        projectId: legacyResolvePgDeltaProjectId(cliSettings.projectId, cfg, cliSettings.workdir),
+        cwd: cliSettings.workdir,
         npmVersion: Option.getOrUndefined(cfg.pgDelta.npmVersion),
         denoVersion: cfg.denoVersion,
         projectEnv: cfg.projectEnv,
@@ -356,7 +357,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // being non-empty, so an empty value (`--output="$OUT"` with OUT unset) falls
       // through to stdout rather than writing SQL into the project directory.
       if (Option.isSome(flags.output) && flags.output.value.length > 0) {
-        const target = path.resolve(cliConfig.workdir, flags.output.value);
+        const target = path.resolve(cliSettings.workdir, flags.output.value);
         // Create parent dirs first, so a nested `--output tmp/diff.sql` doesn't
         // fail when `tmp/` doesn't exist yet.
         yield* legacyMakeDir(fs, path.dirname(target)).pipe(
@@ -486,7 +487,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // `cfg`/`localInputs`/`resolver.resolve()` all succeed.
       linkedRefForCache = linkedRef;
     }
-    const cfg = yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef);
+    const cfg = yield* legacyReadDbToml(fs, path, cliSettings.workdir, linkedRef);
     // Make an allowlisted `supabase/.env` registry override visible to the
     // synchronous `process.env` reader the pgAdmin differ's (and the migra/pg-delta
     // shadow's) own image resolver falls back to, reverted when this scope closes.
@@ -511,7 +512,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     // banner itself announces.
     const localInputs = yield* legacyBuildLocalDbContainerInputs(
       spawner,
-      cliConfig.workdir,
+      cliSettings.workdir,
       networkIdFlag,
       runtimeInfo.platform,
       debug,
@@ -543,8 +544,8 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // `project_id` (`cfg.projectId`, already gated on `remoteOverrideKeys` by
       // `legacyReadDbToml`) suppressing the raw env argument on the linked path — see
       // that helper's own doc comment.
-      projectId: legacyResolvePgDeltaProjectId(cliConfig.projectId, cfg, cliConfig.workdir),
-      cwd: cliConfig.workdir,
+      projectId: legacyResolvePgDeltaProjectId(cliSettings.projectId, cfg, cliSettings.workdir),
+      cwd: cliSettings.workdir,
       npmVersion: Option.getOrUndefined(cfg.pgDelta.npmVersion),
       denoVersion: cfg.denoVersion,
       projectEnv: cfg.projectEnv,
@@ -603,14 +604,14 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // The running-db check runs AFTER the config load + target resolve above, and —
       // unlike every other engine on this command — runs for `--linked`/`--db-url` too,
       // not just the local target. Uses `ctx.projectId` (already remote-merge-resolved,
-      // see its own doc comment above), not the raw `cliConfig.projectId` env reader, so
+      // see its own doc comment above), not the raw `cliSettings.projectId` env reader, so
       // the check reflects a resolved remote merge rather than an ungated
       // `SUPABASE_PROJECT_ID` env var.
       const running = yield* legacyIsLocalDbRunning(
         spawner,
         fs,
         path,
-        cliConfig.workdir,
+        cliSettings.workdir,
         ctx.projectId,
       ).pipe(
         Effect.mapError(
@@ -649,7 +650,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
             yield* legacyMigrateShadowDatabase(spawner, {
               fs,
               path,
-              workdir: cliConfig.workdir,
+              workdir: cliSettings.workdir,
               projectId: shadowBase.projectId,
               container: handle.containerId,
               networkId: shadowBase.networkId,
@@ -690,9 +691,14 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         pgDelta: cfg.pgDelta,
         ctx,
       };
-      // Register cleanup atomically with creation; prepare and diff remain interruptible.
-      diffResult = yield* Effect.acquireUseRelease(
-        legacyCreateShadowDatabase(spawner, shadowInput),
+      // `legacyWithShadowDatabase` (`shadow-cache.ts`) owns the interrupt-safe lifecycle and the
+      // cache seam — a plain create/remove pair when `SUPABASE_SHADOW_CACHE` is unset. The key's
+      // webhooks policy must mirror what `legacyPrepareShadowSource` selects for this mode
+      // (legacy migrate forces `pg_net` on, next follows config), or the two engines could
+      // restore each other's tars.
+      diffResult = yield* legacyWithShadowDatabase(
+        spawner,
+        shadowInput,
         (handle) =>
           Effect.gen(function* () {
             const shadow = yield* legacyPrepareShadowSource(spawner, handle, shadowInput);
@@ -740,7 +746,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
             // single migration file.
             return { sql, files: undefined };
           }),
-        (handle) => legacyRemoveShadowDatabase(spawner, handle.containerId),
+        { webhooks: migrationMode === "pgdelta-next" ? "config" : "enabled" },
       );
     }
     const out = diffResult.sql;
@@ -750,7 +756,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // Detect the branch from the resolved workdir, not the caller's CWD, so
       // `supabase --workdir … db diff` reports the project's branch, not the
       // directory the command was invoked from.
-      const branch = Option.getOrElse(yield* detectGitBranch(cliConfig.workdir), () => "main");
+      const branch = Option.getOrElse(yield* detectGitBranch(cliSettings.workdir), () => "main");
       yield* output.raw(
         `Finished ${legacyAqua("supabase db diff")} on branch ${legacyAqua(branch)}.\n\n`,
         "stderr",
@@ -777,7 +783,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // intentionally not inputs to normal db diff, so an unreadable or changing
       // directory must never turn a previously successful diff into a failure.
       const declarativeDir = legacyResolveDeclarativeDir(path, cfg.pgDelta);
-      const declarativeDirAbsolute = path.resolve(cliConfig.workdir, declarativeDir);
+      const declarativeDirAbsolute = path.resolve(cliSettings.workdir, declarativeDir);
       const hasDeclarativeSql = yield* Effect.gen(function* () {
         if (!(yield* fs.exists(declarativeDirAbsolute))) return false;
         return (yield* LegacyLoadPgDeltaSqlFiles(fs, path, declarativeDirAbsolute)).length > 0;
@@ -802,7 +808,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       const planFiles = diffResult.files ?? [];
       if (planFiles.length > 1) {
         const writtenUnits = yield* legacyWritePgDeltaMigrations(fs, path, {
-          workdir: cliConfig.workdir,
+          workdir: cliSettings.workdir,
           baseMillis: yield* Clock.currentTimeMillis,
           name: fileName,
           files: planFiles.map((file) => ({
@@ -817,7 +823,12 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         for (const unit of writtenUnits) writtenFiles.push(unit.path);
       } else {
         const timestamp = legacyFormatMigrationTimestamp(yield* Clock.currentTimeMillis);
-        const migrationPath = legacyGetMigrationPath(path, cliConfig.workdir, timestamp, fileName);
+        const migrationPath = legacyGetMigrationPath(
+          path,
+          cliSettings.workdir,
+          timestamp,
+          fileName,
+        );
         // Create parent dirs per written path, so a nested `--file snapshots/remote`
         // name creates `<ts>_snapshots/` first.
         yield* legacyMakeDir(fs, path.dirname(migrationPath)).pipe(

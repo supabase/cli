@@ -1,6 +1,6 @@
 import { Data, Effect, Schema } from "effect";
 import type { ManagedPortAssignment } from "./model.ts";
-import { PartialVersionManifestSchema, type PartialVersionManifest } from "../versions.ts";
+import { PartialVersionManifestSchema } from "../versions.ts";
 
 export type ManagedStackDocumentLifecycle =
   | "stopped"
@@ -8,6 +8,29 @@ export type ManagedStackDocumentLifecycle =
   | "running"
   | "deleting"
   | "failed";
+
+const managedStackLaunchFields = {
+  versions: PartialVersionManifestSchema,
+  excludedServices: Schema.optionalKey(Schema.Array(Schema.String)),
+  lastNotifiedUpdateFingerprint: Schema.optionalKey(Schema.String),
+} as const;
+
+export const managedStackLaunchUpdateSchema = Schema.Struct(managedStackLaunchFields);
+export type ManagedStackLaunchUpdate = Schema.Schema.Type<typeof managedStackLaunchUpdateSchema>;
+
+const managedStackLaunchSchema = Schema.Union([
+  Schema.Struct({
+    mode: Schema.Literal("native"),
+    ...managedStackLaunchFields,
+  }),
+  Schema.Struct({
+    mode: Schema.Literal("docker"),
+    containerRuntime: Schema.Literals(["docker", "podman"] as const),
+    ...managedStackLaunchFields,
+  }),
+]);
+
+export type ManagedStackLaunch = Schema.Schema.Type<typeof managedStackLaunchSchema>;
 
 export interface ManagedStackDocument {
   readonly format: "supabase-stack";
@@ -28,29 +51,25 @@ export interface ManagedStackDocument {
   };
   readonly ports: ReadonlyArray<ManagedPortAssignment>;
   readonly lifecycle: ManagedStackDocumentLifecycle;
+  /** A durable fence written by the identity-scoped public stop operation. */
+  readonly stopIntent?: "explicit";
   readonly runtime?: {
     readonly pid: number;
     readonly controlEndpoint: string;
     readonly protocolVersion: 1;
   };
-  readonly launch?: {
-    readonly mode: "native" | "auto" | "docker";
-    readonly versions: PartialVersionManifest;
-    readonly excludedServices?: ReadonlyArray<string>;
-    readonly lastNotifiedUpdateFingerprint?: string;
-  };
+  readonly launch: ManagedStackLaunch;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
 
-export const managedStackLaunchSchema = Schema.Struct({
-  mode: Schema.Literals(["native", "auto", "docker"] as const),
-  versions: PartialVersionManifestSchema,
-  excludedServices: Schema.optionalKey(Schema.Array(Schema.String)),
-  lastNotifiedUpdateFingerprint: Schema.optionalKey(Schema.String),
+/** Launch request before the supervisor selects a concrete execution mode. */
+export const managedStackLaunchInputSchema = Schema.Struct({
+  mode: Schema.optionalKey(Schema.Literals(["native", "docker"] as const)),
+  ...managedStackLaunchFields,
 });
 
-export type ManagedStackLaunch = Schema.Schema.Type<typeof managedStackLaunchSchema>;
+export type ManagedStackLaunchInput = Schema.Schema.Type<typeof managedStackLaunchInputSchema>;
 
 const managedPortAssignmentSchema = Schema.Struct({
   key: Schema.Literals([
@@ -87,6 +106,7 @@ const managedStackDocumentSchema = Schema.Struct({
   }),
   ports: Schema.Array(managedPortAssignmentSchema),
   lifecycle: Schema.Literals(["stopped", "starting", "running", "deleting", "failed"]),
+  stopIntent: Schema.optionalKey(Schema.Literal("explicit")),
   runtime: Schema.optionalKey(
     Schema.Struct({
       pid: Schema.Number,
@@ -94,7 +114,7 @@ const managedStackDocumentSchema = Schema.Struct({
       protocolVersion: Schema.Literal(1),
     }),
   ),
-  launch: Schema.optionalKey(managedStackLaunchSchema),
+  launch: managedStackLaunchSchema,
   createdAt: Schema.String,
   updatedAt: Schema.String,
 });
@@ -115,34 +135,29 @@ export class InvalidManagedStackDocumentError extends Data.TaggedError(
   }
 }
 
-const decodeDocument = Schema.decodeUnknownSync(ManagedStackDocumentSchema);
-const encodeDocument = Schema.encodeUnknownSync(managedStackDocumentSchema);
-
 export const decodeManagedStackDocument = (
   path: string,
   content: string,
 ): Effect.Effect<ManagedStackDocument, InvalidManagedStackDocumentError> =>
-  Effect.try({
-    try: () => {
-      const document = decodeDocument(content);
-      if (!hasCorePortAssignments(document)) {
-        throw new Error("Managed document is missing core port assignments");
-      }
-      return document;
-    },
-    catch: () => new InvalidManagedStackDocumentError({ path }),
-  });
+  Schema.decodeUnknownEffect(ManagedStackDocumentSchema)(content).pipe(
+    Effect.mapError(() => new InvalidManagedStackDocumentError({ path })),
+    Effect.flatMap((document) =>
+      hasCorePortAssignments(document)
+        ? Effect.succeed(document)
+        : Effect.fail(new InvalidManagedStackDocumentError({ path })),
+    ),
+  );
 
 export const encodeManagedStackDocument = (
   path: string,
   document: ManagedStackDocument,
 ): Effect.Effect<string, InvalidManagedStackDocumentError> =>
-  Effect.try({
-    try: () => {
-      if (!hasCorePortAssignments(document)) {
-        throw new Error("Managed document is missing core port assignments");
-      }
-      return JSON.stringify(encodeDocument(document), null, 2) + "\n";
-    },
-    catch: () => new InvalidManagedStackDocumentError({ path }),
+  Effect.gen(function* () {
+    if (!hasCorePortAssignments(document)) {
+      return yield* Effect.fail(new InvalidManagedStackDocumentError({ path }));
+    }
+    const encoded = yield* Schema.encodeEffect(managedStackDocumentSchema)(document).pipe(
+      Effect.mapError(() => new InvalidManagedStackDocumentError({ path })),
+    );
+    return JSON.stringify(encoded, null, 2) + "\n";
   });

@@ -20,7 +20,7 @@ interface LegacyProjectRefResolverShape {
    * Resolution chain used by `supabase link`. The on-disk `project-ref` file
    * is deliberately skipped:
    *
-   *   flag → `cliConfig.projectId` (env `SUPABASE_PROJECT_ID`) → (TTY) prompt.
+   *   flag → `cliSettings.projectId` (env `SUPABASE_PROJECT_ID`) → (TTY) prompt.
    *
    * On a non-TTY with neither the flag nor `PROJECT_ID` set, fails with
    * `LegacyProjectRefRequiredError`, reproducing cobra's
@@ -34,7 +34,7 @@ interface LegacyProjectRefResolverShape {
     never
   >;
   /**
-   * Soft resolution chain (flag -> `cliConfig.projectId` -> ref file) with **no
+   * Soft resolution chain (flag -> `cliSettings.projectId` -> ref file) with **no
    * prompt and no failure**. Used by `projects list`, which ignores a
    * missing/unreadable ref and only uses the value as a "linked" marker.
    * Returns `None` when nothing resolves.
@@ -51,7 +51,7 @@ interface LegacyProjectRefResolverShape {
     flagValue: Option.Option<string>,
   ) => Effect.Effect<Option.Option<string>, never, never>;
   /**
-   * Non-prompting resolution chain (flag -> `cliConfig.projectId` -> ref file)
+   * Non-prompting resolution chain (flag -> `cliSettings.projectId` -> ref file)
    * that **fails hard** with `LegacyProjectNotLinkedError` when nothing
    * resolves, with ref-format validation. Used by the `--linked` PreRun of
    * the `db` command family and by the linked branch of database-config

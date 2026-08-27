@@ -1,4 +1,8 @@
-import type { StackConfig, VersionManifest } from "@supabase/stack/effect";
+import {
+  expandExcludedServices,
+  type StackConfig,
+  type VersionManifest,
+} from "@supabase/stack/effect";
 
 export const excludedStackServices = [
   "auth",
@@ -17,26 +21,26 @@ export const excludedStackServices = [
 export type ExcludedStackService = (typeof excludedStackServices)[number];
 export const isExcludedStackService = (value: string): value is ExcludedStackService =>
   excludedStackServices.some((candidate) => candidate === value);
-export const startModes = ["native", "auto", "docker"] as const;
+export const startModes = ["native", "docker"] as const;
 export type StartMode = (typeof startModes)[number];
 
 export function toStartStackConfig(
   exclude: ReadonlyArray<ExcludedStackService>,
-  mode: StartMode,
+  mode?: StartMode,
 ): StackConfig {
-  const excluded = new Set(exclude);
+  const excluded = expandExcludedServices(exclude);
+  const native = mode === "native";
   return {
-    mode,
-    startupMode: "lazy",
-    realtime: excluded.has("realtime") ? false : {},
-    storage: excluded.has("storage") ? false : {},
-    imgproxy: excluded.has("imgproxy") || excluded.has("storage") ? false : {},
-    mailpit: excluded.has("mailpit") ? false : {},
-    pgmeta: excluded.has("pgmeta") ? false : {},
-    studio: excluded.has("studio") || excluded.has("pgmeta") ? false : {},
-    analytics: excluded.has("analytics") ? false : {},
-    vector: excluded.has("vector") || excluded.has("analytics") ? false : {},
-    pooler: excluded.has("pooler") ? false : {},
+    ...(mode === undefined ? {} : { mode }),
+    realtime: native || excluded.has("realtime") ? false : {},
+    storage: native || excluded.has("storage") ? false : {},
+    imgproxy: native || excluded.has("imgproxy") ? false : {},
+    mailpit: native || excluded.has("mailpit") ? false : {},
+    pgmeta: native || excluded.has("pgmeta") ? false : {},
+    studio: native || excluded.has("studio") ? false : {},
+    analytics: native || excluded.has("analytics") ? false : {},
+    vector: native || excluded.has("vector") ? false : {},
+    pooler: native || excluded.has("pooler") ? false : {},
     ...(excluded.has("auth") ? { auth: false } : {}),
     ...(excluded.has("postgrest") ? { postgrest: false } : {}),
   };

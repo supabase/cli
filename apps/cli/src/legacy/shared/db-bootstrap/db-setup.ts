@@ -1,10 +1,11 @@
 /**
- * Post-Postgres-health local database setup pipeline — a strict 1:1 port of Go's
- * `SetupLocalDatabase` (`apps/cli-go/internal/db/start/start.go:359-381`), run once
+ * Post-Postgres-health local database setup pipeline — a port of Go's
+ * `SetupLocalDatabase` (`apps/cli-go/internal/db/start/start.go:359-381`, with one
+ * intentional divergence: see step 3 below on `api.auto_expose_new_tables`), run once
  * the `db` container's healthcheck passes on a FRESH volume (Go's `NoBackupVolume`
  * gate, `start.go:184` — the caller decides whether to invoke this at all; see
  * `legacyVolumeExists` in `./container-lifecycle.ts`). The single exported
- * entry point, {@link legacyStartSetupLocalDatabase}, runs the exact Go call chain
+ * entry point, {@link legacyStartSetupLocalDatabase}, runs the same call chain,
  * in order:
  *
  * 1. **`initSchema`** (`start.go:243-266`) — prints `Initialising schema...`, then
@@ -35,11 +36,10 @@
  *    into `experimental.webhooks`, unless the setup caller disables user extension
  *    activation. Legacy callers may explicitly request the historical `pg_net`
  *    baseline independently of that user config.
- * 3. **`ApplyApiPrivileges`** (`start.go:414-435`) — tri-state on
- *    `api.auto_expose_new_tables`: `true` is a no-op (keep the bundled initial-schema
- *    grants); unset/`false` execs {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL}
- *    (Go's inline `RevokeDefaultDataApiPrivilegesSql` constant, `start.go:405-412`)
- *    via a temp file, same as the schema SQL above.
+ * 3. **API privileges** — tri-state on `api.auto_expose_new_tables`: unset and `true`
+ *    are both a no-op (keep the bundled initial-schema grants); an explicit `false`
+ *    execs {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL} via a temp file, same as the
+ *    schema SQL above.
  * 4. **Vault upsert** (`start.go:390-393`) — `legacyUpsertVaultSecrets`, run BEFORE
  *    the custom-roles seed "so roles.sql can reference them" (Go's own comment).
  * 5. **Custom-roles seed** (`start.go:394-398` + `pkg/migration/seed.go:84-97`) —
@@ -114,7 +114,7 @@
  * same reason.
  */
 
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 import { Data, Effect, type FileSystem, Option, type Path, Schedule } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
@@ -175,9 +175,11 @@ type Spawner = ChildProcessSpawner["Service"];
 /**
  * Go's inline `RevokeDefaultDataApiPrivilegesSql` constant (`start.go:405-412`) —
  * NOT a `//go:embed` file (unlike the three large SQL templates), so transcribed
- * directly here rather than as a sibling `templates/*.sql.ts` module.
+ * directly here rather than as a sibling `templates/*.sql.ts` module. Exported for the
+ * shadow baseline cache's embedded-SQL digest (`shadow-cache.ts`), which must re-key
+ * whenever this text changes across CLI releases.
  */
-const LEGACY_START_REVOKE_API_PRIVILEGES_SQL = `
+export const LEGACY_START_REVOKE_API_PRIVILEGES_SQL = `
 alter default privileges for role postgres in schema public
   revoke select, insert, update, delete on tables from anon, authenticated, service_role;
 alter default privileges for role postgres in schema public
@@ -186,7 +188,12 @@ alter default privileges for role postgres in schema public
   revoke execute on functions from anon, authenticated, service_role;
 `;
 
-const LEGACY_START_ENABLE_DATABASE_WEBHOOKS_SQL =
+/**
+ * Exported for the shadow baseline cache's embedded-SQL digest (`shadow-cache.ts`), same as
+ * {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL}: a webhooks-enabled baseline bakes this
+ * statement into PGDATA, so the digest must re-key whenever this text changes across releases.
+ */
+export const LEGACY_START_ENABLE_DATABASE_WEBHOOKS_SQL =
   "create extension if not exists pg_net schema extensions;";
 
 // The historical PG14 dump installs pg_net because later statements grant on
@@ -251,7 +258,7 @@ export type LegacyStartSetupLocalDatabaseError =
 
 /** Already-resolved Docker images for the three PG15+ one-shot migrate jobs (`initSchema15`'s `initJobs`). */
 export interface LegacyStartDbSetupImages {
-  /** `utils.Config.Realtime.Image`, resolved by the caller (not part of the decoded `ProjectConfig` schema — `toml:"-"`). */
+  /** `utils.Config.Realtime.Image`, resolved by the caller (not part of the decoded `CliConfig` schema — `toml:"-"`). */
   readonly realtime: string;
   /** `utils.Config.Storage.Image`, ditto. */
   readonly storage: string;
@@ -372,7 +379,7 @@ export interface LegacySetupDatabaseInput {
   /** The Supabase project root (parent of `supabase/`). */
   readonly workdir: string;
   /** The caller's already-resolved, effective config (env overrides already applied). */
-  readonly config: ProjectConfig;
+  readonly config: CliConfig;
   /** Effective `[experimental.webhooks].enabled`, including supported environment overrides. */
   readonly webhooksEnabled: boolean;
   /** `db.major_version` (13-17) — Go's `utils.Config.Db.MajorVersion`, resolved by the caller once, ahead of the `db` container's own image tag selection. */
@@ -456,7 +463,7 @@ export interface LegacySetupDatabaseInput {
    * `utils.GetDebugLogger()` as the job's stderr writer (`start.go:349-353`).
    */
   readonly debug: boolean;
-  /** `toml.baseline.apiAutoExposeNewTables` — Go's `api.auto_expose_new_tables` tri-state, threaded straight into {@link legacyApplyApiPrivileges}. */
+  /** `toml.baseline.apiAutoExposeNewTables` — the `api.auto_expose_new_tables` tri-state, threaded straight into {@link legacyApplyApiPrivileges}. */
   readonly apiAutoExposeNewTables: Option.Option<boolean>;
   /** `toml.vault` — Go's `utils.Config.Db.Vault`, threaded straight into {@link legacyUpsertVaultSecrets}. */
   readonly vault: ReadonlyArray<LegacyVaultSecret>;
@@ -465,6 +472,15 @@ export interface LegacySetupDatabaseInput {
 /** Controls the extension side effects of {@link legacySetupDatabase}. */
 export interface LegacySetupDatabaseOptions {
   readonly webhooks?: "config" | "enabled" | "disabled";
+}
+
+/** `"enabled"` always installs `pg_net`, `"disabled"` always removes it, `"config"` follows the project flag. */
+export function legacyResolveSetupWebhooksEnabled(
+  policy: LegacySetupDatabaseOptions["webhooks"],
+  webhooksEnabled: boolean,
+): boolean {
+  const webhooks = policy ?? "config";
+  return webhooks === "enabled" || (webhooks === "config" && webhooksEnabled);
 }
 
 /** Input to {@link legacyStartSetupLocalDatabase}. */
@@ -719,7 +735,7 @@ function legacyStartStorageMigrateEnv(input: {
   readonly jwtSecret: string;
   readonly dbHost: string;
   readonly dbPassword: string;
-  readonly fileSizeLimit: ProjectConfig["storage"]["file_size_limit"];
+  readonly fileSizeLimit: CliConfig["storage"]["file_size_limit"];
 }): Record<string, string> {
   return {
     DB_INSTALL_ROLES: "false",
@@ -746,7 +762,7 @@ function legacyStartStorageMigrateEnv(input: {
 function legacyStartAuthMigrateEnv(input: {
   readonly apiUrl: string;
   readonly authExternalUrl: string | undefined;
-  readonly siteUrl: ProjectConfig["auth"]["site_url"];
+  readonly siteUrl: CliConfig["auth"]["site_url"];
   readonly jwtSecret: string;
   readonly dbHost: string;
   readonly dbPassword: string;
@@ -896,17 +912,16 @@ const legacyStartInitSchema = Effect.fnUntraced(function* (
 });
 
 /**
- * Port of Go's `ApplyApiPrivileges` (`start.go:414-435`): tri-state on
- * `api.auto_expose_new_tables` — `true` keeps the bundled initial-schema grants
- * (no-op); unset/`false` execs {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL}. Runs
- * regardless of PG major version (unlike `initSchema`, this always execs SQL over
- * `session` directly — it is never part of the PG15+ one-shot Docker jobs). Exported
- * (and taking `session`/`fs`/`path` directly, not the whole
- * {@link LegacyStartSetupLocalDatabaseInput}) because Go's `ApplyApiPrivileges` is
- * the SAME exported function `db reset`'s PG14 `initDatabase` calls
- * (`reset.go:176-186`), after its own `InitSchema14` call and with none of
- * `SetupDatabase`'s other steps (vault/roles.sql/MigrateAndSeed) — see
- * `legacy/shared/db-bootstrap/recreate-local-database.ts`.
+ * Applies the `api.auto_expose_new_tables` tri-state: unset and `true` both keep the
+ * bundled initial-schema grants (no-op), matching the cloud default of auto-exposing
+ * new `public` entities; only an explicit `false` execs
+ * {@link LEGACY_START_REVOKE_API_PRIVILEGES_SQL}. Runs regardless of PG major version
+ * (unlike `initSchema`, this always execs SQL over `session` directly — it is never
+ * part of the PG15+ one-shot Docker jobs). Exported (and taking `session`/`fs`/`path`
+ * directly, not the whole {@link LegacyStartSetupLocalDatabaseInput}) because `db
+ * reset`'s PG14 `initDatabase` path calls it too, after its own init-schema step and
+ * with none of `legacySetupDatabase`'s other steps (vault/roles.sql/migrate+seed) —
+ * see `legacy/shared/db-bootstrap/recreate-local-database.ts`.
  */
 export const legacyApplyApiPrivileges = Effect.fnUntraced(function* (
   session: LegacyDbSession,
@@ -915,7 +930,7 @@ export const legacyApplyApiPrivileges = Effect.fnUntraced(function* (
   tmpDir: string,
   autoExposeNewTables: Option.Option<boolean>,
 ) {
-  if (Option.isSome(autoExposeNewTables) && autoExposeNewTables.value) return;
+  if (Option.getOrElse(autoExposeNewTables, () => true)) return;
   yield* legacyExecSqlConstant(
     session,
     fs,
@@ -1063,13 +1078,12 @@ export const legacySetupDatabase = (
         if (requiresPg14WebhooksCleanup) {
           yield* legacyRemoveDatabaseWebhooks(session, fs, path, tmpDir);
         }
-        const webhooks = options.webhooks ?? "config";
         yield* legacyApplyDatabaseWebhooks(
           session,
           fs,
           path,
           tmpDir,
-          webhooks === "enabled" || (webhooks === "config" && input.webhooksEnabled),
+          legacyResolveSetupWebhooksEnabled(options.webhooks, input.webhooksEnabled),
         );
         yield* legacyApplyApiPrivileges(session, fs, path, tmpDir, input.apiAutoExposeNewTables);
       }),
@@ -1179,7 +1193,7 @@ export const legacyStartSetupLocalDatabase = (
     // are this module's own already-loaded config (the latter already resolved +
     // `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` env-overridden by `legacyCheckDbToml`,
     // `legacy-db-config.toml-read.ts`), not re-read from the caller's raw, unresolved
-    // `ProjectConfig`. `input.seedFlags` applies `db reset`'s own `--no-seed`/
+    // `CliConfig`. `input.seedFlags` applies `db reset`'s own `--no-seed`/
     // `--sql-paths` overrides on top of the loaded `[db.seed]` config — a no-op for
     // `db start`, which has neither flag.
     yield* legacyMigrateAndSeed(session, fs, path, workdir, input.version, {

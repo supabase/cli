@@ -7,7 +7,7 @@ import { Stdin } from "../../../../shared/runtime/stdin.service.ts";
 import { LegacyAgentFlag, LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { AiTool } from "../../../../shared/telemetry/ai-tool.service.ts";
 import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { legacyResolveAgentMode } from "../../../shared/legacy-agent-mode.ts";
 import { encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -93,7 +93,7 @@ export const legacyFeedbackAdd = Effect.fn("legacy.feedback.add")(function* (
 ) {
   const output = yield* Output;
   const goOutputFlag = yield* LegacyOutputFlag;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const runtimeInfo = yield* RuntimeInfo;
   const telemetryRuntime = yield* TelemetryRuntime;
   const aiTool = yield* AiTool;
@@ -127,8 +127,8 @@ export const legacyFeedbackAdd = Effect.fn("legacy.feedback.add")(function* (
     const isAgent = legacyResolveAgentMode(agentFlag, aiTool.name);
     const agentName = isAgent ? Option.getOrUndefined(aiTool.name) : undefined;
     const projectRef = yield* legacyResolveFeedbackProjectRef(
-      cliConfig.workdir,
-      cliConfig.projectId,
+      cliSettings.workdir,
+      cliSettings.projectId,
     );
 
     const sending = yield* output.task("Sending feedback...");
@@ -146,7 +146,7 @@ export const legacyFeedbackAdd = Effect.fn("legacy.feedback.add")(function* (
           telemetryRuntime.consent === "granted" ? telemetryRuntime.identity.current() : undefined,
         context: {
           cliVersion: telemetryRuntime.cliVersion,
-          userAgent: cliConfig.userAgent,
+          userAgent: cliSettings.userAgent,
           os: runtimeInfo.platform,
           arch: runtimeInfo.arch,
           isAgent,

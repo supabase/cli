@@ -11,10 +11,11 @@ import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
   LEGACY_FAKE_SHADOW_CONTAINER_ID,
   LEGACY_VALID_REF,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyShadowContainerCliSpawner,
   mockLegacyTelemetryStateTracked,
+  useLegacyShadowCacheDisabled,
   useLegacyTempWorkdir,
   legacySequentialExecBatch,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -369,7 +370,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     docker.layer,
     debugLogger,
     alwaysReadyHttpClientLayer,
-    mockLegacyCliConfig({ workdir }),
+    mockLegacyCliSettings({ workdir }),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     Layer.succeed(LegacyDebugFlag, false),
     Layer.succeed(LegacyExperimentalFlag, false),
@@ -432,6 +433,7 @@ const failureTag = (exit: Exit.Exit<unknown, unknown>): string | undefined => {
 };
 
 const tmp = useLegacyTempWorkdir();
+useLegacyShadowCacheDisabled();
 
 describe("legacy migration squash", () => {
   describe("flag surface & ordering", () => {

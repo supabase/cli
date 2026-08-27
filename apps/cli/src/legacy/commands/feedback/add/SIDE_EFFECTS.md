@@ -4,7 +4,7 @@
 
 | Path                                            | Format                              | When                                                                                                                                                                                                                         |
 | ----------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `~/.supabase/profile`                           | plain text (profile name)           | when `--profile` and `SUPABASE_PROFILE` are unset (profile resolution via `legacyCliConfigLayer`)                                                                                                                            |
+| `~/.supabase/profile`                           | plain text (profile name)           | when `--profile` and `SUPABASE_PROFILE` are unset (profile resolution via `legacyCliSettingsLayer`)                                                                                                                          |
 | `$SUPABASE_PROFILE`                             | YAML (`api_url:` / `gotrue_url:` …) | when `SUPABASE_PROFILE` is set to a file path instead of a built-in profile name                                                                                                                                             |
 | `<workdir>/supabase/.temp/project-ref`          | plain text (project ref)            | when `SUPABASE_PROJECT_ID` is unset — supplies the submission's `project_ref`. Absent, blank, or unreadable → `null` (never fails the submission)                                                                            |
 | `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON (telemetry state)              | read at startup by the shared telemetry runtime — its `distinct_id` (gotrue user id stamped at login) supplies the submission's `user_id` when telemetry consent is granted. Absent, logged-out, or consent-denied → omitted |
@@ -36,7 +36,7 @@ request times out after 10 s.
 | ----------------------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------ |
 | `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                            | no (falls back to `~/.supabase/profile` → `supabase`)              |
 | `SUPABASE_WORKDIR`      | project directory override                                                         | no (falls back to `--workdir` → cwd)                               |
-| `SUPABASE_ACCESS_TOKEN` | access token captured by `legacyCliConfigLayer`                                    | no (unused by this command)                                        |
+| `SUPABASE_ACCESS_TOKEN` | access token captured by `legacyCliSettingsLayer`                                  | no (unused by this command)                                        |
 | `SUPABASE_PROJECT_ID`   | overrides the submission's `project_ref`, taking priority over the linked-ref file | no (falls back to `<workdir>/supabase/.temp/project-ref` → `null`) |
 
 Agent-detection env vars (e.g. `CLAUDECODE`) are read indirectly by
@@ -102,7 +102,7 @@ terminal, a "What's on your mind?" text prompt collects it first.
 - Piped stdin is read in constant memory with a 64 KB cap; input past the cap
   fails as over-limit (exit 1) without buffering the rest of the pipe.
 - Submission context: CLI version, user agent (`SupabaseCLI/<version>` from
-  `LegacyCliConfig`), OS/arch, agent detection, and — when the workdir has a
+  `LegacyCliSettings`), OS/arch, agent detection, and — when the workdir has a
   linked project — its project ref. The resolved access token is never sent.
 - The persisted gotrue user id from `<SUPABASE_HOME or ~/.supabase>/telemetry.json` (`distinct_id`,
   stamped at login) is sent as `user_id` when present **and** telemetry consent
@@ -114,7 +114,7 @@ terminal, a "What's on your mind?" text prompt collects it first.
   `<workdir>/supabase/.temp/project-ref` (written by `supabase link`) → `null`.
   This mirrors the soft-load half of `LegacyProjectRefResolver.resolveOptional`
   but reads the file directly, so the command has no auth dependency and works
-  when the user is not logged in. Note `LegacyCliConfig.projectId` alone is only
+  when the user is not logged in. Note `LegacyCliSettings.projectId` alone is only
   the env var — it is NOT linked-project-aware.
 - Submission goes through the SECURITY DEFINER `submit_interfaces_feedback`
   RPC (the table has no insert grant), which returns a server-generated

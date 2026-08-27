@@ -2,7 +2,7 @@ import { Layer } from "effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 
-import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
+import { legacyCliSettingsLayer } from "../../../config/legacy-cli-settings.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
@@ -25,12 +25,12 @@ export type LegacyTestNewFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 // `test new` writes a local file and makes no Management API calls, so it avoids
 // `legacyManagementApiRuntimeLayer` (which eagerly resolves an access token).
-// `legacyCliConfigLayer` provides the resolved `workdir`; `Layer.provide` does not
+// `legacyCliSettingsLayer` provides the resolved `workdir`; `Layer.provide` does not
 // share to siblings inside a merge, so it is exposed at the top level too.
-const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 
 const legacyTestNewRuntimeLayer = Layer.mergeAll(
-  cliConfig,
+  cliSettings,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["test", "new"]),
 );

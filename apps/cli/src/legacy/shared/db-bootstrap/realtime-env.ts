@@ -10,7 +10,7 @@
  * `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate" rule.
  */
 
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 
 import {
   LEGACY_START_INTERNAL_DB_NAME,
@@ -24,7 +24,7 @@ import {
  * `authenticator`, Storage's `supabase_storage_admin`), so it is not hoisted
  * alongside `legacyStartInternalDbUrl`.
  */
-const LEGACY_REALTIME_DB_USER = "supabase_admin";
+export const LEGACY_REALTIME_DB_USER = "supabase_admin";
 
 /**
  * Go's `realtime.TenantId` default (`pkg/config/config.go:481`) — `toml:"-"`
@@ -37,7 +37,7 @@ const LEGACY_REALTIME_DB_USER = "supabase_admin";
 export const LEGACY_REALTIME_TENANT_ID = "realtime-dev";
 
 /** Go's `realtime.EncryptionKey` default (`pkg/config/config.go:482`) — `toml:"-"`, never configurable. */
-const LEGACY_REALTIME_ENCRYPTION_KEY = "supabaserealtime";
+export const LEGACY_REALTIME_ENCRYPTION_KEY = "supabaserealtime";
 
 /** Go's `realtime.SecretKeyBase` default (`pkg/config/config.go:483`) — `toml:"-"`, never configurable. */
 const LEGACY_REALTIME_SECRET_KEY_BASE =
@@ -45,9 +45,9 @@ const LEGACY_REALTIME_SECRET_KEY_BASE =
 
 export interface LegacyRealtimeEnvInput {
   /** `config.realtime.ip_version` — feeds `utils.ToRealtimeEnv` (`utils/config.go:209-214`). */
-  readonly ipVersion: ProjectConfig["realtime"]["ip_version"];
+  readonly ipVersion: CliConfig["realtime"]["ip_version"];
   /** `config.realtime.max_header_length`. */
-  readonly maxHeaderLength: ProjectConfig["realtime"]["max_header_length"];
+  readonly maxHeaderLength: CliConfig["realtime"]["max_header_length"];
   /** The `db` container's own Docker name (`legacyServiceContainerName("db", projectId)`). */
   readonly dbHost: string;
   /** See {@link legacyStartInternalDbPassword}. */

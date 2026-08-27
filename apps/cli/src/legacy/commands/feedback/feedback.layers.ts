@@ -4,14 +4,14 @@ import {
   legacyFeedbackEnvironment,
 } from "../../../shared/feedback/feedback-client.layer.ts";
 import { LegacyDnsResolverFlag } from "../../../shared/legacy/global-flags.ts";
-import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
-import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
+import { legacyCliSettingsLayer } from "../../config/legacy-cli-settings.layer.ts";
+import { LegacyCliSettings } from "../../config/legacy-cli-settings.service.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
 import type { LegacyDebugLoggerShape } from "../../shared/legacy-debug-logger.service.ts";
 import { LegacyDebugLogger } from "../../shared/legacy-debug-logger.service.ts";
 import { legacyDohFetch, type LegacyDohFetchOptions } from "../../shared/legacy-http-dns.ts";
 
-export const legacyFeedbackCliConfigLayer = legacyCliConfigLayer.pipe(
+export const legacyFeedbackCliConfigLayer = legacyCliSettingsLayer.pipe(
   Layer.provide(legacyDebugLoggerLayer),
 );
 
@@ -66,7 +66,7 @@ export function legacyFeedbackFetch(options: LegacyFeedbackFetchOptions): typeof
 
 export const legacyFeedbackClientLayer = Layer.unwrap(
   Effect.gen(function* () {
-    const config = yield* LegacyCliConfig;
+    const config = yield* LegacyCliSettings;
     const dnsResolver = yield* LegacyDnsResolverFlag;
     const logger = yield* LegacyDebugLogger;
     return feedbackClientLayer({

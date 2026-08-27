@@ -5,7 +5,10 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
-import { mockLegacyShadowContainerCliSpawner } from "../../../../../../tests/helpers/legacy-mocks.ts";
+import {
+  mockLegacyShadowContainerCliSpawner,
+  useLegacyShadowCacheDisabled,
+} from "../../../../../../tests/helpers/legacy-mocks.ts";
 import { alwaysReadyHttpClientLayer } from "../../../../../../tests/helpers/legacy-local-reset.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../../../shared/cli/cli-args.service.ts";
@@ -344,7 +347,7 @@ const setupInputs: LegacySetupInputs = {
   authEnabled: true,
   storageEnabled: true,
   realtimeEnabled: true,
-  autoExpose: false,
+  autoExpose: true,
   vaultNames: [],
   rolesSql: "",
 };
@@ -390,6 +393,7 @@ const toml: LegacyDbTomlValues = {
 };
 
 describe("legacyDiffDeclarativeToMigrations", () => {
+  useLegacyShadowCacheDisabled();
   it.effect(
     "resolves the migrations catalog natively and diffs it against the seam-provisioned declarative catalog",
     () => {

@@ -27,7 +27,7 @@
  *   - `auth.captcha`/`auth.passkey`/`auth.webauthn`/`auth.email.smtp`'s
  *     presence-and-default quirks (an explicitly-omitted `enabled` is
  *     treated differently depending on whether the surrounding TOML table is
- *     present at all) can't be recovered from the decoded `ProjectConfig`
+ *     present at all) can't be recovered from the decoded `CliConfig`
  *     alone — the caller resolves these the same way
  *     `legacy-local-config-values.ts` already does (reading the raw TOML
  *     document) and passes the final, presence-resolved values in.
@@ -44,7 +44,7 @@
  *     `validateAuthExternalProviders` already filters for its own purposes.
  */
 
-import type { ProjectConfig } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
 
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
 import {
@@ -131,7 +131,7 @@ const LEGACY_GOTRUE_PASSWORD_REQUIREMENTS_TO_CHAR: Record<string, string> = {
 };
 
 function legacyGotruePasswordRequirementsToChar(
-  value: ProjectConfig["auth"]["password_requirements"],
+  value: CliConfig["auth"]["password_requirements"],
 ): string {
   return LEGACY_GOTRUE_PASSWORD_REQUIREMENTS_TO_CHAR[value] ?? "";
 }
@@ -201,16 +201,16 @@ export interface LegacyBuildGotrueEnvInput {
   readonly jwtSecret: string;
   /** `config.auth.jwt_issuer`, raw (`undefined` when unset — falls back to the derived auth-external URL). */
   readonly jwtIssuer: string | undefined;
-  readonly jwtExpiry: ProjectConfig["auth"]["jwt_expiry"];
-  readonly siteUrl: ProjectConfig["auth"]["site_url"];
-  readonly additionalRedirectUrls: ProjectConfig["auth"]["additional_redirect_urls"];
-  readonly enableSignup: ProjectConfig["auth"]["enable_signup"];
-  readonly enableAnonymousSignIns: ProjectConfig["auth"]["enable_anonymous_sign_ins"];
-  readonly enableRefreshTokenRotation: ProjectConfig["auth"]["enable_refresh_token_rotation"];
-  readonly refreshTokenReuseInterval: ProjectConfig["auth"]["refresh_token_reuse_interval"];
-  readonly enableManualLinking: ProjectConfig["auth"]["enable_manual_linking"];
-  readonly minimumPasswordLength: ProjectConfig["auth"]["minimum_password_length"];
-  readonly passwordRequirements: ProjectConfig["auth"]["password_requirements"];
+  readonly jwtExpiry: CliConfig["auth"]["jwt_expiry"];
+  readonly siteUrl: CliConfig["auth"]["site_url"];
+  readonly additionalRedirectUrls: CliConfig["auth"]["additional_redirect_urls"];
+  readonly enableSignup: CliConfig["auth"]["enable_signup"];
+  readonly enableAnonymousSignIns: CliConfig["auth"]["enable_anonymous_sign_ins"];
+  readonly enableRefreshTokenRotation: CliConfig["auth"]["enable_refresh_token_rotation"];
+  readonly refreshTokenReuseInterval: CliConfig["auth"]["refresh_token_reuse_interval"];
+  readonly enableManualLinking: CliConfig["auth"]["enable_manual_linking"];
+  readonly minimumPasswordLength: CliConfig["auth"]["minimum_password_length"];
+  readonly passwordRequirements: CliConfig["auth"]["password_requirements"];
 
   /**
    * `config.auth.signing_keys_path`'s resolved contents (the file's
@@ -252,12 +252,12 @@ export interface LegacyBuildGotrueEnvInput {
     readonly senderName?: string;
   };
 
-  readonly sms: ProjectConfig["auth"]["sms"];
-  readonly sessions: ProjectConfig["auth"]["sessions"];
-  readonly mfa: ProjectConfig["auth"]["mfa"];
-  readonly rateLimit: ProjectConfig["auth"]["rate_limit"];
-  readonly web3: ProjectConfig["auth"]["web3"];
-  readonly oauthServer: ProjectConfig["auth"]["oauth_server"];
+  readonly sms: CliConfig["auth"]["sms"];
+  readonly sessions: CliConfig["auth"]["sessions"];
+  readonly mfa: CliConfig["auth"]["mfa"];
+  readonly rateLimit: CliConfig["auth"]["rate_limit"];
+  readonly web3: CliConfig["auth"]["web3"];
+  readonly oauthServer: CliConfig["auth"]["oauth_server"];
   /**
    * `config.auth.hook.<type>`, each already presence-resolved AND
    * env-override-resolved by the caller (`legacyResolveAuthHooks` —

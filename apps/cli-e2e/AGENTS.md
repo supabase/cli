@@ -141,39 +141,22 @@ In **record mode**: global setup resolves the org, deletes any orphaned test pro
 
 The pre-recording cleanup deletes projects named `cli-e2e-test`, `my-project`, and `to-delete` so re-recording never hits a 409 name-conflict. Do not add tests that rely on pre-existing named projects existing on staging.
 
-## Live mode (ADR-0013)
-
-`live` is a third mode (`CLI_E2E_MODE=live`) that, unlike replay/record, **does not use the replay server**. The harness is wired straight at the real Management API (`CLI_E2E_API_URL`) and the real Docker socket; tests assert on **real outcomes**.
-
-- Live tests are `src/tests/live/**/*.live.e2e.test.ts`, run only via `vitest.live.config.ts` (the default config excludes them). They `skipIf(!isLive)`, so they are inert on the replay suite.
-- Global setup (`tests/live-setup.ts`) provisions **one ephemeral project per run** (`cli-e2e-live-{target}-{runId}-{short}`), waits for `ACTIVE_HEALTHY`, resolves the anon JWT, the IPv4 **session-pooler `dbUrl`** (for `--db-url` DB commands), the functions URL, and a seeded storage bucket, exposing them via `inject()`. It deletes the project on teardown (even on failure). Setup is intentionally **dumb** — no provisioning retry; the CI job re-runs the step on flake.
-- Use `testLive` from `src/tests/live/live-context.ts`: `run(cmd)` (direct-wired CLI), `invoke(slug)` (direct HTTP call sending the **anon JWT** in both `Authorization: Bearer` and `apikey`), plus `workspace` (a fresh `supabase init` config so golden paths exercise a generated config), `projectRef`, `anonKey`, `functionsUrl`, `dbUrl`, `storageBucket`. The functions deploy tests call `seedFunctions(workspace.path)` to layer the `deploy-e2e-*` fixtures + their `[functions.*]` config onto the init'd config.
-- **Assertion style:** outcome-based — assert `exitCode`/`stdout` substrings and the function's HTTP status + JSON body. This is ID-agnostic, so **no normalization/snapshots by default**. If the CLI's own diagnostic output is ever the assertion target, add a scoped normalizer for that one test — do not make normalization the default.
-- **Authoring/CI target is `ts-legacy`** — the only shipped CLI shell. It still shells out to the Go binary for the handful of commands the TS port proxies (`db diff`, `db pull`, `db branch *`, `db remote *`, `gen keys`, `functions download`), so `SUPABASE_GO_BINARY` must point at a built Go binary for those to resolve.
-- Retargeting to another env (e.g. `supabox`) is an env swap only: `CLI_E2E_TARGET_ENV` + `CLI_E2E_API_URL` + `CLI_E2E_PROJECT_HOST` + token. Tests assert on function output, not hostnames.
-- **CI triggers** (`.github/workflows/live-e2e.yml`): `workflow_dispatch` (manual; the Actions branch picker selects the ref — no free-form `ref` input, so the staging token never reaches arbitrary code) and an hourly `schedule`. There is **no `pull_request` trigger** — run it manually on a PR branch for pre-merge coverage. The scheduled run exercises the `@beta` channel: `develop` is the default branch and the beta release source, so it builds from `develop` source and runs the `ts-legacy` job. A `gate` job skips the run unless the published `supabase@beta` version changed since the last green run (an `actions/cache` marker keyed on the version, written by `finalize` only after the job passes), so a staging project is spent only when there is a new beta to test. Because the marker is written only on a green run, a chronically-failing `@beta` keeps re-running every hour until it goes green or a newer beta supersedes it (intended — the failure stays visible).
-
 ## Running the suite
+
+Run the following orchestration commands from the repository root.
 
 ```sh
 # Replay (no credentials needed)
-pnpm nx run @supabase/cli-e2e:test:legacy   # ts-legacy target
+pnpm exec turbo run @supabase/cli-e2e#test:e2e:run   # ts-legacy target
 
 # Record (requires staging access)
 SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_STAGING_URL=https://api.supabase.green \
-  pnpm nx run @supabase/cli-e2e:record
-
-# Live (requires staging access; creates + deletes a real project; needs Docker).
-# Build the Go binary first so newly-added proxy commands resolve (the system
-# `supabase` may be stale) — mirrors what CI does.
-cd apps/cli-go && go build -o /tmp/supabase-test-binary . && cd -
-SUPABASE_GO_BINARY=/tmp/supabase-test-binary \
-  SUPABASE_ACCESS_TOKEN=sbp_... \
-  pnpm --filter @supabase/cli-e2e test:e2e:live
+  pnpm run record
 ```
 
-See `apps/cli-e2e/.env.example` for the full set of live/record env vars (copy to
-a gitignored `.env.local`).
+See `apps/cli-e2e/.env.example` for replay/record env vars (copy to a gitignored
+`.env.local`). Live environment setup is documented in `apps/cli/AGENTS.md` and
+`apps/cli/live.env.example`.
 
 After recording, replay must pass with no changes between the two commands.
 
@@ -182,7 +165,7 @@ After recording, replay must pass with no changes between the two commands.
 CI splits the replay suite across 3 parallel shards via vitest's `--shard`
 flag (https://vitest.dev/guide/improving-performance.html#sharding).
 Locally, invoke vitest directly so the flag isn't eaten by a `--`
-passthrough quirk in `pnpm run` / `nx run-many`:
+passthrough quirk in package-script argument forwarding:
 
 ```sh
 pnpm --filter @supabase/cli-e2e exec bun --bun vitest run --shard=1/3
@@ -205,15 +188,16 @@ The ts-legacy CLI proxies a fixed, small set of commands to a Go binary (`SUPABA
 Build the Go CLI from source and point `SUPABASE_GO_BINARY` at it:
 
 ```sh
-cd apps/cli-go && go build -o /tmp/supabase-test-binary .
+(cd apps/cli-go && go build -o /tmp/supabase-test-binary .)
 
 # Replay
-SUPABASE_GO_BINARY=/tmp/supabase-test-binary pnpm nx run @supabase/cli-e2e:test:legacy
+SUPABASE_GO_BINARY=/tmp/supabase-test-binary \
+  pnpm exec turbo run @supabase/cli-e2e#test:e2e:run
 
 # Record
 SUPABASE_GO_BINARY=/tmp/supabase-test-binary \
   SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_STAGING_URL=https://api.supabase.green \
-  pnpm nx run @supabase/cli-e2e:record
+  pnpm run record
 ```
 
 `SUPABASE_GO_BINARY` is inherited by the ts-legacy subprocess via `exec()` in the harness, so you only need to set it once in the shell.

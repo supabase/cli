@@ -1,9 +1,13 @@
 import { Schema } from "effect";
 import type { ResolvedFunctionsBundle } from "./functions.ts";
 import type { ResolvedPorts } from "./PortCatalog.ts";
+import type { ServiceName } from "./ServiceName.ts";
 
-type StackMode = "native" | "auto" | "docker";
-type StackStartupMode = "eager" | "lazy";
+import type { StackRuntimeSelection } from "./ContainerRuntime.ts";
+
+export type StackMode = "native" | "docker";
+export type ServicePolicy = "off" | "lazy" | "eager";
+export type ServicePolicyManifest = Readonly<Record<ServiceName, ServicePolicy>>;
 
 export type ReadinessPolicy =
   | { readonly mode: "finite"; readonly timeoutMs: number }
@@ -61,9 +65,10 @@ export interface PostgresConfig {
   /**
    * When true (default), the bundled initial schema GRANTs that expose new tables, views,
    * sequences, and functions in `public` to the Data API roles (`anon`, `authenticated`,
-   * `service_role`) are kept in place. When false, those default privileges are revoked so the
-   * local stack matches the new cloud default and requires explicit GRANTs to surface entities
-   * through the Data API.
+   * `service_role`) are kept in place, matching the cloud default. When false, those default
+   * privileges are revoked so new entities require explicit GRANTs to surface through the Data
+   * API, matching a cloud project with the "Default privileges for new entities" toggle turned
+   * off.
    */
   readonly autoExposeNewTables?: boolean;
 }
@@ -174,8 +179,8 @@ export interface StackConfig {
   readonly runtimeRoot?: string;
   readonly projectDir?: string;
   readonly mode?: StackMode;
-  /** Start all services immediately, or defer proxied services until first use. */
-  readonly startupMode?: StackStartupMode;
+  /** Per-service resource policy. `off` excludes a service from the graph. */
+  readonly servicePolicies?: Partial<Record<ServiceName, ServicePolicy>>;
   /** Stack-wide readiness policy. Per-call ReadyOptions take precedence. */
   readonly readiness?: ReadinessPolicy;
   readonly jwtSecret?: string;
@@ -303,8 +308,9 @@ export interface ResolvedStackConfig {
   readonly stackRoot: string;
   readonly runtimeRoot: string;
   readonly projectDir: string;
-  readonly mode: StackMode;
-  readonly startupMode: StackStartupMode;
+  /** Concrete execution mode and, for containers, the selected executable. */
+  readonly runtime: StackRuntimeSelection;
+  readonly servicePolicies: ServicePolicyManifest;
   readonly readiness: ReadinessPolicy;
   /** Whether readiness came from the package default or an explicit stack policy. */
   readonly readinessSource: "default" | "configured";

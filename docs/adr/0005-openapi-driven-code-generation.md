@@ -38,11 +38,11 @@ Workflow commands (`dev`, `push`, `pull`, `migrations`, `functions serve`, etc.)
 
 ### Command classification
 
-| Classification | Count | Examples |
-|---|---|---|
-| **Auto-gen** (pure CRUD, 1:1 API mapping) | ~30 | `orgs list/create`, `projects list/delete/api-keys`, `secrets list/set/unset`, `branches list/get/delete`, `domains *`, `vanity-subdomains *`, `network-bans *`, `network-restrictions *`, `ssl-enforcement *`, `encryption *`, `snippets *`, `functions list/delete`, `env list-environments/list/set/unset/create/delete` |
-| **Scaffold** (mostly CRUD, needs custom logic) | ~12 | `projects create`, `branches create/update`, `postgres-config *`, `backups *`, `sso *` |
-| **Hand-write** (workflow, multi-step, local state) | ~10+ | `dev`, `push/pull`, `migrations *`, `functions deploy/download/serve/new`, `config push/pull/diff`, `storage *`, `login/logout`, `init/link`, `env pull/push/seed` |
+| Classification                                     | Count | Examples                                                                                                                                                                                                                                                                                                                    |
+| -------------------------------------------------- | ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Auto-gen** (pure CRUD, 1:1 API mapping)          | ~30   | `orgs list/create`, `projects list/delete/api-keys`, `secrets list/set/unset`, `branches list/get/delete`, `domains *`, `vanity-subdomains *`, `network-bans *`, `network-restrictions *`, `ssl-enforcement *`, `encryption *`, `snippets *`, `functions list/delete`, `env list-environments/list/set/unset/create/delete` |
+| **Scaffold** (mostly CRUD, needs custom logic)     | ~12   | `projects create`, `branches create/update`, `postgres-config *`, `backups *`, `sso *`                                                                                                                                                                                                                                      |
+| **Hand-write** (workflow, multi-step, local state) | ~10+  | `dev`, `push/pull`, `migrations *`, `functions deploy/download/serve/new`, `config push/pull/diff`, `storage *`, `login/logout`, `init/link`, `env pull/push/seed`                                                                                                                                                          |
 
 ### `openapi-fetch` over generated wrapper methods
 

@@ -1,7 +1,10 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import ts from "typescript";
-import { describe, expect, it } from "vitest";
+import * as ts from "typescript/unstable/ast";
+import type { ClassLikeDeclaration, Expression, Node, SourceFile } from "typescript/unstable/ast";
+import { createVirtualFileSystem } from "typescript/unstable/fs";
+import { API } from "typescript/unstable/async";
+import { afterAll, describe, expect, it } from "vitest";
 import { CliError } from "effect/unstable/cli";
 
 // Vitest (via Vite) provides `import.meta.glob` at runtime; the workspace
@@ -44,7 +47,12 @@ import {
 
 // The simple name of a call's callee: `TaggedError` for both `TaggedError(...)`
 // and `Data.TaggedError(...)`.
-function calleeName(expression: ts.Expression): string {
+const parserFileSystem = createVirtualFileSystem({});
+const parserApi = new API({ cwd: process.cwd(), fs: parserFileSystem });
+
+afterAll(() => parserApi.close());
+
+function calleeName(expression: Expression): string {
   if (ts.isIdentifier(expression)) return expression.text;
   if (ts.isPropertyAccessExpression(expression)) return expression.name.text;
   return "";
@@ -53,27 +61,57 @@ function calleeName(expression: ts.Expression): string {
 // The value of a plain string literal, seeing through an `as const` assertion
 // (`readonly code = "X" as const`). A computed or interpolated string cannot be
 // resolved statically, and none exists in this workspace.
-function stringLiteralText(expression: ts.Expression | undefined): string | undefined {
+function stringLiteralText(expression: Expression | undefined): string | undefined {
   const inner =
     expression !== undefined && ts.isAsExpression(expression) ? expression.expression : expression;
   return inner !== undefined && ts.isStringLiteral(inner) ? inner.text : undefined;
 }
 
-function extendsExpression(node: ts.ClassLikeDeclaration): ts.Expression | undefined {
+function extendsExpression(node: ClassLikeDeclaration): Expression | undefined {
   const clause = node.heritageClauses?.find((c) => c.token === ts.SyntaxKind.ExtendsKeyword);
   return clause?.types[0]?.expression;
 }
 
-function parse(fileName: string, source: string): ts.SourceFile {
-  return ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+async function withParsedSources<T>(
+  sources: ReadonlyArray<readonly [fileName: string, source: string]>,
+  visit: (files: ReadonlyMap<string, SourceFile>) => T,
+): Promise<T> {
+  const normalizedSources = sources.map(
+    ([fileName, source]) => [resolve(fileName), source] as const,
+  );
+  for (const [fileName, source] of normalizedSources)
+    parserFileSystem.writeFile?.(fileName, source);
+  const snapshot = await parserApi.updateSnapshot({
+    openFiles: normalizedSources.map(([fileName]) => fileName),
+    fileChanges: { changed: normalizedSources.map(([fileName]) => fileName) },
+  });
+  try {
+    const files = new Map<string, SourceFile>();
+    for (const [index, [originalFileName]] of sources.entries()) {
+      const normalized = normalizedSources[index];
+      if (normalized === undefined) throw new Error(`failed to normalize ${originalFileName}`);
+      const [fileName] = normalized;
+      const project = await snapshot.getDefaultProjectForFile(fileName);
+      const sourceFile = await project?.program.getSourceFile(fileName);
+      if (sourceFile === undefined) throw new Error(`failed to parse ${fileName}`);
+      files.set(originalFileName, sourceFile);
+    }
+    return visit(files);
+  } finally {
+    await snapshot.dispose();
+  }
 }
 
-function hasExportModifier(node: ts.Node): boolean {
-  return (
-    ts.canHaveModifiers(node) &&
-    ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ===
-      true
-  );
+async function withParsedSource<T>(
+  fileName: string,
+  source: string,
+  visit: (file: SourceFile) => T,
+): Promise<T> {
+  return withParsedSources([[fileName, source]], (files) => visit(files.get(fileName)!));
+}
+
+function hasExportModifier(node: ClassLikeDeclaration): boolean {
+  return node.modifiers?.some((modifier) => ts.isExportKeyword(modifier)) === true;
 }
 
 // Extracts the error identifiers a source file defines: the tag literal of
@@ -82,16 +120,15 @@ function hasExportModifier(node: ts.Node): boolean {
 // every plain `class X extends Error` (untagged classes are fingerprinted by
 // name). A tagged class contributes its tag once — the heritage call is
 // claimed by the class rule so the factory rule does not count it again.
-function extractErrorTags(
-  source: string,
-  fileName = "scan.ts",
-  options: { readonly exportedOnly?: boolean } = {},
+function extractErrorTagsFromFile(
+  sourceFile: SourceFile,
+  options: { readonly exportedOnly?: boolean },
 ): Array<string> {
   const tags: Array<string> = [];
-  const claimed = new Set<ts.Node>();
+  const claimed = new Set<Node>();
 
-  const visit = (node: ts.Node): void => {
-    if (ts.isClassLike(node)) {
+  const visit = (node: Node): void => {
+    if (ts.isClassLikeDeclaration(node)) {
       const heritage = extendsExpression(node);
       if (heritage !== undefined && ts.isCallExpression(heritage)) {
         const tag = calleeName(heritage.expression).endsWith("Error")
@@ -120,18 +157,60 @@ function extractErrorTags(
       if (tag !== undefined) tags.push(tag);
     }
 
-    ts.forEachChild(node, visit);
+    node.forEachChild(visit);
   };
 
-  ts.forEachChild(parse(fileName, source), visit);
+  sourceFile.forEachChild(visit);
   return tags;
 }
 
-function scanErrorTags(
+// Parse the focused AST fixtures once, before Vitest starts scheduling the
+// module-import checks below. Keeping these assertions synchronous avoids
+// competing for the shared TypeScript project service while those imports are
+// exercising the full CLI module graph under load.
+const extractedTestTags = await withParsedSources(
+  [
+    [
+      "definitions.ts",
+      [
+        'export class TaggedThingError extends Data.TaggedError("TaggedThingError") {}',
+        'export class FactoryThingError extends CliError("FactoryTag") {}',
+        "export class PlainThingError extends Error {}",
+        'const Base = Data.TaggedError("FreeStandingTag");',
+      ].join("\n"),
+    ],
+    [
+      "comments.ts",
+      [
+        "// class Fake extends Error",
+        '/* e.g. Data.TaggedError("FakeTag") */',
+        "const x = 1;",
+      ].join("\n"),
+    ],
+    [
+      "literals.ts",
+      [
+        'const a = "class Fake extends Error";',
+        'const b = `Data.TaggedError("FakeTag")`;',
+        "const c = 'class AlsoFake extends Error';",
+      ].join("\n"),
+    ],
+  ] as const,
+  (files) =>
+    new Map(
+      ["definitions.ts", "comments.ts", "literals.ts"].map((fileName) => [
+        fileName,
+        extractErrorTagsFromFile(files.get(fileName)!, {}),
+      ]),
+    ),
+);
+
+async function scanErrorTags(
   root: string,
   options: { readonly exportedOnly?: boolean } = {},
-): Map<string, Array<string>> {
+): Promise<Map<string, Array<string>>> {
   const tagsByFile = new Map<string, Array<string>>();
+  const sources: Array<readonly [string, string]> = [];
   const walk = (dir: string) => {
     for (const entry of readdirSync(dir)) {
       const path = join(dir, entry);
@@ -140,23 +219,22 @@ function scanErrorTags(
         continue;
       }
       if (!path.endsWith(".ts") || path.endsWith(".test.ts")) continue;
-      const tags = extractErrorTags(readFileSync(path, "utf8"), path, options);
-      if (tags.length > 0) tagsByFile.set(path, tags);
+      sources.push([path, readFileSync(path, "utf8")]);
     }
   };
   walk(root);
+  await withParsedSources(sources, (files) => {
+    for (const [fileName, sourceFile] of files) {
+      const tags = extractErrorTagsFromFile(sourceFile, options);
+      if (tags.length > 0) tagsByFile.set(fileName, tags);
+    }
+  });
   return tagsByFile;
 }
 
 describe("extractErrorTags", () => {
   it("finds tagged, factory-tagged and plain error class definitions", () => {
-    const source = [
-      'export class TaggedThingError extends Data.TaggedError("TaggedThingError") {}',
-      'export class FactoryThingError extends CliError("FactoryTag") {}',
-      "export class PlainThingError extends Error {}",
-      'const Base = Data.TaggedError("FreeStandingTag");',
-    ].join("\n");
-    expect(extractErrorTags(source)).toEqual([
+    expect(extractedTestTags.get("definitions.ts")).toEqual([
       "TaggedThingError",
       "FactoryTag",
       "PlainThingError",
@@ -165,21 +243,11 @@ describe("extractErrorTags", () => {
   });
 
   it("ignores definitions that only appear in comments", () => {
-    const source = [
-      "// class Fake extends Error",
-      '/* e.g. Data.TaggedError("FakeTag") */',
-      "const x = 1;",
-    ].join("\n");
-    expect(extractErrorTags(source)).toEqual([]);
+    expect(extractedTestTags.get("comments.ts")).toEqual([]);
   });
 
   it("ignores definitions that only appear inside string and template literals", () => {
-    const source = [
-      'const a = "class Fake extends Error";',
-      'const b = `Data.TaggedError("FakeTag")`;',
-      "const c = 'class AlsoFake extends Error';",
-    ].join("\n");
-    expect(extractErrorTags(source)).toEqual([]);
+    expect(extractedTestTags.get("literals.ts")).toEqual([]);
   });
 });
 
@@ -231,9 +299,9 @@ const moduleLoaders = new Map(
   ]),
 );
 
-describe("apps/cli error classes declare their actionability", () => {
-  const tagsByFile = scanErrorTags(srcRoot);
+const tagsByFile = await scanErrorTags(srcRoot);
 
+describe("apps/cli error classes declare their actionability", () => {
   it("finds the error definition surface", () => {
     expect(tagsByFile.size).toBeGreaterThan(50);
   });
@@ -305,8 +373,10 @@ describe("workspace package error tags have external adapters", () => {
   ];
 
   for (const packageRoot of packageRoots) {
-    it(packageRoot, () => {
-      const tagsByFile = scanErrorTags(resolve(repoRoot, packageRoot), { exportedOnly: true });
+    it(packageRoot, { timeout: 30_000 }, async () => {
+      const tagsByFile = await scanErrorTags(resolve(repoRoot, packageRoot), {
+        exportedOnly: true,
+      });
       expect(tagsByFile.size).toBeGreaterThan(0);
       for (const [file, tags] of tagsByFile) {
         for (const tag of tags) {
@@ -334,7 +404,7 @@ interface ManagedErrorClass {
 
 // Collects the (class, tag, code) triples of every `class X extends
 // Data.TaggedError("Tag")` that also declares a string-literal `code` member.
-function scanManagedErrorClasses(path: string): Array<ManagedErrorClass> {
+async function scanManagedErrorClasses(path: string): Promise<Array<ManagedErrorClass>> {
   const classes: Array<ManagedErrorClass> = [];
   const visit = (node: ts.Node): void => {
     if (ts.isClassDeclaration(node) && node.name !== undefined) {
@@ -355,16 +425,18 @@ function scanManagedErrorClasses(path: string): Array<ManagedErrorClass> {
         classes.push({ className: node.name.text, tag, code });
       }
     }
-    ts.forEachChild(node, visit);
+    node.forEachChild(visit);
   };
-  ts.forEachChild(parse(path, readFileSync(path, "utf8")), visit);
-  return classes;
+  return withParsedSource(path, readFileSync(path, "utf8"), (sourceFile) => {
+    sourceFile.forEachChild(visit);
+    return classes;
+  });
 }
 
 describe("managed registry error codes are classified", () => {
-  it("packages/stack/src/managed/model.ts", () => {
+  it("packages/stack/src/managed/model.ts", async () => {
     const modelPath = resolve(repoRoot, "packages/stack/src/managed/model.ts");
-    const scanned = scanManagedErrorClasses(modelPath);
+    const scanned = await scanManagedErrorClasses(modelPath);
     // One class per declared code: a class written in a shape this scan cannot
     // see would otherwise pass vacuously instead of failing loudly.
     expect(scanned.length).toBe(MANAGED_ERROR_CODES.length);

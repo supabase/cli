@@ -11,7 +11,7 @@ import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.
 import {
   buildLegacyTestRuntime,
   legacyJsonResponse,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -198,7 +198,7 @@ describe("legacy functions download", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         linkedProjectCache: linkedProjectCache.layer,
         telemetry: telemetry.layer,
       }),
@@ -251,7 +251,7 @@ describe("legacy functions download", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -314,7 +314,7 @@ describe("legacy functions download", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         Stdio.layerTest({
@@ -360,7 +360,7 @@ describe("legacy functions download", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -409,7 +409,7 @@ describe("legacy functions download", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -471,7 +471,7 @@ describe("legacy functions download", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -533,7 +533,7 @@ describe("legacy functions download", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -617,7 +617,7 @@ describe("legacy functions download", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -682,7 +682,7 @@ describe("legacy functions download", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -715,7 +715,7 @@ describe("legacy functions download", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -764,7 +764,7 @@ describe("legacy functions download", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -809,7 +809,7 @@ describe("legacy functions download", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -853,7 +853,7 @@ describe("legacy functions download", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -891,7 +891,7 @@ describe("legacy functions download", () => {
       // CLI-1963's `functions download` port). A nested workdir with no
       // `supabase/config.toml` of its own must fall back to `--project-ref`
       // for network/volume naming, not an ancestor project's configured
-      // `project_id`, even though `cliConfig.workdir` sits right inside one.
+      // `project_id`, even though `cliSettings.workdir` sits right inside one.
       const out = mockOutput({ format: "text" });
       const api = mockLegacyPlatformApi();
       const proxy = mockProxy();
@@ -901,7 +901,7 @@ describe("legacy functions download", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: nestedWorkdir }),
+          cliSettings: mockLegacyCliSettings({ workdir: nestedWorkdir }),
         }),
         proxy.layer,
         child.layer,
@@ -957,7 +957,7 @@ describe("legacy functions download", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -1014,7 +1014,7 @@ describe("legacy functions download", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -1055,7 +1055,7 @@ describe("legacy functions download", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -1095,7 +1095,7 @@ describe("legacy functions download", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -1136,7 +1136,7 @@ describe("legacy functions download", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -1181,7 +1181,7 @@ describe("legacy functions download", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -1230,7 +1230,7 @@ describe("legacy functions download", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -1277,7 +1277,7 @@ describe("legacy functions download", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           }),
           proxy.layer,
           child.layer,
@@ -1329,7 +1329,7 @@ describe("legacy functions download", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           }),
           proxy.layer,
           child.layer,
@@ -1386,7 +1386,7 @@ describe("legacy functions download", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -1434,7 +1434,7 @@ describe("legacy functions download", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -1495,7 +1495,7 @@ describe("legacy functions download", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -1549,7 +1549,7 @@ describe("legacy functions download", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -1602,7 +1602,7 @@ describe("legacy functions download", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       child.layer,
@@ -1641,7 +1641,7 @@ describe("legacy functions download", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       Stdio.layerTest({
@@ -1685,7 +1685,7 @@ describe("legacy functions download", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       Stdio.layerTest({
@@ -1730,7 +1730,7 @@ describe("legacy functions download", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           analytics,
         }),
         proxy.layer,
@@ -1766,7 +1766,7 @@ describe("legacy functions download", () => {
       buildLegacyTestRuntime({
         out,
         api,
-        cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
       }),
       proxy.layer,
       Stdio.layerTest({
@@ -1804,7 +1804,7 @@ describe("legacy functions download", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           }),
           proxy.layer,
           child.layer,
@@ -1853,7 +1853,7 @@ describe("legacy functions download", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           }),
           proxy.layer,
           child.layer,
@@ -1904,7 +1904,7 @@ describe("legacy functions download", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           }),
           proxy.layer,
           child.layer,
@@ -1957,7 +1957,7 @@ describe("legacy functions download", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           }),
           proxy.layer,
           child.layer,
@@ -2010,7 +2010,7 @@ describe("legacy functions download", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -2067,7 +2067,7 @@ describe("legacy functions download", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           }),
           proxy.layer,
           child.layer,
@@ -2146,7 +2146,7 @@ describe("legacy functions download", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         }),
         proxy.layer,
         child.layer,
@@ -2188,7 +2188,7 @@ describe("legacy functions download", () => {
           buildLegacyTestRuntime({
             out,
             api,
-            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
           }),
           proxy.layer,
           child.layer,
@@ -2239,7 +2239,7 @@ describe("legacy functions download", () => {
         buildLegacyTestRuntime({
           out,
           api,
-          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          cliSettings: mockLegacyCliSettings({ workdir: tempRoot.current }),
         }),
         child.layer,
         Stdio.layerTest({

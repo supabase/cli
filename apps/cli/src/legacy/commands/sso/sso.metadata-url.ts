@@ -48,7 +48,7 @@ export const validateMetadataUrl = (
       try: () => new URL(metadataUrl),
       catch: (cause) =>
         new LegacySsoMetadataUrlInvalidError({
-          message: `failed to parse metadata uri: ${String(cause)}`,
+          message: `failed to parse metadata uri ${JSON.stringify(metadataUrl)}: ${String(cause)}`,
         }),
     });
 

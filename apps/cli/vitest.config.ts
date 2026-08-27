@@ -45,6 +45,7 @@ export default defineConfig({
         test: {
           name: "unit",
           include: ["**/*.unit.test.ts"],
+          env: { FORCE_COLOR: "1" },
         },
       },
       {
@@ -70,9 +71,9 @@ export default defineConfig({
       {
         plugins: [dockerfileTextPlugin()],
         test: {
-          // Live tests run against a real platform (a supabox stack in CI) and
-          // are gated by `describeLive`, so they are inert unless the live env
-          // is configured. Never part of the default unit/integration/e2e loop.
+          // Live tests run against one provisioned project on the configured
+          // platform. They are never part of the default unit/integration/e2e
+          // loop; an explicit run fails fast when required configuration is absent.
           name: "live",
           include: ["**/*.live.test.ts"],
           fileParallelism: false,

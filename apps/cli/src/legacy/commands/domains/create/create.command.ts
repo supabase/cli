@@ -16,6 +16,7 @@ const config = {
   ),
   includeRawOutput: Flag.boolean("include-raw-output").pipe(
     Flag.withDescription("(Deprecated) use -o json instead."),
+    Flag.withDefault(false),
   ),
 } as const;
 

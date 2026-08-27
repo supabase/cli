@@ -9,7 +9,7 @@ import { mockAnalytics, mockOutput, mockRuntimeInfo } from "../../../../../tests
 import {
   buildLegacyTestRuntime,
   LEGACY_VALID_REF,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -172,7 +172,7 @@ function setup(opts: SetupOpts = {}) {
     stitchedDistinctId: () => undefined,
   });
 
-  const cliConfig = mockLegacyCliConfig({
+  const cliSettings = mockLegacyCliSettings({
     workdir: tempRoot.current,
     ...(opts.accessToken !== undefined ? { accessToken: opts.accessToken } : {}),
   });
@@ -180,7 +180,7 @@ function setup(opts: SetupOpts = {}) {
     buildLegacyTestRuntime({
       out,
       api: { layer: api.layer, httpClientLayer: api.httpClientLayer },
-      cliConfig,
+      cliSettings,
       telemetry: telemetry.layer,
       linkedProjectCache: cache.layer,
       analytics,

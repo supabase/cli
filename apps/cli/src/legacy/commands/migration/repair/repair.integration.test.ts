@@ -7,7 +7,7 @@ import { Cause, Effect, Exit, Layer, Option } from "effect";
 import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
   LEGACY_VALID_REF,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
@@ -124,7 +124,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     resolver,
     connection,
     projectRef,
-    mockLegacyCliConfig({ workdir }),
+    mockLegacyCliSettings({ workdir }),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),

@@ -1,7 +1,7 @@
 import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
 import { legacyResolveDbImage } from "../../../shared/legacy-db-image.ts";
 import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
@@ -79,7 +79,7 @@ export const legacyToShadowDbError = (cause: {
 export const legacyDeclarativeSeamLayer = Layer.effect(
   LegacyDeclarativeSeam,
   Effect.gen(function* () {
-    const cliConfig = yield* LegacyCliConfig;
+    const cliSettings = yield* LegacyCliSettings;
     const spawner = yield* ChildProcessSpawner;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -91,23 +91,30 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
     // and satisfy `LegacyDeclarativeSeamShape`'s `Effect<T, E>` (no leftover requirements)
     // without hand-enumerating every transitive dependency — mirrors
     // `legacy-platform-api-factory.layer.ts`'s identical capture-and-provide shape.
+    // `legacyExportDeclarativeCatalogRef`'s requirements are today identical to
+    // `LegacyExportBaselineCatalogDeps`; if they ever diverge, the declarative
+    // closure below stops typechecking and the new deps must be added here.
     const context = yield* Effect.context<
-      | LegacyExportBaselineCatalogDeps
-      | LegacyExportDeclarativeCatalogDeps
-      | LegacyStartLocalDatabaseDeps
+      LegacyExportBaselineCatalogDeps | LegacyStartLocalDatabaseDeps
     >();
 
     return LegacyDeclarativeSeam.of({
       exportCatalog: ({ mode, noCache, projectRef }) =>
         (mode === "baseline"
-          ? legacyExportBaselineCatalogRef(fs, path, cliConfig.workdir, cliConfig.projectId, {
+          ? legacyExportBaselineCatalogRef(fs, path, cliSettings.workdir, cliSettings.projectId, {
               noCache,
               projectRef,
             })
-          : legacyExportDeclarativeCatalogRef(fs, path, cliConfig.workdir, cliConfig.projectId, {
-              noCache,
-              projectRef,
-            })
+          : legacyExportDeclarativeCatalogRef(
+              fs,
+              path,
+              cliSettings.workdir,
+              cliSettings.projectId,
+              {
+                noCache,
+                projectRef,
+              },
+            )
         ).pipe(
           Effect.provideContext(context),
           Effect.catch((cause) => Effect.fail(legacyToShadowDbError(cause))),
@@ -118,8 +125,8 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
             spawner,
             fs,
             path,
-            cliConfig.workdir,
-            Option.getOrUndefined(cliConfig.projectId),
+            cliSettings.workdir,
+            Option.getOrUndefined(cliSettings.projectId),
           ).pipe(
             Effect.mapError(
               (cause) =>
@@ -153,7 +160,7 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
       ensureLocalPostgresImageCurrent: () =>
         Effect.scoped(
           Effect.gen(function* () {
-            const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir).pipe(
+            const toml = yield* legacyReadDbToml(fs, path, cliSettings.workdir).pipe(
               Effect.mapError(
                 (error) =>
                   new LegacyDeclarativeShadowDbError({
@@ -164,15 +171,15 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
             const image = yield* legacyResolveDbImage(
               fs,
               path,
-              cliConfig.workdir,
+              cliSettings.workdir,
               toml.majorVersion,
               Option.getOrUndefined(toml.orioledbVersion),
             );
             const tomlProjectId = toml.projectId;
             const projectId = legacyResolveLocalProjectId(
-              Option.getOrUndefined(cliConfig.projectId),
+              Option.getOrUndefined(cliSettings.projectId),
               Option.getOrUndefined(tomlProjectId),
-              cliConfig.workdir,
+              cliSettings.workdir,
             );
             const containerId = localDbContainerId(projectId);
             const child = yield* spawnContainerCli(spawner, ["container", "inspect", containerId], {
@@ -271,15 +278,6 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
 
 type LegacyExportBaselineCatalogDeps =
   ReturnType<typeof legacyExportBaselineCatalogRef> extends Effect.Effect<
-    infer _A,
-    infer _E,
-    infer R
-  >
-    ? R
-    : never;
-
-type LegacyExportDeclarativeCatalogDeps =
-  ReturnType<typeof legacyExportDeclarativeCatalogRef> extends Effect.Effect<
     infer _A,
     infer _E,
     infer R

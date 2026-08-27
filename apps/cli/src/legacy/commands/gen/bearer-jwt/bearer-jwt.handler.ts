@@ -1,5 +1,5 @@
 import { Effect, FileSystem, Option, Path } from "effect";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { legacyLoadProjectEnv } from "../../../shared/legacy-db-config.toml-read.ts";
 import { legacySignJwtWithJwk } from "../../../shared/legacy-go-jwt.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -49,7 +49,7 @@ import { legacyResolveBearerJwtSigningKey } from "./bearer-jwt.signing-key.ts";
 export const legacyGenBearerJwt = Effect.fn("legacy.gen.bearer-jwt")(function* (
   flags: LegacyGenBearerJwtFlags,
 ) {
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const telemetryState = yield* LegacyTelemetryState;
   const output = yield* Output;
   const fs = yield* FileSystem.FileSystem;
@@ -88,8 +88,8 @@ export const legacyGenBearerJwt = Effect.fn("legacy.gen.bearer-jwt")(function* (
         }),
     });
 
-    yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
-    const jwk = yield* legacyResolveBearerJwtSigningKey(cliConfig.workdir);
+    yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir);
+    const jwk = yield* legacyResolveBearerJwtSigningKey(cliSettings.workdir);
 
     const payloadJson = legacyEncodeBearerJwtClaims(claims);
     const token = yield* Effect.try({

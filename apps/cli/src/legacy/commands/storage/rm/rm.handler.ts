@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -54,7 +54,7 @@ export const legacyStorageRm = Effect.fn("legacy.storage.rm")(function* (
   flags: LegacyStorageRmFlags,
 ) {
   const output = yield* Output;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const telemetryState = yield* LegacyTelemetryState;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const resolver = yield* LegacyProjectRefResolver;
@@ -87,9 +87,9 @@ export const legacyStorageRm = Effect.fn("legacy.storage.rm")(function* (
     // branches load the project `.env` files before the confirmation
     // prompt, so a `SUPABASE_YES` set only in `supabase/.env` must
     // auto-confirm here too.
-    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliSettings.workdir);
     const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
-    const loaded = yield* legacyLoadStorageConfig(cliConfig.workdir, projectRef);
+    const loaded = yield* legacyLoadStorageConfig(cliSettings.workdir, projectRef);
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }
@@ -113,7 +113,7 @@ export const legacyStorageRm = Effect.fn("legacy.storage.rm")(function* (
     const summary: RmSummary = { deleted: [], buckets_deleted: [] };
 
     yield* legacyConnectStorageGateway(
-      { projectRef, config: loaded.config, userAgent: cliConfig.userAgent },
+      { projectRef, config: loaded.config, userAgent: cliSettings.userAgent },
       (gateway) =>
         Effect.gen(function* () {
           // No paths: `-r` deletes every bucket, otherwise it's a missing-flag

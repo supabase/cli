@@ -12,6 +12,7 @@ import { ConnectionError, SqlError } from "effect/unstable/sql/SqlError";
 import * as Pg from "pg";
 import { to as pgCopyTo } from "pg-copy-streams";
 import {
+  LEGACY_SUGGEST_LOCAL_STACK,
   legacyConnectFailureMessage,
   legacyConnectSuggestion,
   legacyIsDialFailure,
@@ -202,6 +203,69 @@ export function legacyToExecError(error: unknown): LegacyDbExecError {
   return new LegacyDbExecError({ message: String(error), code: legacyExtractSqlState(error) });
 }
 
+const LEGACY_BATCH_CONNECTION_LOST =
+  "connection to the database was lost before the batch could be sent";
+
+/** How far a batch got on the wire: nothing sent, a partial write, or fully written. */
+export type LegacyBatchOutcome = "unsent" | "poisoned" | "submitted";
+
+/**
+ * Idle time before TCP starts probing a silent peer. Node applies this as the idle delay only,
+ * leaving the probe interval and count to the runtime and OS, so a connection whose peer died
+ * without a FIN or RST surfaces some minutes after this elapses rather than when it elapses.
+ */
+const LEGACY_DB_KEEPALIVE_IDLE_MILLIS = 300_000;
+
+/**
+ * Maps a failed migration batch to its public error. A batch that never reached the wire
+ * is a connectivity failure, not a statement failure, so it reports as one instead of
+ * blaming the batch's first statement; anything else keeps `legacyToExecError`'s
+ * server-error rendering plus the number of statements that completed.
+ */
+export function legacyBatchFailureError(
+  error: Error,
+  batch: { readonly completed: number; readonly outcome: LegacyBatchOutcome } | undefined,
+  isLocal: boolean,
+): LegacyDbExecError | LegacyDbConnectError {
+  if (batch === undefined || batch.outcome === "unsent") {
+    return new LegacyDbConnectError({
+      message: `${LEGACY_BATCH_CONNECTION_LOST}: ${error.message}`,
+      // The checkout failure a tick earlier carries this same hint, so losing the
+      // connection mid-batch must not silently drop it.
+      ...(isLocal ? { suggestion: LEGACY_SUGGEST_LOCAL_STACK } : {}),
+    });
+  }
+  const mapped = legacyToExecError(error);
+  return new LegacyDbExecError({
+    message: mapped.message,
+    code: mapped.code,
+    detail: mapped.detail,
+    position: mapped.position,
+    statementIndex: batch.completed,
+  });
+}
+
+/**
+ * Whether a batch's pooled client must be destroyed rather than returned to the pool. A
+ * batch that never reached the wire leaves the client looking healthy to pg-pool while its
+ * socket is already gone, so the next checkout would write into the same dead connection.
+ *
+ * A batch that WAS written keeps its client: a statement failure should not cost a redial and
+ * a fresh step-down on a single-connection pool. Recovering from a socket that died after the
+ * write is left to pg-pool, which drops a released client whose private `_queryable` flag is
+ * false — so that is the behavior to re-check if a pg-pool bump ever breaks the recovery this
+ * layer's integration tests assert.
+ */
+export function legacyShouldDiscardBatchClient(
+  batch: { readonly outcome: LegacyBatchOutcome } | undefined,
+  exit: Exit.Exit<unknown, unknown>,
+): boolean {
+  return (
+    (batch !== undefined && batch.outcome !== "submitted") ||
+    (Exit.isFailure(exit) && (Cause.hasInterrupts(exit.cause) || Cause.hasDies(exit.cause)))
+  );
+}
+
 const legacyEncodeTextArray = (values: ReadonlyArray<string>): string =>
   `{${values
     .map((value) => `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`)
@@ -210,14 +274,14 @@ const legacyEncodeTextArray = (values: ReadonlyArray<string>): string =>
 const legacyEncodeBatchValue = (value: LegacyDbBatchValue): string | null =>
   value === null ? null : typeof value === "string" ? value : legacyEncodeTextArray(value);
 
-class LegacyPgBatchQuery implements Pg.Submittable {
+export class LegacyPgBatchQuery implements Pg.Submittable {
   readonly statements: ReadonlyArray<{
     readonly sql: string;
     readonly params: ReadonlyArray<string | null>;
   }>;
   callback: (error: Error | undefined) => void;
   completed = 0;
-  poisoned = false;
+  outcome: LegacyBatchOutcome = "unsent";
 
   constructor(
     statements: ReadonlyArray<LegacyDbBatchStatement>,
@@ -231,6 +295,9 @@ class LegacyPgBatchQuery implements Pg.Submittable {
   }
 
   submit(connection: Pg.Connection): Error | null {
+    if (!connection.stream.writable) {
+      return new Error("the connection's socket is no longer writable");
+    }
     let started = false;
     connection.stream.cork?.();
     try {
@@ -242,13 +309,20 @@ class LegacyPgBatchQuery implements Pg.Submittable {
         connection.execute({ portal: "" }, true);
       }
       connection.sync();
-      return null;
     } catch (error) {
-      this.poisoned = started;
+      this.outcome = started ? "poisoned" : "unsent";
       return error instanceof Error ? error : new Error(String(error));
     } finally {
       connection.stream.uncork?.();
     }
+    // The corked frames only hit the socket at uncork, and a dead peer destroys the
+    // stream synchronously during that flush — so only now does writable prove the
+    // batch actually left the process.
+    if (!connection.stream.writable) {
+      return new Error("the connection's socket became unwritable while the batch was flushing");
+    }
+    this.outcome = "submitted";
+    return null;
   }
 
   handleRowDescription(): void {}
@@ -511,6 +585,8 @@ export function legacyBuildRawPgConfig(
       : { host, port, user: cfg.user, password: cfg.password, database: cfg.database }),
     ...(sslOption === undefined ? {} : { ssl: sslOption }),
     connectionTimeoutMillis: connectTimeoutSeconds * 1000,
+    keepAlive: true,
+    keepAliveInitialDelayMillis: LEGACY_DB_KEEPALIVE_IDLE_MILLIS,
   };
 }
 
@@ -946,6 +1022,12 @@ const connect = (
     const acquireRawClient = Effect.gen(function* () {
       if (rawClient !== undefined) return rawClient;
       const fresh = new Pg.Client(winningRawConfig);
+      // node-postgres emits `error` on a cached client whose socket dies while idle; with
+      // no listener that terminates the process, so absorb it and drop the dead client so
+      // the next acquisition redials instead of reusing it.
+      fresh.on("error", () => {
+        if (rawClient === fresh) rawClient = undefined;
+      });
       yield* Effect.tryPromise({
         try: () => fresh.connect(),
         catch: (error) => legacyToConnectError(cfg, options.isLocal, error),
@@ -964,11 +1046,12 @@ const connect = (
     // Checking a connection out of the pool for a batch is a connection-setup
     // concern, so it fails with `LegacyDbConnectError` — the same classification
     // `acquireRawClient` uses above, and for the same reason: the pool may have to
-    // redial (its single connection is discarded after an interrupted or poisoned
-    // batch), and a refused/auth/DNS failure there is not a statement failure. Mapping
-    // it to `LegacyDbExecError` would lose the connect suggestion and make the
+    // redial (its single connection is discarded after an interrupted, poisoned, or
+    // unsent batch), and a refused/auth/DNS failure there is not a statement failure.
+    // Mapping it to `LegacyDbExecError` would lose the connect suggestion and make the
     // migration-apply formatter blame the batch's first statement for a connectivity
-    // problem. Only the batch's own execution (below) raises `LegacyDbExecError`.
+    // problem — which is also why a batch that never reached the wire reports the same
+    // way (below). Only a batch that was actually written raises `LegacyDbExecError`.
     const acquireBatchClient = Effect.callback<Pg.PoolClient, LegacyDbConnectError>((resume) => {
       let done = false;
       try {
@@ -1007,7 +1090,7 @@ const connect = (
         (activeClient) => {
           const onConnectionError = () => {};
           activeClient.on("error", onConnectionError);
-          return Effect.callback<void, LegacyDbExecError>((resume) => {
+          return Effect.callback<void, LegacyDbExecError | LegacyDbConnectError>((resume) => {
             let done = false;
             const finish = (error: Error | undefined) => {
               if (done) return;
@@ -1016,18 +1099,7 @@ const connect = (
                 resume(Effect.void);
                 return;
               }
-              const mapped = legacyToExecError(error);
-              resume(
-                Effect.fail(
-                  new LegacyDbExecError({
-                    message: mapped.message,
-                    code: mapped.code,
-                    detail: mapped.detail,
-                    position: mapped.position,
-                    statementIndex: batchQuery?.completed ?? 0,
-                  }),
-                ),
-              );
+              resume(Effect.fail(legacyBatchFailureError(error, batchQuery, options.isLocal)));
             };
             batchQuery = new LegacyPgBatchQuery(statements, finish);
             try {
@@ -1046,11 +1118,8 @@ const connect = (
         },
         (activeClient, exit) =>
           Effect.sync(() => {
-            const discard =
-              batchQuery?.poisoned === true ||
-              (Exit.isFailure(exit) &&
-                (Cause.hasInterrupts(exit.cause) || Cause.hasDies(exit.cause)));
-            activeClient.release(discard ? new Error("batch execution interrupted") : undefined);
+            const discard = legacyShouldDiscardBatchClient(batchQuery, exit);
+            activeClient.release(discard ? new Error("batch connection discarded") : undefined);
           }),
       );
     };

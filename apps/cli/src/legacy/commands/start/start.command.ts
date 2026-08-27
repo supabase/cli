@@ -5,7 +5,7 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { legacyHttpClientLayer } from "../../auth/legacy-http-debug.layer.ts";
-import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
+import { legacyCliSettingsLayer } from "../../config/legacy-cli-settings.layer.ts";
 import { legacyDbConnectionLayer } from "../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
 import { legacyDockerRunLayer } from "../../shared/legacy-docker-run.layer.ts";
@@ -32,9 +32,11 @@ const config = {
   exclude: legacyStartExcludeFlag,
   ignoreHealthCheck: Flag.boolean("ignore-health-check").pipe(
     Flag.withDescription("Ignore unhealthy services and exit 0"),
+    Flag.withDefault(false),
   ),
   preview: Flag.boolean("preview").pipe(
     Flag.withDescription("Connect to feature preview branch"),
+    Flag.withDefault(false),
     Flag.withHidden,
   ),
 } as const;
@@ -60,15 +62,15 @@ export type LegacyStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 // pipeline's best-effort pg-delta migrations-catalog warmup (`db-setup.ts`'s
 // `legacyTryCacheMigrationsCatalog` call) — the exact same pair `db push` already composes
 // for its own call to that function (`push.layers.ts`).
-const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const cliSettings = legacyCliSettingsLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
   Layer.provide(legacyDockerRunLayer),
-  Layer.provide(cliConfig),
+  Layer.provide(cliSettings),
 );
 
 const legacyStartRuntimeLayer = Layer.mergeAll(
-  cliConfig,
+  cliSettings,
   legacyTelemetryStateLayer,
   commandRuntimeLayer(["start"]),
   legacyDockerRunLayer,

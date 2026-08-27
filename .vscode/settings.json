@@ -2,5 +2,17 @@
   "editor.defaultFormatter": "oxc.oxc-vscode",
   "editor.formatOnSave": true,
   "editor.formatOnSaveMode": "file",
-  "typescript.experimental.useTsgo": true
+
+  // Explicit config paths disable nested config discovery: `ignorePatterns`
+  // doesn't prevent oxlint/oxfmt from loading the `.repos` submodules' own
+  // configs (see oxc-project/oxc#21959, oxc-project/oxc#23182).
+  "oxc.configPath": ".oxlintrc.json",
+  "oxc.fmt.configPath": ".oxfmtrc.json",
+
+  // Ignore the `.repos` submodules (see this blog post):
+  // https://www.effect.website/blog/the-one-weird-git-trick-that-makes-coding-agents-more-effect-ive#configuring-your-editor
+  "js/ts.preferences.autoImportFileExcludePatterns": [".repos/**"],
+  "files.exclude": { ".repos/**": true },
+  "files.watcherExclude": { ".repos/**": true },
+  "search.exclude": { ".repos/**": true }
 }

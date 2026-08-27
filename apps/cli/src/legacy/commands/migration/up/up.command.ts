@@ -9,6 +9,7 @@ import { legacyMigrationUp } from "./up.handler.ts";
 const config = {
   includeAll: Flag.boolean("include-all").pipe(
     Flag.withDescription("Include all migrations not found on remote history table."),
+    Flag.withDefault(false),
   ),
   dbUrl: Flag.string("db-url").pipe(
     Flag.withDescription(
@@ -18,6 +19,7 @@ const config = {
   ),
   linked: Flag.boolean("linked").pipe(
     Flag.withDescription("Applies pending migrations to the linked project."),
+    Flag.withDefault(false),
   ),
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Applies pending migrations to the local database."),

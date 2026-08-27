@@ -1,10 +1,14 @@
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerPortMapArgs } from "../Platform.ts";
 import type { StackIdentity } from "../StackIdentity.ts";
-import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
+import {
+  dockerRunService,
+  type ContainerRuntimeOptions,
+  type ServiceDependency,
+} from "./service-utils.ts";
 import { stackHealthBudgets } from "./health-budgets.ts";
 
-interface DockerAnalyticsOptions {
+interface DockerAnalyticsOptions extends ContainerRuntimeOptions {
   readonly image: string;
   readonly identity: StackIdentity;
   readonly hostPort: number;
@@ -69,23 +73,13 @@ export const makeAnalyticsServiceDocker = (opts: DockerAnalyticsOptions): Servic
   }
 
   return dockerRunService({
+    runtime: opts.runtime,
     name: "analytics",
     identity: opts.identity,
     image: opts.image,
     networkArgs: dockerPortMapArgs(opts.platformOs, [
       { host: opts.hostPort, container: ANALYTICS_CONTAINER_PORT },
     ]),
-    entrypoint: "sh",
-    cmd: [
-      "-c",
-      // migrate && start: a failed migrate exits the container and the
-      // unless-stopped restart retries until the db is ready (supabase/cli#6088).
-      `cat <<'EOF' > /tmp/run.sh && sh /tmp/run.sh
-./logflare eval Logflare.Release.migrate &&
-./logflare start --sname logflare
-EOF
-`,
-    ],
     env,
     dependencies: opts.dependencies,
     healthCheck: analyticsHealthCheck(opts.hostPort),

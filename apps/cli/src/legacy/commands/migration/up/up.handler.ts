@@ -3,7 +3,7 @@ import { Effect, FileSystem, Option, Path } from "effect";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyBold } from "../../../shared/legacy-colors.ts";
 import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
@@ -42,7 +42,7 @@ const runUp = Effect.fnUntraced(function* (
   const output = yield* Output;
   const resolver = yield* LegacyDbConfigResolver;
   const connection = yield* LegacyDbConnection;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dnsResolver = yield* LegacyDnsResolverFlag;
@@ -67,7 +67,7 @@ const runUp = Effect.fnUntraced(function* (
     );
   }
 
-  const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
+  const migrationsDir = path.join(cliSettings.workdir, "supabase", "migrations");
 
   const upBody = Effect.gen(function* () {
     // up defaults to `--local`.
@@ -78,7 +78,7 @@ const runUp = Effect.fnUntraced(function* (
       linkedProjectRef: flags.projectRef,
     });
     const ref = Option.getOrUndefined(cfg.ref ?? Option.none());
-    const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref);
+    const toml = yield* legacyReadDbToml(fs, path, cliSettings.workdir, ref);
 
     yield* Effect.scoped(
       Effect.gen(function* () {

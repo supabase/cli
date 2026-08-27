@@ -11,7 +11,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
-import { ProjectLocalServiceVersions } from "./project-local-service-versions.service.ts";
+import { CliProjectLocalServiceVersions } from "./cli-project-local-service-versions.service.ts";
 import { ProjectLinkState } from "./project-link-state.service.ts";
 
 export type ResolvedServiceVersionContext = StackVersionPlan;
@@ -71,10 +71,10 @@ export const resolveServiceVersionContext = Effect.fnUntraced(function* (
   pinnedBaselineOverride?: VersionManifest,
 ) {
   const projectLinkState = yield* ProjectLinkState;
-  const projectLocalServiceVersions = yield* ProjectLocalServiceVersions;
+  const cliProjectLocalServiceVersions = yield* CliProjectLocalServiceVersions;
 
   const flagOverrides = yield* parseServiceVersionOverrides(rawOverrides);
-  const localState = yield* projectLocalServiceVersions.load;
+  const localState = yield* cliProjectLocalServiceVersions.load;
   const linkedState = yield* projectLinkState.load;
 
   return planStackVersions({

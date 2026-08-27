@@ -3,7 +3,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
 import { requestWithAuth } from "../../../shared/legacy-raw-http.ts";
 import { resolveLegacyAccessToken } from "../../../shared/legacy-resolve-token.ts";
@@ -33,13 +33,13 @@ export interface LegacyCostItem {
  */
 export const getCostMatrix = Effect.fn("legacy.config.push.cost-matrix")(function* (ref: string) {
   const httpClient = yield* HttpClient.HttpClient;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const tokenOpt = yield* resolveLegacyAccessToken;
 
   const request = requestWithAuth(
-    HttpClientRequest.get(`${cliConfig.apiUrl}/v1/projects/${ref}/billing/addons`),
+    HttpClientRequest.get(`${cliSettings.apiUrl}/v1/projects/${ref}/billing/addons`),
     tokenOpt,
-    cliConfig.userAgent,
+    cliSettings.userAgent,
   );
 
   const response = yield* httpClient.execute(request).pipe(

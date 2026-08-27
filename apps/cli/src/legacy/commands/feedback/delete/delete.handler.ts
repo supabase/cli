@@ -5,7 +5,7 @@ import { Output } from "../../../../shared/output/output.service.ts";
 import { Stdin } from "../../../../shared/runtime/stdin.service.ts";
 import { LegacyOutputFlag, legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
 import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.ts";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyCliSettings } from "../../../config/legacy-cli-settings.service.ts";
 import { encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyResolveFeedbackProjectRef } from "../feedback-project-ref.ts";
@@ -30,7 +30,7 @@ export const legacyFeedbackDelete = Effect.fn("legacy.feedback.delete")(function
 ) {
   const output = yield* Output;
   const goOutputFlag = yield* LegacyOutputFlag;
-  const cliConfig = yield* LegacyCliConfig;
+  const cliSettings = yield* LegacyCliSettings;
   const telemetryRuntime = yield* TelemetryRuntime;
   const client = yield* FeedbackClient;
   const telemetryState = yield* LegacyTelemetryState;
@@ -54,8 +54,8 @@ export const legacyFeedbackDelete = Effect.fn("legacy.feedback.delete")(function
     // ref file; extra context against a context-free row is ignored server-side,
     // so sending whatever resolves is always safe.
     const projectRef = yield* legacyResolveFeedbackProjectRef(
-      cliConfig.workdir,
-      Option.orElse(args.projectRef, () => cliConfig.projectId),
+      cliSettings.workdir,
+      Option.orElse(args.projectRef, () => cliSettings.projectId),
     ).pipe(Effect.map(Option.getOrUndefined));
 
     // User-id context gate, same shape as the project-ref one: rows submitted

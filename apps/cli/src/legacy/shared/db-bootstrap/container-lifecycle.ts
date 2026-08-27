@@ -48,6 +48,11 @@ import {
 /** Structural element type of {@link LegacyStartContainerSpec.secretFiles} — not exported from `docker-create-args.ts`, so referenced positionally here. */
 type LegacyStartSecretFileSpec = NonNullable<LegacyStartContainerSpec["secretFiles"]>[number];
 
+/** Structural element type of {@link LegacyStartContainerSpec.preStartArchives} — same reasoning as {@link LegacyStartSecretFileSpec}. */
+type LegacyStartPreStartArchiveSpec = NonNullable<
+  LegacyStartContainerSpec["preStartArchives"]
+>[number];
+
 type Spawner = ChildProcessSpawner["Service"];
 
 /**
@@ -154,7 +159,7 @@ export interface LegacyContainerOpts {
    */
   readonly isBitbucketPipeline: boolean;
   /**
-   * `LegacyCliConfig.workdir` — the project's own working directory. Stamped onto every
+   * `LegacyCliSettings.workdir` — the project's own working directory. Stamped onto every
    * created container as {@link LEGACY_CLI_WORKDIR_LABEL} (see that constant's doc
    * comment) so a later `stop`/{@link legacyRollbackStart} can find this exact directory
    * again from the container's own label, without depending on being invoked from the
@@ -679,58 +684,46 @@ function legacyDockerStartContainer(
 }
 
 /**
- * Extracts an in-memory tar archive through the same Docker CLI/Engine connection used by create
- * and start. Stdin requires no daemon-visible bind source or client-visible host path, so the flow
- * works with local, remote-context, and confined container clients.
+ * `docker cp - <dest>` with tar bytes on stdin. The stream form keeps member uid/gid;
+ * a host-path copy would reset ownership to root.
  */
-function legacyDockerCopyArchiveIntoContainer(
+export function legacyDockerCopyArchiveIntoContainer<E>(
   spawner: Spawner,
-  archive: Uint8Array,
+  archive: Uint8Array | LegacyStartPreStartArchiveSpec["tar"],
   containerDest: string,
-): Effect.Effect<void, LegacyContainerCreateError> {
+  fail: (detail: string) => E,
+): Effect.Effect<void, E> {
+  const stdin = Stream.isStream(archive) ? archive : Stream.make(archive);
   return Effect.scoped(
     Effect.gen(function* () {
       const child = yield* spawnContainerCli(spawner, ["cp", "-", containerDest], {
-        stdin: Stream.make(archive),
+        stdin,
         stdout: "ignore",
         stderr: "pipe",
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new LegacyContainerCreateError({
-              message: `failed to create docker container: failed to copy secret file into container: ${legacyDescribeContainerCliFailure(cause)}`,
-              reason: "runtime",
-            }),
-        ),
-      );
+      }).pipe(Effect.mapError((cause) => fail(legacyDescribeContainerCliFailure(cause))));
       const [exitCode, stderr] = yield* Effect.all(
         [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
         { concurrency: "unbounded" },
-      ).pipe(
-        Effect.mapError(
-          () =>
-            new LegacyContainerCreateError({
-              message:
-                "failed to create docker container: failed to copy secret file into container",
-              reason: "runtime",
-            }),
-        ),
-      );
+      ).pipe(Effect.mapError((cause) => fail(legacyDescribeContainerCliFailure(cause))));
       if (exitCode !== 0) {
         const message = stderr.trim();
         return yield* Effect.fail(
-          new LegacyContainerCreateError({
-            message:
-              message.length > 0
-                ? `failed to create docker container: failed to copy secret file into container: ${message}`
-                : "failed to create docker container: failed to copy secret file into container",
-            reason: legacyContainerCliReason(message),
-          }),
+          fail(message.length > 0 ? `exit ${exitCode}: ${message}` : `exit ${exitCode}`),
         );
       }
     }),
   );
 }
+
+const legacySecretCopyFailure = (detail: string): LegacyContainerCreateError =>
+  new LegacyContainerCreateError({
+    message:
+      detail.length > 0
+        ? `failed to create docker container: failed to copy secret file into container: ${detail}`
+        : "failed to create docker container: failed to copy secret file into container",
+    reason:
+      detail.length > 0 && !legacyIsDockerDaemonUnreachable(detail) ? "configuration" : "runtime",
+  });
 
 /**
  * Streams all secret files as one archive after create and before start. `Bun.Archive` exposes no
@@ -762,8 +755,43 @@ function legacyCopyStartSecretFilesIntoContainer(
       }),
   }).pipe(
     Effect.flatMap((archive) =>
-      legacyDockerCopyArchiveIntoContainer(spawner, archive, `${containerId}:/`),
+      legacyDockerCopyArchiveIntoContainer(
+        spawner,
+        archive,
+        `${containerId}:/`,
+        legacySecretCopyFailure,
+      ),
     ),
+  );
+}
+
+/**
+ * `docker cp - <containerId>:<containerPath>` with one
+ * {@link LegacyStartContainerSpec.preStartArchives} entry's tar bytes on stdin — the ONE `docker
+ * cp` form that preserves each archive member's uid/gid inside the container (the host-path form
+ * rewrites ownership to root, which a restored Postgres data directory cannot survive; see that
+ * field's own doc comment).
+ *
+ * Sequenced by {@link legacyCreateContainer} between `docker create` and `docker start`, for the
+ * same two reasons the secret-file copies are: the container must exist for `docker cp` to have a
+ * target, and must not be running yet so its entrypoint never races the copy — which for an
+ * archive is not merely a race but the whole point, since the entrypoint's behavior depends on
+ * what it finds already unpacked.
+ */
+function legacyExtractPreStartArchiveIntoContainer(
+  spawner: Spawner,
+  containerId: string,
+  archive: LegacyStartPreStartArchiveSpec,
+): Effect.Effect<void, LegacyContainerCreateError> {
+  return legacyDockerCopyArchiveIntoContainer(
+    spawner,
+    archive.tar,
+    `${containerId}:${archive.containerPath}`,
+    (detail) =>
+      new LegacyContainerCreateError({
+        message: `failed to create docker container: failed to restore archive into container: ${detail}`,
+        reason: "runtime",
+      }),
   );
 }
 
@@ -785,7 +813,11 @@ function legacyCopyStartSecretFilesIntoContainer(
  *    Runs strictly between `docker create` and `docker start`: the container
  *    must already exist for `docker cp` to have a target, and must not be
  *    running yet so its entrypoint never races the copy.
- * 6. `docker start`.
+ * 6. Unpack any `preStartArchives` into the same created-but-unstarted
+ *    container via `docker cp -` (`legacyExtractPreStartArchiveIntoContainer`)
+ *    — also TS-port-only, and for the shadow baseline cache's restored PGDATA
+ *    the "not started yet" half of step 5's ordering is the entire point.
+ * 7. `docker start`.
  *
  * Resolves to the created container's id/name on success.
  */
@@ -838,6 +870,29 @@ export function legacyCreateContainer(
       spawner,
       containerId,
       finalSpec.secretFiles ?? [],
+    );
+    // Sequentially, not concurrently like the secret files: two archives could legitimately
+    // overlap in the container's filesystem, so the spec's own order has to be the applied order.
+    //
+    // A failed extraction removes the just-created container (best-effort, `-v` so an anonymous
+    // volume goes with it) before failing. The secret-file/`docker start` steps deliberately do
+    // NOT do this — their established post-create failure window leaves cleanup to the caller's
+    // finalizer (see `legacyCreateShadowDatabase`'s doc comment, `shadow-database.ts`) — but
+    // `preStartArchives`' one producer (the shadow baseline cache's warm restore) recovers from
+    // this exact failure by provisioning a replacement, which must not accumulate an orphaned
+    // created container per recovery.
+    yield* Effect.forEach(
+      finalSpec.preStartArchives ?? [],
+      (archive) => legacyExtractPreStartArchiveIntoContainer(spawner, containerId, archive),
+      { discard: true },
+    ).pipe(
+      Effect.tapError(() =>
+        containerCliExitCode(spawner, ["rm", "-f", "-v", containerId], {
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "ignore",
+        }).pipe(Effect.orElseSucceed(() => 0)),
+      ),
     );
     yield* legacyDockerStartContainer(spawner, containerId, finalSpec);
     return containerId;

@@ -6,7 +6,7 @@ import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts
 import {
   buildLegacyTestRuntime,
   LEGACY_VALID_REF,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
@@ -14,6 +14,7 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { EventUpgradeSuggested } from "../../../../shared/telemetry/event-catalog.ts";
+import { classifyCliCauseActionability } from "../../../../shared/telemetry/error-actionability.ts";
 import { legacySsoList } from "./list.handler.ts";
 
 // Mirrors what the Management API returns: neither `saml.id` nor
@@ -125,11 +126,11 @@ function setup(opts: SetupOpts = {}) {
     },
   });
 
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
     analytics,
@@ -158,14 +159,29 @@ describe("legacy sso list integration", () => {
     const item = {
       ...PROVIDER_ITEM,
       saml: { ...PROVIDER_ITEM.saml, id: "8682fcf4-4056-455c-bd93-f33295604929" },
-      domains: [{ ...PROVIDER_ITEM.domains[0], id: "9484591c-a203-4500-bea7-d0aaa845e2f5" }],
+      domains: [
+        {
+          ...PROVIDER_ITEM.domains[0],
+          id: "9484591c-a203-4500-bea7-d0aaa845e2f5",
+          created_at: "1999-01-02T03:04:05.000Z",
+          updated_at: "2000-02-03T04:05:06.000Z",
+        },
+      ],
     };
     const { layer, out } = setup({ goOutput: "json", body: { items: [item] } });
     return Effect.gen(function* () {
       yield* legacySsoList({ projectRef: Option.none() });
+      const emitted = JSON.parse(out.stdoutText) as {
+        providers: Array<{ domains: Array<{ created_at: string; updated_at: string }> }>;
+      };
       expect(out.stdoutText).toContain("0b0d48f6-878b-4190-88d7-2ca33ed800bc");
       expect(out.stdoutText).not.toContain("8682fcf4-4056-455c-bd93-f33295604929");
       expect(out.stdoutText).not.toContain("9484591c-a203-4500-bea7-d0aaa845e2f5");
+      expect(emitted.providers[0]?.domains[0]).toEqual({
+        domain: "example.com",
+        created_at: "1999-01-02T03:04:05.000Z",
+        updated_at: "2000-02-03T04:05:06.000Z",
+      });
     }).pipe(Effect.provide(layer));
   });
 
@@ -247,6 +263,23 @@ describe("legacy sso list integration", () => {
     return Effect.gen(function* () {
       yield* legacySsoList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("IDENTITY PROVIDER ID");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects a 200 response containing a null provider item", () => {
+    const { layer } = setup({ body: { items: [null] } });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacySsoList({ projectRef: Option.none() }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySsoListNetworkError");
+        expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+          error_kind: "external_service",
+          error_category: "api_status",
+          error_fingerprint: "tag:LegacySsoListNetworkError:api_response",
+        });
+      }
     }).pipe(Effect.provide(layer));
   });
 

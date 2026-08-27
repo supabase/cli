@@ -1,7 +1,7 @@
 import { mkdir } from "node:fs/promises";
-import { toProjectConfigJsonSchema } from "../src/base.ts";
+import { toCliConfigJsonSchema } from "../src/base.ts";
 
-const json = toProjectConfigJsonSchema();
+const json = toCliConfigJsonSchema();
 const schema = `${JSON.stringify(json, null, 2)}\n`;
 
 const formatter = Bun.spawn(["bun", "x", "oxfmt", "--stdin-filepath=./dist/schema.json"], {
@@ -9,8 +9,8 @@ const formatter = Bun.spawn(["bun", "x", "oxfmt", "--stdin-filepath=./dist/schem
   stdout: "pipe",
   stderr: "pipe",
 });
-formatter.stdin.write(schema);
-formatter.stdin.end();
+await formatter.stdin.write(schema);
+await formatter.stdin.end();
 
 const [exitCode, formatted, stderr] = await Promise.all([
   formatter.exited,

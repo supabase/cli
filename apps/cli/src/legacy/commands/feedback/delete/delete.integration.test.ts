@@ -19,7 +19,7 @@ import {
 } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -112,7 +112,7 @@ function setupLegacyFeedbackDelete(
     yes?: boolean;
     /** Simulates the Go-compat `-o`/`--output` global flag. */
     goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
-    /** Simulates `SUPABASE_PROJECT_ID`, the only source `LegacyCliConfig` reads. */
+    /** Simulates `SUPABASE_PROJECT_ID`, the only source `LegacyCliSettings` reads. */
     projectIdEnv?: string;
     /** Simulates the gotrue user id persisted to telemetry.json at login. */
     distinctId?: string;
@@ -132,7 +132,7 @@ function setupLegacyFeedbackDelete(
       distinctId: opts.distinctId,
       consent: opts.consent,
     }),
-    mockLegacyCliConfig({
+    mockLegacyCliSettings({
       workdir: tempRoot.current,
       userAgent: "SupabaseCLI/9.9.9",
       projectId: opts.projectIdEnv === undefined ? Option.none() : Option.some(opts.projectIdEnv),

@@ -1,16 +1,21 @@
 import {
-  ProjectConfigSchema,
-  findProjectPaths,
+  CliConfigSchema,
+  findCliProjectPaths,
   inferFunctionsManifest,
-  loadProjectConfig,
-  resolveProjectSubtree,
-  resolveProjectValue,
-  type ProjectConfig,
-  type ProjectEnvironment,
-  type ResolvedProjectValue,
+  loadCliConfig,
+  resolveCliConfigSubtree,
+  resolveCliConfigValue,
+  type CliConfig,
+  type CliProjectEnvironment,
+  type ResolvedCliConfigValue,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
-} from "@supabase/config";
-import { defaultJwtSecret, defaultPublishableKey, defaultSecretKey } from "@supabase/stack/effect";
+} from "@supabase/config/effect";
+import {
+  defaultJwtSecret,
+  defaultPublishableKey,
+  defaultSecretKey,
+  edgeRuntimeNofileUlimit,
+} from "@supabase/stack/effect";
 import {
   createHmac,
   createPrivateKey,
@@ -21,7 +26,18 @@ import { existsSync, watch } from "node:fs";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { styleText } from "node:util";
-import { Cause, Duration, Effect, Layer, Option, Queue, Redacted, Schema, Stream } from "effect";
+import {
+  Cause,
+  Duration,
+  Effect,
+  Exit,
+  Layer,
+  Option,
+  Queue,
+  Redacted,
+  Schema,
+  Stream,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   legacyDescribeContainerCliFailure,
@@ -49,8 +65,8 @@ import { ProcessControl } from "../runtime/process-control.service.ts";
 import {
   buildDockerBinds,
   discoverFunctionSlugs,
-  dockerBindContainerPath,
-  dockerBindHostPath,
+  type DockerBind,
+  formatDockerBind,
   dockerWorkdirLabel,
   rawFunctionConfigRecord,
   resolveFunctionConfigs,
@@ -69,10 +85,10 @@ import {
   runChildProcess,
   toDockerPath,
 } from "./functions-docker.ts";
-import { loadFunctionsProjectConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
+import { loadFunctionsCliConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
 import { edgeRuntimeImage, resolveEdgeRuntimeVersionPin } from "./functions.shared.ts";
-const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
-const defaultProjectConfig = decodeProjectConfig({});
+const decodeCliConfig = Schema.decodeUnknownSync(CliConfigSchema);
+const defaultCliConfig = decodeCliConfig({});
 
 const dockerRuntimeServerPort = 8081;
 const dockerRuntimeInspectorPort = 8083;
@@ -161,11 +177,11 @@ interface PlainServeAuthConfig {
   readonly jwt_secret?: string;
   readonly anon_key?: string;
   readonly service_role_key?: string;
-  readonly third_party: ProjectConfig["auth"]["third_party"];
+  readonly third_party: CliConfig["auth"]["third_party"];
 }
 
 export interface PlainServeEdgeRuntimeConfig {
-  readonly policy: ProjectConfig["edge_runtime"]["policy"];
+  readonly policy: CliConfig["edge_runtime"]["policy"];
   readonly inspector_port: number;
   readonly deno_version?: number;
   readonly secrets: Readonly<Record<string, string>>;
@@ -194,6 +210,7 @@ interface ServeFunctionContainerConfig {
 
 interface WatchSpec {
   readonly root: string;
+  readonly recursive: boolean;
   readonly matchPaths?: ReadonlySet<string>;
 }
 
@@ -229,7 +246,7 @@ export interface ServeAuthArtifacts {
  * {@link ServeResolvedConfig} (which also carries `auth`/`configPath`, used
  * only to resolve {@link ServeAuthArtifacts} and therefore irrelevant once
  * those are already resolved). `start`'s own bring-up builds this directly
- * from its own already-loaded `ProjectConfig` via {@link toPlainEdgeRuntimeConfig}/
+ * from its own already-loaded `CliConfig` via {@link toPlainEdgeRuntimeConfig}/
  * {@link toPlainFunctionRecord}/`inferFunctionsManifest` (`@supabase/config`)
  * rather than going through {@link resolveServeConfig}'s independent
  * config-loading pipeline.
@@ -255,6 +272,7 @@ export interface ServeEdgeRuntimeContainerConfig {
  * {@link dbUrl} specifically must be caller-supplied rather than hardcoded).
  */
 export interface StartEdgeRuntimeContainerInput {
+  readonly onContainerCreated?: () => void;
   readonly config: ServeEdgeRuntimeContainerConfig;
   readonly authArtifacts: ServeAuthArtifacts;
   /**
@@ -303,11 +321,12 @@ declare const SUPABASE_FUNCTIONS_SERVE_MAIN_TEMPLATE: string | undefined;
 
 export const serveFileWatcherLayer = Layer.sync(FileWatcher, () =>
   FileWatcher.of({
-    watch: (root) =>
+    watch: (root, options) =>
       Stream.callback<ReadonlyArray<FileWatchEvent>, FileWatcherError>((queue) =>
         Effect.acquireRelease(
           Effect.sync(() => {
-            const watcher = watch(root, { recursive: true }, (eventType, filename) => {
+            const recursive = options?.recursive ?? true;
+            const watcher = watch(root, { recursive }, (eventType, filename) => {
               const pathname =
                 filename === null || filename === undefined || filename.length === 0
                   ? root
@@ -373,7 +392,7 @@ function reveal(value: string | Redacted.Redacted<string> | undefined): string |
 }
 
 function toPlainAuthConfig(
-  auth: ProjectConfig["auth"] | ResolvedProjectValue<ProjectConfig["auth"]>,
+  auth: CliConfig["auth"] | ResolvedCliConfigValue<CliConfig["auth"]>,
 ): PlainServeAuthConfig {
   return {
     enabled: auth.enabled,
@@ -414,11 +433,11 @@ function toPlainAuthConfig(
  * Exported so `start`'s own edge-runtime bring-up
  * (`legacy/commands/start/services/edge-runtime.service.ts`) can reuse this
  * exact `Redacted`-unwrapping/zero-hash-filtering logic against its own,
- * already-loaded `ProjectConfig` instead of duplicating it — see
+ * already-loaded `CliConfig` instead of duplicating it — see
  * {@link ServeEdgeRuntimeContainerConfig}'s doc comment.
  */
 export function toPlainEdgeRuntimeConfig(
-  edgeRuntime: ProjectConfig["edge_runtime"] | ResolvedProjectValue<ProjectConfig["edge_runtime"]>,
+  edgeRuntime: CliConfig["edge_runtime"] | ResolvedCliConfigValue<CliConfig["edge_runtime"]>,
 ): PlainServeEdgeRuntimeConfig {
   return {
     policy: reveal(edgeRuntime.policy) ?? "",
@@ -432,7 +451,7 @@ export function toPlainEdgeRuntimeConfig(
     // casing. ListSecrets then keeps only entries with a non-empty SHA256:
     // `DecryptSecretHookFunc` (`pkg/config/secret.go:94-107`) leaves the
     // SHA256 empty exactly when the value is empty or a still-unresolved
-    // `env(VAR)` literal. In the TS pipeline `resolveProjectSubtree` wraps
+    // `env(VAR)` literal. In the TS pipeline `resolveCliConfigSubtree` wraps
     // resolved secret leaves in `Redacted` and leaves unresolved `env()`
     // literals as plain strings, so `Redacted.isRedacted` + non-empty mirrors
     // both zero-hash cases — the same guard `secrets set` uses
@@ -449,7 +468,7 @@ export function toPlainEdgeRuntimeConfig(
 
 /** Exported for the same reason as {@link toPlainEdgeRuntimeConfig}. */
 export function toPlainFunctionRecord(
-  functions: ProjectConfig["functions"] | ResolvedProjectValue<ProjectConfig["functions"]>,
+  functions: CliConfig["functions"] | ResolvedCliConfigValue<CliConfig["functions"]>,
 ): Readonly<Record<string, ManifestFunctionConfig>> {
   return Object.fromEntries(
     Object.entries(functions).map(([slug, config]) => [
@@ -693,7 +712,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   goViperCompat: boolean,
   goConfigCompat: FunctionsGoConfigCompat | undefined,
 ) {
-  const projectEnv = yield* loadServeProjectEnvironment(projectRoot);
+  const projectEnv = yield* loadServeCliProjectEnvironment(projectRoot);
   const projectRef = Option.match(projectIdOverride, {
     onNone: () => undefined,
     onSome: (value) => {
@@ -701,54 +720,54 @@ const resolveServeConfig = Effect.fnUntraced(function* (
       return normalized.length > 0 ? normalized : undefined;
     },
   });
-  // `loadProjectConfig` interpolates `env()` references against the project
+  // `loadCliConfig` interpolates `env()` references against the project
   // environment. We resolve that environment ourselves (Go-accurate, layering
   // `.env.<SUPABASE_ENV>`/`.env.local`/`.env` over the ambient env) and pass it
   // in, so loading neither re-reads those files nor mutates `process.env`.
   //
   // `search: false`/`tomlOnly: true` when `goConfigCompat` is set (legacy
-  // shell): this MUST match `loadFunctionsProjectConfig`'s own options below
+  // shell): this MUST match `loadFunctionsCliConfig`'s own options below
   // exactly, or the two loads can resolve two different files (an ancestor's
   // config.toml vs this dir's; a stray config.json vs config.toml) — one
   // supplying `auth`/`edgeRuntime`/`apiPort` here, the other supplying
   // `denoVersion`/`Config.Validate` below, silently mixing fields from two
   // different projects. `next` (`goConfigCompat === undefined`) keeps the
   // package defaults (ancestor search, JSON preferred), unchanged.
-  const loadedConfig = yield* loadProjectConfig(projectRoot, {
+  const loadedConfig = yield* loadCliConfig(projectRoot, {
     ...(projectRef === undefined ? {} : { projectRef }),
-    ...(projectEnv === null ? {} : { projectEnv }),
+    ...(projectEnv === null ? {} : { cliProjectEnv: projectEnv }),
     goViperCompat,
     ...(goConfigCompat === undefined ? {} : { search: false, tomlOnly: true }),
   });
-  const baseConfig = loadedConfig?.config ?? defaultProjectConfig;
+  const baseConfig = loadedConfig?.config ?? defaultCliConfig;
 
   const auth =
     projectEnv === null
       ? toPlainAuthConfig(baseConfig.auth)
       : toPlainAuthConfig(
-          yield* resolveProjectSubtree(baseConfig.auth, projectEnv, "auth", { goViperCompat }),
+          yield* resolveCliConfigSubtree(baseConfig.auth, projectEnv, "auth", { goViperCompat }),
         );
   const edgeRuntime =
     projectEnv === null
       ? toPlainEdgeRuntimeConfig(baseConfig.edge_runtime)
       : toPlainEdgeRuntimeConfig(
-          yield* resolveProjectSubtree(baseConfig.edge_runtime, projectEnv, "edge_runtime", {
+          yield* resolveCliConfigSubtree(baseConfig.edge_runtime, projectEnv, "edge_runtime", {
             goViperCompat,
           }),
         );
   const apiPort =
     projectEnv === null
       ? baseConfig.api.port
-      : (yield* resolveProjectSubtree(baseConfig.api, projectEnv, "api", { goViperCompat })).port;
+      : (yield* resolveCliConfigSubtree(baseConfig.api, projectEnv, "api", { goViperCompat })).port;
   const configDeclaredFunctions =
     projectEnv === null
       ? toPlainFunctionRecord(baseConfig.functions)
       : toPlainFunctionRecord(
-          yield* resolveProjectSubtree(baseConfig.functions, projectEnv, "functions", {
+          yield* resolveCliConfigSubtree(baseConfig.functions, projectEnv, "functions", {
             goViperCompat,
           }),
         );
-  const configForManifest: ProjectConfig = {
+  const configForManifest: CliConfig = {
     ...baseConfig,
     functions: configDeclaredFunctions,
   };
@@ -760,7 +779,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
     projectEnv === null
       ? (baseConfig.project_id ?? "")
       : (reveal(
-          yield* resolveProjectValue(baseConfig.project_id ?? "", projectEnv, "project_id", {
+          yield* resolveCliConfigValue(baseConfig.project_id ?? "", projectEnv, "project_id", {
             goViperCompat,
           }),
         ) ?? "");
@@ -786,7 +805,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   // derivation — a known gap, narrow to trigger but NOT cosmetic when hit:
   // unlike `deploy`/`download` (which use `context.projectId` outright),
   // `rawProjectId` below only ever sees `SUPABASE_PROJECT_ID` from the
-  // *ambient* shell (`projectIdOverride`, from `LegacyCliConfig`), not from
+  // *ambient* shell (`projectIdOverride`, from `LegacyCliSettings`), not from
   // project dotenv. A project that sets it only in `supabase/.env` therefore
   // gets a different `supabase_edge_runtime_<id>`/`supabase_network_<id>`
   // here than `deploy`/`download`/`start` resolve for the SAME project — so
@@ -801,7 +820,7 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   const goContext =
     goConfigCompat === undefined
       ? undefined
-      : yield* loadFunctionsProjectConfig({
+      : yield* loadFunctionsCliConfig({
           projectRoot,
           projectRef,
           goConfigCompat,
@@ -1090,8 +1109,8 @@ function ambientProjectEnv() {
   );
 }
 
-const loadServeProjectEnvironment = Effect.fnUntraced(function* (projectRoot: string) {
-  const paths = yield* findProjectPaths(projectRoot);
+const loadServeCliProjectEnvironment = Effect.fnUntraced(function* (projectRoot: string) {
+  const paths = yield* findCliProjectPaths(projectRoot);
   if (paths === null) {
     return null;
   }
@@ -1137,7 +1156,7 @@ const loadServeProjectEnvironment = Effect.fnUntraced(function* (projectRoot: st
     }
   }
 
-  return { paths, values, loadedPaths, sources } satisfies ProjectEnvironment;
+  return { paths, values, loadedPaths, sources } satisfies CliProjectEnvironment;
 });
 
 /**
@@ -1146,21 +1165,25 @@ const loadServeProjectEnvironment = Effect.fnUntraced(function* (projectRoot: st
  * but Podman rejects the container outright (supabase/cli#6035), so the flag can
  * only be set for a path a bind actually materializes.
  */
-function hasBindUnder(binds: Iterable<string>, containerPath: string): boolean {
+function hasBindUnder(binds: Iterable<DockerBind>, containerPath: string): boolean {
   for (const bind of binds) {
-    const target = dockerBindContainerPath(bind);
-    if (target === containerPath || target.startsWith(`${containerPath}/`)) {
+    if (
+      bind.containerPath === containerPath ||
+      bind.containerPath.startsWith(`${containerPath}/`)
+    ) {
       return true;
     }
   }
   return false;
 }
 
-async function buildWatchSpecs(binds: ReadonlyArray<string>): Promise<ReadonlyArray<WatchSpec>> {
+async function buildWatchSpecs(
+  binds: ReadonlyArray<DockerBind>,
+): Promise<ReadonlyArray<WatchSpec>> {
   const specs = new Map<string, WatchSpec>();
 
   for (const bind of binds) {
-    const hostPath = dockerBindHostPath(bind);
+    const hostPath = bind.hostPath;
     if (!isAbsolute(hostPath)) {
       continue;
     }
@@ -1168,7 +1191,7 @@ async function buildWatchSpecs(binds: ReadonlyArray<string>): Promise<ReadonlyAr
     try {
       const info = await stat(hostPath);
       if (info.isDirectory()) {
-        specs.set(hostPath, { root: hostPath });
+        specs.set(hostPath, { root: hostPath, recursive: true });
       } else {
         const root = dirname(hostPath);
         const existing = specs.get(root);
@@ -1177,7 +1200,7 @@ async function buildWatchSpecs(binds: ReadonlyArray<string>): Promise<ReadonlyAr
         }
         const matchPaths = new Set(existing?.matchPaths ?? []);
         matchPaths.add(hostPath);
-        specs.set(root, { root, matchPaths });
+        specs.set(root, { root, recursive: false, matchPaths });
       }
     } catch {
       continue;
@@ -1232,10 +1255,15 @@ const waitForRestartSignal = Effect.fnUntraced(function* (watchSpecs: ReadonlyAr
 
   const stream = Stream.mergeAll(
     watchSpecs.map((spec) =>
-      fileWatcher.watch(spec.root, { ignore: watchIgnoreGlobs }).pipe(
-        Stream.map((events) => events.filter((event) => eventMatchesSpec(spec, event))),
-        Stream.filter((events) => events.length > 0),
-      ),
+      fileWatcher
+        .watch(spec.root, {
+          ignore: watchIgnoreGlobs,
+          recursive: spec.recursive,
+        })
+        .pipe(
+          Stream.map((events) => events.filter((event) => eventMatchesSpec(spec, event))),
+          Stream.filter((events) => events.length > 0),
+        ),
     ),
     { concurrency: "unbounded" },
   ).pipe(
@@ -1466,7 +1494,8 @@ export function buildServeEntrypointCommand(
   command: ReadonlyArray<string>,
   multilineEnvScriptPath?: string,
 ) {
-  return `${multilineEnvScriptPath === undefined ? "" : `. ${multilineEnvScriptPath}\n`}${command.join(" ")}
+  // `exec` so edge-runtime is PID 1; sourced env survives into the replacement process.
+  return `${multilineEnvScriptPath === undefined ? "" : `. ${multilineEnvScriptPath}\n`}exec ${command.join(" ")}
 `;
 }
 
@@ -1553,7 +1582,7 @@ export const resolveFunctionBindMounts = Effect.fn("functions.resolveFunctionBin
           },
         }),
       )) {
-        binds.add(bind);
+        binds.add(formatDockerBind(bind));
       }
       const missingSourceWarning = bindWarnings.find((warning) =>
         warning.includes("failed to read file:"),
@@ -1631,7 +1660,9 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     );
 
     const functionsDir = join(input.projectRoot, functionsDirName);
-    const functionBinds = new Set<string>();
+    const functionBinds = new Map<string, DockerBind>();
+    const watchableBinds = new Map<string, DockerBind>();
+    const emittedScopeWarnings = new Set<string>();
     const functionsConfig: Record<string, ServeFunctionContainerConfig> = {};
 
     for (const config of functionConfigs) {
@@ -1650,7 +1681,11 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
           },
         }),
       )) {
-        functionBinds.add(bind);
+        const key = formatDockerBind(bind);
+        functionBinds.set(key, bind);
+        if (!bind.externalScope) {
+          watchableBinds.set(key, bind);
+        }
       }
       const missingSourceWarning = bindWarnings.find((warning) =>
         warning.includes("failed to read file:"),
@@ -1659,6 +1694,15 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         return yield* Effect.fail(
           new Error(missingSourceWarning.trimStart().replace(/^WARN:\s*/, "")),
         );
+      }
+      for (const warning of bindWarnings) {
+        if (
+          warning.startsWith("WARN: Mounting import map scope target") &&
+          !emittedScopeWarnings.has(warning)
+        ) {
+          emittedScopeWarnings.add(warning);
+          yield* output.raw(warning, "stderr");
+        }
       }
       const functionEnv =
         input.discoverFunctionEnvFiles && Option.isNone(input.envFile)
@@ -1671,7 +1715,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       );
     }
 
-    const binds = new Set(functionBinds);
+    const binds = [...functionBinds.values()];
 
     yield* ensureDockerNamedVolume(localDockerId("edge_runtime", projectId), projectId);
     yield* ensureDockerNetwork(networkMode, projectId);
@@ -1744,6 +1788,10 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
       });
       const containerProjectRoot = toDockerPath(input.projectRoot);
+      const nofile = edgeRuntimeNofileUlimit(input.platform);
+      if (nofile.clampWarning !== undefined) {
+        yield* output.warn(nofile.clampWarning);
+      }
       const command = [
         "create",
         "--name",
@@ -1754,14 +1802,14 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         "edge_runtime",
         ...(hasBindUnder(binds, containerProjectRoot) ? ["--workdir", containerProjectRoot] : []),
         "--ulimit",
-        "nofile=65536:65536",
+        nofile.arg,
         "--label",
         `com.supabase.cli.project=${labels["com.supabase.cli.project"]}`,
         "--label",
         `com.docker.compose.project=${labels["com.docker.compose.project"]}`,
         "--label",
         `${dockerWorkdirLabel}=${input.projectRoot}`,
-        ...([...binds] as ReadonlyArray<string>).flatMap((bind) => ["-v", bind]),
+        ...binds.flatMap((bind) => ["-v", formatDockerBind(bind)]),
         ...(dockerMultilineEnvScript === undefined ? [] : ["-v", dockerMultilineEnvScript.bind]),
         ...(dockerEnvFile === undefined ? [] : ["--env-file", dockerEnvFile.path]),
         ...(input.platform === "linux" ? ["--add-host", "host.docker.internal:host-gateway"] : []),
@@ -1777,7 +1825,11 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
 
       // The container must exist for `docker cp` to have a target, and must not be running
       // yet so edge-runtime never races the copy.
-      yield* runEdgeRuntimeDockerStep(command);
+      yield* Effect.uninterruptibleMask((restore) =>
+        restore(runEdgeRuntimeDockerStep(command)).pipe(
+          Effect.tap(() => Effect.sync(() => input.onContainerCreated?.())),
+        ),
+      );
       yield* runEdgeRuntimeDockerStep(["cp", "-", `${containerId}:/`], {
         messagePrefix: "failed to copy edge runtime main service into container",
         stdin: Stream.make(serveMainArchive),
@@ -1787,7 +1839,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
       return {
         containerId,
         cleanup: removeRuntimeArtifacts.pipe(Effect.orDie),
-        watchSpecs: yield* Effect.promise(() => buildWatchSpecs([...functionBinds])),
+        watchSpecs: yield* Effect.promise(() => buildWatchSpecs([...watchableBinds.values()])),
       } satisfies StartedRuntime;
     }).pipe(Effect.onError(() => bestEffortCleanupRuntimeArtifacts));
   },
@@ -1870,7 +1922,6 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
 
     yield* assertLocalDbRunning(projectId);
     yield* bestEffortRemoveContainer(containerId);
-    ownsRuntime = true;
 
     // Go's `restartEdgeRuntime` prints this right before calling `ServeFunctions`
     // (`serve.go:124-125`) — `ServeFunctions` itself (this file's `startEdgeRuntimeContainer`,
@@ -1914,6 +1965,9 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
     );
 
     startedRuntime = yield* startEdgeRuntimeContainer({
+      onContainerCreated: () => {
+        ownsRuntime = true;
+      },
       config: {
         projectId,
         apiPort: resolved.apiPort,
@@ -1946,14 +2000,18 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
     return startedRuntime;
   }).pipe(
     // `startEdgeRuntimeContainer`'s own `Effect.onError` only reaches while it's still running —
-    // once it returns successfully, an interrupt here (e.g. mid-`reloadKong`) escapes that scope
-    // entirely, so this wrapper must also run the returned runtime's own staging-file cleanup,
-    // not just remove the container.
-    Effect.onInterrupt(() =>
-      Effect.all([
-        ownsRuntime ? bestEffortRemoveContainer(containerId) : Effect.void,
-        startedRuntime === undefined ? Effect.void : startedRuntime.cleanup,
-      ]).pipe(Effect.asVoid),
+    // once it returns successfully, a failure or interrupt here (e.g. mid-`reloadKong`) escapes
+    // that scope entirely, so this wrapper must also run the returned runtime's own staging-file
+    // cleanup, not just remove the container. Removal stays with this caller for bring-up
+    // failures too (`docker cp`/`docker start`), matching `docker run -d` behavior — the shared
+    // core never removes the container it created.
+    Effect.onExit((exit) =>
+      Exit.isFailure(exit)
+        ? Effect.all([
+            ownsRuntime ? bestEffortRemoveContainer(containerId) : Effect.void,
+            startedRuntime === undefined ? Effect.void : startedRuntime.cleanup,
+          ]).pipe(Effect.asVoid)
+        : Effect.void,
     ),
   );
 });

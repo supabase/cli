@@ -1,5 +1,5 @@
-import type { ProjectConfig } from "@supabase/config";
-import { ProjectConfigSchema } from "@supabase/config";
+import type { CliConfig } from "@supabase/config";
+import { CliConfigSchema } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Fiber, Layer, Option, Path, Schema, Sink, Stream } from "effect";
@@ -31,8 +31,8 @@ import {
   type LegacyShadowDbSetupInput,
 } from "./shadow-database.ts";
 
-const decodeConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
-const defaultConfig: ProjectConfig = decodeConfig({});
+const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
+const defaultConfig: CliConfig = decodeConfig({});
 const PG_NET_CREATE_FINGERPRINT = "create extension if not exists pg_net schema extensions";
 
 const tempRoot = useLegacyTempWorkdir("legacy-shadow-database-");
@@ -212,7 +212,7 @@ describe("legacyCreateShadowDatabase / legacyRemoveShadowDatabase", () => {
           // in argv.
           const script = mock.spawned[createIdx]?.at(-1) ?? "";
           expect(script).toContain(
-            `docker-entrypoint.sh postgres -D /etc/postgresql ${LEGACY_SHADOW_ENTRYPOINT_ARGS}`,
+            `exec docker-entrypoint.sh postgres -D /etc/postgresql ${LEGACY_SHADOW_ENTRYPOINT_ARGS}`,
           );
         }),
       );
@@ -742,6 +742,64 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
   });
 
   it.effect(
+    "skips the platform baseline on a warm cache hit but still creates the template",
+    () => {
+      const { session, calls } = fakeSession();
+      const workdir = tempRoot.current;
+      const mock = mockSpawner();
+      let jwksEvaluated = false;
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* legacySetupShadowDatabase(
+          mock.spawner,
+          {
+            fs,
+            path,
+            workdir,
+            projectId: "proj",
+            container: "shadow-container-id-0123456789abcdef",
+            networkId: "supabase_network_proj",
+            connConfig: {
+              host: "127.0.0.1",
+              port: 54320,
+              user: "postgres",
+              password: "postgres",
+              database: "postgres",
+            },
+            setup: baseShadowSetup({
+              majorVersion: 17,
+              realtimeEnabledForSetup: true,
+              jwks: Effect.sync(() => {
+                jwksEvaluated = true;
+                return '{"keys":[]}';
+              }),
+            }),
+          },
+          {},
+          {
+            baselinePresent: true,
+            snapshotRequired: false,
+            snapshotBaseline: Effect.void,
+          },
+        );
+        expect(jwksEvaluated).toBe(false);
+        expect(calls.some((c) => c.sql === LEGACY_SHADOW_CREATE_TEMPLATE_SQL)).toBe(true);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            mockOutput().layer,
+            mockDockerRun(),
+            mockRuntimeInfo(),
+            mockDbConnection(session),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect(
     "legacyMigrateShadowDatabase lists local migrations BEFORE connecting, tolerating a missing migrations directory as an empty list rather than a failure",
     () => {
       const workdir = tempRoot.current;
@@ -787,6 +845,12 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
           },
           setup: baseShadowSetup(),
         });
+        // ONE connect, matching Go's single-connection flow: the default baseline state
+        // (`LEGACY_SHADOW_BASELINE_COLD`) requires no snapshot, so baseline + template +
+        // migrations all share one session — the split-session shape is reserved for the
+        // cache's own snapshotting cold provision (`snapshotRequired: true`), whose disk-level
+        // export must close the session before stopping the container. The ordering under test
+        // is unaffected — the migration listing still precedes the connect.
         expect(events).toEqual(["list", "connect"]);
       }).pipe(
         Effect.provide(

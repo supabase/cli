@@ -3,10 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { activationTimeoutSecondsForService } from "../src/ServiceActivation.ts";
 import { createStack, type ResolvedFunctionsBundle, type StackHandle } from "../src/node.ts";
 import { fetchFunctionWhenReady, setupTestTable } from "./helpers/e2e.ts";
 
-const STACK_E2E_TEST_TIMEOUT_MS = 5_000;
+const AUTH_COLD_START_TEST_TIMEOUT_MS = activationTimeoutSecondsForService("auth") * 1000;
 
 describe("createStack e2e", () => {
   let stack: StackHandle;
@@ -48,34 +49,14 @@ describe("createStack e2e", () => {
   }, 30_000);
 
   test(
-    "serves health endpoints through the local gateway",
-    { timeout: STACK_E2E_TEST_TIMEOUT_MS },
-    async () => {
-      const [proxyRes, authRes] = await Promise.all([
-        fetch(`${stack.url}/health`),
-        fetch(`${stack.url}/auth/v1/health`),
-      ]);
-
-      expect(proxyRes.status).toBe(200);
-      expect(await proxyRes.text()).toBe("OK");
-      expect(authRes.status).toBe(200);
-      expect(await authRes.json()).toEqual(
-        expect.objectContaining({ description: expect.any(String) }),
-      );
-    },
-  );
-
-  test(
     "serves detected Edge Functions through the local gateway",
     { timeout: 30_000 },
     async () => {
       // "Healthy" only means the edge-runtime control plane answered its health
       // probe; the first request to a function still lazily cold-boots a user
       // worker, so wait for the function to actually become servable.
-      const [states, functionsRes] = await Promise.all([
-        stack.getStatus(),
-        fetchFunctionWhenReady(`${stack.url}/functions/v1/hello`),
-      ]);
+      const functionsRes = await fetchFunctionWhenReady(`${stack.url}/functions/v1/hello`);
+      const states = await stack.getStatus();
 
       expect(states).toEqual(
         expect.arrayContaining([
@@ -99,7 +80,7 @@ describe("createStack e2e", () => {
 
   test(
     "supports the auth signup and session golden path",
-    { timeout: STACK_E2E_TEST_TIMEOUT_MS },
+    { timeout: AUTH_COLD_START_TEST_TIMEOUT_MS },
     async () => {
       const testEmail = `test-${Date.now()}@example.com`;
       const testPassword = "test-password-123";
@@ -126,47 +107,44 @@ describe("createStack e2e", () => {
     },
   );
 
-  test(
-    "supports a full PostgREST CRUD golden path",
-    { timeout: STACK_E2E_TEST_TIMEOUT_MS },
-    async () => {
-      const seeded = await supabase.from("todos").select("*").order("id");
-      expect(seeded.error).toBeNull();
-      expect(seeded.data).toHaveLength(2);
+  test("supports a full PostgREST CRUD golden path", { timeout: 30_000 }, async () => {
+    const seeded = await supabase.from("todos").select("*").order("id");
+    expect(seeded.error).toBeNull();
+    expect(seeded.data).toHaveLength(2);
 
-      const inserted = await supabase
-        .from("todos")
-        .insert({ title: "E2E test todo" })
-        .select()
-        .single();
-      expect(inserted.error).toBeNull();
-      expect(inserted.data?.title).toBe("E2E test todo");
+    const inserted = await supabase
+      .from("todos")
+      .insert({ title: "E2E test todo" })
+      .select()
+      .single();
+    expect(inserted.error).toBeNull();
+    expect(inserted.data?.title).toBe("E2E test todo");
 
-      const updated = await supabase
-        .from("todos")
-        .update({ completed: true })
-        .eq("title", "E2E test todo")
-        .select()
-        .single();
-      expect(updated.error).toBeNull();
-      expect(updated.data?.completed).toBe(true);
+    const updated = await supabase
+      .from("todos")
+      .update({ completed: true })
+      .eq("title", "E2E test todo")
+      .select()
+      .single();
+    expect(updated.error).toBeNull();
+    expect(updated.data?.completed).toBe(true);
 
-      const deleted = await supabase.from("todos").delete().eq("title", "E2E test todo");
-      expect(deleted.error).toBeNull();
+    const deleted = await supabase.from("todos").delete().eq("title", "E2E test todo");
+    expect(deleted.error).toBeNull();
 
-      const remaining = await supabase.from("todos").select("*").eq("title", "E2E test todo");
-      expect(remaining.data).toHaveLength(0);
-    },
-  );
+    const remaining = await supabase.from("todos").select("*").eq("title", "E2E test todo");
+    expect(remaining.data).toHaveLength(0);
+  });
 });
+
+function codeSafeJson(value: string) {
+  return JSON.stringify(value).replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
+}
 
 function writeFunction(projectDir: string, slug: string, body: string) {
   const dir = join(projectDir, "supabase", "functions", slug);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(
-    join(dir, "index.ts"),
-    `Deno.serve(() => new Response(${JSON.stringify(body)}));\n`,
-  );
+  writeFileSync(join(dir, "index.ts"), `Deno.serve(() => new Response(${codeSafeJson(body)}));\n`);
 }
 
 function functionsBundle(

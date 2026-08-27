@@ -1,7 +1,7 @@
 import { Data } from "effect";
-import type { ConfigFormat } from "./io.ts";
+import type { ConfigFormat } from "./config-format.ts";
 
-export class ProjectConfigParseError extends Data.TaggedError("ProjectConfigParseError")<{
+export class CliConfigParseError extends Data.TaggedError("CliConfigParseError")<{
   readonly path: string;
   readonly format: ConfigFormat;
   readonly cause: unknown;
@@ -18,7 +18,7 @@ export class ProjectConfigParseError extends Data.TaggedError("ProjectConfigPars
    * `edge_runtime.secrets` when an unrelated field like `analytics.port` is
    * malformed) can re-decode this subtree against the full schema themselves.
    * Only `edge_runtime` is retained, not the whole document — several callers
-   * of `loadProjectConfig` don't catch `ProjectConfigParseError` at all, so
+   * of `loadCliConfig` don't catch `CliConfigParseError` at all, so
    * this error can propagate with whatever is attached here, and no caller
    * needs anything outside `edge_runtime` today. Every `edge_runtime.secrets`
    * value is wrapped in `Redacted` (mirroring `secret()`'s `x-secret`
@@ -33,7 +33,7 @@ export class ProjectConfigParseError extends Data.TaggedError("ProjectConfigPars
    * Name of the `[remotes.<name>]` block whose subtree was merged over the
    * base document before the decode that produced this error, when a
    * `projectRef` was supplied and one matched. Mirrors `appliedRemote` on
-   * {@link LoadedProjectConfig} for the success path. Go's `loadFromFile`
+   * {@link LoadedCliConfig} for the success path. Go's `loadFromFile`
    * prints `Loading config override: [remotes.<name>]` to stderr
    * unconditionally, *before* `mapstructure` decode ever runs
    * (`apps/cli-go/pkg/config/config.go:604-609`) — so the notice is still due
@@ -48,14 +48,93 @@ export class ProjectConfigParseError extends Data.TaggedError("ProjectConfigPars
   readonly appliedRemote?: string;
 }> {}
 
-export class ProjectEnvParseError extends Data.TaggedError("ProjectEnvParseError")<{
+/**
+ * Shared human-message prefix for every {@link ProjectConfigParseError}
+ * construction site (`./project-config/*.ts`), so the class always reads as
+ * one coherent failure kind rather than a grab-bag of ad hoc wording.
+ */
+const PROJECT_CONFIG_PARSE_ERROR_MESSAGE_PREFIX =
+  "Could not read the project config from the Management API response";
+
+/**
+ * Renders `detail` under the shared {@link ProjectConfigParseError} message
+ * convention: `"<prefix>: <detail>"`, or `"<prefix>: at data.attributes.<apiPath>:
+ * <detail>"` when `apiPath` is given and non-empty. Every construction site
+ * (`./project-config/project-config.ts`, `./project-config/registry-row.ts`,
+ * `./project-config/registry.ts`) builds its message through this helper so
+ * the "at data.attributes...." rendering stays identical everywhere an
+ * `apiPath` is known.
+ */
+export function formatProjectConfigParseErrorMessage(
+  detail: string,
+  apiPath?: ReadonlyArray<string>,
+): string {
+  if (apiPath === undefined || apiPath.length === 0) {
+    return `${PROJECT_CONFIG_PARSE_ERROR_MESSAGE_PREFIX}: ${detail}`;
+  }
+  return `${PROJECT_CONFIG_PARSE_ERROR_MESSAGE_PREFIX}: at ${["data", "attributes", ...apiPath].join(".")}: ${detail}`;
+}
+
+/**
+ * {@link ProjectConfigParseError} is, by construction, always the same
+ * underlying situation: this package's mirrored schema/registry
+ * (`./project-config/api-attributes.ts`, `./project-config/registry*.ts`) is
+ * behind what the Management API actually sent. There is therefore exactly
+ * one remediation, attached as `suggestion` at every construction site:
+ * upgrade first (a newer package version may already map or leniently accept
+ * the offending shape), then report if it persists.
+ */
+export const PROJECT_CONFIG_PARSE_ERROR_SUGGESTION =
+  "Try upgrading the Supabase CLI to the latest version. If the error persists on the latest version, report it at https://github.com/supabase/cli/issues.";
+
+/**
+ * A Management API v2 project-config response failed to map into a
+ * `ProjectConfig`: the envelope/attributes shape didn't decode, or a
+ * registry-mapped field carried a value of the wrong type. `message` is a
+ * human-readable summary built via {@link formatProjectConfigParseErrorMessage}
+ * at every construction site; `detail` optionally carries a fuller,
+ * multi-issue rendering (currently only populated for a schema decode
+ * failure, via `SchemaIssue.makeFormatterDefault()`); `suggestion` is always
+ * {@link PROJECT_CONFIG_PARSE_ERROR_SUGGESTION}. Unknown keys never cause
+ * this on their own — the mapping decode is lenient toward
+ * API-ahead-of-package skew by design (ADR 0019, rule 2) — with one
+ * documented trade: an own `data` or `attributes` key found on what was
+ * actually meant to be a bare-attributes payload is indistinguishable from a
+ * real envelope and is treated as one (`unwrapApiResponse`'s docstring in
+ * `./project-config/project-config.ts`), so a section genuinely named either
+ * of those two words would trigger envelope validation instead of being
+ * tolerated as an unmapped key.
+ */
+export class ProjectConfigParseError extends Data.TaggedError("ProjectConfigParseError")<{
+  readonly message: string;
+  /**
+   * What actually went wrong, as a closed union telemetry can branch on:
+   * `"api_response"` (the default when absent) — the Management API payload
+   * itself failed to decode or map; `"caller_misuse"` — the CALLER handed
+   * this package's own API an invalid argument (a `toProjectConfig` source
+   * carrying neither/both keys or not an object at all, a non-object
+   * `attachApiResponse` operand). Misuse is a programming error in the
+   * consumer: the upgrade `suggestion` does not apply to it, and it must not
+   * be reported as an external platform failure.
+   */
+  readonly reason?: "api_response" | "caller_misuse";
+  /**
+   * Path under v2 `data.attributes` of the offending value; `undefined` when
+   * the response envelope/attributes shape itself failed to decode.
+   */
+  readonly apiPath?: ReadonlyArray<string>;
+  readonly cause: unknown;
+  /** Fuller, multi-issue detail beyond `message`'s single-issue summary. */
+  readonly detail?: string;
+  readonly suggestion?: string;
+}> {}
+
+export class CliProjectEnvParseError extends Data.TaggedError("CliProjectEnvParseError")<{
   readonly path: string;
   readonly line: number;
 }> {}
 
-export class MissingProjectConfigValueError extends Data.TaggedError(
-  "MissingProjectConfigValueError",
-)<{
+export class MissingCliConfigValueError extends Data.TaggedError("MissingCliConfigValueError")<{
   readonly configPath: string;
 }> {}
 

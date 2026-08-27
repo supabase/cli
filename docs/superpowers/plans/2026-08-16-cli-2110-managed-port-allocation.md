@@ -75,8 +75,8 @@ and the ordinary daemon retain their independent ephemeral allocator.
 
 **Interfaces:**
 
-- Produces `ProjectConfigValueSource`, `ProjectConfigValueOrigin`, and
-  `LoadedProjectConfig.valueOrigins`.
+- Produces `CliConfigValueSource`, `CliConfigValueOrigin`, and
+  `LoadedCliConfig.valueOrigins`.
 - Environment wins over remote as the immediate value source for a remote-provided `env(NAME)`.
 
 - [ ] **Step 1: Write failing loader tests**
@@ -110,17 +110,17 @@ Expected: assertions fail because `valueOrigins` and `originAt` do not exist.
 Add to `io.ts` and export from `index.ts`:
 
 ```ts
-export type ProjectConfigValueSource = "environment" | "local" | "remote";
+export type CliConfigValueSource = "environment" | "local" | "remote";
 
-export interface ProjectConfigValueOrigin {
+export interface CliConfigValueOrigin {
   readonly path: ReadonlyArray<string>;
-  readonly source: ProjectConfigValueSource;
+  readonly source: CliConfigValueSource;
 }
 
-export const projectConfigValueSourceAt = (
-  loaded: Pick<LoadedProjectConfig, "valueOrigins">,
+export const cliConfigValueSourceAt = (
+  loaded: Pick<LoadedCliConfig, "valueOrigins">,
   path: ReadonlyArray<string>,
-): ProjectConfigValueSource | undefined =>
+): CliConfigValueSource | undefined =>
   loaded.valueOrigins?.find(
     (origin) =>
       origin.path.length === path.length &&
@@ -128,10 +128,10 @@ export const projectConfigValueSourceAt = (
   )?.source;
 ```
 
-Extend `LoadedProjectConfig` with:
+Extend `LoadedCliConfig` with:
 
 ```ts
-readonly valueOrigins?: ReadonlyArray<ProjectConfigValueOrigin>;
+readonly valueOrigins?: ReadonlyArray<CliConfigValueOrigin>;
 ```
 
 - [ ] **Step 4: Capture winning remote and environment paths**
@@ -158,7 +158,7 @@ Only retain origins whose paths still exist in `normalizedForDecode`.
 ```bash
 pnpm --filter @supabase/config exec vitest run src/io.unit.test.ts
 pnpm --filter @supabase/config check:all
-pnpm --filter @supabase/config test:core
+pnpm --filter @supabase/config test:unit
 ```
 
 Expected: all pass.
@@ -917,9 +917,9 @@ git diff --check
 
 ```bash
 pnpm --filter @supabase/config check:all
-pnpm --filter @supabase/config test:core
+pnpm --filter @supabase/config test:unit
 pnpm --filter @supabase/stack check:all
-pnpm --filter @supabase/stack test:core
+pnpm --filter @supabase/stack test:unit && pnpm --filter @supabase/stack test:integration
 ```
 
 Expected: every command passes; no e2e target runs.

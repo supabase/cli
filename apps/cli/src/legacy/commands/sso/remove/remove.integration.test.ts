@@ -6,13 +6,14 @@ import { mockAnalytics, mockOutput } from "../../../../../tests/helpers/mocks.ts
 import {
   buildLegacyTestRuntime,
   LEGACY_VALID_REF,
-  mockLegacyCliConfig,
+  mockLegacyCliSettings,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApi,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { EventUpgradeSuggested } from "../../../../shared/telemetry/event-catalog.ts";
+import { classifyCliCauseActionability } from "../../../../shared/telemetry/error-actionability.ts";
 import { legacySsoRemove } from "./remove.handler.ts";
 
 const VALID_PROVIDER_ID = "b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8";
@@ -30,6 +31,7 @@ interface SetupOpts {
   goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
   status?: number;
   body?: unknown;
+  rawBody?: string;
   network?: "fail";
   upgradeGate?: "gated" | "notGated";
 }
@@ -38,10 +40,11 @@ function jsonResponse(
   request: Parameters<typeof HttpClientResponse.fromWeb>[0],
   status: number,
   body: unknown,
+  rawBody?: string,
 ) {
   return HttpClientResponse.fromWeb(
     request,
-    new Response(JSON.stringify(body), {
+    new Response(rawBody ?? JSON.stringify(body), {
       status,
       headers: { "content-type": "application/json" },
     }),
@@ -63,7 +66,7 @@ function setup(opts: SetupOpts = {}) {
     handler: (request) => {
       const url = request.url;
       if (url.includes("/config/auth/sso/providers/") && request.method === "DELETE") {
-        return Effect.succeed(jsonResponse(request, status, body));
+        return Effect.succeed(jsonResponse(request, status, body, opts.rawBody));
       }
       if (url.endsWith(`/v1/projects/${LEGACY_VALID_REF}`)) {
         if (gate === undefined) return Effect.succeed(jsonResponse(request, 404, {}));
@@ -104,11 +107,11 @@ function setup(opts: SetupOpts = {}) {
     },
   });
 
-  const cliConfig = mockLegacyCliConfig({ workdir: tempRoot.current });
+  const cliSettings = mockLegacyCliSettings({ workdir: tempRoot.current });
   const layer = buildLegacyTestRuntime({
     out,
     api,
-    cliConfig,
+    cliSettings,
     telemetry: telemetry.layer,
     linkedProjectCache: cache.layer,
     analytics,
@@ -250,6 +253,44 @@ describe("legacy sso remove integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("LegacySsoRemoveNetworkError");
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("classifies malformed 200 response as an API status error", () => {
+    const { layer } = setup({ rawBody: "{not json" });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacySsoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySsoRemoveUnexpectedStatusError");
+        expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+          error_kind: "external_service",
+          error_category: "api_status",
+          error_fingerprint: "tag:LegacySsoRemoveUnexpectedStatusError:api_status",
+        });
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects a structurally invalid 200 response", () => {
+    const { layer } = setup({ body: {} });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacySsoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySsoRemoveNetworkError");
+        expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+          error_kind: "external_service",
+          error_category: "api_status",
+          error_fingerprint: "tag:LegacySsoRemoveNetworkError:api_response",
+        });
       }
     }).pipe(Effect.provide(layer));
   });

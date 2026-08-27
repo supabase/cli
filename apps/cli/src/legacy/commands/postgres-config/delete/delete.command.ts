@@ -30,6 +30,7 @@ const config = {
   config: legacyPostgresConfigDeleteConfigFlag,
   noRestart: Flag.boolean("no-restart").pipe(
     Flag.withDescription("Do not restart the database after deleting config."),
+    Flag.withDefault(false),
   ),
 } as const;
 

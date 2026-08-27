@@ -1,7 +1,7 @@
 import { Effect } from "effect";
 import type { ManagedStackManagerError, ManagedStackManagerShape } from "./managed/manager.ts";
 import { ManagedStackManager } from "./managed/manager.ts";
-import type { ManagedStackDocument } from "./managed/document.ts";
+import { InvalidManagedStackDocumentError, type ManagedStackDocument } from "./managed/document.ts";
 import {
   connectManagedStack,
   deleteManagedStack,
@@ -12,7 +12,16 @@ import { PORT_CATALOG, PORT_FIELDS, type ResolvedPorts } from "./PortCatalog.ts"
 import type { PartialVersionManifest } from "./versions.ts";
 import { NoRunningStackError } from "./managed/model.ts";
 import type { ManagedPortDrift, ManagedPortIntentDocument } from "./managed/model.ts";
+import { managedStackDocumentPathEffect } from "./managed/paths.ts";
 import { HttpTransportClient } from "./HttpTransportClient.ts";
+import type { ControlTransport } from "./managed/control.ts";
+import { isControlSupervisorStatus } from "./DaemonProtocol.ts";
+import {
+  DaemonUpgradeRequired,
+  StackRpcProtocolError,
+  StackRpcTransportError,
+  StopTimeout,
+} from "./errors.ts";
 import type { Stack } from "./Stack.ts";
 
 export interface StackSummary {
@@ -25,7 +34,7 @@ export interface StackSummary {
   readonly dbUrl?: string;
   readonly startedAt?: string;
   readonly lastNotifiedUpdateFingerprint?: string;
-  readonly launch?: ManagedStackDocument["launch"];
+  readonly launch: ManagedStackDocument["launch"];
   readonly drift?: ReadonlyArray<ManagedPortDrift>;
 }
 
@@ -38,18 +47,19 @@ const portFieldByKey: Readonly<Record<string, keyof ResolvedPorts>> = Object.fro
 
 const summaryForDocument = (
   document: ManagedStackDocument & { readonly drift?: ReadonlyArray<ManagedPortDrift> },
+  path: string,
   running?: boolean,
-): StackSummary => {
+): Effect.Effect<StackSummary, InvalidManagedStackDocumentError> => {
   const ports: Record<string, number> = {};
   for (const assignment of document.ports) {
     const field = portFieldByKey[assignment.key];
     if (field !== undefined) ports[field] = assignment.port;
   }
   if (ports.apiPort === undefined || ports.dbPort === undefined) {
-    throw new Error("Managed stack document is missing api.port or db.port");
+    return Effect.fail(new InvalidManagedStackDocumentError({ path }));
   }
   const { apiPort, dbPort } = ports;
-  return {
+  return Effect.succeed({
     name: document.identity.name,
     running: running ?? (document.lifecycle === "running" && document.runtime !== undefined),
     ports: {
@@ -57,15 +67,15 @@ const summaryForDocument = (
       apiPort,
       dbPort,
     },
-    versions: document.launch?.versions ?? {},
-    ...(document.launch === undefined ? {} : { launch: document.launch }),
+    versions: document.launch.versions,
+    launch: document.launch,
     ...(document.drift === undefined ? {} : { drift: document.drift }),
-    ...(document.launch?.lastNotifiedUpdateFingerprint === undefined
+    ...(document.launch.lastNotifiedUpdateFingerprint === undefined
       ? {}
       : { lastNotifiedUpdateFingerprint: document.launch.lastNotifiedUpdateFingerprint }),
     ...(document.runtime === undefined ? {} : { pid: document.runtime.pid }),
     startedAt: document.updatedAt,
-  };
+  });
 };
 
 const liveStatus = (
@@ -74,7 +84,15 @@ const liveStatus = (
 ): Effect.Effect<boolean, ManagedStackManagerError, never> =>
   manager
     .probeControl(document.id)
-    .pipe(Effect.map((probe) => probe?.status.state === "running" && probe.status.ready));
+    .pipe(
+      Effect.map(
+        (probe) =>
+          probe !== undefined &&
+          isControlSupervisorStatus(probe.status) &&
+          probe.status.state === "running" &&
+          probe.status.ready,
+      ),
+    );
 
 export const listStacks = (opts: {
   readonly cacheRoot: string;
@@ -100,7 +118,11 @@ export const listStacks = (opts: {
           return undefined;
         }
         const running = yield* liveStatus(manager, listing.document);
-        return summaryForDocument(listing.document, running);
+        return yield* summaryForDocument(
+          listing.document,
+          yield* managedStackDocumentPathEffect(manager.stateRoot, listing.document.id),
+          running,
+        );
       }),
     );
     return summaries
@@ -127,7 +149,11 @@ export const resolveStackSummary = (opts: {
       ...(opts.portDocument === undefined ? {} : { portDocument: opts.portDocument }),
     });
     const manager = yield* ManagedStackManager;
-    return summaryForDocument(document, yield* liveStatus(manager, document));
+    return yield* summaryForDocument(
+      document,
+      yield* managedStackDocumentPathEffect(manager.stateRoot, document.id),
+      yield* liveStatus(manager, document),
+    );
   });
 
 export const stopDaemon = (opts: {
@@ -137,7 +163,7 @@ export const stopDaemon = (opts: {
   readonly projectDir?: string;
 }): Effect.Effect<
   void,
-  NoRunningStackError | ManagedStackManagerError,
+  NoRunningStackError | ManagedStackManagerError | StopTimeout,
   ManagedStackManager | HttpTransportClient
 > =>
   stopManagedStack({
@@ -151,7 +177,11 @@ export const deleteManagedStackPersistence = (opts: {
   readonly cwd?: string;
   readonly cacheRoot: string;
   readonly projectDir?: string;
-}): Effect.Effect<void, NoRunningStackError | ManagedStackManagerError, ManagedStackManager> =>
+}): Effect.Effect<
+  void,
+  NoRunningStackError | ManagedStackManagerError,
+  ManagedStackManager | ControlTransport
+> =>
   deleteManagedStack({
     workspacePath: opts.projectDir ?? opts.cwd ?? process.cwd(),
     ...(opts.name === undefined ? {} : { stackName: opts.name }),
@@ -181,13 +211,18 @@ export const connectManagedLayer = (opts: {
   readonly cwd?: string;
   readonly cacheRoot: string;
   readonly projectDir?: string;
+  readonly cliVersion: string;
 }): Effect.Effect<
-  import("effect").Layer.Layer<Stack>,
-  NoRunningStackError | ManagedStackManagerError,
+  import("effect").Layer.Layer<
+    Stack,
+    DaemonUpgradeRequired | StackRpcProtocolError | StackRpcTransportError
+  >,
+  NoRunningStackError | ManagedStackManagerError | DaemonUpgradeRequired,
   ManagedStackManager | HttpTransportClient
 > =>
   connectManagedStack({
     workspacePath: opts.projectDir ?? opts.cwd ?? process.cwd(),
     ...(opts.name === undefined ? {} : { stackName: opts.name }),
     cwd: opts.cwd,
+    cliVersion: opts.cliVersion,
   });

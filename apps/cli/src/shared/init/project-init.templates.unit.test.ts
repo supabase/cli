@@ -7,7 +7,7 @@ import {
   INTELLIJ_DENO_TEMPLATE,
   VSCODE_EXTENSIONS_TEMPLATE,
   VSCODE_SETTINGS_TEMPLATE,
-  renderProjectConfigTemplate,
+  renderCliConfigTemplate,
 } from "./project-init.templates.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -51,16 +51,30 @@ function renderExpectedGoEject(): string {
   );
 }
 
+// The residual Go scaffold still describes `auto_expose_new_tables` as unset-means-revoked and
+// deprecated. Platform projects never stopped auto-exposing new entities, so the native template
+// documents unset-means-exposed with `false` as the opt-out instead.
+const GO_AUTO_EXPOSE_COMMENT = `# without explicit GRANTs. When unset, new entities are NOT auto-exposed, matching the new cloud
+# default. Set to \`true\` to keep the legacy behaviour of auto-exposing new entities; this is
+# deprecated and the field is removed on 2026-10-30 once the always-revoked behaviour is permanent.
+# auto_expose_new_tables = true`;
+
+const NATIVE_AUTO_EXPOSE_COMMENT = `# without explicit GRANTs, matching the cloud default. Set to \`false\` to require explicit GRANTs
+# instead. Left unset, a fresh project falls back to \`true\`.
+# auto_expose_new_tables = true`;
+
 function renderExpectedNativeEject(): string {
-  return renderExpectedGoEject().replace(
-    '# content_path = "./templates/password_changed_notification.html"',
-    '# content_path = "./supabase/templates/password_changed_notification.html"',
-  );
+  return renderExpectedGoEject()
+    .replace(
+      '# content_path = "./templates/password_changed_notification.html"',
+      '# content_path = "./supabase/templates/password_changed_notification.html"',
+    )
+    .replace(GO_AUTO_EXPOSE_COMMENT, NATIVE_AUTO_EXPOSE_COMMENT);
 }
 
 describe("project init templates", () => {
   it("renders config.toml with the native notification content_path base", () => {
-    expect(normalizeNewlines(renderProjectConfigTemplate("demo-project", true))).toBe(
+    expect(normalizeNewlines(renderCliConfigTemplate("demo-project", true))).toBe(
       renderExpectedNativeEject(),
     );
   });
@@ -75,7 +89,7 @@ describe("project init templates", () => {
   });
 
   it("renders the SMS and MFA phone OTP templates as GoTrue templates, not raw Go escapes", () => {
-    const rendered = renderProjectConfigTemplate("demo-project", false);
+    const rendered = renderCliConfigTemplate("demo-project", false);
     const otpTemplateLines = rendered.split("\n").filter((line) => line.startsWith("template = "));
     expect(otpTemplateLines).toEqual([
       'template = "Your code is {{ .Code }}"',
@@ -84,7 +98,7 @@ describe("project init templates", () => {
   });
 
   it("enables pg-delta by default in the generated config", () => {
-    const rendered = renderProjectConfigTemplate("demo-project", false);
+    const rendered = renderCliConfigTemplate("demo-project", false);
     expect(rendered).toContain("[experimental.pgdelta]\nenabled = true");
   });
 

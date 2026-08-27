@@ -7,7 +7,7 @@ import {
   legacyDebugBundleMessage,
   legacySaveDebugBundle,
 } from "../shared/legacy-debug-bundle.ts";
-import { legacyPgDeltaTempPath } from "../../../shared/legacy-pgdelta.cache.ts";
+import { legacyPgDeltaTempPath } from "../../../shared/legacy-pgdelta.paths.ts";
 import {
   type LegacyPgDeltaContext,
   legacyExportCatalogPgDelta,

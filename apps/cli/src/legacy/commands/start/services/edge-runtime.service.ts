@@ -13,7 +13,7 @@
  *   - `docker-create-args.ts`'s own header explicitly excludes `WorkingDir`
  *     and `Ulimits` from `LegacyStartContainerSpec` ("none of the 13 [other]
  *     call sites... set them") — Edge Runtime needs BOTH (`--workdir`,
- *     `--ulimit nofile=65536:65536`), so "mapping cleanly" would mean
+ *     `--ulimit nofile`, host-clamped), so "mapping cleanly" would mean
  *     extending the shared spec for a single caller.
  *   - Every other service's env travels as bare `-e KEY` flags whose values
  *     come from the spawned `docker create` process's own environment
@@ -70,7 +70,7 @@ export interface LegacyEdgeRuntimeBringUpInput {
   /** `utils.Config.EdgeRuntime.Image`, already resolved/pulled by the caller (`image-prepull.ts`/`legacyResolveEdgeRuntimeImage`). */
   readonly image: string;
   /**
-   * `cliConfig.workdir` in `start.handler.ts` — used as `functions serve`'s
+   * `cliSettings.workdir` in `start.handler.ts` — used as `functions serve`'s
    * `projectRoot`/`flagCwd` (no separate "flag cwd" exists for `start`) and
    * to derive `supabaseDir` (`<workdir>/supabase`).
    */

@@ -5,29 +5,40 @@ export type { StackServiceStatus } from "./StackServiceState.ts";
 export { StackServiceState, fromRawServiceState } from "./StackServiceState.ts";
 
 export {
+  BinaryHostCompatibilityError,
+  BinaryManifestError,
   BinaryNotFoundError,
+  BinaryRuntimeError,
   ChecksumMismatchError,
+  DaemonUpgradeRequired,
   DockerPullError,
   DownloadError,
   isDockerDaemonDownMessage,
   PortConflictError,
   StackBuildError,
   StackError,
+  StackNotRunningError,
   StackReadinessError,
+  StackRpcProtocolError,
+  StackRpcTransportError,
+  StackUnavailableError,
+  StopTimeout,
+  UpgradePreflightError,
+  UpgradeRestartError,
   toStackError,
 } from "./errors.ts";
 
-export type { PlatformInfo } from "./Platform.ts";
-export {
-  authAssetName,
-  detectPlatform,
-  postgresAssetName,
-  postgrestAssetName,
-} from "./Platform.ts";
+export type { NativeTarget, PlatformInfo } from "./Platform.ts";
+export { detectPlatform, nativeTargetForPlatform } from "./Platform.ts";
 
-export type { ServiceResolution } from "./StackPreparation.ts";
+export { expandExcludedServices } from "./ServiceExclusions.ts";
 
-export type { PrefetchOptions, PrefetchResult } from "./prefetch.ts";
+export type { ContainerRuntime, StackRuntimeSelection } from "./ContainerRuntime.ts";
+export { selectStackRuntime, validateStackRuntime } from "./ContainerRuntime.ts";
+
+export type { ServiceResolution, StackPreparationError } from "./StackPreparation.ts";
+
+export type { PrefetchEffectOptions, PrefetchOptions, PrefetchResult } from "./prefetch.ts";
 export { prefetch } from "./prefetch.ts";
 
 export {
@@ -36,6 +47,8 @@ export {
   defaultSecretKey,
   generateJwt,
 } from "./JwtGenerator.ts";
+
+export { edgeRuntimeNofileUlimit } from "./services/nofile-limit.ts";
 
 export type {
   AllocatedPorts,
@@ -51,7 +64,7 @@ export type {
   PortSelection,
   PortSelectionOptions,
 } from "./PortAllocator.ts";
-export { allocatePortSet, PortAllocationError, reservePortSet } from "./PortAllocator.ts";
+export { PortAllocationError, reservePortSet } from "./PortAllocator.ts";
 export {
   AllocatedPortsSchema,
   DEFAULT_API_PORT,
@@ -93,6 +106,9 @@ export type {
   ResolvedVectorConfig,
   ReadinessPolicy,
   ReadyOptions,
+  ServicePolicy,
+  ServicePolicyManifest,
+  StackMode,
   StackConfig,
   StorageConfig,
   StudioConfig,
@@ -126,7 +142,6 @@ export {
   dockerImageForService,
   fillServiceVersionManifest,
   fullVersionManifest,
-  IMAGE_TAG_PREFIX,
   normalizeServiceVersion,
   normalizeServiceVersions,
   SERVICE_NAMES,
@@ -144,7 +159,8 @@ export { NoRunningStackError } from "./managed/model.ts";
 
 export type { PartialVersionManifest } from "./versions.ts";
 export { PartialVersionManifestSchema } from "./versions.ts";
-export { resolveConfig } from "./StackConfigResolver.ts";
+export { portRequestsForConfig, resolveConfig } from "./StackConfigResolver.ts";
+export type { PortRequestOptions, ResolveConfigOptions } from "./StackConfigResolver.ts";
 
 export { DaemonStartError } from "./layers.ts";
 export type { ManagedDaemonConfigInput } from "./layers.ts";
