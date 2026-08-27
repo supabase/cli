@@ -435,25 +435,47 @@ function unwrapApiResponse(input: unknown): Record<string, unknown> {
     });
   }
   if (Object.hasOwn(input, "data")) {
-    const data = input["data"];
+    const data = readEnvelopeProperty(input, "data");
     if (!isObject(data)) {
       throw envelopeError("data is not an object");
     }
     assertProjectConfigResourceType(data);
-    if (!isObject(data["attributes"])) {
+    const attributes = readEnvelopeProperty(data, "attributes");
+    if (!isObject(attributes)) {
       throw envelopeError("data.attributes is not an object");
     }
-    return data["attributes"];
+    return attributes;
   }
   if (Object.hasOwn(input, "attributes")) {
     assertProjectConfigResourceType(input);
-    const attributes = input["attributes"];
+    const attributes = readEnvelopeProperty(input, "attributes");
     if (!isObject(attributes)) {
       throw envelopeError("attributes is not an object");
     }
     return attributes;
   }
   return input;
+}
+
+/**
+ * Reads one envelope property, translating a throwing accessor into the
+ * documented failure type: parsed JSON never carries getters, so an accessor
+ * that throws during unwrapping is programmatic caller input — the same
+ * taxonomy as the non-plain-object rejection in the validation walk. Each
+ * envelope property is read exactly ONCE through this helper, so a getter
+ * cannot return one value for a shape check and another (or a throw) for the
+ * actual read.
+ */
+function readEnvelopeProperty(container: Record<string, unknown>, key: string): unknown {
+  try {
+    return container[key];
+  } catch (cause) {
+    throw new ProjectConfigParseError({
+      message: `reading envelope property "${key}" threw — raw API input must be plain parsed JSON`,
+      cause,
+      reason: "caller_misuse",
+    });
+  }
 }
 
 /**
@@ -468,7 +490,7 @@ function assertProjectConfigResourceType(envelope: Record<string, unknown>): voi
   if (!Object.hasOwn(envelope, "type")) {
     return;
   }
-  const resourceType = envelope["type"];
+  const resourceType = readEnvelopeProperty(envelope, "type");
   if (resourceType !== "project_config") {
     // Rendered defensively: JSON.stringify throws on a bigint discriminator,
     // which would escape the typed-error contract from inside the error

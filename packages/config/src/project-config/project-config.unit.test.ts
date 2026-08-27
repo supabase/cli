@@ -2106,6 +2106,83 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
     ).toThrow(ProjectConfigParseError);
   });
 
+  test("the sessions floor includes int64's own minimum, asymmetrically", () => {
+    // -2^63 ns IS a valid Go duration (the int64 minimum); its hours spelling
+    // rounds back to exactly -2^63 through magnitude-then-sign. The next
+    // more-negative float already products past 2^63, and the POSITIVE
+    // mirror of the endpoint stays rejected (+2^63 is one past max int64).
+    const endpoint = fromApiProjectConfig({
+      auth: { sessions_timebox: -(2 ** 63) / 3_600_000_000_000 },
+    });
+    expect(endpoint.auth?.sessions?.timebox).toBe("-2562047h47m16.854775808s");
+    for (const hours of [-2562047.788015216, 2562047.7880152157]) {
+      expect(() => fromApiProjectConfig({ auth: { sessions_timebox: hours } })).toThrow(
+        ProjectConfigParseError,
+      );
+    }
+  });
+
+  test("test_otp records canonicalize to their push round-trip on the document side", () => {
+    // The push wrapper serializes k=v pairs joined by commas (mapToEnv,
+    // auth.sync.ts:2603-2609) and the pull direction re-parses by splitting
+    // on every comma — a value holding a literal comma converges on the
+    // post-push hosted record.
+    const doc = fromConfigDocument({
+      auth: { sms: { test_otp: { "15551234567": "123,456" } } },
+    });
+    expect(doc.auth?.sms?.test_otp).toEqual({ "15551234567": "123" });
+    // The API arm produces the identical record for the post-push value.
+    const api = fromApiProjectConfig({ auth: { sms_test_otp: "15551234567=123,456" } });
+    expect(api.auth?.sms?.test_otp).toEqual(doc.auth?.sms?.test_otp);
+    // Comma-free records pass through unchanged.
+    const plain = fromConfigDocument({
+      auth: { sms: { test_otp: { "15551234567": "123456" } } },
+    });
+    expect(plain.auth?.sms?.test_otp).toEqual({ "15551234567": "123456" });
+  });
+
+  test("throwing envelope accessors surface as caller misuse, not raw errors", () => {
+    const cases: Array<Record<string, unknown>> = [
+      {
+        get data(): unknown {
+          throw new Error("boom");
+        },
+      },
+      {
+        data: {
+          type: "project_config",
+          get attributes(): unknown {
+            throw new Error("boom");
+          },
+        },
+      },
+      {
+        type: "project_config",
+        get attributes(): unknown {
+          throw new Error("boom");
+        },
+      },
+      {
+        data: {
+          get type(): unknown {
+            throw new Error("boom");
+          },
+          attributes: {},
+        },
+      },
+    ];
+    for (const input of cases) {
+      let thrown: unknown;
+      try {
+        fromApiProjectConfig(input);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+      expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
+    }
+  });
+
   test("orphan secret paths validate like isSecret rows before being suppressed", () => {
     // The four unmappedSecretApiPaths are in the consumed set, so without
     // validation a contract-invalid value (string-or-null only) would vanish

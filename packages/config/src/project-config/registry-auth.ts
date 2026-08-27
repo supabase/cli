@@ -379,6 +379,29 @@ function parseUint16(s: string): number | undefined {
  * each entry on the first `=`; entries without a `=` (or with `=` at index 0)
  * are dropped. Used for `sms.test_otp`.
  */
+/**
+ * DOCUMENT-side canonicalization for `sms.test_otp` (same convergence rule
+ * as the CSV-backed array rows): the push wrapper serializes the record as
+ * `k=v` pairs joined by commas (`mapToEnv`, auth.sync.ts:2603-2609, used at
+ * :2487) and the pull direction re-parses with {@link envToMap}, which
+ * splits on EVERY comma and drops `=`-less fragments — so a key or value
+ * holding a literal comma round-trips into a different record. Replaying
+ * serialize-then-parse converges the document projection on the value that
+ * actually exists hosted after a push. Non-record values or non-string
+ * entries stay verbatim (document input has passed schema validation; never
+ * throw here).
+ */
+function canonicalizeTestOtpMap(value: unknown): unknown {
+  if (!isObject(value)) {
+    return value;
+  }
+  const entries = Object.entries(value);
+  if (!entries.every(([, entryValue]) => typeof entryValue === "string")) {
+    return value;
+  }
+  return envToMap(entries.map(([key, entryValue]) => `${key}=${entryValue}`).join(","));
+}
+
 function envToMap(input: string): Record<string, string> {
   const entries = input.length === 0 ? [] : input.split(",");
   const result: Record<string, string> = {};
@@ -564,13 +587,21 @@ function secondsDurationRow(
  * legacy apply renders a negative value faithfully (`sessions_timebox: -1` →
  * `"-1h0m0s"`, auth.sync.ts:1402-1404 via durationString's sign handling),
  * with the push parser reading the leading `-` back (config-sync.duration.
- * ts:101-104,158) — so the floor mirrors the ceiling, like the signed
- * `*_max_frequency` rows above.
+ * ts:101-104,158) — like the signed `*_max_frequency` rows above, except the
+ * floor reaches one nanosecond-equivalent further (int64's own asymmetry,
+ * {@link MIN_SESSION_DURATION_HOURS} below).
  */
 const MAX_SESSION_DURATION_HOURS = (MAX_GO_DURATION_NS - 2 ** 10) / NS_PER_HOUR;
 // ^ 2^63 - 1024 (exactly representable at that float spacing) keeps the
 // INCLUSIVE bound below Go's maximum duration — 2^63 itself is one
 // nanosecond past max int64.
+
+// Asymmetric like int64 itself: -2^63 ns IS a valid Go duration (the
+// minimum), and the hours spelling of that endpoint rounds back to exactly
+// -2^63 through the magnitude-then-sign conversion below (verified: the next
+// more-negative float already products past 2^63 and stays rejected) — so
+// the floor includes it while the ceiling stops short of +2^63.
+const MIN_SESSION_DURATION_HOURS = -(MAX_GO_DURATION_NS / NS_PER_HOUR);
 
 function hoursDurationRow(
   configPath: ReadonlyArray<string>,
@@ -587,7 +618,7 @@ function hoursDurationRow(
             expectNumberBetween(
               value,
               apiPath,
-              -MAX_SESSION_DURATION_HOURS,
+              MIN_SESSION_DURATION_HOURS,
               MAX_SESSION_DURATION_HOURS,
             ),
           ),
@@ -913,6 +944,7 @@ const smsBaseRows: ReadonlyArray<ProjectConfigMappingRow> = [
       const map = envToMap(encoded);
       return Object.keys(map).length > 0 ? map : undefined;
     },
+    normalizeDocument: canonicalizeTestOtpMap,
   },
 ];
 
