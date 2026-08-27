@@ -1,7 +1,19 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Standalone supervisor entrypoint uses Node process APIs.
 import { execFileSync, spawn } from "node:child_process";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Standalone supervisor entrypoint uses Node filesystem APIs.
 import { realpathSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { Deferred, Duration, Effect, Fiber, Match, Option, Predicate, Schedule } from "effect";
+import {
+  Data,
+  Deferred,
+  Duration,
+  Effect,
+  Fiber,
+  Match,
+  Option,
+  Predicate,
+  Schedule,
+} from "effect";
 import type { ChildProcess } from "effect/unstable/process";
 import type { ExternalCleanupAction } from "./ServiceDef.ts";
 import {
@@ -11,6 +23,10 @@ import {
 
 type RemovePathAction = Extract<ExternalCleanupAction, { readonly _tag: "RemovePath" }>;
 type RunCommandAction = Extract<ExternalCleanupAction, { readonly _tag: "RunCommand" }>;
+
+class SupervisorCleanupError extends Data.TaggedError("SupervisorCleanupError")<{
+  readonly cause: unknown;
+}> {}
 
 interface SupervisorRuntimeConfig {
   readonly command: string;
@@ -241,7 +257,7 @@ const runSupervisorRuntimeEffect = (config: SupervisorRuntimeConfig): Effect.Eff
       const childExit = yield* Deferred.make<ChildExit>();
       const shutdownRequest = yield* Deferred.make<ChildProcess.Signal>();
       const onChildExit = (code: number | null, signal: NodeJS.Signals | null) => {
-        Effect.runSync(Deferred.succeed(childExit, { code, signal }));
+        Deferred.doneUnsafe(childExit, Effect.succeed({ code, signal }));
       };
       child.once("exit", onChildExit);
 
@@ -256,7 +272,7 @@ const runSupervisorRuntimeEffect = (config: SupervisorRuntimeConfig): Effect.Eff
         }
       };
       const requestShutdown = (signal: ChildProcess.Signal) => {
-        Effect.runSync(Deferred.succeed(shutdownRequest, signal));
+        Deferred.doneUnsafe(shutdownRequest, Effect.succeed(signal));
       };
 
       process.stdin.resume();
@@ -315,7 +331,6 @@ const runSupervisorRuntimeEffect = (config: SupervisorRuntimeConfig): Effect.Eff
             Duration.millis(action.timeoutMs ?? DEFAULT_CLEANUP_COMMAND_TIMEOUT_MS),
           ),
           Effect.asVoid,
-          Effect.catch(() => Effect.void),
         );
 
       const runCleanup = Effect.gen(function* () {
@@ -327,10 +342,10 @@ const runSupervisorRuntimeEffect = (config: SupervisorRuntimeConfig): Effect.Eff
                 force: action.force ?? true,
               });
             },
-            catch: (cause) => cause,
+            catch: (cause) => new SupervisorCleanupError({ cause }),
           }).pipe(
             Effect.retry(Schedule.spaced(Duration.millis(250)).pipe(Schedule.upTo({ times: 19 }))),
-            Effect.catch(() => Effect.void),
+            Effect.ignore,
           );
         yield* Effect.all(
           [

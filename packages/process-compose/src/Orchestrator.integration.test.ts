@@ -2,7 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import { layer as BunChildProcessSpawnerLayer } from "@effect/platform-bun/BunChildProcessSpawner";
 import { layer as BunFileSystemLayer } from "@effect/platform-bun/BunFileSystem";
 import { layer as BunPathLayer } from "@effect/platform-bun/BunPath";
-import { Deferred, Duration, Effect, Fiber, Layer, Option, Stream } from "effect";
+import { Clock, Deferred, Duration, Effect, Fiber, Layer, Option, Stream } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
 import { buildGraph } from "./DependencyGraph.ts";
 import { LogBuffer } from "./LogBuffer.ts";
 import { Orchestrator } from "./Orchestrator.ts";
@@ -13,7 +14,7 @@ const spawnerLayer = BunChildProcessSpawnerLayer.pipe(
   Layer.provide(Layer.mergeAll(BunFileSystemLayer, BunPathLayer)),
 );
 
-const deps = Layer.mergeAll(spawnerLayer, LogBuffer.layer);
+const deps = Layer.mergeAll(spawnerLayer, LogBuffer.layer, FetchHttpClient.layer);
 
 function setupReal(defs: ReadonlyArray<ServiceDef>) {
   const graph = Effect.runSync(buildGraph(defs));
@@ -31,8 +32,8 @@ const fileExistsProbe = (path: string) =>
   }) satisfies ProbeConfig;
 
 type StateReader = {
-  readonly getAllStates: () => Effect.Effect<ReadonlyArray<ServiceState>>;
-  readonly allStateChanges: () => Stream.Stream<ServiceState>;
+  readonly getAllStates: Effect.Effect<ReadonlyArray<ServiceState>>;
+  readonly allStateChanges: Stream.Stream<ServiceState>;
 };
 
 const waitForStatuses = (
@@ -43,7 +44,7 @@ const waitForStatuses = (
   }>,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const current = yield* orc.getAllStates();
+    const current = yield* orc.getAllStates;
     const matches = (states: ReadonlyArray<ServiceState>) =>
       predicates.every(({ name, predicate }) => {
         const state = states.find((candidate) => candidate.name === name);
@@ -51,7 +52,7 @@ const waitForStatuses = (
       });
     if (matches(current)) return;
 
-    yield* orc.allStateChanges().pipe(
+    yield* orc.allStateChanges.pipe(
       Stream.scan(new Map(current.map((state) => [state.name, state])), (states, state) =>
         new Map(states).set(state.name, state),
       ),
@@ -95,7 +96,7 @@ describe("Orchestrator integration", () => {
         );
         const events: Array<string> = [];
         const startEntered = yield* Deferred.make<void>();
-        const stop = orc.stop().pipe(
+        const stop = orc.stop.pipe(
           Effect.tap(() =>
             Effect.sync(() => {
               events.push("stop");
@@ -122,7 +123,7 @@ describe("Orchestrator integration", () => {
         expect(Option.isSome(startResult)).toBe(true);
 
         expect(events).toEqual(["stop", "start"]);
-        yield* orc.stop();
+        yield* orc.stop;
       }).pipe(Effect.provide(layer), Effect.scoped);
     },
     { timeout: 15000 },
@@ -165,7 +166,7 @@ describe("Orchestrator integration", () => {
         expect(stateB.pid).toBeGreaterThan(0);
         expect(stateA.startedAt!).toBeLessThanOrEqual(stateB.startedAt!);
 
-        yield* orc.stop();
+        yield* orc.stop;
       }).pipe(Effect.provide(layer), Effect.scoped);
     },
     { timeout: 15000 },
@@ -174,7 +175,7 @@ describe("Orchestrator integration", () => {
   it.live(
     "health check transitions to Healthy with exec probe",
     () => {
-      const flagFile = `/tmp/pc-e2e-flag-${Date.now()}`;
+      const flagFile = `/tmp/pc-e2e-flag-${process.pid}`;
 
       const defs: ServiceDef[] = [
         {
@@ -205,7 +206,7 @@ describe("Orchestrator integration", () => {
 
         const state = yield* orc.getState("flag-service");
         expect(state.status).toBe("Healthy");
-        yield* orc.stop();
+        yield* orc.stop;
       }).pipe(Effect.provide(layer), Effect.scoped);
     },
     { timeout: 15000 },
@@ -235,7 +236,7 @@ describe("Orchestrator integration", () => {
         expect(a.pid).toBeGreaterThan(0);
         expect(b.pid).toBeGreaterThan(0);
 
-        yield* orc.stop();
+        yield* orc.stop;
       }).pipe(Effect.provide(layer), Effect.scoped);
     },
     { timeout: 15000 },
@@ -262,9 +263,9 @@ describe("Orchestrator integration", () => {
           { name: "sleep-c", predicate: (state) => isUp(state.status) },
         ]);
 
-        const before = Date.now();
-        yield* orc.stop();
-        const elapsed = Date.now() - before;
+        const before = yield* Clock.currentTimeMillis;
+        yield* orc.stop;
+        const elapsed = (yield* Clock.currentTimeMillis) - before;
 
         // 3 services * 2s timeout each = 6s sequential.
         // sleep responds to SIGTERM quickly, so parallel should be < 2s.
@@ -304,7 +305,7 @@ describe("Orchestrator integration", () => {
         expect(lines).toContain("line-two");
         expect(lines).toContain("line-three");
 
-        yield* orc.stop();
+        yield* orc.stop;
       }).pipe(Effect.provide(layer), Effect.scoped);
     },
     { timeout: 15000 },
@@ -357,7 +358,7 @@ describe("resource cleanup", () => {
         expect(isPidAlive(pidA)).toBe(true);
         expect(isPidAlive(pidB)).toBe(true);
 
-        yield* orc.stop();
+        yield* orc.stop;
 
         expect(isPidAlive(pidA)).toBe(false);
         expect(isPidAlive(pidB)).toBe(false);
@@ -405,7 +406,7 @@ describe("resource cleanup", () => {
         expect(isPidAlive(pidTarget)).toBe(false);
         expect(isPidAlive(pidBystander)).toBe(true);
 
-        yield* orc.stop();
+        yield* orc.stop;
       }).pipe(Effect.provide(layer), Effect.scoped);
     },
     { timeout: 15000 },
@@ -441,7 +442,7 @@ describe("resource cleanup", () => {
         const state = yield* orc.getState("restartable");
         expect(state.status).toBe("Stopped");
 
-        yield* orc.stop();
+        yield* orc.stop;
       }).pipe(Effect.provide(layer), Effect.scoped);
     },
     { timeout: 15000 },
@@ -450,7 +451,7 @@ describe("resource cleanup", () => {
   it.live(
     "exec health probe processes cleaned up on stop",
     () => {
-      const flagFile = `/tmp/pc-cleanup-flag-${Date.now()}`;
+      const flagFile = `/tmp/pc-cleanup-flag-${process.pid}`;
       const defs: ServiceDef[] = [
         {
           name: "probed",
@@ -479,7 +480,7 @@ describe("resource cleanup", () => {
         ]);
 
         const pid = (yield* orc.getState("probed")).pid!;
-        yield* orc.stop();
+        yield* orc.stop;
 
         expect(isPidAlive(pid)).toBe(false);
       }).pipe(Effect.provide(layer), Effect.scoped);

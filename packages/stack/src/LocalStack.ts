@@ -25,6 +25,7 @@ import {
   SubscriptionRef,
 } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import { FetchHttpClient } from "effect/unstable/http";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { cleanupLocalStackResources } from "./cleanup.ts";
 import {
@@ -282,7 +283,7 @@ export const localStackLayer = (
         serviceProjection: StackServiceProjectionCatalog,
       ) =>
         Effect.gen(function* () {
-          const rawStates = yield* orchestrator.getAllStates();
+          const rawStates = yield* orchestrator.getAllStates;
           yield* Effect.forEach(projectStackStates(rawStates, serviceProjection), updateState, {
             discard: true,
           });
@@ -510,12 +511,13 @@ export const localStackLayer = (
             const orchLayer = Orchestrator.layer(graph).pipe(
               Layer.provide(Layer.succeed(LogBuffer, logBuffer)),
               Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+              Layer.provide(FetchHttpClient.layer),
             );
             const orchServices = yield* Layer.buildWithScope(orchLayer, scope);
             const orchestrator = Context.get(orchServices, Orchestrator);
 
             yield* syncProjectedStates(orchestrator, serviceProjection);
-            yield* orchestrator.allStateChanges().pipe(
+            yield* orchestrator.allStateChanges.pipe(
               Stream.runForEach(() => syncProjectedStates(orchestrator, serviceProjection)),
               Effect.ignore,
               Effect.forkIn(scope),
@@ -774,7 +776,7 @@ export const localStackLayer = (
             yield* Scope.close(preparationScope, Exit.void);
             yield* cleanupLocalStackResources({
               stop: () =>
-                runtimeState === undefined ? Effect.void : runtimeState.orchestrator.stop(),
+                runtimeState === undefined ? Effect.void : runtimeState.orchestrator.stop,
               cleanupTargets: exactCleanupTargets ?? { dockerContainerNames: [] },
               config,
             }).pipe(
@@ -823,7 +825,7 @@ export const localStackLayer = (
           ? Effect.succeed(error)
           : attachReadinessDiagnostics(
               error,
-              runtimeState.orchestrator.getAllStates(),
+              runtimeState.orchestrator.getAllStates,
               logBuffer.historyAll(READINESS_DIAGNOSTIC_LOG_LIMIT),
             );
       const cleanupOnReadinessFailure = <A, E, R>(
@@ -940,9 +942,9 @@ export const localStackLayer = (
               yield* requireMutable("start");
               serviceStartupBegan = true;
               yield* runtime.orchestrator.start(serviceStartOptions);
-              yield* runtime.orchestrator
-                .waitAllReady()
-                .pipe((effect) => withReadinessPolicy(effect, "stack"));
+              yield* runtime.orchestrator.waitAllReady.pipe((effect) =>
+                withReadinessPolicy(effect, "stack"),
+              );
               yield* syncRuntimeProjectedStates(runtime);
             }
             yield* requireMutable("start");
@@ -964,7 +966,7 @@ export const localStackLayer = (
               return;
             }
             yield* Ref.set(phaseRef, "stopping");
-            yield* runtimeState.orchestrator.stop();
+            yield* runtimeState.orchestrator.stop;
             yield* Ref.set(phaseRef, "stopped");
           }).pipe(withLifecycleLock),
         dispose: disposeOnce,
@@ -1148,22 +1150,22 @@ export const localStackLayer = (
               );
             }
             const runtime = yield* ensureRuntime;
-            yield* runtime.orchestrator
-              .waitAllReady()
-              .pipe((effect) => withReadinessPolicy(effect, "stack", opts));
+            yield* runtime.orchestrator.waitAllReady.pipe((effect) =>
+              withReadinessPolicy(effect, "stack", opts),
+            );
             yield* syncRuntimeProjectedStates(runtime);
           }).pipe(cleanupOnReadinessFailure),
         subscribeLogs: (name) =>
           Stream.unwrap(requireKnownService(name).pipe(Effect.as(logBuffer.subscribe(name)))),
         subscribeAllLogs: (services) =>
           services === undefined || services.length === 0
-            ? logBuffer.subscribeAll()
+            ? logBuffer.subscribeAll
             : Stream.unwrap(
                 Effect.forEach(services, requireKnownService, { discard: true }).pipe(
                   Effect.as(
-                    logBuffer
-                      .subscribeAll()
-                      .pipe(Stream.filter((entry) => services.includes(entry.service))),
+                    logBuffer.subscribeAll.pipe(
+                      Stream.filter((entry) => services.includes(entry.service)),
+                    ),
                   ),
                 ),
               ),
