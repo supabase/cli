@@ -453,7 +453,7 @@ const makeManager = (
     ): Effect.Effect<void, ManagedStackManagerError> =>
       Effect.gen(function* () {
         if (discovery.workspace.kind !== "folder") return;
-        const listings = yield* store.list();
+        const listings = yield* store.list;
         const matching = listings
           .filter(isHealthyDocument)
           .map((listing) => listing.document)
@@ -506,7 +506,7 @@ const makeManager = (
     const inspectManagedPortReservations = (request: AllocateManagedPortsRequest) =>
       Effect.gen(function* () {
         const persisted = request.persisted ?? [];
-        const listings = yield* store.list();
+        const listings = yield* store.list;
         const plan = planManagedPorts({
           activeFields: request.portDocument.activeFields,
           disabledFields: request.portDocument.disabledFields,
@@ -814,7 +814,7 @@ const makeManager = (
     const listStacks = (): Effect.Effect<
       ReadonlyArray<ManagedStackListing>,
       ManagedStackManagerError
-    > => store.list();
+    > => store.list;
 
     const recordLifecycle = (
       ownership: ControlOwnership,
@@ -914,7 +914,7 @@ const makeManager = (
             );
           }
           yield* provideDependencies(validateEnvironmentRepair(request));
-          const listings = yield* store.list();
+          const listings = yield* store.list;
           const affected = listings
             .filter(isHealthyDocument)
             .map((listing) => listing.document)

@@ -111,7 +111,7 @@ const publish = (
     if (isHardLinkUnsupported(linkError.value)) {
       return yield* unsupportedHardLink(targetPath, linkError.value);
     }
-    return yield* Effect.fail(linkError.value);
+    return yield* linkError.value;
   });
 
 /**

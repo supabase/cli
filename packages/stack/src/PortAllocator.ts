@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Port claim paths are native temporary filesystem boundary values.
 import { join } from "node:path";
 import {
   Cause,
+  Clock,
   Data,
   Effect,
   Exit,
@@ -93,6 +95,7 @@ interface ClaimSnapshot {
 const claimNamespace = (): string => {
   const uid = process.getuid?.();
   if (uid !== undefined) return `uid-${uid}`;
+  // oxlint-disable-next-line effecttsgo/process-env -- Claim namespace fallback is computed before an Effect runtime exists.
   const username = process.env.USER ?? process.env.USERNAME ?? "unknown";
   const safeUsername = username.replace(/[^a-zA-Z0-9._-]/g, "_") || "unknown";
   return `user-${safeUsername}`;
@@ -141,7 +144,7 @@ const readClaimSnapshot = (
       .readFileString(path)
       .pipe(
         Effect.catchTag("PlatformError", (error) =>
-          isNotFound(error) ? Effect.succeed(undefined) : Effect.fail(error),
+          isNotFound(error) ? Effect.void : Effect.fail(error),
         ),
       );
     if (contents === undefined) return undefined;
@@ -149,19 +152,19 @@ const readClaimSnapshot = (
       .stat(path)
       .pipe(
         Effect.catchTag("PlatformError", (error) =>
-          isNotFound(error) ? Effect.succeed(undefined) : Effect.fail(error),
+          isNotFound(error) ? Effect.void : Effect.fail(error),
         ),
       );
     if (info === undefined) return undefined;
     return { contents, record: parseClaimRecord(contents), info };
   });
 
-const claimIsStale = (snapshot: ClaimSnapshot): boolean => {
+const claimIsStale = (snapshot: ClaimSnapshot, now: number): boolean => {
   if (snapshot.info.type !== "File") return false;
   if (snapshot.record !== undefined) return !isProcessAlive(snapshot.record.pid);
   return (
     Option.isSome(snapshot.info.mtime) &&
-    Date.now() - snapshot.info.mtime.value.getTime() > CLAIM_STALE_AFTER_MS
+    now - snapshot.info.mtime.value.getTime() > CLAIM_STALE_AFTER_MS
   );
 };
 
@@ -172,11 +175,11 @@ const inspectClaim = (
   PlatformError,
   FileSystem.FileSystem
 > =>
-  readClaimSnapshot(path).pipe(
-    Effect.map((snapshot) =>
-      snapshot === undefined ? undefined : { snapshot, stale: claimIsStale(snapshot) },
-    ),
-  );
+  Effect.gen(function* () {
+    const snapshot = yield* readClaimSnapshot(path);
+    if (snapshot === undefined) return undefined;
+    return { snapshot, stale: claimIsStale(snapshot, yield* Clock.currentTimeMillis) };
+  });
 
 const claimIdentityMatches = (expected: ClaimSnapshot, current: ClaimSnapshot): boolean => {
   if (expected.record !== undefined || current.record !== undefined) {
@@ -258,6 +261,7 @@ const acquirePortClaimInternal = (
     yield* fs.makeDirectory(root, { recursive: true });
     const path = claimPath(port, root);
     const token = randomUUID();
+    // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Atomic claim records are a tiny native filesystem protocol payload.
     const contents = JSON.stringify({ pid: process.pid, token });
 
     for (let attempt = 0; attempt < MAX_CLAIM_ATTEMPTS; attempt += 1) {
@@ -281,7 +285,7 @@ const acquirePortClaimInternal = (
       const failure = Cause.findErrorOption(openedExit.cause);
       if (Option.isNone(failure)) return yield* Effect.failCause(openedExit.cause);
       if (!isAlreadyExists(failure.value)) {
-        return yield* Effect.fail(failure.value);
+        return yield* failure.value;
       }
       const inspection = yield* inspectClaim(path);
       if (inspection === undefined) continue;
@@ -591,10 +595,10 @@ const reserveRandomPort = (
       return yield* reserveRandomPort(exclude, field, claims, fs, root, attempt + 1);
     }
     if (Option.isSome(failure) && failure.value instanceof PlatformError) {
-      return yield* Effect.fail(portAllocationFromCause(bound.port, failure.value));
+      return yield* portAllocationFromCause(bound.port, failure.value);
     }
     if (Option.isSome(failure) && failure.value instanceof PortAllocationError) {
-      return yield* Effect.fail(failure.value);
+      return yield* failure.value;
     }
     return yield* Effect.failCause(
       Cause.map(claimExit.cause, (error) =>
@@ -618,7 +622,7 @@ const withPortField = (field: PortField, error: PortAllocationError): PortAlloca
 const decodePortSet = (
   partial: Partial<Record<PortField, number>>,
 ): Effect.Effect<PortSet, PortAllocationError> =>
-  Schema.decodeUnknownEffect(PortSetSchema)(partial).pipe(
+  Schema.decodeEffect(PortSetSchema)(partial).pipe(
     Effect.mapError(
       (cause) =>
         new PortAllocationError({

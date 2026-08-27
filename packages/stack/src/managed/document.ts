@@ -83,7 +83,7 @@ const managedPortAssignmentSchema = Schema.Struct({
     "analytics.port",
     "db.pooler.port",
   ]),
-  port: Schema.Number,
+  port: Schema.Finite,
   intent: Schema.Literals(["automatic", "exact"]),
 });
 
@@ -109,7 +109,7 @@ const managedStackDocumentSchema = Schema.Struct({
   stopIntent: Schema.optionalKey(Schema.Literal("explicit")),
   runtime: Schema.optionalKey(
     Schema.Struct({
-      pid: Schema.Number,
+      pid: Schema.Finite,
       controlEndpoint: Schema.String,
       protocolVersion: Schema.Literal(1),
     }),
@@ -139,7 +139,7 @@ export const decodeManagedStackDocument = (
   path: string,
   content: string,
 ): Effect.Effect<ManagedStackDocument, InvalidManagedStackDocumentError> =>
-  Schema.decodeUnknownEffect(ManagedStackDocumentSchema)(content).pipe(
+  Schema.decodeEffect(ManagedStackDocumentSchema)(content).pipe(
     Effect.mapError(() => new InvalidManagedStackDocumentError({ path })),
     Effect.flatMap((document) =>
       hasCorePortAssignments(document)
@@ -154,10 +154,11 @@ export const encodeManagedStackDocument = (
 ): Effect.Effect<string, InvalidManagedStackDocumentError> =>
   Effect.gen(function* () {
     if (!hasCorePortAssignments(document)) {
-      return yield* Effect.fail(new InvalidManagedStackDocumentError({ path }));
+      return yield* new InvalidManagedStackDocumentError({ path });
     }
     const encoded = yield* Schema.encodeEffect(managedStackDocumentSchema)(document).pipe(
       Effect.mapError(() => new InvalidManagedStackDocumentError({ path })),
     );
+    // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Persisted stack documents use stable pretty JSON for the native filesystem boundary.
     return JSON.stringify(encoded, null, 2) + "\n";
   });

@@ -218,7 +218,7 @@ describe("managed stack document store", () => {
       const store = yield* makeTempStackStore();
       yield* store.write(document({ id: HEALTHY_ID }));
       writeRawStackDocument(store.stateRoot, CORRUPT_ID, "not-json");
-      expect(yield* store.list()).toEqual([
+      expect(yield* store.list).toEqual([
         expect.objectContaining({ id: CORRUPT_ID, status: "corrupt" }),
         expect.objectContaining({ id: HEALTHY_ID, status: "healthy" }),
       ]);
@@ -232,7 +232,7 @@ describe("managed stack document store", () => {
       const corruptPath = yield* managedStackDocumentPathEffect(store.stateRoot, CORRUPT_ID);
       yield* Effect.sync(() => mkdirSync(corruptPath, { recursive: true }));
 
-      const listings = yield* store.list();
+      const listings = yield* store.list;
       expect(listings).toEqual([
         expect.objectContaining({
           id: CORRUPT_ID,
@@ -265,7 +265,7 @@ describe("managed stack document store", () => {
         expect(yield* store.read(STACK_ID)).toBeUndefined();
         if (resetDisappearance === undefined) throw new Error("expected injected filesystem");
         resetDisappearance();
-        expect(yield* store.list()).toEqual([]);
+        expect(yield* store.list).toEqual([]);
       }).pipe(Effect.provide(Layer.mergeAll(disappearingDocumentFileSystemLayer, NodePath.layer))),
   );
 });
