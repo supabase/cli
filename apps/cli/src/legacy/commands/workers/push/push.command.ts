@@ -24,6 +24,11 @@ const config = {
     ),
     Flag.optional,
   ),
+  force: Flag.boolean("force").pipe(
+    Flag.withDescription(
+      "Deploy even when the packaged source and spec match the last deploy this CLI recorded.",
+    ),
+  ),
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
@@ -50,6 +55,10 @@ export const legacyWorkersPushCommand = Command.make("push", config).pipe(
     {
       command: "supabase workers push api web",
       description: "Deploy several workers by name",
+    },
+    {
+      command: "supabase workers push api --force",
+      description: "Redeploy a worker whose source and spec have not changed",
     },
   ]),
   Command.withHandler((flags) =>

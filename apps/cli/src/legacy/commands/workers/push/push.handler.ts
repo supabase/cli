@@ -27,9 +27,17 @@ import {
   awaitWorkerBuild,
   createWorkerUpload,
   deployWorker,
+  getWorker,
   uploadBuildContext,
   type WorkerDeploySpec,
+  type WorkerRecord,
 } from "../../../../shared/workers/workers-api.ts";
+import {
+  readWorkerDeployState,
+  workerDeployFingerprint,
+  workerDeployUnchangedImage,
+  writeWorkerDeployState,
+} from "../../../../shared/workers/worker-deploy-state.ts";
 import {
   NoWorkersToDeployError,
   UnknownWorkerRuntimeError,
@@ -135,6 +143,8 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
   readonly name: string;
   readonly projectRef: string;
   readonly instances: Option.Option<number>;
+  /** Deploy even when the packaged source and spec match the last deploy. */
+  readonly force: boolean;
   readonly pollSchedule?: Schedule.Schedule<unknown>;
   readonly pollRetrySchedule?: Schedule.Schedule<unknown>;
   /** Suppresses this step's human output when `-o` owns stdout. */
@@ -195,43 +205,9 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     override: input.instances,
   });
 
-  let contextUploadId: string;
-  {
-    const packaging = yield* output.task("Packaging worker...");
-    const packaged = yield* packageWorkerDirectory(worker.sourceDir).pipe(
-      Effect.tapError(() => packaging.fail()),
-    );
-    yield* packaging.clear();
-    yield* output.raw(
-      `Packaged ${sourceDisplay} (${packaged.fileCount} files, ${formatBytes(
-        packaged.archive.length,
-      )}).\n`,
-      "stderr",
-    );
-
-    // The guard above counts directory entries, so a tree of nothing but empty
-    // subdirectories reaches here and packages to zero files. For a catalog
-    // runtime that deploys an image with no handler in it — the exact "nothing
-    // to deploy" case that guard exists to refuse.
-    if (packaged.fileCount === 0) {
-      return yield* Effect.fail(
-        new WorkerSourceMissingError({
-          detail: `${sourceDisplay} holds no files to deploy, only empty directories.`,
-          suggestion: `Add your code there, or re-scaffold it with \`supabase workers new ${name} --force\`.`,
-        }),
-      );
-    }
-
-    const uploading = yield* output.task("Uploading build context...");
-    const slot = yield* createWorkerUpload(api, projectRef, name).pipe(
-      Effect.tapError(() => uploading.fail()),
-    );
-    yield* uploadBuildContext(slot, packaged.archive).pipe(Effect.tapError(() => uploading.fail()));
-    yield* uploading.clear();
-    yield* output.raw("Uploaded build context.\n", "stderr");
-    contextUploadId = slot.uploadId;
-  }
-
+  // The spec is settled before the source is packaged because it is part of
+  // what identifies this deploy: an unchanged bundle at a new size or instance
+  // count is still a deploy to make.
   const spec: WorkerDeploySpec = {
     // A plain Dockerfile build has no catalog runtime to name; the uploaded
     // context carries its own Dockerfile and is built as-is.
@@ -242,6 +218,88 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     exposure: "public",
     instances,
   };
+
+  const packaging = yield* output.task("Packaging worker...");
+  const packaged = yield* packageWorkerDirectory(worker.sourceDir).pipe(
+    Effect.tapError(() => packaging.fail()),
+  );
+  yield* packaging.clear();
+  yield* output.raw(
+    `Packaged ${sourceDisplay} (${packaged.fileCount} files, ${formatBytes(
+      packaged.archive.length,
+    )}).\n`,
+    "stderr",
+  );
+
+  // The guard above counts directory entries, so a tree of nothing but empty
+  // subdirectories reaches here and packages to zero files. For a catalog
+  // runtime that deploys an image with no handler in it — the exact "nothing
+  // to deploy" case that guard exists to refuse.
+  if (packaged.fileCount === 0) {
+    return yield* Effect.fail(
+      new WorkerSourceMissingError({
+        detail: `${sourceDisplay} holds no files to deploy, only empty directories.`,
+        suggestion: `Add your code there, or re-scaffold it with \`supabase workers new ${name} --force\`.`,
+      }),
+    );
+  }
+
+  const stateKey = { projectRoot: project.projectRoot, projectRef, name };
+  const fingerprint = workerDeployFingerprint({ contentDigest: packaged.contentDigest, spec });
+  const recorded = yield* readWorkerDeployState(stateKey);
+
+  // Read after every local reason to refuse has been checked, so a source that
+  // was never going to deploy costs no request at all.
+  //
+  // Never fatal: this read exists only to confirm what the recorded fingerprint
+  // claims, so a blip on it costs a skip that would have been taken rather than
+  // a deploy. Anything worth reporting — an expired token, a project outside
+  // the alpha — is reported by the upload slot below, which is where it has
+  // always come from.
+  const current = yield* getWorker(api, projectRef, name).pipe(
+    Effect.orElseSucceed(() => Option.none<WorkerRecord>()),
+  );
+
+  if (Option.isSome(current)) {
+    const remote = current.value;
+    const unchanged = input.force
+      ? Option.none<string>()
+      : workerDeployUnchangedImage({ recorded, remote, fingerprint, spec });
+
+    if (Option.isSome(unchanged)) {
+      // The same line `functions deploy` reports an unchanged function with, on
+      // stderr for the same reason every other progress line here is: `-o` owns
+      // stdout.
+      yield* output.raw(`No change found in Worker: ${name}\n`, "stderr");
+
+      // Nothing conditional in what is reported: a match is only a match when
+      // the API reports the recorded image and the exposure this command sends,
+      // which is always `public`.
+      return {
+        worker_name: name,
+        runtime,
+        size: remote.spec.size,
+        exposure: remote.spec.exposure,
+        instances: remote.spec.instances,
+        image_version: unchanged.value,
+        build_state: remote.buildState,
+        url: workerUrl(projectRef, settings.projectHost, name),
+        skipped: true,
+      };
+    }
+  }
+
+  let contextUploadId: string;
+  {
+    const uploading = yield* output.task("Uploading build context...");
+    const slot = yield* createWorkerUpload(api, projectRef, name).pipe(
+      Effect.tapError(() => uploading.fail()),
+    );
+    yield* uploadBuildContext(slot, packaged.archive).pipe(Effect.tapError(() => uploading.fail()));
+    yield* uploading.clear();
+    yield* output.raw("Uploaded build context.\n", "stderr");
+    contextUploadId = slot.uploadId;
+  }
 
   const deploying = yield* output.task("Deploying worker...");
   yield* deployWorker(api, projectRef, name, { spec, contextUploadId }).pipe(
@@ -268,6 +326,22 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
   }
 
   yield* deploying.clear();
+
+  // Best-effort, and only once the build has settled: this is the record the
+  // next push checks its fingerprint against, and a `.temp` that cannot be
+  // written should cost that push its skip, not report this deploy as failed.
+  yield* writeWorkerDeployState(stateKey, {
+    worker: name,
+    project_ref: projectRef,
+    fingerprint,
+    ...(settled.imageVersion === undefined ? {} : { image_version: settled.imageVersion }),
+    spec: {
+      ...(spec.runtime === undefined ? {} : { runtime: spec.runtime }),
+      size: spec.size,
+      exposure: spec.exposure,
+      instances: spec.instances,
+    },
+  }).pipe(Effect.ignore);
 
   const url =
     settled.spec.exposure === "public"
@@ -379,6 +453,7 @@ export const legacyWorkersPush = Effect.fn("legacy.workers.push")(function* (
           name,
           projectRef,
           instances: flags.instances,
+          force: flags.force,
           machineOutput,
           ...(options.pollSchedule === undefined ? {} : { pollSchedule: options.pollSchedule }),
           ...(options.pollRetrySchedule === undefined

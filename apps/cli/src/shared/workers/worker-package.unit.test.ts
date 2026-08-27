@@ -7,6 +7,7 @@ import {
   readdirSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -173,6 +174,43 @@ describe("packageWorkerDirectory", () => {
       expect(Exit.isFailure(exit)).toBe(true);
     }
     chmodSync(locked, 0o700);
+  });
+
+  // The digest is what decides whether a push has anything to deploy, so what
+  // it does and does not notice is behaviour, not an implementation detail.
+  test("digests the tree's contents, and not the mtimes the archive carries", async () => {
+    writeFileSync(join(dir, "index.js"), "export default {};\n");
+    const first = await pack(dir);
+
+    // A fresh clone or checkout rewrites every mtime without touching a byte of
+    // the code; that must not read as a new deployment.
+    utimesSync(join(dir, "index.js"), new Date(1000), new Date(1000));
+    const restamped = await pack(dir);
+
+    expect(restamped.contentDigest).toBe(first.contentDigest);
+    expect(restamped.archive).not.toEqual(first.archive);
+
+    writeFileSync(join(dir, "index.js"), "export default { changed: true };\n");
+    expect((await pack(dir)).contentDigest).not.toBe(first.contentDigest);
+  });
+
+  test("digests a file's executable bit", async () => {
+    writeFileSync(join(dir, "run.sh"), "#!/bin/sh\n");
+    const plain = await pack(dir);
+
+    chmodSync(join(dir, "run.sh"), 0o755);
+    expect((await pack(dir)).contentDigest).not.toBe(plain.contentDigest);
+  });
+
+  test("digests a symlink's target, not just the name pointing at it", async () => {
+    const other = mkdtempSync(join(tmpdir(), "supabase-worker-package-"));
+    writeFileSync(join(dir, "run.sh"), "#!/bin/sh\n");
+    writeFileSync(join(other, "run.sh"), "#!/bin/sh\n");
+    symlinkSync("run.sh", join(dir, "start"));
+    symlinkSync("elsewhere.sh", join(other, "start"));
+
+    expect((await pack(dir)).contentDigest).not.toBe((await pack(other)).contentDigest);
+    rmSync(other, { recursive: true, force: true });
   });
 });
 

@@ -1,4 +1,4 @@
-import { rmSync } from "node:fs";
+import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option, Schedule } from "effect";
@@ -40,6 +40,7 @@ function flags(overrides: Partial<LegacyWorkersPushFlags> = {}): LegacyWorkersPu
   return {
     names: ["api"],
     instances: Option.none(),
+    force: false,
     projectRef: Option.none(),
     ...overrides,
   };
@@ -109,6 +110,8 @@ describe("legacy workers push", () => {
       yield* push();
 
       expect(http.routeKeys).toEqual([
+        // Read before the upload: what an unchanged deploy is checked against.
+        `GET ${workersRoute("/api")}`,
         `POST ${workersRoute("/api/uploads")}`,
         "PUT /deploy-context/api.tar.gz",
         `POST ${workersRoute("/api/deploy")}`,
@@ -263,6 +266,231 @@ describe("legacy workers push", () => {
 
       const polls = http.routeKeys.filter((key) => key === `GET ${workersRoute("/api")}`);
       expect(polls).toHaveLength(3);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("deploys once, then reports the second push of unchanged source as no change", () => {
+    const repo = project();
+    const { layer, out, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      yield* push();
+      yield* push();
+
+      expect(out.stderrText).toContain("No change found in Worker: api");
+      // The second push made its read and stopped there: no slot minted, no
+      // bytes uploaded, no deploy.
+      expect(
+        http.routeKeys.filter((key) => key === `POST ${workersRoute("/api/deploy")}`),
+      ).toHaveLength(1);
+      expect(
+        http.routeKeys.filter((key) => key === `POST ${workersRoute("/api/uploads")}`),
+      ).toHaveLength(1);
+      expect(http.requests.filter((request) => request.method === "PUT")).toHaveLength(1);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("reports the running worker in json mode when it skips an unchanged deploy", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      format: "json",
+      routes: routes(),
+    });
+
+    return Effect.gen(function* () {
+      yield* push();
+      yield* push();
+
+      const success = out.messages.findLast(
+        (message) => message.type === "success" && message.data !== undefined,
+      );
+      expect(success?.data?.["workers"]).toEqual([
+        {
+          worker_name: "api",
+          runtime: "node",
+          size: "2gb-1vcpu",
+          exposure: "public",
+          instances: 1,
+          build_state: "active",
+          image_version: "v1",
+          url: `https://${WORKERS_PROJECT_REF}.supabase.co/workers/v1/api`,
+          skipped: true,
+        },
+      ]);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("deploys the same source again when the code changed underneath it", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      yield* push();
+      writeFileSync(
+        join(repo.dir, "supabase", "workers", "api", "index.js"),
+        "export default { fetch: () => new Response('changed') };\n",
+      );
+      yield* push();
+
+      expect(
+        http.routeKeys.filter((key) => key === `POST ${workersRoute("/api/deploy")}`),
+      ).toHaveLength(2);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The bundle is unchanged but the shape it runs in is not, so there is still
+  // a deploy to make.
+  it.live("deploys unchanged source at a new instance count", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      yield* push();
+      yield* push({ instances: Option.some(3) });
+
+      expect(
+        http.routeKeys.filter((key) => key === `POST ${workersRoute("/api/deploy")}`),
+      ).toHaveLength(2);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("redeploys unchanged source when asked to with --force", () => {
+    const repo = project();
+    const { layer, out, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      yield* push();
+      yield* push({ force: true });
+
+      expect(
+        http.routeKeys.filter((key) => key === `POST ${workersRoute("/api/deploy")}`),
+      ).toHaveLength(2);
+      expect(out.stderrText).not.toContain("No change found");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Someone redeployed from another checkout or the dashboard in between: the
+  // recorded fingerprint says nothing about what is running now.
+  it.live("deploys again when the running image is not the one it recorded", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: routes({
+        // One pre-deploy read and one poll per push, so the third entry is what
+        // the second push reads before deciding.
+        [`GET ${workersRoute("/api")}`]: [
+          {
+            status: 200,
+            body: {
+              data: workerResource({ name: "api", buildState: "active", imageVersion: "v1" }),
+            },
+          },
+          {
+            status: 200,
+            body: {
+              data: workerResource({ name: "api", buildState: "active", imageVersion: "v1" }),
+            },
+          },
+          {
+            status: 200,
+            body: {
+              data: workerResource({ name: "api", buildState: "active", imageVersion: "v7" }),
+            },
+          },
+        ],
+      }),
+    });
+
+    return Effect.gen(function* () {
+      yield* push();
+      yield* push();
+
+      expect(
+        http.routeKeys.filter((key) => key === `POST ${workersRoute("/api/deploy")}`),
+      ).toHaveLength(2);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The record is a cache, never the verdict on its own: a worker deleted out
+  // from under it must deploy rather than report a skip.
+  it.live("deploys when the worker is no longer there at all", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: routes({
+        [`GET ${workersRoute("/api")}`]: [
+          {
+            status: 200,
+            body: {
+              data: workerResource({ name: "api", buildState: "active", imageVersion: "v1" }),
+            },
+          },
+          {
+            status: 200,
+            body: {
+              data: workerResource({ name: "api", buildState: "active", imageVersion: "v1" }),
+            },
+          },
+          { status: 404, body: { error: { code: "not_found", message: "Not Found" } } },
+          {
+            status: 200,
+            body: {
+              data: workerResource({ name: "api", buildState: "active", imageVersion: "v2" }),
+            },
+          },
+        ],
+      }),
+    });
+
+    return Effect.gen(function* () {
+      yield* push();
+      yield* push();
+
+      expect(
+        http.routeKeys.filter((key) => key === `POST ${workersRoute("/api/deploy")}`),
+      ).toHaveLength(2);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The read backing the skip is an optimization, not a prerequisite: losing it
+  // costs a redeploy, never the command.
+  it.live("deploys when the pre-deploy read fails outright", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: routes({
+        [`GET ${workersRoute("/api")}`]: [
+          {
+            status: 200,
+            body: {
+              data: workerResource({ name: "api", buildState: "active", imageVersion: "v1" }),
+            },
+          },
+          {
+            status: 200,
+            body: {
+              data: workerResource({ name: "api", buildState: "active", imageVersion: "v1" }),
+            },
+          },
+          { status: 500, body: { message: "blip" } },
+          {
+            status: 200,
+            body: {
+              data: workerResource({ name: "api", buildState: "active", imageVersion: "v2" }),
+            },
+          },
+        ],
+      }),
+    });
+
+    return Effect.gen(function* () {
+      yield* push();
+      yield* push();
+
+      expect(
+        http.routeKeys.filter((key) => key === `POST ${workersRoute("/api/deploy")}`),
+      ).toHaveLength(2);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -429,6 +657,11 @@ describe("legacy workers push", () => {
       workdir: repo.dir,
       routes: routes({
         [`GET ${workersRoute("/api")}`]: [
+          // The pre-deploy read, then a blip on the first poll.
+          {
+            status: 200,
+            body: { data: workerResource({ name: "api", buildState: "active" }) },
+          },
           { status: 500, body: { message: "blip" } },
           {
             status: 200,
@@ -444,7 +677,7 @@ describe("legacy workers push", () => {
       // The blip was retried rather than aborting a deploy already in flight.
       expect(
         http.routeKeys.filter((key) => key === `GET ${workersRoute("/api")}`).length,
-      ).toBeGreaterThan(1);
+      ).toBeGreaterThan(2);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { Effect, FileSystem, Option } from "effect";
 import type { PlatformError } from "effect/PlatformError";
@@ -19,6 +20,49 @@ import { createTar, type TarEntry, TarPathTooLongError } from "./tar.ts";
 interface PackagedWorker {
   readonly archive: Uint8Array;
   readonly fileCount: number;
+  /**
+   * `sha256:<hex>` over the packaged tree's contents — see
+   * {@link digestEntries}. Not a digest of `archive`: the archive carries
+   * mtimes, so hashing its bytes would call a fresh checkout of unchanged code
+   * a different deployment.
+   */
+  readonly contentDigest: string;
+}
+
+/**
+ * A stable identity for what a build context would put in the image: every
+ * entry's path, executable bit, and either its bytes or its link target, in the
+ * walk's sorted order.
+ *
+ * mtimes are deliberately left out. Nothing downstream of the tar reads them —
+ * the server untars the context and builds it — while `git clone` and
+ * `git checkout` rewrite every one of them, so including them would make the
+ * same source deploy as new work on every fresh machine.
+ *
+ * Lengths are hashed alongside the values they precede so no two different
+ * trees can serialize to the same byte stream (`a/bc` + `d` vs `a/b` + `cd`).
+ */
+function digestEntries(entries: ReadonlyArray<TarEntry>): string {
+  const hash = createHash("sha256");
+  const field = (value: string | Uint8Array) => {
+    const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
+    hash.update(`${bytes.length}:`);
+    hash.update(bytes);
+  };
+
+  for (const entry of entries) {
+    field(entry.path);
+    field(String(entry.mode ?? 0o644));
+    if (entry.linkTarget === undefined) {
+      field("file");
+      field(entry.contents);
+    } else {
+      field("symlink");
+      field(entry.linkTarget);
+    }
+  }
+
+  return `sha256:${hash.digest("hex")}`;
 }
 
 /**
@@ -117,6 +161,7 @@ export const packageWorkerDirectory = Effect.fnUntraced(function* (dir: string) 
   return {
     archive: new Uint8Array(archive),
     fileCount: entries.filter((entry) => !entry.path.endsWith("/")).length,
+    contentDigest: digestEntries(entries),
   } satisfies PackagedWorker;
 });
 
