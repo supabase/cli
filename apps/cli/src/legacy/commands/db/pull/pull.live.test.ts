@@ -5,8 +5,8 @@ import { expect } from "vitest";
 
 import { requireLiveSuccess, test, throwWithCleanup } from "../../../../../tests/helpers/live.ts";
 
-// `db pull` exits non-zero when the diff comes back empty (Go-identical, see
-// IN_SYNC_SUGGESTION in pull.handler.ts), so the journey seeds a remote-only
+// `db pull` exits non-zero when the diff comes back empty (the in-sync
+// finding, see IN_SYNC_SUGGESTION in pull.handler.ts), so the journey seeds a remote-only
 // marker table through `db query` — no local migration and no history row.
 // The marker cannot exist in the freshly provisioned shadow, so the diff is
 // never empty regardless of engine and the pull deterministically writes it.
