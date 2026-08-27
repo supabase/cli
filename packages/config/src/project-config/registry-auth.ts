@@ -347,7 +347,12 @@ function hoursToDurationString(hours: number): string {
   // that representation error while sub-nanosecond noise (sessions_timebox:
   // 1e-20 → exponent-notation "3.6e-8ns" under raw decomposition) still
   // collapses to "0s".
-  return durationString(Math.round(hours * 3_600_000_000_000));
+  // Magnitude first, sign second: both duration parsers round the absolute
+  // value and then negate (parseDuration above; config-sync.duration.ts:
+  // 101-104,155,158), while a raw Math.round rounds half toward +∞ — the two
+  // disagree on negative half-nanosecond boundaries.
+  const magnitudeNs = Math.round(Math.abs(hours) * 3_600_000_000_000);
+  return durationString(hours < 0 ? -magnitudeNs : magnitudeNs);
 }
 
 /**
@@ -455,6 +460,27 @@ function boolRow(configPath: ReadonlyArray<string>, apiKey: string): ProjectConf
 }
 
 /**
+ * A GATING boolean — one that anchors a disabled-sentinel prune (captcha,
+ * hooks, external providers). Unlike {@link boolRow}'s null-skip, `null` maps
+ * to `false` here: the legacy reconciliation reads a null discriminator as
+ * disabled (`valOrDefault(remote.security_captcha_enabled, false)`,
+ * auth.sync.ts:1315; hooks `:1336`; providers `:1789`), the push path only
+ * manages the sibling fields while enabled, and the sentinel sweep
+ * (`applyDisabledSentinels`) only fires on a literal `false` — dropping the
+ * null would leave a retained client_id/URI in the projection with no
+ * `enabled` key, exactly the phantom-drift shape the sweep exists to prune.
+ * Same shape as the SMTP anchor's `smtp_host: null → enabled: false`.
+ */
+function gatedBoolRow(configPath: ReadonlyArray<string>, apiKey: string): ProjectConfigMappingRow {
+  const apiPath = ["auth", apiKey];
+  return {
+    configPath,
+    apiPath,
+    transform: (value) => (value === null ? false : expectBoolean(value, apiPath)),
+  };
+}
+
+/**
  * Boolean field whose GoTrue name is the negation of the config field, e.g.
  * `disable_signup` → `enable_signup` (`auth.sync.ts:1272`, push inverse at
  * `:2299`) and `mailer_autoconfirm` → `email.enable_confirmations`
@@ -533,7 +559,12 @@ function secondsDurationRow(
  * 8760 and must map back, so the ceiling is Go's range, not float precision
  * (whole-hour products stay exact at any magnitude inside it). Values past
  * it overflow the formatter ("InfinityhNaNmNaNs", exponent notation).
- * Negative session bounds are meaningless, so 0 is the floor.
+ * SIGNED: the strict contract only requires these fields finite, and the
+ * legacy apply renders a negative value faithfully (`sessions_timebox: -1` →
+ * `"-1h0m0s"`, auth.sync.ts:1402-1404 via durationString's sign handling),
+ * with the push parser reading the leading `-` back (config-sync.duration.
+ * ts:101-104,158) — so the floor mirrors the ceiling, like the signed
+ * `*_max_frequency` rows above.
  */
 const MAX_SESSION_DURATION_HOURS = (MAX_GO_DURATION_NS - 2 ** 10) / NS_PER_HOUR;
 // ^ 2^63 - 1024 (exactly representable at that float spacing) keeps the
@@ -551,7 +582,14 @@ function hoursDurationRow(
     transform: (value) =>
       value === null
         ? undefined
-        : hoursToDurationString(expectNumberBetween(value, apiPath, 0, MAX_SESSION_DURATION_HOURS)),
+        : hoursToDurationString(
+            expectNumberBetween(
+              value,
+              apiPath,
+              -MAX_SESSION_DURATION_HOURS,
+              MAX_SESSION_DURATION_HOURS,
+            ),
+          ),
     normalizeDocument: canonicalizeDurationString,
     unit: "hours → duration string",
   };
@@ -806,7 +844,7 @@ const mfaRows: ReadonlyArray<ProjectConfigMappingRow> = [
 // CAPTCHA (auth.sync.ts:1303-1317)
 
 const captchaRows: ReadonlyArray<ProjectConfigMappingRow> = [
-  boolRow(["auth", "captcha", "enabled"], "security_captcha_enabled"),
+  gatedBoolRow(["auth", "captcha", "enabled"], "security_captcha_enabled"),
   {
     // Guarded to the schema enum (../auth/captcha.ts: "hcaptcha" | "turnstile"):
     // an unrecognized STRING (including "") omits the field — an enum member
@@ -953,7 +991,7 @@ const AUTH_HOOK_NAMES = [
 ] as const;
 
 const hookRows: ReadonlyArray<ProjectConfigMappingRow> = AUTH_HOOK_NAMES.flatMap((name) => [
-  boolRow(["auth", "hook", name, "enabled"], `hook_${name}_enabled`),
+  gatedBoolRow(["auth", "hook", name, "enabled"], `hook_${name}_enabled`),
   stringRow(["auth", "hook", name, "uri"], `hook_${name}_uri`),
   secretRow(["auth", "hook", name, "secrets"], `hook_${name}_secrets`),
 ]);
@@ -1041,7 +1079,7 @@ function providerClientIdRow(id: string): ProjectConfigMappingRow {
 const externalProviderRows: ReadonlyArray<ProjectConfigMappingRow> = EXTERNAL_PROVIDERS.flatMap(
   (provider) => {
     const rows: Array<ProjectConfigMappingRow> = [
-      boolRow(["auth", "external", provider.id, "enabled"], `external_${provider.id}_enabled`),
+      gatedBoolRow(["auth", "external", provider.id, "enabled"], `external_${provider.id}_enabled`),
       provider.id === "apple" || provider.id === "google"
         ? providerClientIdRow(provider.id)
         : stringRow(

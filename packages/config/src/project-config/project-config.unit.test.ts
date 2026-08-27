@@ -1542,7 +1542,7 @@ describe("review round: operand guards, empty-entry preservation, duration bound
   });
 
   test("session-hour values beyond the formatter's range throw with their apiPath", () => {
-    for (const hours of [1e300, 1e22, -1]) {
+    for (const hours of [1e300, 1e22, -1e300, -1e22]) {
       let thrown: unknown;
       try {
         fromApiProjectConfig({ auth: { sessions_timebox: hours } });
@@ -1555,6 +1555,24 @@ describe("review round: operand guards, empty-entry preservation, duration bound
     // A sane value still maps.
     const result = fromApiProjectConfig({ auth: { sessions_timebox: 24 } });
     expect(result.auth?.sessions?.timebox).toBe("24h0m0s");
+  });
+
+  test("negative session hours render with their sign, like the legacy apply", () => {
+    // auth.sync.ts:1402-1404 renders sessions_timebox: -1 as "-1h0m0s" (the
+    // shared durationString prepends the sign), the document schema keeps
+    // timebox a plain string, and the push parser reads the leading "-" back
+    // (config-sync.duration.ts:101-104) — so a signed hosted value maps
+    // instead of throwing.
+    expect(fromApiProjectConfig({ auth: { sessions_timebox: -1 } }).auth?.sessions?.timebox).toBe(
+      "-1h0m0s",
+    );
+    expect(
+      fromApiProjectConfig({ auth: { sessions_inactivity_timeout: -1.5 } }).auth?.sessions
+        ?.inactivity_timeout,
+    ).toBe("-1h30m0s");
+    // Document-side canonicalization converges on the same spelling.
+    const projected = fromConfigDocument({ auth: { sessions: { timebox: "-1h" } } });
+    expect(projected.auth?.sessions?.timebox).toBe("-1h0m0s");
   });
 });
 
@@ -1995,6 +2013,41 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
     expect(result.auth?.sms?.messagebird).toEqual({ enabled: false });
     expect(result.auth?.external?.github).toEqual({ enabled: false });
     expect(result.storage?.analytics).toEqual({ enabled: false });
+  });
+
+  test("null gating discriminators read as disabled and still prune their siblings", () => {
+    // The GET contract permits null for these booleans, and the legacy
+    // reconciliation reads a null discriminator as disabled (auth.sync.ts:
+    // 1315 captcha, :1336 hooks, :1789 external providers) — so the gated
+    // rows map null to false, letting the sentinel sweep prune the retained
+    // siblings instead of projecting them with no `enabled` key.
+    const result = fromApiProjectConfig({
+      auth: {
+        external_github_enabled: null,
+        external_github_client_id: "retained-id",
+        hook_send_email_enabled: null,
+        hook_send_email_uri: "https://retained.example.com",
+        security_captcha_enabled: null,
+        security_captcha_provider: "hcaptcha",
+      },
+    });
+    expect(result.auth?.external?.github).toEqual({ enabled: false });
+    expect(result.auth?.hook?.send_email).toEqual({ enabled: false });
+    expect(result.auth?.captcha).toEqual({ enabled: false });
+    // Validation still runs before the null→false gate maps.
+    expect(() =>
+      fromApiProjectConfig({
+        auth: { external_github_enabled: null, external_github_client_id: 5 },
+      }),
+    ).toThrow(ProjectConfigParseError);
+    // Non-gating nullable booleans keep the null-skip convention.
+    const nonGating = fromApiProjectConfig({ auth: { mfa_totp_enroll_enabled: null } });
+    expect(Object.hasOwn(nonGating, "auth")).toBe(false);
+    // A true discriminator still projects its siblings unchanged.
+    const enabled = fromApiProjectConfig({
+      auth: { external_github_enabled: true, external_github_client_id: "live-id" },
+    });
+    expect(enabled.auth?.external?.github).toEqual({ enabled: true, client_id: "live-id" });
   });
 
   test("documents with auth or storage disabled project only the toggle", () => {
