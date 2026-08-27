@@ -60,6 +60,8 @@ When an ADR becomes outdated, mark it as `deprecated` or reference the supersedi
 | 0017 | [Simplified Managed Stack Architecture](0017-simplified-managed-stack-architecture.md)                         | accepted   |
 | 0018 | [Sparse Config Subtraction](0018-sparse-config-subtraction.md)                                                 | proposed   |
 | 0019 | [Raw API-Response Passthrough on API-Sourced Config](0019-config-api-response-passthrough.md)                  | accepted   |
+| 0020 | [Config Naming Vocabulary](0020-config-naming-vocabulary.md)                                                   | accepted   |
+| 0021 | [ProjectConfig Convergence Semantics](0021-projectconfig-convergence-semantics.md)                             | accepted   |
 
 ## Template
 
