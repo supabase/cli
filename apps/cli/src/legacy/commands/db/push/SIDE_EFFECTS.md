@@ -27,14 +27,14 @@ before migrations unless `--skip-vault` is set.
 
 ## Database Mutations
 
-| Statement                                                                                                           | When                                                                                                                                                                                                                                    |
-| ------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RESET ALL` + migration statements + `INSERT INTO supabase_migrations.schema_migrations(version, name, statements)` | per pending migration (after confirmation); compatible statements use an implicit extended-protocol batch with one final `Sync`, while pipeline-incompatible statements run standalone — see Notes                                      |
-| `CREATE SCHEMA/TABLE … supabase_migrations.schema_migrations`, `ALTER TABLE … ADD COLUMN …`                         | once before applying migrations (idempotent)                                                                                                                                                                                            |
-| `roles.sql` statements (no history row)                                                                             | per `--include-roles` globals file (after confirmation); statements use an implicit extended-protocol batch with one final `Sync`                                                                                                       |
-| `SELECT id, name FROM vault.secrets …`, `SELECT vault.update_secret(...)`, `SELECT vault.create_secret(...)`        | when `[db.vault]` has syncable secrets, migrations are applied, and `--skip-vault` is not set                                                                                                                                           |
-| `CREATE TABLE … supabase_migrations.seed_files`, seed statements, `INSERT … seed_files(path, hash) … ON CONFLICT …` | per pending seed file with `--include-seed` (after confirmation); a dirty seed only refreshes the hash                                                                                                                                  |
-| `SET SESSION ROLE postgres`                                                                                         | stepped-down sessions only (`cli_login_*`/`supabase_admin`): after each top-level role-reverting statement, at the end of each migration/globals/seed file, and before the history insert and the `seed_files` upsert (CLI-2205, #6236) |
+| Statement                                                                                                           | When                                                                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RESET ALL` + migration statements + `INSERT INTO supabase_migrations.schema_migrations(version, name, statements)` | per pending migration (after confirmation); compatible statements use one explicitly transactional extended-protocol batch (`BEGIN` … `COMMIT`) with one final `Sync`, while pipeline-incompatible statements run standalone — see Notes |
+| `CREATE SCHEMA/TABLE … supabase_migrations.schema_migrations`, `ALTER TABLE … ADD COLUMN …`                         | once before applying migrations (idempotent)                                                                                                                                                                                             |
+| `roles.sql` statements (no history row)                                                                             | per `--include-roles` globals file (after confirmation); statements use one explicitly transactional extended-protocol batch (`BEGIN` … `COMMIT`) with one final `Sync`                                                                  |
+| `SELECT id, name FROM vault.secrets …`, `SELECT vault.update_secret(...)`, `SELECT vault.create_secret(...)`        | when `[db.vault]` has syncable secrets, migrations are applied, and `--skip-vault` is not set                                                                                                                                            |
+| `CREATE TABLE … supabase_migrations.seed_files`, seed statements, `INSERT … seed_files(path, hash) … ON CONFLICT …` | per pending seed file with `--include-seed` (after confirmation); a dirty seed only refreshes the hash                                                                                                                                   |
+| `SET SESSION ROLE postgres`                                                                                         | stepped-down sessions only (`cli_login_*`/`supabase_admin`): after each top-level role-reverting statement, at the end of each migration/globals/seed file, and before the history insert and the `seed_files` upsert (CLI-2205, #6236)  |
 
 ## API Routes
 
@@ -118,7 +118,9 @@ stdout is payload-only. A single `result` object is emitted:
   load, including decrypted `encrypted:` values. `--skip-vault` leaves them unchanged
   and does not resolve or decrypt their configured values.
 - **Pipeline-incompatible statements**: `CREATE [UNIQUE] INDEX CONCURRENTLY`,
-  `REINDEX … CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM`, and `CLUSTER` cannot run inside a
+  `DROP INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM`, `CLUSTER`,
+  `CREATE`/`DROP DATABASE`, `CREATE`/`DROP TABLESPACE`, and `REINDEX DATABASE`/`SYSTEM`
+  cannot run inside a
   transaction block (SQLSTATE 25001). The apply flushes (commits) the open batch, runs
   the statement standalone outside any transaction, then resumes batching; the history
   insert stays in the final batch so the migration is recorded only after every
