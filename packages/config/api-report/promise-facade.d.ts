@@ -10,10 +10,17 @@ import type { LoadCliProjectEnvironmentOptions, CliProjectEnvironment } from "./
  * member names.
  *
  * A rejection from `loadCliConfig`, `loadCliConfigFile`, or `saveCliConfig`
- * can carry any of `CliConfigStoreError`'s members (`cli-config.service.ts`):
- * this package's own `CliConfigParseError` / `DuplicateRemoteProjectIdError` /
- * `InvalidRemoteProjectIdError` / `CliProjectEnvParseError`, or `PlatformError`
- * for a host/OS failure — distinguish via `instanceof`.
+ * can carry any of five typed failures — this package's own
+ * `CliConfigParseError`, `DuplicateRemoteProjectIdError`,
+ * `InvalidRemoteProjectIdError`, `CliProjectEnvParseError`, or `PlatformError`
+ * (from `effect/PlatformError`) for a host/OS failure — distinguish via
+ * `instanceof`. One exception: `saveCliConfig`'s atomic-write step maps a
+ * rename failure to a defect rather than one of these typed failures (see
+ * `io.ts`'s `writeFileAtomic`) — the returned promise still rejects, but with
+ * the raw, un-mapped failure, not an instance of any class listed above. This
+ * is a deliberate design choice (a rename failure after a successful write
+ * indicates something is wrong with the filesystem itself, not a recoverable
+ * config condition), not an oversight.
  */
 export interface CliConfigIo {
     readonly loadCliConfig: (cwd: string, options?: LoadCliConfigOptions) => Promise<LoadedCliConfig | null>;

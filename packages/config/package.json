@@ -2,6 +2,23 @@
   "name": "@supabase/config",
   "version": "0.1.0",
   "private": true,
+  "description": "Supabase project configuration schema, parsing, and validation, built on Effect Schema.",
+  "keywords": [
+    "config",
+    "effect",
+    "schema",
+    "supabase"
+  ],
+  "homepage": "https://github.com/supabase/cli#readme",
+  "bugs": {
+    "url": "https://github.com/supabase/cli/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/supabase/cli.git",
+    "directory": "packages/config"
+  },
   "files": [
     "src",
     "!src/**/*.test.ts",
@@ -12,13 +29,13 @@
   "sideEffects": false,
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
       "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./internal": {
-      "types": "./dist/internal.d.ts",
       "bun": "./src/internal.ts",
+      "types": "./dist/internal.d.ts",
       "default": "./dist/internal.js"
     },
     "./io": {
@@ -37,15 +54,19 @@
       }
     },
     "./effect": {
-      "types": "./dist/effect.d.ts",
       "bun": "./src/effect.ts",
+      "types": "./dist/effect.d.ts",
       "default": "./dist/effect.js"
     },
     "./schema.json": "./dist/schema.json",
     "./project-schema.json": "./dist/project-schema.json"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "bun run ./scripts/build.ts",
+    "api-report:update": "bun run ./scripts/build.ts --api-report-only",
     "types:check": "tsc --noEmit",
     "test": "pnpm run test:unit",
     "test:unit": "pnpm exec turbo run @supabase/config#test:unit:run --",
@@ -67,9 +88,9 @@
     "vitest": "catalog:"
   },
   "peerDependencies": {
-    "@effect/platform-bun": "catalog:",
-    "@effect/platform-node": "catalog:",
-    "effect": "catalog:"
+    "@effect/platform-bun": ">=4.0.0-rc.111 <5",
+    "@effect/platform-node": ">=4.0.0-rc.111 <5",
+    "effect": ">=4.0.0-rc.111 <5"
   },
   "peerDependenciesMeta": {
     "@effect/platform-bun": {
@@ -78,5 +99,8 @@
     "@effect/platform-node": {
       "optional": true
     }
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

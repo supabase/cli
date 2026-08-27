@@ -1,11 +1,16 @@
-import { copyFile, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rename, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { toCliConfigJsonSchema } from "../src/base.ts";
-import { toProjectConfigJsonSchema } from "../src/project-config/project-schema.ts";
+import { CliConfigSchema, toCliConfigJsonSchema } from "../src/base.ts";
+import {
+  ProjectConfigSchema,
+  toProjectConfigJsonSchema,
+} from "../src/project-config/project-schema.ts";
+import { CLI_CONFIG_SCHEMA_URL, PROJECT_CONFIG_SCHEMA_URL } from "../src/schema-metadata.ts";
+import { collapseNonFiniteNumberUnions, withSchemaMetadata } from "./json-schema-postprocess.ts";
 
 const packageRoot = path.resolve(import.meta.dir, "..");
-const repoRoot = path.resolve(packageRoot, "../..");
+const apiReportOnly = process.argv.includes("--api-report-only");
 
 async function runCommand(cmd: readonly string[], cwd: string = packageRoot): Promise<void> {
   const child = Bun.spawn([...cmd], { cwd, stdout: "inherit", stderr: "inherit" });
@@ -15,7 +20,51 @@ async function runCommand(cmd: readonly string[], cwd: string = packageRoot): Pr
   }
 }
 
-async function renderJsonSchema(outputPath: string, json: unknown): Promise<void> {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+/** Descends `root` at each of `path`, requiring an object at every intermediate step, throwing with a precise location otherwise. */
+function readStringAt(root: unknown, path: ReadonlyArray<string>): string {
+  let current = root;
+  for (const [index, key] of path.entries()) {
+    if (!isRecord(current)) {
+      throw new Error(
+        `expected an object while reading ${path.slice(0, index).join(".")} (looking for "${key}"), got ${typeof current}`,
+      );
+    }
+    current = current[key];
+  }
+  if (typeof current !== "string") {
+    throw new Error(`expected a string at ${path.join(".")}, got ${typeof current}`);
+  }
+  return current;
+}
+
+/**
+ * Runs a schema's rendered JSON Schema document through
+ * {@link collapseNonFiniteNumberUnions} and {@link withSchemaMetadata}, then
+ * writes it via {@link renderJsonSchema}. `collapseNonFiniteNumberUnions`
+ * returns `unknown` (it's a generic JSON-tree walk with no static shape
+ * guarantee); this narrows it back to an object via `isRecord` rather than an
+ * `as` cast — both `toCliConfigJsonSchema()`/`toProjectConfigJsonSchema()`
+ * always render a top-level object, so a non-object result here would mean
+ * the collapse walk itself is broken, worth failing loudly on.
+ */
+async function renderCollapsedJsonSchema(
+  outputPath: string,
+  document: unknown,
+  rootAst: Parameters<typeof collapseNonFiniteNumberUnions>[1],
+  metadata: Parameters<typeof withSchemaMetadata>[1],
+): Promise<void> {
+  const collapsed = collapseNonFiniteNumberUnions(document, rootAst);
+  if (!isRecord(collapsed)) {
+    throw new Error(`collapseNonFiniteNumberUnions did not return an object for ${outputPath}`);
+  }
+  await renderJsonSchema(outputPath, withSchemaMetadata(collapsed, metadata));
+}
+
+async function renderJsonSchema(outputPath: string, json: Record<string, unknown>): Promise<void> {
   const schema = `${JSON.stringify(json, null, 2)}\n`;
 
   const formatter = Bun.spawn(["bun", "x", "oxfmt", `--stdin-filepath=${outputPath}`], {
@@ -47,10 +96,15 @@ async function renderJsonSchema(outputPath: string, json: unknown): Promise<void
  * the rest of the `./project-config/registry*.ts` graph it pulls in) must be
  * droppable even though it contains real side-effecting statements — that's
  * exactly what `sideEffects: false` authorizes a bundler to do, and exactly
- * what this asserts actually happened.
+ * what this asserts actually happened. A second, positive-control probe
+ * (bundling `projectConfigMappingRows` from `dist/internal.js`) proves the
+ * registry-only marker this test looks for is actually detectable by this
+ * exact bundling method in the first place, before trusting its absence from
+ * the first probe as meaningful.
  */
 async function verifyTreeShaking(): Promise<void> {
   const distIndexPath = await realpath(path.join(packageRoot, "dist", "index.js"));
+  const distInternalPath = await realpath(path.join(packageRoot, "dist", "internal.js"));
   // `mkdtemp` can return a path through a symlinked prefix (e.g. macOS's
   // `/var` -> `/private/var`) that Bun's bundler resolves to its canonical
   // form internally when computing the probe entry's own directory — compute
@@ -62,38 +116,65 @@ async function verifyTreeShaking(): Promise<void> {
   );
 
   try {
-    const probeEntry = path.join(probeDir, "probe.js");
-    const relativeSpecifier = path.relative(probeDir, distIndexPath).split(path.sep).join("/");
-    const specifier = relativeSpecifier.startsWith(".")
-      ? relativeSpecifier
-      : `./${relativeSpecifier}`;
-    await Bun.write(probeEntry, `export { CliConfigSchema } from "${specifier}";\n`);
-
-    const result = await Bun.build({
-      entrypoints: [probeEntry],
-      target: "browser",
-      minify: false,
-    });
-
-    if (!result.success) {
-      const messages = result.logs.map((log) => log.message).join("\n");
-      throw new Error(`tree-shake probe failed to bundle:\n${messages}`);
+    function relativeSpecifierFor(target: string): string {
+      const relative = path.relative(probeDir, target).split(path.sep).join("/");
+      return relative.startsWith(".") ? relative : `./${relative}`;
     }
 
-    const [output] = result.outputs;
-    if (!output) {
-      throw new Error("tree-shake probe produced no bundle output");
+    async function bundle(entryName: string, source: string): Promise<string> {
+      const probeEntry = path.join(probeDir, entryName);
+      await Bun.write(probeEntry, source);
+      const result = await Bun.build({
+        entrypoints: [probeEntry],
+        target: "browser",
+        minify: false,
+      });
+      if (!result.success) {
+        const messages = result.logs.map((log) => log.message).join("\n");
+        throw new Error(`tree-shake probe failed to bundle ${entryName}:\n${messages}`);
+      }
+      const [output] = result.outputs;
+      if (!output) {
+        throw new Error(`tree-shake probe produced no bundle output for ${entryName}`);
+      }
+      return output.text();
     }
-    const code = await output.text();
 
     // Only appears in `src/project-config/registry*.ts` (verified by
     // grepping `dist/`) — a real API attribute path segment, never used by
     // `CliConfigSchema`'s own field names (`base.ts`/`api.ts` use `schemas`,
     // not `db_schema`).
     const REGISTRY_ONLY_MARKER = "db_schema";
-    // Only appears in `src/api.ts`, reachable through `CliConfigSchema` —
-    // proof the probe still bundled real, non-empty content.
-    const SCHEMA_MARKER = "Enable the local PostgREST service.";
+    // Derived at runtime from the actual `CliConfigSchema` annotation it
+    // names, rather than hardcoded prose that could silently drift from the
+    // real description text — `api.enabled`'s `description`, read off the
+    // real rendered JSON Schema document (the same source `dist/schema.json`
+    // is built from).
+    const SCHEMA_MARKER = readStringAt(toCliConfigJsonSchema(), [
+      "properties",
+      "api",
+      "properties",
+      "enabled",
+      "description",
+    ]);
+
+    const positiveControlCode = await bundle(
+      "positive-control.js",
+      `export { projectConfigMappingRows } from "${relativeSpecifierFor(distInternalPath)}";\n`,
+    );
+    if (!positiveControlCode.includes(REGISTRY_ONLY_MARKER)) {
+      throw new Error(
+        `tree-shake probe's positive control failed: bundling { projectConfigMappingRows } from ` +
+          `dist/internal.js did not include marker ${JSON.stringify(REGISTRY_ONLY_MARKER)} — this ` +
+          `probe methodology can no longer detect the marker it's meant to prove absent below, so its ` +
+          `absence from the CliConfigSchema-only probe would be meaningless.`,
+      );
+    }
+
+    const code = await bundle(
+      "probe.js",
+      `export { CliConfigSchema } from "${relativeSpecifierFor(distIndexPath)}";\n`,
+    );
 
     if (code.includes(REGISTRY_ONLY_MARKER)) {
       throw new Error(
@@ -111,7 +192,7 @@ async function verifyTreeShaking(): Promise<void> {
     }
 
     console.log(
-      `[build] tree-shake probe OK (${code.length} bytes; registry-only marker absent, schema marker present).`,
+      `[build] tree-shake probe OK (${code.length} bytes; registry-only marker absent, schema marker present, positive control passed).`,
     );
   } finally {
     await rm(probeDir, { recursive: true, force: true });
@@ -120,14 +201,16 @@ async function verifyTreeShaking(): Promise<void> {
 
 /**
  * Regenerates a declarations-only build (`tsconfig.api-report.json`, no
- * `.d.ts.map`/`.js`) into a scratch dir and mirrors it into the checked-in
- * `api-report/` (CLI-2234 enforcement layer 4). `src/api-report.unit.test.ts`
- * regenerates the same way and diffs against this mirror, so any type-surface
- * change becomes a reviewable `git diff` instead of a silent drift.
+ * `.d.ts.map`/`.js`) into a scratch dir INSIDE this package (so the final
+ * swap below is a same-filesystem, atomic `rename`) and swaps it into the
+ * checked-in `api-report/` (CLI-2234 enforcement layer 4).
+ * `src/api-report.unit.test.ts` regenerates the same way and diffs against
+ * this mirror, so any type-surface change becomes a reviewable `api-report/`
+ * diff instead of passing silently.
  */
 async function syncApiReport(): Promise<void> {
   const apiReportDir = path.join(packageRoot, "api-report");
-  const scratchDir = await mkdtemp(path.join(tmpdir(), "supabase-config-api-report-"));
+  const scratchDir = await mkdtemp(path.join(packageRoot, ".api-report-scratch-"));
 
   try {
     await runCommand([
@@ -140,45 +223,45 @@ async function syncApiReport(): Promise<void> {
       scratchDir,
     ]);
 
-    await rm(apiReportDir, { recursive: true, force: true });
-    await mkdir(apiReportDir, { recursive: true });
-
     const glob = new Bun.Glob("**/*.d.ts");
     let count = 0;
-    for await (const relativePath of glob.scan({ cwd: scratchDir })) {
-      const dest = path.join(apiReportDir, relativePath);
-      await mkdir(path.dirname(dest), { recursive: true });
-      await copyFile(path.join(scratchDir, relativePath), dest);
+    for await (const _relativePath of glob.scan({ cwd: scratchDir })) {
       count++;
     }
+    if (count === 0) {
+      throw new Error(
+        "the declarations-only compile produced zero .d.ts files — refusing to swap an empty tree " +
+          "into api-report/",
+      );
+    }
 
-    console.log(`[build] synced ${count} .d.ts files into api-report/`);
+    const staleDir = `${apiReportDir}.stale-${Date.now()}`;
+    const hadExistingApiReport = await Bun.file(path.join(apiReportDir, "index.d.ts")).exists();
+    if (hadExistingApiReport) {
+      await rm(staleDir, { recursive: true, force: true });
+      await rename(apiReportDir, staleDir);
+    }
+    await rename(scratchDir, apiReportDir);
+    if (hadExistingApiReport) {
+      await rm(staleDir, { recursive: true, force: true });
+    }
+
+    console.log(`[build] synced ${count} .d.ts files into api-report/ (atomic swap)`);
   } finally {
     await rm(scratchDir, { recursive: true, force: true });
   }
 }
 
-/**
- * The real CLI-2232 acceptance check: proves every exports-map subpath
- * actually resolves compiled `dist/` output end-to-end for a real Node
- * consumer — not just that `tsc` produced files. Runs from `apps/cli`
- * (the one in-repo workspace that depends on `@supabase/config`) so the
- * top-level bare specifier resolves through pnpm's real `node_modules` link,
- * exactly like an external consumer would.
- */
-async function runNodeSmokeTest(): Promise<void> {
-  const nodePath = Bun.which("node");
-  if (!nodePath) {
-    console.error(
-      "[build] `node` executable not found on PATH; skipping the Node-consumer smoke test. This " +
-        "step exists specifically to catch a broken `exports` map / dist resolution for real Node " +
-        "consumers (CLI-2232) — install Node (mise provides it) and re-run `pnpm build` before " +
-        "trusting this package's dist output.",
-    );
-    return;
-  }
+const SMOKE_TEST_RUNTIME_DEPS = [
+  "effect",
+  "@effect/platform-node",
+  "@standard-schema/spec",
+  "dedent",
+  "smol-toml",
+] as const;
 
-  const smokeScript = [
+function buildSmokeTestScript(): string {
+  return [
     'import assert from "node:assert/strict";',
     'import { createRequire } from "node:module";',
     "",
@@ -204,29 +287,200 @@ async function runNodeSmokeTest(): Promise<void> {
     'assert.equal(typeof schemaJson, "object", "schema.json did not resolve to an object");',
     'assert.equal(typeof projectSchemaJson, "object", "project-schema.json did not resolve to an object");',
     "",
-    'console.log("[build] node smoke test: every entrypoint resolved through the node condition");',
+    'console.log("[build] pack-and-install smoke test: every entrypoint resolved through a real npm-packed tarball install");',
   ].join("\n");
-
-  await runCommand(
-    [nodePath, "--input-type=module", "-e", smokeScript],
-    path.join(repoRoot, "apps/cli"),
-  );
 }
 
-console.log("[build] compiling TypeScript project (tsconfig.build.json)...");
-await runCommand(["pnpm", "exec", "tsc", "-p", "tsconfig.build.json"]);
+/**
+ * The real CLI-2232/CLI-2234 acceptance check: packs the actual publish
+ * tarball (`npm pack`, governed by `files`/`.npmignore` — the exact thing
+ * `npm publish` would ship) and installs it into a fresh, isolated consumer
+ * project, then imports every entrypoint and JSON artifact through a real
+ * `node` process. This catches `files`/`exports` drift the previous
+ * workspace-link Node smoke test missed entirely (a workspace `pnpm` link
+ * resolves straight to this package's own directory, bypassing `files`
+ * filtering altogether).
+ *
+ * Deliberately extracts the tarball directly (`tar`) rather than `npm install
+ * <tarball>`: the latter would additionally try to resolve
+ * `@supabase/config`'s own dependency tree (`effect`'s own `fast-check`/
+ * `msgpackr`, `@effect/platform-node`'s `undici`/`mime`, …) from the npm
+ * registry over the network on every build. Every runtime dependency this
+ * smoke test actually needs is already resolved locally by pnpm — symlinking
+ * those real, already-resolved package directories in below — the same
+ * directories `packages/config/node_modules/*` itself points at — mirrors
+ * exactly how pnpm links every other workspace in this monorepo (Node
+ * resolves each symlink to its real path before walking further ancestor
+ * `node_modules` directories, so each linked package's own transitive deps,
+ * already resolved alongside it in the pnpm store, are found the same way).
+ * This keeps the check hermetic, fast, and network-free.
+ */
+async function runPackAndInstallSmokeTest(): Promise<void> {
+  const npmPath = Bun.which("npm");
+  const nodePath = Bun.which("node");
+  const tarPath = Bun.which("tar");
+  if (npmPath === null || nodePath === null || tarPath === null) {
+    const missing = [
+      npmPath === null ? "npm" : null,
+      nodePath === null ? "node" : null,
+      tarPath === null ? "tar" : null,
+    ].filter((name) => name !== null);
+    throw new Error(
+      `the pack-and-install smoke test (CLI-2234) requires ${missing.join(", ")} on PATH — install ` +
+        "it (mise provides node/npm; tar ships with every supported OS) before running `pnpm build`.",
+    );
+  }
 
-console.log("[build] rendering JSON Schema artifacts...");
-await renderJsonSchema("./dist/schema.json", toCliConfigJsonSchema());
-await renderJsonSchema("./dist/project-schema.json", toProjectConfigJsonSchema());
+  const scratchDir = await mkdtemp(path.join(tmpdir(), "supabase-config-pack-smoke-"));
+  try {
+    const packResult = Bun.spawn([npmPath, "pack", "--json", "--pack-destination", scratchDir], {
+      cwd: packageRoot,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [packExitCode, packStdout] = await Promise.all([
+      packResult.exited,
+      new Response(packResult.stdout).text(),
+    ]);
+    if (packExitCode !== 0) {
+      throw new Error(`\`npm pack\` failed with exit code ${packExitCode}`);
+    }
+    const packEntries = JSON.parse(packStdout) as ReadonlyArray<{ readonly filename: string }>;
+    const [packEntry] = packEntries;
+    if (packEntry === undefined) {
+      throw new Error("`npm pack --json` produced no tarball entries");
+    }
+    const tarballPath = path.join(scratchDir, packEntry.filename);
 
-console.log("[build] verifying the sideEffects:false tree-shaking claim...");
-await verifyTreeShaking();
+    const consumerDir = path.join(scratchDir, "consumer");
+    const consumerConfigDir = path.join(consumerDir, "node_modules", "@supabase", "config");
+    await mkdir(consumerConfigDir, { recursive: true });
+    await runCommand([
+      tarPath,
+      "-xzf",
+      tarballPath,
+      "-C",
+      consumerConfigDir,
+      "--strip-components=1",
+    ]);
 
-console.log("[build] syncing api-report/ from a declarations-only compile...");
-await syncApiReport();
+    await Bun.write(
+      path.join(consumerDir, "package.json"),
+      `${JSON.stringify(
+        { name: "supabase-config-pack-smoke", version: "0.0.0", private: true, type: "module" },
+        null,
+        2,
+      )}\n`,
+    );
 
-console.log("[build] running the Node-consumer smoke test...");
-await runNodeSmokeTest();
+    const consumerNodeModules = path.join(consumerDir, "node_modules");
+    for (const name of SMOKE_TEST_RUNTIME_DEPS) {
+      const real = await realpath(path.join(packageRoot, "node_modules", name));
+      const dest = path.join(consumerNodeModules, name);
+      await mkdir(path.dirname(dest), { recursive: true });
+      await symlink(real, dest, "dir");
+    }
 
-console.log("[build] done.");
+    await runCommand([nodePath, "--input-type=module", "-e", buildSmokeTestScript()], consumerDir);
+  } finally {
+    await rm(scratchDir, { recursive: true, force: true });
+  }
+}
+
+interface ExportsMap {
+  readonly [subpath: string]: ExportsNode;
+}
+type ExportsNode = string | { readonly [condition: string]: ExportsNode };
+
+function collectDistTargets(node: ExportsNode, into: Set<string>): void {
+  if (typeof node === "string") {
+    if (node.startsWith("./dist/")) {
+      into.add(node);
+    }
+    return;
+  }
+  for (const [condition, value] of Object.entries(node)) {
+    // `bun` conditions point at `src/*.ts`, which trivially exists at every
+    // commit (it's source, not a build output) — nothing to verify here.
+    if (condition === "bun") {
+      continue;
+    }
+    collectDistTargets(value, into);
+  }
+}
+
+/** CLI-2234: every `types`/`default`/JSON-artifact target the exports map declares must exist once the build finishes. */
+async function verifyExportsMapTargetsExist(): Promise<void> {
+  const packageJson = JSON.parse(await Bun.file(path.join(packageRoot, "package.json")).text()) as {
+    readonly exports: ExportsMap;
+  };
+
+  const targets = new Set<string>();
+  for (const node of Object.values(packageJson.exports)) {
+    collectDistTargets(node, targets);
+  }
+
+  const missing: string[] = [];
+  for (const target of targets) {
+    if (!(await Bun.file(path.join(packageRoot, target)).exists())) {
+      missing.push(target);
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `the following dist targets declared in package.json's exports map are missing after the ` +
+        `build: ${missing.join(", ")}`,
+    );
+  }
+  console.log(`[build] verified ${targets.size} exports-map dist targets exist on disk.`);
+}
+
+if (apiReportOnly) {
+  console.log("[build] --api-report-only: syncing api-report/ from a declarations-only compile...");
+  await syncApiReport();
+  console.log("[build] done.");
+} else {
+  console.log("[build] removing stale dist/ (stale modules from renames must not ship)...");
+  await rm(path.join(packageRoot, "dist"), { recursive: true, force: true });
+
+  console.log("[build] compiling TypeScript project (tsconfig.build.json)...");
+  await runCommand(["pnpm", "exec", "tsc", "-p", "tsconfig.build.json"]);
+
+  console.log("[build] rendering JSON Schema artifacts...");
+  await renderCollapsedJsonSchema(
+    "./dist/schema.json",
+    toCliConfigJsonSchema(),
+    CliConfigSchema.ast,
+    {
+      id: CLI_CONFIG_SCHEMA_URL,
+      title: "Supabase CLI config (CliConfig)",
+      description:
+        "The Supabase CLI's local project config document (supabase/config.toml or supabase/config.json).",
+    },
+  );
+  await renderCollapsedJsonSchema(
+    "./dist/project-schema.json",
+    toProjectConfigJsonSchema(),
+    ProjectConfigSchema.ast,
+    {
+      id: PROJECT_CONFIG_SCHEMA_URL,
+      title: "Supabase hosted project config (ProjectConfig)",
+      description:
+        "The sparse, hosted-project subset of CliConfig that a Supabase project manages.",
+    },
+  );
+
+  console.log("[build] verifying every exports-map dist target exists...");
+  await verifyExportsMapTargetsExist();
+
+  console.log("[build] verifying the sideEffects:false tree-shaking claim...");
+  await verifyTreeShaking();
+
+  console.log("[build] syncing api-report/ from a declarations-only compile...");
+  await syncApiReport();
+
+  console.log("[build] running the pack-and-install smoke test...");
+  await runPackAndInstallSmokeTest();
+
+  console.log("[build] done.");
+}

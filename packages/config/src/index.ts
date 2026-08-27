@@ -17,7 +17,6 @@ export {
   CliProjectEnvParseError,
   DuplicateRemoteProjectIdError,
   InvalidRemoteProjectIdError,
-  MissingCliConfigValueError,
   ProjectConfigParseError,
 } from "./errors.ts";
 export type { ConfigFormat } from "./config-format.ts";
@@ -41,12 +40,11 @@ export {
 export type { LoadCliProjectEnvironmentOptions, CliProjectEnvironment } from "./project.ts";
 export {
   type ResolvedCliConfigValue,
-  type ResolveCliConfigOptions,
   resolveCliConfigValue,
   resolveCliConfigSubtree,
 } from "./lib/resolve.ts";
 export type { CliProjectPaths } from "./paths.ts";
-export { CLI_CONFIG_SCHEMA_URL } from "./schema-metadata.ts";
+export { CLI_CONFIG_SCHEMA_URL, PROJECT_CONFIG_SCHEMA_URL } from "./schema-metadata.ts";
 export {
   type EffectiveConfig,
   type SparseCliConfig,

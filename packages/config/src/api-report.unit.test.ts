@@ -28,34 +28,49 @@ async function listDeclarationFiles(root: string): Promise<string[]> {
   return relativePaths.sort();
 }
 
-/**
- * `bun --bun vitest` (this package's mandated test runner, per `AGENTS.md`)
- * prepends a synthetic `node` shim directory (`/tmp/bun-node-*`, `node` ->
- * `bun`) to `PATH` for the whole process tree, so any nested
- * `#!/usr/bin/env node` script resolves to Bun instead of real Node. `pnpm`'s
- * own launcher is exactly such a script, and its corepack wrapper needs
- * `node:sqlite`, which Bun's Node-compat layer doesn't implement — so
- * spawning `pnpm` unmodified from inside this test fails before it ever
- * reaches `tsc`. Stripping that shim directory back out restores real `node`
- * resolution for the spawned `pnpm` subprocess.
- */
-function pnpmSpawnEnv(): Record<string, string | undefined> {
-  const path = process.env.PATH ?? "";
-  const sanitizedPath = path
-    .split(":")
-    .filter((segment) => !segment.includes("/bun-node-"))
-    .join(":");
-  return { ...process.env, PATH: sanitizedPath };
+/** The first line at which `fresh`/`checkedIn` diverge, `undefined` when identical, for a precise mismatch message. */
+function firstDifferingLine(fresh: string, checkedIn: string): string | undefined {
+  const freshLines = fresh.split("\n");
+  const checkedInLines = checkedIn.split("\n");
+  const length = Math.max(freshLines.length, checkedInLines.length);
+  for (let index = 0; index < length; index++) {
+    if (freshLines[index] !== checkedInLines[index]) {
+      return (
+        `line ${index + 1}: fresh=${JSON.stringify(freshLines[index])} ` +
+        `checked-in=${JSON.stringify(checkedInLines[index])}`
+      );
+    }
+  }
+  return undefined;
 }
 
+// This unit test spawns a real subprocess (`tsc`), a deliberate, narrow
+// exception to this repo's usual "no subprocess in unit tests" default: the
+// declarations-only compile it runs takes well under half a second, and it's
+// the only thing that can actually guard the published type surface against
+// silent drift (see this file's header comment).
 describe("api-report/ mirrors the compiled declaration surface", () => {
   test("a fresh declarations-only build matches the checked-in api-report/ mirror", async () => {
     const scratchDir = await mkdtemp(join(tmpdir(), "supabase-config-api-report-test-"));
 
     try {
+      // Spawns this package's own `node_modules/.bin/tsc` directly rather
+      // than `pnpm exec tsc`: `bun --bun vitest` (this package's mandated
+      // test runner, per `AGENTS.md`) prepends a synthetic `node` shim
+      // directory (`/tmp/bun-node-*`, `node` -> `bun`) to `PATH` for the
+      // whole process tree, so any nested `#!/usr/bin/env node` script
+      // resolves to Bun instead of real Node. `pnpm`'s own launcher is
+      // exactly such a script, and its corepack wrapper needs `node:sqlite`,
+      // which Bun's Node-compat layer doesn't implement — so spawning `pnpm`
+      // unmodified from inside this test used to fail before ever reaching
+      // `tsc`, requiring PATH surgery to work around it. Going straight to
+      // the installed `tsc` bin sidesteps `pnpm`'s launcher (and its
+      // `node:sqlite` dependency) entirely — `tsc` itself has no such
+      // dependency, so Bun's `node` shim resolving it is fine.
+      const tscBinPath = join(packageRoot, "node_modules", ".bin", "tsc");
       const tsc = Bun.spawn(
-        ["pnpm", "exec", "tsc", "-p", "tsconfig.api-report.json", "--outDir", scratchDir],
-        { cwd: packageRoot, env: pnpmSpawnEnv(), stdout: "pipe", stderr: "pipe" },
+        [tscBinPath, "-p", "tsconfig.api-report.json", "--outDir", scratchDir],
+        { cwd: packageRoot, stdout: "pipe", stderr: "pipe" },
       );
       const [exitCode, stdout, stderr] = await Promise.all([
         tsc.exited,
@@ -78,7 +93,7 @@ describe("api-report/ mirrors the compiled declaration surface", () => {
           readFile(join(apiReportDir, relativePath), "utf8"),
         ]);
         if (fresh !== checkedIn) {
-          mismatches.push(relativePath);
+          mismatches.push(`${relativePath} (${firstDifferingLine(fresh, checkedIn)})`);
         }
       }
 

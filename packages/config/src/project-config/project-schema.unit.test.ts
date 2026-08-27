@@ -141,6 +141,94 @@ describe("ProjectConfigSchema secret-strip exhaustiveness", () => {
       expect(findAtPattern(ProjectConfigSchema.ast, pattern)).toBeUndefined();
     }
   });
+
+  // Guards against a vacuous pass: if an ANCESTOR of `pattern` vanished
+  // (e.g. a whole section got dropped by an unrelated bug), `findAtPattern`
+  // for the full secret path also returns `undefined` — indistinguishable,
+  // from that assertion alone, from the secret leaf being correctly
+  // stripped. Asserting the parent path is still reachable rules that out.
+  test("the parent of every stripped x-secret path is still reachable", () => {
+    for (const pattern of reachablePatterns) {
+      const parentPattern = pattern.slice(0, -1);
+      const parent =
+        parentPattern.length === 0
+          ? ProjectConfigSchema.ast
+          : findAtPattern(ProjectConfigSchema.ast, parentPattern);
+      expect(parent, `parent of ${JSON.stringify(pattern)} vanished`).toBeDefined();
+    }
+  });
+});
+
+describe("ProjectConfigSchema hosted-section keys", () => {
+  // Moved from an import-time throw in `project-schema.ts` (CLI-2234): a
+  // schema-module import should never be able to crash a consumer's
+  // process for a condition a test already covers. Asserts against the
+  // PUBLIC, observable `ProjectConfigSchema.ast` rather than reaching into
+  // the module's private `hostedSectionsStruct`.
+  test("the schema's own top-level property names are exactly HOSTED_SECTION_KEYS", () => {
+    if (!SchemaAST.isObjects(ProjectConfigSchema.ast)) {
+      throw new Error("expected ProjectConfigSchema.ast to be an Objects node");
+    }
+    const actualKeys = ProjectConfigSchema.ast.propertySignatures.map((property) =>
+      String(property.name),
+    );
+    expect(actualKeys.toSorted()).toEqual([...HOSTED_SECTION_KEYS].toSorted());
+  });
+});
+
+describe("ProjectConfigSchema derivation AST-walk exhaustiveness", () => {
+  // CLI-2234 group 7c/7d: `toDeepOptionalHostedAst` (`project-schema.ts`)
+  // enumerates AST node kinds explicitly rather than through a generic
+  // recursion helper (see that module's doc comment for why) and
+  // deliberately leaves `Suspend` unhandled. This walks the ACTUAL derived
+  // `ProjectConfigSchema.ast` and fails loudly the moment a node kind
+  // outside the set that derivation is written to understand appears,
+  // rather than letting a future schema addition silently fall through
+  // `toDeepOptionalHostedAst`'s final `return ast` (correct for a true
+  // leaf, silently wrong for an unhandled container/recursive kind).
+  const HANDLED_CONTAINER_TAGS = new Set(["Objects", "Arrays", "Union"]);
+  const HANDLED_LEAF_TAGS = new Set(["String", "Number", "Boolean", "Literal"]);
+
+  function walk(ast: SchemaAST.AST, seen: Set<SchemaAST.AST>): void {
+    if (seen.has(ast)) {
+      return;
+    }
+    seen.add(ast);
+
+    if (HANDLED_CONTAINER_TAGS.has(ast._tag) || HANDLED_LEAF_TAGS.has(ast._tag)) {
+      if (SchemaAST.isObjects(ast)) {
+        for (const property of ast.propertySignatures) {
+          walk(property.type, seen);
+        }
+        for (const indexSignature of ast.indexSignatures) {
+          walk(indexSignature.type, seen);
+        }
+      } else if (SchemaAST.isArrays(ast)) {
+        for (const element of ast.elements) {
+          walk(element, seen);
+        }
+        for (const rest of ast.rest) {
+          walk(rest, seen);
+        }
+      } else if (SchemaAST.isUnion(ast)) {
+        for (const member of ast.types) {
+          walk(member, seen);
+        }
+      }
+      return;
+    }
+
+    throw new Error(
+      `ProjectConfigSchema's derived AST contains a node kind ("${ast._tag}") that ` +
+        "toDeepOptionalHostedAst (project-schema.ts) isn't written to understand yet — " +
+        "the derivation must learn this new node kind (secret-stripping, optionality, and " +
+        "checks-stripping all need a deliberate decision for it) before this guard can pass.",
+    );
+  }
+
+  test("every node kind reachable from ProjectConfigSchema.ast is in the handled set", () => {
+    walk(ProjectConfigSchema.ast, new Set());
+  });
 });
 
 describe("ProjectConfigSchema local-only sections", () => {

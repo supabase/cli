@@ -2,7 +2,7 @@
 export * from "./index.ts";
 import type { Effect } from "effect";
 import type { LoadCliConfigOptions } from "./config-document.ts";
-import type { ResolvedCliConfigValue, ResolveCliConfigOptions } from "./lib/resolve.ts";
+import type { ResolvedCliConfigValue } from "./lib/resolve.ts";
 import * as io from "./io.ts";
 import type { CliProjectEnvironment } from "./project.ts";
 import * as project from "./project.ts";
@@ -39,16 +39,14 @@ export { loadDotEnvFile, loadCliProjectEnvironment } from "./project.ts";
  * `resolveCliConfigValue`/`resolveCliConfigSubtree` on this subpath — the
  * Effect-typed variant wins on `./effect`; the sync variant lives on `.`.
  *
- * Narrowed to the public `ResolveCliConfigOptions` (no `goViperCompat`) for
- * the same reason as {@link loadCliConfig} above; `@supabase/config/internal`
- * re-exports these same runtime functions typed to additionally show
- * `goViperCompat`.
+ * Narrowed to no options parameter (no `goViperCompat`) for the same reason
+ * as {@link loadCliConfig} above; `@supabase/config/internal` re-exports
+ * these same runtime functions typed to additionally show `goViperCompat`.
  */
 export const resolveCliConfigValue: <T>(
   value: T,
   cliProjectEnv: Pick<CliProjectEnvironment, "values">,
   configPath: string,
-  options?: ResolveCliConfigOptions,
 ) => Effect.Effect<ResolvedCliConfigValue<T>> = project.resolveCliConfigValue;
 
 /** See {@link resolveCliConfigValue}'s doc comment for the shadowing and narrowing rationale. */
@@ -56,7 +54,6 @@ export const resolveCliConfigSubtree: <T>(
   value: T,
   cliProjectEnv: Pick<CliProjectEnvironment, "values">,
   pathPrefix: string,
-  options?: ResolveCliConfigOptions,
 ) => Effect.Effect<ResolvedCliConfigValue<T>> = project.resolveCliConfigSubtree;
 
 export { findCliProjectPaths, findCliProjectRoot } from "./paths.ts";

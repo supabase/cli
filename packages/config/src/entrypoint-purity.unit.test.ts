@@ -356,6 +356,37 @@ describe("src/index.ts stays browser-safe", () => {
   });
 });
 
+// CLI-2234 group 8c: `src/io-browser.ts` (the `browser` condition target for
+// `@supabase/config/io`) must stay just as bundler-safe as `index.ts` itself
+// — it only adds inert, throw-when-invoked stubs plus a type-only import from
+// `promise-facade.ts` (erased at the specifier-scan level, same as every
+// other `import type`/`export type` statement this walker already ignores)
+// on top of `export * from "./index.ts"`. Reuses the exact same walker and
+// browser-safe bare-specifier allowlist as the `index.ts` suite above.
+const ioBrowserGraph = collectImportGraph(join(srcDir, "io-browser.ts"));
+const expectedIoBrowserGraphFiles = [
+  join(srcDir, "io-browser.ts"),
+  ...expectedPureGraphFiles,
+].sort();
+
+describe("src/io-browser.ts stays browser-safe", () => {
+  test("the traversal actually walked the real module graph", () => {
+    expect(ioBrowserGraph.visitedFiles.size).toBeGreaterThan(1);
+    expect(ioBrowserGraph.bareSpecifiers.has("effect")).toBe(true);
+  });
+
+  test("every bare import reachable from io-browser.ts is on the browser-safe allowlist", () => {
+    const disallowed = [...ioBrowserGraph.bareSpecifiers].filter(
+      (specifier) => !allowedBareSpecifier(specifier),
+    );
+    expect(disallowed).toEqual([]);
+  });
+
+  test("the pure runtime graph is exactly index.ts's graph plus io-browser.ts itself", () => {
+    expect([...ioBrowserGraph.visitedFiles].sort()).toEqual(expectedIoBrowserGraphFiles);
+  });
+});
+
 describe("src/index.ts export surface", () => {
   test("pins the exact set of runtime export names", () => {
     expect(Object.keys(defaultEntrypoint).sort()).toMatchInlineSnapshot(`
@@ -366,7 +397,7 @@ describe("src/index.ts export surface", () => {
         "CliProjectEnvParseError",
         "DuplicateRemoteProjectIdError",
         "InvalidRemoteProjectIdError",
-        "MissingCliConfigValueError",
+        "PROJECT_CONFIG_SCHEMA_URL",
         "ProjectConfigParseError",
         "ProjectConfigSchema",
         "attachApiResponse",
@@ -405,7 +436,7 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
         "CliProjectEnvParseError",
         "DuplicateRemoteProjectIdError",
         "InvalidRemoteProjectIdError",
-        "MissingCliConfigValueError",
+        "PROJECT_CONFIG_SCHEMA_URL",
         "ProjectConfigParseError",
         "ProjectConfigSchema",
         "attachApiResponse",
@@ -482,7 +513,6 @@ describe("src/internal.ts export surface", () => {
         "AUTH_HOOK_NAMES",
         "ENV_CAPTURE_REGEX",
         "loadCliConfig",
-        "loadCliConfigFile",
         "projectConfigMappingRows",
         "resolveCliConfigSubtree",
         "resolveCliConfigValue",
@@ -515,7 +545,15 @@ describe("package.json exports map", () => {
     expect(Object.keys(ioExports)).toEqual(["bun", "node", "browser", "default"]);
   });
 
-  test("'types' is the first key in every conditional export object (CLI-2232)", () => {
+  // `.`/`./effect`/`./internal` lead with `bun` (CLI-2234): `tsc` under this
+  // repo's `customConditions: ["bun"]` must resolve straight to `src/*.ts`
+  // (self-typed, no separate `.d.ts` needed) instead of `dist/*.d.ts`, which
+  // requires `bun` to win the exports-map lookup ahead of `types` — see
+  // `apps/cli/tsconfig.json`'s `customConditions`. `types` only needs to
+  // precede `default` (the dist JS the `types` `.d.ts` describes), not be
+  // first outright, so a plain `nodenext` consumer (no `bun` condition
+  // requested) still resolves `types` -> `dist/*.d.ts` correctly.
+  test("'types' precedes 'default' in every conditional export object (CLI-2234)", () => {
     const conditionObjects = [
       packageJson.exports["."],
       packageJson.exports["./effect"],
@@ -525,8 +563,21 @@ describe("package.json exports map", () => {
       packageJson.exports["./io"].default,
     ];
     for (const conditions of conditionObjects) {
-      expect(Object.keys(conditions)[0]).toBe("types");
+      const keys = Object.keys(conditions);
+      expect(keys.indexOf("types")).toBeLessThan(keys.indexOf("default"));
     }
+  });
+
+  test("'.', './effect', and './internal' lead with the 'bun' condition (CLI-2234)", () => {
+    for (const key of [".", "./effect", "./internal"] as const) {
+      expect(Object.keys(packageJson.exports[key])[0]).toBe("bun");
+    }
+  });
+
+  test("pins the exact top-level exports-map subpath set", () => {
+    expect(Object.keys(packageJson.exports).sort()).toEqual(
+      [".", "./internal", "./io", "./effect", "./schema.json", "./project-schema.json"].sort(),
+    );
   });
 
   // The `types`/`default` conditions of `.`/`./effect`/`./internal`/`./io`

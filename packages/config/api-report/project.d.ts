@@ -1,6 +1,6 @@
 import { Effect, FileSystem } from "effect";
 import { CliProjectEnvParseError } from "./errors.ts";
-import { type ResolvedCliConfigValue, type ResolveCliConfigOptions } from "./lib/resolve.ts";
+import { type ResolvedCliConfigValue } from "./lib/resolve.ts";
 import { type CliProjectPaths } from "./paths.ts";
 export interface CliProjectEnvironment {
     readonly paths: CliProjectPaths;
@@ -31,7 +31,7 @@ export interface LoadCliProjectEnvironmentOptions {
  * Not covered by semver — exported from `@supabase/config/internal` only. See
  * that module's header for why.
  */
-export interface InternalResolveCliConfigOptions extends ResolveCliConfigOptions {
+export interface InternalResolveCliConfigOptions {
     /**
      * Opt into Go/viper-parity `env()` matching (case-agnostic
      * `^env\((.*)\)$`). Defaults to `false`, which uses the pre-PR-#5765 strict

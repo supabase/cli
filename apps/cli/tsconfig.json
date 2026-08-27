@@ -1,4 +1,15 @@
 {
   "extends": "@tsconfig/bun/tsconfig.json",
+  "compilerOptions": {
+    // Lets `tsc` resolve `@supabase/config`'s exports-map `bun` condition
+    // straight to its `src/*.ts` sources (self-typed, no `.d.ts` needed)
+    // instead of `dist/*.d.ts`, which requires that package to be built
+    // first — see `packages/config/package.json`'s exports map and
+    // `packages/config/AGENTS.md`'s "Build" section (CLI-2234). This also
+    // affects any OTHER dependency whose own exports map declares a `bun`
+    // condition (e.g. `@supabase/pg-topo`) — see this package's AGENTS.md/PR
+    // notes for a known collision that surfaces there.
+    "customConditions": ["bun"]
+  },
   "exclude": ["supabase", "src/shared/workers/stacks"]
 }

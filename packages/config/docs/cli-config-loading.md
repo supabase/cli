@@ -34,9 +34,8 @@ This document explains how the CLI's on-disk config document loading works, acro
 The `Cli*` prefix is a rule, not a per-name coincidence: it names the local checkout side — what
 the CLI reads, writes, or resolves about itself on disk. A bare `Project*` name is reserved for the
 hosted Supabase project. Value-helpers follow the config family regardless of their inputs, not the
-shape of whatever they're passed — `resolveCliConfigValue` and `MissingCliConfigValueError` are
-`Cli*`-named for this reason. See [ADR 0020](../../../docs/adr/0020-config-naming-vocabulary.md)
-for the full decision record.
+shape of whatever they're passed — `resolveCliConfigValue` is `Cli*`-named for this reason. See
+[ADR 0020](../../../docs/adr/0020-config-naming-vocabulary.md) for the full decision record.
 
 Within `CliConfig` itself, `project_id` is overloaded by position: the root-scope `project_id` is
 a local identifier that defaults to the working directory name when running `supabase init` (see
@@ -207,13 +206,14 @@ literal, unresolved `env(NAME)`.
 ## Lazy `env(NAME)` Resolution
 
 A caller can also resolve `env(NAME)` references explicitly, after config is loaded. The package
-exposes two helpers, under the same names from both `.` (plain, synchronous — throws instead of
-failing an `Effect`) and `@supabase/config/effect` (Effect-typed; the Effect-typed variant wins
-when both are in scope via `@supabase/config/effect`, since explicit named exports take precedence
-over a star re-export of the same name):
+exposes two helpers, under the same names from both `.` (plain, synchronous) and
+`@supabase/config/effect` (Effect-typed; the Effect-typed variant wins when both are in scope via
+`@supabase/config/effect`, since explicit named exports take precedence over a star re-export of
+the same name). Neither has a failure mode: an unresolved `env(NAME)` reference is preserved
+verbatim rather than rejected or thrown (see "Lazy `env(NAME)` Resolution" behavior below).
 
-- `resolveCliConfigValue(value, cliProjectEnv, configPath, options?)`
-- `resolveCliConfigSubtree(value, cliProjectEnv, pathPrefix, options?)`
+- `resolveCliConfigValue(value, cliProjectEnv, configPath)`
+- `resolveCliConfigSubtree(value, cliProjectEnv, pathPrefix)`
 
 Resolution only applies to exact whole-string matches of the form:
 
@@ -238,10 +238,11 @@ resolves and redacts leaves nested inside `[remotes.*]` blocks.
 
 An optional `goViperCompat` flag switches the `env(NAME)` matcher from the default, strict
 `SCREAMING_SNAKE_CASE`-only pattern to Go/viper's case-agnostic `^env\((.*)\)$` form; only the
-Go-parity legacy shell sets it. `goViperCompat` is not part of the public `ResolveCliConfigOptions`
-type on `.`/`./effect` — it is internal-only (CLI-2234), typed on `InternalResolveCliConfigOptions`
-and exported from `@supabase/config/internal`, which `apps/cli`'s Go-parity call sites import from
-instead.
+Go-parity legacy shell sets it. The public `resolveCliConfigValue`/`resolveCliConfigSubtree` on
+`.`/`./effect` take no options parameter at all (CLI-2234) — `goViperCompat` is internal-only,
+typed on `InternalResolveCliConfigOptions` and exported from `@supabase/config/internal`, which
+re-exports these same runtime functions typed to additionally accept it; `apps/cli`'s Go-parity
+call sites import from there instead.
 
 Callers such as `functions serve`/`functions dev`, `secrets set`, and `start` call these resolvers
 on the subtrees they actually need (e.g. `auth`, `edge_runtime`, `functions`), so dormant
@@ -249,9 +250,8 @@ config — like a disabled Twilio block whose `auth_token` is still `env(TWILIO_
 that variable was never set — never has to resolve at load time, and no caller pays for resolving
 or redacting a subtree it doesn't use.
 
-The package still exports a `MissingCliConfigValueError` class, and `apps/cli` classifies it for
-telemetry, but neither resolver raises it today: an unresolved `env(NAME)` reference is returned
-as a plain string, not a typed failure.
+Neither resolver ever fails: an unresolved `env(NAME)` reference is returned as a plain string,
+not a typed failure.
 
 ## Secret Handling
 

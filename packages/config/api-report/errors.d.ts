@@ -124,13 +124,6 @@ export declare class CliProjectEnvParseError extends CliProjectEnvParseError_bas
     readonly line: number;
 }> {
 }
-declare const MissingCliConfigValueError_base: new <A extends Record<string, any> = {}>(args: import("effect/Types").VoidIfEmpty<{ readonly [P in keyof A as P extends "_tag" ? never : P]: A[P]; }>) => import("effect/Cause").YieldableError & {
-    readonly _tag: "MissingCliConfigValueError";
-} & Readonly<A>;
-export declare class MissingCliConfigValueError extends MissingCliConfigValueError_base<{
-    readonly configPath: string;
-}> {
-}
 declare const DuplicateRemoteProjectIdError_base: new <A extends Record<string, any> = {}>(args: import("effect/Types").VoidIfEmpty<{ readonly [P in keyof A as P extends "_tag" ? never : P]: A[P]; }>) => import("effect/Cause").YieldableError & {
     readonly _tag: "DuplicateRemoteProjectIdError";
 } & Readonly<A>;

@@ -1,0 +1,7 @@
+# `packages/config/api-report/` is a checked-in mirror of compiled `.d.ts`
+# output, byte-diffed against a fresh regenerate by
+# `packages/config/src/api-report.unit.test.ts` (CLI-2234). Windows autocrlf
+# line-ending rewriting would break that comparison — treat these files as
+# binary (no line-ending normalization) so they stay byte-identical across
+# platforms.
+packages/config/api-report/** -text

@@ -1,9 +1,3 @@
-import type { StandardSchemaV1 } from "@standard-schema/spec";
-import { Schema, SchemaAST } from "effect";
-import { CliConfigSchema } from "../base.ts";
-import { HOSTED_SECTION_KEYS } from "./hosted-sections.ts";
-import type { ProjectConfig } from "./project-config.ts";
-
 /**
  * Runtime companion to {@link ProjectConfig} (`./project-config.ts`) — a
  * schema that VALIDATES the same sparse hosted-section overlay
@@ -29,14 +23,18 @@ import type { ProjectConfig } from "./project-config.ts";
  *      `x-secret` annotation (ADR 0019 rule 5 — `fromConfigDocument`/
  *      `fromApiProjectConfig` never populate a secret leaf either), the same
  *      detection `../lib/secret-paths.ts`'s own walk uses. A container whose
- *      value type consists ENTIRELY of secret leaves (e.g. `db.vault`, a
- *      `Record<string, secret()>`) ends up an empty `Objects` node (no
- *      surviving properties or index signatures) — `SchemaAST`'s own
+ *      value type consists ENTIRELY of secret leaves (`db.vault`, a
+ *      `Record<string, secret()>`) ends up an empty `Objects` node this way
+ *      (no surviving properties or index signatures) — `SchemaAST`'s own
  *      documented behavior for that shape is "accepts any value except
- *      `null`/`undefined`", which is the closest a schema can get to "this
- *      container held nothing but secrets, so nothing concrete is left to
- *      validate here" without special-casing an empty-object type that JSON
- *      Schema has no way to express either.
+ *      `null`/`undefined`", the closest a schema can get to "this container
+ *      held nothing but secrets, so nothing concrete is left to validate
+ *      here" without special-casing an empty-object type JSON Schema has no
+ *      way to express either. Two OTHER hosted-section leaves land on that
+ *      same empty-`Objects` shape for an unrelated reason:
+ *      `storage.analytics.buckets.*` and `storage.vector.buckets.*` are
+ *      already `Schema.Struct({})` at the SOURCE level (`../storage.ts`) —
+ *      genuinely empty structs, untouched by this walk's secret-stripping.
  *    - Wraps every SURVIVING property in `optionalKey` (via
  *      {@link toOptionalAst}), recursing into its type — mirroring
  *      `DeepPartial`'s `{ readonly [K in keyof T]?: DeepPartial<T[K]> }`
@@ -59,22 +57,30 @@ import type { ProjectConfig } from "./project-config.ts";
  *      cannot generally satisfy — e.g. `{ auth: { email: { smtp: { enabled:
  *      true } } } }` with no `host` yet is a legal, if incomplete,
  *      `ProjectConfig` fragment, but `requiredWhenEnabled("host", ...)` would
- *      reject it. Every LEAF-level check (`Schema.Number.check(isInt(),
- *      isGreaterThanOrEqualTo(0))`, `Schema.isPattern(...)`, port-range
- *      bounds, …) lives on a non-`Objects` node and is left untouched.
+ *      reject it. Every LEAF-level check survives untouched, since it lives
+ *      on a non-`Objects` node — today that's only `workers.*.instances`'s
+ *      `Schema.Number.check(isInt(), isGreaterThanOrEqualTo(0))` and the
+ *      `[workers]` record's own key pattern (`Schema.isPattern(...)` on
+ *      `workerName`, `../workers.ts`). There is no port-range (or other
+ *      numeric-bound) leaf check anywhere in this schema today.
  *    - Recurses into `Union` members (e.g. `storage.file_size_limit`'s
  *      `Schema.Union([String, Number])`, and every `Schema.Literals`-backed
- *      enum, which V4 also compiles to a `Union`) and `Suspend` thunks, so a
- *      secret-bearing or object-shaped member nested inside either would
- *      still be reached. Every other node kind (every leaf: `String`,
- *      `Number`, `Boolean`, `Literal`, …) is returned unchanged — there is
- *      nothing further to drop or partialize on a leaf. This module's own AST
- *      node kinds are enumerated explicitly, via each class's PUBLIC
- *      constructor, rather than through a generic `.recur()`-style
- *      mechanism: unlike `.repos/effect`'s vendored source, the installed
- *      `effect` release's own `AST#recur` is `@internal` (absent from its
- *      published `.d.ts`), so a truly generic fallback isn't available
- *      through the public API surface this package is allowed to depend on.
+ *      enum, which V4 also compiles to a `Union`), so a secret-bearing or
+ *      object-shaped member nested inside one would still be reached. Every
+ *      other node kind (every leaf: `String`, `Number`, `Boolean`,
+ *      `Literal`, …) is returned unchanged — there is nothing further to
+ *      drop or partialize on a leaf. This module's own AST node kinds are
+ *      enumerated explicitly, via each class's PUBLIC constructor, rather
+ *      than through a generic `.recur()`-style mechanism: unlike
+ *      `.repos/effect`'s vendored source, the installed `effect` release's
+ *      own `AST#recur` is `@internal` (absent from its published `.d.ts`),
+ *      so a truly generic fallback isn't available through the public API
+ *      surface this package is allowed to depend on.
+ *      `./project-schema.unit.test.ts`'s AST-walk exhaustiveness guard walks
+ *      the derived AST and fails loudly if a node kind outside this
+ *      enumerated set (or a reintroduced `Suspend`, deliberately unhandled
+ *      here — see {@link toDeepOptionalHostedAst}) ever appears, rather than
+ *      silently mishandling it.
  *
  * `_apiResponse` (ADR 0019) is deliberately NOT part of this schema: it's
  * attached as a non-enumerable property that ordinary decode/validation can
@@ -88,6 +94,11 @@ import type { ProjectConfig } from "./project-config.ts";
  * future release adds), and JSON Schema's own default is permissive — this
  * derivation matches that norm rather than rejecting anything unrecognized.
  */
+import type { StandardSchemaV1 } from "@standard-schema/spec";
+import { Schema, SchemaAST } from "effect";
+import { CliConfigSchema } from "../base.ts";
+import type { ProjectConfig } from "./project-config.ts";
+
 function isSecretAst(ast: SchemaAST.AST): boolean {
   return ast.annotations?.["x-secret"] === true;
 }
@@ -97,14 +108,26 @@ function isSecretAst(ast: SchemaAST.AST): boolean {
  * (`Schema.optionalKey(Schema.make(ast)).ast`) rather than the internal
  * `SchemaAST.optionalKey` this repo's vendored `.repos/effect` snapshot
  * exposes publicly but the installed `effect` release does not — see this
- * module's own doc comment. `Schema.make` performs no structural check
- * against the throwaway `unknown` `Codec` parameter here; only `ast` itself
- * (read straight back off the wrapped schema) is used.
+ * module's own doc comment. Conscious exception to this repo's `as`-cast
+ * policy's spirit (a typed-constructor call standing in for one): `Schema.make`
+ * performs no structural check against the throwaway `unknown` `Codec`
+ * parameter here; only `ast` itself (read straight back off the wrapped
+ * schema) is used.
  */
 function toOptionalAst(ast: SchemaAST.AST): SchemaAST.AST {
   return Schema.optionalKey(Schema.make<Schema.Codec<unknown>>(ast)).ast;
 }
 
+/**
+ * `Suspend` is deliberately UNHANDLED here (falls through to the final
+ * `return ast` below, verbatim, untouched) rather than recursed into: no
+ * `Schema.suspend`-backed recursive type is reachable from the seven hosted
+ * sections today, so this is unreachable in practice, and
+ * `./project-schema.unit.test.ts`'s AST-walk exhaustiveness guard fails
+ * loudly the moment one is introduced — a reviewable prompt to design real
+ * `Suspend` handling (thunk identity/`$defs` implications included) instead
+ * of silently mishandling recursion.
+ */
 function toDeepOptionalHostedAst(ast: SchemaAST.AST): SchemaAST.AST {
   if (SchemaAST.isObjects(ast)) {
     const propertySignatures = ast.propertySignatures
@@ -149,15 +172,6 @@ function toDeepOptionalHostedAst(ast: SchemaAST.AST): SchemaAST.AST {
       ast.encodingChecks,
     );
   }
-  if (SchemaAST.isSuspend(ast)) {
-    return new SchemaAST.Suspend(
-      () => toDeepOptionalHostedAst(ast.thunk()),
-      ast.annotations,
-      ast.checks,
-      ast.encoding,
-      ast.context,
-    );
-  }
   return ast;
 }
 
@@ -179,16 +193,13 @@ const hostedSectionsStruct = Schema.Struct({
 
 // The literal pick above still names the same seven keys as
 // `HOSTED_SECTION_KEYS` by hand, since a type-safe `Schema.Struct` field
-// object can't be built from an array without an `as` cast — this guard
-// catches the two lists drifting apart (an edit to one without the other) at
-// import time instead of silently validating the wrong section set.
-const pickedHostedSectionKeys = Object.keys(hostedSectionsStruct.fields).toSorted();
-const declaredHostedSectionKeys = HOSTED_SECTION_KEYS.toSorted();
-if (JSON.stringify(pickedHostedSectionKeys) !== JSON.stringify(declaredHostedSectionKeys)) {
-  throw new Error(
-    "project-schema.ts's picked hosted-section fields drifted from HOSTED_SECTION_KEYS",
-  );
-}
+// object can't be built from an array without an `as` cast. The two lists
+// drifting apart (an edit to one without the other) is caught by
+// `./project-schema.unit.test.ts`'s own assertion against
+// `ProjectConfigSchema.ast`'s top-level property names vs.
+// `HOSTED_SECTION_KEYS`, not by an import-time throw here (CLI-2234) — a
+// schema-module import should never be able to crash a consumer's process
+// for a condition a test already covers.
 
 const projectConfigAst = toDeepOptionalHostedAst(SchemaAST.toType(hostedSectionsStruct.ast));
 
@@ -215,7 +226,11 @@ type ProjectConfigSchemaType = Omit<ProjectConfig, "_apiResponse">;
  * only transitively through `effect` under pnpm's strict `node_modules`
  * isolation — which tsc's declaration emit refuses to synthesize into
  * `project-schema.d.ts` as non-portable. Explicitly importing the type here
- * pins `@standard-schema/spec` as a direct dependency instead.
+ * pins `@standard-schema/spec` as a direct dependency instead. Conscious
+ * exception to this repo's `as`-cast policy's spirit: `Schema.make`'s type
+ * parameter here is asserted, not verified, against `projectConfigAst` — see
+ * {@link ProjectConfigSchemaType}'s doc comment for the independent
+ * compile-time cross-check that catches drift instead.
  */
 export const ProjectConfigSchema: StandardSchemaV1<
   ProjectConfigSchemaType,
