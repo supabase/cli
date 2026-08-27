@@ -65,7 +65,7 @@ export const buildGraph = (
     });
 
     if (missingDepError !== undefined) {
-      yield* Effect.fail(missingDepError);
+      return yield* Effect.fail(missingDepError);
     }
 
     // Check for cycles before calling topo (which would throw a generic GraphError)
@@ -75,7 +75,7 @@ export const buildGraph = (
       for (const [, svc] of Graph.nodes(graph)) {
         cycleNodes.push(svc.name);
       }
-      yield* Effect.fail(new CyclicDependencyError({ cycle: cycleNodes.join(" -> ") }));
+      return yield* Effect.fail(new CyclicDependencyError({ cycle: cycleNodes.join(" -> ") }));
     }
 
     // Compute start order via topological sort (yields dependencies first)

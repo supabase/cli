@@ -59,7 +59,7 @@ const cleanupAutoManagedPathsWithRetry = (
           fs.exists(path).pipe(Effect.catchTag("PlatformError", () => Effect.succeed(true))),
         { concurrency: 4 },
       );
-      if (remaining.some(Boolean)) yield* Effect.fail(new CleanupPending());
+      if (remaining.some(Boolean)) return yield* Effect.fail(new CleanupPending());
     }).pipe(Effect.uninterruptible);
     const retries = Effect.sleep(Duration.millis(250)).pipe(
       Effect.andThen(

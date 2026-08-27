@@ -376,22 +376,22 @@ const runSupervisorRuntimeEffect = (config: SupervisorRuntimeConfig): Effect.Eff
       );
 
       yield* Fiber.interrupt(ownerWatcher);
-      yield* Match.valueTags(outcome, {
+      return yield* Match.valueTags(outcome, {
         ShutdownRequested: ({ signal }) =>
           Effect.gen(function* () {
             yield* shutdown(signal);
             yield* runCleanup;
-            yield* Effect.sync(() => process.exit(0));
+            return yield* Effect.sync(() => process.exit(0));
           }),
         ChildExited: ({ exit: { code, signal } }) =>
           Effect.gen(function* () {
             if (!ownerAlive() || (config.cleanup?.length ?? 0) > 0) {
               yield* runCleanup;
-              yield* Effect.sync(() => process.exit(0));
+              return yield* Effect.sync(() => process.exit(0));
             } else if (signal != null) {
-              yield* Effect.sync(() => process.exit(1));
+              return yield* Effect.sync(() => process.exit(1));
             } else {
-              yield* Effect.sync(() => process.exit(code ?? 0));
+              return yield* Effect.sync(() => process.exit(code ?? 0));
             }
           }),
       });

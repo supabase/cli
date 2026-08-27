@@ -1886,7 +1886,7 @@ describe("Orchestrator", () => {
                 run: (log) =>
                   Effect.gen(function* () {
                     yield* log("stderr", "attempting migration...");
-                    yield* Effect.fail(new Error("migration failed"));
+                    return yield* Effect.fail(new Error("migration failed"));
                   }),
                 failurePolicy: "ignore",
               },
