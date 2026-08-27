@@ -209,7 +209,10 @@ function copyHostedValueWithoutSecrets(value: unknown, path: ReadonlyArray<strin
  * above has already run — CLI-2230's duration/byte-size finding. A row
  * without `normalizeDocument` is untouched; a row whose `configPath` is
  * absent from `output` is skipped (nothing to normalize); otherwise the
- * leaf is replaced with the row's canonicalized value.
+ * leaf is replaced with the row's canonicalized value — or REMOVED when the
+ * canonicalizer returns `undefined` (unmanaged absence, e.g. an empty
+ * `test_otp` map the push wrapper would omit), pruning any containers the
+ * removal empties, consistent with the copy's own self-emptied-section rule.
  */
 function applyDocumentNormalizations(output: Record<string, unknown>): void {
   for (const row of projectConfigMappingRows) {
@@ -220,7 +223,39 @@ function applyDocumentNormalizations(output: Record<string, unknown>): void {
     if (current === undefined) {
       continue;
     }
-    writePath(output, row.configPath, row.normalizeDocument(current));
+    const normalized = row.normalizeDocument(current);
+    if (normalized === undefined) {
+      removePathAndEmptiedAncestors(output, row.configPath);
+    } else {
+      writePath(output, row.configPath, normalized);
+    }
+  }
+}
+
+/**
+ * Deletes the leaf at `path` from `output`, then walks back up deleting each
+ * container the removal left empty — a normalization that withdraws the only
+ * field of a section must not leave a bare `{}` behind, matching the
+ * secret-omitting copy's treatment of sections it empties itself.
+ */
+function removePathAndEmptiedAncestors(
+  output: Record<string, unknown>,
+  path: ReadonlyArray<string>,
+): void {
+  const containers: Array<Record<string, unknown>> = [output];
+  for (let index = 0; index < path.length - 1; index++) {
+    const next = containers[containers.length - 1][path[index]];
+    if (!isObject(next)) {
+      return;
+    }
+    containers.push(next);
+  }
+  for (let index = path.length - 1; index >= 0; index--) {
+    const container = containers[index];
+    delete container[path[index]];
+    if (Object.keys(container).length > 0 || index === 0) {
+      return;
+    }
   }
 }
 
@@ -1269,7 +1304,20 @@ const comparableProjectConfigPathKeys: ReadonlySet<string> = new Set(
   comparableProjectConfigPaths.map(pathKey),
 );
 
-/** Whether `path` is a member of {@link comparableProjectConfigPaths}. */
+/**
+ * Whether `path` is a member of {@link comparableProjectConfigPaths} — or a
+ * DESCENDANT of one: a row that maps a container (e.g. `sms.test_otp`'s
+ * record) yields diff leaves like `["auth","sms","test_otp","<phone>"]` from
+ * a leaf-path traversal, and those entries are exactly as comparable as the
+ * mapped container itself. A bare PREFIX of a mapped path (e.g.
+ * `["auth","sms"]`) is still not comparable — it names a section, not a
+ * mapped value.
+ */
 export function isComparableProjectConfigPath(path: ReadonlyArray<string>): boolean {
-  return comparableProjectConfigPathKeys.has(pathKey(path));
+  for (let length = path.length; length >= 1; length--) {
+    if (comparableProjectConfigPathKeys.has(pathKey(path.slice(0, length)))) {
+      return true;
+    }
+  }
+  return false;
 }

@@ -57,9 +57,12 @@ export interface ProjectConfigMappingRow {
    * duration but compare unequal textually unless one side is normalized.
    * Applied by `fromConfigDocument` only, at `configPath`, after the
    * secret-omitting copy; never applied by `fromApiProjectConfig` (its output
-   * is already canonical). Must return the canonical value, or the input
-   * verbatim when it cannot be parsed — a document value has already passed
-   * schema validation, so this must never throw.
+   * is already canonical). Must return the canonical value, the input
+   * verbatim when it cannot be parsed (a document value has already passed
+   * schema validation, so this must never throw), or `undefined` to REMOVE
+   * the field — unmanaged absence, for a value the push wrapper would omit
+   * entirely (e.g. an empty `test_otp` map); the engine prunes containers
+   * the removal empties.
    */
   readonly normalizeDocument?: (value: unknown) => unknown;
   /**

@@ -277,6 +277,16 @@ function parseDuration(s: string): number {
     total = next;
   }
 
+  // int64's own asymmetry: +2^63 is one nanosecond PAST Go's maximum while
+  // -2^63 IS the valid minimum. The in-loop bound is strict (`>`), which
+  // rightly lets the accumulation land exactly on 2^63 for the negative
+  // endpoint — so the positive case must be rejected here, keeping the
+  // document side in agreement with the API-side session ceiling (which
+  // stops short of +2^63).
+  if (!neg && total === MAX_GO_DURATION_NS) {
+    throw new Error(`time: invalid duration "${orig}" (value out of range)`);
+  }
+
   return neg ? -total : total;
 }
 
@@ -390,6 +400,13 @@ function parseUint16(s: string): number | undefined {
  * actually exists hosted after a push. Non-record values or non-string
  * entries stay verbatim (document input has passed schema validation; never
  * throw here).
+ *
+ * A record that is (or parses back) EMPTY normalizes to `undefined` —
+ * unmanaged absence: the push wrapper omits `sms_test_otp` entirely when the
+ * serialized map is empty (auth.sync.ts:2487-2495), so an explicit
+ * `test_otp: {}` can never clear a retained remote value; projecting `{}`
+ * would fabricate permanent drift against the API arm (whose transform
+ * likewise omits an empty map).
  */
 function canonicalizeTestOtpMap(value: unknown): unknown {
   if (!isObject(value)) {
@@ -399,7 +416,8 @@ function canonicalizeTestOtpMap(value: unknown): unknown {
   if (!entries.every(([, entryValue]) => typeof entryValue === "string")) {
     return value;
   }
-  return envToMap(entries.map(([key, entryValue]) => `${key}=${entryValue}`).join(","));
+  const canonical = envToMap(entries.map(([key, entryValue]) => `${key}=${entryValue}`).join(","));
+  return Object.keys(canonical).length > 0 ? canonical : undefined;
 }
 
 function envToMap(input: string): Record<string, string> {

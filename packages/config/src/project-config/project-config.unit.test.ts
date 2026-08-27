@@ -2183,6 +2183,47 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
     }
   });
 
+  test("an empty test_otp map normalizes to unmanaged absence", () => {
+    // The push wrapper omits sms_test_otp when the serialized map is empty
+    // (auth.sync.ts:2487-2495), so an explicit {} can never clear a retained
+    // remote value — projecting it would fabricate permanent drift.
+    const empty = fromConfigDocument({ auth: { sms: { test_otp: {} } } });
+    expect(Object.hasOwn(empty, "auth")).toBe(false);
+    // A record whose entries all dissolve in the round-trip empties too.
+    const dissolved = fromConfigDocument({ auth: { sms: { test_otp: { ",": "x" } } } });
+    expect(Object.hasOwn(dissolved, "auth")).toBe(false);
+    // Siblings survive the pruned leaf.
+    const withSibling = fromConfigDocument({
+      auth: { sms: { test_otp: {}, enable_signup: true } },
+    });
+    expect(withSibling.auth?.sms).toEqual({ enable_signup: true });
+  });
+
+  test("descendants of mapped container paths are comparable", () => {
+    // sms.test_otp maps a record, so leaf-path traversals produce entry-level
+    // paths — exactly as comparable as the mapped container itself.
+    expect(isComparableProjectConfigPath(["auth", "sms", "test_otp"])).toBe(true);
+    expect(isComparableProjectConfigPath(["auth", "sms", "test_otp", "15551234567"])).toBe(true);
+    // A bare prefix names a section, not a mapped value.
+    expect(isComparableProjectConfigPath(["auth", "sms"])).toBe(false);
+    expect(isComparableProjectConfigPath(["auth", "sms", "nope"])).toBe(false);
+  });
+
+  test("the document parser rejects the positive int64 endpoint the API arm rejects", () => {
+    // +2^63 ns is one past Go's maximum; a non-canonical spelling summing to
+    // exactly 2^63 stays verbatim instead of canonicalizing into a duration
+    // fromApiProjectConfig would reject.
+    const positive = fromConfigDocument({
+      auth: { sessions: { timebox: "2562047h47m16s854775808ns" } },
+    });
+    expect(positive.auth?.sessions?.timebox).toBe("2562047h47m16s854775808ns");
+    // The negative endpoint IS valid int64 and still canonicalizes.
+    const negative = fromConfigDocument({
+      auth: { sessions: { timebox: "-2562047h47m16s854775808ns" } },
+    });
+    expect(negative.auth?.sessions?.timebox).toBe("-2562047h47m16.854775808s");
+  });
+
   test("orphan secret paths validate like isSecret rows before being suppressed", () => {
     // The four unmappedSecretApiPaths are in the consumed set, so without
     // validation a contract-invalid value (string-or-null only) would vanish
