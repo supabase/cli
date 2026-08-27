@@ -9,6 +9,7 @@ on:
   pull_request:
     paths:
       - ".github/scripts/**"
+      - ".github/workflows/github-scripts-ci.yml"
 
 permissions: {}
 
@@ -27,9 +28,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      # The shared setup installs the toolchain (bun/pnpm/node via mise) AND the
+      # workspace dependencies, so the type-check below can resolve
+      # `@tsconfig/bun` + `@types/bun` from `node_modules`. `setup-bun` alone
+      # left those uninstalled, which is what failed this check originally. On
+      # fork PRs the firewall token is empty and the shared setup falls back to
+      # the public npm registry, so this stays fork-safe.
+      - uses: ./.github/actions/setup
         with:
-          bun-version-file: ".bun-version"
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
 
       - name: Run tests
         run: |
