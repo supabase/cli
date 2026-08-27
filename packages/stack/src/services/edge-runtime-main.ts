@@ -185,8 +185,17 @@ export function buildFunctionEnv(config: any, functionConfig: any, functionName:
   };
 }
 
-const servicePathSlugs = new Map<string, string>();
-const servicePathCreateQueues = new Map<string, Promise<void>>();
+function hasSharedServicePath(config: any, servicePath: string): boolean {
+  const functions: Record<string, { entrypointPath: string }> = config.functions ?? {};
+  let count = 0;
+  for (const functionConfig of Object.values(functions)) {
+    if (dirname(functionConfig.entrypointPath) === servicePath) {
+      count += 1;
+      if (count > 1) return true;
+    }
+  }
+  return false;
+}
 
 async function serveFunction(req: Request, config: any, functionName: string, functionConfig: any) {
   const authError = await verifyRequest(req, config, functionConfig);
@@ -196,43 +205,24 @@ async function serveFunction(req: Request, config: any, functionName: string, fu
   const servicePath = dirname(functionConfig.entrypointPath);
 
   try {
-    let releaseWorkerCreate: () => void;
-    const currentWorkerCreate = new Promise<void>((resolve) => {
-      releaseWorkerCreate = resolve;
+    const worker = await EdgeRuntime.userWorkers.create({
+      servicePath,
+      memoryLimitMb: 256,
+      workerTimeoutMs: 400000,
+      noModuleCache: false,
+      noNpm: false,
+      importMapPath: functionConfig.importMapPath ?? undefined,
+      envVars,
+      // Shared entrypoint directories need a fresh worker for the per-function slug.
+      forceCreate: hasSharedServicePath(config, servicePath),
+      customModuleRoot: "",
+      cpuTimeSoftLimitMs: 1000,
+      cpuTimeHardLimitMs: 2000,
+      decoratorType: "tc39",
+      maybeEntrypoint: fileUrl(functionConfig.entrypointPath),
+      context: { useReadSyncFileAPI: true },
+      staticPatterns: functionConfig.staticFiles,
     });
-    const previousWorkerCreate = servicePathCreateQueues.get(servicePath) ?? Promise.resolve();
-    const queuedWorkerCreate = previousWorkerCreate.then(() => currentWorkerCreate);
-    servicePathCreateQueues.set(servicePath, queuedWorkerCreate);
-    await previousWorkerCreate;
-
-    // Keep this map in step with Edge Runtime's servicePath worker cache.
-    const forceCreate = servicePathSlugs.get(servicePath) !== functionName;
-    let worker: Awaited<ReturnType<typeof EdgeRuntime.userWorkers.create>>;
-    try {
-      worker = await EdgeRuntime.userWorkers.create({
-        servicePath,
-        memoryLimitMb: 256,
-        workerTimeoutMs: 400000,
-        noModuleCache: false,
-        noNpm: false,
-        importMapPath: functionConfig.importMapPath ?? undefined,
-        envVars,
-        forceCreate,
-        customModuleRoot: "",
-        cpuTimeSoftLimitMs: 1000,
-        cpuTimeHardLimitMs: 2000,
-        decoratorType: "tc39",
-        maybeEntrypoint: fileUrl(functionConfig.entrypointPath),
-        context: { useReadSyncFileAPI: true },
-        staticPatterns: functionConfig.staticFiles,
-      });
-      servicePathSlugs.set(servicePath, functionName);
-    } finally {
-      releaseWorkerCreate!();
-      if (servicePathCreateQueues.get(servicePath) === queuedWorkerCreate) {
-        servicePathCreateQueues.delete(servicePath);
-      }
-    }
     return await worker.fetch(req);
   } catch (error) {
     console.error(`Failed to serve Function ${functionName}`, error);

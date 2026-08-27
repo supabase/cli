@@ -122,6 +122,19 @@ const functionsConfig: Record<string, FunctionConfig> = (() => {
   }
 })();
 
+const sharedServicePaths = (() => {
+  const counts = new Map<string, number>();
+  for (const config of Object.values(functionsConfig)) {
+    const servicePath = dirname(config.entrypointPath);
+    counts.set(servicePath, (counts.get(servicePath) ?? 0) + 1);
+  }
+  return new Set(
+    Array.from(counts)
+      .filter(([, count]) => count > 1)
+      .map(([servicePath]) => servicePath),
+  );
+})();
+
 /* --- JWT verification --- */
 export function extractBearerToken(rawToken: string) {
   const tokenParts = rawToken.split(" ");
@@ -275,9 +288,6 @@ export function prepareUserRequest(req: Request): Request {
   return clonedReq;
 }
 
-const servicePathSlugs = new Map<string, string>();
-const servicePathCreateQueues = new Map<string, Promise<void>>();
-
 Deno.serve({
   handler: async (req: Request) => {
     const url = new URL(req.url);
@@ -352,6 +362,8 @@ Deno.serve({
       ([name, _]) => !EXCLUDED_ENVS.includes(name) && !name.startsWith("SUPABASE_INTERNAL_"),
     );
 
+    // Shared entrypoint directories need a fresh worker for the per-function slug.
+    const forceCreate = sharedServicePaths.has(servicePath);
     const customModuleRoot = ""; // empty string to allow any local path
     const cpuTimeSoftLimitMs = 1000;
     const cpuTimeHardLimitMs = 2000;
@@ -369,45 +381,25 @@ Deno.serve({
     const staticPatterns = functionsConfig[functionName].staticFiles;
 
     try {
-      let releaseWorkerCreate;
-      const currentWorkerCreate = new Promise((resolve) => {
-        releaseWorkerCreate = resolve;
+      const worker = await EdgeRuntime.userWorkers.create({
+        servicePath,
+        memoryLimitMb,
+        workerTimeoutMs,
+        noModuleCache,
+        noNpm: !usePackageJson,
+        importMapPath: functionsConfig[functionName].importMapPath,
+        envVars,
+        forceCreate,
+        customModuleRoot,
+        cpuTimeSoftLimitMs,
+        cpuTimeHardLimitMs,
+        decoratorType,
+        maybeEntrypoint,
+        context: {
+          useReadSyncFileAPI: true,
+        },
+        staticPatterns,
       });
-      const previousWorkerCreate = servicePathCreateQueues.get(servicePath) ?? Promise.resolve();
-      const queuedWorkerCreate = previousWorkerCreate.then(() => currentWorkerCreate);
-      servicePathCreateQueues.set(servicePath, queuedWorkerCreate);
-      await previousWorkerCreate;
-
-      // Keep this map in step with Edge Runtime's servicePath worker cache.
-      const forceCreate = servicePathSlugs.get(servicePath) !== functionName;
-      let worker;
-      try {
-        worker = await EdgeRuntime.userWorkers.create({
-          servicePath,
-          memoryLimitMb,
-          workerTimeoutMs,
-          noModuleCache,
-          noNpm: !usePackageJson,
-          importMapPath: functionsConfig[functionName].importMapPath,
-          envVars,
-          forceCreate,
-          customModuleRoot,
-          cpuTimeSoftLimitMs,
-          cpuTimeHardLimitMs,
-          decoratorType,
-          maybeEntrypoint,
-          context: {
-            useReadSyncFileAPI: true,
-          },
-          staticPatterns,
-        });
-        servicePathSlugs.set(servicePath, functionName);
-      } finally {
-        releaseWorkerCreate();
-        if (servicePathCreateQueues.get(servicePath) === queuedWorkerCreate) {
-          servicePathCreateQueues.delete(servicePath);
-        }
-      }
 
       const userReq = prepareUserRequest(req);
       return await worker.fetch(userReq);
