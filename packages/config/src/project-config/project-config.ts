@@ -115,6 +115,15 @@ export type ReadonlyJsonValue =
  * {@link comparableProjectConfigPaths}/{@link isComparableProjectConfigPath}
  * to restrict a comparison to exactly the fields `fromApiProjectConfig` can
  * actually speak for, rather than hand-maintaining an equivalent field list.
+ *
+ * Per ADR 0021, a `ProjectConfig` value is NOT a verbatim projection of
+ * whichever operand produced it — both {@link fromConfigDocument} and
+ * {@link fromApiProjectConfig} canonicalize toward the state a `config push`
+ * would actually converge on (SMS-provider push precedence, disabled-sentinel
+ * pruning of gated siblings, duration/byte-size re-quantization, and more —
+ * see that ADR for the full enumeration). A `ProjectConfig` built from a
+ * document is therefore not a faithful rendering of what the user wrote in
+ * their config file; see {@link fromConfigDocument}'s own docstring.
  */
 export type ProjectConfig = DeepPartial<Pick<CliConfig, HostedSectionKey>> & {
   // Readonly, recursively: the runtime value is deep-frozen
@@ -284,6 +293,16 @@ function removePathAndEmptiedAncestors(
  * malformed in a way `normalizeDocument` cannot tolerate — in practice this
  * should not happen, since every `normalizeDocument` implementation returns
  * its input verbatim rather than throwing.
+ *
+ * NOT a verbatim projection of `config` (ADR 0021): beyond secret omission
+ * and per-field canonicalization, this function also applies
+ * {@link applySmsProviderPrecedence} (a document enabling several SMS
+ * providers converges on only the push-selected one staying `enabled`) and
+ * {@link applyDisabledSentinels} (a disabled section/entry drops the sibling
+ * fields the legacy push does not manage while it is off). The result
+ * predicts what the hosted config will look like AFTER pushing `config`, not
+ * `config`'s own declared hosted-section values — do not render it to a user
+ * as "your local config".
  */
 export function fromConfigDocument(config: EffectiveConfig): ProjectConfig;
 // The implementation signature stays untyped for the same reason as
@@ -356,7 +375,7 @@ export function fromConfigDocument(config: EffectiveConfig): unknown {
  * reports for that hosted state. The API arm never needs this: its five
  * flags all derive from the single `sms_provider` discriminator.
  */
-const SMS_PROVIDER_PUSH_PRECEDENCE = [
+export const SMS_PROVIDER_PUSH_PRECEDENCE = [
   "twilio",
   "twilio_verify",
   "messagebird",
@@ -399,7 +418,7 @@ function applySmsProviderPrecedence(result: Record<string, unknown>): void {
  * mapped shape is identical on the document and API arms, so one pass keeps
  * the two symmetric by construction.
  */
-const DISABLED_SENTINEL_PRUNES: ReadonlyArray<{
+export const DISABLED_SENTINEL_PRUNES: ReadonlyArray<{
   readonly containerPath: ReadonlyArray<string>;
   /** Keys to drop when `enabled === false`; absent = drop every key but `enabled`. */
   readonly dropKeys?: ReadonlyArray<string>;
@@ -433,17 +452,17 @@ const DISABLED_SENTINEL_PRUNES: ReadonlyArray<{
 ];
 
 /** Record-shaped containers whose per-entry `enabled: false` keeps only the flag. */
-const DISABLED_SENTINEL_ENTRY_SWEEPS: ReadonlyArray<{
+export const DISABLED_SENTINEL_ENTRY_SWEEPS: ReadonlyArray<{
   readonly containerPath: ReadonlyArray<string>;
   /** Restrict the sweep to these entry keys (a container mixing records and scalars). */
   readonly entryKeys?: ReadonlyArray<string>;
 }> = [
   { containerPath: ["auth", "external"] },
   { containerPath: ["auth", "hook"] },
-  {
-    containerPath: ["auth", "sms"],
-    entryKeys: ["twilio", "twilio_verify", "messagebird", "textlocal", "vonage"],
-  },
+  // Same five provider names as SMS_PROVIDER_PUSH_PRECEDENCE — one list, not
+  // two hand-kept in sync (order doesn't matter for a sweep, unlike the
+  // precedence table's own order-pinned test).
+  { containerPath: ["auth", "sms"], entryKeys: SMS_PROVIDER_PUSH_PRECEDENCE },
 ];
 
 function pruneDisabledContainer(
@@ -479,15 +498,21 @@ function applyDisabledSentinels(result: Record<string, unknown>): void {
   }
   // Cross-section rule: the email rate limit is only managed while SMTP is
   // enabled (authToUpdateBody sends rate_limit_email_sent solely under
-  // local.email.smtp.enabled, auth.sync.ts:2310-2313) — with SMTP absent or
-  // disabled, a (default or platform-retained) value is unmanaged noise.
+  // local.email.smtp.enabled, auth.sync.ts:2310-2313) — but pruning only
+  // fires on an EXPLICIT `smtp.enabled === false`, never on absence: the
+  // legacy push always knows local `smtp.enabled` (the document is fully
+  // defaulted before push ever runs), so an ABSENT flag here can only happen
+  // on the API arm, where it follows the same absent-says-nothing rule as
+  // its sibling fields (`smtpExplicitlyDisabledInAttributes`,
+  // `./registry-auth.ts`) — a sparse response that never mentioned
+  // `smtp_host` must not have this value pruned either.
   const authSection = result["auth"];
   if (isObject(authSection)) {
     const email = authSection["email"];
     const smtp = isObject(email) ? email["smtp"] : undefined;
-    const smtpEnabled = isObject(smtp) && smtp["enabled"] === true;
+    const smtpExplicitlyDisabled = isObject(smtp) && smtp["enabled"] === false;
     const rateLimit = authSection["rate_limit"];
-    if (!smtpEnabled && isObject(rateLimit)) {
+    if (smtpExplicitlyDisabled && isObject(rateLimit)) {
       delete rateLimit["email_sent"];
       if (Object.keys(rateLimit).length === 0) {
         delete authSection["rate_limit"];
@@ -863,17 +888,23 @@ function assertRawAttributesDepthWithinBound(
   // Bigint is structured-cloneable and freezable but not JSON — it would
   // land under a ReadonlyJsonValue-typed _apiResponse and blow up the first
   // JSON.stringify a consumer runs on an unmappedApiFields report. Parsed
-  // JSON never produces one; programmatic caller input.
-  // NaN/Infinity silently stringify to null and an undefined-valued key
-  // silently vanishes under JSON.stringify — same non-JSON-primitive class.
+  // JSON never produces one; programmatic caller input. Same for an
+  // undefined-valued key (silently vanishes under JSON.stringify) and NaN
+  // (no JSON literal exists for it). ±Infinity is NOT in this set (ADR 0019
+  // rule 2 addendum): `JSON.parse('{"x":1e400}')` yields `Infinity`, so a
+  // real platform payload can carry it in a field nothing reads — rejecting
+  // it here would mis-bucket that payload as caller misuse. `walkUnmapped`
+  // below converts a tolerated ±Infinity leaf to `null` (JSON.stringify's own
+  // rendering) for `unmappedApiFields`, and `expectNumber` still rejects it
+  // on any MAPPED field via the registry.
   if (
     typeof value === "bigint" ||
     value === undefined ||
-    (typeof value === "number" && !Number.isFinite(value))
+    (typeof value === "number" && Number.isNaN(value))
   ) {
     throw new ProjectConfigParseError({
       message:
-        "raw attributes hold a non-JSON primitive (a bigint, undefined, or a non-finite number) — raw attributes must be plain parsed JSON",
+        "raw attributes hold a non-JSON primitive (a bigint, undefined, or NaN) — raw attributes must be plain parsed JSON",
       cause: new Error(`non-JSON primitive at depth ${depth}`),
       reason: "caller_misuse",
     });
@@ -1003,6 +1034,17 @@ function attachFrozenApiResponse<T extends Record<string, unknown>>(
  * whatever the registry didn't map. Throws {@link ProjectConfigParseError}
  * when `input` isn't an object, when the envelope is malformed, or when
  * decoding/mapping a value fails.
+ *
+ * Also NOT a verbatim projection of the response (ADR 0021): a `null` on a
+ * gating boolean canonicalizes to `enabled: false` rather than being skipped
+ * (`gatedBoolRow`/the SMTP host anchor, `./registry-auth.ts`), the
+ * same {@link applyDisabledSentinels} pruning `fromConfigDocument` applies
+ * runs here too, and an out-of-domain value on a mapped field (e.g. a
+ * negative `storage.file_size_limit`) throws rather than canonicalizing to a
+ * wrong value. This makes an API-sourced and a document-sourced
+ * `ProjectConfig` comparable for the same hosted state, at the cost of this
+ * function's output also not being a byte-for-byte echo of what the API
+ * reported.
  */
 export function fromApiProjectConfig(input: unknown): ProjectConfig;
 // Untyped for the same reason as `fromConfigDocument` above: the mapping
@@ -1278,6 +1320,70 @@ const knownApiContainerKeys: ReadonlySet<string> = (() => {
   return keys;
 })();
 
+/**
+ * Deep-sanitizes a non-finite number anywhere inside an unmapped ARRAY
+ * leaf — an element, or a leaf inside a plain object nested within the
+ * array — into `null`, the same JSON.stringify-shaped collapse
+ * {@link walkUnmapped}'s own scalar check applies to a bare non-finite
+ * value. An array is returned wholesale by `walkUnmapped` (never walked
+ * element-by-element for the consumed-path pruning that governs objects), so
+ * a non-finite number hiding inside one would otherwise reach
+ * `unmappedApiFields`'s return unsanitized — `Infinity`/`-Infinity`/`NaN` are
+ * `number`s (the type checker admits them into `ReadonlyJsonValue` just
+ * fine), but none of them has a JSON spelling: `JSON.stringify` collapses
+ * every one of them to `null`, so a caller round-tripping the report through
+ * JSON would silently see a different value than `toEqual` does in-process.
+ *
+ * Returns the SAME reference, not a copy, when nothing needed sanitizing —
+ * the common all-finite case — so `unmappedApiFields`'s "leaf arrays stay
+ * frozen" contract (the array is a subtree of the deep-frozen `_apiResponse`)
+ * keeps holding for it; only an array that actually contains a non-finite
+ * number pays for a fresh, unfrozen copy.
+ *
+ * Depth-capped the same way every other walk over `_apiResponse`-reachable
+ * data is (`walkUnmapped` above, `assertRawAttributesDepthWithinBound`): the
+ * raw attributes are already depth/cycle-bounded pre-decode, so this can
+ * never actually trip in practice, but each recursive walk keeps its own
+ * explicit bound rather than relying on a guarantee proven elsewhere.
+ */
+function sanitizeNonFiniteArrayLeaf(value: unknown, depth: number): unknown {
+  if (depth > MAX_UNMAPPED_WALK_DEPTH) {
+    const detail = `pathological nesting: exceeded ${MAX_UNMAPPED_WALK_DEPTH} levels while walking for unmapped fields`;
+    throw new ProjectConfigParseError({
+      message: formatProjectConfigParseErrorMessage(detail),
+      cause: new Error(detail),
+      suggestion: PROJECT_CONFIG_PARSE_ERROR_SUGGESTION,
+    });
+  }
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    return null;
+  }
+  if (Array.isArray(value)) {
+    let changed = false;
+    const mapped = value.map((element) => {
+      const sanitized = sanitizeNonFiniteArrayLeaf(element, depth + 1);
+      if (sanitized !== element) {
+        changed = true;
+      }
+      return sanitized;
+    });
+    return changed ? mapped : value;
+  }
+  if (isObject(value)) {
+    let changed = false;
+    const mapped: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value)) {
+      const sanitized = sanitizeNonFiniteArrayLeaf(child, depth + 1);
+      if (sanitized !== child) {
+        changed = true;
+      }
+      setOwnProperty(mapped, key, sanitized);
+    }
+    return changed ? mapped : value;
+  }
+  return value;
+}
+
 function walkUnmapped(value: unknown, path: ReadonlyArray<string>, depth = 0): unknown {
   if (depth > MAX_UNMAPPED_WALK_DEPTH) {
     const detail = `pathological nesting: exceeded ${MAX_UNMAPPED_WALK_DEPTH} levels while walking for unmapped fields`;
@@ -1289,6 +1395,18 @@ function walkUnmapped(value: unknown, path: ReadonlyArray<string>, depth = 0): u
   }
   if (consumedApiPathKeys.has(pathKey(path))) {
     return undefined;
+  }
+  // A tolerated ±Infinity leaf (Fix 1 above) has no JSON spelling — collapse
+  // it to `null`, matching what JSON.stringify itself would render.
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    return null;
+  }
+  // An array is returned wholesale below (never walked element-by-element for
+  // the consumed-path pruning objects get) — sanitize it separately so a
+  // non-finite number hiding inside one still surfaces as `null` (its
+  // JSON.stringify rendering) instead of silently riding along unsanitized.
+  if (Array.isArray(value)) {
+    return sanitizeNonFiniteArrayLeaf(value, depth);
   }
   if (!isObject(value)) {
     return value;

@@ -237,14 +237,13 @@ function parseDuration(s: string): number {
       throw new Error(`time: unknown unit in duration "${orig}"`);
     }
 
-    // Math.trunc, not round: Go's ParseDuration truncates fractional
-    // nanoseconds ("1.0000000005s" reads as exactly 1s), and the legacy port
-    // rounds — a deliberate match-Go divergence so canonicalization never
-    // shifts a value by a nanosecond.
-    // Go's exact operand order — `int64(f * (float64(unit) / scale))` — so
-    // e.g. "0.2593ms" scales as 2593 * (1e6 / 1e4) = 259300 exactly, where
-    // (frac / post) * unitNs rounds to 259299.99999999997 and truncates a
-    // nanosecond short.
+    // Plain integer multiplication, with no rounding decision of its own —
+    // any imprecision at large magnitudes is REJECTED below (the BigInt
+    // exactness check), never rounded. Rounding only applies to the
+    // fractional remainder handled next (`fracNs`), whose authority is the
+    // legacy PUSH parser (`apps/cli/src/legacy/commands/config/push/
+    // config-sync/config-sync.duration.ts:155`), not Go's own
+    // `time.ParseDuration`.
     const wholeContribution = n * unitNs;
     // A safe integer component can still round through the unit
     // multiplication ("9007199254740ms" × 1e6 lands above MAX_SAFE, and the
@@ -849,7 +848,7 @@ const smtpRows: ReadonlyArray<ProjectConfigMappingRow> = [
     transform: (value, attributes) => {
       if (value === null) return undefined;
       const port = parseUint16(expectString(value, smtpPortPath));
-      return smtpEnabledInAttributes(attributes) ? port : undefined;
+      return smtpExplicitlyDisabledInAttributes(attributes) ? undefined : port;
     },
   },
   smtpSiblingStringRow(["auth", "email", "smtp", "user"], "smtp_user"),
@@ -859,18 +858,23 @@ const smtpRows: ReadonlyArray<ProjectConfigMappingRow> = [
 ];
 
 /**
- * Whether the reported `smtp_host` signals SMTP enabled (non-null, non-empty)
- * — the sibling settings (`smtp_user`, `smtp_admin_email`, …) are stale noise
- * while SMTP is off: the push direction writes ONLY `smtp_host: ""` when
- * disabling (auth.sync.ts:2384-2397), so reporting retained siblings on a
- * disabled section would fabricate drift.
+ * Whether the response EXPLICITLY reports SMTP disabled — a `null` or `""`
+ * `smtp_host`, the push disable sentinel (the push direction writes ONLY
+ * `smtp_host: ""` when disabling, auth.sync.ts:2384-2397). An ABSENT
+ * `smtp_host` normalizes to `undefined` here (`readAuthAttribute`), which
+ * fails both comparisons below and so does NOT gate the siblings — same
+ * absent-vs-sentinel rule, and same twin-function shape, as
+ * {@link smsProviderExplicitlyUnset} below: a sparse response that never
+ * mentioned the host must still map `smtp_user`/`smtp_admin_email`/…
+ * normally, rather than have them vanish untraceably (both from the mapped
+ * output AND from `unmappedApiFields`, since these paths are consumed).
  */
-function smtpEnabledInAttributes(attributes: Record<string, unknown>): boolean {
+function smtpExplicitlyDisabledInAttributes(attributes: Record<string, unknown>): boolean {
   const host = readAuthAttribute(attributes, "smtp_host");
-  return typeof host === "string" && host.length > 0;
+  return host === null || host === "";
 }
 
-/** A {@link stringRow} gated on {@link smtpEnabledInAttributes} — validation still runs first. */
+/** A {@link stringRow} gated on {@link smtpExplicitlyDisabledInAttributes} — validation still runs first. */
 function smtpSiblingStringRow(
   configPath: ReadonlyArray<string>,
   apiKey: string,
@@ -882,7 +886,7 @@ function smtpSiblingStringRow(
     transform: (value, attributes) => {
       if (value === null) return undefined;
       const narrowed = expectString(value, apiPath);
-      return smtpEnabledInAttributes(attributes) ? narrowed : undefined;
+      return smtpExplicitlyDisabledInAttributes(attributes) ? undefined : narrowed;
     },
   };
 }

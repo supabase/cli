@@ -1,6 +1,11 @@
 import { describe, expect, test } from "vitest";
 import { CliConfigSchema } from "../base.ts";
 import { ProjectConfigApiAttributesSchema } from "./api-attributes.ts";
+import {
+  DISABLED_SENTINEL_ENTRY_SWEEPS,
+  DISABLED_SENTINEL_PRUNES,
+  SMS_PROVIDER_PUSH_PRECEDENCE,
+} from "./project-config.ts";
 import { unmappedSecretApiPaths } from "./registry-auth.ts";
 import { projectConfigMappingRows } from "./registry.ts";
 
@@ -102,6 +107,27 @@ function pathResolves(rootAst: unknown, path: ReadonlyArray<string>): boolean {
   return true;
 }
 
+/**
+ * The named property-signature keys directly under `path` from `rootAst` —
+ * empty if `path` doesn't resolve at all, or resolves to a node with no named
+ * signatures (e.g. a bare `Schema.Record`). Used for the entry-sweep tables
+ * below, whose `entryKeys` is sometimes omitted (the sweep walks
+ * `Object.keys(container)` at runtime instead) — reading the schema's own
+ * property names is the only way to still assert something concrete about
+ * which entries that sweep can ever see.
+ */
+function structPropertyNames(rootAst: unknown, path: ReadonlyArray<string>): ReadonlyArray<string> {
+  let current: unknown = rootAst;
+  for (const segment of path) {
+    current = descendOneSegment(current, segment);
+    if (current === undefined) {
+      return [];
+    }
+  }
+  const ast = unwrapSuspend(current);
+  return ast?.propertySignatures?.map((signature) => String(signature.name)) ?? [];
+}
+
 describe("registry integrity: every row resolves against both schemas", () => {
   test("the registry actually has rows to check", () => {
     // Guards against the loop below passing vacuously if the registry import
@@ -133,4 +159,110 @@ describe("registry integrity: every row resolves against both schemas", () => {
       expect(pathResolves(ProjectConfigApiAttributesSchema.ast, secretPath)).toBe(true);
     });
   }
+});
+
+/**
+ * Standing AST-walk drift guard for the three hand-written disabled-sentinel
+ * tables in `./project-config.ts` (`DISABLED_SENTINEL_PRUNES`,
+ * `DISABLED_SENTINEL_ENTRY_SWEEPS`, `SMS_PROVIDER_PUSH_PRECEDENCE`): these
+ * tables were added after the registry-integrity walker above and carry no
+ * AST guard of their own — a renamed `CliConfigSchema` field would silently
+ * turn one of their rules into a no-op (the gating `enabled` check, a dropped
+ * sibling, or an entry sweep simply never firing again for that field) with
+ * no red test anywhere to catch it.
+ */
+describe("disabled-sentinel tables: every path/key resolves against CliConfigSchema", () => {
+  test("DISABLED_SENTINEL_PRUNES actually has rows to check", () => {
+    // Guards against the loop below passing vacuously if the table is ever
+    // emptied out.
+    expect(DISABLED_SENTINEL_PRUNES.length).toBeGreaterThan(5);
+  });
+
+  for (const rule of DISABLED_SENTINEL_PRUNES) {
+    const containerLabel = rule.containerPath.join(".");
+
+    test(`DISABLED_SENTINEL_PRUNES containerPath "${containerLabel}" resolves against CliConfigSchema`, () => {
+      expect(pathResolves(CliConfigSchema.ast, rule.containerPath)).toBe(true);
+    });
+
+    test(`DISABLED_SENTINEL_PRUNES containerPath "${containerLabel}"'s gating "enabled" flag resolves against CliConfigSchema`, () => {
+      expect(pathResolves(CliConfigSchema.ast, [...rule.containerPath, "enabled"])).toBe(true);
+    });
+
+    for (const dropKey of rule.dropKeys ?? []) {
+      test(`DISABLED_SENTINEL_PRUNES containerPath "${containerLabel}"'s dropKey "${dropKey}" resolves against CliConfigSchema`, () => {
+        expect(pathResolves(CliConfigSchema.ast, [...rule.containerPath, dropKey])).toBe(true);
+      });
+    }
+  }
+
+  test("DISABLED_SENTINEL_ENTRY_SWEEPS actually has rows to check", () => {
+    expect(DISABLED_SENTINEL_ENTRY_SWEEPS.length).toBeGreaterThan(1);
+  });
+
+  for (const sweep of DISABLED_SENTINEL_ENTRY_SWEEPS) {
+    const containerLabel = sweep.containerPath.join(".");
+
+    test(`DISABLED_SENTINEL_ENTRY_SWEEPS containerPath "${containerLabel}" resolves against CliConfigSchema`, () => {
+      expect(pathResolves(CliConfigSchema.ast, sweep.containerPath)).toBe(true);
+    });
+
+    // A row without `entryKeys` sweeps `Object.keys(container)` at runtime —
+    // fall back to the schema's own property names so this guard still
+    // catches an "enabled" rename on any concrete entry the container can
+    // ever hold.
+    const entryKeys =
+      sweep.entryKeys ?? structPropertyNames(CliConfigSchema.ast, sweep.containerPath);
+
+    test(`DISABLED_SENTINEL_ENTRY_SWEEPS containerPath "${containerLabel}" has at least one entry key to sweep`, () => {
+      expect(entryKeys.length).toBeGreaterThan(0);
+    });
+
+    for (const entryKey of entryKeys) {
+      test(`DISABLED_SENTINEL_ENTRY_SWEEPS containerPath "${containerLabel}"'s entry "${entryKey}" gating "enabled" flag resolves against CliConfigSchema`, () => {
+        expect(
+          pathResolves(CliConfigSchema.ast, [...sweep.containerPath, entryKey, "enabled"]),
+        ).toBe(true);
+      });
+    }
+  }
+});
+
+/**
+ * `SMS_PROVIDER_PUSH_PRECEDENCE` doubles as data (every entry must resolve as
+ * a real `auth.sms` provider) and as a pinned ORDER (it must keep matching
+ * the legacy push switch's fixed provider priority, since a reordering here
+ * would silently change which provider `fromConfigDocument` treats as "the"
+ * enabled one when a document enables more than one).
+ */
+describe("SMS_PROVIDER_PUSH_PRECEDENCE: every provider resolves and matches the legacy push order", () => {
+  test("SMS_PROVIDER_PUSH_PRECEDENCE actually has rows to check", () => {
+    expect(SMS_PROVIDER_PUSH_PRECEDENCE.length).toBeGreaterThan(1);
+  });
+
+  for (const provider of SMS_PROVIDER_PUSH_PRECEDENCE) {
+    test(`SMS_PROVIDER_PUSH_PRECEDENCE entry "${provider}" resolves as a key under auth.sms against CliConfigSchema`, () => {
+      expect(pathResolves(CliConfigSchema.ast, ["auth", "sms", provider])).toBe(true);
+    });
+
+    test(`SMS_PROVIDER_PUSH_PRECEDENCE entry "${provider}"'s gating "enabled" flag resolves against CliConfigSchema`, () => {
+      expect(pathResolves(CliConfigSchema.ast, ["auth", "sms", provider, "enabled"])).toBe(true);
+    });
+  }
+
+  // Pinned against a hardcoded copy of the legacy switch's order (cited
+  // below) — this test file cannot itself see auth.sync.ts. The FIRST
+  // enabled provider wins and every later one is skipped entirely
+  // (apps/cli/src/legacy/commands/config/push/config-sync/auth.sync.ts:2498-2539's
+  // `switch (true)`: twilio (case at :2499), twilio_verify (:2507),
+  // messagebird (:2515), textlocal (:2522), vonage (:2529), default (:2537-2539)).
+  test("order matches the legacy push switch's fixed provider priority", () => {
+    expect(SMS_PROVIDER_PUSH_PRECEDENCE).toEqual([
+      "twilio",
+      "twilio_verify",
+      "messagebird",
+      "textlocal",
+      "vonage",
+    ]);
+  });
 });

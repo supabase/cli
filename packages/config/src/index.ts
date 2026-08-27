@@ -57,6 +57,7 @@ export { KONG_LOCAL_CA_CERT } from "./tls.ts";
 export { ENV_CAPTURE_REGEX } from "./lib/env.ts";
 export {
   type ProjectConfig,
+  type ReadonlyJsonValue,
   type ToProjectConfigSource,
   attachApiResponse,
   comparableProjectConfigPaths,

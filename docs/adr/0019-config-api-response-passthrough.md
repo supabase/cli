@@ -251,3 +251,32 @@ Rule 3's "invisible to structural walks" claim is scoped to exactly that — ser
 deliberately renders non-enumerable own properties (Bun's `console.log`, `util.inspect` with
 `showHidden`) still prints `_apiResponse`, HMAC digests and all. Never log an API-sourced
 `ProjectConfig` directly for this reason.
+
+## Addendum (2026-08-27): the lenient/typed boundary, precisely (a drift-audit fix)
+
+A drift audit of PR supabase/cli#6339 found that the pre-decode raw-attributes validation walk
+(`assertRawAttributesDepthWithinBound`, `project-config.ts`) had drifted from rule 2's own leniency
+promise: it rejected a non-finite number (`Infinity`/`-Infinity`, not just `NaN`) as `caller_misuse`
+before the lenient schema ever ran. That is wrong — `JSON.parse('{"x":1e400}')` legitimately yields
+`Infinity`, so a real platform response can carry one in a field nothing reads, and bucketing it as a
+_caller_ bug corrupts the `caller_misuse`/`api_response` telemetry split rule 2's own reason field
+exists to keep honest.
+
+The boundary, restated precisely: pre-decode rejection (`reason: "caller_misuse"`) is reserved for
+values `JSON.parse` cannot produce on any path, including a `bigint`, an `undefined`-valued key, `NaN`
+(no JSON literal encodes `NaN`; a numeric overflow literal like `1e400` only ever produces `±Infinity`,
+never `NaN`), a non-plain object (a `Map`/`Set`/`Date`/typed array), and structures that exceed the
+depth/node-visit bounds — every one of these is a programmatic-caller shape, not something a real
+platform response can contain. Every JSON-reachable oddity, including `±Infinity`, now always decodes:
+it rides through to `_apiResponse` like any other value, and on an unmapped path it surfaces through
+`unmappedApiFields()` as `null` — not because `±Infinity` fails to type-check as a `ReadonlyJsonValue`
+(it is a `number`, so it type-checks fine), but because it has no JSON spelling, so the report renders
+it the same way `JSON.stringify` itself would. A typed `api_response` throw remains
+reserved for a malformed envelope or an out-of-domain value on a **mapped** field, via the registry's
+own gates: `expectNumber`'s finite check (a mapped numeric field, e.g. `api.max_rows`, still rejects
+`±Infinity` — the tolerance above is for fields nothing reads, not for a value this package actually
+narrows), `expectNumberBetween`'s range gates (e.g. `storage.file_size_limit`'s non-negative bound),
+the CIDR/`pool_mode`-style resource-type discriminators, and the orphan-secret digest type checks
+(`unmappedSecretApiPaths`'s string-or-null validation in `project-config.ts`). Ruled by Colum Ferry via
+drift-audit adjudication, 2026-08-27; see [ADR 0021](0021-projectconfig-convergence-semantics.md) for
+the broader convergence-semantics documentation gap this same audit closed.

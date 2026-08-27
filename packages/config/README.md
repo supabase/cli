@@ -54,15 +54,21 @@ The hosted-project subset — `ProjectConfig` — and its normalizers live on th
   granularity, omitting every `x-secret` leaf, and every duration/byte-size field a mapping
   row canonicalizes (e.g. a document's `"24h"` becomes `"24h0m0s"`, matching what the API side
   would emit for the same logical value) — parity with `fromApiProjectConfig`'s own secret
-  omission and canonical spellings.
+  omission and canonical spellings. **Not a verbatim rendering of the document**: per
+  [ADR 0021](../../docs/adr/0021-projectconfig-convergence-semantics.md), the result also
+  applies SMS-provider push precedence and disabled-sentinel pruning, so it predicts what the
+  hosted config will look like _after_ pushing the document, not the document's own declared
+  values.
 - `fromApiProjectConfig(input)` — translation of a Management API v2 project-config response
   (the full envelope, its `data` object, or bare `data.attributes`): registry-driven renames, boolean inversions, and
   unit conversions; lenient toward API keys this package version doesn't know; secret fields
   omitted (the API reports HMAC digests, never plaintext). Attaches a deep-cloned, deep-frozen
   copy of the raw attributes as a non-enumerable `_apiResponse` — invisible to encodes and
-  structural walks, never persisted (ADR 0019). Both normalizers throw `ProjectConfigParseError`
-  on malformed API input (a bad envelope, a mapped field of the wrong type, or an unparseable
-  schema-decode failure).
+  structural walks, never persisted (ADR 0019). Also not a byte-for-byte echo of the response
+  (ADR 0021): a `null` on a gating boolean canonicalizes to `enabled: false`, and the same
+  disabled-sentinel pruning `fromConfigDocument` applies runs here too. Both normalizers throw
+  `ProjectConfigParseError` on malformed API input (a bad envelope, a mapped field of the wrong
+  type, or an unparseable schema-decode failure).
 - `unmappedApiFields(projectConfig)` — the API fields this package version doesn't map,
   derived from the same mapping registry.
 - `attachApiResponse(projectConfig, rawAttributes)` — re-attaches `_apiResponse` after a

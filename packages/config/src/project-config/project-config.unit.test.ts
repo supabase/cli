@@ -515,11 +515,11 @@ describe("fromApiProjectConfig — api section", () => {
     expect(result.api?.max_rows).toBe(0);
   });
 
-  // JSON cannot encode NaN/Infinity, so a non-finite number in the raw
-  // response can only be programmatic input — the pre-decode walk rejects it
-  // with the caller-misuse reason before any row's narrowing runs (the
-  // expect*-level finite check remains as defense in depth).
-  test("a non-finite max_rows is rejected pre-decode as a non-JSON primitive", () => {
+  // NaN has no JSON literal — JSON.parse can only ever produce ±Infinity from
+  // an overflowing numeral (e.g. `1e400`), never NaN — so a NaN in the raw
+  // response can only be programmatic input; the pre-decode walk rejects it
+  // with the caller-misuse reason before any row's narrowing runs.
+  test("a NaN max_rows is rejected pre-decode as a non-JSON primitive", () => {
     let thrown: unknown;
     try {
       fromApiProjectConfig({ api: { max_rows: Number.NaN } });
@@ -529,6 +529,26 @@ describe("fromApiProjectConfig — api section", () => {
     expect(thrown).toBeInstanceOf(ProjectConfigParseError);
     expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
     expect((thrown as ProjectConfigParseError).message).toContain("non-JSON primitive");
+  });
+
+  // ±Infinity IS JSON-reachable (drift-audit fix, ADR 0019's 2026-08-27
+  // addendum) and so passes the pre-decode walk — but on a MAPPED field like
+  // `max_rows`, `expectInteger`/`expectNumber`'s own finite check still
+  // rejects it, this time with the api_response reason (a platform-response
+  // problem, not caller misuse).
+  test("an Infinity max_rows decodes past the pre-decode walk but still throws api_response via expectInteger", () => {
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({ api: { max_rows: Number.POSITIVE_INFINITY } });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    // `reason` is absent here — per ProjectConfigParseError's own docstring
+    // ("api_response" is the default when absent), that IS the api_response
+    // classification, not merely "not caller_misuse".
+    expect((thrown as ProjectConfigParseError).reason ?? "api_response").toBe("api_response");
+    expect((thrown as ProjectConfigParseError).apiPath).toEqual(["api", "max_rows"]);
   });
 });
 
@@ -1810,8 +1830,12 @@ describe("review round: safe integers, Go truncation, bigint, fractional-hour bo
 });
 
 describe("review round: non-JSON primitives, tiny hours, readonly report, whole-second frequencies, disabled sentinel (CLI-2230)", () => {
-  test("undefined and non-finite raw values throw the typed caller-misuse error", () => {
-    for (const bad of [{ x: undefined }, { x: Number.NaN }, { x: Number.POSITIVE_INFINITY }]) {
+  // undefined and NaN have no JSON.parse-reachable spelling, so both stay
+  // caller-misuse. Drift-audit fix: ±Infinity is JSON-reachable
+  // (`JSON.parse('{"x":1e400}')` yields `Infinity`) and was wrongly rejected
+  // here too — see the sibling test below.
+  test("undefined and NaN raw values throw the typed caller-misuse error", () => {
+    for (const bad of [{ x: undefined }, { x: Number.NaN }]) {
       let thrown: unknown;
       try {
         attachApiResponse({}, bad);
@@ -1823,17 +1847,51 @@ describe("review round: non-JSON primitives, tiny hours, readonly report, whole-
     }
   });
 
+  test("a ±Infinity raw value on an UNKNOWN field decodes successfully and surfaces as null in unmappedApiFields", () => {
+    // 1e400 overflows to Infinity during JSON.parse itself — this is what a
+    // real platform payload with a numeric field nothing reads can look like,
+    // not a hand-constructed edge case.
+    const parsed: { api: { max_rows: number }; brand_new_platform_field: number } = JSON.parse(
+      '{"api":{"max_rows":5},"brand_new_platform_field":1e400}',
+    );
+    expect(parsed.brand_new_platform_field).toBe(Number.POSITIVE_INFINITY);
+    const result = fromApiProjectConfig(parsed);
+    expect(result.api?.max_rows).toBe(5);
+    expect(result._apiResponse?.["brand_new_platform_field"]).toBe(Number.POSITIVE_INFINITY);
+    expect(unmappedApiFields(result)).toEqual({ brand_new_platform_field: null });
+  });
+
+  test("attachApiResponse also tolerates a ±Infinity raw value — the caller-path counterpart of fromApiProjectConfig's relaxation", () => {
+    const parsed: { x: number } = JSON.parse('{"x":1e400}');
+    expect(parsed.x).toBe(Number.POSITIVE_INFINITY);
+    const result = attachApiResponse({}, parsed);
+    expect(result._apiResponse?.["x"]).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  test("a bare non-finite scalar at an unmapped path (not nested inside an array) surfaces as null too", () => {
+    const parsed: { brand_new_platform_field: number } = JSON.parse(
+      '{"brand_new_platform_field":-1e400}',
+    );
+    expect(parsed.brand_new_platform_field).toBe(Number.NEGATIVE_INFINITY);
+    const result = fromApiProjectConfig(parsed);
+    expect(unmappedApiFields(result)).toEqual({ brand_new_platform_field: null });
+  });
+
   test("a sub-nanosecond session-hour value truncates to 0s instead of exponent notation", () => {
     const result = fromApiProjectConfig({ auth: { sessions_timebox: 1e-20 } });
     expect(result.auth?.sessions?.timebox).toBe("0s");
   });
 
-  test("the unmapped report is readonly at compile time and its leaf arrays stay frozen", () => {
+  test("the unmapped report is readonly at compile time and an all-finite leaf array keeps the frozen _apiResponse identity", () => {
     const result = fromApiProjectConfig({ brand_new: ["a"] });
     const report = unmappedApiFields(result);
     const leaf = report["brand_new"];
     expect(Array.isArray(leaf)).toBe(true);
     expect(Object.isFrozen(leaf)).toBe(true);
+    // No non-finite value anywhere inside — the sanitizing walk must be a
+    // no-op and hand back the SAME array `_apiResponse` already holds,
+    // rather than a fresh (unfrozen) copy.
+    expect(leaf).toBe(result._apiResponse?.["brand_new"]);
     expect(() => {
       // @ts-expect-error — the report's index is readonly.
       report["brand_new"] = null;
@@ -1843,6 +1901,24 @@ describe("review round: non-JSON primitives, tiny hours, readonly report, whole-
       // readonly matters. Throw manually to keep the expectation uniform.
       throw new TypeError("compile-only guard");
     }).toThrow(TypeError);
+  });
+
+  // Drift-audit follow-up to Fix 1: `walkUnmapped` returns an unmapped array
+  // leaf wholesale (never walked element-by-element the way an object is),
+  // so a non-finite number hiding inside one — even nested inside a plain
+  // object inside the array — would otherwise reach `unmappedApiFields`'s
+  // return unsanitized and violate its own ReadonlyJsonValue contract.
+  test("a non-finite number hiding inside an unmapped array leaf (including nested in an object) surfaces as null via a sanitized copy", () => {
+    const parsed: { brand_new: ReadonlyArray<unknown> } = JSON.parse(
+      '{"brand_new":[1e400,{"x":-1e400,"y":1}]}',
+    );
+    expect(parsed.brand_new[0]).toBe(Number.POSITIVE_INFINITY);
+    const result = fromApiProjectConfig(parsed);
+    const report = unmappedApiFields(result);
+    expect(report["brand_new"]).toEqual([null, { x: null, y: 1 }]);
+    // Sanitizing produces a FRESH copy — unlike the all-finite case above,
+    // this is no longer the shared frozen `_apiResponse` reference.
+    expect(report["brand_new"]).not.toBe(result._apiResponse?.["brand_new"]);
   });
 
   test("document frequency durations quantize to whole seconds like the legacy push", () => {
@@ -1967,6 +2043,21 @@ describe("review round: Go-range sessions, SMTP/provider/storage disabled sentin
     expect(() => fromApiProjectConfig({ auth: { smtp_host: "", smtp_user: 5 } })).toThrow(
       ProjectConfigParseError,
     );
+  });
+
+  // Three-state fix (drift audit of CLI-2230/PR #6339): an ABSENT smtp_host
+  // says nothing about SMTP status — unlike the explicit "" sentinel above,
+  // it must not suppress the siblings. Mirrors smsProviderExplicitlyUnset's
+  // own absent-vs-sentinel rule a few rows below in registry-auth.ts.
+  test("SMTP siblings map normally when smtp_host is ABSENT, not explicitly disabled", () => {
+    const sparse = fromApiProjectConfig({
+      auth: { smtp_user: "postmaster", smtp_admin_email: "a@b.c" },
+    });
+    expect(sparse.auth?.email?.smtp).toEqual({
+      user: "postmaster",
+      admin_email: "a@b.c",
+    });
+    expect(unmappedApiFields(sparse)).toEqual({});
   });
 
   test("disabled storage features project only their toggle", () => {
@@ -2428,13 +2519,29 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
     expect(projected.storage).toEqual({ enabled: false });
   });
 
-  test("the email rate limit is omitted while SMTP is unmanaged", () => {
+  test("the email rate limit is pruned only on an EXPLICIT smtp.enabled === false, never on absence", () => {
+    // Document arm: a real document is fully defaulted (`smtp.enabled` is
+    // always present, true or false), so an explicit disable is what this
+    // fixture spells out.
     const doc = fromConfigDocument({
-      auth: { rate_limit: { email_sent: 30, sms_sent: 30 } },
+      auth: { email: { smtp: { enabled: false } }, rate_limit: { email_sent: 30, sms_sent: 30 } },
     });
     expect(doc.auth?.rate_limit).toEqual({ sms_sent: 30 });
-    const api = fromApiProjectConfig({ auth: { rate_limit_email_sent: 30 } });
-    expect(Object.hasOwn(api, "auth")).toBe(false);
+
+    // API arm, smtp_host ABSENT: says nothing (same sibling rule as the SMTP
+    // three-state fix) — email_sent must NOT be pruned.
+    const apiAbsent = fromApiProjectConfig({
+      auth: { smtp_user: "u", smtp_admin_email: "a@b.c", rate_limit_email_sent: 5 },
+    });
+    expect(apiAbsent.auth?.rate_limit).toEqual({ email_sent: 5 });
+
+    // API arm, smtp_host EXPLICITLY "" (disabled sentinel): still pruned.
+    const apiDisabled = fromApiProjectConfig({
+      auth: { smtp_host: "", rate_limit_email_sent: 30 },
+    });
+    expect(apiDisabled.auth?.rate_limit).toBeUndefined();
+
+    // API arm, smtp_host present and non-empty: keeps mapping normally.
     const apiWithSmtp = fromApiProjectConfig({
       auth: { smtp_host: "smtp.example.com", rate_limit_email_sent: 30 },
     });
