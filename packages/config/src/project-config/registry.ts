@@ -78,7 +78,17 @@ const apiSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
       const schemas = splitCommaSeparated(expectString(value, apiDbSchemaPath));
       return remoteDataApiDisabled(attributes) ? undefined : schemas;
     },
-    normalizeDocument: canonicalizeCommaJoinedArray,
+    // Beyond the comma round-trip: an explicitly EMPTY schemas array is
+    // unmanaged absence — the push only sends db_schema when the array is
+    // non-empty (api.sync.ts:137-139, with "" reserved for the disable
+    // path), and the pull side reads "" as the disabled sentinel, so the
+    // API arm can never project `[]`; keeping it would fabricate permanent
+    // drift. (extra_search_path differs: its push join is unconditional,
+    // so its empty array round-trips and stays.)
+    normalizeDocument: (value) => {
+      const canonical = canonicalizeCommaJoinedArray(value);
+      return Array.isArray(canonical) && canonical.length === 0 ? undefined : canonical;
+    },
     unit: "csv → string[]",
   },
   {

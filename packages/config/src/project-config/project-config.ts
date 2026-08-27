@@ -1037,7 +1037,21 @@ function attachOwnedSnapshot<T extends Record<string, unknown>>(
       reason: "caller_misuse",
     });
   }
-  const result = { ...enumerableProps };
+  // The spread evaluates every enumerable own property, so a getter on a
+  // caller-supplied props object (attachApiResponse) would otherwise leak
+  // its raw throw past the typed-error contract; the API arm's props are
+  // built internally as plain data and can never take this branch.
+  let result: T;
+  try {
+    result = { ...enumerableProps };
+  } catch (cause) {
+    throw new ProjectConfigParseError({
+      message:
+        "reading the config's enumerable properties threw — attachApiResponse configs must be plain data, not accessor-backed",
+      cause,
+      reason: "caller_misuse",
+    });
+  }
   Object.defineProperty(result, "_apiResponse", {
     value: frozen,
     enumerable: false,

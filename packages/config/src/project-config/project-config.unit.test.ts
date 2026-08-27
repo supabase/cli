@@ -1641,17 +1641,21 @@ describe("review round: duration/size bounds and freeze failures (CLI-2230)", ()
     expect((thrown as ProjectConfigParseError).apiPath).toEqual(["storage", "file_size_limit"]);
   });
 
-  test("canonicalization preserves fractional seconds in hours/minutes durations", () => {
+  test("canonicalization applies the push formatter's h/m sub-second truncation", () => {
     const projected = fromConfigDocument({
       auth: {
         sessions: { timebox: "1h0.5s", inactivity_timeout: "1m0.5s" },
       },
     });
-    // Go's Duration.String() prints fractional seconds in these branches;
-    // the legacy port truncates them (config-sync.duration.ts:62-69) — this
-    // copy deliberately matches Go so canonicalizing never changes the value.
-    expect(projected.auth?.sessions?.timebox).toBe("1h0m0.5s");
-    expect(projected.auth?.sessions?.inactivity_timeout).toBe("1m0.5s");
+    // The push pipeline normalizes through the truncating legacy formatter
+    // (normalizeDurationStr, auth.sync.ts:986-987; config-sync.duration.ts:
+    // 39-45) BEFORE durationToHours converts — "1h0.5s" stores exactly one
+    // hour, so the canonical document spelling predicts that reading.
+    expect(projected.auth?.sessions?.timebox).toBe("1h0m0s");
+    expect(projected.auth?.sessions?.inactivity_timeout).toBe("1m0s");
+    // Sub-minute magnitudes keep their fraction (legacy seconds branch does).
+    const subMinute = fromConfigDocument({ auth: { sessions: { timebox: "59.5s" } } });
+    expect(subMinute.auth?.sessions?.timebox).toBe("59.5s");
   });
 
   test("an unfreezable raw attribute value throws the typed caller-misuse error", () => {
@@ -1689,8 +1693,13 @@ describe("review round: absent anchors, exponent-free seconds, non-plain values 
   });
 
   test("sub-microsecond remainders format fixed-decimal, never exponent notation", () => {
+    // Document side: the push-formatter truncation drops the remainder.
     const projected = fromConfigDocument({ auth: { sessions: { timebox: "1h1ns" } } });
-    expect(projected.auth?.sessions?.timebox).toBe("1h0m0.000000001s");
+    expect(projected.auth?.sessions?.timebox).toBe("1h0m0s");
+    // API arm: the Go-faithful formatter renders a hosted sub-second tail
+    // fixed-decimal, never exponent notation (1h + 1ns in hours).
+    const api = fromApiProjectConfig({ auth: { sessions_timebox: 1 + 1e-9 / 3600 } });
+    expect(api.auth?.sessions?.timebox).toBe("1h0m0.000000001s");
   });
 
   test("non-plain structured-cloneable values are rejected before attach", () => {
@@ -1841,10 +1850,10 @@ describe("review round: non-JSON primitives, tiny hours, readonly report, whole-
     // auth.sync.ts:2611-2616 floors to integer seconds on push — the hosted
     // value can only ever be whole seconds, so the document converges on it.
     expect(projected.auth?.email?.max_frequency).toBe("1s");
-    // Sessions durations are NOT quantized (fractional seconds are pushable
-    // as fractional hours).
+    // Session durations quantize through the push formatter's h/m
+    // truncation instead (normalizeDurationStr runs before durationToHours).
     const sessions = fromConfigDocument({ auth: { sessions: { timebox: "1h0.5s" } } });
-    expect(sessions.auth?.sessions?.timebox).toBe("1h0m0.5s");
+    expect(sessions.auth?.sessions?.timebox).toBe("1h0m0s");
   });
 
   test("a document with the Data API disabled projects only the enabled sentinel", () => {
@@ -2221,7 +2230,9 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
     const negative = fromConfigDocument({
       auth: { sessions: { timebox: "-2562047h47m16s854775808ns" } },
     });
-    expect(negative.auth?.sessions?.timebox).toBe("-2562047h47m16.854775808s");
+    // The push-formatter truncation drops the sub-second tail on the
+    // document side; the API arm's faithful endpoint render is pinned above.
+    expect(negative.auth?.sessions?.timebox).toBe("-2562047h47m16s");
   });
 
   test("multiple enabled SMS providers converge on the push switch's first-enabled precedence", () => {
@@ -2298,6 +2309,36 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
       expect(thrown).toBeInstanceOf(ProjectConfigParseError);
       expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
     }
+  });
+
+  test("an explicitly empty schemas array normalizes to unmanaged absence", () => {
+    // Push only sends db_schema when the array is non-empty (api.sync.ts:
+    // 137-139, "" being the disable sentinel), and the pull side reads ""
+    // as disabled — the API arm can never project [], so keeping it would
+    // fabricate permanent drift.
+    const empty = fromConfigDocument({ api: { enabled: true, schemas: [] } });
+    expect(empty.api?.schemas).toBeUndefined();
+    expect(empty.api?.enabled).toBe(true);
+    // extra_search_path differs: its push join is unconditional, so its
+    // empty array round-trips ("" → []) and stays declared.
+    const search = fromConfigDocument({ api: { enabled: true, extra_search_path: [] } });
+    expect(search.api?.extra_search_path).toEqual([]);
+  });
+
+  test("a throwing enumerable config getter surfaces as caller misuse on attach", () => {
+    const props: Record<string, unknown> = {
+      get api(): unknown {
+        throw new Error("boom");
+      },
+    };
+    let thrown: unknown;
+    try {
+      attachApiResponse(props, { api: { max_rows: 100 } });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).reason).toBe("caller_misuse");
   });
 
   test("orphan secret paths validate like isSecret rows before being suppressed", () => {

@@ -34,10 +34,14 @@ import {
  * Port of Go `time.Duration.String()`, based on the legacy port at
  * `apps/cli/src/legacy/commands/config/push/config-sync/config-sync.duration.ts:18-82`,
  * with one DELIBERATE divergence: the legacy port truncates sub-second
- * remainders in its hours/minutes branches (its :62-69), where Go itself
- * prints fractional seconds (`"1h0m0.5s"`). Truncating there would let
- * canonicalization silently change a configured duration, so this copy
- * matches Go.
+ * remainders in its hours/minutes branches (its :39-45), where Go itself
+ * prints fractional seconds (`"1h0m0.5s"`). This copy matches Go because it
+ * renders the HOSTED value (the API arm must show sub-second bits a hosted
+ * value can genuinely carry); the document-side canonicalizers instead apply
+ * {@link truncateLikePushFormatter} first, since the push pipeline runs the
+ * truncating formatter before converting (`normalizeDurationStr`,
+ * auth.sync.ts:986-987) — the two arms then agree exactly on every value a
+ * push can actually produce.
  */
 function durationString(ns: number): string {
   if (ns === 0) return "0s";
@@ -306,10 +310,33 @@ function canonicalizeDurationString(value: unknown): unknown {
     return value;
   }
   try {
-    return durationString(parseDuration(value));
+    return durationString(truncateLikePushFormatter(parseDuration(value)));
   } catch {
     return value;
   }
+}
+
+/**
+ * The push pipeline's OWN quantization of session durations: the local
+ * subset is built with `normalizeDurationStr` (auth.sync.ts:986-987), whose
+ * formatter drops the sub-second remainder in its hours/minutes branches
+ * (config-sync.duration.ts:39-45) before `durationToHours` converts what
+ * remains (auth.sync.ts:2374-2375) — so a document `"1h0.5s"` stores exactly
+ * one hour, and the canonical document spelling must predict that reading
+ * (same convergence rule as the whole-second flooring for frequencies).
+ * Sub-minute magnitudes keep their fraction: the legacy seconds/ms/µs
+ * branches print it. The API-arm formatter ({@link durationString}) stays
+ * Go-faithful — a hosted value set out-of-band CAN carry sub-second bits
+ * under an hour/minute magnitude, and rendering them faithfully is what
+ * makes the resulting drift honest (a push would quantize it away).
+ */
+function truncateLikePushFormatter(ns: number): number {
+  const magnitude = Math.abs(ns);
+  if (magnitude < NS_PER_MINUTE) {
+    return ns;
+  }
+  const wholeSeconds = Math.floor(magnitude / NS_PER_SECOND) * NS_PER_SECOND;
+  return ns < 0 ? -wholeSeconds : wholeSeconds;
 }
 
 /**
