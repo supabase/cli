@@ -513,7 +513,11 @@ const REDACTED_SECRET = "«redacted»";
  * containment. */
 const SECRET_PATTERNS: readonly RegExp[] = [
   /sk-ant-[A-Za-z0-9_-]{20,}/g,
-  /sk-[A-Za-z0-9]{20,}/g,
+  // OpenAI keys embed hyphenated prefixes (`sk-proj-…`, `sk-svcacct-…`,
+  // `sk-admin-…`) as well as the legacy `sk-<40 alnum>` shape, so the class
+  // must allow `-`/`_` — otherwise the match stops at the first hyphen and a
+  // leaked project-scoped key reaches the posted review/artifact unredacted.
+  /sk-[A-Za-z0-9_-]{20,}/g,
   /ghp_[A-Za-z0-9]{36}/g,
   /github_pat_[A-Za-z0-9_]{22,}/g,
   // GitHub App/OAuth/Actions tokens (gho_, ghu_, ghs_, ghr_) share this

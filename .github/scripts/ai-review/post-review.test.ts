@@ -950,6 +950,8 @@ describe("redactSecrets", () => {
   test.each([
     ["an Anthropic API key", "sk-ant-api03-abcdefghijklmnopqrstuvwxyz012345"],
     ["a generic OpenAI-shaped API key", "sk-abcdefghijklmnopqrstuvwxyz012345"],
+    ["a project-scoped OpenAI key", "sk-proj-abcdefghijklmnopqrstuvwxyz012345"],
+    ["a service-account OpenAI key", "sk-svcacct-abcdefghijklmnopqrstuvwxyz012345"],
     ["a GitHub personal access token", `ghp_${"a".repeat(36)}`],
     ["a GitHub fine-grained PAT", `github_pat_${"a".repeat(30)}`],
     ["a GitHub Actions server-to-server token", `ghs_${"a".repeat(36)}`],
