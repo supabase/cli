@@ -12,7 +12,7 @@ import {
 import { LocalStackLifecycle } from "../../src/LocalStack.ts";
 import { Stack } from "../../src/Stack.ts";
 import { validateResolvedConfig } from "../../src/StackBuilder.ts";
-import { StackBuildError, StackReadinessError } from "../../src/errors.ts";
+import { StackReadinessError } from "../../src/errors.ts";
 import { ControlTransport } from "../../src/managed/control.ts";
 import { gitConfigStoreLayer } from "../../src/managed/git.ts";
 import { ManagedStackManager, managedStackManagerLayer } from "../../src/managed/manager.ts";
@@ -211,12 +211,8 @@ const testRuntime = ({
       }),
     );
   }).pipe(
-    Effect.mapError((cause) =>
-      cause instanceof SupervisorStartError
-        ? cause
-        : new SupervisorStartError({
-            message: cause instanceof StackBuildError ? cause.detail : String(cause),
-          }),
+    Effect.catchTag("StackBuildError", (cause) =>
+      Effect.fail(new SupervisorStartError({ message: cause.detail })),
     ),
   );
 };

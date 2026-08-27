@@ -247,8 +247,6 @@ it.live("rejects launch updates after supervisor shutdown begins", () =>
         }
         expect(updates).toEqual([]);
       }).pipe(Effect.ensuring(Deferred.succeed(releaseStop, undefined).pipe(Effect.asVoid)));
-      // SupervisorSession exposes an aggregate cleanup channel for arbitrary owner failures.
-      // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
       yield* lifecycle.awaitShutdown;
     }).pipe(Effect.provide(Layer.mergeAll(controlTransportLayer, httpTransportClientLayer))),
   ),
@@ -303,8 +301,6 @@ it.live("propagates a failure terminal reason to an active state stream", () =>
           yield* lifecycle.disposeRuntime;
           const exit = yield* Fiber.await(active);
           yield* Deferred.succeed(releaseStop, undefined);
-          // SupervisorSession exposes an aggregate cleanup channel for arbitrary owner failures.
-          // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
           yield* lifecycle.awaitShutdown.pipe(Effect.exit);
           return exit;
         }).pipe(Effect.provide(layer)),
@@ -394,8 +390,6 @@ it.live("interrupts an in-flight runtime mutation before stopping the stack", ()
       yield* Deferred.await(mutationReleased);
       yield* Deferred.await(stopStarted);
       expect(Exit.isFailure(yield* Fiber.await(mutation))).toBe(true);
-      // SupervisorSession exposes an aggregate cleanup channel for arbitrary owner failures.
-      // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
       yield* lifecycle.awaitShutdown;
     }).pipe(Effect.provide(controlTransportLayer)),
   ),

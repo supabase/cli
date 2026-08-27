@@ -47,7 +47,7 @@ const acquireIsolatedCollisionOwner = () =>
         return { collidingStackId, ownership: acquisition.value };
       }
     }
-    return yield* Effect.die("failed to acquire an isolated collision endpoint");
+    return yield* Effect.die(new Error("failed to acquire an isolated collision endpoint"));
   });
 
 const acquireIsolatedStackOwner = (workspacePath: string) =>
@@ -64,7 +64,7 @@ const acquireIsolatedStackOwner = (workspacePath: string) =>
         return { stackName, ownership: acquisition.value };
       }
     }
-    return yield* Effect.die("failed to acquire an isolated stack endpoint");
+    return yield* Effect.die(new Error("failed to acquire an isolated stack endpoint"));
   });
 
 const startWithIsolatedOwner = (

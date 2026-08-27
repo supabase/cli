@@ -2,6 +2,7 @@
 import { it } from "@effect/vitest";
 import { Cause, Deferred, Effect, Exit, Fiber, Layer, Predicate, Result, Stream } from "effect";
 import * as TestClock from "effect/testing/TestClock";
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { createServer as createTcpServer, type Server as TcpServer, type Socket } from "node:net";
@@ -65,7 +66,7 @@ const makeStack = (started: { value: boolean }): Stack["Service"] => ({
 
 const makeStaticOwner = (stackId: string, stack: Stack["Service"]) =>
   Effect.gen(function* () {
-    const ownerSessionId = `static-owner-${stackId}`;
+    const ownerSessionId = `static-owner-${randomUUID()}`;
     const lifecycle = yield* makeSupervisorSessionFixture({
       ownershipId: stackId,
       ownerSessionId,
@@ -250,7 +251,7 @@ describe("managed control endpoint", () => {
           Effect.gen(function* () {
             const lifecycle = yield* makeSupervisorSessionFixture({
               ownershipId: STACK_ID,
-              ownerSessionId: "static-listener-session",
+              ownerSessionId: `static-listener-${randomUUID()}`,
               daemonCliVersion: "test",
               close: Effect.void,
             });
@@ -306,8 +307,6 @@ describe("managed control endpoint", () => {
           );
           expect(response.status).toBe(202);
           expect(yield* Effect.promise(() => response.json())).toEqual({ ok: true });
-          // SupervisorSession exposes an aggregate cleanup channel for arbitrary owner failures.
-          // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
           yield* lifecycle.awaitShutdown;
           expect(stopCalls.value).toBe(1);
         }),

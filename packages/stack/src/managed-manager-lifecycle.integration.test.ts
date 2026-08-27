@@ -278,9 +278,6 @@ describe("managed stack lifecycle journeys", () => {
             expect(error).toMatchObject({ state: "starting", ready: false });
           }
         }
-        // SupervisorSession's cleanup channel is intentionally unknown because it aggregates
-        // arbitrary owner finalizer failures; this test only waits for teardown to settle.
-        // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
         yield* lifecycle.requestShutdown("dispose").pipe(Effect.ignore);
       }),
     ).pipe(

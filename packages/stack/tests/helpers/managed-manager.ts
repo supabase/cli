@@ -54,7 +54,7 @@ export const controlStack = (): Stack["Service"] => ({
   restartService: () => Effect.void,
   reloadFunctions: () => Effect.void,
   reloadEdgeRuntime: () => Effect.void,
-  getState: () => Effect.die("unused"),
+  getState: () => Effect.die(new Error("unused")),
   getAllStates: Effect.succeed([]),
   stateChanges: () => Effect.succeed(Stream.empty),
   allStateChanges: Stream.empty,
@@ -113,14 +113,14 @@ export const freePorts = (
       return port === undefined ? [] : [port];
     });
     yield* lease.releaseAll;
-    if (ports.length !== count) return yield* Effect.die("missing free ports");
+    if (ports.length !== count) return yield* Effect.die(new Error("missing free ports"));
     return ports;
   });
 
 export const freePort: Effect.Effect<number, PortAllocationError, import("effect/Scope").Scope> =
   Effect.gen(function* () {
     const [port] = yield* freePorts(1);
-    if (port === undefined) return yield* Effect.die("missing free port");
+    if (port === undefined) return yield* Effect.die(new Error("missing free port"));
     return port;
   });
 

@@ -5,7 +5,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   Cause,
-  Clock,
   Data,
   Effect,
   Exit,
@@ -178,7 +177,10 @@ const inspectClaim = (
   Effect.gen(function* () {
     const snapshot = yield* readClaimSnapshot(path);
     if (snapshot === undefined) return undefined;
-    return { snapshot, stale: claimIsStale(snapshot, yield* Clock.currentTimeMillis) };
+    // Claim mtimes come from the native filesystem wall clock; compare them
+    // against the same wall-clock source rather than Effect's virtual Clock.
+    // oxlint-disable-next-line effecttsgo/global-date-in-effect -- Native filesystem mtime staleness requires wall-clock time at this leaf boundary.
+    return { snapshot, stale: claimIsStale(snapshot, Date.now()) };
   });
 
 const claimIdentityMatches = (expected: ClaimSnapshot, current: ClaimSnapshot): boolean => {

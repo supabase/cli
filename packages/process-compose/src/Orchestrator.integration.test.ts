@@ -1,8 +1,19 @@
+import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "@effect/vitest";
 import { layer as BunChildProcessSpawnerLayer } from "@effect/platform-bun/BunChildProcessSpawner";
 import { layer as BunFileSystemLayer } from "@effect/platform-bun/BunFileSystem";
 import { layer as BunPathLayer } from "@effect/platform-bun/BunPath";
-import { Clock, Deferred, Duration, Effect, Fiber, Layer, Option, Stream } from "effect";
+import {
+  Clock,
+  Deferred,
+  Duration,
+  Effect,
+  Fiber,
+  FileSystem,
+  Layer,
+  Option,
+  Stream,
+} from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { buildGraph } from "./DependencyGraph.ts";
 import { LogBuffer } from "./LogBuffer.ts";
@@ -175,7 +186,7 @@ describe("Orchestrator integration", () => {
   it.live(
     "health check transitions to Healthy with exec probe",
     () => {
-      const flagFile = `/tmp/pc-e2e-flag-${process.pid}`;
+      const flagFile = `/tmp/pc-e2e-flag-${randomUUID()}`;
 
       const defs: ServiceDef[] = [
         {
@@ -207,7 +218,16 @@ describe("Orchestrator integration", () => {
         const state = yield* orc.getState("flag-service");
         expect(state.status).toBe("Healthy");
         yield* orc.stop;
-      }).pipe(Effect.provide(layer), Effect.scoped);
+      }).pipe(
+        Effect.ensuring(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            yield* fs.remove(flagFile, { force: true });
+          }).pipe(Effect.provide(BunFileSystemLayer), Effect.ignore),
+        ),
+        Effect.provide(layer),
+        Effect.scoped,
+      );
     },
     { timeout: 15000 },
   );
@@ -451,7 +471,7 @@ describe("resource cleanup", () => {
   it.live(
     "exec health probe processes cleaned up on stop",
     () => {
-      const flagFile = `/tmp/pc-cleanup-flag-${process.pid}`;
+      const flagFile = `/tmp/pc-cleanup-flag-${randomUUID()}`;
       const defs: ServiceDef[] = [
         {
           name: "probed",
@@ -483,7 +503,16 @@ describe("resource cleanup", () => {
         yield* orc.stop;
 
         expect(isPidAlive(pid)).toBe(false);
-      }).pipe(Effect.provide(layer), Effect.scoped);
+      }).pipe(
+        Effect.ensuring(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            yield* fs.remove(flagFile, { force: true });
+          }).pipe(Effect.provide(BunFileSystemLayer), Effect.ignore),
+        ),
+        Effect.provide(layer),
+        Effect.scoped,
+      );
     },
     { timeout: 15000 },
   );

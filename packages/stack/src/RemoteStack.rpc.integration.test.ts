@@ -799,8 +799,6 @@ it.live("closes an owner while another client still consumes an RPC stream", () 
               ownerSessionId,
               intent: "explicit",
             });
-            // SupervisorSession exposes an aggregate cleanup channel for arbitrary owner failures.
-            // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
             return yield* lifecycle.awaitShutdown.pipe(Effect.timeout("2 seconds"), Effect.exit);
           }).pipe(Effect.provide(layer)),
         );
@@ -881,8 +879,6 @@ it.live("terminates an active stream with the stopping reason", () =>
               Effect.exit,
             );
             yield* Deferred.succeed(stopRelease, undefined);
-            // SupervisorSession exposes an aggregate cleanup channel for arbitrary owner failures.
-            // oxlint-disable-next-line effecttsgo/any-unknown-in-error-context
             yield* lifecycle.awaitShutdown;
             yield* Deferred.await(streamReleased);
             return streamExit;

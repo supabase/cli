@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import { zstdDecompress } from "node:zlib";
 import {
   Context,
-  Clock,
   Duration,
   Effect,
   FileSystem,
@@ -580,7 +579,10 @@ export class BinaryResolver extends Context.Service<
                         onNone: () => Effect.void,
                         onSome: (modifiedAt) =>
                           Effect.gen(function* () {
-                            const now = yield* Clock.currentTimeMillis;
+                            // Preparation mtimes are native filesystem wall-clock
+                            // values, so compare them with the same clock source.
+                            // oxlint-disable-next-line effecttsgo/global-date-in-effect -- Native filesystem mtime staleness requires wall-clock time at this leaf boundary.
+                            const now = Date.now();
                             return now - modifiedAt.getTime() >= STALE_PREPARATION_ENTRY_AGE_MS
                               ? yield* fs.remove(stagingPath, { recursive: true, force: true })
                               : undefined;

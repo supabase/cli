@@ -90,10 +90,9 @@ export const cleanupLocalStackResources = (opts: {
   readonly config: ResolvedStackConfig;
 }): Effect.Effect<void, never, FileSystem.FileSystem> =>
   Effect.gen(function* () {
-    // Best-effort graceful shutdown — stop() may fail if services already
-    // exited or the scope is partially closed. Make the stop path
-    // uninterruptible so SIGTERM-driven scope closure does not abandon it
-    // mid-shutdown and leak child processes.
+    // The Stack stop contract is infallible and owns graceful service
+    // shutdown. Keep it uninterruptible so SIGTERM-driven scope closure does
+    // not abandon the transaction mid-shutdown and leak child processes.
     yield* Effect.uninterruptible(opts.stop());
 
     // Safety net: force-remove any Docker containers that survived
