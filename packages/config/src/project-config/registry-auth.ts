@@ -6,6 +6,7 @@ import {
   expectInteger,
   expectNumberBetween,
   expectString,
+  canonicalizeCommaJoinedArray,
   splitCommaSeparated,
   type ProjectConfigMappingRow,
 } from "./registry-row.ts";
@@ -615,6 +616,7 @@ const coreRows: ReadonlyArray<ProjectConfigMappingRow> = [
       value === null
         ? undefined
         : splitCommaSeparated(expectString(value, ["auth", "uri_allow_list"])),
+    normalizeDocument: canonicalizeCommaJoinedArray,
     unit: "csv → string[]",
   },
   uintRow(["auth", "jwt_expiry"], "jwt_exp"),
@@ -956,25 +958,74 @@ const smsProviderSelectionRows: ReadonlyArray<ProjectConfigMappingRow> = SMS_PRO
   }),
 );
 
+/**
+ * Whether the response EXPLICITLY reports no active SMS provider — a `null`
+ * or `""` `sms_provider`, which legacy treats identically (`valOrDefault(
+ * remote.sms_provider, "")` then `provider.length > 0`, auth.sync.ts:
+ * 1664-1666). An ABSENT key does not gate: a sparse response that never
+ * mentioned the provider says nothing about it, same absent-vs-sentinel rule
+ * as `api.db_schema`'s `""` sentinel (`../registry.ts`).
+ */
+function smsProviderExplicitlyUnset(attributes: Record<string, unknown>): boolean {
+  const provider = readAuthAttribute(attributes, "sms_provider");
+  return provider === null || provider === "";
+}
+
+/**
+ * A {@link stringRow} for a non-secret SMS provider credential, omitted when
+ * {@link smsProviderExplicitlyUnset} — validation still runs first. Legacy
+ * touches NEITHER the flags nor the credentials on a null/empty provider
+ * (flag reconciliation is gated at auth.sync.ts:1664-1666, credentials read
+ * only for the locally-selected provider, :1574-1655), so a retained
+ * credential under an explicitly-unset provider must not project: the five
+ * selection rows all omit on null/"" too, and with no `enabled: false` for
+ * the entry sweep to key on, the credential would otherwise survive as an
+ * unmanaged phantom entry.
+ */
+function smsCredentialStringRow(
+  configPath: ReadonlyArray<string>,
+  apiKey: string,
+): ProjectConfigMappingRow {
+  const apiPath = ["auth", apiKey];
+  return {
+    configPath,
+    apiPath,
+    transform: (value, attributes) => {
+      if (value === null) return undefined;
+      const narrowed = expectString(value, apiPath);
+      return smsProviderExplicitlyUnset(attributes) ? undefined : narrowed;
+    },
+  };
+}
+
 // SMS provider credentials (auth.sync.ts:1574-1672; vonage.api_key is NOT a
 // secret — ../auth/sms.ts:286-292 has no `secret()` wrapper on it)
 
 const smsCredentialRows: ReadonlyArray<ProjectConfigMappingRow> = [
-  stringRow(["auth", "sms", "twilio", "account_sid"], "sms_twilio_account_sid"),
-  stringRow(["auth", "sms", "twilio", "message_service_sid"], "sms_twilio_message_service_sid"),
+  smsCredentialStringRow(["auth", "sms", "twilio", "account_sid"], "sms_twilio_account_sid"),
+  smsCredentialStringRow(
+    ["auth", "sms", "twilio", "message_service_sid"],
+    "sms_twilio_message_service_sid",
+  ),
   secretRow(["auth", "sms", "twilio", "auth_token"], "sms_twilio_auth_token"),
-  stringRow(["auth", "sms", "twilio_verify", "account_sid"], "sms_twilio_verify_account_sid"),
-  stringRow(
+  smsCredentialStringRow(
+    ["auth", "sms", "twilio_verify", "account_sid"],
+    "sms_twilio_verify_account_sid",
+  ),
+  smsCredentialStringRow(
     ["auth", "sms", "twilio_verify", "message_service_sid"],
     "sms_twilio_verify_message_service_sid",
   ),
   secretRow(["auth", "sms", "twilio_verify", "auth_token"], "sms_twilio_verify_auth_token"),
-  stringRow(["auth", "sms", "messagebird", "originator"], "sms_messagebird_originator"),
+  smsCredentialStringRow(
+    ["auth", "sms", "messagebird", "originator"],
+    "sms_messagebird_originator",
+  ),
   secretRow(["auth", "sms", "messagebird", "access_key"], "sms_messagebird_access_key"),
-  stringRow(["auth", "sms", "textlocal", "sender"], "sms_textlocal_sender"),
+  smsCredentialStringRow(["auth", "sms", "textlocal", "sender"], "sms_textlocal_sender"),
   secretRow(["auth", "sms", "textlocal", "api_key"], "sms_textlocal_api_key"),
-  stringRow(["auth", "sms", "vonage", "from"], "sms_vonage_from"),
-  stringRow(["auth", "sms", "vonage", "api_key"], "sms_vonage_api_key"),
+  smsCredentialStringRow(["auth", "sms", "vonage", "from"], "sms_vonage_from"),
+  smsCredentialStringRow(["auth", "sms", "vonage", "api_key"], "sms_vonage_api_key"),
   secretRow(["auth", "sms", "vonage", "api_secret"], "sms_vonage_api_secret"),
 ];
 

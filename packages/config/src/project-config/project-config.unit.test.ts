@@ -2050,6 +2050,81 @@ describe("review round: exactness parsing, cross-arm disabled sentinels (CLI-223
     expect(enabled.auth?.external?.github).toEqual({ enabled: true, client_id: "live-id" });
   });
 
+  test("CSV-backed arrays canonicalize to their push round-trip on the document side", () => {
+    // The push mapper joins these arrays with "," (auth.sync.ts:2294,
+    // api.sync.ts:138,140) and the pull direction re-splits, so an element
+    // holding a literal comma round-trips into a different array — the
+    // document projection converges on the value that actually exists hosted.
+    const doc = fromConfigDocument({
+      api: { schemas: ["public,graphql_public"], extra_search_path: [" public", "extensions "] },
+      auth: { additional_redirect_urls: ["https://example.com/callback?a=1,2"] },
+    });
+    expect(doc.api?.schemas).toEqual(["public", "graphql_public"]);
+    expect(doc.api?.extra_search_path).toEqual(["public", "extensions"]);
+    expect(doc.auth?.additional_redirect_urls).toEqual(["https://example.com/callback?a=1", "2"]);
+    // The API arm produces the identical shape for the post-push value.
+    const api = fromApiProjectConfig({
+      auth: { uri_allow_list: "https://example.com/callback?a=1,2" },
+    });
+    expect(api.auth?.additional_redirect_urls).toEqual(doc.auth?.additional_redirect_urls);
+    // Comma-free arrays pass through unchanged.
+    const plain = fromConfigDocument({ api: { schemas: ["public", "storage"] } });
+    expect(plain.api?.schemas).toEqual(["public", "storage"]);
+  });
+
+  test("an explicitly-unset SMS provider omits retained credentials entirely", () => {
+    // Legacy touches neither the flags nor the credentials on a null/empty
+    // sms_provider (auth.sync.ts:1664-1666, :1574-1655) — so nothing about
+    // the providers projects: no fabricated enabled flags, no retained
+    // credentials surviving as unmanaged phantom entries.
+    const nullProvider = fromApiProjectConfig({
+      auth: { sms_provider: null, sms_messagebird_originator: "retained" },
+    });
+    expect(Object.hasOwn(nullProvider, "auth")).toBe(false);
+    const emptyProvider = fromApiProjectConfig({
+      auth: { sms_provider: "", sms_twilio_account_sid: "AC1" },
+    });
+    expect(Object.hasOwn(emptyProvider, "auth")).toBe(false);
+    // An ABSENT provider key says nothing — the credential still maps.
+    const absentProvider = fromApiProjectConfig({
+      auth: { sms_messagebird_originator: "retained" },
+    });
+    expect(absentProvider.auth?.sms?.messagebird).toEqual({ originator: "retained" });
+    // A named provider keeps the inactive-provider sweep unchanged.
+    const named = fromApiProjectConfig({
+      auth: {
+        sms_provider: "twilio",
+        sms_twilio_account_sid: "AC1",
+        sms_messagebird_originator: "x",
+      },
+    });
+    expect(named.auth?.sms?.twilio).toEqual({ enabled: true, account_sid: "AC1" });
+    expect(named.auth?.sms?.messagebird).toEqual({ enabled: false });
+    // Validation still runs before the gate.
+    expect(() =>
+      fromApiProjectConfig({ auth: { sms_provider: null, sms_messagebird_originator: 42 } }),
+    ).toThrow(ProjectConfigParseError);
+  });
+
+  test("orphan secret paths validate like isSecret rows before being suppressed", () => {
+    // The four unmappedSecretApiPaths are in the consumed set, so without
+    // validation a contract-invalid value (string-or-null only) would vanish
+    // completely — never emitted AND hidden from unmappedApiFields.
+    let thrown: unknown;
+    try {
+      fromApiProjectConfig({ auth: { external_slack_secret: 123 } });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(ProjectConfigParseError);
+    expect((thrown as ProjectConfigParseError).apiPath).toEqual(["auth", "external_slack_secret"]);
+    // String and null values stay silently suppressed, like isSecret rows.
+    const ok = fromApiProjectConfig({
+      auth: { external_slack_secret: "hmac-digest", nimbus_oauth_client_secret: null },
+    });
+    expect(Object.hasOwn(ok, "auth")).toBe(false);
+  });
+
   test("documents with auth or storage disabled project only the toggle", () => {
     const projected = fromConfigDocument({
       auth: { enabled: false, site_url: "http://localhost:3000" },

@@ -663,6 +663,18 @@ function applyMappingRows(
 
     writePath(output, row.configPath, mapped);
   }
+
+  // The orphan secret paths (`unmappedSecretApiPaths`) get the same
+  // present-non-null validation as `isSecret` rows above: they too are in the
+  // consumed set, so a malformed platform value (the contract permits only
+  // string or null) would otherwise vanish — never emitted AND suppressed
+  // from `unmappedApiFields`.
+  for (const secretPath of unmappedSecretApiPaths) {
+    const secretValue = readPath(decodedAttributes, secretPath);
+    if (secretValue !== undefined && secretValue !== null) {
+      expectString(secretValue, secretPath);
+    }
+  }
 }
 
 /**

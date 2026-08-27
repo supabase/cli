@@ -11,6 +11,7 @@ import {
   expectInteger,
   expectNumberBetween,
   expectString,
+  canonicalizeCommaJoinedArray,
   splitCommaSeparated,
   type ProjectConfigMappingRow,
 } from "./registry-row.ts";
@@ -66,6 +67,7 @@ const apiSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
       const schemas = splitCommaSeparated(expectString(value, apiDbSchemaPath));
       return remoteDataApiDisabled(attributes) ? undefined : schemas;
     },
+    normalizeDocument: canonicalizeCommaJoinedArray,
     unit: "csv → string[]",
   },
   {
@@ -84,6 +86,7 @@ const apiSectionRows: ReadonlyArray<ProjectConfigMappingRow> = [
       const paths = splitCommaSeparated(expectString(value, apiExtraSearchPathPath));
       return remoteDataApiDisabled(attributes) ? undefined : paths;
     },
+    normalizeDocument: canonicalizeCommaJoinedArray,
     unit: "csv → string[]",
   },
   {

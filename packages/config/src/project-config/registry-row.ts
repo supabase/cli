@@ -192,6 +192,25 @@ export function splitCommaSeparated(value: string): ReadonlyArray<string> {
   return value.split(",").map((entry) => entry.trim());
 }
 
+/**
+ * DOCUMENT-side canonicalization for the three CSV-backed array rows
+ * (`api.schemas`, `api.extra_search_path`, `auth.additional_redirect_urls`):
+ * the push mapper joins the array with `","` (auth.sync.ts:2294,
+ * api.sync.ts:138,140) and the pull direction re-splits with
+ * {@link splitCommaSeparated}, so an element containing a literal comma (or
+ * padded with whitespace) round-trips into a DIFFERENT array — replaying
+ * join-then-split makes the document projection converge on the value that
+ * actually exists hosted after a push, same as the whole-second duration
+ * flooring. Non-array/non-string-element values stay verbatim (a document
+ * value has already passed schema validation; never throw here).
+ */
+export function canonicalizeCommaJoinedArray(value: unknown): unknown {
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
+    return value;
+  }
+  return splitCommaSeparated(value.join(","));
+}
+
 function typeMismatchDetail(expected: string, value: unknown): string {
   return `expected ${expected}, got ${value === null ? "null" : typeof value}`;
 }
