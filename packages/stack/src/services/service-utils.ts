@@ -32,6 +32,35 @@ interface DockerRunServiceOptions extends ContainerRuntimeOptions {
   readonly orphanCleanup?: ReadonlyArray<ExternalCleanupAction>;
 }
 
+export interface NativeRunServiceOptions {
+  /**
+   * Native definitions may include private one-shot helpers that are not part
+   * of the public service catalog (for example Realtime's migration step).
+   */
+  readonly name: string;
+  readonly command: string;
+  readonly args?: ReadonlyArray<string>;
+  readonly env?: Record<string, string>;
+  readonly cwd?: string;
+  readonly dependencies: ReadonlyArray<ServiceDependency>;
+  readonly healthCheck?: ServiceDef["healthCheck"];
+  readonly shutdown?: ServiceDef["shutdown"];
+  readonly restart?: ServiceDef["restart"];
+}
+
+export const nativeRunService = (opts: NativeRunServiceOptions): ServiceDef => ({
+  name: opts.name,
+  command: opts.command,
+  ...(opts.args === undefined ? {} : { args: opts.args }),
+  ...(opts.env === undefined ? {} : { env: opts.env }),
+  ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }),
+  dependencies: opts.dependencies,
+  ...(opts.healthCheck === undefined ? {} : { healthCheck: opts.healthCheck }),
+  ...(opts.shutdown === undefined ? {} : { shutdown: opts.shutdown }),
+  supervision: {},
+  restart: opts.restart ?? "unless-stopped",
+});
+
 export const hostUserForLinuxDocker = (
   runtime: ContainerRuntime,
   platformOs: string,

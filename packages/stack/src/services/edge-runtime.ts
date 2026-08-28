@@ -10,6 +10,7 @@ import {
   dockerRunService,
   hostUserForLinuxDocker,
   hostHttpHealthCheck,
+  nativeRunService,
   type ContainerRuntimeOptions,
   type ServiceDependency,
 } from "./service-utils.ts";
@@ -25,6 +26,12 @@ interface EdgeRuntimeOptions {
   readonly policy: "oneshot" | "per_worker";
   readonly env: Readonly<Record<string, string>>;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
+}
+
+export interface NativeEdgeRuntimeOptions extends Omit<EdgeRuntimeOptions, "projectDir"> {
+  readonly binPath: string;
+  readonly bootstrapDir: string;
+  readonly projectDir: string;
 }
 
 interface DockerEdgeRuntimeOptions extends EdgeRuntimeOptions, ContainerRuntimeOptions {
@@ -125,3 +132,14 @@ export const makeEdgeRuntimeServiceDocker = (opts: DockerEdgeRuntimeOptions): Se
     healthCheck: edgeRuntimeHealthCheck(opts.port),
   });
 };
+
+export const makeEdgeRuntimeServiceNative = (opts: NativeEdgeRuntimeOptions): ServiceDef =>
+  nativeRunService({
+    name: "edge-runtime",
+    command: `${opts.binPath}/bin/.edge-runtime-wrapped`,
+    args: [...edgeRuntimeArgs(opts, opts.bootstrapDir)],
+    cwd: opts.projectDir,
+    env: edgeRuntimeEnv(opts),
+    dependencies: opts.dependencies,
+    healthCheck: edgeRuntimeHealthCheck(opts.port),
+  });

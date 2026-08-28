@@ -7,15 +7,15 @@ import { describe, expect, it } from "vitest";
 import { Predicate } from "effect";
 import { analyticsDockerRuntimeNetwork, makeAnalyticsServiceDocker } from "./analytics.ts";
 import { makeAuthServiceNative, makeAuthServiceDocker } from "./auth.ts";
-import { makeEdgeRuntimeServiceDocker } from "./edge-runtime.ts";
+import { makeEdgeRuntimeServiceDocker, makeEdgeRuntimeServiceNative } from "./edge-runtime.ts";
 import { edgeRuntimeNofileUlimit } from "./nofile-limit.ts";
 import { makeImgproxyServiceDocker } from "./imgproxy.ts";
-import { makeMailpitServiceDocker } from "./mailpit.ts";
-import { makePgmetaServiceDocker } from "./pgmeta.ts";
+import { makeMailpitServiceDocker, makeMailpitServiceNative } from "./mailpit.ts";
+import { makePgmetaServiceDocker, makePgmetaServiceNative } from "./pgmeta.ts";
 import { makePostgresInitService, makePostgresInitServiceDocker } from "./postgres-init.ts";
 import { makePostgresService, makePostgresServiceDocker } from "./postgres.ts";
 import { makePostgrestService, makePostgrestServiceDocker } from "./postgrest.ts";
-import { makeRealtimeServiceDocker } from "./realtime.ts";
+import { makeRealtimeServiceDocker, makeRealtimeServicesNative } from "./realtime.ts";
 import { makePoolerServiceDocker, poolerContainerPorts } from "./pooler.ts";
 import { dockerRunService } from "./service-utils.ts";
 import {
@@ -23,7 +23,7 @@ import {
   LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET,
   makeStorageServiceDocker,
 } from "./storage.ts";
-import { makeStudioServiceDocker } from "./studio.ts";
+import { makeStudioServiceDocker, makeStudioServiceNative } from "./studio.ts";
 import { makeVectorServiceDocker } from "./vector.ts";
 import { stackIdentity, type StackIdentity } from "../StackIdentity.ts";
 import { DEFAULT_VERSIONS, dockerImageForService } from "../versions.ts";
@@ -387,6 +387,182 @@ describe("makeEdgeRuntimeServiceDocker", () => {
     } finally {
       rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("native auxiliary service definitions", () => {
+  it("starts Edge Runtime from the prepared wrapper and generated host paths", () => {
+    const artifactRoot = "/cache/edge-runtime/v1.74.3/darwin-arm64";
+    const runtimeRoot = "/tmp/stacks/project-a/runtime";
+    const projectDir = "/tmp/stacks/project-a/project";
+    const bootstrapDir = `${runtimeRoot}/edge-runtime`;
+    const def = makeEdgeRuntimeServiceNative({
+      binPath: artifactRoot,
+      runtimeRoot,
+      projectDir,
+      bootstrapDir,
+      port: 54340,
+      inspectorPort: 54341,
+      policy: "per_worker",
+      env: { SUPABASE_INTERNAL_DEBUG: "true" },
+      dependencies: [{ service: "postgres", condition: "healthy" }],
+    });
+
+    expect(def.command).toBe(`${artifactRoot}/bin/.edge-runtime-wrapped`);
+    expect(def.args).toEqual([
+      "start",
+      `--main-service=${bootstrapDir}`,
+      "--port=54340",
+      "--policy=per_worker",
+    ]);
+    expect(def.cwd).toBe(projectDir);
+    expect(def.env).toMatchObject({
+      SUPABASE_INTERNAL_DEBUG: "true",
+      FUNCTIONS_RUNTIME_CONFIG_PATH: `${runtimeRoot}/edge-runtime/functions-runtime-config.json`,
+    });
+    expect(def.healthCheck?.probe).toEqual({
+      _tag: "Http",
+      host: "127.0.0.1",
+      port: 54340,
+      path: "/_internal/health",
+      scheme: "http",
+    });
+  });
+
+  it("orchestrates Realtime migration, seed, and server through rooted host entrypoints", () => {
+    const artifactRoot = "/cache/realtime/v2.129.1/linux-amd64";
+    const dependencies = [{ service: "postgres", condition: "healthy" }] as const;
+    const bundle = makeRealtimeServicesNative({
+      binPath: artifactRoot,
+      port: 54330,
+      dbPort: DB_PORT,
+      jwtSecret: JWT_SECRET,
+      jwtJwks: "native-jwks",
+      tenantId: "native-realtime",
+      encryptionKey: "native-encryption-key",
+      secretKeyBase: "native-secret-key-base",
+      maxHeaderLength: 4096,
+      dependencies,
+    });
+
+    expect(bundle.migrate).toMatchObject({
+      name: "realtime-migrate",
+      command: `${artifactRoot}/bin/migrate`,
+      restart: "no",
+      dependencies,
+    });
+    expect(bundle.seed).toMatchObject({
+      name: "realtime-seed",
+      command: `${artifactRoot}/bin/realtime`,
+      args: ["eval", "Realtime.Release.seeds(Realtime.Repo)"],
+      restart: "no",
+      dependencies: [{ service: "realtime-migrate", condition: "completed" }],
+    });
+    expect(bundle.server).toMatchObject({
+      name: "realtime",
+      command: `${artifactRoot}/bin/server`,
+      dependencies: [{ service: "realtime-seed", condition: "completed" }],
+      restart: "unless-stopped",
+    });
+    expect(bundle.server.env).toMatchObject({
+      PORT: "54330",
+      DB_HOST: "127.0.0.1",
+      DB_PORT: String(DB_PORT),
+      API_JWT_SECRET: JWT_SECRET,
+      API_JWT_JWKS: "native-jwks",
+      SECRET_KEY_BASE: "native-secret-key-base",
+      MAX_HEADER_LENGTH: "4096",
+    });
+    expect(bundle.server.healthCheck?.probe).toEqual(expect.objectContaining({ _tag: "Exec" }));
+  });
+
+  it("starts PgMeta from its published host launcher against loopback PostgreSQL", () => {
+    const artifactRoot = "/cache/pgmeta/v0.98.0/linux-amd64";
+    const dependencies = [{ service: "postgres", condition: "healthy" }] as const;
+    const def = makePgmetaServiceNative({
+      binPath: artifactRoot,
+      port: 54336,
+      dbPort: DB_PORT,
+      dependencies,
+    });
+
+    expect(def.command).toBe(`${artifactRoot}/bin/pgmeta`);
+    expect(def.args).toBeUndefined();
+    expect(def.env).toMatchObject({
+      PG_META_PORT: "54336",
+      PG_META_DB_HOST: "127.0.0.1",
+      PG_META_DB_PORT: String(DB_PORT),
+    });
+    expect(def.healthCheck?.probe).toEqual({
+      _tag: "Http",
+      host: "127.0.0.1",
+      port: 54336,
+      path: "/health",
+      scheme: "http",
+    });
+  });
+
+  it("starts Studio from its published host launcher with host URLs", () => {
+    const artifactRoot = "/cache/studio/2026.08.17-sha-0c1da8f/darwin-arm64";
+    const def = makeStudioServiceNative({
+      binPath: artifactRoot,
+      port: 54323,
+      apiUrl: "http://127.0.0.1:54321",
+      publicApiUrl: "http://127.0.0.1:54321",
+      pgmetaUrl: "http://127.0.0.1:54336",
+      publishableKey: "sb_publishable_native",
+      secretKey: "sb_secret_native",
+      s3ProtocolAccessKeyId: LOCAL_S3_PROTOCOL_ACCESS_KEY_ID,
+      s3ProtocolAccessKeySecret: LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET,
+      jwtSecret: JWT_SECRET,
+      analyticsEnabled: true,
+      analyticsBackend: "postgres",
+      analyticsUrl: "http://127.0.0.1:54327",
+      analyticsApiKey: "native-analytics-key",
+      dependencies: [{ service: "pgmeta", condition: "healthy" }],
+    });
+
+    expect(def.command).toBe(`${artifactRoot}/bin/studio`);
+    expect(def.args).toBeUndefined();
+    expect(def.env).toMatchObject({
+      PORT: "54323",
+      SUPABASE_URL: "http://127.0.0.1:54321",
+      SUPABASE_PUBLIC_URL: "http://127.0.0.1:54321",
+      STUDIO_PG_META_URL: "http://127.0.0.1:54336",
+      LOGFLARE_URL: "http://127.0.0.1:54327",
+      LOGFLARE_PRIVATE_ACCESS_TOKEN: "native-analytics-key",
+    });
+  });
+
+  it("binds Mailpit protocols on independent loopback ports and an owning data path", () => {
+    const artifactRoot = "/cache/mailpit/v1.30.2/linux-amd64";
+    const dataDir = "/tmp/stacks/project-a/data/mailpit";
+    const def = makeMailpitServiceNative({
+      binPath: artifactRoot,
+      dataDir,
+      webPort: 54323,
+      smtpPort: 54324,
+      pop3Port: 54325,
+      dependencies: [],
+    });
+
+    expect(def.command).toBe(`${artifactRoot}/bin/mailpit`);
+    expect(def.args).toBeUndefined();
+    expect(def.env).toMatchObject({
+      MP_UI_BIND_ADDR: "127.0.0.1:54323",
+      MP_SMTP_BIND_ADDR: "127.0.0.1:54324",
+      MP_POP3_BIND_ADDR: "127.0.0.1:54325",
+      MP_SMTP_DISABLE_RDNS: "true",
+      MP_DATABASE: `${dataDir}/mailpit.db`,
+    });
+    expect(def.env?.MP_DATABASE).not.toContain("project-b");
+    expect(def.healthCheck?.probe).toEqual({
+      _tag: "Http",
+      host: "127.0.0.1",
+      port: 54323,
+      path: "/readyz",
+      scheme: "http",
+    });
   });
 });
 
