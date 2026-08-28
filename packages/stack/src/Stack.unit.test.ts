@@ -886,7 +886,7 @@ describe("Stack", () => {
     }).pipe(Effect.provide(layer), Effect.timeout("5 seconds"));
   });
 
-  it.live("restarts activated companions after stopping the stack", () => {
+  it.live("restarts activated analytics companions after stopping and restarting the stack", () => {
     const graph = Effect.runSync(
       buildGraph([
         {
@@ -962,10 +962,10 @@ describe("Stack", () => {
         ...defaultConfig.servicePolicies,
         auth: "off",
         postgrest: "lazy",
-        pgmeta: "eager",
-        studio: "eager",
-        analytics: "eager",
-        vector: "eager",
+        pgmeta: "off",
+        studio: "off",
+        analytics: "lazy",
+        vector: "lazy",
       },
       auth: false,
     } satisfies ResolvedStackConfig;
@@ -980,11 +980,16 @@ describe("Stack", () => {
 
     return Effect.gen(function* () {
       const stack = yield* Stack;
+      const activator = yield* StackServiceActivator;
       yield* stack.start;
+      yield* activator.activate("analytics");
+      expect((yield* stack.getState("analytics")).status).toBe("Healthy");
+      expect((yield* stack.getState("vector")).status).toBe("Healthy");
       yield* stack.stop;
       yield* stack.start;
+      yield* stack.restartService("analytics");
+      yield* activator.activate("analytics");
 
-      expect((yield* stack.getState("studio")).status).toBe("Healthy");
       expect((yield* stack.getState("analytics")).status).toBe("Healthy");
       expect((yield* stack.getState("vector")).status).toBe("Healthy");
     }).pipe(Effect.provide(layer), Effect.timeout("10 seconds"));

@@ -1064,9 +1064,7 @@ export const localStackLayer = (
               return { runtime, targets: [service] };
             }).pipe(withLifecycleLock);
             yield* waitForTargets(started).pipe((effect) => withReadinessPolicy(effect, name));
-            yield* clearWholeStackStopAllowanceAfterSuccess(
-              lifecycleTargetsForService(enabledServices, service),
-            );
+            yield* clearWholeStackStopAllowanceAfterSuccess([service]);
           }).pipe(cleanupOnReadinessFailure),
         reloadFunctions: (opts) =>
           Effect.gen(function* () {
