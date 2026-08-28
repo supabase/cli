@@ -19,6 +19,10 @@ import { join } from "node:path";
 
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
+import {
+  legacySlimBusyboxWgetHealthcheck,
+  legacyUsesSlimRuntime,
+} from "../../../shared/db-bootstrap/slim-runtime.ts";
 
 /** The Logflare network alias — also this service's `containerSuffix` in `LEGACY_SERVICE_CATALOG`. */
 const LEGACY_LOGFLARE_CONTAINER_SUFFIX = "analytics";
@@ -146,23 +150,41 @@ export function legacyBuildLogflareContainerSpec(
     env.POSTGRES_BACKEND_SCHEMA = "_analytics";
   }
 
+  const slim = legacyUsesSlimRuntime(input.image);
+
   return {
     image: input.image,
     containerName: legacyServiceContainerName(LEGACY_LOGFLARE_CONTAINER_SUFFIX, input.projectId),
     hostname: "127.0.0.1",
     env,
-    entrypoint: "sh",
-    cmd: ["-c", LEGACY_LOGFLARE_ENTRYPOINT_SCRIPT],
+    ...(slim
+      ? {}
+      : {
+          entrypoint: "sh",
+          cmd: ["-c", LEGACY_LOGFLARE_ENTRYPOINT_SCRIPT],
+        }),
     binds,
     exposedPorts: [{ containerPort: "4000" }],
     ports: [{ hostPort: String(input.port), containerPort: "4000" }],
-    healthcheck: {
-      test: ["CMD", "curl", "-sSfL", "--head", "-o", "/dev/null", "http://127.0.0.1:4000/health"],
-      intervalSeconds: 10,
-      timeoutSeconds: 2,
-      retries: 3,
-      startPeriodSeconds: 10,
-    },
+    healthcheck: slim
+      ? legacySlimBusyboxWgetHealthcheck("http://127.0.0.1:4000/health", {
+          startPeriodSeconds: 10,
+        })
+      : {
+          test: [
+            "CMD",
+            "curl",
+            "-sSfL",
+            "--head",
+            "-o",
+            "/dev/null",
+            "http://127.0.0.1:4000/health",
+          ],
+          intervalSeconds: 10,
+          timeoutSeconds: 2,
+          retries: 3,
+          startPeriodSeconds: 10,
+        },
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
     networkAliases: [LEGACY_LOGFLARE_CONTAINER_SUFFIX],

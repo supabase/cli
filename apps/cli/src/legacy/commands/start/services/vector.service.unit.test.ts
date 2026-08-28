@@ -1,4 +1,5 @@
 import { describe, expect, it, test } from "@effect/vitest";
+import { afterEach, vi } from "vitest";
 import { Deferred, Effect, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
@@ -14,6 +15,10 @@ import {
   type LegacyVectorContainerSpecInput,
   type LegacyVectorDockerSocketPlan,
 } from "./vector.service.ts";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 /** Matches the standing `mockSpawner` shape in `image-prepull.unit.test.ts`. */
 function mockSpawner(
@@ -294,6 +299,30 @@ describe("legacyBuildVectorContainerSpec", () => {
     const script = String(spec.cmd?.[1]);
     expect(script).toContain('"supabase_vector_proj"');
     expect(script).toContain('.appname == "supabase_kong_proj"');
+  });
+
+  test("delivers vector.yaml via secretFiles and uses busybox wget on a slim image", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    const spec = legacyBuildVectorContainerSpec({
+      ...base,
+      image: "ghcr.io/supabase/cli/vector:0.53.0",
+    });
+    expect(spec.entrypoint).toBeUndefined();
+    expect(spec.cmd).toEqual(["--config", "/etc/vector/vector.yaml"]);
+    expect(spec.secretFiles).toEqual([
+      {
+        containerPath: "/etc/vector/vector.yaml",
+        content: expect.stringContaining('"supabase_vector_proj"'),
+      },
+    ]);
+    expect(spec.healthcheck?.test).toEqual([
+      "CMD",
+      "/bin/busybox",
+      "wget",
+      "-q",
+      "--spider",
+      "http://127.0.0.1:9001/health",
+    ]);
   });
 });
 

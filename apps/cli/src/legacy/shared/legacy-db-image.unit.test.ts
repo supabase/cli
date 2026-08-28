@@ -1,14 +1,28 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, FileSystem, Path } from "effect";
+import { afterEach, vi } from "vitest";
 
-import { dockerfileServiceImage } from "../../shared/services/dockerfile-images.ts";
+import {
+  dockerfileServiceImage,
+  dockerfileServiceImageRaw,
+} from "../../shared/services/dockerfile-images.ts";
+import { toSlimImage } from "../../shared/services/slim-images.ts";
 import { legacyResolveDbImage } from "./legacy-db-image.ts";
 
+const currentPostgres = dockerfileServiceImageRaw("pg");
+const currentPostgresTag = currentPostgres.split(":")[1] ?? "";
+
 const withTemp = () => mkdtempSync(join(tmpdir(), "legacy-db-image-"));
+
+const writePin = (workdir: string, pinned: string) => {
+  const dir = join(workdir, "supabase", ".temp");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "postgres-version"), pinned);
+};
 
 const resolve = (workdir: string, majorVersion: number, orioledbVersion?: string) =>
   Effect.gen(function* () {
@@ -45,6 +59,42 @@ describe("legacyResolveDbImage", () => {
     return Effect.gen(function* () {
       expect(yield* resolve(dir, 14, "16.0.0.1")).toBe("supabase/postgres:14.1.0.89");
       rmSync(dir, { recursive: true, force: true });
+    });
+  });
+
+  describe("pinned version with the slim-images flag on", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it.effect("keeps a 13/14/15 fallback on docker.io, not the slim registry", () => {
+      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+      const dir = withTemp();
+      writePin(dir, "15.8.1.100");
+      return Effect.gen(function* () {
+        expect(yield* resolve(dir, 15)).toBe("supabase/postgres:15.8.1.100");
+        rmSync(dir, { recursive: true, force: true });
+      });
+    });
+
+    it.effect("keeps a historical default-major pin on docker.io", () => {
+      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+      const dir = withTemp();
+      writePin(dir, "17.9.9.999");
+      return Effect.gen(function* () {
+        expect(yield* resolve(dir, 17)).toBe("supabase/postgres:17.9.9.999");
+        rmSync(dir, { recursive: true, force: true });
+      });
+    });
+
+    it.effect("rewrites the current Dockerfile pin to the slim registry", () => {
+      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+      const dir = withTemp();
+      writePin(dir, currentPostgresTag);
+      return Effect.gen(function* () {
+        expect(yield* resolve(dir, 17)).toBe(toSlimImage("pg", currentPostgres));
+        rmSync(dir, { recursive: true, force: true });
+      });
     });
   });
 });

@@ -1,6 +1,10 @@
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { legacyBuildPgMetaContainerSpec } from "./pg-meta.service.ts";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("legacyBuildPgMetaContainerSpec", () => {
   test("assembles the full container spec from resolved inputs", () => {
@@ -59,5 +63,20 @@ describe("legacyBuildPgMetaContainerSpec", () => {
     expect(spec.env["PG_META_DB_PORT"]).toBe("6543");
     expect(spec.env["PG_META_DB_PASSWORD"]).toBe("hunter2");
     expect(spec.healthcheck?.test[1]).toContain("127.0.0.1:8080");
+  });
+
+  test("omits the Docker healthcheck on a slim distroless pg-meta image", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    const spec = legacyBuildPgMetaContainerSpec({
+      image: "ghcr.io/supabase/cli/pgmeta:v0.98.0",
+      containerName: "supabase_pg_meta_proj",
+      dbHost: "supabase_db_proj",
+      dbPort: 5432,
+      dbUser: "postgres",
+      dbPassword: "postgres",
+      dbName: "postgres",
+      networkId: "supabase_network_proj",
+    });
+    expect(spec.healthcheck).toBeUndefined();
   });
 });

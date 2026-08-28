@@ -35,6 +35,10 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
+import {
+  legacySlimBusyboxWgetHealthcheck,
+  legacyUsesSlimRuntime,
+} from "../../../shared/db-bootstrap/slim-runtime.ts";
 import { legacyRenderStartVectorYaml } from "../lib/template-render.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
@@ -344,18 +348,33 @@ export function legacyBuildVectorContainerSpec(
     dbId: input.dbId,
   });
 
-  return {
-    image: input.image,
-    containerName: input.containerName,
-    env: input.dockerSocketPlan.env,
-    entrypoint: "sh",
-    cmd: ["-c", legacyBuildVectorEntrypointScript(vectorYaml, input.logflareId)],
-    binds: input.dockerSocketPlan.binds,
-    healthcheck: LEGACY_VECTOR_HEALTHCHECK,
-    restartPolicy: "unless-stopped",
-    securityOpt: input.dockerSocketPlan.securityOpt,
-    networkId: input.networkId,
-    networkAliases: LEGACY_VECTOR_NETWORK_ALIASES,
-    labels: {},
-  };
+  return legacyUsesSlimRuntime(input.image)
+    ? {
+        image: input.image,
+        containerName: input.containerName,
+        env: input.dockerSocketPlan.env,
+        cmd: ["--config", "/etc/vector/vector.yaml"],
+        secretFiles: [{ containerPath: "/etc/vector/vector.yaml", content: vectorYaml }],
+        binds: input.dockerSocketPlan.binds,
+        healthcheck: legacySlimBusyboxWgetHealthcheck("http://127.0.0.1:9001/health"),
+        restartPolicy: "unless-stopped",
+        securityOpt: input.dockerSocketPlan.securityOpt,
+        networkId: input.networkId,
+        networkAliases: LEGACY_VECTOR_NETWORK_ALIASES,
+        labels: {},
+      }
+    : {
+        image: input.image,
+        containerName: input.containerName,
+        env: input.dockerSocketPlan.env,
+        entrypoint: "sh",
+        cmd: ["-c", legacyBuildVectorEntrypointScript(vectorYaml, input.logflareId)],
+        binds: input.dockerSocketPlan.binds,
+        healthcheck: LEGACY_VECTOR_HEALTHCHECK,
+        restartPolicy: "unless-stopped",
+        securityOpt: input.dockerSocketPlan.securityOpt,
+        networkId: input.networkId,
+        networkAliases: LEGACY_VECTOR_NETWORK_ALIASES,
+        labels: {},
+      };
 }

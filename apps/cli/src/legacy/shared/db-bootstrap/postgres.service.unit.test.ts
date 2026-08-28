@@ -1,5 +1,5 @@
 import type { CliConfig } from "@supabase/config";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { LEGACY_START_DB_RESTORE_SH } from "./templates/db-restore.sh.ts";
 import { LEGACY_START_DB_SCHEMA_SQL } from "./templates/db-schema.sql.ts";
@@ -18,6 +18,10 @@ import {
 } from "./postgres.service.ts";
 
 const POSTGRES_CONFIG_HEADER = "\n# supabase [db.settings] configuration\n";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 function baseDb(overrides: Partial<CliConfig["db"]> = {}): CliConfig["db"] {
   return {
@@ -227,6 +231,21 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
       timeoutSeconds: 2,
       retries: 3,
     });
+  });
+
+  test("healthcheck stays the plain pg_isready probe on docker.io even with the slim flag set", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    const spec = legacyBuildPostgresStartContainerSpec(baseInput());
+    expect(spec.healthcheck?.test).toEqual([
+      "CMD",
+      "pg_isready",
+      "-U",
+      "postgres",
+      "-h",
+      "127.0.0.1",
+      "-p",
+      "5432",
+    ]);
   });
 
   test("port binding maps the configured db.port to container port 5432", () => {

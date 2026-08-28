@@ -1,11 +1,24 @@
 import { CliConfigSchema, type CliConfig } from "@supabase/config";
 import { Schema } from "effect";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { dockerfileServiceImageRaw } from "../../../shared/services/dockerfile-images.ts";
+import type { LocalServiceVersionOverrides } from "../../../shared/services/services.shared.ts";
+import { toSlimImage } from "../../../shared/services/slim-images.ts";
 import { legacyServiceContainerIds, localDbContainerId } from "../../shared/legacy-docker-ids.ts";
 import { LEGACY_SERVICE_CATALOG } from "../../shared/legacy-service-catalog.ts";
-import { legacyResolveStartGates, type LegacyStartGates } from "./start.gates.ts";
+import {
+  legacyResolveStartGates,
+  legacyResolveStartImagePlan,
+  type LegacyStartGates,
+} from "./start.gates.ts";
 import { LEGACY_START_SERVICES, legacyStartServiceMeta } from "./start.services.ts";
+
+const currentGotrue = dockerfileServiceImageRaw("gotrue");
+const currentLogflare = dockerfileServiceImageRaw("logflare");
+const currentVector = dockerfileServiceImageRaw("vector");
+const currentPooler = dockerfileServiceImageRaw("supavisor");
+const currentPoolerTag = currentPooler.split(":")[1] ?? "";
 
 describe("LEGACY_START_SERVICES", () => {
   it("has one row per LEGACY_SERVICE_CATALOG entry, in the catalog's startOrder", () => {
@@ -210,5 +223,51 @@ describe("LEGACY_START_SERVICES enabledGate cross-check against start.gates.ts",
     const gatedServices = new Set(Object.keys(realGates));
     const ungated = LEGACY_START_SERVICES.filter((entry) => !gatedServices.has(entry.service));
     expect(ungated.map((entry) => entry.service).toSorted()).toEqual(["postgres"]);
+  });
+});
+
+describe("legacyResolveStartImagePlan under SUPABASE_USE_SLIM_IMAGES", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  const allGatesOpen: LegacyStartGates = {
+    kong: true,
+    gotrue: true,
+    mailpit: true,
+    realtime: true,
+    postgrest: true,
+    storage: true,
+    imgproxy: true,
+    logflare: true,
+    vector: true,
+    pgMeta: true,
+    studio: true,
+    supavisor: true,
+    edgeRuntime: true,
+  };
+
+  const imageFor = (service: string, serviceVersions: LocalServiceVersionOverrides = {}) =>
+    legacyResolveStartImagePlan(allGatesOpen, serviceVersions).find(
+      (entry) => entry.service === service,
+    )?.image;
+
+  it("plans docker.io images while the flag is off", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
+    expect(imageFor("gotrue")).toBe(currentGotrue);
+    expect(imageFor("vector")).toBe(currentVector);
+    expect(imageFor("supavisor", { pooler: "2.0.0" })).toBe("supabase/supavisor:2.0.0");
+  });
+
+  it("plans slim images when the flag is on, keeping unmapped services on docker.io", () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    expect(imageFor("gotrue")).toBe(toSlimImage("gotrue", currentGotrue));
+    expect(imageFor("logflare")).toBe(toSlimImage("logflare", currentLogflare));
+    expect(imageFor("vector")).toBe(toSlimImage("vector", currentVector));
+    expect(imageFor("supavisor", { pooler: currentPoolerTag })).toBe(
+      toSlimImage("supavisor", currentPooler),
+    );
+    expect(imageFor("supavisor", { pooler: "2.0.0" })).toBe("supabase/supavisor:2.0.0");
+    expect(imageFor("kong")).toBe("library/kong:2.8.1");
   });
 });

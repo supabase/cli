@@ -7,7 +7,7 @@ import { LegacyCliSettings } from "../config/legacy-cli-settings.service.ts";
 import { legacyReadDbToml } from "./legacy-db-config.toml-read.ts";
 import { legacyGetRegistryImageUrl } from "./legacy-docker-registry.ts";
 import { LegacyDockerRun } from "./legacy-docker-run.service.ts";
-import { legacyResolveEdgeRuntimeImage } from "./legacy-edge-runtime-image.ts";
+import { legacyResolveEdgeRuntimeShellImage } from "./legacy-edge-runtime-image.ts";
 import { LegacyEdgeRuntimeScriptError } from "./legacy-edge-runtime-script.errors.ts";
 import {
   LEGACY_EDGE_RUNTIME_SCRIPT_ERROR_SENTINEL,
@@ -101,8 +101,10 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
                 (error) => new LegacyEdgeRuntimeScriptError({ message: error.message }),
               ),
             )).denoVersion;
+          // Shell-pinned resolution: this runner delivers `index.ts` through an
+          // `sh -c` here-document, which the distroless slim image cannot run.
           const registryImage = legacyGetRegistryImageUrl(
-            yield* legacyResolveEdgeRuntimeImage(fs, path, workdir, denoVersion),
+            yield* legacyResolveEdgeRuntimeShellImage(fs, path, workdir, denoVersion),
           );
           const port = yield* allocateFreeHostPort;
           const startCmd = legacyBuildEdgeRuntimeStartCmd({ port, debug }).join(" ");

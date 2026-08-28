@@ -14,6 +14,7 @@ import {
   parseDockerfileServiceImages,
   type DockerfileImageSpec,
 } from "./dockerfile-images.ts";
+import { slimImageForAlias, slimImageForCurrentPin, slimImagesEnabled } from "./slim-images.ts";
 
 export { parseDockerfileServiceImages } from "./dockerfile-images.ts";
 
@@ -38,6 +39,12 @@ export interface LocalServiceImageOptions {
   readonly imageOverrides?: LocalServiceImageOverrides;
   readonly normalizeVersionTags?: boolean;
   readonly serviceVersions?: LocalServiceVersionOverrides;
+  /**
+   * Legacy `.temp` pins only slim-translate when they match the current
+   * Dockerfile tag (unpublished historical slim tags). Next start runs
+   * catalog versions from GHCR, so it leaves this off.
+   */
+  readonly slimCurrentPinOnly?: boolean;
 }
 
 // Mirrors Go's `utils.ProjectRefPattern` (`apps/cli-go/internal/utils/misc.go`).
@@ -47,6 +54,7 @@ export interface LocalServiceImageOptions {
 const PROJECT_REF_PATTERN = /^[a-z]{20}$/;
 
 interface ServiceImageSpec {
+  readonly alias: string;
   readonly image: string;
   readonly remoteService: RemoteServiceName | undefined;
   readonly localService: LocalServiceVersionName;
@@ -91,6 +99,7 @@ function localServiceImagesFromSpecs(
     }
 
     return {
+      alias: service.alias,
       image,
       remoteService: service.remoteService,
       localService: service.localService,
@@ -120,7 +129,7 @@ export function postgresImageForDbMajorVersion(majorVersion: number): string | u
   }
 }
 
-export function replaceImageTag(image: string, tag: string): string {
+function replaceImageTag(image: string, tag: string): string {
   const index = image.lastIndexOf(":");
   if (index === -1) {
     return image;
@@ -141,11 +150,32 @@ function localServiceImagesForOptions(
   options: LocalServiceImageOptions = {},
 ): ReadonlyArray<ServiceImageSpec> {
   const normalizeVersionTags = options.normalizeVersionTags ?? true;
+  const slim = slimImagesEnabled();
   return LOCAL_SERVICE_IMAGES.map((service) => {
-    const baseImage = options.imageOverrides?.[service.localService] ?? service.image;
+    // An explicit `imageOverrides` entry is a caller-chosen ref (the Postgres
+    // major-version fallback, a configured edge-runtime image) with no slim
+    // counterpart, so it keeps the docker.io path even with the flag on.
+    const override = options.imageOverrides?.[service.localService];
+    const baseImage = override ?? slimImageForAlias(service.alias, service.image);
     const version = options.serviceVersions?.[service.localService];
     if (version === undefined || version.trim().length === 0) {
       return baseImage === service.image ? service : { ...service, image: baseImage };
+    }
+    if (override === undefined && slim) {
+      return {
+        ...service,
+        image: options.slimCurrentPinOnly
+          ? slimImageForCurrentPin(service.alias, service.image, version)
+          : slimImageForAlias(
+              service.alias,
+              replaceImageTag(
+                service.image,
+                normalizeVersionTags
+                  ? tagForServiceVersion(service.localService, version)
+                  : version,
+              ),
+            ),
+      };
     }
     return {
       ...service,

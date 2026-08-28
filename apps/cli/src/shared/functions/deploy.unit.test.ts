@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from "node:f
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildDockerBinds, formatDockerBind, type ResolvedDeployFunctionConfig } from "./deploy.ts";
 import { FunctionImportNotDirectoryError } from "./deploy.errors.ts";
@@ -640,6 +640,45 @@ describe("buildDockerBinds — import-map key matching (spec-strict) and the fil
       });
 
       expect(warnings.some((warning) => warning.includes("nested"))).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("buildDockerBinds — edge-runtime Deno-cache volume selection", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("mounts the shared volume at /root/.cache/deno by default", async () => {
+    const { root, functionsDir, outputDir, config } = await createHelloFunctionProject(
+      {},
+      'Deno.serve(() => new Response("ok"));\n',
+    );
+
+    try {
+      const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config);
+      expect(binds.map(formatDockerBind)).toContain(
+        "supabase_edge_runtime_test-project:/root/.cache/deno:rw",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("mounts the shared /root/.cache/deno volume when the image is slim", async () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+    const { root, functionsDir, outputDir, config } = await createHelloFunctionProject(
+      {},
+      'Deno.serve(() => new Response("ok"));\n',
+    );
+
+    try {
+      const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config);
+      const formatted = binds.map(formatDockerBind);
+      expect(formatted).toContain("supabase_edge_runtime_test-project:/root/.cache/deno:rw");
+      expect(formatted).not.toContain("supabase_edge_runtime_slim_test-project:/home/nonroot:rw");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

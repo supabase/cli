@@ -389,6 +389,7 @@ const currentBranchPath = (workdir: string) =>
 describe("legacy db start", () => {
   afterEach(() => {
     delete process.env["SUPABASE_NETWORK_ID"];
+    vi.unstubAllEnvs();
   });
 
   it.live("reports an already-running database without starting a container", () => {
@@ -679,6 +680,25 @@ describe("legacy db start", () => {
         expect(rollbackWasAttempted(child.spawned)).toBe(true);
         expect(volumePruneWasAttempted(child.spawned)).toBe(false);
       });
+    },
+  );
+
+  it.live(
+    "--from-backup under SUPABASE_USE_SLIM_IMAGES uses the same restore entrypoint as docker.io",
+    () => {
+      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+      const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
+      return Effect.gen(function* () {
+        yield* legacyDbStart(flags("/abs/host/backup.sql")).pipe(Effect.provide(layer));
+        const args = createArgs(child.spawned);
+        expect(args).not.toBeUndefined();
+        const script = args?.[(args?.indexOf("-c") ?? -1) + 1];
+        expect(script).toContain("/docker-entrypoint-initdb.d/migrate.sh");
+        expect(bindsFromCreateArgs(args ?? [])).toContain(
+          "/abs/host/backup.sql:/etc/backup.sql:ro",
+        );
+        expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
+      }).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
     },
   );
 

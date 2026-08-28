@@ -171,6 +171,7 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
       imageOverrides,
       normalizeVersionTags: false,
       serviceVersions,
+      slimCurrentPinOnly: true,
     };
 
     let rows = listLocalServiceVersions(localImageOptions);

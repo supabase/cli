@@ -41,6 +41,10 @@
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 import {
+  legacySlimBusyboxWgetHealthcheck,
+  legacyUsesSlimRuntime,
+} from "../../../shared/db-bootstrap/slim-runtime.ts";
+import {
   legacyRenderStartPoolerExs,
   type LegacyStartPoolerExsFields,
 } from "../lib/template-render.ts";
@@ -180,20 +184,23 @@ export function legacyBuildSupavisorContainerSpec(
       { containerPort: LEGACY_SUPAVISOR_TRANSACTION_PORT },
     ],
     ports: [{ hostPort: String(input.port), containerPort: dockerPort }],
-    healthcheck: {
-      test: [
-        "CMD",
-        "curl",
-        "-sSfL",
-        "--head",
-        "-o",
-        "/dev/null",
-        "http://127.0.0.1:4000/api/health",
-      ],
-      intervalSeconds: 10,
-      timeoutSeconds: 2,
-      retries: 3,
-    },
+    // The slim supavisor image is distroless plus /bin/busybox (no curl).
+    healthcheck: legacyUsesSlimRuntime(input.image)
+      ? legacySlimBusyboxWgetHealthcheck("http://127.0.0.1:4000/api/health")
+      : {
+          test: [
+            "CMD",
+            "curl",
+            "-sSfL",
+            "--head",
+            "-o",
+            "/dev/null",
+            "http://127.0.0.1:4000/api/health",
+          ],
+          intervalSeconds: 10,
+          timeoutSeconds: 2,
+          retries: 3,
+        },
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
     networkAliases: [LEGACY_SUPAVISOR_CONTAINER_SUFFIX],
