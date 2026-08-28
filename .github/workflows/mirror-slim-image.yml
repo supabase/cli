@@ -103,13 +103,17 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Install regctl
+        # Installed under $RUNNER_TEMP (always writable by the job user) and
+        # exposed to later steps via $GITHUB_PATH.
         run: |
           set -euo pipefail
-          curl -fsSLo /usr/local/bin/regctl \
+          install -d "${RUNNER_TEMP}/regctl-bin"
+          curl -fsSLo "${RUNNER_TEMP}/regctl-bin/regctl" \
             https://github.com/regclient/regclient/releases/download/v0.11.5/regctl-linux-amd64
-          echo "c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467  /usr/local/bin/regctl" | sha256sum -c -
-          chmod +x /usr/local/bin/regctl
-          regctl version
+          echo "c93aa7638749f5aaac1a8e01787321889c78f0101809bb2880343478d0ba0467  ${RUNNER_TEMP}/regctl-bin/regctl" | sha256sum -c -
+          chmod +x "${RUNNER_TEMP}/regctl-bin/regctl"
+          echo "${RUNNER_TEMP}/regctl-bin" >> "$GITHUB_PATH"
+          "${RUNNER_TEMP}/regctl-bin/regctl" version
 
       - name: Log in to ghcr.io
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
@@ -166,10 +170,17 @@ jobs:
           if aws ecr-public describe-repositories \
             --repository-names "$REPO_NAME" --region us-east-1 >/dev/null 2>&1; then
             echo "ECR Public repository $REPO_NAME exists"
-          elif aws ecr-public create-repository \
-            --repository-name "$REPO_NAME" --region us-east-1 >/dev/null; then
+            exit 0
+          fi
+          if CREATE_ERR="$(aws ecr-public create-repository \
+            --repository-name "$REPO_NAME" --region us-east-1 2>&1 >/dev/null)"; then
             echo "created ECR Public repository $REPO_NAME"
+          elif grep -q RepositoryAlreadyExistsException <<< "$CREATE_ERR"; then
+            # Concurrent run for another version of the same new service won
+            # the creation race; the repository exists, which is all we need.
+            echo "ECR Public repository $REPO_NAME was created concurrently"
           else
+            echo "$CREATE_ERR"
             echo "::error::ECR Public repository '$REPO_NAME' does not exist and this role cannot create it (missing ecr-public:CreateRepository). Create it once manually — aws ecr-public create-repository --repository-name '$REPO_NAME' --region us-east-1 — then re-run this workflow."
             exit 1
           fi
