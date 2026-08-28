@@ -592,7 +592,6 @@ describe("native auxiliary service definitions", () => {
     const imgproxy = makeImgproxyServiceNative({
       binPath: imgproxyArtifactRoot,
       port: 54332,
-      dataDir,
       dependencies: [{ service: "storage", condition: "healthy" }],
     });
 

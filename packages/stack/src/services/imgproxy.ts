@@ -17,7 +17,7 @@ interface ImgproxyServiceOptions {
   readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
-export interface NativeImgproxyOptions extends ImgproxyServiceOptions {
+export interface NativeImgproxyOptions extends Omit<ImgproxyServiceOptions, "dataDir"> {
   readonly binPath: string;
 }
 
