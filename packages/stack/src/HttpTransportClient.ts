@@ -1,3 +1,6 @@
+// oxlint-disable effecttsgo/global-fetch-in-effect, effecttsgo/prefer-schema-over-json --
+// This service is the native HTTP transport leaf; request bodies are encoded
+// for the control protocol and fetch is supplied by the host runtime.
 import { Context, Data, Effect, Layer } from "effect";
 import {
   CONTROL_STATUS_PATH,

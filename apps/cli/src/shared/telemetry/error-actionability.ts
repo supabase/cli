@@ -1003,8 +1003,8 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   }),
   SchemaError: () => ({ ...actionability.apiStatus, fingerprint_suffix: "api_response" }),
 
-  // @supabase/stack — StackError is a plain Error subclass matched by `name`
-  // in classifyCliErrorActionability, with a structured `code` field.
+  // @supabase/stack — StackError is a tagged error with a structured `code`
+  // field.
   StackError: (error) =>
     readString(error, "code") === "PORT_ALLOCATION"
       ? { ...actionability.invalidConfig, fingerprint_suffix: "port_allocation" }
@@ -1289,6 +1289,25 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
     if (cause !== undefined) return classifyAtDepth(cause, depth + 1);
   }
 
+  // @supabase/stack's public wrapper is itself a tagged error. Handle it
+  // before generic tag dispatch so a preserved classifiable cause (for
+  // example DockerPullError or a native exception) is not hidden by the
+  // wrapper's own generic StackError adapter.
+  if (isErrorRecord(error) && tag === "StackError") {
+    const cause = classifiableCause(error);
+    if (cause !== undefined) return classifyAtDepth(cause, depth + 1);
+    // toStackError wraps arbitrary thrown errors with code "UNKNOWN"; a
+    // native JS exception cause is a stack-internal crash and must land in
+    // the internal-bug bucket, matching the top-level native-exception rule.
+    if (isNativeJsExceptionName(readErrorName(error["cause"]))) {
+      return classifyAtDepth(error["cause"], depth + 1);
+    }
+    const classify = externalActionabilityByTag["StackError"];
+    if (classify !== undefined) {
+      return toActionability(classify(error), "tag", "StackError");
+    }
+  }
+
   if (tag !== undefined && isErrorRecord(error)) {
     // Own-property lookup: a sanitized tag like "constructor" must not pick
     // up Object.prototype members as adapters.
@@ -1299,26 +1318,6 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
       }
     }
     return toActionability(actionability.unknown, "tag", undefined);
-  }
-
-  if (isErrorRecord(error) && readErrorName(error) === "StackError") {
-    // The public Stack promise API wraps tagged failures via `toStackError`,
-    // preserving the original in `cause` — classify that instead of the
-    // wrapper whenever it is itself classifiable.
-    const cause = classifiableCause(error);
-    if (cause !== undefined) {
-      return classifyAtDepth(cause, depth + 1);
-    }
-    // toStackError wraps arbitrary thrown errors with code "UNKNOWN"; a
-    // native JS exception cause is a stack-internal crash and must land in
-    // the internal-bug bucket, matching the top-level native-exception rule.
-    if (isNativeJsExceptionName(readErrorName(error["cause"]))) {
-      return classifyAtDepth(error["cause"], depth + 1);
-    }
-    const classify = externalActionabilityByTag["StackError"];
-    if (classify !== undefined) {
-      return toActionability(classify(error), "error", "StackError");
-    }
   }
 
   if (typeof error === "string") {

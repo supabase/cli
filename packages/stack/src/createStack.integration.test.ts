@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/new-promise, effecttsgo/node-builtin-import -- Integration tests await the public stack facade and coordinate native process fixtures.
+
 import { createServer } from "node:net";
 import { existsSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
@@ -39,7 +41,7 @@ const testPorts: PortSet = {
 
 afterEach(() => {
   const owned = handles.splice(0);
-  return Effect.runPromise(Effect.forEach(owned, (handle) => handle.dispose(), { discard: true }));
+  return Effect.runPromise(Effect.forEach(owned, (handle) => handle.dispose, { discard: true }));
 });
 
 describe("direct createStack port ownership", () => {
@@ -95,7 +97,7 @@ describe("direct createStack port ownership", () => {
     expect(stack.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
     expect(stack.dbUrl).toMatch(/127\.0\.0\.1:\d+/);
     const activeServices = new Set(
-      (await Effect.runPromise(stack.getStatus())).map((state) => state.name),
+      (await Effect.runPromise(stack.getStatus)).map((state) => state.name),
     );
     expect(activeServices).not.toContain("studio");
     expect(activeServices).not.toContain("analytics");

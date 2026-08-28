@@ -13,12 +13,14 @@ export const defaultJwtSecret = "super-secret-jwt-token-with-at-least-32-charact
  */
 export function generateJwt(secret: string, role: string): string {
   const header = Buffer.from(JSON.stringify({ alg: "HS256", typ: "JWT" })).toString("base64url");
+  // oxlint-disable-next-line effecttsgo/global-date -- This synchronous signer must stamp JWT claims at generation time.
+  const issuedAt = Math.floor(Date.now() / 1000);
   const payload = Buffer.from(
     JSON.stringify({
       role,
       iss: "supabase",
-      iat: Math.floor(Date.now() / 1000),
-      exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 365 * 10,
+      iat: issuedAt,
+      exp: issuedAt + 60 * 60 * 24 * 365 * 10,
     }),
   ).toString("base64url");
   const data = `${header}.${payload}`;

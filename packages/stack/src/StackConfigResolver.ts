@@ -1,3 +1,4 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Config path resolution is a pure boundary helper and intentionally does not require the Path service.
 import { join } from "node:path";
 import { Effect, Exit, FileSystem, Record, Schema } from "effect";
 import type { PlatformError } from "effect/PlatformError";
@@ -244,7 +245,7 @@ function resolveFunctionsConfig(
   if (config.functions === undefined || config.functions === false) {
     return Effect.succeed(false);
   }
-  return Schema.decodeUnknownEffect(resolvedFunctionsBundleSchemaForProject(projectDir))(
+  return Schema.decodeEffect(resolvedFunctionsBundleSchemaForProject(projectDir))(
     config.functions,
   ).pipe(
     Effect.mapError(
@@ -262,8 +263,8 @@ const resolveInstanceId = (
   instanceId: string | undefined,
 ): Effect.Effect<string | undefined, StackBuildError> =>
   instanceId === undefined
-    ? Effect.succeed(undefined)
-    : Schema.decodeUnknownEffect(InstanceIdSchema)(instanceId).pipe(
+    ? Effect.void.pipe(Effect.as(undefined))
+    : Schema.decodeEffect(InstanceIdSchema)(instanceId).pipe(
         Effect.mapError(
           (cause) =>
             new StackBuildError({
@@ -476,22 +477,18 @@ const resolveServicePolicies = (
     for (const service of SERVICE_NAMES) {
       const requested = requestedPolicies[service];
       if (service === "postgres" && requested !== undefined && requested !== "eager") {
-        return yield* Effect.fail(
-          new StackBuildError({
-            detail: "postgres supports only the eager service preparation policy",
-            reason: "invalid_config",
-          }),
-        );
+        return yield* new StackBuildError({
+          detail: "postgres supports only the eager service preparation policy",
+          reason: "invalid_config",
+        });
       }
 
       const enabled = rawServiceEnabled(config, service);
       if (!enabled && requested !== undefined && requested !== "off") {
-        return yield* Effect.fail(
-          new StackBuildError({
-            detail: `${service} cannot use the ${requested} service preparation policy because the service is not configured`,
-            reason: "invalid_config",
-          }),
-        );
+        return yield* new StackBuildError({
+          detail: `${service} cannot use the ${requested} service preparation policy because the service is not configured`,
+          reason: "invalid_config",
+        });
       }
       if (!enabled || requested === "off") {
         policies[service] = "off";
@@ -501,12 +498,10 @@ const resolveServicePolicies = (
       const policy: Exclude<ServicePolicy, "off"> =
         requested === undefined ? DEFAULT_SERVICE_POLICIES[service] : requested;
       if (!serviceMetadata(service).preparation.supported.includes(policy)) {
-        return yield* Effect.fail(
-          new StackBuildError({
-            detail: `${service} does not support the ${policy} service preparation policy`,
-            reason: "invalid_config",
-          }),
-        );
+        return yield* new StackBuildError({
+          detail: `${service} does not support the ${policy} service preparation policy`,
+          reason: "invalid_config",
+        });
       }
       policies[service] = policy;
     }
@@ -526,12 +521,10 @@ const resolveServicePolicies = (
             continue;
           }
           if (requestedPolicies[service] !== undefined) {
-            return yield* Effect.fail(
-              new StackBuildError({
-                detail: `${dependency} uses the ${dependencyPolicy} preparation policy but requires ${service} to be at least ${dependencyPolicy}`,
-                reason: "invalid_config",
-              }),
-            );
+            return yield* new StackBuildError({
+              detail: `${dependency} uses the ${dependencyPolicy} preparation policy but requires ${service} to be at least ${dependencyPolicy}`,
+              reason: "invalid_config",
+            });
           }
           policies[service] = dependencyPolicy;
           promoted = true;
@@ -562,22 +555,18 @@ export const portRequestsForConfig = (
       options.runtime !== undefined &&
       input.mode !== options.runtime.mode
     ) {
-      return yield* Effect.fail(
-        new StackBuildError({
-          detail: `Selected ${options.runtime.mode} runtime does not match requested ${input.mode} mode`,
-          reason: "invalid_config",
-        }),
-      );
+      return yield* new StackBuildError({
+        detail: `Selected ${options.runtime.mode} runtime does not match requested ${input.mode} mode`,
+        reason: "invalid_config",
+      });
     }
     const mode = options.runtime?.mode ?? input.mode ?? "native";
     const config: StackConfig = { ...input, mode };
     if (mode === "docker" && options.runtime?.containerRuntime == null) {
-      return yield* Effect.fail(
-        new StackBuildError({
-          detail: "Docker mode requires a selected Docker or Podman runtime",
-          reason: "invalid_config",
-        }),
-      );
+      return yield* new StackBuildError({
+        detail: "Docker mode requires a selected Docker or Podman runtime",
+        reason: "invalid_config",
+      });
     }
 
     // Deliberately first: unsupported policies and invalid explicit ports must
@@ -640,12 +629,10 @@ export const portRequestsForConfig = (
         explicit !== undefined &&
         (!Number.isInteger(explicit) || explicit < 1 || explicit > 65_535)
       ) {
-        return yield* Effect.fail(
-          new StackBuildError({
-            detail: `Invalid port for ${field}: expected an integer between 1 and 65535`,
-            reason: "invalid_config",
-          }),
-        );
+        return yield* new StackBuildError({
+          detail: `Invalid port for ${field}: expected an integer between 1 and 65535`,
+          reason: "invalid_config",
+        });
       }
     }
     const unorderedRequests = activeFields.map((field) => {
@@ -684,12 +671,10 @@ export function resolveConfig(
       const servicePolicies = yield* resolveServicePolicies(config);
       for (const field of portFieldsForConfigInput(config)) {
         if (opts.ports[field] === undefined) {
-          return yield* Effect.fail(
-            new StackBuildError({
-              detail: `Missing resolved port for active field ${field}`,
-              reason: "invalid_config",
-            }),
-          );
+          return yield* new StackBuildError({
+            detail: `Missing resolved port for active field ${field}`,
+            reason: "invalid_config",
+          });
         }
       }
       const projectDir = config.projectDir ?? process.cwd();
@@ -697,12 +682,10 @@ export function resolveConfig(
       const functions = yield* resolveFunctionsConfig(config, projectDir);
       const edgeRuntimeEnabled = servicePolicies["edge-runtime"] !== "off";
       if (functions !== false && !edgeRuntimeEnabled) {
-        return yield* Effect.fail(
-          new StackBuildError({
-            detail: "Edge Functions require Edge Runtime to be enabled",
-            reason: "invalid_config",
-          }),
-        );
+        return yield* new StackBuildError({
+          detail: "Edge Functions require Edge Runtime to be enabled",
+          reason: "invalid_config",
+        });
       }
       roots = yield* resolveRoots(config, opts);
       const postgresInput = config.postgres ?? {};

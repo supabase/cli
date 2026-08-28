@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/node-builtin-import -- Service tests use native filesystem/path fixtures to validate service wiring.
+
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";

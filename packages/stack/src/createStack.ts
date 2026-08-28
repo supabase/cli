@@ -18,11 +18,18 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { ApiProxy } from "./ApiProxy.ts";
 import type { StackRuntimeSelection } from "./ContainerRuntime.ts";
 import { candidateCleanupTargets, cleanupAutoManagedPaths, dockerForceRemove } from "./cleanup.ts";
-import { toStackError, type StackError } from "./errors.ts";
+import {
+  StackBuildError,
+  StackRpcProtocolError,
+  StackRpcTransportError,
+  StackUnavailableError,
+  toStackError,
+  type StackError,
+} from "./errors.ts";
 import type { FunctionsReloadConfig } from "./functions.ts";
 import { foregroundLayer } from "./layers.ts";
 import { LocalStackLifecycle } from "./LocalStack.ts";
-import { reservePortSet, type PortLease } from "./PortAllocator.ts";
+import { PortAllocationError, reservePortSet, type PortLease } from "./PortAllocator.ts";
 import { Stack } from "./Stack.ts";
 import type { EdgeRuntimeReloadConfig } from "./Stack.ts";
 import type { ReadyOptions, ResolvedStackConfig, StackConfig } from "./StackConfig.ts";
@@ -48,7 +55,14 @@ export type PlatformFactory = (options: PlatformFactoryOptions) => PlatformLayer
 export type ResolveConfigEffect = (
   input: StackConfig | undefined,
   options: ResolveConfigOptions,
-) => Effect.Effect<ResolvedStackConfig, unknown, FileSystem.FileSystem>;
+) => Effect.Effect<ResolvedStackConfig, StackBuildError, FileSystem.FileSystem>;
+
+type CreateStackAttemptError =
+  | StackBuildError
+  | PortAllocationError
+  | StackUnavailableError
+  | StackRpcTransportError
+  | StackRpcProtocolError;
 
 /** The internal foreground handle; public adapters live at the package edge. */
 export interface ForegroundStackHandle {
@@ -56,9 +70,9 @@ export interface ForegroundStackHandle {
   readonly dbUrl: string;
   readonly publishableKey: string;
   readonly secretKey: string;
-  start(): Effect.Effect<void, StackError>;
-  stop(): Effect.Effect<void, StackError>;
-  dispose(): Effect.Effect<void>;
+  readonly start: Effect.Effect<void, StackError>;
+  readonly stop: Effect.Effect<void, StackError>;
+  readonly dispose: Effect.Effect<void>;
   startService(name: string): Effect.Effect<void, StackError>;
   stopService(name: string): Effect.Effect<void, StackError>;
   restartService(name: string): Effect.Effect<void, StackError>;
@@ -66,10 +80,10 @@ export interface ForegroundStackHandle {
   reloadEdgeRuntime(opts: EdgeRuntimeReloadConfig): Effect.Effect<void, StackError>;
   ready(opts?: ReadyOptions): Effect.Effect<void, StackError>;
   serviceReady(name: string, opts?: ReadyOptions): Effect.Effect<void, StackError>;
-  getStatus(): Effect.Effect<ReadonlyArray<StackServiceState>, StackError>;
+  readonly getStatus: Effect.Effect<ReadonlyArray<StackServiceState>, StackError>;
   getServiceStatus(name: string): Effect.Effect<StackServiceState, StackError>;
-  statusChanges(): Stream.Stream<StackServiceState, StackError>;
-  logs(): Stream.Stream<LogEntry, StackError>;
+  readonly statusChanges: Stream.Stream<StackServiceState, StackError>;
+  readonly logs: Stream.Stream<LogEntry, StackError>;
   serviceLogs(name: string): Stream.Stream<LogEntry, StackError>;
   logHistory(name: string, limit?: number): Effect.Effect<ReadonlyArray<LogEntry>, StackError>;
 }
@@ -87,7 +101,7 @@ export function runForegroundOperation<A, E>(
           if (yield* isDisposed) {
             yield* dispose;
           }
-          return yield* Effect.fail(toStackError(error));
+          return yield* toStackError(error);
         }),
       ),
     ),
@@ -122,7 +136,7 @@ const createStackAttempt = (
   runtimeSelection: StackRuntimeSelection,
   resolveConfig: ResolveConfigEffect,
   preferredApiPort?: number,
-): Effect.Effect<ForegroundStackHandle, unknown, FileSystem.FileSystem> =>
+): Effect.Effect<ForegroundStackHandle, CreateStackAttemptError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     let portLease: PortLease | undefined;
     let resolved: ResolvedStackConfig | undefined;
@@ -171,7 +185,7 @@ const createStackAttempt = (
         const localStack = Context.get(services, Stack);
         const apiProxy = Context.get(services, ApiProxy);
         const lifecycle = Context.get(services, LocalStackLifecycle);
-        const info = yield* Effect.provideContext(localStack.getInfo(), services);
+        const info = yield* Effect.provideContext(localStack.getInfo, services);
 
         const disposalCompletion = Deferred.makeUnsafe<Exit.Exit<void, never>>();
         let disposalStarted = false;
@@ -211,7 +225,7 @@ const createStackAttempt = (
           apiProxy.awaitTerminalFailure.pipe(
             Effect.andThen(Effect.sleep("25 millis")),
             Effect.andThen(dispose),
-            Effect.catchCause(() => Effect.void),
+            Effect.ignoreCause,
           ),
         );
 
@@ -220,9 +234,9 @@ const createStackAttempt = (
           dbUrl: info.dbUrl,
           publishableKey: info.publishableKey,
           secretKey: info.secretKey,
-          start: () => run(localStack.start()),
-          stop: () => run(localStack.stop()),
-          dispose: () => dispose,
+          start: run(localStack.start),
+          stop: run(localStack.stop),
+          dispose,
           startService: (name: string) => run(localStack.startService(name)),
           stopService: (name: string) => run(localStack.stopService(name)),
           restartService: (name: string) => run(localStack.restartService(name)),
@@ -232,10 +246,10 @@ const createStackAttempt = (
           ready: (opts?: ReadyOptions) => run(localStack.waitAllReady(opts)),
           serviceReady: (name: string, opts?: ReadyOptions) =>
             run(localStack.waitReady(name, opts)),
-          getStatus: () => run(localStack.getAllStates()),
+          getStatus: run(localStack.getAllStates),
           getServiceStatus: (name: string) => run(localStack.getState(name)),
-          statusChanges: () => localStack.allStateChanges().pipe(Stream.mapError(toStackError)),
-          logs: () => localStack.subscribeAllLogs().pipe(Stream.mapError(toStackError)),
+          statusChanges: localStack.allStateChanges.pipe(Stream.mapError(toStackError)),
+          logs: localStack.subscribeAllLogs().pipe(Stream.mapError(toStackError)),
           serviceLogs: (name: string) =>
             localStack.subscribeLogs(name).pipe(Stream.mapError(toStackError)),
           logHistory: (name: string, limit?: number) => run(localStack.logHistory(name, limit)),
@@ -257,7 +271,7 @@ export function createStack(
   const automaticApiPort = config?.port === undefined;
   const loop = (
     attempt: number,
-  ): Effect.Effect<ForegroundStackHandle, unknown, FileSystem.FileSystem> =>
+  ): Effect.Effect<ForegroundStackHandle, CreateStackAttemptError, FileSystem.FileSystem> =>
     createStackAttempt(
       config,
       platformFactory,

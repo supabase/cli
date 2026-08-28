@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-date, effecttsgo/global-fetch, effecttsgo/node-builtin-import -- Docker e2e tests drive the native CLI, Docker, and HTTP boundaries from Vitest's Promise callbacks.
+
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { execFileSync, execSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";

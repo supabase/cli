@@ -1,5 +1,7 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- This test uses a temporary filesystem fixture at the native boundary.
 import { mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- This test uses native path handling for its temporary fixture.
 import { join } from "node:path";
 import * as Net from "node:net";
 import { describe, expect, it } from "@effect/vitest";
@@ -7,38 +9,45 @@ import { layer as BunChildProcessSpawnerLayer } from "@effect/platform-bun/BunCh
 import { layer as BunFileSystemLayer } from "@effect/platform-bun/BunFileSystem";
 import { layer as BunPathLayer } from "@effect/platform-bun/BunPath";
 import { Deferred, Duration, Effect, Exit, Fiber, Layer, Predicate, Sink, Stream } from "effect";
+import { FetchHttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { runHealthProbe } from "./HealthProbe.ts";
 import type { HealthCheckConfig, ProbeConfig } from "./ServiceDef.ts";
 
-const platformLayer = BunChildProcessSpawnerLayer.pipe(
-  Layer.provide(Layer.mergeAll(BunFileSystemLayer, BunPathLayer)),
+const platformLayer = Layer.mergeAll(
+  BunChildProcessSpawnerLayer.pipe(Layer.provide(Layer.mergeAll(BunFileSystemLayer, BunPathLayer))),
+  BunFileSystemLayer,
+  BunPathLayer,
+  FetchHttpClient.layer,
 );
 
 const sequenceProbeLayer = (results: ReadonlyArray<boolean>) => {
   let calls = 0;
   return {
-    layer: Layer.succeed(
-      ChildProcessSpawner.ChildProcessSpawner,
-      ChildProcessSpawner.make(() =>
-        Effect.sync(() => {
-          const result = results[calls] ?? results.at(-1) ?? false;
-          calls++;
-          return ChildProcessSpawner.makeHandle({
-            pid: ChildProcessSpawner.ProcessId(2000 + calls),
-            stdout: Stream.empty,
-            stderr: Stream.empty,
-            all: Stream.empty,
-            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result ? 0 : 1)),
-            isRunning: Effect.succeed(false),
-            stdin: Sink.drain,
-            kill: () => Effect.void,
-            unref: Effect.succeed(Effect.void),
-            getInputFd: () => Sink.drain,
-            getOutputFd: () => Stream.empty,
-          });
-        }),
+    layer: Layer.mergeAll(
+      Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.sync(() => {
+            const result = results[calls] ?? results.at(-1) ?? false;
+            calls++;
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(2000 + calls),
+              stdout: Stream.empty,
+              stderr: Stream.empty,
+              all: Stream.empty,
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result ? 0 : 1)),
+              isRunning: Effect.succeed(false),
+              stdin: Sink.drain,
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            });
+          }),
+        ),
       ),
+      FetchHttpClient.layer,
     ),
     get calls() {
       return calls;
@@ -63,16 +72,14 @@ const setupProbe = (probe: ProbeConfig, overrides?: Partial<HealthCheckConfig>) 
         ...overrides,
       },
       callbacks: {
-        onHealthy: () =>
-          Effect.gen(function* () {
-            healthy = true;
-            yield* Deferred.succeed(healthySignal, void 0);
-          }),
-        onUnhealthy: () =>
-          Effect.gen(function* () {
-            healthy = false;
-            yield* Deferred.succeed(unhealthySignal, void 0);
-          }),
+        onHealthy: Effect.gen(function* () {
+          healthy = true;
+          yield* Deferred.succeed(healthySignal, void 0);
+        }),
+        onUnhealthy: Effect.gen(function* () {
+          healthy = false;
+          yield* Deferred.succeed(unhealthySignal, void 0);
+        }),
       },
     };
     return { healthySignal, unhealthySignal, config, isHealthy: () => healthy };
@@ -88,7 +95,9 @@ describe("HealthProbe", () => {
         init?.signal?.addEventListener("abort", () => {
           aborted = true;
         });
+        // oxlint-disable-next-line effecttsgo/run-effect-inside-effect -- The test fetch stub signals its start synchronously before hanging.
         Effect.runSync(Deferred.succeed(started, void 0));
+        // oxlint-disable-next-line effecttsgo/new-promise -- The test fetch stub must remain pending until interruption.
         return new Promise<Response>(() => undefined);
       }) as typeof fetch;
 
@@ -156,32 +165,35 @@ describe("HealthProbe", () => {
         readonly command: string;
         readonly args: ReadonlyArray<string>;
       }> = [];
-      const layer = Layer.succeed(
-        ChildProcessSpawner.ChildProcessSpawner,
-        ChildProcessSpawner.make((command) =>
-          Effect.sync(() => {
-            if (Predicate.isTagged(command, "StandardCommand")) {
-              spawned.push({
-                command: command.command,
-                args: command.args,
-              });
-            }
+      const layer = Layer.mergeAll(
+        Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) =>
+            Effect.sync(() => {
+              if (Predicate.isTagged(command, "StandardCommand")) {
+                spawned.push({
+                  command: command.command,
+                  args: command.args,
+                });
+              }
 
-            return ChildProcessSpawner.makeHandle({
-              pid: ChildProcessSpawner.ProcessId(1234),
-              stdout: Stream.empty,
-              stderr: Stream.empty,
-              all: Stream.empty,
-              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
-              isRunning: Effect.succeed(false),
-              stdin: Sink.drain,
-              kill: () => Effect.void,
-              unref: Effect.succeed(Effect.void),
-              getInputFd: () => Sink.drain,
-              getOutputFd: () => Stream.empty,
-            });
-          }),
+              return ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(1234),
+                stdout: Stream.empty,
+                stderr: Stream.empty,
+                all: Stream.empty,
+                exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+                isRunning: Effect.succeed(false),
+                stdin: Sink.drain,
+                kill: () => Effect.void,
+                unref: Effect.succeed(Effect.void),
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+              });
+            }),
+          ),
         ),
+        FetchHttpClient.layer,
       );
 
       return Effect.gen(function* () {
@@ -326,17 +338,15 @@ describe("HealthProbe", () => {
             failureThreshold: 2,
           },
           callbacks: {
-            onHealthy: () =>
-              Effect.sync(() => {
-                healthyTransitions++;
-              }),
-            onUnhealthy: () =>
-              Effect.gen(function* () {
-                unhealthyTransitions++;
-                if (unhealthyTransitions === 2) {
-                  yield* Deferred.succeed(secondUnhealthy, void 0);
-                }
-              }),
+            onHealthy: Effect.sync(() => {
+              healthyTransitions++;
+            }),
+            onUnhealthy: Effect.gen(function* () {
+              unhealthyTransitions++;
+              if (unhealthyTransitions === 2) {
+                yield* Deferred.succeed(secondUnhealthy, void 0);
+              }
+            }),
           },
         }),
       );
@@ -464,6 +474,7 @@ describe("HealthProbe", () => {
       expect(isHealthy()).toBe(true);
 
       // Remove the flag file so probe starts failing
+      // oxlint-disable-next-line effecttsgo/try-catch-in-effect-gen -- Native unlink cleanup is best-effort test fixture teardown.
       try {
         unlinkSync(flagFile);
       } catch {

@@ -9,7 +9,7 @@ it.live("does not report RPC stream interruption as a dashboard failure", () =>
     Effect.gen(function* () {
       const stack = {
         ...makeTestStack(),
-        allStateChanges: () => Stream.failCause(Cause.interrupt()),
+        allStateChanges: Stream.failCause(Cause.interrupt()),
       };
       const context = yield* Layer.build(
         StartDashboardState.live.pipe(Layer.provide(Layer.succeed(Stack, stack))),
@@ -29,8 +29,9 @@ it.live("renders graceful state-stream completion as stopping", () =>
       const subscribed = Deferred.makeUnsafe<void>();
       const stack = {
         ...makeTestStack(),
-        allStateChanges: () =>
-          Stream.unwrap(Deferred.succeed(subscribed, undefined).pipe(Effect.as(Stream.empty))),
+        allStateChanges: Stream.unwrap(
+          Deferred.succeed(subscribed, undefined).pipe(Effect.as(Stream.empty)),
+        ),
       };
       const context = yield* Layer.build(
         StartDashboardState.live.pipe(Layer.provide(Layer.succeed(Stack, stack))),
@@ -56,20 +57,19 @@ it.live("keeps genuine state-stream errors as failed", () =>
       const subscribed = Deferred.makeUnsafe<void>();
       const stack = {
         ...makeTestStack(),
-        allStateChanges: () =>
-          Stream.unwrap(
-            Deferred.succeed(subscribed, undefined).pipe(
-              Effect.as(
-                Stream.fail(
-                  new StackRpcProtocolError({
-                    endpoint: "http://127.0.0.1:54321",
-                    procedure: "WatchServiceStates",
-                    detail: "state stream failed",
-                  }),
-                ),
+        allStateChanges: Stream.unwrap(
+          Deferred.succeed(subscribed, undefined).pipe(
+            Effect.as(
+              Stream.fail(
+                new StackRpcProtocolError({
+                  endpoint: "http://127.0.0.1:54321",
+                  procedure: "WatchServiceStates",
+                  detail: "state stream failed",
+                }),
               ),
             ),
           ),
+        ),
       };
       const context = yield* Layer.build(
         StartDashboardState.live.pipe(Layer.provide(Layer.succeed(Stack, stack))),
@@ -95,19 +95,18 @@ it.live("renders a failure terminal reason as failed", () =>
       const subscribed = Deferred.makeUnsafe<void>();
       const stack = {
         ...makeTestStack(),
-        allStateChanges: () =>
-          Stream.unwrap(
-            Deferred.succeed(subscribed, undefined).pipe(
-              Effect.as(
-                Stream.fail(
-                  new StackUnavailableError({
-                    phase: "failed",
-                    detail: "Local stack disposed unexpectedly",
-                  }),
-                ),
+        allStateChanges: Stream.unwrap(
+          Deferred.succeed(subscribed, undefined).pipe(
+            Effect.as(
+              Stream.fail(
+                new StackUnavailableError({
+                  phase: "failed",
+                  detail: "Local stack disposed unexpectedly",
+                }),
               ),
             ),
           ),
+        ),
       };
       const context = yield* Layer.build(
         StartDashboardState.live.pipe(Layer.provide(Layer.succeed(Stack, stack))),

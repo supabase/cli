@@ -13,6 +13,12 @@
     "lint:fix": {
       "cache": false
     },
+    "lint:effect:check": {
+      "cache": false
+    },
+    "lint:effect:fix": {
+      "cache": false
+    },
     "fmt:check": {
       "cache": false
     },
