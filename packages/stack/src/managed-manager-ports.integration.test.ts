@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/multiple-effect-provide, effecttsgo/node-builtin-import -- Port-manager tests compose platform path fixtures around the native control boundary; manager dependencies are provided sequentially to preserve the service order expected by scenario layers.
 import { it } from "@effect/vitest";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { Cause, Effect, Exit } from "effect";
@@ -112,7 +113,7 @@ describe("managed stack ports journeys", () => {
     return Effect.scoped(
       Effect.gen(function* () {
         const manager = yield* ManagedStackManager;
-        const apiPort = yield* freePort();
+        const apiPort = yield* freePort;
         const { workspace, ownership } = yield* acquireWorkspaceControl(base);
         if (!isControlOwnership(ownership)) throw new Error("expected ownership");
         const started = yield* startManagedStack(manager, {
@@ -142,7 +143,7 @@ describe("managed stack ports journeys", () => {
     return Effect.scoped(
       Effect.gen(function* () {
         const manager = yield* ManagedStackManager;
-        const port = yield* freePort();
+        const port = yield* freePort;
         const firstOwner = yield* acquireWorkspaceControl(base, "first");
         if (!isControlOwnership(firstOwner.ownership)) throw new Error("expected first ownership");
         const first = yield* startManagedStack(manager, {
@@ -270,7 +271,7 @@ describe("managed stack ports journeys", () => {
     return Effect.scoped(
       Effect.gen(function* () {
         const manager = yield* ManagedStackManager;
-        const port = yield* freePort();
+        const port = yield* freePort;
         const external = yield* Effect.acquireRelease(
           Effect.promise(() => listenExternal(port)),
           (server) => Effect.promise(() => closeExternal(server)),
@@ -474,7 +475,7 @@ describe("managed stack ports journeys", () => {
     return Effect.scoped(
       Effect.gen(function* () {
         const manager = yield* ManagedStackManager;
-        const port = yield* freePort();
+        const port = yield* freePort;
         const { workspace, ownership } = yield* acquireWorkspaceControl(root);
         if (!isControlOwnership(ownership)) throw new Error("expected ownership");
         const first = yield* startManagedStack(manager, {

@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/any-unknown-in-error-context, effecttsgo/node-builtin-import -- Managed environment tests validate dynamic process environment failures against native filesystem fixtures.
+
 import { NodeFileSystem } from "@effect/platform-node";
 import { it } from "@effect/vitest";
 import { Effect, Exit, Layer } from "effect";

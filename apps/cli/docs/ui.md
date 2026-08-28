@@ -238,12 +238,12 @@ function DataComponent() {
 ### Data Flow
 
 1. **Effect side** creates a session-scoped dashboard model and a manual `AtomRegistry`
-2. **Effect side** snapshots `stack.getInfo()` / `stack.getAllStates()` into writable atoms
-3. **Effect side** forks a supervised child fiber that pipes `stack.allStateChanges()` into the registry
+2. **Effect side** snapshots `stack.getInfo` / `stack.getAllStates` into writable atoms
+3. **Effect side** forks a supervised child fiber that pipes `stack.allStateChanges` into the registry
    Before the orchestrator exists, that stream can already emit synthetic `Downloading` states from stack preparation.
 4. **ink side** renders `RegistryContext.Provider` with the shared registry
 5. **React components** use `useAtomValue()` to subscribe and render only
-6. **Effect side** controls lifecycle: render → `stack.start()` (`prepare -> start`) → wait for exit → stop stack → dispose registry
+6. **Effect side** controls lifecycle: render → `stack.start` (`prepare -> start`) → wait for exit → stop stack → dispose registry
 
 ### Atoms for the Start Command
 
@@ -294,8 +294,8 @@ import { Cause, Effect, Fiber, Stream } from "effect"
 const startAttached = Effect.fnUntraced(function* () {
   const stack = yield* Stack
   const ink = yield* Ink
-  const info = yield* stack.getInfo()
-  const initialStates = yield* stack.getAllStates()
+  const info = yield* stack.getInfo
+  const initialStates = yield* stack.getAllStates
   const model = createDashboardModel()
 
   // Create registry (shared between Effect and React for this one session)
@@ -305,7 +305,7 @@ const startAttached = Effect.fnUntraced(function* () {
 
   // Fork: pipe state changes into writable atoms
   const fiber = yield* Stream.runForEach(
-    stack.allStateChanges(),
+    stack.allStateChanges,
     (state) => Effect.sync(() => {
       const current = registry.get(model.serviceStatesAtom)
       registry.set(model.serviceStatesAtom,
@@ -322,7 +322,7 @@ const startAttached = Effect.fnUntraced(function* () {
   )
 
   return yield* Effect.gen(function* () {
-    yield* stack.start()
+    yield* stack.start
     registry.set(model.phaseAtom, "running")
     yield* Effect.promise(() => instance.waitUntilExit())
     registry.set(model.phaseAtom, "stopping")
@@ -337,7 +337,7 @@ const startAttached = Effect.fnUntraced(function* () {
       Effect.gen(function* () {
         yield* Fiber.interrupt(fiber)
         instance.unmount()
-        yield* stack.stop()
+        yield* stack.stop
         registry.dispose()
       })
     )

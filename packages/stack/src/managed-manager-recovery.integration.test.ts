@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/multiple-effect-provide, effecttsgo/node-builtin-import -- Recovery tests inject native process/filesystem failures and compose scenario-specific platform layers; dependencies are staged to preserve the gated layer ordering.
 import { it } from "@effect/vitest";
 import { NodeFileSystem, NodePath } from "@effect/platform-node";
 import { Cause, Deferred, Effect, Exit, Fiber, FileSystem, Layer, PlatformError } from "effect";
@@ -46,7 +47,7 @@ const acquireIsolatedCollisionOwner = () =>
         return { collidingStackId, ownership: acquisition.value };
       }
     }
-    return yield* Effect.fail(new Error("failed to acquire an isolated collision endpoint"));
+    return yield* Effect.die(new Error("failed to acquire an isolated collision endpoint"));
   });
 
 const acquireIsolatedStackOwner = (workspacePath: string) =>
@@ -63,7 +64,7 @@ const acquireIsolatedStackOwner = (workspacePath: string) =>
         return { stackName, ownership: acquisition.value };
       }
     }
-    return yield* Effect.fail(new Error("failed to acquire an isolated stack endpoint"));
+    return yield* Effect.die(new Error("failed to acquire an isolated stack endpoint"));
   });
 
 const startWithIsolatedOwner = (
@@ -394,7 +395,7 @@ describe("managed stack recovery journeys", () => {
           mkdirSync(corruptPaths.root, { recursive: true });
           writeFileSync(corruptDocumentPath, "not-json");
         });
-        const listings = yield* manager.listStacks();
+        const listings = yield* manager.listStacks;
         expect(listings).toEqual(
           expect.arrayContaining([
             expect.objectContaining({ id: stack.stack.id, status: "healthy" }),

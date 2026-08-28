@@ -71,7 +71,7 @@ describe("LogBuffer", () => {
       const log = yield* LogBuffer;
 
       // Collect 3 entries from the global subscription
-      const collectEffect = log.subscribeAll().pipe(Stream.take(3), Stream.runCollect);
+      const collectEffect = log.subscribeAll.pipe(Stream.take(3), Stream.runCollect);
       const fiber = yield* Effect.forkChild(collectEffect, { startImmediately: true });
 
       yield* log.append("svcA", "stdout", "from-a");

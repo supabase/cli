@@ -27,8 +27,8 @@ export class StartDashboardState extends Context.Service<
     Effect.gen(function* () {
       const stack = yield* Stack;
 
-      const info = yield* stack.getInfo();
-      const initialStates = yield* stack.getAllStates();
+      const info = yield* stack.getInfo;
+      const initialStates = yield* stack.getAllStates;
       const stackInfoRef = yield* SubscriptionRef.make<StackInfo | null>(info);
       const serviceStatesRef =
         yield* SubscriptionRef.make<ReadonlyArray<StackServiceState>>(initialStates);
@@ -38,7 +38,7 @@ export class StartDashboardState extends Context.Service<
         Effect.andThen(SubscriptionRef.set(phaseRef, "stopping")),
       );
 
-      yield* stack.allStateChanges().pipe(
+      yield* stack.allStateChanges.pipe(
         Stream.runForEach((state) =>
           SubscriptionRef.update(serviceStatesRef, (current) =>
             updateServiceStates(current, state),

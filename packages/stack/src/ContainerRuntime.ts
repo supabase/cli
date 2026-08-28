@@ -52,12 +52,10 @@ export const selectStackRuntimeForPlatform = (
       if (nativeTargetForPlatform(platform) !== undefined) {
         return { mode: "native", containerRuntime: null };
       }
-      return yield* Effect.fail(
-        new StackBuildError({
-          detail: `Native mode is unavailable on ${platform.os}-${platform.arch}. Use a supported Linux or Apple silicon macOS host, or install and start Docker or Podman.`,
-          reason: "invalid_config",
-        }),
-      );
+      return yield* new StackBuildError({
+        detail: `Native mode is unavailable on ${platform.os}-${platform.arch}. Use a supported Linux or Apple silicon macOS host, or install and start Docker or Podman.`,
+        reason: "invalid_config",
+      });
     }
 
     const runtimes = ["docker", "podman"] as const satisfies ReadonlyArray<ContainerRuntime>;
@@ -73,23 +71,19 @@ export const selectStackRuntimeForPlatform = (
     }
 
     if (requestedMode === "docker") {
-      return yield* Effect.fail(
-        new StackBuildError({
-          detail: "Docker mode requires a usable Docker or Podman runtime",
-          reason: "docker_not_running",
-        }),
-      );
+      return yield* new StackBuildError({
+        detail: "Docker mode requires a usable Docker or Podman runtime",
+        reason: "docker_not_running",
+      });
     }
 
     if (nativeTargetForPlatform(platform) !== undefined) {
       return { mode: "native", containerRuntime: null };
     }
-    return yield* Effect.fail(
-      new StackBuildError({
-        detail: `No usable Docker or Podman runtime was found, and native mode is unavailable on ${platform.os}-${platform.arch}. Install and start Docker or Podman.`,
-        reason: "docker_not_running",
-      }),
-    );
+    return yield* new StackBuildError({
+      detail: `No usable Docker or Podman runtime was found, and native mode is unavailable on ${platform.os}-${platform.arch}. Install and start Docker or Podman.`,
+      reason: "docker_not_running",
+    });
   });
 
 export const selectStackRuntime = (
