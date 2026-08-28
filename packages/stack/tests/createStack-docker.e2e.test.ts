@@ -11,10 +11,12 @@ import { dependencyTimeoutSecondsForServices } from "../src/services/health-budg
 import { SERVICE_NAMES, type ServiceName } from "../src/versions.ts";
 import { setupTestTable } from "./helpers/e2e.ts";
 
-const STACK_DOCKER_E2E_TEST_TIMEOUT_MS = 240_000;
 const STACK_DOCKER_E2E_SETUP_OVERHEAD_MS = 180_000;
-const STACK_DOCKER_E2E_SETUP_TIMEOUT_MS =
+const STACK_DOCKER_E2E_FULL_START_TIMEOUT_MS =
   dependencyTimeoutSecondsForServices(["postgres"]) * 1000 + STACK_DOCKER_E2E_SETUP_OVERHEAD_MS;
+const STACK_DOCKER_E2E_JOURNEY_OVERHEAD_MS = 240_000;
+const STACK_DOCKER_E2E_TEST_TIMEOUT_MS =
+  2 * STACK_DOCKER_E2E_FULL_START_TIMEOUT_MS + STACK_DOCKER_E2E_JOURNEY_OVERHEAD_MS;
 
 const EXPECTED_SLIM_DOCKER_IMAGES: Readonly<Record<ServiceName, string>> = {
   postgres: "ghcr.io/supabase/cli/postgres:17.6.1.165",
@@ -146,7 +148,7 @@ dockerDescribe("createStack e2e (docker mode)", () => {
 
     apiPort = new URL(stack.url).port;
     supabase = createClient(stack.url, stack.publishableKey);
-  }, STACK_DOCKER_E2E_SETUP_TIMEOUT_MS);
+  }, STACK_DOCKER_E2E_FULL_START_TIMEOUT_MS);
 
   afterAll(async () => {
     await stack?.dispose();
