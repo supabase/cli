@@ -3,8 +3,13 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
-import { requireLiveSuccess, test, throwWithCleanup } from "../../../../../tests/helpers/live.ts";
-import { legacyRemoveStorageLiveObject, legacyStorageLiveFlags } from "../storage.live-helpers.ts";
+import {
+  removeStorageLiveObject,
+  requireLiveSuccess,
+  storageLiveFlags,
+  test,
+  throwWithCleanup,
+} from "../../../../../tests/helpers/live.ts";
 
 test("copies a local file to the remote bucket", async ({ cli, project, workspace }) => {
   const suffix = randomUUID().slice(0, 8);
@@ -20,13 +25,13 @@ test("copies a local file to the remote bucket", async ({ cli, project, workspac
     });
     requireLiveSuccess(linked, "link setup for storage cp");
 
-    const result = await cli(["storage", "cp", local, remote, ...legacyStorageLiveFlags]);
+    const result = await cli(["storage", "cp", local, remote, ...storageLiveFlags]);
     expect(result.exitCode, result.stderr).toBe(0);
   } catch (error) {
     targetError = error;
   } finally {
     try {
-      await legacyRemoveStorageLiveObject(cli, remote);
+      await removeStorageLiveObject(cli, remote);
     } catch (error) {
       cleanupError = error;
     }

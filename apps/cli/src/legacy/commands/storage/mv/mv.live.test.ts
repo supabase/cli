@@ -3,8 +3,13 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
-import { requireLiveSuccess, test, throwWithCleanup } from "../../../../../tests/helpers/live.ts";
-import { legacyRemoveStorageLiveObject, legacyStorageLiveFlags } from "../storage.live-helpers.ts";
+import {
+  removeStorageLiveObject,
+  requireLiveSuccess,
+  storageLiveFlags,
+  test,
+  throwWithCleanup,
+} from "../../../../../tests/helpers/live.ts";
 
 test("moves an uploaded object to a new path", async ({ cli, project, workspace }) => {
   const suffix = randomUUID().slice(0, 8);
@@ -20,10 +25,10 @@ test("moves an uploaded object to a new path", async ({ cli, project, workspace 
       env: { SUPABASE_DB_PASSWORD: project.dbPassword },
     });
     requireLiveSuccess(linked, "link setup for storage mv");
-    const uploaded = await cli(["storage", "cp", local, source, ...legacyStorageLiveFlags]);
+    const uploaded = await cli(["storage", "cp", local, source, ...storageLiveFlags]);
     requireLiveSuccess(uploaded, "storage cp setup for storage mv");
 
-    const moved = await cli(["storage", "mv", source, destination, ...legacyStorageLiveFlags]);
+    const moved = await cli(["storage", "mv", source, destination, ...storageLiveFlags]);
     expect(moved.exitCode, moved.stderr).toBe(0);
     expect(moved.stderr, moved.stderr).toContain("Moving object:");
 
@@ -31,7 +36,7 @@ test("moves an uploaded object to a new path", async ({ cli, project, workspace 
       "storage",
       "ls",
       `ss:///${project.storageBucket}/`,
-      ...legacyStorageLiveFlags,
+      ...storageLiveFlags,
     ]);
     requireLiveSuccess(listed, "storage ls proof for storage mv");
     expect(listed.stdout).toContain(`mv-dst-${suffix}.txt`);
@@ -41,7 +46,7 @@ test("moves an uploaded object to a new path", async ({ cli, project, workspace 
   } finally {
     for (const remote of [destination, source]) {
       try {
-        await legacyRemoveStorageLiveObject(cli, remote);
+        await removeStorageLiveObject(cli, remote);
       } catch (error) {
         cleanupErrors.push(error);
       }
