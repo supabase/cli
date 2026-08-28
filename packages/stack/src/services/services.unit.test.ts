@@ -9,7 +9,7 @@ import { analyticsDockerRuntimeNetwork, makeAnalyticsServiceDocker } from "./ana
 import { makeAuthServiceNative, makeAuthServiceDocker } from "./auth.ts";
 import { makeEdgeRuntimeServiceDocker, makeEdgeRuntimeServiceNative } from "./edge-runtime.ts";
 import { edgeRuntimeNofileUlimit } from "./nofile-limit.ts";
-import { makeImgproxyServiceDocker } from "./imgproxy.ts";
+import { makeImgproxyServiceDocker, makeImgproxyServiceNative } from "./imgproxy.ts";
 import { makeMailpitServiceDocker, makeMailpitServiceNative } from "./mailpit.ts";
 import { makePgmetaServiceDocker, makePgmetaServiceNative } from "./pgmeta.ts";
 import { makePostgresInitService, makePostgresInitServiceDocker } from "./postgres-init.ts";
@@ -21,6 +21,7 @@ import { dockerRunService } from "./service-utils.ts";
 import {
   LOCAL_S3_PROTOCOL_ACCESS_KEY_ID,
   LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET,
+  makeStorageServiceNative,
   makeStorageServiceDocker,
 } from "./storage.ts";
 import { makeStudioServiceDocker, makeStudioServiceNative } from "./studio.ts";
@@ -565,6 +566,88 @@ describe("native auxiliary service definitions", () => {
       path: "/readyz",
       scheme: "http",
     });
+  });
+
+  it("couples native Storage and imgproxy on one owning data root", () => {
+    const artifactRoot = "/cache/storage/v1.70.1/darwin-arm64";
+    const imgproxyArtifactRoot = "/cache/imgproxy/v3.8.0/darwin-arm64";
+    const dataDir = "/tmp/stacks/project-a/data/storage";
+    const storageDependencies = [{ service: "postgres-init", condition: "completed" }] as const;
+    const storage = makeStorageServiceNative({
+      binPath: artifactRoot,
+      port: 54331,
+      dbPort: DB_PORT,
+      dataDir,
+      anonKey: "native-anon-key",
+      serviceKey: "native-service-key",
+      jwtSecret: JWT_SECRET,
+      jwtJwks: "native-jwks",
+      fileSizeLimit: "50MiB",
+      enableImageTransformation: true,
+      imgproxyUrl: "http://127.0.0.1:54332",
+      s3ProtocolEnabled: true,
+      cleanupDataDirOnExit: true,
+      dependencies: storageDependencies,
+    });
+    const imgproxy = makeImgproxyServiceNative({
+      binPath: imgproxyArtifactRoot,
+      port: 54332,
+      dataDir,
+      dependencies: [{ service: "storage", condition: "healthy" }],
+    });
+
+    expect(storage).toMatchObject({
+      name: "storage",
+      command: `${artifactRoot}/bin/storage`,
+      dependencies: storageDependencies,
+      restart: "unless-stopped",
+      healthCheck: {
+        probe: {
+          _tag: "Http",
+          host: "127.0.0.1",
+          port: 54331,
+          path: "/status",
+          scheme: "http",
+        },
+      },
+      supervision: {
+        orphanCleanup: [{ _tag: "RemovePath", path: dataDir, recursive: true }],
+      },
+    });
+    expect(storage.env).toMatchObject({
+      SERVER_HOST: "127.0.0.1",
+      SERVER_PORT: "54331",
+      DATABASE_URL: `postgresql://supabase_storage_admin:postgres@127.0.0.1:${DB_PORT}/postgres`,
+      FILE_STORAGE_BACKEND_PATH: dataDir,
+      STORAGE_FILE_BACKEND_PATH: dataDir,
+      ENABLE_IMAGE_TRANSFORMATION: "true",
+      IMAGE_TRANSFORMATION_ENABLED: "true",
+      IMGPROXY_URL: "http://127.0.0.1:54332",
+      FILE_SIZE_LIMIT: "50MiB",
+      S3_PROTOCOL_ENABLED: "true",
+    });
+    expect(imgproxy).toMatchObject({
+      name: "imgproxy",
+      command: `${imgproxyArtifactRoot}/bin/imgproxy`,
+      dependencies: [{ service: "storage", condition: "healthy" }],
+      restart: "unless-stopped",
+      healthCheck: {
+        probe: {
+          _tag: "Http",
+          host: "127.0.0.1",
+          port: 54332,
+          path: "/health",
+          scheme: "http",
+        },
+      },
+    });
+    expect(imgproxy.env).toMatchObject({
+      IMGPROXY_BIND: "127.0.0.1:54332",
+      IMGPROXY_LOCAL_FILESYSTEM_ROOT: "/",
+      IMGPROXY_USE_ETAG: "/",
+    });
+    expect(imgproxy.env?.IMGPROXY_LOCAL_FILESYSTEM_ROOT).toBe("/");
+    expect(imgproxy).not.toHaveProperty("supervision.orphanCleanup");
   });
 });
 
