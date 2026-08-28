@@ -33,6 +33,7 @@ const config = {
     Flag.withDescription(
       "Wait for the server-side build to finish, and fail if it does not succeed. Off by default: the command returns once the deploy is accepted.",
     ),
+    Flag.withDefault(false),
   ),
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
