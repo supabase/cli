@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
@@ -42,11 +42,7 @@ import {
   type LegacyDbSession,
 } from "../../shared/legacy-db-connection.service.ts";
 import { legacyDockerRunLayer } from "../../shared/legacy-docker-run.layer.ts";
-import { LegacyEdgeRuntimeScriptError } from "../../shared/legacy-edge-runtime-script.errors.ts";
-import {
-  LegacyEdgeRuntimeScript,
-  type LegacyEdgeRuntimeRunOpts,
-} from "../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyEdgeRuntimeScript } from "../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LEGACY_START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import type { LegacyStartFlags } from "./start.command.ts";
@@ -413,10 +409,6 @@ interface SetupOpts {
   readonly networkId?: Option.Option<string>;
   /** `--experimental`/`SUPABASE_EXPERIMENTAL`. Defaults to `false`. */
   readonly experimental?: boolean;
-  /** `LegacyEdgeRuntimeScript`'s mocked stdout for the pg-delta catalog-export call (`db-setup.ts`'s `legacyTryCacheMigrationsCatalog`). Only ever reached on a fresh volume with pg-delta enabled. */
-  readonly catalogStdout?: string;
-  /** Fails the mocked catalog-export call with this message instead of succeeding. */
-  readonly catalogExportFailWith?: string;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -436,17 +428,8 @@ function setup(opts: SetupOpts = {}) {
     onSecretCopy: opts.onSecretCopy,
   });
   const dbSession = fakeDbSession();
-  const edgeRunCalls: Array<LegacyEdgeRuntimeRunOpts> = [];
   const edgeRuntime = Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
-      edgeRunCalls.push(runOpts);
-      if (opts.catalogExportFailWith !== undefined) {
-        return Effect.fail(
-          new LegacyEdgeRuntimeScriptError({ message: opts.catalogExportFailWith }),
-        );
-      }
-      return Effect.succeed({ stdout: opts.catalogStdout ?? '{"version":1}', stderr: "" });
-    },
+    run: () => Effect.succeed({ stdout: '{"version":1}', stderr: "" }),
   });
   const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
     requireSsl: () => Effect.succeed(false),
@@ -492,7 +475,7 @@ function setup(opts: SetupOpts = {}) {
     sslProbe,
   );
 
-  return { workdir, out, telemetry, analytics, child, dbSession, edgeRunCalls, layer };
+  return { workdir, out, telemetry, analytics, child, dbSession, layer };
 }
 
 /**
@@ -2404,61 +2387,6 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(out.stderrText).toContain("Initialising schema...");
           // Default config: realtime, storage, and auth are all enabled.
           expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
-        }).pipe(Effect.provide(layer));
-      },
-    );
-
-    it.live(
-      "caches the migrations catalog after a fresh-volume setup for the legacy engine",
-      () => {
-        const { layer, out, workdir, edgeRunCalls } = setup({
-          configContents: 'project_id = "demo"\n[experimental.pgdelta]\nenabled = true\n',
-          route: freshVolumeRoute(defaultRoute()),
-          catalogStdout: '{"snapshot":"ok"}',
-        });
-        writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_USE_PG_DELTA_NEXT=false\n");
-        return Effect.gen(function* () {
-          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
-          expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-          // Runs once, immediately AFTER the fresh-volume migrate+seed pipeline.
-          expect(edgeRunCalls).toHaveLength(1);
-          const tempDir = join(workdir, "supabase", ".temp", "pgdelta");
-          const catalogFiles = readdirSync(tempDir).filter((name) =>
-            name.startsWith("catalog-local-migrations-"),
-          );
-          expect(catalogFiles).toHaveLength(1);
-          expect(readFileSync(join(tempDir, catalogFiles[0]!), "utf8")).toBe('{"snapshot":"ok"}');
-        }).pipe(Effect.provide(layer));
-      },
-    );
-
-    it.live(
-      "warns without failing supabase start when the migrations-catalog export fails on a fresh volume",
-      () => {
-        const { layer, out, workdir } = setup({
-          configContents: 'project_id = "demo"\n[experimental.pgdelta]\nenabled = true\n',
-          route: freshVolumeRoute(defaultRoute()),
-          catalogExportFailWith: "edge-runtime script produced no output",
-        });
-        writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_USE_PG_DELTA_NEXT=false\n");
-        return Effect.gen(function* () {
-          const exit = yield* legacyStart(flags({ exclude: ["edge-runtime"] })).pipe(Effect.exit);
-          expect(Exit.isSuccess(exit)).toBe(true);
-          expect(out.stderrText).toContain(
-            "Warning: failed to cache migrations catalog: edge-runtime script produced no output",
-          );
-        }).pipe(Effect.provide(layer));
-      },
-    );
-
-    it.live(
-      "does not attempt to cache the migrations catalog on a fresh volume when pg-delta is disabled",
-      () => {
-        const { layer, out, edgeRunCalls } = setup({ route: freshVolumeRoute(defaultRoute()) });
-        return Effect.gen(function* () {
-          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
-          expect(edgeRunCalls).toHaveLength(0);
-          expect(out.stderrText).not.toContain("failed to cache migrations catalog");
         }).pipe(Effect.provide(layer));
       },
     );

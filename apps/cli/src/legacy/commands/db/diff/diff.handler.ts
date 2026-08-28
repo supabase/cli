@@ -338,7 +338,6 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       const explicitCtx: LegacyPgDeltaContext = {
         projectId: legacyResolvePgDeltaProjectId(cliSettings.projectId, cfg, cliSettings.workdir),
         cwd: cliSettings.workdir,
-        npmVersion: Option.getOrUndefined(cfg.pgDelta.npmVersion),
         denoVersion: cfg.denoVersion,
         projectEnv: cfg.projectEnv,
       };
@@ -546,7 +545,6 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // that helper's own doc comment.
       projectId: legacyResolvePgDeltaProjectId(cliSettings.projectId, cfg, cliSettings.workdir),
       cwd: cliSettings.workdir,
-      npmVersion: Option.getOrUndefined(cfg.pgDelta.npmVersion),
       denoVersion: cfg.denoVersion,
       projectEnv: cfg.projectEnv,
     };
@@ -565,9 +563,8 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       usePgSchema,
       pgDeltaDefault,
     });
-    // Only the next engine ignores schema_paths when building its migrations baseline.
-    const usesPgDeltaNext = useDelta && pgDelta.implementation === "next";
-    if (usesPgDeltaNext && cfg.schemaPaths !== undefined && cfg.schemaPaths.length > 0) {
+    // pg-delta ignores schema_paths when building its migrations baseline.
+    if (useDelta && cfg.schemaPaths !== undefined && cfg.schemaPaths.length > 0) {
       yield* output.raw(legacySchemaPathsTransitionWarning, "stderr");
     }
 
@@ -677,11 +674,10 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       diffResult = { sql, files: undefined };
     } else {
       yield* output.raw("Creating shadow database...\n", "stderr");
-      const migrationMode: "legacy" | "pgdelta-next" = usesPgDeltaNext ? "pgdelta-next" : "legacy";
+      const migrationMode: "legacy" | "pgdelta-next" = useDelta ? "pgdelta-next" : "legacy";
       const shadowInput = {
         ...(yield* resolveShadowRunInput()),
         targetLocal: resolved.isLocal,
-        usePgDelta: useDelta,
         migrationMode,
         // `cfg.schemaPathPatterns`, NOT `localInputs.context.config.db.migrations.schema_paths`:
         // the latter is the raw `@supabase/config` field, which never applies
@@ -689,7 +685,6 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         // resolves that env override.
         schemaPaths: cfg.schemaPathPatterns,
         pgDelta: cfg.pgDelta,
-        ctx,
       };
       // `legacyWithShadowDatabase` (`shadow-cache.ts`) owns the interrupt-safe lifecycle and the
       // cache seam — a plain create/remove pair when `SUPABASE_SHADOW_CACHE` is unset. The key's
@@ -772,13 +767,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         : legacyFindDropStatements(out);
     const writtenFiles: Array<string> = [];
     let ignoredDeclarativeAdvisory: ReturnType<typeof declarativeBaselineAdvisory> | undefined;
-    if (
-      out.length >= 2 &&
-      useDelta &&
-      pgDelta.implementation === "next" &&
-      Option.isSome(flags.file) &&
-      flags.file.value.length > 0
-    ) {
+    if (out.length >= 2 && useDelta && Option.isSome(flags.file) && flags.file.value.length > 0) {
       // This is an informational, best-effort probe only. Declarative files are
       // intentionally not inputs to normal db diff, so an unreadable or changing
       // directory must never turn a previously successful diff into a failure.

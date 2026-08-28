@@ -87,8 +87,6 @@ import {
   legacyWaitForHealthyServices,
   type LegacyHealthCheckTimeoutError,
 } from "./health-check.ts";
-import type { LegacyEdgeRuntimeScript } from "../legacy-edge-runtime-script.service.ts";
-import type { LegacyPgDeltaSslProbe } from "../legacy-pgdelta-ssl-probe.service.ts";
 import {
   LEGACY_START_STARTING_DATABASE_FROM_BACKUP_MESSAGE,
   LEGACY_START_STARTING_DATABASE_MESSAGE,
@@ -184,8 +182,6 @@ export const legacyStartDatabase = <E>(
   | LegacyDockerRun
   | RuntimeInfo
   | HttpClient.HttpClient
-  | LegacyEdgeRuntimeScript
-  | LegacyPgDeltaSslProbe
   | FileSystem.FileSystem
   | Path.Path
 > =>

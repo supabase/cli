@@ -165,10 +165,9 @@ interface LegacyDbVaultSecretToml {
 
 /**
  * Cache-key inputs from `[auth]`/`[storage]`/`[realtime]`/`[api]`/`[db.vault]`.
- * Exported so callers that build this cache-key subset directly (e.g.
- * `legacyResolveSetupInputs` in `legacy-pgdelta.cache.ts`) reference this shape
- * instead of re-declaring it inline, making field drift a compile error rather
- * than a silent cache-key gap.
+ * Exported so callers that build this cache-key subset directly reference this
+ * shape instead of re-declaring it inline, making field drift a compile error
+ * rather than a silent cache-key gap.
  */
 export interface LegacyBaselineTomlConfig {
   /** `[auth] enabled`, default true. Gates `initSchema`'s auth service migration. */
@@ -187,10 +186,7 @@ export interface LegacyBaselineTomlConfig {
   readonly vaultNames: ReadonlyArray<string>;
 }
 
-/**
- * The `[experimental.pgdelta]` subtree. `npmVersion` is sourced from
- * `supabase/.temp/pgdelta-version` (not the TOML), matching `config.Load`.
- */
+/** The `[experimental.pgdelta]` subtree. */
 export interface LegacyPgDeltaTomlConfig {
   /** `[experimental.pgdelta] enabled`, default false. `IsPgDeltaEnabled`. */
   readonly enabled: boolean;
@@ -202,8 +198,6 @@ export interface LegacyPgDeltaTomlConfig {
   readonly declarativeSchemaPath: Option.Option<string>;
   /** `[experimental.pgdelta] format_options`, a JSON string passed to pg-delta. */
   readonly formatOptions: Option.Option<string>;
-  /** `@supabase/pg-delta` npm version from `.temp/pgdelta-version`. */
-  readonly npmVersion: Option.Option<string>;
 }
 
 const DEFAULT_PORT = 54322;
@@ -979,13 +973,10 @@ const DEFAULT_SUPABASE_ENV = "development";
  * Keys {@link legacyApplyProjectEnv} copies from the project `.env` into
  * `process.env`. Kept to an allowlist of values that are read *only* via
  * `process.env` (no project-env map path) and must reflect `supabase/.env`:
- * `SUPABASE_INTERNAL_IMAGE_REGISTRY` (`legacyGetRegistryImageUrl`) and
- * `PGDELTA_NPM_REGISTRY` (`legacyPgDeltaNpmRegistryOption`, read straight from
- * `process.env` for legacy-opt-out pg-delta edge-runtime invocations). The bundled
- * next implementation never consults it. Go's
+ * `SUPABASE_INTERNAL_IMAGE_REGISTRY` (`legacyGetRegistryImageUrl`). Go's
  * `godotenv.Load` (`loadNestedEnv`) `os.Setenv`s every key from the project
- * `.env`, so both readers see a `.env`-only value there; omitting either here
- * would leave that one process.env-only reader blind to a project-`.env`-scoped
+ * `.env`, so the reader sees a `.env`-only value there; omitting it here
+ * would leave that process.env-only reader blind to a project-`.env`-scoped
  * override the shell never set.
  * Everything else is read from {@link legacyLoadProjectEnv}'s returned map
  * (`envLookup`, `legacyResolveYesWithProjectEnv`, `resolveDbPassword`) or resolved
@@ -994,10 +985,7 @@ const DEFAULT_SUPABASE_ENV = "development";
  * writing them here would let our lazily-built resolvers diverge from Go (retarget
  * the project, switch the env-file set, or leak into the Go `--experimental` proxy).
  */
-const LEGACY_PROCESS_ENV_APPLY_KEYS = [
-  "SUPABASE_INTERNAL_IMAGE_REGISTRY",
-  "PGDELTA_NPM_REGISTRY",
-] as const;
+const LEGACY_PROCESS_ENV_APPLY_KEYS = ["SUPABASE_INTERNAL_IMAGE_REGISTRY"] as const;
 
 /**
  * Load the project's nested `.env` files into a lookup map. **Pure**: it reads the
@@ -1069,10 +1057,10 @@ export const legacyLoadProjectEnv = Effect.fnUntraced(function* (
  * Apply the allowlisted project-`.env` keys (see {@link LEGACY_PROCESS_ENV_APPLY_KEYS})
  * to `process.env` **for the duration of the current scope**, then revert. This is
  * the opt-in counterpart to the pure {@link legacyLoadProjectEnv}: `bootstrap` /
- * `db push` / `db pull` / `db dump` run it around their pg_dump / migration / pg-delta
- * container work so a `SUPABASE_INTERNAL_IMAGE_REGISTRY` or `PGDELTA_NPM_REGISTRY` set
- * only in `supabase/.env` still reaches `legacyGetRegistryImageUrl` /
- * `legacyPgDeltaNpmRegistryOption` (both read `process.env` synchronously) — mirroring
+ * `db push` / `db pull` / `db dump` run it around their pg_dump / migration
+ * container work so a `SUPABASE_INTERNAL_IMAGE_REGISTRY` set
+ * only in `supabase/.env` still reaches `legacyGetRegistryImageUrl` (which reads
+ * `process.env` synchronously) — mirroring
  * the `os.Setenv` half of `loadNestedEnv`. Kept out of the shared loader so
  * SUPABASE_YES / db-password reads stay side-effect-free.
  *
@@ -1518,17 +1506,6 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   const poolerConnectionString = yield* fs
     .readFileString(poolerUrlPath)
     .pipe(Effect.map(nonEmptyString), Effect.orElseSucceed(Option.none<string>));
-
-  // The legacy pg-delta npm version is read from
-  // `.temp/pgdelta-version` (trimmed, non-empty) during Load, never from the
-  // TOML. An absent/empty file leaves it `None` (callers fall back to the
-  // default via `legacyEffectivePgDeltaNpmVersion`). The bundled next engine is
-  // fixed at CLI build time and ignores this compatibility setting.
-  const pgDeltaVersionPath = path.join(supabaseDir, ".temp", "pgdelta-version");
-  const pgDeltaNpmVersion = yield* fs.readFileString(pgDeltaVersionPath).pipe(
-    Effect.map((content) => nonEmptyString(content.trim())),
-    Effect.orElseSucceed(Option.none<string>),
-  );
 
   // `SUPABASE_DB_*` env vars override the matching `[db]` field before the TOML
   // value/default. An empty env value is ignored, and the project `.env` files are
@@ -2694,7 +2671,6 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       enabled,
       declarativeSchemaPath,
       formatOptions,
-      npmVersion: pgDeltaNpmVersion,
     },
     webhooksEnabled,
     baseline: {

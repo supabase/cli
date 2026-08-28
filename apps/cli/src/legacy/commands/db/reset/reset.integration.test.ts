@@ -41,11 +41,7 @@ import {
 } from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { legacyDockerRunLayer } from "../../../shared/legacy-docker-run.layer.ts";
-import { LegacyEdgeRuntimeScriptError } from "../../../shared/legacy-edge-runtime-script.errors.ts";
-import {
-  LegacyEdgeRuntimeScript,
-  type LegacyEdgeRuntimeRunOpts,
-} from "../../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type {
@@ -440,8 +436,6 @@ function setup(
     failStatement?: { readonly sql: string; readonly code?: string; readonly message: string };
     // pg-delta migrations-catalog cache, wired into the remote-reset path
     // after a successful migrate/schema-files + seed.
-    catalogStdout?: string;
-    catalogExportFailWith?: string;
     // Simulates a genuinely unlinked workdir: `loadProjectRef` fails with
     // `LegacyProjectNotLinkedError` absent an explicit `--project-ref` flag,
     // instead of silently falling back to `opts.ref ?? LEGACY_VALID_REF`.
@@ -473,24 +467,8 @@ function setup(
   });
   const route = opts.route ?? defaultLocalResetRoute(opts.routeOpts);
   const child = mockContainerCliSpawner(route);
-  // Backs both the local recreate's post-setup pg-delta migrations-catalog warmup
-  // (`db-setup.ts`'s `legacyTryCacheMigrationsCatalog`) and the remote path's own
-  // post-reset catalog-cache call — tracked so tests can assert on it directly
-  // (`edgeRunCalls`/`registryEnvAtRunTime`), same as `db push`'s own integration
-  // tests (`push.integration.test.ts`).
-  const edgeRunCalls: Array<LegacyEdgeRuntimeRunOpts> = [];
-  const registryEnvAtRunTime: Array<string | undefined> = [];
   const edgeRuntime = Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
-      edgeRunCalls.push(runOpts);
-      registryEnvAtRunTime.push(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]);
-      if (opts.catalogExportFailWith !== undefined) {
-        return Effect.fail(
-          new LegacyEdgeRuntimeScriptError({ message: opts.catalogExportFailWith }),
-        );
-      }
-      return Effect.succeed({ stdout: opts.catalogStdout ?? '{"version":1}', stderr: "" });
-    },
+    run: () => Effect.succeed({ stdout: '{"version":1}', stderr: "" }),
   });
   const pgDeltaSslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
     requireSsl: () => Effect.succeed(false),
@@ -555,8 +533,6 @@ function setup(
     linkedCache,
     resolver,
     child,
-    edgeRunCalls,
-    registryEnvAtRunTime,
   };
 }
 
@@ -1693,132 +1669,6 @@ describe("legacy db reset", () => {
         expect(out.stderrText).not.toContain("Seeding data from");
       });
     });
-
-    it.live(
-      "caches the migrations catalog after a successful remote reset with SUPABASE_EXPERIMENTAL_PG_DELTA set",
-      () => {
-        // Best-effort caches the pg-delta migrations catalog right after the
-        // migrate-and-seed step succeeds — gated on
-        // `experimental.pgdelta.enabled` OR the legacy
-        // `SUPABASE_EXPERIMENTAL_PG_DELTA` env switch, independent of
-        // `--experimental`'s own schema-files gate.
-        const { layer, out, edgeRunCalls } = setup(tmp.current, {
-          toml: 'project_id = "test"\n',
-          files: {
-            ...migrationFile("20240101000000"),
-            "supabase/.env": "SUPABASE_EXPERIMENTAL_PG_DELTA=true\n",
-          },
-          confirm: [true],
-        });
-        return Effect.gen(function* () {
-          yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-          expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-          expect(edgeRunCalls).toHaveLength(1);
-        });
-      },
-    );
-
-    it.live(
-      "resolves the pg-delta cache export image via SUPABASE_INTERNAL_IMAGE_REGISTRY from supabase/.env",
-      () => {
-        // The project `.env` is applied to make a `supabase/.env`-only
-        // `SUPABASE_INTERNAL_IMAGE_REGISTRY` visible to the WHOLE reset run,
-        // including the pg-delta catalog export the reset handler triggers
-        // after a successful remote reset (review CLI-1958 round 18) —
-        // mirroring `db push`'s own `legacyApplyProjectEnv(projectEnv)`
-        // scoping (same-named test in `push.integration.test.ts`). Without
-        // that scoping, this reads only real `process.env` and falls back to
-        // the default registry instead.
-        const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-        delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-        const { layer, registryEnvAtRunTime } = setup(tmp.current, {
-          toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
-          files: {
-            ...migrationFile("20240101000000"),
-            "supabase/.env": "SUPABASE_INTERNAL_IMAGE_REGISTRY=my-mirror.example.com\n",
-          },
-          confirm: [true],
-        });
-        return Effect.gen(function* () {
-          yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-          expect(registryEnvAtRunTime).toEqual(["my-mirror.example.com"]);
-          // The finalizer reverted it — never leaks into the surrounding process.
-          expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
-        }).pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (prev === undefined) delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-              else process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = prev;
-            }),
-          ),
-        );
-      },
-    );
-
-    it.live("warns without failing the reset when the migrations-catalog cache write fails", () => {
-      const { layer, out } = setup(tmp.current, {
-        toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
-        files: migrationFile("20240101000000"),
-        confirm: [true],
-        catalogExportFailWith: "edge-runtime script produced no output",
-      });
-      return Effect.gen(function* () {
-        const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
-          Effect.provide(layer),
-          Effect.exit,
-        );
-        expect(Exit.isSuccess(exit)).toBe(true);
-        expect(out.stderrText).toContain(
-          "Warning: failed to cache migrations catalog: edge-runtime script produced no output",
-        );
-      });
-    });
-
-    it.live(
-      "falls back to the linked project ref for the pg-delta cache when config.toml has no project_id",
-      () => {
-        // The project id seeds from the ref BEFORE the config loads, so on
-        // the linked remote path an absent `project_id` retains the linked
-        // ref rather than falling to the workdir basename.
-        const { layer, out, edgeRunCalls } = setup(tmp.current, {
-          toml: "[experimental.pgdelta]\nenabled = true\n",
-          ref: LEGACY_VALID_REF,
-          files: migrationFile("20240101000000"),
-          confirm: [true],
-        });
-        return Effect.gen(function* () {
-          yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-          expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-          expect(edgeRunCalls).toHaveLength(1);
-        });
-      },
-    );
-
-    it.live(
-      "skips the migrations-catalog cache for a versioned remote reset even with pg-delta caching enabled",
-      () => {
-        // `pgcache.TryCacheMigrationsCatalog` no-ops on any non-empty `version`
-        // (`pgcache/cache.go:73`, `len(version) > 0`) — a `--version`/`--last` reset
-        // never refreshes the cache, unlike a full (versionless) reset.
-        const { layer, out, edgeRunCalls } = setup(tmp.current, {
-          toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
-          files: {
-            ...migrationFile("20240101000000"),
-            ...migrationFile("20240202000000"),
-          },
-          confirm: [true],
-        });
-        return Effect.gen(function* () {
-          yield* legacyDbReset({
-            ...DEFAULT_FLAGS,
-            linked: true,
-            version: Option.some("20240101000000"),
-          }).pipe(Effect.provide(layer));
-          expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-          expect(edgeRunCalls).toHaveLength(0);
-        });
-      },
-    );
 
     it.live(
       "applies configured schema files instead of replaying migrations on an experimental remote reset",

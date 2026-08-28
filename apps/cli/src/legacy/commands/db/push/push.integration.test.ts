@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -31,11 +31,7 @@ import {
   type LegacyPgConnInput,
   type LegacyDbSession,
 } from "../../../shared/legacy-db-connection.service.ts";
-import { LegacyEdgeRuntimeScriptError } from "../../../shared/legacy-edge-runtime-script.errors.ts";
-import {
-  LegacyEdgeRuntimeScript,
-  type LegacyEdgeRuntimeRunOpts,
-} from "../../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { legacyDbPush } from "./push.handler.ts";
 import type { LegacyDbPushFlags } from "./push.command.ts";
@@ -182,8 +178,6 @@ function setup(
     noSeedTable?: boolean;
     failExec?: string;
     failExecWith?: { message: string; code?: string; detail?: string; position?: number };
-    catalogStdout?: string;
-    catalogExportFailWith?: string;
     noProjectId?: boolean;
     // Simulates the real `LegacyDbConfigResolver`'s own "Initialising login
     // role..." stderr line (`legacy-db-config.layer.ts`'s `initLoginRole`),
@@ -209,19 +203,8 @@ function setup(
   const telemetry = mockLegacyTelemetryStateTracked();
   const linkedCache = mockLegacyLinkedProjectCacheTracked();
 
-  const edgeRunCalls: Array<LegacyEdgeRuntimeRunOpts> = [];
-  const registryEnvAtRunTime: Array<string | undefined> = [];
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
-      edgeRunCalls.push(runOpts);
-      registryEnvAtRunTime.push(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]);
-      if (opts.catalogExportFailWith !== undefined) {
-        return Effect.fail(
-          new LegacyEdgeRuntimeScriptError({ message: opts.catalogExportFailWith }),
-        );
-      }
-      return Effect.succeed({ stdout: opts.catalogStdout ?? '{"version":1}', stderr: "" });
-    },
+    run: () => Effect.succeed({ stdout: '{"version":1}', stderr: "" }),
   });
   const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
     requireSsl: () => Effect.succeed(false),
@@ -286,8 +269,6 @@ function setup(
     telemetry,
     linkedCache,
     resolver,
-    edgeRunCalls,
-    registryEnvAtRunTime,
   };
 }
 
@@ -393,269 +374,6 @@ describe("legacy db push", () => {
       ).toBe(true);
     });
   });
-
-  it.live("does not attempt to cache the migrations catalog when pg-delta is disabled", () => {
-    const { layer, out, edgeRunCalls } = setup(tmp.current, {
-      toml: 'project_id = "test"\n',
-      files: migrationFile("20240101000000"),
-      confirm: [true],
-    });
-    return Effect.gen(function* () {
-      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-      expect(edgeRunCalls).toHaveLength(0);
-      expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-      expect(existsSync(join(tmp.current, "supabase", ".temp", "pgdelta"))).toBe(false);
-    });
-  });
-
-  it.live("does not start edge-runtime for the obsolete catalog warmup under default next", () => {
-    const { layer, edgeRunCalls } = setup(tmp.current, {
-      toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
-      files: migrationFile("20240101000000"),
-      confirm: [true],
-    });
-    return Effect.gen(function* () {
-      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-      expect(edgeRunCalls).toHaveLength(0);
-      expect(existsSync(join(tmp.current, "supabase", ".temp", "pgdelta"))).toBe(false);
-    });
-  });
-
-  it.live("caches the migrations catalog when project .env enables pg-delta", () => {
-    const { layer, out, edgeRunCalls } = setup(tmp.current, {
-      toml: 'project_id = "test"\n',
-      files: {
-        ...migrationFile("20240101000000"),
-        "supabase/.env": "SUPABASE_EXPERIMENTAL_PG_DELTA=true\nSUPABASE_USE_PG_DELTA_NEXT=false\n",
-      },
-      confirm: [true],
-      catalogStdout: '{"snapshot":"ok"}',
-    });
-    return Effect.gen(function* () {
-      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-      expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-      expect(edgeRunCalls).toHaveLength(1);
-      const tempDir = join(tmp.current, "supabase", ".temp", "pgdelta");
-      const catalogFiles = readdirSync(tempDir).filter((name) =>
-        name.startsWith("catalog-local-migrations-"),
-      );
-      expect(catalogFiles).toHaveLength(1);
-    });
-  });
-
-  it.live(
-    "skips the legacy catalog when an empty shell value shadows a project .env false (godotenv parity)",
-    () => {
-      // godotenv.Load never replaces a shell value, including an empty one, so
-      // an empty `SUPABASE_USE_PG_DELTA_NEXT` in the shell must suppress the
-      // `supabase/.env` fallback below and resolve to the next implementation —
-      // matching the engine-selector layer's own precedence rather than
-      // `toml.envLookup`'s (which treats an empty shell value as unset).
-      const prev = process.env["SUPABASE_USE_PG_DELTA_NEXT"];
-      process.env["SUPABASE_USE_PG_DELTA_NEXT"] = "";
-      const { layer, out, edgeRunCalls } = setup(tmp.current, {
-        toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
-        files: {
-          ...migrationFile("20240101000000"),
-          "supabase/.env": "SUPABASE_USE_PG_DELTA_NEXT=false\n",
-        },
-        confirm: [true],
-      });
-      return Effect.gen(function* () {
-        yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-        expect(edgeRunCalls).toHaveLength(0);
-        expect(existsSync(join(tmp.current, "supabase", ".temp", "pgdelta"))).toBe(false);
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (prev === undefined) delete process.env["SUPABASE_USE_PG_DELTA_NEXT"];
-            else process.env["SUPABASE_USE_PG_DELTA_NEXT"] = prev;
-          }),
-        ),
-      );
-    },
-  );
-
-  it.live("caches the migrations catalog after a successful push when pg-delta is enabled", () => {
-    const { layer, out, edgeRunCalls } = setup(tmp.current, {
-      toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
-      files: {
-        ...migrationFile("20240101000000"),
-        "supabase/.env": "SUPABASE_USE_PG_DELTA_NEXT=false\n",
-      },
-      confirm: [true],
-      catalogStdout: '{"snapshot":"ok"}',
-    });
-    return Effect.gen(function* () {
-      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-      expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-      expect(edgeRunCalls).toHaveLength(1);
-      const tempDir = join(tmp.current, "supabase", ".temp", "pgdelta");
-      const catalogFiles = readdirSync(tempDir).filter((name) =>
-        name.startsWith("catalog-local-migrations-"),
-      );
-      expect(catalogFiles).toHaveLength(1);
-      expect(readFileSync(join(tempDir, catalogFiles[0]!), "utf8")).toBe('{"snapshot":"ok"}');
-    });
-  });
-
-  it.live(
-    "falls back to config.toml's project_id for the pg-delta volume when SUPABASE_PROJECT_ID is unset",
-    () => {
-      const { layer, out, edgeRunCalls } = setup(tmp.current, {
-        toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
-        files: {
-          ...migrationFile("20240101000000"),
-          "supabase/.env": "SUPABASE_USE_PG_DELTA_NEXT=false\n",
-        },
-        confirm: [true],
-        catalogStdout: '{"snapshot":"ok"}',
-        noProjectId: true,
-      });
-      return Effect.gen(function* () {
-        yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-        expect(edgeRunCalls).toHaveLength(1);
-        // `project_id` resolves from config.toml (here "test") once no
-        // `SUPABASE_PROJECT_ID` env override wins — the pg-delta Deno-cache volume
-        // must key off that same id, not fall through to an empty/shared name.
-        expect(edgeRunCalls[0]?.binds).toContain("supabase_edge_runtime_test:/root/.cache/deno:rw");
-      });
-    },
-  );
-
-  it.live(
-    "falls back to the workdir basename for the pg-delta volume when config.toml has no project_id",
-    () => {
-      const { layer, out, edgeRunCalls } = setup(tmp.current, {
-        toml: "[experimental.pgdelta]\nenabled = true\n",
-        files: {
-          ...migrationFile("20240101000000"),
-          "supabase/.env": "SUPABASE_USE_PG_DELTA_NEXT=false\n",
-        },
-        confirm: [true],
-        catalogStdout: '{"snapshot":"ok"}',
-        noProjectId: true,
-      });
-      return Effect.gen(function* () {
-        yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-        expect(edgeRunCalls).toHaveLength(1);
-        const expectedId = basename(tmp.current);
-        expect(edgeRunCalls[0]?.binds).toContain(
-          `supabase_edge_runtime_${expectedId}:/root/.cache/deno:rw`,
-        );
-      });
-    },
-  );
-
-  it.live(
-    "falls back to the linked project ref for the pg-delta volume when config.toml has no project_id",
-    () => {
-      // The linked ref seeds `project_id` before config load runs, so on the
-      // linked path (the default target here — no `--local`/`--db-url`) an
-      // absent `project_id` retains the linked ref rather than falling to the
-      // workdir basename; only `--local`/`--db-url` (the previous test, where
-      // the ref is never seeded) fall through to the basename.
-      const { layer, out, edgeRunCalls } = setup(tmp.current, {
-        toml: "[experimental.pgdelta]\nenabled = true\n",
-        args: ["db", "push", "--linked"],
-        isLocal: false,
-        projectRef: LEGACY_VALID_REF,
-        files: {
-          ...migrationFile("20240101000000"),
-          "supabase/.env": "SUPABASE_USE_PG_DELTA_NEXT=false\n",
-        },
-        confirm: [true],
-        catalogStdout: '{"snapshot":"ok"}',
-        noProjectId: true,
-      });
-      return Effect.gen(function* () {
-        yield* legacyDbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(
-          Effect.provide(layer),
-        );
-        expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-        expect(edgeRunCalls).toHaveLength(1);
-        expect(edgeRunCalls[0]?.binds).toContain(
-          `supabase_edge_runtime_${LEGACY_VALID_REF}:/root/.cache/deno:rw`,
-        );
-      });
-    },
-  );
-
-  it.live("sanitizes an invalid config.toml project_id before naming the pg-delta volume", () => {
-    const { layer, out, edgeRunCalls } = setup(tmp.current, {
-      toml: 'project_id = "my app"\n[experimental.pgdelta]\nenabled = true\n',
-      files: {
-        ...migrationFile("20240101000000"),
-        "supabase/.env": "SUPABASE_USE_PG_DELTA_NEXT=false\n",
-      },
-      confirm: [true],
-      catalogStdout: '{"snapshot":"ok"}',
-      noProjectId: true,
-    });
-    return Effect.gen(function* () {
-      yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-      expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-      expect(edgeRunCalls).toHaveLength(1);
-      // Config validation sanitizes an invalid `project_id` (replacing the
-      // disallowed run with `_`) once at config-load time, so every later
-      // reader — including `EdgeRuntimeId` — sees the sanitized form, never
-      // the raw `"my app"`.
-      expect(edgeRunCalls[0]?.binds).toContain("supabase_edge_runtime_my_app:/root/.cache/deno:rw");
-    });
-  });
-
-  it.live("warns without failing the push when the catalog export fails", () => {
-    const { layer, out } = setup(tmp.current, {
-      toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
-      files: {
-        ...migrationFile("20240101000000"),
-        "supabase/.env": "SUPABASE_USE_PG_DELTA_NEXT=false\n",
-      },
-      confirm: [true],
-      catalogExportFailWith: "edge-runtime script produced no output",
-    });
-    return Effect.gen(function* () {
-      const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-      expect(Exit.isSuccess(exit)).toBe(true);
-      expect(out.stderrText).toContain(
-        "Warning: failed to cache migrations catalog: edge-runtime script produced no output",
-      );
-      expect(out.stdoutText).toContain("Finished");
-    });
-  });
-
-  it.live(
-    "resolves the pg-delta cache export image via SUPABASE_INTERNAL_IMAGE_REGISTRY from supabase/.env",
-    () => {
-      const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-      delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-      const { layer, registryEnvAtRunTime } = setup(tmp.current, {
-        toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
-        files: {
-          ...migrationFile("20240101000000"),
-          "supabase/.env":
-            "SUPABASE_INTERNAL_IMAGE_REGISTRY=my-mirror.example.com\nSUPABASE_USE_PG_DELTA_NEXT=false\n",
-        },
-        confirm: [true],
-        catalogStdout: '{"snapshot":"ok"}',
-      });
-      return Effect.gen(function* () {
-        yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(registryEnvAtRunTime).toEqual(["my-mirror.example.com"]);
-        expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (prev === undefined) delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
-            else process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = prev;
-          }),
-        ),
-      );
-    },
-  );
 
   it.live("returns context canceled when the migration prompt is declined", () => {
     const { layer, conn } = setup(tmp.current, {

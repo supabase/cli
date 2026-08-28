@@ -18,12 +18,10 @@ before migrations unless `--skip-vault` is set.
 
 ## Files Written
 
-| Path                                                                            | Format | When                                                                                                                                                                                                                                                                                                                                 |
-| ------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `~/.supabase/<workdir-hash>/linked-project.json`                                | JSON   | on the `--linked` path (post-run cache)                                                                                                                                                                                                                                                                                              |
-| `~/.supabase/telemetry.json`                                                    | JSON   | always (post-run telemetry flush)                                                                                                                                                                                                                                                                                                    |
-| `<workdir>/supabase/.temp/pgdelta/catalog-<prefix>-migrations-<hash>-<ts>.json` | JSON   | best-effort, after a successful migration apply, when pg-delta is enabled (`[experimental.pgdelta] enabled` or `SUPABASE_EXPERIMENTAL_PG_DELTA`) AND the legacy engine is selected (`SUPABASE_USE_PG_DELTA_NEXT=false`); the default next engine skips this warmup entirely; a failure only warns on stderr and never fails the push |
-| `<workdir>/supabase/.temp/pgdelta/pgdelta-target-ca.crt`                        | PEM    | same gate as above, when the target requires SSL (`legacyPreparePgDeltaRef`)                                                                                                                                                                                                                                                         |
+| Path                                             | Format | When                                    |
+| ------------------------------------------------ | ------ | --------------------------------------- |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | on the `--linked` path (post-run cache) |
+| `~/.supabase/telemetry.json`                     | JSON   | always (post-run telemetry flush)       |
 
 ## Database Mutations
 
@@ -44,17 +42,13 @@ before migrations unless `--skip-vault` is set.
 
 ## Environment Variables
 
-| Variable                           | Purpose                                                                                                                                                                                                                                                                           | Required?                                               |
-| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN`            | auth token for the `--linked` resolver path                                                                                                                                                                                                                                       | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_DB_PASSWORD`             | password for the linked/remote connection                                                                                                                                                                                                                                         | no (`--password`/`-p` takes precedence)                 |
-| `SUPABASE_YES`                     | auto-confirm prompts                                                                                                                                                                                                                                                              | no (also `--yes`)                                       |
-| `SUPABASE_PROJECT_ID`              | linked-ref resolution override, superseded by `--project-ref` when set (same precedence position); also independently feeds the pg-delta migrations-catalog cache's project id, which `--project-ref` does NOT affect — see Notes                                                 | no                                                      |
-| `DOTENV_PRIVATE_KEY*`              | decrypts `encrypted:` config secrets; `[db.vault]` values are not decrypted with `--skip-vault`                                                                                                                                                                                   | no                                                      |
-| `SUPABASE_EXPERIMENTAL_PG_DELTA`   | enables the migrations-catalog cache when `[experimental.pgdelta].enabled` is unset                                                                                                                                                                                               | no (project `.env` or shell)                            |
-| `SUPABASE_USE_PG_DELTA_NEXT`       | selects the pg-delta implementation; `false` selects the legacy edge-runtime engine and thereby restores the migrations-catalog cache warmup (unset/unrecognized defaults to the next engine, which skips it); shell presence wins over project `.env`, even an empty shell value | no (project `.env` or shell)                            |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | overrides the pg-delta edge-runtime image registry for the cache export                                                                                                                                                                                                           | no (project `.env` or shell)                            |
-| `PGDELTA_NPM_REGISTRY`             | overrides the pg-delta edge-runtime npm registry (`.npmrc` + `NPM_CONFIG_REGISTRY` forward) for the cache export                                                                                                                                                                  | no (project `.env` or shell)                            |
+| Variable                | Purpose                                                                                                       | Required?                                               |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token for the `--linked` resolver path                                                                   | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_DB_PASSWORD`  | password for the linked/remote connection                                                                     | no (`--password`/`-p` takes precedence)                 |
+| `SUPABASE_YES`          | auto-confirm prompts                                                                                          | no (also `--yes`)                                       |
+| `SUPABASE_PROJECT_ID`   | linked-ref resolution override, superseded by `--project-ref` when set (same precedence position) — see Notes | no                                                      |
+| `DOTENV_PRIVATE_KEY*`   | decrypts `encrypted:` config secrets; `[db.vault]` values are not decrypted with `--skip-vault`               | no                                                      |
 
 ## Exit Codes
 
@@ -102,9 +96,7 @@ stdout is payload-only. A single `result` object is emitted:
   exclusive; with no flag the target defaults to linked.
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
   command) overrides ONLY the linked-ref resolution `LegacyProjectRefResolver`
-  performs (flag > `SUPABASE_PROJECT_ID` > `~/.supabase/<hash>/project-ref`) —
-  it does not affect the pg-delta migrations-catalog cache's project id, which
-  still derives from `SUPABASE_PROJECT_ID`/config.toml/workdir basename only.
+  performs (flag > `SUPABASE_PROJECT_ID` > `~/.supabase/<hash>/project-ref`).
   It never implies `--linked`: passing it with a resolved `--local`/`--db-url`
   target is a hard error rather than a silently discarded flag (deliberately
   stricter than `SUPABASE_PROJECT_ID`, which simply goes unused on a
@@ -129,14 +121,3 @@ stdout is payload-only. A single `result` object is emitted:
   Prefer idempotent forms (`CREATE INDEX CONCURRENTLY IF NOT EXISTS …`) and isolating
   such statements in their own migration file. Intentional fix for supabase/cli#5139,
   adopted into TS in PR supabase/cli#5671 (landed on develop as `b48fad60`).
-- **Migrations catalog cache**: after a successful migration apply, when pg-delta
-  is enabled AND the legacy engine is selected (`SUPABASE_USE_PG_DELTA_NEXT=false`
-  — the default next engine skips this warmup entirely), exports the target's
-  pg-delta catalog via the edge-runtime stack
-  and writes it under `supabase/.temp/pgdelta/`, pruning older snapshots for the
-  same prefix (retains 2). A failure only warns on stderr
-  (`Warning: failed to cache migrations catalog: …`) and never fails the push.
-  Reuses `legacyExportCatalogPgDelta` (the same pg-delta export path
-  `db pull`/`db diff` use, which always mounts the project root at `/workspace`)
-  rather than a second copy, so an ENOENT bug present in an earlier
-  implementation (supabase/cli#5921) has no equivalent here.

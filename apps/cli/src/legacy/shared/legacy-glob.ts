@@ -115,7 +115,7 @@ export const legacyGlobPattern = (
  * supplementary-plane codepoint (`>= U+10000 > U+FFFF`) AFTER it. Verified empirically:
  * `["a\u{1F600}.sql","a.sql"].sort()` (default) disagrees with `Buffer.compare` on the
  * same two strings' UTF-8 bytes. Used for every `sort.Strings` this module (and its callers
- * across `legacy-shadow-source.ts`/`legacy-pgdelta.cache.ts`) ports, so a directory with such
+ * across `legacy-shadow-source.ts`/`legacy-migration-list.ts`) ports, so a directory with such
  * filenames applies/lists in the same order Go would.
  */
 export function legacyCompareUtf8Bytes(a: string, b: string): number {

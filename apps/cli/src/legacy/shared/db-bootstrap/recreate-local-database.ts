@@ -95,14 +95,12 @@ import { LegacyDbConnection, type LegacyDbSession } from "../legacy-db-connectio
 import { LegacyDbExecError, type LegacyDbConnectError } from "../legacy-db-connection.errors.ts";
 import { LEGACY_CLI_PROJECT_LABEL } from "../legacy-docker-ids.ts";
 import type { LegacyDockerRun } from "../legacy-docker-run.service.ts";
-import type { LegacyEdgeRuntimeScript } from "../legacy-edge-runtime-script.service.ts";
 import { legacyMigrateAndSeed } from "../legacy-migrate-and-seed.ts";
 import {
   legacyFormatExecBatchError,
   type LegacyMigrationApplyError,
 } from "../legacy-migration-apply.ts";
 import { legacyErrorMessage } from "../legacy-error-message.ts";
-import type { LegacyPgDeltaSslProbe } from "../legacy-pgdelta-ssl-probe.service.ts";
 import type { LegacyMigrationSeedError } from "../legacy-seed.ts";
 import {
   legacyEnsureNetwork,
@@ -364,8 +362,6 @@ const legacyRecreateLocalDatabase15 = <E>(
   | LegacyDockerRun
   | RuntimeInfo
   | HttpClient.HttpClient
-  | LegacyEdgeRuntimeScript
-  | LegacyPgDeltaSslProbe
   | FileSystem.FileSystem
   | Path.Path
 > =>
@@ -434,8 +430,6 @@ const legacyRecreateLocalDatabase14 = <E>(
   | LegacyDockerRun
   | RuntimeInfo
   | HttpClient.HttpClient
-  | LegacyEdgeRuntimeScript
-  | LegacyPgDeltaSslProbe
   | FileSystem.FileSystem
   | Path.Path
 > =>
@@ -540,8 +534,6 @@ export const legacyRecreateLocalDatabase = <E>(
   | LegacyDockerRun
   | RuntimeInfo
   | HttpClient.HttpClient
-  | LegacyEdgeRuntimeScript
-  | LegacyPgDeltaSslProbe
   | FileSystem.FileSystem
   | Path.Path
 > =>

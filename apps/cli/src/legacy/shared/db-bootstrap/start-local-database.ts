@@ -137,9 +137,7 @@ export const legacyStartLocalDatabase = Effect.fnUntraced(function* (fromBackupF
   // Realtime/Storage/Auth migrate job tees its own stderr (`db-setup.ts`'s
   // `legacyRunStartMigrateJob`). Resolved with the `SUPABASE_DEBUG` shell/project-`.env`
   // fallback, not the bare flag: every Go debug read on this path went through
-  // `viper.GetBool("DEBUG")` under `AutomaticEnv`, and the sibling shadow-provision path
-  // (`legacy-pgdelta.cache.ts`'s `legacyBuildShadowCatalogInputs`) already resolves it the
-  // same way.
+  // `viper.GetBool("DEBUG")` under `AutomaticEnv`.
   const debug = yield* legacyResolveDebugWithProjectEnv(dbTomlValues.projectEnv);
 
   // The rest of config loading — full config decode/resolution (`legacyLoadLocalProjectContext`)

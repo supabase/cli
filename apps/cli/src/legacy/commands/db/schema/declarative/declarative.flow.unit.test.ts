@@ -30,7 +30,6 @@ const classifyGap = (
   overrides: Partial<Parameters<typeof legacyClassifyDeclarativeCompatibilityGap>[0]> = {},
 ) =>
   legacyClassifyDeclarativeCompatibilityGap({
-    implementation: "next",
     manifestPresent: false,
     removals,
     ...overrides,
@@ -40,7 +39,6 @@ const classifyLoad = (
   overrides: Partial<Parameters<typeof legacyClassifyDeclarativeLoadCompatibility>[0]>,
 ) =>
   legacyClassifyDeclarativeLoadCompatibility({
-    implementation: "next",
     manifestPresent: false,
     diagnostics: [],
     files: [],
@@ -79,11 +77,6 @@ describe("legacyClassifyDeclarativeCompatibilityGap", () => {
     {
       name: "trusts a next export manifest",
       overrides: { manifestPresent: true },
-      expected: { recommendedAction: "none" },
-    },
-    {
-      name: "leaves legacy behavior unchanged",
-      overrides: { implementation: "legacy" as const },
       expected: { recommendedAction: "none" },
     },
     {
@@ -325,28 +318,23 @@ describe("legacyClassifyDeclarativeLoadCompatibility", () => {
     });
   });
 
-  it("requires next, no manifest, and an error-level non-converging diagnostic", () => {
+  it("requires no manifest and an error-level non-converging diagnostic", () => {
     const files = [{ name: "members.sql", sql: "select extensions.uuid_generate_v4();" }];
     const diagnostic = stuck("members.sql: function extensions.uuid_generate_v4() does not exist");
     const classify = (
-      implementation: "legacy" | "next",
       manifestPresent: boolean,
       diagnostics: ReadonlyArray<{ code: string; severity: string; message: string }>,
     ) =>
       classifyLoad({
-        implementation,
         manifestPresent,
         diagnostics,
         files,
       });
 
-    expect(classify("legacy", false, [diagnostic])).toEqual([]);
-    expect(classify("next", true, [diagnostic])).toEqual([]);
-    expect(classify("next", false, [{ ...diagnostic, severity: "warning" }])).toEqual([]);
-    expect(classify("next", false, [{ ...diagnostic, code: "invalid_routine_body" }])).toEqual([]);
-    expect(classify("next", false, [{ ...diagnostic, code: "max_rounds_exceeded" }])).toHaveLength(
-      1,
-    );
+    expect(classify(true, [diagnostic])).toEqual([]);
+    expect(classify(false, [{ ...diagnostic, severity: "warning" }])).toEqual([]);
+    expect(classify(false, [{ ...diagnostic, code: "invalid_routine_body" }])).toEqual([]);
+    expect(classify(false, [{ ...diagnostic, code: "max_rounds_exceeded" }])).toHaveLength(1);
   });
 
   it("does not classify an extension already declared anywhere in the tree", () => {
