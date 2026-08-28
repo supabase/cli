@@ -315,7 +315,7 @@ jobs:
           jq 'del(.["$schema"])' .github/ai-review/findings.schema.json > /tmp/ai-review/findings.schema.json
 
       # Safety strategy (drop-sudo + read-only), verified against the pinned
-      # openai/codex-action@86365089…'s action.yml + src/runCodexExec.ts — see
+      # openai/codex-action@52fe01ec…'s action.yml + src/runCodexExec.ts — see
       # the adjudicate job below for the full rationale. In short: Codex runs as
       # a non-sudo-capable user, in a sandbox with no filesystem writes and no
       # network, with no `codex-args`/`--sandbox` duplication.
@@ -464,7 +464,7 @@ jobs:
           jq 'del(.["$schema"])' .github/ai-review/merged-review.schema.json > /tmp/ai-review/merged-review.schema.json
 
       # Safety strategy, verified against the pinned
-      # openai/codex-action@86365089…'s action.yml + src/runCodexExec.ts:
+      # openai/codex-action@52fe01ec…'s action.yml + src/runCodexExec.ts:
       #   - `safety-strategy: read-only` forces codex-exec's legacy sandbox to
       #     read-only, but Codex still runs as the action's default,
       #     sudo-capable user — the action's own docs/security.md calls this
