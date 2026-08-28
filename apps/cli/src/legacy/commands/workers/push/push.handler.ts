@@ -66,6 +66,11 @@ import type { LegacyWorkersPushFlags } from "./push.command.ts";
  * code takes the same path, with the base image and a copy synthesized in place
  * of your Dockerfile. Every runtime this CLI offers has code to package, so
  * there is no path here that skips the upload.
+ *
+ * The command returns once the platform accepts the deploy. The container build
+ * that follows runs for minutes, and blocking on it made every successful
+ * deploy as slow as the slowest one — so `--wait` opts into the build's
+ * verdict, for CI and for anyone who needs the image version before continuing.
  */
 
 const resolveRuntime = Effect.fnUntraced(function* (options: {
@@ -176,6 +181,8 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
   readonly name: string;
   readonly projectRef: string;
   readonly instances: Option.Option<number>;
+  /** `--wait`: block on the server-side build instead of returning once it starts. */
+  readonly wait: boolean;
   readonly pollSchedule?: Schedule.Schedule<unknown>;
   readonly pollRetrySchedule?: Schedule.Schedule<unknown>;
   /** Suppresses this step's human output when `-o` owns stdout. */
@@ -315,17 +322,26 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
   };
 
   const deploying = yield* output.task("Deploying worker...");
-  yield* deployWorker(api, projectRef, name, { spec, contextUploadId }).pipe(
+  // The response to the deploy itself is the last thing this command can learn
+  // without waiting: the platform answers it only after accepting the spec and
+  // the uploaded context, and it carries the accepted spec back. Everything
+  // after this point is the server-side container build.
+  const accepted = yield* deployWorker(api, projectRef, name, { spec, contextUploadId }).pipe(
     Effect.tapError(() => deploying.fail()),
   );
 
-  const settled = yield* awaitWorkerBuild(api, projectRef, name, {
-    schedule: input.pollSchedule,
-    retrySchedule: input.pollRetrySchedule,
-    onPoll: (polled) =>
-      polled.buildState === "building" ? deploying.message("Building worker...") : Effect.void,
-  }).pipe(Effect.tapError(() => deploying.fail()));
+  const settled = input.wait
+    ? yield* awaitWorkerBuild(api, projectRef, name, {
+        schedule: input.pollSchedule,
+        retrySchedule: input.pollRetrySchedule,
+        onPoll: (polled) =>
+          polled.buildState === "building" ? deploying.message("Building worker...") : Effect.void,
+      }).pipe(Effect.tapError(() => deploying.fail()))
+    : accepted;
 
+  // Checked whether or not the build was waited on. A deploy answered with a
+  // spec already in `failed` is a refusal the command should report as one,
+  // rather than exiting zero on a worker that will never come up.
   if (settled.buildState === "failed") {
     yield* deploying.clear();
     return yield* Effect.fail(
@@ -358,11 +374,22 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
       legacyRenderWorkerDetails([
         ["Runtime", runtime],
         ["Size", formatApiSize(settled.spec.size)],
+        // Empty without `--wait`: no image exists until the build produces one,
+        // and `legacyRenderWorkerDetails` drops an empty-valued row.
         ["Image", settled.imageVersion ?? ""],
         ["Access", settled.spec.exposure],
         ["URL", url ?? ""],
       ]),
     );
+    if (settled.buildState === "building") {
+      // stderr, like every other progress line here: the deploy is accepted but
+      // the worker is not serving yet, and the user needs somewhere to look.
+      yield* output.raw(
+        `The build is still running. Check on it with \`supabase workers status ${name}\`, ` +
+          `or pass --wait to block until it finishes.\n`,
+        "stderr",
+      );
+    }
   }
 
   return {
@@ -389,6 +416,10 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
  * per-project capacity and shred the progress output. The first failure stops
  * the run, because a build that failed is usually the thing to fix before
  * spending minutes on the rest.
+ *
+ * Without `--wait` that serialization only covers the package/upload/deploy
+ * legs; the builds themselves then run concurrently on the platform, which is
+ * what the caller asked for by not waiting.
  */
 export const legacyWorkersPush = Effect.fn("legacy.workers.push")(function* (
   flags: LegacyWorkersPushFlags,
@@ -450,6 +481,7 @@ export const legacyWorkersPush = Effect.fn("legacy.workers.push")(function* (
           name,
           projectRef,
           instances: flags.instances,
+          wait: flags.wait,
           machineOutput,
           ...(options.pollSchedule === undefined ? {} : { pollSchedule: options.pollSchedule }),
           ...(options.pollRetrySchedule === undefined

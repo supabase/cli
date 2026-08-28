@@ -24,6 +24,16 @@ const config = {
     ),
     Flag.optional,
   ),
+  wait: Flag.boolean("wait").pipe(
+    // Off by default: the deploy POST is answered once the platform has accepted
+    // the spec and the uploaded context, and the server-side container build
+    // that follows routinely runs for minutes. Blocking on it made the common
+    // case — a deploy that builds fine — the slowest thing in the loop, so the
+    // wait is opt-in for the callers that actually need the build's verdict.
+    Flag.withDescription(
+      "Wait for the server-side build to finish, and fail if it does not succeed. Off by default: the command returns once the deploy is accepted.",
+    ),
+  ),
   projectRef: Flag.string("project-ref").pipe(
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
@@ -50,6 +60,10 @@ export const legacyWorkersPushCommand = Command.make("push", config).pipe(
     {
       command: "supabase workers push api web",
       description: "Deploy several workers by name",
+    },
+    {
+      command: "supabase workers push api --wait",
+      description: "Deploy and block until the build succeeds or fails",
     },
   ]),
   Command.withHandler((flags) =>

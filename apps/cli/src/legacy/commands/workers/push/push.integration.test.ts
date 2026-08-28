@@ -42,6 +42,9 @@ function flags(overrides: Partial<LegacyWorkersPushFlags> = {}): LegacyWorkersPu
   return {
     names: ["api"],
     instances: Option.none(),
+    // Mirrors the command default: the deploy returns once accepted, and only
+    // the scenarios that are about the build itself opt into waiting.
+    wait: false,
     projectRef: Option.none(),
     ...overrides,
   };
@@ -107,7 +110,7 @@ function push(flagOverrides: Partial<LegacyWorkersPushFlags> = {}) {
 }
 
 describe("legacy workers push", () => {
-  it.live("packages, uploads, deploys and waits for the build to settle", () => {
+  it.live("packages, uploads and deploys, returning once the deploy is accepted", () => {
     const repo = project();
     const { layer, out, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
 
@@ -118,7 +121,6 @@ describe("legacy workers push", () => {
         `POST ${workersRoute("/api/uploads")}`,
         "PUT /deploy-context/api.tar.gz",
         `POST ${workersRoute("/api/deploy")}`,
-        `GET ${workersRoute("/api")}`,
       ]);
 
       const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
@@ -143,6 +145,29 @@ describe("legacy workers push", () => {
       expect(out.stdoutText).toContain("Deployed Worker api");
       expect(out.stdoutText).toContain("Runtime");
       expect(out.stdoutText).toContain(`https://${WORKERS_PROJECT_REF}.supabase.co/workers/v1/api`);
+      // No image exists yet, so the row is dropped rather than rendered empty.
+      expect(out.stdoutText).not.toContain("Image");
+      expect(out.stderrText).toContain("supabase workers status api");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("waits for the build to settle when --wait is passed", () => {
+    const repo = project();
+    const { layer, out, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      yield* push({ wait: true });
+
+      expect(http.routeKeys).toEqual([
+        `POST ${workersRoute("/api/uploads")}`,
+        "PUT /deploy-context/api.tar.gz",
+        `POST ${workersRoute("/api/deploy")}`,
+        `GET ${workersRoute("/api")}`,
+      ]);
+
+      expect(out.stdoutText).toContain("Deployed Worker api");
+      expect(out.stdoutText).toContain("v1");
+      expect(out.stderrText).not.toContain("supabase workers status api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -265,7 +290,7 @@ describe("legacy workers push", () => {
     });
 
     return Effect.gen(function* () {
-      yield* push();
+      yield* push({ wait: true });
 
       const polls = http.routeKeys.filter((key) => key === `GET ${workersRoute("/api")}`);
       expect(polls).toHaveLength(3);
@@ -291,7 +316,7 @@ describe("legacy workers push", () => {
     });
 
     return Effect.gen(function* () {
-      const error = yield* push().pipe(Effect.flip);
+      const error = yield* push({ wait: true }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerBuildFailedError);
       expect((error as WorkerBuildFailedError).detail).toContain("error building image");
@@ -312,9 +337,9 @@ describe("legacy workers push", () => {
     });
 
     return Effect.gen(function* () {
-      const error = yield* legacyWorkersPush(flags(), { pollSchedule: Schedule.recurs(2) }).pipe(
-        Effect.flip,
-      );
+      const error = yield* legacyWorkersPush(flags({ wait: true }), {
+        pollSchedule: Schedule.recurs(2),
+      }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerBuildTimeoutError);
       expect((error as { suggestion: string }).suggestion).toContain("supabase workers status api");
@@ -633,7 +658,7 @@ describe("legacy workers push", () => {
     });
 
     return Effect.gen(function* () {
-      yield* push();
+      yield* push({ wait: true });
 
       // The blip was retried rather than aborting a deploy already in flight.
       expect(
@@ -782,7 +807,7 @@ describe("legacy workers push", () => {
     });
 
     return Effect.gen(function* () {
-      yield* push();
+      yield* push({ wait: true });
 
       const success = out.messages.findLast(
         (message) => message.type === "success" && message.data !== undefined,
@@ -798,6 +823,37 @@ describe("legacy workers push", () => {
           instances: 1,
           build_state: "active",
           image_version: "v1",
+          url: `https://${WORKERS_PROJECT_REF}.supabase.co/workers/v1/api`,
+        },
+      ]);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Without `--wait` the payload reports the accepted deploy rather than a
+  // finished one: the build has not produced an image, and saying `active`
+  // would tell a script the worker is already serving.
+  it.live("reports the build as still running in json mode without --wait", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      format: "json",
+      routes: routes(),
+    });
+
+    return Effect.gen(function* () {
+      yield* push();
+
+      const success = out.messages.findLast(
+        (message) => message.type === "success" && message.data !== undefined,
+      );
+      expect(success?.data?.["workers"]).toEqual([
+        {
+          worker_name: "api",
+          runtime: "node",
+          size: "2gb-1vcpu",
+          exposure: "public",
+          instances: 1,
+          build_state: "building",
           url: `https://${WORKERS_PROJECT_REF}.supabase.co/workers/v1/api`,
         },
       ]);

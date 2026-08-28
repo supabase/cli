@@ -32,20 +32,24 @@
 | `GET`  | `/v2/projects/{ref}/workers/{name}`          | Bearer token                                | none                                                | `build_state`, `state_reason`, `image_version`, `spec` |
 | `GET`  | `/v1/projects/{ref}`                         | Bearer token                                | none                                                | linked-project cache miss only — name, org, region     |
 
-`GET` is polled until `build_state` leaves `building`.
+`GET /v2/projects/{ref}/workers/{name}` is requested **only with `--wait`**, and
+is then polled until `build_state` leaves `building`. Without it the command
+returns on the deploy response, which carries the accepted spec and a
+`build_state` of `building`.
 
 ## Exit Codes
 
-| Code | Condition                                               |
-| ---- | ------------------------------------------------------- |
-| `0`  | success                                                 |
-| `1`  | no workers named and none found in the project          |
-| `1`  | a worker's source is missing, not a directory, or empty |
-| `1`  | a worker's source directory cannot be read              |
-| `1`  | a worker's source links to a path outside itself        |
-| `1`  | build context upload failed                             |
-| `1`  | the build reached `failed`, or never left `building`    |
-| `1`  | API error, or project not enrolled in the alpha         |
+| Code | Condition                                                           |
+| ---- | ------------------------------------------------------------------- |
+| `0`  | success                                                             |
+| `1`  | no workers named and none found in the project                      |
+| `1`  | a worker's source is missing, not a directory, or empty             |
+| `1`  | a worker's source directory cannot be read                          |
+| `1`  | a worker's source links to a path outside itself                    |
+| `1`  | build context upload failed                                         |
+| `1`  | the deploy was answered with `build_state: failed`                  |
+| `1`  | with `--wait`: the build reached `failed`, or never left `building` |
+| `1`  | API error, or project not enrolled in the alpha                     |
 
 ## Environment Variables
 
