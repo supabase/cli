@@ -17,6 +17,7 @@ import {
   legacyBuildRealtimeEnv,
 } from "../../../shared/db-bootstrap/realtime-env.ts";
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
+import { legacyUsesSlimRuntime } from "../../../shared/legacy-docker-registry.ts";
 import { legacyStartInternalDbPassword } from "../../../shared/db-bootstrap/internal-db-connection.ts";
 
 export interface LegacyRealtimeContainerSpecInput {
@@ -59,18 +60,27 @@ export function legacyBuildRealtimeContainerSpec(
     exposedPorts: [{ containerPort: "4000" }],
     healthcheck: {
       // Podman splits command by spaces unless quoted, but curl's header can't be
-      // quoted, hence this exec-form `test` array.
-      test: [
-        "CMD",
-        "curl",
-        "-sSfL",
-        "--head",
-        "-o",
-        "/dev/null",
-        "-H",
-        `Host:${LEGACY_REALTIME_TENANT_ID}`,
-        "http://127.0.0.1:4000/api/ping",
-      ],
+      // quoted, hence this exec-form `test` array. Slim has wget, not curl.
+      test: legacyUsesSlimRuntime(input.image)
+        ? [
+            "CMD",
+            "wget",
+            "-q",
+            "--spider",
+            `--header=Host:${LEGACY_REALTIME_TENANT_ID}`,
+            "http://127.0.0.1:4000/api/ping",
+          ]
+        : [
+            "CMD",
+            "curl",
+            "-sSfL",
+            "--head",
+            "-o",
+            "/dev/null",
+            "-H",
+            `Host:${LEGACY_REALTIME_TENANT_ID}`,
+            "http://127.0.0.1:4000/api/ping",
+          ],
       intervalSeconds: 10,
       timeoutSeconds: 2,
       retries: 3,

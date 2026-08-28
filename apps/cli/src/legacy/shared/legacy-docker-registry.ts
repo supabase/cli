@@ -19,6 +19,8 @@ const DEFAULT_SUPABASE_REGISTRY = `${DEFAULT_REGISTRY}/supabase`;
 const GHCR_REGISTRY = "ghcr.io";
 const GHCR_SUPABASE_REGISTRY = `${GHCR_REGISTRY}/supabase`;
 const DOCKER_HUB_REGISTRY = "docker.io";
+/** Slim images live under the supabase/cli image namespace. */
+const SLIM_IMAGE_REPO = "/supabase/cli/";
 
 function dedupe(values: ReadonlyArray<string>): ReadonlyArray<string> {
   return [...new Set(values)];
@@ -51,6 +53,11 @@ function legacyGetRegistryOverride(
 
 function legacyGetRegistry(projectEnvValues?: Readonly<Record<string, string>>): string {
   return legacyGetRegistryOverride(projectEnvValues) ?? DEFAULT_REGISTRY;
+}
+
+/** True when `image` is a slim-services image (`ghcr.io/supabase/cli/…`). */
+export function legacyUsesSlimRuntime(image: string): boolean {
+  return image.includes(SLIM_IMAGE_REPO) || image.startsWith("supabase/cli/");
 }
 
 export function legacyGetRegistryImageUrl(

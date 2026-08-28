@@ -57,6 +57,21 @@ describe("legacyBuildLogflareContainerSpec", () => {
     expect(spec.networkId).toBe("supabase_network_proj");
   });
 
+  test("uses wget --spider on slim images and keeps the run.sh override", () => {
+    const spec = legacyBuildLogflareContainerSpec({
+      ...base,
+      image: "ghcr.io/supabase/cli/analytics:v1.50.4",
+    });
+    expect(spec.entrypoint).toBe("sh");
+    expect(spec.healthcheck?.test).toEqual([
+      "CMD",
+      "wget",
+      "-q",
+      "--spider",
+      "http://127.0.0.1:4000/health",
+    ]);
+  });
+
   test("emits the common DB_*/LOGFLARE_* env vars regardless of backend (start.go:315-330)", () => {
     const spec = legacyBuildLogflareContainerSpec(base);
     expect(spec.env).toMatchObject({

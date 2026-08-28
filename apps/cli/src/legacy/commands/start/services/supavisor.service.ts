@@ -40,6 +40,7 @@
 
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
+import { legacyUsesSlimRuntime } from "../../../shared/legacy-docker-registry.ts";
 import {
   legacyRenderStartPoolerExs,
   type LegacyStartPoolerExsFields,
@@ -181,15 +182,17 @@ export function legacyBuildSupavisorContainerSpec(
     ],
     ports: [{ hostPort: String(input.port), containerPort: dockerPort }],
     healthcheck: {
-      test: [
-        "CMD",
-        "curl",
-        "-sSfL",
-        "--head",
-        "-o",
-        "/dev/null",
-        "http://127.0.0.1:4000/api/health",
-      ],
+      test: legacyUsesSlimRuntime(input.image)
+        ? ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:4000/api/health"]
+        : [
+            "CMD",
+            "curl",
+            "-sSfL",
+            "--head",
+            "-o",
+            "/dev/null",
+            "http://127.0.0.1:4000/api/health",
+          ],
       intervalSeconds: 10,
       timeoutSeconds: 2,
       retries: 3,

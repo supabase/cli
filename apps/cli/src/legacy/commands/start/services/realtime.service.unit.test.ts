@@ -50,6 +50,21 @@ describe("legacyBuildRealtimeContainerSpec", () => {
     });
   });
 
+  test("uses wget --spider on slim images", () => {
+    const spec = legacyBuildRealtimeContainerSpec({
+      ...input,
+      image: "ghcr.io/supabase/cli/realtime:v2.129.3",
+    });
+    expect(spec.healthcheck?.test).toEqual([
+      "CMD",
+      "wget",
+      "-q",
+      "--spider",
+      "--header=Host:realtime-dev",
+      "http://127.0.0.1:4000/api/ping",
+    ]);
+  });
+
   test("network aliases are 'realtime' and the tenant id", () => {
     const spec = legacyBuildRealtimeContainerSpec(input);
     expect(spec.networkAliases).toEqual(["realtime", "realtime-dev"]);

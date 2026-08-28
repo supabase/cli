@@ -3,7 +3,21 @@ import { describe, expect, it } from "vitest";
 import {
   legacyGetRegistryImageUrl,
   legacyGetRegistryImageUrlCandidates,
+  legacyUsesSlimRuntime,
 } from "./legacy-docker-registry.ts";
+
+describe("legacyUsesSlimRuntime", () => {
+  it("matches slim-services GHCR images", () => {
+    expect(legacyUsesSlimRuntime("ghcr.io/supabase/cli/realtime:v2.129.3")).toBe(true);
+    expect(legacyUsesSlimRuntime("supabase/cli/analytics:v1.50.4")).toBe(true);
+  });
+
+  it("does not match docker.io family mirrors", () => {
+    expect(legacyUsesSlimRuntime("supabase/realtime:v2.129.3")).toBe(false);
+    expect(legacyUsesSlimRuntime("ghcr.io/supabase/gotrue:v2.196.0")).toBe(false);
+    expect(legacyUsesSlimRuntime("public.ecr.aws/supabase/logflare:1.50.4")).toBe(false);
+  });
+});
 
 describe("legacyGetRegistryImageUrl", () => {
   const withRegistry = <T>(value: string | undefined, fn: () => T): T => {
