@@ -326,3 +326,39 @@ Implementation continues after recording a ruling; this file is not a question q
 - Effect lint over all Task 5 sources and tests — passed with zero warnings.
 - Formatting and `git diff --check` — passed; no matching Supervisor processes or control sockets
   remained after the integration suites.
+
+### Task 6 — 2026-08-29
+
+- Added the exact private `RuntimeDriver` boundary and a deterministic desired-state planner. Running
+  reconciliation starts in dependency order; stop, destroy, stale-generation replacement, and
+  duplicate-resource cleanup quiesce active resources before removal in reverse dependency order.
+  Every runtime mutation uses the full StackId, desired generation, workload id, and semantic spec
+  hash.
+- Added one Supervisor-local reconciliation semaphore and generation fences before and after every
+  mutation and observation boundary. Independent branches continue after a workload failure, while
+  the complete transitive dependent closure is blocked and any already-running descendants are
+  stopped and removed child-first.
+- Readiness uses a deadline and bounded `Schedule` retry policy. Exhaustion is scoped by stack,
+  generation, and workload, persists across repeated running reconciliation, resets on an explicit
+  stopped/destroying intent, and starts fresh for a new generation. Retry control classifies the
+  complete failed `Cause` before scheduling so defects and interruption are never collapsed into an
+  ordinary workload failure.
+- Added complete status projections backed by `SubscriptionRef`; every watcher begins with the
+  current snapshot. Added owner-only bounded retained logs with strict persisted decoding, opaque
+  monotonic cursors, capability filters, exact known-secret redaction before persistence and live
+  publication, and one semaphore-protected retained-to-live `PubSub` handoff without gaps or
+  duplicates.
+- Retained log limits reject non-finite or undersized configurations, existing log directories and
+  files are repaired to `0700`/`0600`, and retained entries are re-redacted and republished
+  atomically when the current known-secret set newly matches old content.
+- Review RED/GREEN evidence: the first package run exposed duplicate blocked reports and a hanging
+  readiness scenario; later regression coverage exposed unsafe stale-resource cleanup, restart
+  budgets surviving explicit stop, and a mixed driver cause being reduced to a normal failure. The
+  final implementations and observable, Deferred/TestClock-coordinated scenarios cover each case.
+- `pnpm --dir packages/stack types:check` — passed.
+- `pnpm --dir packages/stack test:unit:run -- Reconciler.unit.test.ts` — passed (4 tests).
+- `pnpm --dir packages/stack test:integration:run -- reconciler.integration.test.ts observability.integration.test.ts`
+  — passed (104 integration tests across 11 files).
+- `pnpm exec oxlint -c .oxlintrc.effect.json` over the eight Task 6 source/test files — passed with
+  zero warnings.
+- `pnpm exec oxfmt --check` over the eight Task 6 source/test files and `git diff --check` — passed.
