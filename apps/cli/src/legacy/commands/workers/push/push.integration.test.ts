@@ -712,16 +712,19 @@ describe("legacy workers push", () => {
     const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
 
     return Effect.gen(function* () {
-      const error = yield* push({ names: [] }).pipe(Effect.flip);
-
       if (listable) {
-        // Root ignores the permission bits, so the root lists and `api` is found.
-        expect(error).not.toBeInstanceOf(NoWorkersToDeployError);
-      } else {
-        expect(error).not.toBeInstanceOf(NoWorkersToDeployError);
-        expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
-        expect(http.requests).toHaveLength(0);
+        // Root ignores the permission bits, so the root lists, `api` is found,
+        // and the push deploys it — same early-success handling as the
+        // unreadable-source test above.
+        yield* push({ names: [] });
+        expect(http.requests.length).toBeGreaterThan(0);
+        return;
       }
+
+      const error = yield* push({ names: [] }).pipe(Effect.flip);
+      expect(error).not.toBeInstanceOf(NoWorkersToDeployError);
+      expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
+      expect(http.requests).toHaveLength(0);
     }).pipe(
       Effect.provide(layer),
       Effect.ensuring(
