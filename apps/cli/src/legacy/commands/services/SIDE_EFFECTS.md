@@ -40,10 +40,11 @@ Tenant calls send `apikey: <serviceKey>` and additionally
 
 ## Environment Variables
 
-| Variable                | Purpose                                             | Required?                                                   |
-| ----------------------- | --------------------------------------------------- | ----------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token for Management API linked-version checks | no (falls back to keyring, then `~/.supabase/access-token`) |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path             | no (falls back to `~/.supabase/profile` -> `supabase`)      |
+| Variable                   | Purpose                                                                                                                      | Required?                                                   |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`    | auth token for Management API linked-version checks                                                                          | no (falls back to keyring, then `~/.supabase/access-token`) |
+| `SUPABASE_PROFILE`         | built-in profile name or YAML file path                                                                                      | no (falls back to `~/.supabase/profile` -> `supabase`)      |
+| `SUPABASE_USE_SLIM_IMAGES` | rewrites the local `LOCAL` column's image references to the slim `ghcr.io/supabase/cli/<service>` builds (`true`/`1` enable) | no                                                          |
 
 ## Exit Codes
 
