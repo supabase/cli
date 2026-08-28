@@ -172,3 +172,28 @@ Implementation continues after recording a ruling; this file is not a question q
 - `pnpm --dir packages/stack types:check` — passed.
 - `pnpm exec oxlint --config .oxlintrc.effect.json packages/stack/src/identity packages/stack/src/state/Paths.ts packages/stack/src/public/StackId.ts packages/stack/src/public/public-model.integration.test.ts` — passed with zero warnings.
 - `pnpm exec oxfmt --check packages/stack/src/identity packages/stack/src/state/Paths.ts packages/stack/src/public/StackId.ts packages/stack/src/public/public-model.integration.test.ts` — passed.
+
+### Task 3 — 2026-08-28
+
+- Added direct closed schemas for all ten public capabilities. Settings cover the current CLI
+  database, REST, Auth (providers/hooks/rate limits/MFA/email/SMS/OAuth/third-party/Web3),
+  Realtime, Storage, Functions/Edge Runtime, Studio, Mail, Analytics, and Pooler fields. Public
+  listeners reuse the eight `PORT_FIELDS`; migrations, seed, shadow port, and hosted metadata stay
+  caller-owned or outside the stack contract.
+- Added deterministic pure compilation with complete defaults and explicit `null` absences,
+  Redacted secret leaves converted to stable slots, sorted canonical fingerprints, path-safe
+  `functions_root`, dependency closure validation, deterministic start/stop order, semantic
+  workload hashes, and runtime-selected native/container logical artifacts. Database versions use
+  an explicit supported Supabase release map and fail before output when unknown.
+- Private workload companions are represented for database bootstrap, storage imgproxy, studio
+  pgmeta, analytics vector, and managed Edge Runtime Functions. Functions remain one capability;
+  all serving is through that managed Edge Runtime.
+- Added 19 integration scenarios covering each capability, defaults, unknown fields, stable record
+  fingerprints, omission versus explicit selection, secret redaction, previous-definition reuse,
+  version validation, runtime artifact selection, path escapes, and dependency closure.
+- Red/green: the compiler scenarios were added against the empty model boundary and then turned
+  green as the modules/compiler were implemented; `compiler.integration.test.ts` and the existing
+  public-model integration file now pass (22 tests).
+- `pnpm --dir packages/stack types:check` — passed.
+- `pnpm exec oxlint --config .oxlintrc.effect.json packages/stack/src/public/Config.ts packages/stack/src/model packages/stack/src/public/Errors.ts` — passed with zero warnings.
+- `pnpm exec oxfmt --check packages/stack/src/public/Config.ts packages/stack/src/model packages/stack/src/public/Errors.ts` — passed.

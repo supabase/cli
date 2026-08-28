@@ -16,6 +16,9 @@ export class InvalidProjectRootError extends Data.TaggedError(
 export class InvalidStackConfigError extends Data.TaggedError(
   "InvalidStackConfigError",
 )<StackErrorFields> {}
+export class StackVersionUnsupportedError extends Data.TaggedError(
+  "StackVersionUnsupportedError",
+)<StackErrorFields> {}
 
 export class StackNotFoundError extends Data.TaggedError("StackNotFoundError")<StackErrorFields> {}
 export class StackOwnershipConflictError extends Data.TaggedError(
@@ -101,6 +104,7 @@ export type StackError =
   | InvalidStackIdentityError
   | InvalidProjectRootError
   | InvalidStackConfigError
+  | StackVersionUnsupportedError
   | StackNotFoundError
   | StackOwnershipConflictError
   | StackRuntimeMismatchError
@@ -132,6 +136,7 @@ export type CreateStackError =
   | InvalidStackIdentityError
   | InvalidProjectRootError
   | InvalidStackConfigError
+  | StackVersionUnsupportedError
   | StackOwnershipConflictError
   | StackRuntimeMismatchError;
 export type OpenStackError =
@@ -156,6 +161,7 @@ export type StackCredentialsError =
 export type PrepareStackError = StackPreparationError | ArtifactIntegrityError | ContainerPullError;
 export type StackStartError =
   | StackDefinitionRequiredError
+  | StackVersionUnsupportedError
   | StackLifecycleConflictError
   | StackStateInvalidError
   | StackStateFormatUnsupportedError

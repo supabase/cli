@@ -247,27 +247,27 @@ artifact keys, state schemas, drivers, or control protocols.
   `InputFingerprint`, resolved secret-slot inputs, and private `ExecutionPlan`.
 - Workload ids and concrete artifact keys remain private.
 
-- [ ] **Step 1: Write one public compiler scenario per capability and verify RED**
+- [x] **Step 1: Write one public compiler scenario per capability and verify RED**
 
   Each scenario supplies non-default values accepted by current CLI configuration and asserts they
   survive in the materialized definition. Add cross-cutting scenarios for all defaults persisted,
   unknown fields rejected, secret bytes absent, exact unsupported versions rejected before output,
   both runtime mappings present, and functions path normalization.
 
-- [ ] **Step 2: Implement the ten direct closed schemas**
+- [x] **Step 2: Implement the ten direct closed schemas**
 
   Use direct `Schema.Struct` declarations owned by each Module; do not add a code generator or open
   property bags. Port the actual supported fields from `CliConfig` and from the baseline sources at
   `de26a30c7:packages/stack/src/StackConfig.ts` and `ServiceCatalog.ts`, updating consumers in the
   same task rather than preserving the old shapes.
 
-- [ ] **Step 3: Implement pure compilation**
+- [x] **Step 3: Implement pure compilation**
 
   Canonicalize non-secret input for the fingerprint, preserve explicit omission versus selection,
   apply every default, convert secret leaves to generated slots, validate dependency closure, and
   derive semantic workload-spec hashes. Reuse the persisted definition on identical fingerprints.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
   Run only `compiler.integration.test.ts`, adjacent pure planner tests, and stack type-check. Commit:
 
