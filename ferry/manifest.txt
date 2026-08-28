@@ -1,0 +1,4 @@
+ghcr.io/supabase/cli/edge-runtime:v1.74.3 sha256:eb17ad3f459cc73465bf5e9b142b1a7317f3965ecacf348097cdbbc82fe2c1ef User=0
+ghcr.io/supabase/cli/postgres:17.6.1.166 sha256:26e3a254bbeaa711f3d3b2c3e841514254a693f784dbac07181105159968dbbc User=0
+ghcr.io/supabase/cli/storage:v1.72.1 sha256:356c91ae274c617064845f832df1b8e540274953a3f4b1fd367377c78ef810d5 User=0
+ghcr.io/supabase/cli/auth:v2.196.0 sha256:f0c3811c3628df696524ec1af6f5875e3c55ecca1de5eb52137f507f745fe72e User=1000:1000
