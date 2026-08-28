@@ -63,6 +63,8 @@ export const FunctionsModule: CapabilityModule<FunctionsSettings> = {
     { listener: "api", protocol: "http" },
     { listener: "functionsInspector", protocol: "http" },
   ],
+  secretPolicy: () => "passthrough",
+  managedSecretSlots: [],
   materialize: (settings) => ({
     ...settings,
     functions: Object.fromEntries(

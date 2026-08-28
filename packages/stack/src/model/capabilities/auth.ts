@@ -279,6 +279,28 @@ const hooks = {
   before_user_created: { enabled: false, uri: undefined, secrets: undefined },
 } satisfies AuthSettings["hook"];
 
+const materializeAuthSettings = (settings: AuthSettings): AuthSettings => ({
+  ...settings,
+  email:
+    settings.email === undefined
+      ? settings.email
+      : {
+          ...settings.email,
+          template: Object.fromEntries(
+            Object.entries(settings.email.template ?? {}).map(([name, template]) => [
+              name,
+              { subject: undefined, content_path: undefined, ...template },
+            ]),
+          ),
+          notification: Object.fromEntries(
+            Object.entries(settings.email.notification ?? {}).map(([name, notification]) => [
+              name,
+              { enabled: false, subject: undefined, content_path: undefined, ...notification },
+            ]),
+          ),
+        },
+});
+
 export const AuthModule: CapabilityModule<AuthSettings> = {
   name: "auth",
   settings: AuthSettingsSchema,
@@ -381,5 +403,22 @@ export const AuthModule: CapabilityModule<AuthSettings> = {
     ]),
   },
   routes: [{ listener: "api", protocol: "http" }],
-  materialize: (settings) => settings,
+  secretPolicy: (path) =>
+    [
+      "auth.settings.publishable_key",
+      "auth.settings.secret_key",
+      "auth.settings.jwt_secret",
+      "auth.settings.anon_key",
+      "auth.settings.service_role_key",
+    ].includes(path)
+      ? "managed"
+      : "passthrough",
+  managedSecretSlots: [
+    "auth.settings.publishable_key",
+    "auth.settings.secret_key",
+    "auth.settings.jwt_secret",
+    "auth.settings.anon_key",
+    "auth.settings.service_role_key",
+  ],
+  materialize: materializeAuthSettings,
 };

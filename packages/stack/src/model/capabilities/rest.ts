@@ -41,5 +41,7 @@ export const RestModule: CapabilityModule<RestSettings> = {
     ]),
   },
   routes: [{ listener: "api", protocol: "http" }],
+  secretPolicy: () => "passthrough",
+  managedSecretSlots: [],
   materialize: (settings) => settings,
 };

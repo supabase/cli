@@ -24,5 +24,7 @@ export const RealtimeModule: CapabilityModule<RealtimeSettings> = {
     ]),
   },
   routes: [{ listener: "api", protocol: "http" }],
+  secretPolicy: () => "passthrough",
+  managedSecretSlots: [],
   materialize: (settings) => settings,
 };

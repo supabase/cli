@@ -16,7 +16,7 @@ updated in the same commit as each completed slice. Scratch review packages live
 - [x] Pinned pnpm dependencies installed with an unchanged lockfile.
 - [x] Baseline package type checks passed for `@supabase/process-compose` and `@supabase/stack`.
 - [x] Baseline targeted tests passed: process-compose dependency graph (18 tests) and stack identity
-  (1 test).
+      (1 test).
 - [x] Approved architecture imported as the canonical tracked design.
 - [x] Layer-by-layer implementation plan completed and reviewed against the design.
 - [x] Legacy process-compose package and stack implementation removed.
@@ -120,7 +120,7 @@ Implementation continues after recording a ruling; this file is not a question q
 - `pnpm install --lockfile-only` — passed (pnpm v11.4.0; platform warnings for unsupported binary
   wrapper workspaces only).
 - `rg -n '@supabase/process-compose|packages/process-compose' package.json packages apps
-  --glob '!docs/superpowers/**' --glob '!docs/adr/**'` — no matches (exit 1 as expected).
+--glob '!docs/superpowers/**' --glob '!docs/adr/**'` — no matches (exit 1 as expected).
 - `pnpm --dir packages/stack types:check` — passed.
 - The CLI type-check was not run; the accepted staging ruling allows the old CLI stack call sites to
   fail until the direct migration task. The telemetry coverage test was attempted and could not load
@@ -225,6 +225,34 @@ Implementation continues after recording a ruling; this file is not a question q
 - `pnpm --dir packages/stack exec vitest run --project integration src/model/compiler.integration.test.ts src/public/public-model.integration.test.ts` — 30 tests passed before final empty-release scenario (31 total expected; rerun final command below).
 - `pnpm exec oxlint --config .oxlintrc.effect.json packages/stack/src/model packages/stack/src/public/Config.ts packages/stack/src/public/Status.ts packages/stack/src/public/Errors.ts` — passed with zero warnings.
 - `pnpm exec oxfmt --check packages/stack/src/model packages/stack/src/public/Config.ts packages/stack/src/public/Status.ts packages/stack/src/public/Errors.ts` — passed.
+
+### Task 4 — 2026-08-28
+
+- Added the strict `supabase-stack-state-v1` Effect codec for complete materialized definitions,
+  persisted identity/runtime/generation/lifecycle, sticky host-port assignments, and dedicated
+  secret values. Unknown fields, malformed formats, invalid record keys, incomplete dynamic
+  defaults, forged identity tuples, duplicate ports, and definition/fingerprint mismatches fail
+  closed with tagged errors. Reads remain lock-free; writes use an owner-only root, a sibling
+  exclusive temporary file, file sync, and same-directory atomic rename. Effect Platform has no
+  portable directory-fsync API, so the implementation documents that file-sync/same-directory
+  rename is the strongest available durability boundary.
+- Added one short O_EXCL registry lock (bounded Schedule retry, exact release, no stale stealing)
+  shared by state mutations and port planning; the per-stack `state.json.ports` fields remain the
+  sole durable port authority. Automatic ports are sticky and exclusive across automatic/live
+  assignments, exact stopped reservations may coexist, and runtime ownership/publication occurs
+  after the state transaction with assignments retained on publication races.
+- Added module-owned secret policies and required managed slots. Auth API credentials, Pooler
+  encryption/key-base, the default JWT signing slot, and the internal database password are
+  managed; other Redacted settings remain pass-through. Managed omissions generate once and reuse;
+  pass-through changes/additions/removals require a stopped lifecycle. Secret bytes never enter
+  definitions, fingerprints, errors, or loggable redaction output.
+- RED evidence: focused state/secret/port tests initially failed to load the missing Task 4 state,
+  secret, and port modules; the final integration scenarios now cover concurrent old-or-new reads,
+  exact cleanup, strict dynamic/default round-trips, secret policy matrices, automatic/exact port
+  conflicts, native listener handoff, host occupancy, and container publication races.
+- `pnpm --dir packages/stack exec vitest run --project integration src/state/state-store.integration.test.ts src/state/secrets.integration.test.ts src/state/ports.integration.test.ts` — passed (17 tests).
+- `pnpm --dir packages/stack types:check` — passed.
+- Effect lint over changed Task 4 sources — passed with zero warnings.
 
 #### Task 3 review fixes — round 2 — 2026-08-28
 

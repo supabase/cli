@@ -34,5 +34,7 @@ export const StudioModule: CapabilityModule<StudioSettings> = {
     ]),
   },
   routes: [{ listener: "studio", protocol: "http" }],
+  secretPolicy: () => "passthrough",
+  managedSecretSlots: [],
   materialize: (settings) => settings,
 };

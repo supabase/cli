@@ -35,5 +35,10 @@ export const PoolerModule: CapabilityModule<PoolerSettings> = {
     ]),
   },
   routes: [{ listener: "pooler", protocol: "tcp" }],
+  secretPolicy: (path) =>
+    path === "pooler.settings.encryption_key" || path === "pooler.settings.secret_key_base"
+      ? "managed"
+      : "passthrough",
+  managedSecretSlots: ["pooler.settings.encryption_key", "pooler.settings.secret_key_base"],
   materialize: (settings) => settings,
 };

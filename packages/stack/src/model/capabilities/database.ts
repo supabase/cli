@@ -156,5 +156,7 @@ export const DatabaseModule: CapabilityModule<DatabaseSettings> = {
     ]),
   },
   routes: [{ listener: "database", protocol: "tcp" }],
+  secretPolicy: () => "passthrough",
+  managedSecretSlots: [],
   materialize: (settings) => settings,
 };

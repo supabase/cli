@@ -57,8 +57,21 @@ describe("closed capability compiler", () => {
       expect(canonicalize(result.definition)).not.toContain("secret-value");
       expect(canonicalize(result.inputFingerprint)).not.toContain("secret-value");
       expect(canonicalize(result.executionPlan)).not.toContain("secret-value");
-      expect(result.secrets).toHaveLength(1);
-      expect(Redacted.isRedacted(result.secrets[0]?.value)).toBe(true);
+      const supplied = result.secrets.find(
+        (entry) => entry.slot === "secret:auth.settings.secret_key",
+      );
+      expect(supplied?.policy).toBe("managed");
+      expect(Redacted.isRedacted(supplied?.value)).toBe(true);
+      for (const slot of [
+        "secret:database.internal.password",
+        "secret:security.jwt.signing.secret",
+        "secret:auth.settings.publishable_key",
+        "secret:auth.settings.jwt_secret",
+        "secret:auth.settings.anon_key",
+        "secret:auth.settings.service_role_key",
+      ]) {
+        expect(result.secrets.find((entry) => entry.slot === slot)?.policy).toBe("managed");
+      }
       expect(canonicalize(result.executionPlan)).not.toContain("secret-value");
     }),
   );

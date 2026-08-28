@@ -40,6 +40,10 @@ export interface CapabilityModule<Settings> {
   readonly routes: ReadonlyArray<
     Readonly<{ readonly listener: PortField; readonly protocol: "http" | "tcp" }>
   >;
+  /** Classifies every Redacted settings leaf; module contracts, not callers, own this policy. */
+  readonly secretPolicy: (path: string) => "managed" | "passthrough";
+  /** Managed slots required by the artifact even when omitted from user config. */
+  readonly managedSecretSlots: ReadonlyArray<string>;
   readonly materialize: (settings: Settings, projectRoot: string) => Settings;
 }
 

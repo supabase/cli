@@ -95,8 +95,12 @@ export interface MaterializedListener {
 
 export interface SecretSlotInput {
   readonly slot: string;
-  readonly value: Redacted.Redacted<unknown>;
+  readonly policy: "managed" | "passthrough";
+  readonly value?: Redacted.Redacted<unknown>;
 }
+
+/** Internal credentials are not user settings but still need durable managed slots. */
+export const INTERNAL_MANAGED_SECRET_SLOTS = ["secret:database.internal.password"] as const;
 
 export interface CompiledStack {
   readonly definition: StackDefinition;
@@ -116,7 +120,7 @@ export interface CompileStackInput {
   readonly config?: StackConfig;
 }
 
-const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" &&
   value !== null &&
   !Array.isArray(value) &&
@@ -158,22 +162,66 @@ function materializeAbsence(value: unknown): unknown {
   return value;
 }
 
-function slotsFor<T>(value: T, path: string, slots: SecretSlotInput[]): MaterializedSettings<T>;
-function slotsFor(value: unknown, path: string, slots: SecretSlotInput[]): unknown {
+function slotsFor<T>(
+  value: T,
+  path: string,
+  slots: SecretSlotInput[],
+  policyForPath?: (path: string) => "managed" | "passthrough",
+): MaterializedSettings<T>;
+function slotsFor(
+  value: unknown,
+  path: string,
+  slots: SecretSlotInput[],
+  policyForPath: (path: string) => "managed" | "passthrough" = () => "passthrough",
+): unknown {
   if (Redacted.isRedacted(value)) {
-    slots.push({ slot: `secret:${path}`, value });
+    slots.push({ slot: `secret:${path}`, policy: policyForPath(path), value });
     return { slot: `secret:${path}` };
   }
   if (Array.isArray(value))
-    return value.map((entry, index) => slotsFor(entry, `${path}.${index}`, slots));
+    return value.map((entry, index) => slotsFor(entry, `${path}.${index}`, slots, policyForPath));
   if (isRecord(value)) {
     const result: Record<string, unknown> = {};
     for (const key of Object.keys(value).sort())
-      result[key] = slotsFor(value[key], `${path}.${key}`, slots);
+      result[key] = slotsFor(value[key], `${path}.${key}`, slots, policyForPath);
     return result;
   }
   return value;
 }
+
+const setMaterializedPath = (
+  value: unknown,
+  parts: ReadonlyArray<string>,
+  slot: SecretSlot,
+): void => {
+  if (!isRecord(value) || parts.length === 0) return;
+  const head = parts[0];
+  if (head === undefined) return;
+  const tail = parts.slice(1);
+  if (tail.length === 0) {
+    value[head] = slot;
+    return;
+  }
+  if (!isRecord(value[head])) value[head] = {};
+  setMaterializedPath(value[head], tail, slot);
+};
+
+const ensureManagedSlots = <T>(
+  settings: MaterializedSettings<T>,
+  module: CapabilityModule<T>,
+  enabled: boolean,
+  slots: SecretSlotInput[],
+): MaterializedSettings<T> => {
+  if (!enabled || module.managedSecretSlots.length === 0) return settings;
+  const result = settings;
+  for (const path of module.managedSecretSlots) {
+    const slot = `secret:${path}`;
+    const existing = slots.find((candidate) => candidate.slot === slot);
+    if (existing === undefined) slots.push({ slot, policy: "managed" });
+    setMaterializedPath(result, path.split(".").slice(2), { slot });
+  }
+  return result;
+};
 
 const materializeListener = (value: unknown, enabledByDefault: boolean): MaterializedListener => {
   if (!isRecord(value))
@@ -337,7 +385,8 @@ const materializeCapability = <T>(
   return Effect.gen(function* () {
     const normalizedSettings = yield* normalized;
     const merged = materializeAbsence(normalizedSettings);
-    const slotted = slotsFor(merged, `${module.name}.settings`, slots);
+    const slotted = slotsFor(merged, `${module.name}.settings`, slots, module.secretPolicy);
+    const completeSettings = ensureManagedSlots(slotted, module, selected.enabled, slots);
     const selectedRelease = yield* releaseFor(module, selected.raw);
     const version = selectedRelease.version;
     for (const entry of selectedRelease.workloads) {
@@ -351,7 +400,7 @@ const materializeCapability = <T>(
       enabled: selected.enabled,
       activation: selected.activation,
       version,
-      settings: slotted,
+      settings: completeSettings,
       release: selectedRelease,
     };
   }).pipe(
@@ -474,12 +523,34 @@ const planForDefinition = (
 const collectSuppliedSecrets = (config: StackConfig, slots: SecretSlotInput[]): void => {
   const capabilities = config.capabilities;
   for (const name of CAPABILITY_NAMES) {
+    const module = CAPABILITY_MODULES[name];
     const capability = capabilities?.[name];
-    if (capability === undefined) continue;
-    slotsFor("settings" in capability ? capability.settings : undefined, `${name}.settings`, slots);
+    if (capability === undefined) {
+      if (module.defaultEnabled) {
+        for (const path of module.managedSecretSlots)
+          slots.push({ slot: `secret:${path}`, policy: "managed" });
+      }
+      continue;
+    }
+    slotsFor(
+      "settings" in capability ? capability.settings : undefined,
+      `${name}.settings`,
+      slots,
+      module.secretPolicy,
+    );
+    if ("enabled" in capability && capability.enabled === false) continue;
+    for (const path of module.managedSecretSlots) {
+      if (!slots.some((entry) => entry.slot === `secret:${path}`))
+        slots.push({ slot: `secret:${path}`, policy: "managed" });
+    }
   }
   const signing = config.security?.jwt?.signing;
-  if (signing !== undefined) slotsFor(signing, "security.jwt.signing", slots);
+  if (signing === undefined) {
+    const slot = "secret:security.jwt.signing.secret";
+    if (!slots.some((entry) => entry.slot === slot)) slots.push({ slot, policy: "managed" });
+  } else {
+    slotsFor(signing, "security.jwt.signing", slots, () => "managed");
+  }
 };
 
 export const compileStack = (
@@ -523,6 +594,7 @@ export const compileStack = (
     ).pipe(Effect.mapError((error) => new InvalidStackConfigError({ message: String(error) })));
     if (previous?.inputFingerprint === inputFingerprint) {
       const slots: SecretSlotInput[] = [];
+      for (const slot of INTERNAL_MANAGED_SECRET_SLOTS) slots.push({ slot, policy: "managed" });
       collectSuppliedSecrets(config, slots);
       const executionPlan = yield* planForDefinition(input.runtime, previous.definition, crypto);
       return {
@@ -533,6 +605,7 @@ export const compileStack = (
       };
     }
     const slots: SecretSlotInput[] = [];
+    for (const slot of INTERNAL_MANAGED_SECRET_SLOTS) slots.push({ slot, policy: "managed" });
     const specHashes = new Map<string, string>();
     const databaseResult = yield* materializeCapability(
       DatabaseModule,
@@ -685,8 +758,13 @@ export const compileStack = (
         issuer: rawJwt?.issuer ?? null,
         signing:
           rawJwt?.signing === undefined
-            ? null
-            : slotsFor<JwtSigning>(rawJwt.signing, "security.jwt.signing", slots),
+            ? (() => {
+                const slot = "secret:security.jwt.signing.secret";
+                if (!slots.some((entry) => entry.slot === slot))
+                  slots.push({ slot, policy: "managed" });
+                return { kind: "symmetric" as const, secret: { slot } };
+              })()
+            : slotsFor<JwtSigning>(rawJwt.signing, "security.jwt.signing", slots, () => "managed"),
       },
     };
     const definition: StackDefinition = {

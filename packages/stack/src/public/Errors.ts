@@ -47,6 +47,9 @@ export class StackStateInvalidError extends Data.TaggedError(
 export class StackStateFormatUnsupportedError extends Data.TaggedError(
   "StackStateFormatUnsupportedError",
 )<StackErrorFields> {}
+export class StackStateGenerationMismatchError extends Data.TaggedError(
+  "StackStateGenerationMismatchError",
+)<StackErrorFields> {}
 export class StackUpgradeRequiredError extends Data.TaggedError(
   "StackUpgradeRequiredError",
 )<StackErrorFields> {}
@@ -114,6 +117,7 @@ export type StackError =
   | StackLifecycleConflictError
   | StackStateInvalidError
   | StackStateFormatUnsupportedError
+  | StackStateGenerationMismatchError
   | StackUpgradeRequiredError
   | StackUpgradeReplacementError
   | StackSecretMismatchError

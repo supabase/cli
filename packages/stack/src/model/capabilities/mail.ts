@@ -26,5 +26,7 @@ export const MailModule: CapabilityModule<MailSettings> = {
     { listener: "smtp", protocol: "tcp" },
     { listener: "pop3", protocol: "tcp" },
   ],
+  secretPolicy: () => "passthrough",
+  managedSecretSlots: [],
   materialize: (settings) => settings,
 };
