@@ -279,10 +279,24 @@ const flags = (
 const failError = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
 
+// pg-delta is the default schema diff engine (CLI-1588): an absent
+// `[experimental.pgdelta]` section resolves to enabled = true, so gate-closed
+// scenarios must now disable it explicitly.
+const seedPgDeltaDisabledConfig = (workdir: string) => {
+  mkdirSync(join(workdir, "supabase"), { recursive: true });
+  writeFileSync(
+    join(workdir, "supabase", "config.toml"),
+    "[experimental.pgdelta]\nenabled = false\n",
+  );
+};
+
 describe("legacy db schema declarative generate integration", () => {
   const tmp = useLegacyTempWorkdir();
 
-  it.effect("gate: fails when neither --experimental nor config enables pg-delta", () => {
+  it.effect("gate: fails when config disables pg-delta and --experimental is not passed", () => {
+    // pg-delta is the default engine (CLI-1588): the gate only closes when the
+    // config EXPLICITLY sets `enabled = false` and --experimental is absent.
+    seedPgDeltaDisabledConfig(tmp.current);
     const { layer } = setup(tmp.current, { experimental: false });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -292,6 +306,19 @@ describe("legacy db schema declarative generate integration", () => {
       expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeNotEnabledError");
     }).pipe(Effect.provide(layer));
   });
+
+  it.effect(
+    "gate: open by default — no [experimental.pgdelta] section and no --experimental",
+    () => {
+      // The pg-delta default flip (CLI-1588): an absent section resolves to
+      // enabled = true, so generate proceeds without --experimental.
+      const s = setup(tmp.current, { experimental: false });
+      return Effect.gen(function* () {
+        yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
+        expect(s.engineExportCalls).toHaveLength(1);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("--local --linked with --experimental fails with the mutex error", () => {
     // Go's declarative PersistentPreRunE gate (db_schema_declarative.go:49-99) runs
@@ -318,7 +345,9 @@ describe("legacy db schema declarative generate integration", () => {
     () => {
       // Mirrors storage's experimental-gate-vs-mutex ordering fix (CLI-1855 / CLI-1876):
       // the pg-delta gate runs before the mutex check, so an unopened gate wins even
-      // when the flags would also violate mutual exclusivity.
+      // when the flags would also violate mutual exclusivity. Closing the gate now
+      // requires an explicit `enabled = false` (pg-delta default flip, CLI-1588).
+      seedPgDeltaDisabledConfig(tmp.current);
       const { layer } = setup(tmp.current, { experimental: false });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(
@@ -368,7 +397,9 @@ describe("legacy db schema declarative generate integration", () => {
       // viper's bound-pflag lookup returns the flag value whenever Changed is true —
       // BEFORE falling back to AutomaticEnv (viper@v1.21.0/viper.go:1176-1178) — so an
       // explicit --experimental=false must win over SUPABASE_EXPERIMENTAL=1, closing the
-      // gate instead of letting the env value override it.
+      // gate instead of letting the env value override it. The config must disable
+      // pg-delta explicitly, or the new default (CLI-1588) keeps the gate open anyway.
+      seedPgDeltaDisabledConfig(tmp.current);
       const { layer } = setup(tmp.current, {
         experimental: false,
         args: ["db", "schema", "declarative", "generate", "--experimental=false"],
@@ -755,13 +786,17 @@ describe("legacy db schema declarative generate integration", () => {
     () => {
       // Go gates pg-delta on the base LoadConfig (declarative PersistentPreRunE) before the
       // root ParseDatabaseConfig reloads the remote block, so a remote enabled=true must NOT
-      // enable a base-disabled command without --experimental.
+      // enable a base-disabled command without --experimental. The base disables pg-delta
+      // explicitly (an absent section would be enabled by default since CLI-1588), keeping
+      // the subject — the gate reads the BASE config — testable.
       const ref = "abcdefghijklmnopqrst";
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
         join(tmp.current, "supabase", "config.toml"),
         [
           'project_id = "base"',
+          "[experimental.pgdelta]",
+          "enabled = false",
           "[remotes.prod]",
           `project_id = "${ref}"`,
           "[remotes.prod.experimental.pgdelta]",
