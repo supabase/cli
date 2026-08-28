@@ -667,7 +667,7 @@ describe("buildDockerBinds — edge-runtime Deno-cache volume selection", () => 
     }
   });
 
-  it("mounts the shared /root/.cache/deno volume when the image is slim", async () => {
+  it("uses the shared /root/.cache/deno volume under the slim flag", async () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const { root, functionsDir, outputDir, config } = await createHelloFunctionProject(
       {},

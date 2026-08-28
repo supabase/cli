@@ -101,8 +101,8 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
                 (error) => new LegacyEdgeRuntimeScriptError({ message: error.message }),
               ),
             )).denoVersion;
-          // Shell-pinned resolution: this runner delivers `index.ts` through an
-          // `sh -c` here-document, which the distroless slim image cannot run.
+          // Slim edge-runtime now ships `sh`, so the heredoc entrypoint
+          // works on both image families.
           const registryImage = legacyGetRegistryImageUrl(
             yield* legacyResolveEdgeRuntimeShellImage(fs, path, workdir, denoVersion),
           );
