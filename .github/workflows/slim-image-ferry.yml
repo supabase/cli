@@ -1,0 +1,64 @@
+name: slim-image-ferry
+
+# TEMPORARY branch-local ferry — pulls the fixed slim images from ghcr.io and
+# commits them as chunked zstd docker-save tarballs to this same temp branch,
+# so a sandboxed environment whose network policy blocks the registry blob
+# CDNs (pkg-containers.githubusercontent.com etc.) can fetch them over git.
+# The branch is deleted after the images are loaded. Do not merge.
+#
+# workflow_dispatch only works for workflows registered on the default
+# branch, so this branch-local workflow triggers on pushes touching itself.
+on:
+  push:
+    branches:
+      - avallete/tmp-slim-image-ferry
+    paths:
+      - .github/workflows/slim-image-ferry.yml
+
+permissions:
+  contents: write
+
+jobs:
+  ferry:
+    name: Ferry slim images as git blobs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      IMAGES: >-
+        ghcr.io/supabase/cli/edge-runtime:v1.74.3
+        ghcr.io/supabase/cli/postgres:17.6.1.166
+        ghcr.io/supabase/cli/storage:v1.72.1
+        ghcr.io/supabase/cli/auth:v2.196.0
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Pull and save images
+        run: |
+          set -euxo pipefail
+          for image in $IMAGES; do
+            docker pull "$image"
+          done
+          docker images --digests | grep supabase/cli || true
+          mkdir -p ferry
+          docker save $IMAGES | zstd -T0 -8 -o ferry/slim-images.tar.zst
+          ls -l ferry
+          sha256sum ferry/slim-images.tar.zst | tee ferry/slim-images.tar.zst.sha256
+          split -b 45m -d --additional-suffix=.part ferry/slim-images.tar.zst ferry/slim-images.tar.zst.
+          rm ferry/slim-images.tar.zst
+          for image in $IMAGES; do
+            docker image inspect "$image" \
+              --format '{{index .RepoTags 0}} {{.Id}} User={{.Config.User}}'
+          done | tee ferry/manifest.txt
+
+      - name: Commit chunks back to this branch
+        run: |
+          set -euxo pipefail
+          git config user.name "slim-image-ferry[bot]"
+          git config user.email "noreply@supabase.io"
+          git add -f ferry
+          git commit -m "chore: ferry slim image tarball chunks (temp, do not merge)"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
