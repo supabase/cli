@@ -10,9 +10,13 @@
  *   bun tools/config-release-gate.ts --version <next version> [--registry <url>] [--tarball <path>]
  *
  * `--version` is the version semantic-release computed for this release.
- * `--registry` defaults to the public npm registry. `--tarball` points at a
- * local `.tgz` to use as the "published" side instead of querying the
- * registry — for local testing and pipeline rehearsal.
+ * `--registry` defaults to `npm config get registry` (the same
+ * probe-matches-publish-target alignment `apps/cli/scripts/publish.ts` uses,
+ * so the local Verdaccio harness works here too), falling back to the public
+ * npm registry. `--tarball` points at a local `.tgz` to use as the
+ * "published" side instead of querying the registry — for local testing and
+ * pipeline rehearsal. A registry-downloaded tarball is verified against the
+ * registry's `dist.integrity` and refused if its URL points off-registry.
  *
  * This tool never builds `packages/config/dist` itself — run the package
  * build first. When the package has never been published (npm view returns
@@ -35,6 +39,7 @@ import {
   countByStatus,
   countDeclarationFiles,
   diffDeclarationTrees,
+  type FileEntry,
   renderDiffDetailsBlocks,
   writeStepSummary,
 } from "./lib/dts-diff.ts";
@@ -69,6 +74,17 @@ function requireBinaries(names: readonly string[]): void {
   }
 }
 
+/**
+ * Same probe-matches-publish-target alignment as `apps/cli/scripts/publish.ts`:
+ * the local Verdaccio harness (`pnpm local-registry`) rewrites npm's registry
+ * config, and the gate must read the registry the publish would target.
+ */
+async function ambientNpmRegistry(): Promise<string> {
+  const result = await runCommand(["npm", "config", "get", "registry"]);
+  const registry = result.stdout.trim().replace(/\/+$/, "");
+  return result.exitCode === 0 && registry !== "" ? registry : DEFAULT_REGISTRY;
+}
+
 async function pathExists(target: string): Promise<boolean> {
   try {
     await stat(target);
@@ -80,7 +96,18 @@ async function pathExists(target: string): Promise<boolean> {
 
 async function extractTarball(tarballPath: string, destDir: string): Promise<void> {
   await mkdir(destDir, { recursive: true });
-  const result = await runCommand(["tar", "-xzf", tarballPath, "-C", destDir]);
+  // The tarball is registry-supplied, i.e. untrusted: never restore its
+  // recorded owners or permission bits. (GNU tar already refuses `..`
+  // members, so path escape is covered by the extractor itself.)
+  const result = await runCommand([
+    "tar",
+    "-xzf",
+    tarballPath,
+    "-C",
+    destDir,
+    "--no-same-owner",
+    "--no-same-permissions",
+  ]);
   if (result.exitCode !== 0) {
     throw new Error(
       `tar extraction of ${tarballPath} into ${destDir} failed: ${result.stderr.trim()}`,
@@ -111,6 +138,53 @@ async function downloadFile(url: string, destPath: string): Promise<void> {
   await Bun.write(destPath, response);
 }
 
+/**
+ * `npm view --json` reports errors as `{"error":{"code":…}}` on stdout, so a
+ * genuine E404 (never published) is distinguishable from a transport failure
+ * or an error message that merely mentions "E404" somewhere.
+ */
+async function npmViewJson(
+  spec: string,
+  field: string,
+  registry: string,
+): Promise<
+  { readonly ok: true; readonly value: unknown } | { readonly ok: false; readonly code: string }
+> {
+  const result = await runCommand(["npm", "view", spec, field, "--registry", registry, "--json"]);
+  let parsed: unknown;
+  try {
+    // `npm view` prints nothing at all for an absent field.
+    parsed = result.stdout.trim() === "" ? undefined : JSON.parse(result.stdout);
+  } catch {
+    throw new Error(
+      `npm view ${spec} ${field} --registry ${registry} returned unparseable output: ${result.stdout.trim().slice(0, 200)}`,
+    );
+  }
+  if (result.exitCode !== 0) {
+    if (isRecord(parsed) && isRecord(parsed.error) && typeof parsed.error.code === "string") {
+      return { ok: false, code: parsed.error.code };
+    }
+    throw new Error(
+      `npm view ${spec} ${field} --registry ${registry} failed: ${result.stderr.trim()}`,
+    );
+  }
+  return { ok: true, value: parsed };
+}
+
+async function verifyTarballIntegrity(tarballPath: string, integrity: string): Promise<void> {
+  if (!integrity.startsWith("sha512-")) {
+    throw new Error(`expected a sha512 integrity value from the registry, got "${integrity}".`);
+  }
+  const hasher = new Bun.CryptoHasher("sha512");
+  hasher.update(await Bun.file(tarballPath).arrayBuffer());
+  const digest = `sha512-${hasher.digest("base64")}`;
+  if (digest !== integrity) {
+    throw new Error(
+      `downloaded tarball failed integrity verification: registry says ${integrity}, got ${digest}.`,
+    );
+  }
+}
+
 type PublishedSide =
   | { readonly kind: "first-publish" }
   | { readonly kind: "resolved"; readonly version: string; readonly distDir: string };
@@ -118,8 +192,11 @@ type PublishedSide =
 /**
  * Resolves the "published" side of the diff: an explicit `--tarball` wins;
  * otherwise queries `<registry>` for the current `dist-tags.latest` and
- * downloads that tarball. An `npm view` `E404` means the package has never
- * been published — reported as `"first-publish"` rather than an error.
+ * downloads that tarball, verifying it against the registry's own
+ * `dist.integrity` and refusing a tarball URL pointing off-registry. An
+ * `E404` (or an existing package with no `latest` dist-tag) means there is
+ * nothing published to compare against — reported as `"first-publish"`
+ * rather than an error.
  */
 async function resolvePublishedSide(
   registry: string,
@@ -132,42 +209,42 @@ async function resolvePublishedSide(
     return { kind: "resolved", version, distDir: path.join(extractDir, "package", "dist") };
   }
 
-  const latestResult = await runCommand([
-    "npm",
-    "view",
-    PACKAGE_NAME,
-    "dist-tags.latest",
-    "--registry",
-    registry,
-  ]);
-  if (latestResult.exitCode !== 0) {
-    if (latestResult.stderr.includes("E404")) {
+  const latestResult = await npmViewJson(PACKAGE_NAME, "dist-tags.latest", registry);
+  if (!latestResult.ok) {
+    if (latestResult.code === "E404") {
       return { kind: "first-publish" };
     }
-    throw new Error(
-      `npm view ${PACKAGE_NAME} dist-tags.latest --registry ${registry} failed: ${latestResult.stderr.trim()}`,
-    );
+    throw new Error(`npm view ${PACKAGE_NAME} dist-tags.latest failed with ${latestResult.code}.`);
   }
-  const latestVersion = latestResult.stdout.trim();
+  if (typeof latestResult.value !== "string" || latestResult.value === "") {
+    console.warn(
+      `[config-release-gate] ${PACKAGE_NAME} exists on ${registry} but has no "latest" dist-tag — treating as first publish.`,
+    );
+    return { kind: "first-publish" };
+  }
+  const latestVersion = latestResult.value;
 
-  const tarballUrlResult = await runCommand([
-    "npm",
-    "view",
-    `${PACKAGE_NAME}@${latestVersion}`,
-    "dist.tarball",
-    "--registry",
-    registry,
+  const spec = `${PACKAGE_NAME}@${latestVersion}`;
+  const [tarballUrlResult, integrityResult] = await Promise.all([
+    npmViewJson(spec, "dist.tarball", registry),
+    npmViewJson(spec, "dist.integrity", registry),
   ]);
-  if (tarballUrlResult.exitCode !== 0) {
+  if (!tarballUrlResult.ok || typeof tarballUrlResult.value !== "string") {
+    throw new Error(`npm view ${spec} dist.tarball returned no tarball URL.`);
+  }
+  if (!integrityResult.ok || typeof integrityResult.value !== "string") {
+    throw new Error(`npm view ${spec} dist.integrity returned no integrity value.`);
+  }
+  const tarballUrl = tarballUrlResult.value;
+  if (new URL(tarballUrl).origin !== new URL(registry).origin) {
     throw new Error(
-      `npm view ${PACKAGE_NAME}@${latestVersion} dist.tarball --registry ${registry} failed: ` +
-        tarballUrlResult.stderr.trim(),
+      `refusing tarball from ${new URL(tarballUrl).origin} — it does not match the registry origin ${new URL(registry).origin}.`,
     );
   }
-  const tarballUrl = tarballUrlResult.stdout.trim();
 
   const downloadedTarballPath = path.join(extractDir, "published.tgz");
   await downloadFile(tarballUrl, downloadedTarballPath);
+  await verifyTarballIntegrity(downloadedTarballPath, integrityResult.value);
   await extractTarball(downloadedTarballPath, extractDir);
 
   return {
@@ -177,7 +254,7 @@ async function resolvePublishedSide(
   };
 }
 
-type BumpClass = "major" | "minor" | "patch" | "none";
+type BumpClass = "major" | "minor" | "patch" | "none" | "unknown";
 
 interface VersionParts {
   readonly major: number;
@@ -185,26 +262,38 @@ interface VersionParts {
   readonly patch: number;
 }
 
-function parseVersionParts(version: string): VersionParts {
+function parseVersionParts(version: string): VersionParts | null {
   const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
   if (!match) {
-    throw new Error(`expected a simple "x.y.z" version (no prerelease), got "${version}".`);
+    return null;
   }
   return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]) };
 }
 
 /**
- * Numeric major/minor/patch comparison only. Both inputs are semantic-release
- * output (or a caller-supplied "next" version), which this tool assumes are
- * always plain "x.y.z" — no prerelease/build-metadata handling.
+ * Numeric major/minor/patch comparison only — this train is stable-only, so
+ * plain "x.y.z" is the expected shape on both sides. The published side comes
+ * from outside this pipeline though (`dist-tags.latest`, or `--tarball`), so
+ * an unparseable version degrades to `"unknown"` (warnings skipped, noted in
+ * the summary) instead of failing the plan job.
  */
 function computeBumpClass(publishedVersion: string, nextVersion: string): BumpClass {
   const published = parseVersionParts(publishedVersion);
   const next = parseVersionParts(nextVersion);
+  if (published === null || next === null) return "unknown";
   if (next.major !== published.major) return "major";
   if (next.minor !== published.minor) return "minor";
   if (next.patch !== published.patch) return "patch";
   return "none";
+}
+
+/** A `changed` file whose unified diff removes lines — the shape an export deletion takes. */
+function hasRemovedDeclarationLines(entries: readonly FileEntry[]): boolean {
+  return entries.some(
+    (entry) =>
+      entry.status === "changed" &&
+      entry.diff.split("\n").some((line) => line.startsWith("-") && !line.startsWith("---")),
+  );
 }
 
 /**
@@ -213,6 +302,12 @@ function computeBumpClass(publishedVersion: string, nextVersion: string): BumpCl
  */
 function computeWarnings(bumpClass: BumpClass, result: CompareResult): string[] {
   const warnings: string[] = [];
+  if (bumpClass === "unknown") {
+    warnings.push(
+      "Could not classify the version bump (a version is not a plain x.y.z) — review the diff without semver hints.",
+    );
+    return warnings;
+  }
   if (!result.identical && bumpClass === "patch") {
     warnings.push(
       "Type-surface diff is non-empty but the version bump is only a patch — confirm this isn't a missed minor/major bump.",
@@ -221,6 +316,11 @@ function computeWarnings(bumpClass: BumpClass, result: CompareResult): string[] 
   if (result.entries.some((entry) => entry.status === "removed") && bumpClass !== "major") {
     warnings.push(
       "A declaration file was removed but the version bump is not major — confirm this isn't a breaking change.",
+    );
+  }
+  if (hasRemovedDeclarationLines(result.entries) && bumpClass !== "major") {
+    warnings.push(
+      "Declaration lines were removed from an existing .d.ts but the version bump is not major — confirm no export was dropped.",
     );
   }
   return warnings;
@@ -317,9 +417,11 @@ async function main(): Promise<number> {
     throw new Error("--version <next version> is required.");
   }
   const nextVersion = values.version;
-  const registry = values.registry ?? DEFAULT_REGISTRY;
 
   requireBinaries(values.tarball ? ["tar", "diff"] : ["tar", "diff", "npm"]);
+
+  const registry =
+    values.registry ?? (values.tarball ? DEFAULT_REGISTRY : await ambientNpmRegistry());
 
   if (!(await pathExists(localDistDir)) || (await countDeclarationFiles(localDistDir)) === 0) {
     throw new Error(
@@ -337,6 +439,27 @@ async function main(): Promise<number> {
       console.log(`[config-release-gate] ${PACKAGE_NAME} has never been published to ${registry}.`);
       console.log(FIRST_PUBLISH_MESSAGE);
       await writeStepSummary(renderFirstPublishSummary(nextVersion));
+      return 0;
+    }
+
+    // A published tarball without declarations means "nothing to diff", not a
+    // tool failure — the .gitignore/packlist trap that motivated
+    // packages/config/.npmignore (CLI-2234) is exactly how such a tarball
+    // could exist, and it must not block every subsequent release.
+    if ((await countDeclarationFiles(published.distDir)) === 0) {
+      const message =
+        `published ${published.version} tarball contains no .d.ts files — nothing to diff against; ` +
+        "the next release's full surface ships as reviewed.";
+      console.warn(`[config-release-gate] ${message}`);
+      await writeStepSummary(
+        [
+          "## @supabase/config release gate — type-surface diff",
+          "",
+          `\`${published.version}\` → \`${nextVersion}\``,
+          "",
+          `⚠️ **${message}**`,
+        ].join("\n"),
+      );
       return 0;
     }
 

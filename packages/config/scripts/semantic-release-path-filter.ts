@@ -52,20 +52,23 @@ export const PACKAGE_PATH_PREFIX = "packages/config/";
 
 /**
  * Resolves which of `commits` touch a path under {@link PACKAGE_PATH_PREFIX},
- * using ONE batched `git diff-tree --stdin -r --root --name-only` subprocess rather
- * than one per commit — the first release analyzes the repo's entire
- * history (thousands of commits).
+ * using ONE batched `git diff-tree --stdin -r --root --name-only -z`
+ * subprocess rather than one per commit — the first release analyzes the
+ * repo's entire history (thousands of commits).
  *
  * Output format (verified empirically against this repo, including a merge
- * commit): for each input hash that touches at least one file, `git
- * diff-tree` echoes that hash on its own line, followed by that commit's
- * changed paths (repo-root-relative, one per line), with no blank-line
- * separator before the next hash. A merge commit prints nothing at all here
- * (no hash line, no file lines) because `-m` is deliberately omitted: this
- * trunk is squash-merged, so a merge commit carries no analyzable change of
- * its own, and dropping it out of the result is intended, not a parsing gap.
- * A root commit would print nothing too — `--root` closes that gap by
- * diffing it against the empty tree (merge behavior is unaffected).
+ * commit): with `-z`, every element — each echoed input hash and each of its
+ * changed paths (repo-root-relative) — is NUL-terminated, with no other
+ * separators. `-z` matters for correctness, not just parsing convenience:
+ * without it, `core.quotePath` (default true) C-quotes any path with
+ * non-ASCII or special bytes (`"packages/config/caf\303\251.ts"`), which
+ * would silently fail the prefix match and drop a genuinely releasable
+ * commit. A merge commit prints nothing at all here (no hash, no paths)
+ * because `-m` is deliberately omitted: this trunk is squash-merged, so a
+ * merge commit carries no analyzable change of its own, and dropping it out
+ * of the result is intended, not a parsing gap. A root commit would print
+ * nothing too — `--root` closes that gap by diffing it against the empty
+ * tree (merge behavior is unaffected).
  */
 export async function filterCommitsToPackage<T extends { hash: string }>(
   commits: readonly T[],
@@ -78,35 +81,37 @@ export async function filterCommitsToPackage<T extends { hash: string }>(
   const hashes = commits.map((commit) => commit.hash);
   const knownHashes = new Set(hashes);
 
-  const proc = Bun.spawn(["git", "diff-tree", "--stdin", "-r", "--root", "--name-only"], {
+  const proc = Bun.spawn(["git", "diff-tree", "--stdin", "-r", "--root", "--name-only", "-z"], {
     cwd,
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
   });
+  // Start draining stdout/stderr before writing stdin: Bun buffers subprocess
+  // output eagerly so this can't deadlock today, but the classic full-pipe
+  // deadlock (git blocked writing stdout while we're blocked writing stdin)
+  // is one runtime port away — don't rely on the buffering behavior.
+  const stdoutText = new Response(proc.stdout).text();
+  const stderrText = new Response(proc.stderr).text();
   await proc.stdin.write(`${hashes.join("\n")}\n`);
   await proc.stdin.end();
 
-  const [exitCode, stdout, stderr] = await Promise.all([
-    proc.exited,
-    new Response(proc.stdout).text(),
-    new Response(proc.stderr).text(),
-  ]);
+  const [exitCode, stdout, stderr] = await Promise.all([proc.exited, stdoutText, stderrText]);
   if (exitCode !== 0) {
     throw new Error(`git diff-tree --stdin failed with exit code ${exitCode}: ${stderr.trim()}`);
   }
 
   const touchedHashes = new Set<string>();
   let currentHash: string | null = null;
-  for (const line of stdout.split("\n")) {
-    if (line.length === 0) {
+  for (const element of stdout.split("\0")) {
+    if (element.length === 0) {
       continue;
     }
-    if (knownHashes.has(line)) {
-      currentHash = line;
+    if (knownHashes.has(element)) {
+      currentHash = element;
       continue;
     }
-    if (currentHash !== null && line.startsWith(PACKAGE_PATH_PREFIX)) {
+    if (currentHash !== null && element.startsWith(PACKAGE_PATH_PREFIX)) {
       touchedHashes.add(currentHash);
     }
   }
@@ -114,24 +119,32 @@ export async function filterCommitsToPackage<T extends { hash: string }>(
   return commits.filter((commit) => touchedHashes.has(commit.hash));
 }
 
+async function withFilteredCommits<C extends AnalyzeCommitsContext | GenerateNotesContext, R>(
+  context: C,
+  step: string,
+  delegate: (filteredContext: C) => Promise<R>,
+): Promise<R> {
+  const filtered = await filterCommitsToPackage(context.commits, context.cwd ?? process.cwd());
+  context.logger.log(
+    `${step}: ${filtered.length} of ${context.commits.length} commits touch ${PACKAGE_PATH_PREFIX}`,
+  );
+  return delegate({ ...context, commits: filtered });
+}
+
 export async function analyzeCommits(
   pluginConfig: PluginConfig,
   context: AnalyzeCommitsContext,
 ): Promise<string | null> {
-  const filtered = await filterCommitsToPackage(context.commits, context.cwd ?? process.cwd());
-  context.logger.log(
-    `Analyzing ${filtered.length} of ${context.commits.length} commits touching ${PACKAGE_PATH_PREFIX}`,
+  return withFilteredCommits(context, "analyzeCommits", (filteredContext) =>
+    commitAnalyzer.analyzeCommits(pluginConfig, filteredContext),
   );
-  return commitAnalyzer.analyzeCommits(pluginConfig, { ...context, commits: filtered });
 }
 
 export async function generateNotes(
   pluginConfig: PluginConfig,
   context: GenerateNotesContext,
 ): Promise<string> {
-  const filtered = await filterCommitsToPackage(context.commits, context.cwd ?? process.cwd());
-  context.logger.log(
-    `Analyzing ${filtered.length} of ${context.commits.length} commits touching ${PACKAGE_PATH_PREFIX}`,
+  return withFilteredCommits(context, "generateNotes", (filteredContext) =>
+    releaseNotesGenerator.generateNotes(pluginConfig, filteredContext),
   );
-  return releaseNotesGenerator.generateNotes(pluginConfig, { ...context, commits: filtered });
 }

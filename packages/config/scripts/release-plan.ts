@@ -18,18 +18,21 @@
 import { appendFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 
 import { PACKAGE_PATH_PREFIX } from "./semantic-release-path-filter.ts";
 
-const packageRoot = path.resolve(import.meta.dir, "..");
+// Not `import.meta.dir`: that Bun-ism doesn't survive vitest's module
+// transform, and this module is imported by its unit test.
+const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 interface ConfigPackageJson {
   readonly name: string;
   readonly private?: boolean;
 }
 
-interface ReleaseDuePlan {
+export interface ReleaseDuePlan {
   readonly due: true;
   readonly version: string;
   readonly bumpType: string;
@@ -37,11 +40,11 @@ interface ReleaseDuePlan {
   readonly isPrivate: boolean;
 }
 
-interface NoReleasePlan {
+export interface NoReleasePlan {
   readonly due: false;
 }
 
-type ReleasePlan = ReleaseDuePlan | NoReleasePlan;
+export type ReleasePlan = ReleaseDuePlan | NoReleasePlan;
 
 async function readPackageJson(): Promise<ConfigPackageJson> {
   return JSON.parse(
@@ -71,9 +74,32 @@ async function computeReleasePlan(isPrivate: boolean): Promise<ReleasePlan> {
     return { due: false };
   }
 
+  // With no config-v* tag on the branch, semantic-release would cut 1.0.0
+  // analyzed from the ENTIRE monorepo history — the release notes (the human
+  // approver's artifact and the public GH release body) would be a changelog
+  // of every commit that ever touched packages/config/. Refuse until a
+  // baseline tag exists (see AGENTS.md "One-time setup"); the escape hatch is
+  // for a deliberate, eyes-open first cut.
+  if (!result.lastRelease.gitTag && !process.env.CONFIG_RELEASE_ALLOW_NO_BASELINE) {
+    throw new Error(
+      "no config-v* baseline tag found on this branch: semantic-release would release " +
+        `${result.nextRelease.version} with notes generated from the entire monorepo history. ` +
+        "Push a baseline tag first (e.g. config-v0.1.0 — see packages/config/AGENTS.md), or set " +
+        "CONFIG_RELEASE_ALLOW_NO_BASELINE=1 to proceed deliberately.",
+    );
+  }
+
+  const version = result.nextRelease.version;
+  // The version flows into `npm pkg set`, a git tag name, and a GH release
+  // title — refuse anything that isn't the plain stable x.y.z this
+  // stable-only train can produce.
+  if (!/^\d+\.\d+\.\d+$/.test(version)) {
+    throw new Error(`computed version "${version}" is not a plain x.y.z stable version.`);
+  }
+
   return {
     due: true,
-    version: result.nextRelease.version,
+    version,
     bumpType: result.nextRelease.type,
     notes: result.nextRelease.notes ?? "",
     isPrivate,
@@ -96,7 +122,30 @@ async function appendStepSummary(markdown: string): Promise<void> {
   await appendFile(summaryPath, `${markdown}\n`);
 }
 
-function renderStepSummary(plan: ReleasePlan): string {
+/**
+ * A fence long enough that no backtick run inside `content` can close it —
+ * the notes are commit-message-derived (squash-merge messages sourced from PR
+ * titles/bodies, including external contributors'), and this summary is the
+ * approver's evidence: rendering them as live markdown would let a crafted
+ * commit message forge parts of it.
+ */
+function fenceFor(content: string): string {
+  const longestRun = Math.max(0, ...[...content.matchAll(/`+/g)].map((match) => match[0].length));
+  return "`".repeat(Math.max(3, longestRun + 1));
+}
+
+export function toGithubOutputLines(plan: ReleasePlan): string[] {
+  const shouldRelease = plan.due && !plan.isPrivate;
+  const blockedOnPrivate = plan.due && plan.isPrivate;
+  return [
+    `should_release=${shouldRelease}`,
+    `version=${plan.due ? plan.version : ""}`,
+    `npm_tag=latest`,
+    `blocked_on_private=${blockedOnPrivate}`,
+  ];
+}
+
+export function renderStepSummary(plan: ReleasePlan): string {
   const lines: string[] = ["## @supabase/config release plan", ""];
 
   if (!plan.due) {
@@ -119,10 +168,14 @@ function renderStepSummary(plan: ReleasePlan): string {
   }
 
   if (plan.notes) {
+    const notes = plan.notes.trim();
+    const fence = fenceFor(notes);
     lines.push(
-      "<details><summary>Release notes</summary>",
+      "<details><summary>Release notes (markdown source)</summary>",
       "",
-      plan.notes.trim(),
+      `${fence}markdown`,
+      notes,
+      fence,
       "",
       "</details>",
     );
@@ -150,21 +203,16 @@ async function main(): Promise<void> {
   const isPrivate = packageJson.private === true;
 
   const plan = await computeReleasePlan(isPrivate);
-  const shouldRelease = plan.due && !plan.isPrivate;
-  const blockedOnPrivate = plan.due && plan.isPrivate;
-  const version = plan.due ? plan.version : "";
 
   if (plan.due && notesOutPath) {
-    await Bun.write(notesOutPath, plan.notes);
+    // Guarantee the trailing newline: the notes end up as a GH release
+    // body_path file, and a missing final newline is the kind of upstream
+    // formatting detail nothing else pins.
+    await Bun.write(notesOutPath, plan.notes.endsWith("\n") ? plan.notes : `${plan.notes}\n`);
   }
 
   if (process.env.GITHUB_OUTPUT) {
-    await appendGithubOutput([
-      `should_release=${shouldRelease}`,
-      `version=${version}`,
-      `npm_tag=latest`,
-      `blocked_on_private=${blockedOnPrivate}`,
-    ]);
+    await appendGithubOutput(toGithubOutputLines(plan));
   } else {
     console.log(renderLocalPlan(plan));
   }
@@ -172,9 +220,11 @@ async function main(): Promise<void> {
   await appendStepSummary(renderStepSummary(plan));
 }
 
-try {
-  await main();
-} catch (error) {
-  console.error(`[release-plan] ${error instanceof Error ? error.message : String(error)}`);
-  process.exit(1);
+if (import.meta.main) {
+  try {
+    await main();
+  } catch (error) {
+    console.error(`[release-plan] ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
+  }
 }

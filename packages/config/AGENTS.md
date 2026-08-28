@@ -144,10 +144,11 @@ elsewhere in the monorepo never releases `@supabase/config`, and vice versa.
 - **Tag format:** `config-v<version>` — never collides with the CLI's `v<version>` tags.
 - **Stable-only, from `develop`.** No beta/alpha channel; every release publishes to npm under the
   `latest` dist-tag.
-- **Workflow:** `.github/workflows/release-config.yml` — a `plan` job computes the version and runs
-  the type-surface gate, a human approves the `config-release` GitHub environment (reviewing the
-  plan job's step summary: release notes + type-surface diff), then an OIDC/provenance publish job
-  runs.
+- **Workflow:** `.github/workflows/release-config.yml` — a `plan` job computes the version, runs
+  the type-surface gate, and packs the release tarball; a human approves the `config-release`
+  GitHub environment (reviewing the plan job's step summary: release notes + type-surface diff);
+  then an OIDC/provenance publish job publishes **that exact tarball** (no rebuild — the approved
+  bytes are the published bytes).
 - **`package.json`'s `version` field is never committed.** It is set at publish time from the
   computed version — never hand-bump it, and never hand-push a `config-v*` tag.
 - **Local dry runs:** `scripts/release-plan.ts` runs the plan locally without publishing;
@@ -155,16 +156,22 @@ elsewhere in the monorepo never releases `@supabase/config`, and vice versa.
 
 ### One-time setup (tracked under CLI-2169)
 
-Three things must be settled before the first real publish:
+Four things must be settled before the first real publish:
 
 1. The `config-release` GitHub environment needs required reviewers configured in repo settings. An
-   environment referenced by a workflow is auto-created WITHOUT protection rules — until reviewers
-   are added, the approval gate is inert.
+   environment referenced by a workflow is auto-created WITHOUT protection rules — the plan job
+   asserts the rule exists and refuses to plan a real release until it does, so the first release
+   attempt fails closed rather than publishing unreviewed.
 2. npm trusted publishing must be configured for the package, which requires the package to exist
-   first. The very first publish is a manual/token bootstrap; afterward, the trusted publisher is
-   set to repo `supabase/cli`, workflow `release-config.yml`, environment `config-release`.
-3. Decide the first version. With no `config-v*` tag on `develop`, semantic-release cuts `1.0.0`.
-   To start on the `0.x` line instead, push a seed tag (e.g. `config-v0.1.0`) on a `develop` commit
-   before flipping `private` — semantic-release then treats `0.1.0` as the last release and
-   computes the next version from the commits after that tag. This is the single exception to the
+   first. The very first publish is a manual bootstrap — use a granular, single-package,
+   short-expiry token and revoke it as soon as the trusted publisher is configured (repo
+   `supabase/cli`, workflow `release-config.yml`, environment `config-release`).
+3. Push a baseline `config-v*` tag (e.g. `config-v0.1.0`) on a `develop` commit. This is required,
+   not optional: with no baseline, semantic-release would cut `1.0.0` with release notes generated
+   from the entire monorepo history — a whole-history changelog as both the approval artifact and
+   the public GH release body. `scripts/release-plan.ts` refuses to plan without a baseline tag
+   (escape hatch: `CONFIG_RELEASE_ALLOW_NO_BASELINE=1`). This is the single exception to the
    "never hand-push a `config-v*` tag" rule above.
+4. Add a repository tag ruleset protecting `config-v*` (alongside `v*`), restricted to the release
+   App. The last `config-v*` tag is the version oracle: a stray hand-pushed tag permanently skews
+   versioning, and a deleted tag makes the next plan re-cut an already-published version.

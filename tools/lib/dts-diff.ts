@@ -6,11 +6,23 @@
  * built `dist/`).
  */
 
-import { appendFile, readFile } from "node:fs/promises";
+import { appendFile, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
+/** `Bun.Glob.scan` throws ENOENT on a missing directory; a missing tree means "no declarations", not a tool failure. */
+async function directoryExists(dir: string): Promise<boolean> {
+  try {
+    return (await stat(dir)).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 export async function countDeclarationFiles(dir: string): Promise<number> {
+  if (!(await directoryExists(dir))) {
+    return 0;
+  }
   const glob = new Bun.Glob("**/*.d.ts");
   let count = 0;
   for await (const _relativePath of glob.scan({ cwd: dir })) {
@@ -20,6 +32,9 @@ export async function countDeclarationFiles(dir: string): Promise<number> {
 }
 
 async function listDeclarationFiles(dir: string): Promise<string[]> {
+  if (!(await directoryExists(dir))) {
+    return [];
+  }
   const glob = new Bun.Glob("**/*.d.ts");
   const relativePaths: string[] = [];
   for await (const relativePath of glob.scan({ cwd: dir })) {
@@ -123,16 +138,41 @@ export function countByStatus(entries: readonly FileEntry[], status: FileEntry["
   return entries.filter((entry) => entry.status === status).length;
 }
 
+function escapeHtml(text: string): string {
+  return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+/**
+ * A fence long enough that no backtick run inside `content` can close it —
+ * the diffed `.d.ts` text is untrusted (published-tarball side) and a JSDoc
+ * `@example` with its own fenced block would otherwise break out and render
+ * as live markdown in the approver's step summary.
+ */
+function fenceFor(content: string): string {
+  const longestRun = Math.max(0, ...[...content.matchAll(/`+/g)].map((match) => match[0].length));
+  return "`".repeat(Math.max(3, longestRun + 1));
+}
+
+/** GITHUB_STEP_SUMMARY is capped at ~1 MB; past this, a diff stops being reviewable inline anyway. */
+const MAX_RENDERED_DIFF_LENGTH = 20_000;
+
 /** The `<details>` markdown block for each changed file, shared verbatim by both tools' summaries. */
 export function renderDiffDetailsBlocks(entries: readonly FileEntry[]): string[] {
   const lines: string[] = [];
   for (const entry of entries) {
+    let diff = entry.diff.trimEnd();
+    if (diff.length > MAX_RENDERED_DIFF_LENGTH) {
+      diff =
+        `${diff.slice(0, MAX_RENDERED_DIFF_LENGTH)}\n` +
+        `… diff truncated (${diff.length} chars total) — see the job log for the full diff`;
+    }
+    const fence = fenceFor(diff);
     lines.push(
-      `<details><summary>${entry.status}: <code>${entry.path}</code></summary>`,
+      `<details><summary>${entry.status}: <code>${escapeHtml(entry.path)}</code></summary>`,
       "",
-      "```diff",
-      entry.diff.trimEnd(),
-      "```",
+      `${fence}diff`,
+      diff,
+      fence,
       "",
       "</details>",
       "",

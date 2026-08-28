@@ -10,6 +10,12 @@ on:
   # workflow_dispatch is the manual re-cut path, mirroring the CLI's Release
   # workflow. Defaults to `true` so a stray "Run workflow" click can't
   # accidentally publish — operators must consciously untick this.
+  #
+  # There is deliberately no `version` input: the publish job's registry probe
+  # skips versions that already exist on npm, so recovery from stale published
+  # bytes is "land a new (releasable) commit" — with no binary artifacts and a
+  # human approval in the loop, the CLI's cut-forward escape hatch isn't worth
+  # a second code path here.
   workflow_dispatch:
     inputs:
       dry_run:
@@ -36,9 +42,7 @@ jobs:
       should_release: ${{ steps.plan.outputs.should_release }}
       version: ${{ steps.plan.outputs.version }}
       npm_tag: ${{ steps.plan.outputs.npm_tag }}
-      blocked_on_private: ${{ steps.plan.outputs.blocked_on_private }}
       dry_run: ${{ steps.plan.outputs.dry_run }}
-      notes: ${{ steps.notes.outputs.notes }}
     steps:
       # semantic-release runs `git push --dry-run HEAD:<branch>` as part of
       # verifyAuth even in `dry_run: true` mode, so the token must have push
@@ -76,7 +80,16 @@ jobs:
           DISPATCH_DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
+          # semantic-release echoes commit-derived text (messages, notes) to
+          # this step's log; a commit message line starting with `::` would
+          # otherwise be interpreted as a workflow command (e.g. `::add-mask::`
+          # could redact words from the gate output the approver reads later).
+          # Bracket the driver with a stop-commands token so none of that
+          # output can issue commands. ($GITHUB_OUTPUT is a file, unaffected.)
+          resume_token="$(openssl rand -hex 16)"
+          echo "::stop-commands::${resume_token}"
           pnpm exec bun packages/config/scripts/release-plan.ts --notes-out "$RUNNER_TEMP/config-release-notes.md"
+          echo "::${resume_token}::"
           # Push events are never dry; workflow_dispatch dry-runs unless the
           # operator explicitly unticks the input.
           if [[ "$EVENT" == "workflow_dispatch" && "$DISPATCH_DRY_RUN" == "true" ]]; then
@@ -85,19 +98,10 @@ jobs:
             echo "dry_run=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - id: notes
-        if: steps.plan.outputs.version != ''
-        run: |
-          delimiter="$(uuidgen)"
-          {
-            echo "notes<<${delimiter}"
-            cat "$RUNNER_TEMP/config-release-notes.md"
-            echo "${delimiter}"
-          } >> "$GITHUB_OUTPUT"
-
-      # Both steps also run on private-blocked pushes (should_release=false,
-      # version set) — every config push rehearses the full release train
-      # while CLI-2169 hasn't flipped `private` yet.
+      # The build, gate, and pack steps also run on private-blocked pushes
+      # (should_release=false, version set) — every config push rehearses the
+      # plan half of the release train while CLI-2169 hasn't flipped `private`
+      # yet. The publish half stays unexercised until then.
       - name: Build @supabase/config
         if: steps.plan.outputs.version != ''
         run: pnpm exec turbo run @supabase/config#build
@@ -107,6 +111,58 @@ jobs:
         env:
           VERSION: ${{ steps.plan.outputs.version }}
         run: pnpm exec bun tools/config-release-gate.ts --version "$VERSION"
+
+      # Pack the exact tarball the approver's evidence (the gate summary
+      # above) describes. The publish job publishes THIS artifact rather than
+      # rebuilding: builds are not byte-reproducible across jobs (see
+      # release-shared.yml's brew/scoop cache-key comments for how that bit
+      # once before), and a rebuild would mean the approved bytes and the
+      # published bytes can differ.
+      - name: Pack the release tarball
+        if: steps.plan.outputs.version != ''
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/config-release-artifact"
+          cd packages/config
+          npm pkg set version="${VERSION}"
+          pnpm pack --pack-destination "$RUNNER_TEMP/config-release-artifact"
+          cp "$RUNNER_TEMP/config-release-notes.md" "$RUNNER_TEMP/config-release-artifact/"
+
+      - name: Upload release artifact
+        if: steps.plan.outputs.version != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: config-release
+          path: ${{ runner.temp }}/config-release-artifact/
+          if-no-files-found: error
+          retention-days: 7
+
+      # The `config-release` environment's required-reviewers rule is repo
+      # configuration, not code: an environment referenced by a workflow is
+      # auto-created WITHOUT protection rules, in which case the publish job
+      # would run straight through unreviewed. Fail closed here — before a
+      # real (non-dry) release can reach the publish job — if the rule is
+      # missing or unreadable. Private-blocked rehearsals (should_release
+      # false) are unaffected, so this only bites once CLI-2169 flips
+      # `private`, which is exactly when it must.
+      - name: Assert the release approval gate is armed
+        if: steps.plan.outputs.should_release == 'true' && steps.plan.outputs.dry_run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rules="$(gh api "repos/${GITHUB_REPOSITORY}/environments/config-release" \
+            --jq '[.protection_rules[].type] | join(",")' 2>/dev/null || echo "")"
+          case "$rules" in
+            *required_reviewers*) echo "config-release gate armed: ${rules}" ;;
+            *)
+              echo "The config-release environment has no required_reviewers rule (found: '${rules:-none}')." >&2
+              echo "Configure required reviewers in repo settings before releasing — see packages/config/AGENTS.md." >&2
+              exit 1
+              ;;
+          esac
 
   publish:
     name: Publish
@@ -122,12 +178,16 @@ jobs:
     environment:
       name: config-release
       # This environment must be configured with required reviewers in repo
-      # settings. The approver reviews the plan job's step summary (release
-      # notes + type-surface gate diff) before approving — that approval IS
-      # the hard semver gate.
+      # settings (asserted by the plan job above). The approver reviews the
+      # plan job's step summary (release notes + type-surface gate diff)
+      # before approving — that approval IS the hard semver gate, and the
+      # tarball published below is byte-identical to the one that evidence
+      # was generated from.
       url: https://www.npmjs.com/package/@supabase/config/v/${{ needs.plan.outputs.version }}
     # OIDC trusted publishing + provenance — same as release-shared.yml; no
-    # NPM_TOKEN anywhere.
+    # NPM_TOKEN anywhere. This job deliberately runs NO dependency install and
+    # NO build: the only repo code it executes is this workflow file, keeping
+    # arbitrary package code away from the job that holds id-token: write.
     permissions:
       contents: write
       id-token: write
@@ -143,42 +203,48 @@ jobs:
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
           permission-contents: write
 
+      # Needed for the tag push and for mise.toml; the default depth-1 fetch
+      # of the triggering commit is enough for both.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: true
-          fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
 
-      - name: Setup
-        uses: ./.github/actions/setup
+      # Toolchains only (pnpm for the publish) — no `pnpm install`.
+      - name: Install toolchains
+        uses: jdx/mise-action@e6a8b3978addb5a52f2b4cd9d91eafa7f0ab959d # v4
         with:
-          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+          version: 2026.7.0
 
-      # Rebuild in-job: same commit and pinned toolchain as the plan job's
-      # gated build, not an artifact carried over between jobs.
-      - name: Build @supabase/config
-        run: pnpm exec turbo run @supabase/config#build
+      - name: Download the reviewed release artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: config-release
+          path: ${{ runner.temp }}/config-release
 
-      # Versions live in `config-v*` tags, never committed — mirroring how the
-      # CLI never commits versions either.
-      - name: Set package version
-        working-directory: packages/config
-        run: npm pkg set version="${VERSION}"
-
-      - name: Guard against a still-private package
-        working-directory: packages/config
+      - name: Verify and extract the tarball
+        working-directory: ${{ runner.temp }}/config-release
         run: |
           set -euo pipefail
-          if [[ "$(npm pkg get private)" == "true" ]]; then
+          tar -xzf "supabase-config-${VERSION}.tgz" --no-same-owner --no-same-permissions
+          # The root .gitignore's bare `dist` line once pruned dist/ from the
+          # packlist entirely (the reason packages/config/.npmignore exists) —
+          # never publish a tarball without its compiled entrypoint.
+          test -f package/dist/index.js
+          [[ "$(jq -r .name package/package.json)" == "@supabase/config" ]]
+          [[ "$(jq -r .version package/package.json)" == "${VERSION}" ]]
+          if [[ "$(jq -r .private package/package.json)" == "true" ]]; then
             echo "packages/config is still private: true — flip it under CLI-2169 before publishing." >&2
             exit 1
           fi
 
       # Idempotent, mirroring publish.ts's registry-probe intent: a re-run
       # after a post-publish failure must not die on EPUBLISHCONFLICT.
+      # Publishing from the extracted artifact keeps the published content
+      # identical to what the approver reviewed.
       - name: Publish to npm
-        working-directory: packages/config
+        working-directory: ${{ runner.temp }}/config-release/package
         run: |
           set -euo pipefail
           if npm view "@supabase/config@${VERSION}" version >/dev/null 2>&1; then
@@ -209,20 +275,13 @@ jobs:
             git push origin "${tag}"
           fi
 
-      # Write via env-var indirection, never inline shell interpolation of the
-      # notes — the notes are LLM/commit-derived markdown and must not be
-      # spliced directly into a shell command line.
-      - name: Write release notes to file
-        env:
-          NOTES: ${{ needs.plan.outputs.notes }}
-        run: printf '%s\n' "$NOTES" > "$RUNNER_TEMP/config-release-notes.md"
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
+          token: ${{ github.token }}
           tag_name: config-v${{ needs.plan.outputs.version }}
           name: "@supabase/config v${{ needs.plan.outputs.version }}"
-          body_path: ${{ runner.temp }}/config-release-notes.md
+          body_path: ${{ runner.temp }}/config-release/config-release-notes.md
           draft: false
           prerelease: false
           # The CLI's install scripts and setup-cli resolve

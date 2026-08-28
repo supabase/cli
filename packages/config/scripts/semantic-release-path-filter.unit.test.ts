@@ -2,12 +2,13 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import process from "node:process";
-import type { AnalyzeCommitsContext, Commit } from "semantic-release";
+import type { AnalyzeCommitsContext, Commit, GenerateNotesContext } from "semantic-release";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   PACKAGE_PATH_PREFIX,
   analyzeCommits,
   filterCommitsToPackage,
+  generateNotes,
 } from "./semantic-release-path-filter.ts";
 
 // Hermetic git identity/signing: the developer's global gitconfig may require
@@ -100,6 +101,7 @@ describe("semantic-release-path-filter", () => {
   let hashCliOnly: string;
   let hashBoth: string;
   let hashPrefixTrap: string;
+  let hashNonAsciiPath: string;
   let hashMerge: string;
 
   beforeAll(async () => {
@@ -133,6 +135,11 @@ describe("semantic-release-path-filter", () => {
       repoDir,
       { "packages/config-other/x.ts": "export const x = 1;\n" },
       "chore: seed packages/config-other, a prefix-adjacent trap",
+    );
+    hashNonAsciiPath = await commitFiles(
+      repoDir,
+      { "packages/config/src/café.ts": "export const café = 1;\n" },
+      "chore: seed a non-ASCII path under packages/config",
     );
 
     await git(repoDir, ["checkout", "-b", "feature", "-q"]);
@@ -183,6 +190,12 @@ describe("semantic-release-path-filter", () => {
       const result = await filterCommitsToPackage([], repoDir);
 
       expect(result).toEqual([]);
+    });
+
+    test("includes a commit whose only config path is non-ASCII (core.quotePath would C-quote it without -z)", async () => {
+      const result = await filterCommitsToPackage([{ hash: hashNonAsciiPath }], repoDir);
+
+      expect(result).toEqual([{ hash: hashNonAsciiPath }]);
     });
 
     test("includes a root commit that touches packages/config/** (--root diffs it against the empty tree)", async () => {
@@ -253,6 +266,46 @@ describe("semantic-release-path-filter", () => {
       const result = await analyzeCommits({}, context);
 
       expect(result).toBe("patch");
+    });
+  });
+
+  describe("generateNotes", () => {
+    function fakeGenerateNotesContext(commits: Commit[], cwd: string): GenerateNotesContext {
+      const base = fakeAnalyzeCommitsContext(commits, cwd);
+      return {
+        ...base,
+        options: { ...base.options, repositoryUrl: "https://github.com/supabase/cli.git" },
+        lastRelease: {
+          version: "0.1.0",
+          gitTag: "config-v0.1.0",
+          channels: [],
+          gitHead: commits[0]?.hash ?? "0".repeat(40),
+          name: "config-v0.1.0",
+        },
+        nextRelease: {
+          version: "0.2.0",
+          gitTag: "config-v0.2.0",
+          gitHead: commits[commits.length - 1]?.hash ?? "0".repeat(40),
+          name: "config-v0.2.0",
+          type: "minor",
+          channel: "latest",
+        },
+      };
+    }
+
+    test("the notes mention the config commit and omit the commit that only touched apps/cli", async () => {
+      const context = fakeGenerateNotesContext(
+        [
+          fakeCommit(hashConfigOnly, "feat(config): add a new config option"),
+          fakeCommit(hashCliOnly, "fix(cli): unrelated cli bug that must not appear"),
+        ],
+        repoDir,
+      );
+
+      const notes = await generateNotes({}, context);
+
+      expect(notes).toContain("add a new config option");
+      expect(notes).not.toContain("unrelated cli bug that must not appear");
     });
   });
 });

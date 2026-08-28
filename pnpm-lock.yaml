@@ -48,6 +48,9 @@ catalogs:
     oxlint-tsgolint:
       specifier: ^7.0.2001
       version: 7.0.2001
+    semantic-release:
+      specifier: ^25.0.9
+      version: 25.0.9
     tldts:
       specifier: ^7.4.10
       version: 7.4.10
@@ -241,7 +244,7 @@ importers:
         specifier: ^7.0.1
         version: 7.0.1
       semantic-release:
-        specifier: ^25.0.9
+        specifier: 'catalog:'
         version: 25.0.9(typescript@7.0.2)
       smol-toml:
         specifier: ^1.8.0
@@ -450,7 +453,7 @@ importers:
         specifier: 'catalog:'
         version: 4.0.0-rc.111
       semantic-release:
-        specifier: ^25.0.9
+        specifier: 'catalog:'
         version: 25.0.9(typescript@7.0.2)
       typescript:
         specifier: 'catalog:'
