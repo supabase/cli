@@ -66,7 +66,6 @@
   },
   "scripts": {
     "build": "bun run ./scripts/build.ts",
-    "api-report:update": "bun run ./scripts/build.ts --api-report-only",
     "types:check": "tsc --noEmit",
     "test": "pnpm run test:unit",
     "test:unit": "pnpm exec turbo run @supabase/config#test:unit:run --",

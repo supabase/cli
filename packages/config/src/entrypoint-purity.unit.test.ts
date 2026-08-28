@@ -583,9 +583,8 @@ describe("package.json exports map", () => {
   // The `types`/`default` conditions of `.`/`./effect`/`./internal`/`./io`
   // (node, browser, default) all point at `dist/` build outputs, which only
   // exist after `pnpm run build` — intentionally NOT checked here so this
-  // test stays build-independent. `src/api-report.unit.test.ts` and
-  // `scripts/build.ts`'s tree-shake/Node-consumer smoke test own dist
-  // correctness instead (CLI-2232).
+  // test stays build-independent. `scripts/build.ts`'s tree-shake/Node-consumer
+  // smoke test owns dist correctness instead (CLI-2232).
   test("the ./io bun condition target exists on disk (its only src target)", () => {
     expect(() => readFileSync(join(packageRoot, packageJson.exports["./io"].bun))).not.toThrow();
   });

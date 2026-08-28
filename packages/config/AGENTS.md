@@ -90,22 +90,17 @@ surface must update that test deliberately — it is not meant to be a silent pa
    merely asserting it — plus a positive-control probe (bundling `projectConfigMappingRows` from
    `dist/internal.js`) proving the registry-only marker is actually detectable by this bundling
    method before trusting its absence elsewhere as meaningful.
-5. Syncs `api-report/` — a declarations-only build (`tsconfig.api-report.json`) built into a
-   scratch directory and atomically swapped into the checked-in `api-report/` directory (never a
-   partial write). `src/api-report.unit.test.ts` regenerates the same build and diffs it against
-   that mirror, so any type-surface change anywhere in `src/` shows up as a reviewable
-   `api-report/` diff instead of passing silently — commit that diff whenever it appears. Run
-   `pnpm run api-report:update` for just this step (declaration emit + sync only) without the rest
-   of the build.
-6. Runs a pack-and-install smoke test: `npm pack`s the real publish tarball (governed by `files`/
+5. Runs a pack-and-install smoke test: `npm pack`s the real publish tarball (governed by `files`/
    `.npmignore` — the exact thing `npm publish` would ship), extracts it into a fresh, isolated
    consumer project, symlinks in the real, already pnpm-resolved runtime deps (network-free), and
    imports every entrypoint and JSON artifact through a real `node` process — catching `files`/
    `exports` drift a workspace-link smoke test or a `tsc`-only build would miss entirely.
 
-`dist/` is gitignored and rebuilt on demand; `api-report/` is the one build output that is checked
-in. Re-run the build and commit the resulting `api-report/` diff whenever a change touches this
-package's public type surface.
+`dist/` is gitignored and rebuilt on demand — no build output is checked in. The public type
+surface is instead enforced per-PR by export snapshots and purity walkers (see "Testing" below)
+plus the repo-root `pnpm check:config-api` (`tools/config-api-compare.ts`), which diffs this
+package's declaration output between the PR base and head commits and is advisory at PR time. A
+release-time tarball diff is planned under CLI-2233 as the hard gate.
 
 ### Publishing the tarball (CLI-2234)
 
@@ -128,7 +123,6 @@ must stay green after any entrypoint or type-surface change:
 - `src/entrypoint-purity.unit.test.ts` — the pure-graph invariant above (also walked separately for
   `src/io-browser.ts`, the `browser` condition target for `./io`), plus pinned export-name
   snapshots for `.`/`./effect`/`./internal` and the package.json `exports` map shape.
-- `src/api-report.unit.test.ts` — the checked-in `api-report/` mirror described above.
 - `src/monorepo-import-contract.unit.test.ts` — the "Monorepo import rule" above: no internal
   `./io` consumer, no deep `@supabase/config/src/*` import, and no `@supabase/config/internal`
   import outside `apps/cli/` — scanning `apps/` and `packages/` while excluding this package's own

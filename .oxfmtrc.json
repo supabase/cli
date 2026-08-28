@@ -5,7 +5,6 @@
     "apps/cli-e2e/fixtures/",
     "apps/docs/content/docs/commands/",
     "apps/docs/public/",
-    "**/testdata/",
-    "**/api-report/"
+    "**/testdata/"
   ]
 }

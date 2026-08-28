@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rename, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { CliConfigSchema, toCliConfigJsonSchema } from "../src/base.ts";
@@ -10,7 +10,6 @@ import { CLI_CONFIG_SCHEMA_URL, PROJECT_CONFIG_SCHEMA_URL } from "../src/schema-
 import { collapseNonFiniteNumberUnions, withSchemaMetadata } from "./json-schema-postprocess.ts";
 
 const packageRoot = path.resolve(import.meta.dir, "..");
-const apiReportOnly = process.argv.includes("--api-report-only");
 
 async function runCommand(cmd: readonly string[], cwd: string = packageRoot): Promise<void> {
   const child = Bun.spawn([...cmd], { cwd, stdout: "inherit", stderr: "inherit" });
@@ -199,59 +198,6 @@ async function verifyTreeShaking(): Promise<void> {
   }
 }
 
-/**
- * Regenerates a declarations-only build (`tsconfig.api-report.json`, no
- * `.d.ts.map`/`.js`) into a scratch dir INSIDE this package (so the final
- * swap below is a same-filesystem, atomic `rename`) and swaps it into the
- * checked-in `api-report/` (CLI-2234 enforcement layer 4).
- * `src/api-report.unit.test.ts` regenerates the same way and diffs against
- * this mirror, so any type-surface change becomes a reviewable `api-report/`
- * diff instead of passing silently.
- */
-async function syncApiReport(): Promise<void> {
-  const apiReportDir = path.join(packageRoot, "api-report");
-  const scratchDir = await mkdtemp(path.join(packageRoot, ".api-report-scratch-"));
-
-  try {
-    await runCommand([
-      "pnpm",
-      "exec",
-      "tsc",
-      "-p",
-      "tsconfig.api-report.json",
-      "--outDir",
-      scratchDir,
-    ]);
-
-    const glob = new Bun.Glob("**/*.d.ts");
-    let count = 0;
-    for await (const _relativePath of glob.scan({ cwd: scratchDir })) {
-      count++;
-    }
-    if (count === 0) {
-      throw new Error(
-        "the declarations-only compile produced zero .d.ts files — refusing to swap an empty tree " +
-          "into api-report/",
-      );
-    }
-
-    const staleDir = `${apiReportDir}.stale-${Date.now()}`;
-    const hadExistingApiReport = await Bun.file(path.join(apiReportDir, "index.d.ts")).exists();
-    if (hadExistingApiReport) {
-      await rm(staleDir, { recursive: true, force: true });
-      await rename(apiReportDir, staleDir);
-    }
-    await rename(scratchDir, apiReportDir);
-    if (hadExistingApiReport) {
-      await rm(staleDir, { recursive: true, force: true });
-    }
-
-    console.log(`[build] synced ${count} .d.ts files into api-report/ (atomic swap)`);
-  } finally {
-    await rm(scratchDir, { recursive: true, force: true });
-  }
-}
-
 const SMOKE_TEST_RUNTIME_DEPS = [
   "effect",
   "@effect/platform-node",
@@ -435,52 +381,42 @@ async function verifyExportsMapTargetsExist(): Promise<void> {
   console.log(`[build] verified ${targets.size} exports-map dist targets exist on disk.`);
 }
 
-if (apiReportOnly) {
-  console.log("[build] --api-report-only: syncing api-report/ from a declarations-only compile...");
-  await syncApiReport();
-  console.log("[build] done.");
-} else {
-  console.log("[build] removing stale dist/ (stale modules from renames must not ship)...");
-  await rm(path.join(packageRoot, "dist"), { recursive: true, force: true });
+console.log("[build] removing stale dist/ (stale modules from renames must not ship)...");
+await rm(path.join(packageRoot, "dist"), { recursive: true, force: true });
 
-  console.log("[build] compiling TypeScript project (tsconfig.build.json)...");
-  await runCommand(["pnpm", "exec", "tsc", "-p", "tsconfig.build.json"]);
+console.log("[build] compiling TypeScript project (tsconfig.build.json)...");
+await runCommand(["pnpm", "exec", "tsc", "-p", "tsconfig.build.json"]);
 
-  console.log("[build] rendering JSON Schema artifacts...");
-  await renderCollapsedJsonSchema(
-    "./dist/schema.json",
-    toCliConfigJsonSchema(),
-    CliConfigSchema.ast,
-    {
-      id: CLI_CONFIG_SCHEMA_URL,
-      title: "Supabase CLI config (CliConfig)",
-      description:
-        "The Supabase CLI's local project config document (supabase/config.toml or supabase/config.json).",
-    },
-  );
-  await renderCollapsedJsonSchema(
-    "./dist/project-schema.json",
-    toProjectConfigJsonSchema(),
-    ProjectConfigSchema.ast,
-    {
-      id: PROJECT_CONFIG_SCHEMA_URL,
-      title: "Supabase hosted project config (ProjectConfig)",
-      description:
-        "The sparse, hosted-project subset of CliConfig that a Supabase project manages.",
-    },
-  );
+console.log("[build] rendering JSON Schema artifacts...");
+await renderCollapsedJsonSchema(
+  "./dist/schema.json",
+  toCliConfigJsonSchema(),
+  CliConfigSchema.ast,
+  {
+    id: CLI_CONFIG_SCHEMA_URL,
+    title: "Supabase CLI config (CliConfig)",
+    description:
+      "The Supabase CLI's local project config document (supabase/config.toml or supabase/config.json).",
+  },
+);
+await renderCollapsedJsonSchema(
+  "./dist/project-schema.json",
+  toProjectConfigJsonSchema(),
+  ProjectConfigSchema.ast,
+  {
+    id: PROJECT_CONFIG_SCHEMA_URL,
+    title: "Supabase hosted project config (ProjectConfig)",
+    description: "The sparse, hosted-project subset of CliConfig that a Supabase project manages.",
+  },
+);
 
-  console.log("[build] verifying every exports-map dist target exists...");
-  await verifyExportsMapTargetsExist();
+console.log("[build] verifying every exports-map dist target exists...");
+await verifyExportsMapTargetsExist();
 
-  console.log("[build] verifying the sideEffects:false tree-shaking claim...");
-  await verifyTreeShaking();
+console.log("[build] verifying the sideEffects:false tree-shaking claim...");
+await verifyTreeShaking();
 
-  console.log("[build] syncing api-report/ from a declarations-only compile...");
-  await syncApiReport();
+console.log("[build] running the pack-and-install smoke test...");
+await runPackAndInstallSmokeTest();
 
-  console.log("[build] running the pack-and-install smoke test...");
-  await runPackAndInstallSmokeTest();
-
-  console.log("[build] done.");
-}
+console.log("[build] done.");

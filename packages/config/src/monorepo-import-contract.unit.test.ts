@@ -16,8 +16,8 @@ import { fileURLToPath } from "node:url";
 // are built by concatenation so this file's own source can never self-match
 // (on top of the directory exclusion below, which already keeps this whole
 // package — where those specifier strings legitimately appear in doc
-// comments, generated `api-report/` declarations, and the build script's own
-// smoke-test source string — out of the walk).
+// comments and the build script's own smoke-test source string — out of the
+// walk).
 //
 const srcDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(srcDir, "..", "..", "..");

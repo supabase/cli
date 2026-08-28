@@ -318,7 +318,8 @@ try {
 The runtime export surface of `.`, `./io`, and `./effect`, plus the two generated JSON Schema
 artifacts (`./schema.json`, `./project-schema.json`), is this package's published contract.
 `./internal` carries no such guarantee. See [AGENTS.md](https://github.com/supabase/cli/blob/develop/packages/config/AGENTS.md) for how that contract is
-enforced (export-surface snapshots and a checked-in API report).
+enforced (export-surface snapshots, purity walkers, and a base-vs-head type-surface diff advisory
+at PR time — a release-time tarball diff hard gate is planned under CLI-2233).
 
 ## Usage
 
@@ -376,7 +377,7 @@ Package-local checks and development commands run from `packages/config`:
 ```sh
 pnpm types:check
 pnpm run test        # Run tests
-pnpm run build       # Compile dist/, generate schema.json/project-schema.json, sync api-report/
+pnpm run build       # Compile dist/, generate schema.json/project-schema.json
 ```
 
 See [AGENTS.md](https://github.com/supabase/cli/blob/develop/packages/config/AGENTS.md) for the build pipeline and contract-enforcement details.

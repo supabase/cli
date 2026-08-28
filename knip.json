@@ -3,7 +3,7 @@
   "exclude": ["catalogReferences"],
   "workspaces": {
     ".": {
-      "entry": [".github/scripts/**/*.ts", "tools/release/*.ts"],
+      "entry": [".github/scripts/**/*.ts", "tools/*.ts", "tools/release/*.ts"],
       "ignore": [".repos/**", "apps/cli-go/**"],
       "ignoreBinaries": ["go"],
       "ignoreDependencies": ["verdaccio"]
@@ -35,8 +35,7 @@
       "ignoreDependencies": ["undici"]
     },
     "packages/config": {
-      "entry": ["src/**/*.test.ts"],
-      "ignore": ["api-report/**"]
+      "entry": ["src/**/*.test.ts"]
     },
     "packages/process-compose": {
       "entry": ["src/**/*.test.ts", "tests/**/*.ts"]

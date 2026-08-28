@@ -68,13 +68,8 @@
     },
     "@supabase/config#build": {
       "cache": true,
-      "inputs": [
-        "$TURBO_DEFAULT$",
-        "!api-report/**",
-        "$TURBO_ROOT$/.bun-version",
-        "$TURBO_ROOT$/mise.lock"
-      ],
-      "outputs": ["dist/**", "api-report/**"]
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/.bun-version", "$TURBO_ROOT$/mise.lock"],
+      "outputs": ["dist/**"]
     },
     "@supabase/api#generate": {
       "cache": false,
