@@ -365,12 +365,7 @@ describe("apps/cli error classes declare their actionability", () => {
 });
 
 describe("workspace package error tags have external adapters", () => {
-  const packageRoots = [
-    "packages/api/src",
-    "packages/stack/src",
-    "packages/config/src",
-    "packages/process-compose/src",
-  ];
+  const packageRoots = ["packages/api/src", "packages/stack/src", "packages/config/src"];
 
   for (const packageRoot of packageRoots) {
     it(packageRoot, { timeout: 30_000 }, async () => {

@@ -20,7 +20,7 @@ import {
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
-import { mockChildProcessSpawner } from "../../../../../../../packages/process-compose/tests/helpers/mocks.ts";
+import { mockChildProcessSpawner } from "../../../../../tests/helpers/child-process-spawner.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { legacyContainerRuntimeNotFoundMessage } from "../../../shared/legacy-container-cli.ts";
 import { downloadFunctions } from "../../../../shared/functions/download.ts";

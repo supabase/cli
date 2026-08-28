@@ -61,7 +61,6 @@
         "$TURBO_ROOT$/.bun-version",
         "$TURBO_ROOT$/mise.lock",
         "$TURBO_ROOT$/packages/api/**",
-        "$TURBO_ROOT$/packages/process-compose/**",
         "$TURBO_ROOT$/packages/stack/**"
       ],
       "outputs": ["dist/**"]

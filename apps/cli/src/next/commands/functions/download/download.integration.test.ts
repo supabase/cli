@@ -24,7 +24,7 @@ import {
   mockProjectLinkState,
   mockRuntimeInfo,
 } from "../../../../../tests/helpers/mocks.ts";
-import { mockChildProcessSpawner } from "../../../../../../../packages/process-compose/tests/helpers/mocks.ts";
+import { mockChildProcessSpawner } from "../../../../../tests/helpers/child-process-spawner.ts";
 import type { FunctionsDownloadFlags } from "./download.command.ts";
 import {
   ConflictingFunctionDownloadFlagsError,

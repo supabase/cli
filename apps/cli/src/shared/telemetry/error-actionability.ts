@@ -15,7 +15,7 @@ import type { CliError as EffectCliError } from "effect/unstable/cli";
  * {@link ErrorActionabilityId} symbol (enforced by
  * `error-actionability-coverage.unit.test.ts`). Errors originating outside the
  * CLI workspace (`@supabase/stack`, `@supabase/config`,
- * `@supabase/process-compose`, `effect` cli/http) are classified by the
+ * `effect` cli/http) are classified by the
  * structural adapters at the bottom of this module, which are themselves
  * exhaustiveness-checked against those packages' sources.
  *
@@ -1149,16 +1149,6 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
     }
     return { ...actionability.stopStack, fingerprint_suffix: "daemon_transport" };
   },
-
-  // @supabase/process-compose — the CLI generates the process graph, so graph
-  // invariants are internal bugs; runtime service failures are stack-state
-  // problems the user resolves by restarting the stack.
-  CyclicDependencyError: () => actionability.impossibleState,
-  MissingDependencyError: () => actionability.impossibleState,
-  ServiceNotFoundError: () => actionability.impossibleState,
-  SpawnError: () => actionability.startStack,
-  ShutdownTimeoutError: () => actionability.stopStack,
-  ServiceReadyError: () => actionability.startStack,
 };
 
 /**

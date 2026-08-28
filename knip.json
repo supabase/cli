@@ -34,12 +34,6 @@
       "entry": ["src/**/*.test.ts"],
       "ignoreDependencies": ["undici"]
     },
-    "packages/process-compose": {
-      "entry": ["src/**/*.test.ts", "tests/**/*.ts"]
-    },
-    "packages/stack": {
-      "entry": ["scripts/**/*.ts", "src/**/*.test.ts", "src/daemon-node.ts", "tests/**/*.ts"]
-    },
     "packages/cli-test-helpers": {
       "entry": ["src/**/*.test.ts"]
     }

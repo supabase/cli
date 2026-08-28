@@ -3,14 +3,6 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     passWithNoTests: true,
-    coverage: {
-      enabled: false,
-      provider: "istanbul",
-      clean: false,
-      include: ["src/**/*.ts"],
-      reporter: ["text", "lcov"],
-      reportsDirectory: "coverage",
-    },
     projects: [
       {
         test: {
@@ -22,15 +14,6 @@ export default defineConfig({
         test: {
           name: "integration",
           include: ["**/*.integration.test.ts"],
-          testTimeout: 60_000,
-        },
-      },
-      {
-        test: {
-          name: "e2e",
-          include: ["**/*.e2e.test.ts"],
-          fileParallelism: false,
-          globalSetup: ["./tests/global-setup.ts"],
         },
       },
     ],

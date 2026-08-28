@@ -31,7 +31,6 @@ import {
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ServiceNotFoundError } from "@supabase/process-compose";
 import { CliSettings } from "../../src/next/config/cli-settings.service.ts";
 import { CliProjectHome } from "../../src/next/config/cli-project-home.service.ts";
 import { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
@@ -77,7 +76,7 @@ const stackService = (info: StackInfo, onStop: Effect.Effect<void>): Stack["Serv
   getState: (name: string) => {
     const state = stackStates.find((candidate) => candidate.name === name);
     return state === undefined
-      ? Effect.fail(new ServiceNotFoundError({ name }))
+      ? Effect.fail(new Error(`service not found: ${name}`))
       : Effect.succeed(state);
   },
   getAllStates: Effect.succeed(stackStates),
