@@ -185,16 +185,25 @@ export function buildFunctionEnv(config: any, functionConfig: any, functionName:
   };
 }
 
-function hasSharedServicePath(config: any, servicePath: string): boolean {
-  const functions: Record<string, { entrypointPath: string }> = config.functions ?? {};
-  let count = 0;
-  for (const functionConfig of Object.values(functions)) {
-    if (dirname(functionConfig.entrypointPath) === servicePath) {
-      count += 1;
-      if (count > 1) return true;
-    }
+export function resolveWorkerServicePath(
+  functions: Record<string, { entrypointPath: string }>,
+  functionName: string,
+) {
+  const functionConfig = functions[functionName];
+  if (!functionConfig) {
+    throw new Error(`Function ${functionName} is not configured`);
   }
-  return false;
+  const sourcePath = dirname(functionConfig.entrypointPath);
+  const sharesSourcePath = Object.entries(functions).some(
+    ([otherName, otherConfig]) =>
+      otherName !== functionName && dirname(otherConfig.entrypointPath) === sourcePath,
+  );
+
+  // Edge Runtime pools user workers by servicePath. maybeEntrypoint remains the real
+  // source file, so this logical suffix changes only the worker's cache identity.
+  return sharesSourcePath
+    ? `${sourcePath}/.supabase-worker/${encodeURIComponent(functionName)}`
+    : sourcePath;
 }
 
 async function serveFunction(req: Request, config: any, functionName: string, functionConfig: any) {
@@ -202,7 +211,7 @@ async function serveFunction(req: Request, config: any, functionName: string, fu
   if (authError) return authError;
 
   const envVars = Object.entries(buildFunctionEnv(config, functionConfig, functionName));
-  const servicePath = dirname(functionConfig.entrypointPath);
+  const servicePath = resolveWorkerServicePath(config.functions, functionName);
 
   try {
     const worker = await EdgeRuntime.userWorkers.create({
@@ -213,8 +222,7 @@ async function serveFunction(req: Request, config: any, functionName: string, fu
       noNpm: false,
       importMapPath: functionConfig.importMapPath ?? undefined,
       envVars,
-      // Shared entrypoint directories need a fresh worker for the per-function slug.
-      forceCreate: hasSharedServicePath(config, servicePath),
+      forceCreate: false,
       customModuleRoot: "",
       cpuTimeSoftLimitMs: 1000,
       cpuTimeHardLimitMs: 2000,

@@ -122,16 +122,26 @@ const functionsConfig: Record<string, FunctionConfig> = (() => {
   }
 })();
 
-const sharedServicePaths = (() => {
-  const counts = new Map<string, number>();
+// Edge Runtime pools user workers by servicePath. Keep the source directory for the
+// common case, but give each function a stable logical path when multiple configured
+// functions share that directory. maybeEntrypoint still points at the real source file,
+// so module resolution (including ../_shared imports) is unchanged.
+const workerServicePaths = (() => {
+  const sourcePathCounts = new Map<string, number>();
   for (const config of Object.values(functionsConfig)) {
-    const servicePath = dirname(config.entrypointPath);
-    counts.set(servicePath, (counts.get(servicePath) ?? 0) + 1);
+    const sourcePath = dirname(config.entrypointPath);
+    sourcePathCounts.set(sourcePath, (sourcePathCounts.get(sourcePath) ?? 0) + 1);
   }
-  return new Set(
-    Array.from(counts)
-      .filter(([, count]) => count > 1)
-      .map(([servicePath]) => servicePath),
+
+  return Object.fromEntries(
+    Object.entries(functionsConfig).map(([functionName, config]) => {
+      const sourcePath = dirname(config.entrypointPath);
+      const servicePath =
+        sourcePathCounts.get(sourcePath) === 1
+          ? sourcePath
+          : join(sourcePath, ".supabase-worker", encodeURIComponent(functionName));
+      return [functionName, servicePath];
+    }),
   );
 })();
 
@@ -330,7 +340,7 @@ Deno.serve({
       }
     }
 
-    const servicePath = dirname(functionsConfig[functionName].entrypointPath);
+    const servicePath = workerServicePaths[functionName];
     console.error(`serving the request with ${servicePath}`);
 
     // Ref: https://supabase.com/docs/guides/functions/limits
@@ -362,8 +372,7 @@ Deno.serve({
       ([name, _]) => !EXCLUDED_ENVS.includes(name) && !name.startsWith("SUPABASE_INTERNAL_"),
     );
 
-    // Shared entrypoint directories need a fresh worker for the per-function slug.
-    const forceCreate = sharedServicePaths.has(servicePath);
+    const forceCreate = false;
     const customModuleRoot = ""; // empty string to allow any local path
     const cpuTimeSoftLimitMs = 1000;
     const cpuTimeHardLimitMs = 2000;

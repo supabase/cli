@@ -19,7 +19,11 @@ import {
   resolveFunctionsRuntimeConfig,
   type ResolvedFunctionsBundle,
 } from "./functions.ts";
-import { buildFunctionEnv, verifyRequest } from "./services/edge-runtime-main.ts";
+import {
+  buildFunctionEnv,
+  resolveWorkerServicePath,
+  verifyRequest,
+} from "./services/edge-runtime-main.ts";
 
 const testPorts: PortSet = {
   apiPort: 40_000,
@@ -343,6 +347,22 @@ describe("stack Functions runtime env", () => {
     expect(env.SHARED).toBe("shared-value");
     expect(env.FUNCTION_ONLY).toBe("function-value");
     expect(env.SUPABASE_URL).toBe("http://api-gw:8000");
+  });
+
+  it("uses distinct worker identities when functions share a source directory", () => {
+    const functions = {
+      alpha: { entrypointPath: "/supabase/functions/shared/alpha.ts" },
+      beta: { entrypointPath: "/supabase/functions/shared/beta.ts" },
+      isolated: { entrypointPath: "/supabase/functions/isolated/index.ts" },
+    };
+
+    expect(resolveWorkerServicePath(functions, "alpha")).toBe(
+      "/supabase/functions/shared/.supabase-worker/alpha",
+    );
+    expect(resolveWorkerServicePath(functions, "beta")).toBe(
+      "/supabase/functions/shared/.supabase-worker/beta",
+    );
+    expect(resolveWorkerServicePath(functions, "isolated")).toBe("/supabase/functions/isolated");
   });
 });
 

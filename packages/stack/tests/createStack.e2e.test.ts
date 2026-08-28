@@ -19,10 +19,11 @@ describe("createStack e2e", () => {
     dataDir = mkdtempSync(join(tmpdir(), "supabase-e2e-"));
     projectDir = mkdtempSync(join(tmpdir(), "supabase-e2e-project-"));
     writeFunction(projectDir, "hello", "hello");
+    writeSharedFunction(projectDir);
 
     stack = await createStack({
       projectDir,
-      functions: functionsBundle(projectDir, ["hello"]),
+      functions: functionsBundle(projectDir, ["hello", "shared-alpha", "shared-beta"]),
       jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
       postgres: { dataDir },
     });
@@ -65,6 +66,25 @@ describe("createStack e2e", () => {
       );
       expect(functionsRes.status).toBe(200);
       expect(await functionsRes.text()).toBe("hello");
+    },
+  );
+
+  test(
+    "keeps worker env isolated for functions sharing a source directory",
+    { timeout: 30_000 },
+    async () => {
+      const [alpha, beta] = await Promise.all([
+        fetchFunctionWhenReady(`${stack.url}/functions/v1/shared-alpha`),
+        fetchFunctionWhenReady(`${stack.url}/functions/v1/shared-beta`),
+      ]);
+      const reusedAlpha = await fetchFunctionWhenReady(`${stack.url}/functions/v1/shared-alpha`);
+
+      expect(alpha.status).toBe(200);
+      expect(await alpha.text()).toBe("shared-alpha:shared-import-ok");
+      expect(beta.status).toBe(200);
+      expect(await beta.text()).toBe("shared-beta:shared-import-ok");
+      expect(reusedAlpha.status).toBe(200);
+      expect(await reusedAlpha.text()).toBe("shared-alpha:shared-import-ok");
     },
   );
 
@@ -147,6 +167,26 @@ function writeFunction(projectDir: string, slug: string, body: string) {
   writeFileSync(join(dir, "index.ts"), `Deno.serve(() => new Response(${codeSafeJson(body)}));\n`);
 }
 
+function writeSharedFunction(projectDir: string) {
+  const functionsDir = join(projectDir, "supabase", "functions");
+  const sharedDir = join(functionsDir, "shared");
+  mkdirSync(sharedDir, { recursive: true });
+  mkdirSync(join(functionsDir, "_shared"), { recursive: true });
+  writeFileSync(
+    join(functionsDir, "_shared", "value.ts"),
+    'export const sharedValue = "shared-import-ok";\n',
+  );
+  writeFileSync(
+    join(sharedDir, "index.ts"),
+    `import { sharedValue } from "../_shared/value.ts";
+
+Deno.serve(() => new Response(
+  (Deno.env.get("SUPABASE_FUNCTION_SLUG") ?? "") + ":" + sharedValue,
+));
+`,
+  );
+}
+
 function functionsBundle(
   projectDir: string,
   names: ReadonlyArray<string>,
@@ -156,7 +196,13 @@ function functionsBundle(
     functions: names.map((name) => ({
       name,
       verifyJWT: false,
-      entrypointPath: join(projectDir, "supabase", "functions", name, "index.ts"),
+      entrypointPath: join(
+        projectDir,
+        "supabase",
+        "functions",
+        name.startsWith("shared-") ? "shared" : name,
+        "index.ts",
+      ),
       importMapPath: null,
       staticFiles: [],
       env: {},
