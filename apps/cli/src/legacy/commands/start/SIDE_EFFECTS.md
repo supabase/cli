@@ -106,13 +106,12 @@ script (`postgresql.conf`-equivalent setup) are all rendered in memory and injec
 directly into each container's entrypoint (a `sh -c '... heredoc ...'` command) —
 never written to the host filesystem, since none of them carries secret content.
 `SUPABASE_USE_SLIM_IMAGES` rewrites image names to `ghcr.io/supabase/cli/*`. Postgres,
-storage, and edge-runtime share the docker.io container specs (root start, `sh`/`wget`,
-`/mnt` and `/root/.cache/deno` mounts). Distroless slim services with no `/bin/sh`
+storage, edge-runtime, and Vector share the docker.io container specs (root start,
+`sh`/`wget`, `/mnt` and `/root/.cache/deno` mounts). Vector still writes `vector.yaml`
+via the Logflare-wait `sh` heredoc. Distroless slim services with no `/bin/sh`
 (auth, studio, pg-meta) omit Docker healthchecks — `docker create --health-cmd` is
 always `CMD-SHELL` — and `legacyCheckContainerReady` treats `Running` as ready.
-The same flag keeps Vector's image entrypoint (`vector --config /etc/vector/vector.yaml`)
-and copies `vector.yaml` via `secretFiles` instead of a `sh` heredoc. Realtime and
-analytics keep a busybox `wget --spider` probe.
+Realtime, analytics, and pooler keep a busybox `wget --spider` probe.
 Kong's `kong.yml`/TLS cert/TLS key, Postgres's `pgsodium_root.key`, and Supavisor's
 `pooler_tenant.exs` DO carry secret content (a service-role-key-derived bearer/query
 key, TLS private key material, and the DB password respectively). Since
