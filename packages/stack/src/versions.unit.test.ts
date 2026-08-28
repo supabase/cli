@@ -144,9 +144,11 @@ describe("dockerImageForService", () => {
     });
   });
 
-  it("normalizes bare public versions to frozen native release tags", () => {
+  it("publishes exact frozen versions through native and Docker consumers", () => {
     const platform = { os: "linux", arch: "x64" } as const;
 
+    expect(DEFAULT_VERSIONS.pgmeta).toBe("v0.98.0");
+    expect(DEFAULT_VERSIONS.pooler).toBe("v2.9.10");
     expect(nativeReleaseForService("pgmeta", DEFAULT_VERSIONS.pgmeta, platform)).toMatchObject({
       releaseTag: "pgmeta-v0.98.0",
       downloadUrl:
@@ -159,7 +161,10 @@ describe("dockerImageForService", () => {
     });
   });
 
-  it("uses the frozen v-prefixed Pooler Docker tag for its bare public version", () => {
+  it("uses the frozen v-prefixed Docker tags for the public versions", () => {
+    expect(dockerImageForArtifact("pgmeta", DEFAULT_VERSIONS.pgmeta)).toBe(
+      "ghcr.io/supabase/cli/pgmeta:v0.98.0",
+    );
     expect(dockerImageForArtifact("pooler", DEFAULT_VERSIONS.pooler)).toBe(
       "ghcr.io/supabase/supavisor:v2.9.10",
     );
@@ -183,9 +188,9 @@ describe("normalizeServiceVersion", () => {
     expect(normalizeServiceVersion("postgres", "17.6.1.090")).toBe("17.6.1.090");
   });
 
-  it("normalizes a prefixed pgmeta override to its catalog tag", () => {
-    expect(normalizeServiceVersion("pgmeta", "v0.98.0")).toBe("0.98.0");
-    expect(normalizeServiceVersion("pgmeta", "V0.98.0")).toBe("0.98.0");
+  it("normalizes PgMeta overrides to its v-prefixed catalog tag", () => {
+    expect(normalizeServiceVersion("pgmeta", "v0.98.0")).toBe("v0.98.0");
+    expect(normalizeServiceVersion("pgmeta", "V0.98.0")).toBe("v0.98.0");
     expect(dockerImageForService("pgmeta", normalizeServiceVersion("pgmeta", "v0.98.0"))).toBe(
       "ghcr.io/supabase/cli/pgmeta:v0.98.0",
     );

@@ -110,11 +110,11 @@ describe("prefetch", () => {
         { service: "storage", version: "v1.70.1" },
         { service: "imgproxy", version: "v3.8.0" },
         { service: "mailpit", version: "v1.30.2" },
-        { service: "pgmeta", version: "0.98.0" },
+        { service: "pgmeta", version: "v0.98.0" },
         { service: "studio", version: "2026.08.17-sha-0c1da8f" },
         { service: "analytics", version: "v1.50.3" },
         { service: "vector", version: "0.53.0" },
-        { service: "pooler", version: "2.9.10" },
+        { service: "pooler", version: "v2.9.10" },
       ]),
     );
   });

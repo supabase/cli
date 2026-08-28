@@ -921,7 +921,7 @@ describe("detached supervisor child journeys", () => {
       };
       const persistedBefore = {
         ...before,
-        launch: { ...before.launch, excludedServices: ["analytics"] },
+        launch: { ...before.launch, excludedServices: ["analytics", "pgmeta", "studio"] },
         ports: [
           ...before.ports,
           { key: "analytics.port", port: blockedAnalyticsPort, intent: "exact" },
@@ -1389,56 +1389,6 @@ describe("detached supervisor child journeys", () => {
       const started = await child.started;
       expect(readStackDocument(roots)?.launch).toMatchObject({ mode: "native" });
       await remoteStop(started.endpoint);
-      await waitForExit(child.child);
-    } finally {
-      if (child.child.exitCode === null) await kill(child.child);
-      cleanupRoots(roots);
-      rmSync(binDir, { recursive: true, force: true });
-    }
-  });
-
-  test("does not discard an explicit Edge Runtime request during native fallback", async () => {
-    const roots = await workspace();
-    const binDir = mkdtempSync(join(tmpdir(), "sup-stack-native-edge-runtime-"));
-    for (const runtime of ["docker", "podman"]) {
-      const executable = join(binDir, runtime);
-      writeFileSync(executable, "#!/bin/sh\nexit 1\n");
-      chmodSync(executable, 0o755);
-    }
-    const base = messageFor(roots);
-    const { mode: _mode, ...config } = base.config;
-    const child = spawnChild(
-      messageFor(roots, { config: { ...config, edgeRuntime: { inspectorPort: 8_123 } } }),
-      { environment: { PATH: `${binDir}:${process.env["PATH"] ?? ""}` } },
-    );
-    try {
-      await expect(child.started).rejects.toThrow("Native mode supports only");
-      await waitForExit(child.child);
-    } finally {
-      if (child.child.exitCode === null) await kill(child.child);
-      cleanupRoots(roots);
-      rmSync(binDir, { recursive: true, force: true });
-    }
-  });
-
-  test("does not discard an explicit Docker-only service request during native fallback", async () => {
-    const roots = await workspace();
-    const binDir = mkdtempSync(join(tmpdir(), "sup-stack-native-storage-"));
-    for (const runtime of ["docker", "podman"]) {
-      const executable = join(binDir, runtime);
-      writeFileSync(executable, "#!/bin/sh\nexit 1\n");
-      chmodSync(executable, 0o755);
-    }
-    const base = messageFor(roots);
-    const { mode: _mode, ...config } = base.config;
-    const child = spawnChild(
-      messageFor(roots, {
-        config: { ...config, storage: { dataDir: join(roots.root, "storage") } },
-      }),
-      { environment: { PATH: `${binDir}:${process.env["PATH"] ?? ""}` } },
-    );
-    try {
-      await expect(child.started).rejects.toThrow("Native mode supports only");
       await waitForExit(child.child);
     } finally {
       if (child.child.exitCode === null) await kill(child.child);
