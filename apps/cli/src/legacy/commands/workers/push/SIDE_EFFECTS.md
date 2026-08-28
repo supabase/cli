@@ -78,6 +78,11 @@ project already changed.
 
 Without `--wait` the deploy returns with the build still running, so the follow-up hint (`workers status`, and `--wait`) is emitted as a success trailer: stderr, once, at the end of the run rather than between workers.
 
+A multi-worker run stops at the first failure, and names the workers it never
+attempted on stderr in **every** format, machine ones included: that run is a
+CI run, where nobody watched the loop and "what still needs deploying" is the
+question the failure raises.
+
 The presigned `PUT` above is the one request whose URL is itself a credential.
 `--debug` logs every request URL, so `legacyHttpClientLayer` redacts query
 strings that carry a signature.

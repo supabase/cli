@@ -721,6 +721,13 @@ describe("legacy workers push", () => {
         http.routeKeys.indexOf(`POST ${workersRoute("/web/deploy")}`),
       );
       expect(out.stdoutText).toContain("web");
+      // Each worker is announced with its place in the run, and the run closes
+      // by naming everything it deployed.
+      expect(out.stderrText).toContain("Deploying Worker 1/2: api");
+      expect(out.stderrText).toContain("Deploying Worker 2/2: web");
+      expect(out.stdoutText).toContain(
+        `Deployed 2 Workers to project ${WORKERS_PROJECT_REF}: api, web`,
+      );
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -756,6 +763,41 @@ describe("legacy workers push", () => {
         }),
       ),
     );
+  });
+
+  it.live("names the workers a failed run never got to", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\n\n[workers.web]\nruntime = "node"\n`,
+      "supabase/workers/web/index.js": "export default {};\n",
+    });
+    const { layer, out, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: routes({
+        // `api` sorts first, so the run stops before `web` is ever touched.
+        [`POST ${workersRoute("/api/deploy")}`]: {
+          status: 202,
+          body: {
+            data: workerResource({
+              name: "api",
+              runtime: "node",
+              buildState: "failed",
+              stateReason: "error building image: exit status 1",
+            }),
+          },
+        },
+      }),
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* push({ names: [] }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerBuildFailedError);
+      expect(out.stderrText).toContain("Not attempted: web");
+      // Named rather than deployed: the run really did stop.
+      expect(http.routeKeys).not.toContain(`POST ${workersRoute("/web/deploy")}`);
+      // No summary either — nothing finished.
+      expect(out.stdoutText).not.toContain("Deployed 2 Workers");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
   it.live("fails when there are no workers to deploy at all", () => {
