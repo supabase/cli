@@ -265,7 +265,7 @@ func TestDeployAll(t *testing.T) {
 			JSON(map[string]string{"message": "deployment already exists"})
 		var bulkBody []byte
 		gock.New(mockApiHost).
-			Put("/v1/projects/"+mockProject+"/functions").
+			Put("/v1/projects/" + mockProject + "/functions").
 			AddMatcher(captureBody(&bulkBody)).
 			Reply(http.StatusOK).
 			JSON(api.BulkUpdateFunctionResponse{})
@@ -340,7 +340,7 @@ func TestDeployAll(t *testing.T) {
 			Reply(http.StatusConflict).
 			JSON(map[string]string{"message": "deployment already exists"})
 		gock.New(mockApiHost).
-			Put("/v1/projects/"+mockProject+"/functions").
+			Put("/v1/projects/" + mockProject + "/functions").
 			Reply(http.StatusBadRequest).
 			JSON(map[string]string{"message": "bulk update rejected"})
 		// Run test

@@ -92,7 +92,7 @@ type (
 		Seed                seed                `toml:"seed" json:"seed"`
 		Settings            settings            `toml:"settings" json:"settings"`
 		NetworkRestrictions networkRestrictions `toml:"network_restrictions" json:"network_restrictions"`
-    SslEnforcement      *sslEnforcement     `toml:"ssl_enforcement" json:"ssl_enforcement"`
+		SslEnforcement      *sslEnforcement     `toml:"ssl_enforcement" json:"ssl_enforcement"`
 		Vault               map[string]Secret   `toml:"vault" json:"vault"`
 	}
 
