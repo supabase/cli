@@ -83,7 +83,7 @@ async function renderJsonSchema(outputPath: string, json: Record<string, unknown
     throw new Error(`oxfmt failed with exit code ${exitCode}: ${stderr.trim()}`);
   }
 
-  await mkdir("./dist", { recursive: true });
+  await mkdir(path.dirname(outputPath), { recursive: true });
   await Bun.write(outputPath, formatted);
 }
 
@@ -389,7 +389,7 @@ await runCommand(["pnpm", "exec", "tsc", "-p", "tsconfig.build.json"]);
 
 console.log("[build] rendering JSON Schema artifacts...");
 await renderCollapsedJsonSchema(
-  "./dist/schema.json",
+  path.join(packageRoot, "dist", "schema.json"),
   toCliConfigJsonSchema(),
   CliConfigSchema.ast,
   {
@@ -400,7 +400,7 @@ await renderCollapsedJsonSchema(
   },
 );
 await renderCollapsedJsonSchema(
-  "./dist/project-schema.json",
+  path.join(packageRoot, "dist", "project-schema.json"),
   toProjectConfigJsonSchema(),
   ProjectConfigSchema.ast,
   {

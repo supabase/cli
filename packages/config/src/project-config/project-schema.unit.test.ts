@@ -72,6 +72,18 @@ describe("ProjectConfigSchema acceptance", () => {
     const projected = fromApiProjectConfig(apiEnvelope({ database: { major_version: 17 } }));
     expect(() => decodeProjectConfig(projected)).not.toThrow();
   });
+
+  // `db.vault` is dropped from the schema entirely (an all-secret
+  // `Record<string, secret()>` container, project-schema.ts's
+  // `isAllSecretCollapsedContainer`) rather than kept as an empty,
+  // accept-anything node — so under this schema's permissive-excess design
+  // (never `additionalProperties: false`, never `onExcessProperty: "error"`),
+  // a `db.vault` of ANY shape is simply excess input: it validates, but is
+  // silently dropped from the decoded result rather than rejected.
+  test("db.vault of any shape validates but is dropped, since the schema no longer knows the key", () => {
+    expect(decodeProjectConfig({ db: { vault: 42 } })).toEqual({ db: {} });
+    expect(decodeProjectConfig({ db: { vault: {} } })).toEqual({ db: {} });
+  });
 });
 
 describe("ProjectConfigSchema rejection", () => {
@@ -146,16 +158,106 @@ describe("ProjectConfigSchema secret-strip exhaustiveness", () => {
   // (e.g. a whole section got dropped by an unrelated bug), `findAtPattern`
   // for the full secret path also returns `undefined` — indistinguishable,
   // from that assertion alone, from the secret leaf being correctly
-  // stripped. Asserting the parent path is still reachable rules that out.
-  test("the parent of every stripped x-secret path is still reachable", () => {
+  // stripped. Asserting the parent path is still reachable rules that out —
+  // EXCEPT for a known all-secret collapsed container (`db.vault`, a
+  // `Record<string, secret()>` — project-schema.ts's
+  // `isAllSecretCollapsedContainer`), whose own immediate parent is dropped
+  // entirely rather than kept as an empty node. That one case is accepted
+  // explicitly (checking the GRANDPARENT is reachable instead, and that the
+  // container's own name no longer survives as a property there) rather
+  // than by walking arbitrarily far up the ancestor chain, which would mask
+  // an unrelated regression dropping some other, unexpected ancestor.
+  const KNOWN_ALL_SECRET_COLLAPSED_CONTAINER_PARENTS: ReadonlyArray<ReadonlyArray<string>> = [
+    ["db", "vault"],
+  ];
+
+  test("the parent of every stripped x-secret path is still reachable, except a known all-secret collapsed container", () => {
     for (const pattern of reachablePatterns) {
       const parentPattern = pattern.slice(0, -1);
       const parent =
         parentPattern.length === 0
           ? ProjectConfigSchema.ast
           : findAtPattern(ProjectConfigSchema.ast, parentPattern);
-      expect(parent, `parent of ${JSON.stringify(pattern)} vanished`).toBeDefined();
+
+      if (parent !== undefined) {
+        continue;
+      }
+
+      const isKnownAllSecretContainer = KNOWN_ALL_SECRET_COLLAPSED_CONTAINER_PARENTS.some(
+        (known) =>
+          known.length === parentPattern.length &&
+          known.every((segment, index) => segment === parentPattern[index]),
+      );
+      expect(
+        isKnownAllSecretContainer,
+        `parent of ${JSON.stringify(pattern)} vanished unexpectedly (not a known all-secret collapsed container)`,
+      ).toBe(true);
+
+      const grandparentPattern = parentPattern.slice(0, -1);
+      const grandparent =
+        grandparentPattern.length === 0
+          ? ProjectConfigSchema.ast
+          : findAtPattern(ProjectConfigSchema.ast, grandparentPattern);
+      expect(grandparent, `grandparent of ${JSON.stringify(pattern)} vanished`).toBeDefined();
+
+      const droppedName = parentPattern[parentPattern.length - 1];
+      if (grandparent !== undefined && SchemaAST.isObjects(grandparent)) {
+        expect(
+          grandparent.propertySignatures.some((property) => property.name === droppedName),
+        ).toBe(false);
+      }
     }
+  });
+
+  /**
+   * Recursively collects the dotted path of every reachable `Objects` node
+   * with zero properties AND zero index signatures — the shape both a
+   * genuinely source-empty struct (`storage.analytics.buckets.*`,
+   * `storage.vector.buckets.*` — see `project-schema.ts`'s own doc comment)
+   * and (before CLI-2234's fix) an all-secret collapsed container would
+   * produce. `db.vault` is dropped entirely rather than emptied now, so it
+   * must NOT appear in this list — this is the "double-check no OTHER
+   * container becomes stripped-empty besides vault" guard.
+   */
+  function collectEmptyObjectPaths(
+    ast: SchemaAST.AST,
+    path: ReadonlyArray<string>,
+    seen: Set<SchemaAST.AST>,
+    into: string[],
+  ): void {
+    if (SchemaAST.isUnion(ast)) {
+      if (seen.has(ast)) {
+        return;
+      }
+      seen.add(ast);
+      for (const member of ast.types) {
+        collectEmptyObjectPaths(member, path, seen, into);
+      }
+      return;
+    }
+    if (!SchemaAST.isObjects(ast) || seen.has(ast)) {
+      return;
+    }
+    seen.add(ast);
+    if (ast.propertySignatures.length === 0 && ast.indexSignatures.length === 0) {
+      into.push(path.join("."));
+      return;
+    }
+    for (const property of ast.propertySignatures) {
+      collectEmptyObjectPaths(property.type, [...path, String(property.name)], seen, into);
+    }
+    for (const indexSignature of ast.indexSignatures) {
+      collectEmptyObjectPaths(indexSignature.type, [...path, "*"], seen, into);
+    }
+  }
+
+  test("no all-secret container besides db.vault collapses to an empty, accept-anything node", () => {
+    const emptyObjectPaths: string[] = [];
+    collectEmptyObjectPaths(ProjectConfigSchema.ast, [], new Set(), emptyObjectPaths);
+
+    expect(emptyObjectPaths.toSorted()).toEqual(
+      ["storage.analytics.buckets.*", "storage.vector.buckets.*"].toSorted(),
+    );
   });
 });
 
@@ -298,10 +400,8 @@ describe("toProjectConfigJsonSchema", () => {
     expect(document.properties.db.properties.pooler.required).toBeUndefined();
   });
 
-  test("the db.vault secret record collapses to a schema with no properties left to leak", () => {
-    const vault = document.properties.db.properties.vault;
-    expect(vault.properties).toBeUndefined();
-    expect(vault.patternProperties).toBeUndefined();
+  test("db.vault disappears from the schema entirely (an all-secret container is dropped, not emptied)", () => {
+    expect(Object.hasOwn(document.properties.db.properties, "vault")).toBe(false);
   });
 
   test("is JSON-serializable and stable across two calls", () => {

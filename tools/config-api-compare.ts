@@ -9,7 +9,10 @@
  * Base ref resolution, in order: `--base`, then `GITHUB_BASE_REF` (prefixed
  * `origin/`), then `origin/develop`. Resolves `git merge-base HEAD <base>`,
  * fetching `origin/<branch>` at depth 1 first when the ref is missing locally
- * (a shallow CI clone only has the PR's own commits).
+ * (a shallow CI clone only has the PR's own commits). If HEAD's own checkout
+ * is also shallow, a depth-1 base fetch still can't produce a common
+ * ancestor — the tool then unshallows (or deepens) the checkout and retries
+ * once more before giving up and skipping the compare.
  *
  * Emits declarations twice with the same compiler settings — head from
  * `packages/config/src` directly, base from a `git archive` of the
@@ -70,18 +73,33 @@ function resolveBaseRef(cliBase: string | undefined): string {
   return "origin/develop";
 }
 
+type MergeBaseResolution =
+  | { readonly kind: "resolved"; readonly sha: string }
+  | { readonly kind: "skip"; readonly reason: string };
+
 /**
  * Resolves `git merge-base HEAD <baseRef>`. A shallow CI checkout only has
  * the PR's own commits, so `<baseRef>` can be locally unresolvable — when
  * it's an `origin/<branch>` ref, fetch that branch at depth 1 and retry
- * before giving up. A non-`origin/` ref (e.g. an explicit `--base <sha>`)
- * that doesn't resolve locally is a caller error, not something this tool
- * can fetch its way out of.
+ * before giving up.
+ *
+ * A depth-1 base fetch only helps when the base ref itself was simply never
+ * fetched; it cannot produce a common ancestor when HEAD's own checkout is
+ * shallow too (the `check` job's default `actions/checkout` depth), since
+ * neither side's shallow history reaches the other's. In that case, unshallow
+ * (or deepen, if `--unshallow` errors because the checkout is already
+ * complete) the repository, refetch the base ref in full, and retry once
+ * more. If a merge-base still can't be resolved, this is an advisory check —
+ * skip the compare instead of failing the tool.
+ *
+ * A non-`origin/` ref (e.g. an explicit `--base <sha>`) that doesn't resolve
+ * locally is a caller error, not something this tool can fetch its way out
+ * of.
  */
-async function resolveMergeBase(baseRef: string): Promise<string> {
+async function resolveMergeBase(baseRef: string): Promise<MergeBaseResolution> {
   const attempt = await runGit(["merge-base", "HEAD", baseRef], repoRoot);
   if (attempt.exitCode === 0) {
-    return attempt.stdout.trim();
+    return { kind: "resolved", sha: attempt.stdout.trim() };
   }
 
   if (!baseRef.startsWith("origin/")) {
@@ -105,13 +123,61 @@ async function resolveMergeBase(baseRef: string): Promise<string> {
   }
 
   const retry = await runGit(["merge-base", "HEAD", baseRef], repoRoot);
-  if (retry.exitCode !== 0) {
+  if (retry.exitCode === 0) {
+    return { kind: "resolved", sha: retry.stdout.trim() };
+  }
+
+  const isShallow = await runGit(["rev-parse", "--is-shallow-repository"], repoRoot);
+  if (isShallow.stdout.trim() !== "true") {
     throw new Error(
       `could not resolve base ref "${baseRef}" even after fetching origin/${branchName}: ` +
         retry.stderr.trim(),
     );
   }
-  return retry.stdout.trim();
+
+  console.warn(
+    `[config-api-compare] HEAD's own checkout is shallow, so a depth-1 ${baseRef} fetch can't ` +
+      "produce a common ancestor; unshallowing before retrying merge-base...",
+  );
+  const unshallow = await runGit(["fetch", "--unshallow", "origin", branchName], repoRoot);
+  if (unshallow.exitCode !== 0) {
+    console.warn(
+      `[config-api-compare] git fetch --unshallow failed (${unshallow.stderr.trim()}); falling ` +
+        "back to git fetch --deepen=100000...",
+    );
+    const deepen = await runGit(["fetch", "--deepen=100000", "origin"], repoRoot);
+    if (deepen.exitCode !== 0) {
+      return {
+        kind: "skip",
+        reason:
+          `could not unshallow (${unshallow.stderr.trim()}) or deepen ` +
+          `(${deepen.stderr.trim()}) the checkout to resolve a merge-base against ${baseRef}.`,
+      };
+    }
+  }
+
+  const fullFetch = await runGit(
+    ["fetch", "origin", `+${branchName}:refs/remotes/origin/${branchName}`],
+    repoRoot,
+  );
+  if (fullFetch.exitCode !== 0) {
+    return {
+      kind: "skip",
+      reason: `could not fully fetch origin/${branchName} after unshallowing: ${fullFetch.stderr.trim()}.`,
+    };
+  }
+
+  const finalRetry = await runGit(["merge-base", "HEAD", baseRef], repoRoot);
+  if (finalRetry.exitCode === 0) {
+    return { kind: "resolved", sha: finalRetry.stdout.trim() };
+  }
+
+  return {
+    kind: "skip",
+    reason:
+      `could not resolve a merge-base between HEAD and ${baseRef} even after unshallowing ` +
+      `(git merge-base: ${finalRetry.stderr.trim()}).`,
+  };
 }
 
 async function shortSha(rev: string): Promise<string> {
@@ -413,6 +479,19 @@ function renderMarkdownSummary(
   return lines.join("\n");
 }
 
+function renderShallowHistorySkippedSummary(
+  baseRef: string,
+  headLabel: string,
+  reason: string,
+): string {
+  return [
+    "## Config type-surface diff (advisory)",
+    "",
+    `⚠️ Compare skipped (shallow history): could not resolve a merge-base between \`${headLabel}\` ` +
+      `and \`${baseRef}\`: ${reason}`,
+  ].join("\n");
+}
+
 function renderSkippedSummary(baseLabel: string, headLabel: string, baseEmit: EmitResult): string {
   return [
     "## Config type-surface diff (advisory)",
@@ -437,7 +516,16 @@ async function main(): Promise<number> {
 
   const { values } = parseArgs({ options: { base: { type: "string" } } });
   const baseRef = resolveBaseRef(values.base);
-  const mergeBase = await resolveMergeBase(baseRef);
+  const mergeBaseResolution = await resolveMergeBase(baseRef);
+  if (mergeBaseResolution.kind === "skip") {
+    const headLabel = await shortSha("HEAD");
+    console.warn(`[config-api-compare] WARNING: ${mergeBaseResolution.reason}`);
+    await writeStepSummary(
+      renderShallowHistorySkippedSummary(baseRef, headLabel, mergeBaseResolution.reason),
+    );
+    return 0;
+  }
+  const mergeBase = mergeBaseResolution.sha;
   const [baseLabel, headLabel] = await Promise.all([shortSha(mergeBase), shortSha("HEAD")]);
   console.log(
     `[config-api-compare] comparing merge-base ${baseLabel} (of ${baseRef}) against HEAD ${headLabel}...`,

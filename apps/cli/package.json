@@ -94,6 +94,7 @@
     "smol-toml": "^1.8.0",
     "tldts": "catalog:",
     "typescript": "catalog:",
+    "vite": "^6.0.0 || ^7.0.0 || ^8.0.0",
     "vitest": "catalog:",
     "yaml": "^2.9.0"
   },

@@ -84,6 +84,7 @@
     "@vitest/coverage-istanbul": "catalog:",
     "effect": "catalog:",
     "typescript": "catalog:",
+    "vite": "^6.0.0 || ^7.0.0 || ^8.0.0",
     "vitest": "catalog:"
   },
   "peerDependencies": {

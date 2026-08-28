@@ -219,13 +219,16 @@ export function collapseNonFiniteNumberUnions(document: unknown, rootAst: Schema
 /**
  * Injects `$id`/`title`/`description` right after `$schema`, ahead of the
  * rest of the document's own keys — used by `build.ts` on both generated
- * artifacts (CLI-2234).
+ * artifacts (CLI-2234). `metadata` is authoritative: any `$id`/`title`/
+ * `description` already present on the incoming `document` is discarded
+ * rather than allowed to win over the caller-supplied values through the
+ * trailing `...rest` spread.
  */
 export function withSchemaMetadata(
   document: Record<string, unknown>,
   metadata: { readonly id: string; readonly title: string; readonly description: string },
 ): Record<string, unknown> {
-  const { $schema, ...rest } = document;
+  const { $schema, $id: _id, title: _title, description: _description, ...rest } = document;
   return {
     $schema,
     $id: metadata.id,

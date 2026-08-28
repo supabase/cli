@@ -22,19 +22,21 @@
  *      `PropertySignature`/`IndexSignature` whose value AST carries the
  *      `x-secret` annotation (ADR 0019 rule 5 — `fromConfigDocument`/
  *      `fromApiProjectConfig` never populate a secret leaf either), the same
- *      detection `../lib/secret-paths.ts`'s own walk uses. A container whose
- *      value type consists ENTIRELY of secret leaves (`db.vault`, a
- *      `Record<string, secret()>`) ends up an empty `Objects` node this way
- *      (no surviving properties or index signatures) — `SchemaAST`'s own
- *      documented behavior for that shape is "accepts any value except
- *      `null`/`undefined`", the closest a schema can get to "this container
- *      held nothing but secrets, so nothing concrete is left to validate
- *      here" without special-casing an empty-object type JSON Schema has no
- *      way to express either. Two OTHER hosted-section leaves land on that
- *      same empty-`Objects` shape for an unrelated reason:
+ *      detection `../lib/secret-paths.ts`'s own walk uses. When that
+ *      stripping empties out an `Objects` node that ORIGINALLY had at least
+ *      one property/index signature — a container whose value type consists
+ *      ENTIRELY of secret leaves, e.g. `db.vault` (a `Record<string,
+ *      secret()>`) — the walk drops that property/index signature from its
+ *      PARENT entirely instead of keeping an empty, accept-anything
+ *      `Objects` node: an all-secret container is itself secret-shaped, the
+ *      same as a single secret leaf, so `db.vault` never appears anywhere in
+ *      `ProjectConfigSchema` at all. This is distinct from an `Objects` node
+ *      that was ALREADY empty at the SOURCE level before any stripping —
  *      `storage.analytics.buckets.*` and `storage.vector.buckets.*` are
- *      already `Schema.Struct({})` at the SOURCE level (`../storage.ts`) —
- *      genuinely empty structs, untouched by this walk's secret-stripping.
+ *      genuinely empty `Schema.Struct({})`s (`../storage.ts`), untouched by
+ *      this walk, and still pass through as accept-anything leaves — the
+ *      derived schema must not be stricter than `CliConfigSchema` itself,
+ *      which behaves identically for those two, genuinely-empty structs.
  *    - Wraps every SURVIVING property in `optionalKey` (via
  *      {@link toOptionalAst}), recursing into its type — mirroring
  *      `DeepPartial`'s `{ readonly [K in keyof T]?: DeepPartial<T[K]> }`
@@ -103,6 +105,31 @@ function isSecretAst(ast: SchemaAST.AST): boolean {
   return ast.annotations?.["x-secret"] === true;
 }
 
+function hasObjectMembers(ast: SchemaAST.AST): boolean {
+  return (
+    SchemaAST.isObjects(ast) &&
+    (ast.propertySignatures.length > 0 || ast.indexSignatures.length > 0)
+  );
+}
+
+/**
+ * True when `original` was an `Objects` node with at least one member
+ * (property or index signature) before secret-stripping, and `transformed` —
+ * the same node's {@link toDeepOptionalHostedAst} result — ended up with
+ * none: every member was secret-shaped and got dropped, so the container
+ * itself is now secret-shaped too. Distinguishes that case from an `Objects`
+ * node that was ALREADY empty at the source level (`storage.analytics.
+ * buckets.*`/`storage.vector.buckets.*` — see this module's own doc
+ * comment), which must pass through unchanged rather than being treated as
+ * secret-shaped.
+ */
+function isAllSecretCollapsedContainer(
+  original: SchemaAST.AST,
+  transformed: SchemaAST.AST,
+): boolean {
+  return hasObjectMembers(original) && !hasObjectMembers(transformed);
+}
+
 /**
  * Marks `ast` optional through the PUBLIC `Schema.optionalKey` combinator
  * (`Schema.optionalKey(Schema.make(ast)).ast`) rather than the internal
@@ -130,24 +157,26 @@ function toOptionalAst(ast: SchemaAST.AST): SchemaAST.AST {
  */
 function toDeepOptionalHostedAst(ast: SchemaAST.AST): SchemaAST.AST {
   if (SchemaAST.isObjects(ast)) {
-    const propertySignatures = ast.propertySignatures
-      .filter((property) => !isSecretAst(property.type))
-      .map(
-        (property) =>
-          new SchemaAST.PropertySignature(
-            property.name,
-            toOptionalAst(toDeepOptionalHostedAst(property.type)),
-          ),
-      );
-    const indexSignatures = ast.indexSignatures
-      .filter((indexSignature) => !isSecretAst(indexSignature.type))
-      .map(
-        (indexSignature) =>
-          new SchemaAST.IndexSignature(
-            indexSignature.parameter,
-            toDeepOptionalHostedAst(indexSignature.type),
-          ),
-      );
+    const propertySignatures = ast.propertySignatures.flatMap((property) => {
+      if (isSecretAst(property.type)) {
+        return [];
+      }
+      const transformedType = toDeepOptionalHostedAst(property.type);
+      if (isAllSecretCollapsedContainer(property.type, transformedType)) {
+        return [];
+      }
+      return [new SchemaAST.PropertySignature(property.name, toOptionalAst(transformedType))];
+    });
+    const indexSignatures = ast.indexSignatures.flatMap((indexSignature) => {
+      if (isSecretAst(indexSignature.type)) {
+        return [];
+      }
+      const transformedType = toDeepOptionalHostedAst(indexSignature.type);
+      if (isAllSecretCollapsedContainer(indexSignature.type, transformedType)) {
+        return [];
+      }
+      return [new SchemaAST.IndexSignature(indexSignature.parameter, transformedType)];
+    });
     return new SchemaAST.Objects(
       propertySignatures,
       indexSignatures,

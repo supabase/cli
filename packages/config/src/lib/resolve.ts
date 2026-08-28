@@ -146,9 +146,11 @@ export function resolveCliConfigValueAtPath(
  * `{ values }` directly instead of threading through the whole loaded object.
  *
  * Has no options parameter: this package's one resolver knob (`goViperCompat`)
- * is internal-only — see `InternalResolveCliConfigOptions` in `../project.ts`,
- * exported from `@supabase/config/internal`. Adding a public knob later is a
- * non-breaking, additive change.
+ * is internal-only — see `InternalResolveCliConfigOptions` in `../project.ts`.
+ * That type is package-internal (not itself re-exported from
+ * `@supabase/config/internal`); only the `resolveCliConfigValue`/
+ * `resolveCliConfigSubtree` functions widened to accept it are exported from
+ * there. Adding a public knob later is a non-breaking, additive change.
  */
 export function resolveCliConfigValue<T>(
   value: T,

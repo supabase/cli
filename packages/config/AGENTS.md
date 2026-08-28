@@ -29,11 +29,12 @@ artifacts (`./schema.json`, `./project-schema.json`).
   (enforced by `src/monorepo-import-contract.unit.test.ts`). Exists solely for `apps/cli`'s own
   Go-parity call sites and contract-guard tests: `loadCliConfig`/`resolveCliConfigValue`/
   `resolveCliConfigSubtree` — the SAME runtime functions `./effect` exports, re-typed here to
-  additionally accept the internal-only `goViperCompat` option (`InternalLoadCliConfigOptions`/
-  `InternalResolveCliConfigOptions`) — plus the otherwise-internal registry data
-  (`AUTH_HOOK_NAMES`, `unmappedSecretApiPaths`, `projectConfigMappingRows`,
-  `ProjectConfigMappingRow`, `ProjectConfigApiAttributes`, `ENV_CAPTURE_REGEX`). Anything here can
-  change or vanish in any release.
+  additionally accept the internal-only `goViperCompat` option (`InternalLoadCliConfigOptions` for
+  `loadCliConfig`; `resolveCliConfigValue`/`resolveCliConfigSubtree`'s own widened options type,
+  `InternalResolveCliConfigOptions`, is package-internal and not itself re-exported) — plus the
+  otherwise-internal registry data (`AUTH_HOOK_NAMES`, `unmappedSecretApiPaths`,
+  `projectConfigMappingRows`, `ProjectConfigMappingRow`, `ProjectConfigApiAttributes`,
+  `ENV_CAPTURE_REGEX`). Anything here can change or vanish in any release.
 - `@supabase/config/schema.json` — generated JSON Schema (draft 2020-12) for `CliConfig` (a
   `dist/` build output).
 - `@supabase/config/project-schema.json` (CLI-2234) — generated JSON Schema (draft 2020-12) for
@@ -117,8 +118,8 @@ either file.
 
 Run tests from this package with `bun --bun vitest run --project unit` (plain `node` vitest is
 broken here). Always run the relevant unit tests for what you changed before considering a task
-done. Besides ordinary behavioral coverage, three tests enforce this package's own contracts and
-must stay green after any entrypoint or type-surface change:
+done. Besides ordinary behavioral coverage, the following contract tests enforce this package's
+own guarantees and must stay green after any entrypoint or type-surface change:
 
 - `src/entrypoint-purity.unit.test.ts` — the pure-graph invariant above (also walked separately for
   `src/io-browser.ts`, the `browser` condition target for `./io`), plus pinned export-name

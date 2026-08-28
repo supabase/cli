@@ -9,9 +9,11 @@
  * `loadCliConfig`/`resolveCliConfigValue`/`resolveCliConfigSubtree` below are
  * the SAME runtime functions `./effect` exports, just re-typed here to widen
  * their options parameter to the internal-only, Go-parity `goViperCompat`
- * knob (`InternalLoadCliConfigOptions`/`InternalResolveCliConfigOptions`) —
- * this module otherwise only re-exports types and registry data, not
- * independent implementations.
+ * knob (`InternalLoadCliConfigOptions` for `loadCliConfig`;
+ * `resolveCliConfigValue`/`resolveCliConfigSubtree`'s own widened options
+ * type is package-internal and not itself re-exported here) — this module
+ * otherwise only re-exports types and registry data, not independent
+ * implementations.
  */
 export { ENV_CAPTURE_REGEX } from "./lib/env.ts";
 export { AUTH_HOOK_NAMES, unmappedSecretApiPaths } from "./project-config/registry-auth.ts";

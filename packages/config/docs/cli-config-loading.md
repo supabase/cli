@@ -240,9 +240,9 @@ An optional `goViperCompat` flag switches the `env(NAME)` matcher from the defau
 `SCREAMING_SNAKE_CASE`-only pattern to Go/viper's case-agnostic `^env\((.*)\)$` form; only the
 Go-parity legacy shell sets it. The public `resolveCliConfigValue`/`resolveCliConfigSubtree` on
 `.`/`./effect` take no options parameter at all (CLI-2234) — `goViperCompat` is internal-only,
-typed on `InternalResolveCliConfigOptions` and exported from `@supabase/config/internal`, which
-re-exports these same runtime functions typed to additionally accept it; `apps/cli`'s Go-parity
-call sites import from there instead.
+typed on `InternalResolveCliConfigOptions`, a package-internal type that is not itself exported.
+`@supabase/config/internal` re-exports these same runtime functions re-typed to additionally
+accept it; `apps/cli`'s Go-parity call sites import from there instead.
 
 Callers such as `functions serve`/`functions dev`, `secrets set`, and `start` call these resolvers
 on the subtrees they actually need (e.g. `auth`, `edge_runtime`, `functions`), so dormant
