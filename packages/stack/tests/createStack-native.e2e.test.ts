@@ -103,8 +103,6 @@ describe("native PostgREST tracer bullet", () => {
   let sentinelMarker: string;
   let originalPath: string | undefined;
   let stackDisposed = false;
-  let authEmail: string;
-  let authPassword: string;
 
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), "supabase-native-postgrest-e2e-"));
@@ -181,7 +179,7 @@ describe("native PostgREST tracer bullet", () => {
     expect(statuses.find((state) => state.name === "postgrest")?.status).toBe("Dormant");
   }, 30_000);
 
-  test("keeps Postgres healthy and retries Auth after a corrected JIT preparation failure", async () => {
+  test("retries Auth signup and password sessions after a corrected JIT preparation failure", async () => {
     const markerPath = join(authCachePath, ".complete");
     const marker = readFileSync(markerPath);
     const asset = markerValue(markerPath, "asset");
@@ -222,15 +220,23 @@ describe("native PostgREST tracer bullet", () => {
       renameSync(movedParent, authParent);
     }
 
-    authEmail = `native-${Date.now()}@example.com`;
-    authPassword = "native-password-123";
+    const authEmail = `native-${Date.now()}@example.com`;
+    const authPassword = "native-password-123";
+    const client = createClient(stack.url, stack.publishableKey);
     await activateWithoutDownload(stack, "auth", async () => {
-      const client = createClient(stack.url, stack.publishableKey);
       const signup = await client.auth.signUp({ email: authEmail, password: authPassword });
       expect(signup.error).toBeNull();
       expect(signup.data.user?.email).toBe(authEmail);
       expect(signup.data.session).not.toBeNull();
     });
+    await client.auth.signOut();
+    const signIn = await client.auth.signInWithPassword({
+      email: authEmail,
+      password: authPassword,
+    });
+    expect(signIn.error).toBeNull();
+    expect(signIn.data.user?.email).toBe(authEmail);
+    expect(signIn.data.session).not.toBeNull();
     expect(readFileSync(markerPath)).toEqual(marker);
     expect(existsSync(stalePartial)).toBe(false);
     expect(existsSync(staleLock)).toBe(false);
@@ -324,18 +330,6 @@ describe("native PostgREST tracer bullet", () => {
     } finally {
       await sql.close();
     }
-  }, 30_000);
-
-  test("serves Auth signup and password sessions through native JIT activation", async () => {
-    const client = createClient(stack.url, stack.publishableKey);
-    await client.auth.signOut();
-    const signIn = await client.auth.signInWithPassword({
-      email: authEmail,
-      password: authPassword,
-    });
-    expect(signIn.error).toBeNull();
-    expect(signIn.data.user?.email).toBe(authEmail);
-    expect(signIn.data.session).not.toBeNull();
   }, 30_000);
 
   test("preserves native data, endpoints, policies, and cache identity across restart", async () => {
