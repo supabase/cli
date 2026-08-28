@@ -1,6 +1,16 @@
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- Native log paths are synchronous platform-boundary values.
 import { join } from "node:path";
-import { Deferred, Effect, Exit, FileSystem, Pull, Scope, Stream } from "effect";
+import {
+  Deferred,
+  Duration,
+  Effect,
+  Exit,
+  FileSystem,
+  Pull,
+  Schedule,
+  Scope,
+  Stream,
+} from "effect";
 import { LogBuffer, type LogEntry } from "@supabase/process-compose";
 import { StackBuildError } from "./errors.ts";
 import type { ServiceName } from "./versions.ts";
@@ -8,14 +18,24 @@ import type { ServiceName } from "./versions.ts";
 /** Native journals live below the runtime root and are private to one stack. */
 export const nativeLogRoot = (runtimeRoot: string): string => join(runtimeRoot, "logs");
 
+/** Encode arbitrary service labels as one reversible path component. */
+const serviceFileName = (service: string): string => encodeURIComponent(service);
+
 /** The active JSONL journal for one native service. Rotated segments append `.1`, `.2`, ... . */
 export const nativeServiceLogPath = (runtimeRoot: string, service: ServiceName): string =>
-  join(nativeLogRoot(runtimeRoot), `${service}.jsonl`);
+  join(nativeLogRoot(runtimeRoot), `${serviceFileName(service)}.jsonl`);
 
-/** Keep each segment bounded while retaining a small, deterministic history per service. */
+/**
+ * Keep each segment bounded while retaining a small, deterministic history per
+ * service. An oversized incoming record is truncated at a Unicode code-point
+ * boundary; oversized lines already present at attachment are discarded while
+ * the active segment is normalized and rotated.
+ */
 const NATIVE_LOG_SEGMENT_BYTES = 64 * 1024;
 const NATIVE_LOG_SEGMENT_RECORDS = 1_000;
 const NATIVE_LOG_SEGMENTS = 3;
+/** Retry transient journal failures with interruptible exponential backoff. */
+const nativeLogWriteRetry = Schedule.exponential(Duration.millis(50)).pipe(Schedule.jittered);
 
 interface Segment {
   readonly service: string;
@@ -27,19 +47,42 @@ interface Segment {
 }
 
 const pathForService = (runtimeRoot: string, service: string, index = 0): string => {
-  const active = join(nativeLogRoot(runtimeRoot), `${service}.jsonl`);
+  const active = join(nativeLogRoot(runtimeRoot), `${serviceFileName(service)}.jsonl`);
   return index === 0 ? active : `${active}.${index}`;
 };
 
-const encodeEntry = (entry: LogEntry): Uint8Array =>
-  new TextEncoder().encode(
-    `${JSON.stringify({
-      timestamp: entry.timestamp,
-      service: entry.service,
-      stream: entry.stream,
-      message: entry.line,
-    })}\n`,
-  );
+const encodeEntry = (entry: LogEntry): Uint8Array => {
+  const encodeMessage = (message: string): Uint8Array =>
+    new TextEncoder().encode(
+      `${JSON.stringify({
+        timestamp: entry.timestamp,
+        service: entry.service,
+        stream: entry.stream,
+        message,
+      })}\n`,
+    );
+  const full = encodeMessage(entry.line);
+  if (full.byteLength <= NATIVE_LOG_SEGMENT_BYTES) return full;
+
+  // Truncate only at code-point boundaries, then re-encode to account for JSON
+  // escaping. This keeps every journal record valid UTF-8 and below the
+  // documented segment bound without splitting a multibyte character.
+  const codePoints = Array.from(entry.line);
+  let low = 0;
+  let high = codePoints.length;
+  let best = "";
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    const candidate = codePoints.slice(0, middle).join("");
+    if (encodeMessage(candidate).byteLength <= NATIVE_LOG_SEGMENT_BYTES) {
+      best = candidate;
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  return encodeMessage(best);
+};
 
 /**
  * Starts one scoped subscriber for a stack's native LogBuffer. The subscriber
@@ -64,6 +107,113 @@ export const startNativeLogWriter = (
             }),
         ),
       );
+
+      // Existing journals have no trusted record metadata, so oversized lines
+      // are discarded rather than copied past the bound during normalization.
+      const normalizeExistingSegment = (path: string): Effect.Effect<string, StackBuildError> =>
+        Effect.gen(function* () {
+          const content = yield* fs.readFileString(path).pipe(
+            Effect.mapError(
+              (cause) =>
+                new StackBuildError({
+                  detail: `Failed to read native log segment ${path}`,
+                  cause,
+                }),
+            ),
+          );
+          const kept: Array<string> = [];
+          let bytes = 0;
+          for (const line of content
+            .split("\n")
+            .filter((line) => line.length > 0)
+            .toReversed()) {
+            const encoded = new TextEncoder().encode(`${line}\n`);
+            if (encoded.byteLength > NATIVE_LOG_SEGMENT_BYTES) continue;
+            if (kept.length >= NATIVE_LOG_SEGMENT_RECORDS) break;
+            if (bytes + encoded.byteLength > NATIVE_LOG_SEGMENT_BYTES) break;
+            kept.unshift(`${line}\n`);
+            bytes += encoded.byteLength;
+          }
+          const normalized = kept.join("");
+          if (normalized !== content) {
+            yield* fs.writeFileString(path, normalized, { flag: "w", mode: 0o600 }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new StackBuildError({
+                    detail: `Failed to bound native log segment ${path}`,
+                    cause,
+                  }),
+              ),
+            );
+          }
+          return normalized;
+        });
+
+      const rotateExistingActive = (activePath: string): Effect.Effect<void, StackBuildError> =>
+        Effect.gen(function* () {
+          const content = yield* normalizeExistingSegment(activePath);
+          if (content.length === 0) return;
+          for (let index = NATIVE_LOG_SEGMENTS - 1; index >= 2; index -= 1) {
+            const from = `${activePath}.${index - 1}`;
+            const to = `${activePath}.${index}`;
+            const exists = yield* fs.exists(from).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new StackBuildError({
+                    detail: `Failed to inspect native log segment ${from}`,
+                    cause,
+                  }),
+              ),
+            );
+            if (exists) {
+              yield* fs.rename(from, to).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new StackBuildError({
+                      detail: `Failed to rotate native log segment ${from}`,
+                      cause,
+                    }),
+                ),
+              );
+            }
+          }
+          yield* fs.rename(activePath, `${activePath}.1`).pipe(
+            Effect.mapError(
+              (cause) =>
+                new StackBuildError({
+                  detail: `Failed to attach native log segment ${activePath}`,
+                  cause,
+                }),
+            ),
+          );
+        });
+
+      const existingEntries = yield* fs.readDirectory(logRoot).pipe(
+        Effect.mapError(
+          (cause) =>
+            new StackBuildError({
+              detail: `Failed to inspect native log directory ${logRoot}`,
+              cause,
+            }),
+        ),
+      );
+      for (const entry of existingEntries.filter((name) => name.endsWith(".jsonl"))) {
+        const activePath = join(logRoot, entry);
+        for (let index = 1; index < NATIVE_LOG_SEGMENTS; index += 1) {
+          const segmentPath = `${activePath}.${index}`;
+          const exists = yield* fs.exists(segmentPath).pipe(
+            Effect.mapError(
+              (cause) =>
+                new StackBuildError({
+                  detail: `Failed to inspect native log segment ${segmentPath}`,
+                  cause,
+                }),
+            ),
+          );
+          if (exists) yield* normalizeExistingSegment(segmentPath);
+        }
+        yield* rotateExistingActive(activePath);
+      }
 
       const segments = new Map<string, Segment>();
       const openSegment = (service: string): Effect.Effect<Segment, StackBuildError> =>
@@ -169,6 +319,14 @@ export const startNativeLogWriter = (
           segment.records += 1;
         });
 
+      const writeEntryWithRecovery = (entry: LogEntry): Effect.Effect<void, StackBuildError> =>
+        writeEntry(entry).pipe(
+          Effect.tapError((error) =>
+            Effect.logError(`Native log write failed; retrying ${entry.service}: ${error.detail}`),
+          ),
+          Effect.retry(nativeLogWriteRetry),
+        );
+
       const subscribed = Deferred.makeUnsafe<void, StackBuildError>();
       const worker = Effect.gen(function* () {
         const pull = yield* Stream.toPull(logBuffer.subscribeAll);
@@ -179,7 +337,7 @@ export const startNativeLogWriter = (
           if (chunk === null) {
             running = false;
           } else {
-            yield* Effect.forEach(chunk, writeEntry, { discard: true });
+            yield* Effect.forEach(chunk, writeEntryWithRecovery, { discard: true });
           }
         }
       }).pipe(
@@ -188,7 +346,12 @@ export const startNativeLogWriter = (
             ? cause
             : new StackBuildError({ detail: "Native log writer failed", cause }),
         ),
-        Effect.tapError((error) => Deferred.fail(subscribed, error).pipe(Effect.ignore)),
+        Effect.tapError((error) =>
+          Deferred.fail(subscribed, error).pipe(
+            Effect.ignore,
+            Effect.andThen(Effect.logError(`Native log writer stopped: ${error.detail}`)),
+          ),
+        ),
       );
 
       yield* Effect.forkIn(worker, parentScope, { startImmediately: true });
