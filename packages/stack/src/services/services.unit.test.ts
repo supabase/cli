@@ -68,6 +68,17 @@ describe("dockerRunService environment transport", () => {
 });
 
 describe("makePostgresService", () => {
+  it("normalizes the native locale for portable PGDATA", () => {
+    const def = makePostgresService({
+      binPath: POSTGRES_BIN_PATH,
+      dataDir: "/tmp/supabase/data",
+      port: DB_PORT,
+      dependencies: [],
+    });
+
+    expect(def.env?.LC_ALL).toBe("C");
+  });
+
   it("creates a postgres ServiceDef with correct defaults", () => {
     const def = makePostgresService({
       binPath: POSTGRES_BIN_PATH,
