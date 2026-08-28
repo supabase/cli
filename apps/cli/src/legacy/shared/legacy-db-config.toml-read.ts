@@ -188,7 +188,7 @@ export interface LegacyBaselineTomlConfig {
 
 /** The `[experimental.pgdelta]` subtree. */
 export interface LegacyPgDeltaTomlConfig {
-  /** `[experimental.pgdelta] enabled`, default false. `IsPgDeltaEnabled`. */
+  /** `[experimental.pgdelta] enabled`, default true. `IsPgDeltaEnabled`. */
   readonly enabled: boolean;
   /**
    * `[experimental.pgdelta] declarative_schema_path`, resolved to a
@@ -1749,7 +1749,8 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // Go decodes this bool via `strconv.ParseBool` (mapstructure weakly typed), so `"1"`
   // counts as true and a malformed value (`SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED=maybe`)
   // aborts the load. The env override wins (viper AutomaticEnv), then the TOML bool, then
-  // an `env(VAR)` string, defaulting to false when absent.
+  // an `env(VAR)` string, defaulting to true when absent: pg-delta is the default
+  // diff engine, and only an explicit `enabled = false` opts back into migra.
   let enabled: boolean;
   if (enabledEnv !== undefined) {
     // The AutomaticEnv override is decoded through `LoadEnvHook`, so an `env(VAR)`
@@ -1781,7 +1782,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     }
     enabled = parsed;
   } else {
-    enabled = false;
+    enabled = true;
   }
 
   const declarativeSchemaPathRaw = pgDeltaRaw?.["declarative_schema_path"];

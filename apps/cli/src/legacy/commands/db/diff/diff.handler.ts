@@ -85,7 +85,7 @@ Run ${legacyAqua("supabase db reset")} to verify that the new migration does not
 // SIDE_EFFECTS.md). The flag is deprecated in favor of the pg-delta engine.
 // This warning is additive to (and prints before) the delegated child's own
 // "experimental" warning, which it still prints unchanged.
-const warnPgSchemaDeprecated = `${legacyYellow("WARNING:")} "--use-pg-schema" is deprecated. Use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.`;
+const warnPgSchemaDeprecated = `${legacyYellow("WARNING:")} "--use-pg-schema" is deprecated. Use the default pg-delta engine or the migra engine (--use-migra) instead.`;
 
 const declarativeBaselineAdvisory = (declarativePath: string | null) => ({
   code: "DeclarativeSchemaNotUsedAsDiffBaseline",

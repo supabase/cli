@@ -21,13 +21,13 @@ const config = {
     Flag.optional,
   ),
   usePgSchema: Flag.boolean("use-pg-schema").pipe(
-    // Deprecated in favor of the pg-delta engine (or the default migra engine) —
+    // Deprecated in favor of the default pg-delta engine (or the migra engine) —
     // a keep-in-Go exception (in-process stripe/pg-schema-diff library, no
     // TS/container equivalent — see SIDE_EFFECTS.md). This description-only
     // notice is not enforced by the flag framework — see diff.handler.ts's
     // runtime warning for the enforced half of the deprecation.
     Flag.withDescription(
-      "Use pg-schema-diff to generate schema diff. Deprecated: use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.",
+      "Use pg-schema-diff to generate schema diff. Deprecated: use the default pg-delta engine or the migra engine (--use-migra) instead.",
     ),
     Flag.optional,
   ),

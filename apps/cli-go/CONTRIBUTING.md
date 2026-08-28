@@ -44,7 +44,15 @@ The Supabase API client is generated from OpenAPI spec. See [our guide](api/READ
 
 ## Testing local pg-delta builds
 
-To exercise unpublished `@supabase/pg-delta` changes inside CLI edge-runtime scripts (`db pull`, `db diff`, `db push`, etc.), publish a local build via Verdaccio in [pg-toolbelt](https://github.com/supabase/pg-toolbelt) and point the CLI at that registry.
+> **Scope:** this workflow only applies to the Go binary's own edge-runtime pg-delta
+> path, which the TypeScript CLI still reaches through the delegated
+> `db remote commit` / `db pull --experimental` commands. The main TypeScript CLI
+> bundles `@supabase/pg-delta` in-process and reads neither `PGDELTA_NPM_REGISTRY`
+> nor `supabase/.temp/pgdelta-version` — to test a local pg-delta build there,
+> update the `@supabase/pg-delta` dependency pin in `apps/cli/package.json` /
+> `pnpm-workspace.yaml` instead.
+
+To exercise unpublished `@supabase/pg-delta` changes inside the Go binary's edge-runtime scripts, publish a local build via Verdaccio in [pg-toolbelt](https://github.com/supabase/pg-toolbelt) and point the Go binary at that registry.
 
 ### 1. Start Verdaccio (pg-toolbelt)
 

@@ -1032,15 +1032,16 @@ describe("legacyReadDbToml", () => {
 
   it.effect("SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED still wins when the block omits pgdelta", () => {
     // Control: the env override is suppressed only for keys the matched block explicitly set;
-    // a block that omits experimental.pgdelta.enabled leaves the env override in force.
+    // a block that omits experimental.pgdelta.enabled leaves the env override in force
+    // (an explicit false beats the enabled-by-default resolution).
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
-    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = "true";
+    process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"] = "false";
     const dir = withConfig(["[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"));
     return readRef(dir, ref).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(v.pgDelta.enabled).toBe(true);
+          expect(v.pgDelta.enabled).toBe(false);
         }),
       ),
       Effect.ensuring(
@@ -2713,12 +2714,12 @@ describe("legacyReadDbToml", () => {
 });
 
 describe("legacyReadDbToml [experimental.pgdelta]", () => {
-  it.effect("defaults pg-delta to disabled with no config", () => {
+  it.effect("defaults pg-delta to enabled with no config", () => {
     const dir = withConfig(undefined);
     return read(dir).pipe(
       Effect.tap((v) =>
         Effect.sync(() => {
-          expect(v.pgDelta.enabled).toBe(false);
+          expect(v.pgDelta.enabled).toBe(true);
           expect(Option.isNone(v.pgDelta.declarativeSchemaPath)).toBe(true);
           expect(Option.isNone(v.pgDelta.formatOptions)).toBe(true);
           rmSync(dir, { recursive: true, force: true });

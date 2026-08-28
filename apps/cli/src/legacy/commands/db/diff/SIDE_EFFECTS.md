@@ -301,7 +301,7 @@ Given that, the flag is now deprecated rather than ported:
 
 - A TS-only stderr deprecation warning is printed immediately before delegating
   (both text and machine `--output-format` modes — diagnostics stay stderr-only,
-  the CLI-1546 rule): `"--use-pg-schema" is deprecated. Use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.`
+  the CLI-1546 rule): `"--use-pg-schema" is deprecated. Use the default pg-delta engine or the migra engine (--use-migra) instead.`
   The warning text intentionally does not promise a removal timeline.
 - This is **additive** to (printed before) Go's own pre-existing "experimental"
   warning (`cmd/db.go:121`, unchanged): `--use-pg-schema flag is experimental and may not include all entities, such as views and grants.` The delegated child
