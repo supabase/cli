@@ -114,7 +114,7 @@ describe("dockerImageForService", () => {
       `ghcr.io/supabase/vector:${DEFAULT_VERSIONS.vector}`,
     );
     expect(dockerImageForService("pooler", DEFAULT_VERSIONS.pooler)).toBe(
-      `ghcr.io/supabase/supavisor:${DEFAULT_VERSIONS.pooler}`,
+      "ghcr.io/supabase/supavisor:2.9.10",
     );
   });
 
@@ -125,18 +125,18 @@ describe("dockerImageForService", () => {
     expect(dockerImageForService("pooler", "2.9.6")).toBe("ghcr.io/supabase/supavisor:2.9.6");
   });
 
-  it("keeps non-managed services Docker-only", () => {
+  it("publishes native slim-services artifacts for every service", () => {
     expect(SERVICE_CATALOG.imgproxy).toMatchObject({
-      runtimeSupport: "docker-only",
-      artifact: { docker: { repository: "imgproxy" } },
+      runtimeSupport: "native-preferred",
+      artifact: { docker: { repository: "imgproxy" }, native: expect.any(Object) },
     });
     expect(SERVICE_CATALOG.mailpit).toMatchObject({
-      runtimeSupport: "docker-only",
-      artifact: { docker: { repository: "mailpit" } },
+      runtimeSupport: "native-preferred",
+      artifact: { docker: { repository: "mailpit" }, native: expect.any(Object) },
     });
     expect(SERVICE_CATALOG.vector).toMatchObject({
-      runtimeSupport: "docker-only",
-      artifact: { docker: { repository: "vector" } },
+      runtimeSupport: "native-preferred",
+      artifact: { docker: { repository: "vector" }, native: expect.any(Object) },
     });
   });
 });

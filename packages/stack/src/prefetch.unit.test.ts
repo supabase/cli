@@ -84,7 +84,11 @@ function mockSequenceSpawner(results: ReadonlyArray<SpawnResult>) {
 
 describe("prefetch", () => {
   test("prefetches every native-capable service by default in native mode", async () => {
-    const resolver = mockBinaryResolver();
+    const resolver = mockBinaryResolver({
+      binaries: Object.fromEntries(
+        SERVICE_NAMES.map((service) => [service, `/cache/${service}/native`]),
+      ),
+    });
     const spawner = mockSequenceSpawner(
       Array.from({ length: SERVICE_NAMES.length }, () => ({
         exitCode: 0,
@@ -98,7 +102,54 @@ describe("prefetch", () => {
 
     const result = await Effect.runPromise(prefetch().pipe(Effect.provide(layer)));
 
-    expect(Object.keys(result).sort()).toEqual(["auth", "postgres", "postgrest"]);
+    expect(Object.keys(result).sort()).toEqual([...SERVICE_NAMES].sort());
+    expect(resolver.resolved).toEqual(
+      expect.arrayContaining([
+        { service: "edge-runtime", version: "v1.74.3" },
+        { service: "realtime", version: "v2.129.1" },
+        { service: "storage", version: "v1.70.1" },
+        { service: "imgproxy", version: "v3.8.0" },
+        { service: "mailpit", version: "v1.30.2" },
+        { service: "pgmeta", version: "0.98.0" },
+        { service: "studio", version: "2026.08.17-sha-0c1da8f" },
+        { service: "analytics", version: "v1.50.3" },
+        { service: "vector", version: "0.53.0" },
+        { service: "pooler", version: "2.9.10" },
+      ]),
+    );
+  });
+
+  test("native preparation uses frozen remaining-service defaults and dependency closures", async () => {
+    const resolver = mockBinaryResolver({
+      binaries: Object.fromEntries(
+        SERVICE_NAMES.map((service) => [service, `/cache/${service}/native`]),
+      ),
+    });
+    const spawner = mockSequenceSpawner([]);
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const result = await Effect.runPromise(
+      prefetch({ mode: "native", services: ["storage", "vector"] }).pipe(Effect.provide(layer)),
+    );
+
+    expect(Object.keys(result).sort()).toEqual([
+      "analytics",
+      "imgproxy",
+      "postgres",
+      "storage",
+      "vector",
+    ]);
+    expect(resolver.resolved).toEqual(
+      expect.arrayContaining([
+        { service: "storage", version: "v1.70.1" },
+        { service: "imgproxy", version: "v3.8.0" },
+        { service: "analytics", version: "v1.50.3" },
+        { service: "vector", version: "0.53.0" },
+      ]),
+    );
   });
 
   test("limits concurrent image preparation to four services", async () => {
@@ -357,8 +408,8 @@ describe("prefetch", () => {
     expect(resolver.resolved).toContainEqual({ service: "postgrest", version: "v16.1" });
   });
 
-  test("native mode rejects services that have no native runtime", async () => {
-    const resolver = mockBinaryResolver();
+  test("native mode rejects services whose native artifact cannot be resolved", async () => {
+    const resolver = mockBinaryResolver({ failServices: ["edge-runtime"] });
     const spawner = mockSequenceSpawner([]);
     const layer = StackPreparation.layer.pipe(
       Layer.provide(resolver.layer),
