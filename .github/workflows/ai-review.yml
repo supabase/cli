@@ -20,20 +20,14 @@ on:
   issue_comment:
     types:
       - created
-  # ⚠️ TEMPORARY SELF-TEST TRIGGER — REMOVE BEFORE THIS PR MERGES. ⚠️
-  # Enabled ONLY so the pipeline runs against THIS PR (every push = synchronize)
-  # to verify it works end-to-end without merging each fix to develop first.
-  # Leaving this on develop would auto-review EVERY PR (real go-live), which must
-  # not happen until the prompts are tuned and the Codex app's automatic reviews
-  # are disabled. Before merge, restore the commented shadow-mode block:
-  #   # pull_request:
-  #   #   types: [opened, ready_for_review]
-  # See .github/ai-review/README.md for the real rollout steps.
-  pull_request:
-    types:
-      - opened
-      - synchronize
-      - reopened
+  # Shadow-mode rollout: uncomment once the prompts have been tuned against
+  # recent real PRs (see .github/ai-review/README.md), and disable the Codex
+  # GitHub App's automatic reviews (chatgpt.com/codex/settings/code-review)
+  # in the same change so the two don't double-review every PR.
+  # pull_request:
+  #   types:
+  #     - opened
+  #     - ready_for_review
 
 permissions: {}
 
