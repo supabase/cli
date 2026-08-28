@@ -29,6 +29,7 @@ import {
   type LegacyEdgeRuntimeRunOpts,
   LegacyEdgeRuntimeScript,
 } from "../../../shared/legacy-edge-runtime-script.service.ts";
+import { dockerfileServiceImageRaw } from "../../../../shared/services/dockerfile-images.ts";
 import { LEGACY_SUGGEST_DOCKER_INSTALL } from "../../../shared/legacy-docker-suggest.ts";
 import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
@@ -289,7 +290,7 @@ describe("legacyDeclarativeSeamLayer.ensureLocalPostgresImageCurrent", () => {
     () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
       const dir = mkdtempSync(join(tmpdir(), "legacy-pgdelta-seam-"));
-      const { layer } = setup(dir, { dbInspectImage: "supabase/postgres:17.6.1.165" });
+      const { layer } = setup(dir, { dbInspectImage: dockerfileServiceImageRaw("pg") });
       return Effect.gen(function* () {
         const seam = yield* LegacyDeclarativeSeam;
         const exit = yield* seam.ensureLocalPostgresImageCurrent().pipe(Effect.exit);
@@ -306,7 +307,7 @@ describe("legacyDeclarativeSeamLayer.ensureLocalPostgresImageCurrent", () => {
 
   it.effect("passes when the running container matches the expected image's family and tag", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-pgdelta-seam-"));
-    const { layer } = setup(dir, { dbInspectImage: "supabase/postgres:17.6.1.165" });
+    const { layer } = setup(dir, { dbInspectImage: dockerfileServiceImageRaw("pg") });
     return Effect.gen(function* () {
       const seam = yield* LegacyDeclarativeSeam;
       const exit = yield* seam.ensureLocalPostgresImageCurrent().pipe(Effect.exit);
