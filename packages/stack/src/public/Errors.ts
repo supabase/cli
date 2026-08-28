@@ -1,0 +1,181 @@
+import { Data } from "effect";
+
+/**
+ * Error context is intentionally open while operation-specific fields settle
+ * with the runtime modules. The `_tag` on each class is the stable public
+ * discriminator used by Effect.catchTag and Promise rejection handlers.
+ */
+export type StackErrorFields = Readonly<Record<string, unknown>>;
+
+export class InvalidStackIdentityError extends Data.TaggedError(
+  "InvalidStackIdentityError",
+)<StackErrorFields> {}
+export class InvalidProjectRootError extends Data.TaggedError(
+  "InvalidProjectRootError",
+)<StackErrorFields> {}
+export class InvalidStackConfigError extends Data.TaggedError(
+  "InvalidStackConfigError",
+)<StackErrorFields> {}
+
+export class StackNotFoundError extends Data.TaggedError("StackNotFoundError")<StackErrorFields> {}
+export class StackOwnershipConflictError extends Data.TaggedError(
+  "StackOwnershipConflictError",
+)<StackErrorFields> {}
+export class StackRuntimeMismatchError extends Data.TaggedError(
+  "StackRuntimeMismatchError",
+)<StackErrorFields> {}
+
+export class StackDefinitionRequiredError extends Data.TaggedError(
+  "StackDefinitionRequiredError",
+)<StackErrorFields> {}
+export class StackNotRunningError extends Data.TaggedError(
+  "StackNotRunningError",
+)<StackErrorFields> {}
+export class StackMustBeStoppedError extends Data.TaggedError(
+  "StackMustBeStoppedError",
+)<StackErrorFields> {}
+export class StackLifecycleConflictError extends Data.TaggedError(
+  "StackLifecycleConflictError",
+)<StackErrorFields> {}
+
+export class StackStateInvalidError extends Data.TaggedError(
+  "StackStateInvalidError",
+)<StackErrorFields> {}
+export class StackStateFormatUnsupportedError extends Data.TaggedError(
+  "StackStateFormatUnsupportedError",
+)<StackErrorFields> {}
+export class StackUpgradeRequiredError extends Data.TaggedError(
+  "StackUpgradeRequiredError",
+)<StackErrorFields> {}
+export class StackUpgradeReplacementError extends Data.TaggedError(
+  "StackUpgradeReplacementError",
+)<StackErrorFields> {}
+
+export class StackSecretMismatchError extends Data.TaggedError(
+  "StackSecretMismatchError",
+)<StackErrorFields> {}
+export class InvalidJwtSigningMaterialError extends Data.TaggedError(
+  "InvalidJwtSigningMaterialError",
+)<StackErrorFields> {}
+
+export class PortAllocationError extends Data.TaggedError(
+  "PortAllocationError",
+)<StackErrorFields> {}
+export class PortUnavailableError extends Data.TaggedError(
+  "PortUnavailableError",
+)<StackErrorFields> {}
+
+export class GatewayAuthenticationError extends Data.TaggedError(
+  "GatewayAuthenticationError",
+)<StackErrorFields> {}
+export class GatewayStaleGenerationError extends Data.TaggedError(
+  "GatewayStaleGenerationError",
+)<StackErrorFields> {}
+export class GatewayActivationError extends Data.TaggedError(
+  "GatewayActivationError",
+)<StackErrorFields> {}
+
+export class StackPreparationError extends Data.TaggedError(
+  "StackPreparationError",
+)<StackErrorFields> {}
+export class ArtifactIntegrityError extends Data.TaggedError(
+  "ArtifactIntegrityError",
+)<StackErrorFields> {}
+export class ContainerPullError extends Data.TaggedError("ContainerPullError")<StackErrorFields> {}
+
+export class StackReconciliationError extends Data.TaggedError(
+  "StackReconciliationError",
+)<StackErrorFields> {}
+export class ServiceStartError extends Data.TaggedError("ServiceStartError")<StackErrorFields> {}
+export class ServiceReadinessError extends Data.TaggedError(
+  "ServiceReadinessError",
+)<StackErrorFields> {}
+export class ContainerEngineError extends Data.TaggedError(
+  "ContainerEngineError",
+)<StackErrorFields> {}
+export class StackDestructionError extends Data.TaggedError(
+  "StackDestructionError",
+)<StackErrorFields> {}
+
+export type StackError =
+  | InvalidStackIdentityError
+  | InvalidProjectRootError
+  | InvalidStackConfigError
+  | StackNotFoundError
+  | StackOwnershipConflictError
+  | StackRuntimeMismatchError
+  | StackDefinitionRequiredError
+  | StackNotRunningError
+  | StackMustBeStoppedError
+  | StackLifecycleConflictError
+  | StackStateInvalidError
+  | StackStateFormatUnsupportedError
+  | StackUpgradeRequiredError
+  | StackUpgradeReplacementError
+  | StackSecretMismatchError
+  | InvalidJwtSigningMaterialError
+  | PortAllocationError
+  | PortUnavailableError
+  | GatewayAuthenticationError
+  | GatewayStaleGenerationError
+  | GatewayActivationError
+  | StackPreparationError
+  | ArtifactIntegrityError
+  | ContainerPullError
+  | StackReconciliationError
+  | ServiceStartError
+  | ServiceReadinessError
+  | ContainerEngineError
+  | StackDestructionError;
+
+export type CreateStackError =
+  | InvalidStackIdentityError
+  | InvalidProjectRootError
+  | InvalidStackConfigError
+  | StackOwnershipConflictError
+  | StackRuntimeMismatchError;
+export type OpenStackError =
+  | StackNotFoundError
+  | StackOwnershipConflictError
+  | StackRuntimeMismatchError;
+export type StackDiscoveryError =
+  | InvalidProjectRootError
+  | StackStateInvalidError
+  | StackStateFormatUnsupportedError;
+export type StackStatusError =
+  | StackNotFoundError
+  | StackStateInvalidError
+  | StackStateFormatUnsupportedError
+  | StackUpgradeRequiredError;
+export type StackStatusWatchError = StackStatusError;
+export type StackCredentialsError =
+  | StackNotFoundError
+  | StackNotRunningError
+  | StackSecretMismatchError
+  | InvalidJwtSigningMaterialError;
+export type PrepareStackError = StackPreparationError | ArtifactIntegrityError | ContainerPullError;
+export type StackStartError =
+  | StackDefinitionRequiredError
+  | StackLifecycleConflictError
+  | StackStateInvalidError
+  | StackStateFormatUnsupportedError
+  | StackUpgradeRequiredError
+  | StackSecretMismatchError
+  | StackReconciliationError
+  | ServiceStartError
+  | ServiceReadinessError
+  | ContainerEngineError;
+export type StackRestartError = StackStartError | StackUpgradeReplacementError;
+export type StackStopError =
+  | StackNotRunningError
+  | StackLifecycleConflictError
+  | StackReconciliationError
+  | ServiceReadinessError
+  | ContainerEngineError;
+export type StackCloseError = StackOwnershipConflictError | StackReconciliationError;
+export type StackLogsError = StackNotFoundError | StackNotRunningError | StackStateInvalidError;
+export type DestroyStackError =
+  | StackDestructionError
+  | StackNotFoundError
+  | StackLifecycleConflictError
+  | ContainerEngineError;

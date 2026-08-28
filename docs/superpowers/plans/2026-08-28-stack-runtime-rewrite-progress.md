@@ -109,3 +109,13 @@ Implementation continues after recording a ruling; this file is not a question q
 - The CLI type-check was not run; the accepted staging ruling allows the old CLI stack call sites to
   fail until the direct migration task. The telemetry coverage test was attempted and could not load
   the removed `@supabase/stack/managed-model` export; its adapters are part of that migration.
+
+### Task 1 — 2026-08-28
+
+- Added the Effect-native public model for stack identity, runtimes, capabilities, complete status
+  snapshots, logs, credentials, and operation-specific tagged failures.
+- `StackStatusSchema` validates that a snapshot contains exactly one status for each of the ten
+  public capabilities, including disabled capabilities.
+- `pnpm --dir packages/stack exec vitest run --project integration src/public/public-model.integration.test.ts`
+  RED: failed before implementation with `Cannot find module './Status.ts'`; GREEN: 3 tests passed.
+- `pnpm --dir packages/stack types:check` — passed.
