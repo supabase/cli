@@ -333,6 +333,19 @@ describe("native PostgREST tracer bullet", () => {
   }, 30_000);
 
   test("preserves native data, endpoints, policies, and cache identity across restart", async () => {
+    const authResponse = await fetch(`${stack.url}/auth/v1/settings`, {
+      headers: { apikey: stack.publishableKey },
+    });
+    expect(authResponse.status).toBe(200);
+    await drain(authResponse);
+    const postgrestResponse = await fetch(`${stack.url}/rest/v1/todos?select=id&limit=1`, {
+      headers: { apikey: stack.publishableKey },
+    });
+    expect(postgrestResponse.status).toBe(200);
+    await drain(postgrestResponse);
+    expect(await stack.getServiceStatus("auth")).toMatchObject({ status: "Healthy" });
+    expect(await stack.getServiceStatus("postgrest")).toMatchObject({ status: "Healthy" });
+
     const markerPaths = [authCachePath, postgresCachePath, postgrestCachePath].map((path) =>
       join(path, ".complete"),
     );
@@ -355,6 +368,7 @@ describe("native PostgREST tracer bullet", () => {
       await sql.close();
     }
 
+    await stack.stop();
     await stack.stop();
     await stack.start();
 

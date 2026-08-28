@@ -993,6 +993,10 @@ export const localStackLayer = (
           if (disposed) {
             return;
           }
+          const phase = yield* Ref.get(phaseRef);
+          if (phase === "stopped") {
+            return;
+          }
           if (runtimeState === undefined) {
             yield* Ref.set(wholeStackStoppedServicesRef, new Set());
             yield* Ref.set(phaseRef, "stopped");
