@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-error-in-effect-failure, effecttsgo/global-timers-in-effect, effecttsgo/new-promise, effecttsgo/node-builtin-import -- Port allocation tests drive native TCP listeners and child processes, including intentionally pending callbacks and process errors.
+
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer, type Server } from "node:net";

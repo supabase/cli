@@ -64,7 +64,7 @@ const ServiceNotFoundErrorSchema = Schema.TaggedStruct("ServiceNotFoundError", {
 const ServiceReadyErrorSchema = Schema.TaggedStruct("ServiceReadyError", {
   name: Schema.String,
   reason: Schema.String,
-  exitCode: Schema.optionalKey(Schema.Number),
+  exitCode: Schema.optionalKey(Schema.Finite),
 }).pipe(
   Schema.decodeTo(
     Schema.instanceOf(ServiceReadyError),
@@ -104,7 +104,7 @@ const StackNotRunningErrorSchema = Schema.TaggedStruct("StackNotRunningError", {
 
 const StackReadinessErrorSchema = Schema.TaggedStruct("StackReadinessError", {
   target: Schema.String,
-  timeoutMs: Schema.Number,
+  timeoutMs: Schema.Finite,
   detail: Schema.String,
 }).pipe(
   Schema.decodeTo(
@@ -149,15 +149,15 @@ const updateLaunchErrors = Schema.Union([StackUnavailableErrorSchema, StackBuild
 const StackServiceStateSchema = Schema.Struct({
   name: Schema.String,
   status: StackServiceStatusSchema,
-  pid: Schema.NullOr(Schema.Number),
-  exitCode: Schema.NullOr(Schema.Number),
-  restartCount: Schema.Number,
-  startedAt: Schema.NullOr(Schema.Number),
+  pid: Schema.NullOr(Schema.Finite),
+  exitCode: Schema.NullOr(Schema.Finite),
+  restartCount: Schema.Finite,
+  startedAt: Schema.NullOr(Schema.Finite),
   error: Schema.NullOr(Schema.String),
 });
 
 const StackLogEntrySchema = Schema.Struct({
-  timestamp: Schema.Number,
+  timestamp: Schema.Finite,
   service: Schema.String,
   stream: Schema.Union([Schema.Literal("stdout"), Schema.Literal("stderr")]),
   line: Schema.String,
@@ -168,7 +168,7 @@ const ReadyOptionsRpcSchema = ReadyOptionsSchema;
 const EdgeRuntimeReloadRpcSchema = Schema.Struct({
   edgeRuntime: Schema.Struct({
     enabled: Schema.optionalKey(Schema.Boolean),
-    inspectorPort: Schema.optionalKey(Schema.Number),
+    inspectorPort: Schema.optionalKey(Schema.Finite),
     policy: Schema.optionalKey(Schema.Literals(["oneshot", "per_worker"])),
     env: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
   }),
@@ -248,7 +248,7 @@ export const StackRpc = RpcGroup.make(
   Rpc.make("GetLogHistory", {
     payload: {
       name: Schema.optionalKey(Schema.String),
-      limit: Schema.optionalKey(Schema.Number),
+      limit: Schema.optionalKey(Schema.Finite),
       services: Schema.optionalKey(Schema.Array(Schema.String)),
     },
     success: Schema.Array(StackLogEntrySchema),

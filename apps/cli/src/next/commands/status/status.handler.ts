@@ -220,7 +220,7 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
     Effect.gen(function* () {
       const context = yield* Layer.build(layerResult.layer);
       const stack = Context.get(context, Stack);
-      const [info, services] = yield* Effect.all([stack.getInfo(), stack.getAllStates()]);
+      const [info, services] = yield* Effect.all([stack.getInfo, stack.getAllStates]);
       return { _tag: "live" as const, info, services };
     }),
   ).pipe(

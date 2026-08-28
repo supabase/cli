@@ -7714,8 +7714,7 @@ type StorageConfigResponse struct {
 		IcebergCatalog bool `json:"iceberg_catalog"`
 		ListV2         bool `json:"list_v2"`
 	} `json:"capabilities"`
-	DatabasePoolMode string `json:"databasePoolMode"`
-	External         struct {
+	External struct {
 		UpstreamTarget StorageConfigResponseExternalUpstreamTarget `json:"upstreamTarget"`
 	} `json:"external"`
 	Features struct {

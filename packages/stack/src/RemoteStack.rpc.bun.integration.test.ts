@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function -- Bun RPC tests invoke the native Promise-based integration harness from Vitest callbacks.
 import { Effect, Exit, Layer, Predicate, Scope } from "effect";
 import { describe, expect, test } from "vitest";
 import { ControlTransport } from "./managed/control.ts";
@@ -73,7 +74,7 @@ describe("Bun runtime RPC", () => {
         Effect.scoped(
           Effect.gen(function* () {
             const remote = yield* Stack;
-            return yield* remote.getInfo();
+            return yield* remote.getInfo;
           }).pipe(Effect.provide(layer), Effect.exit),
         ),
       );

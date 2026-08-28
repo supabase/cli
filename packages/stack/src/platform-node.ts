@@ -1,5 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- The control server owns the native Node HTTP listener at this platform boundary.
 import { createServer, type Server } from "node:http";
 import { fileURLToPath } from "node:url";
 import { Effect, Layer, Scope, Schema } from "effect";

@@ -10,12 +10,10 @@ export const startForegroundWithStopSignal = <R>(stopRequested: Effect.Effect<vo
     return yield* Effect.scoped(
       Effect.gen(function* () {
         const session = yield* makeStartForegroundSession();
-        yield* Effect.addFinalizer(() =>
-          Effect.uninterruptible(stack.dispose()).pipe(Effect.ignore),
-        );
+        yield* Effect.addFinalizer(() => Effect.uninterruptible(stack.dispose).pipe(Effect.ignore));
 
         return yield* Effect.gen(function* () {
-          yield* stack.start();
+          yield* stack.start;
           yield* session.markRunning;
           yield* session.waitUntilExit;
           yield* session.markStopping;

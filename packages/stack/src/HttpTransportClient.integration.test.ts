@@ -1,8 +1,13 @@
-import { Effect, Fiber, ManagedRuntime } from "effect";
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-timers, effecttsgo/new-promise, effecttsgo/node-builtin-import -- Transport tests coordinate native HTTP sockets and readiness callbacks through Vitest's Promise boundary.
+import { Effect, Fiber, ManagedRuntime, Predicate, Result } from "effect";
 import type { Socket } from "node:net";
 import { createServer, type Server } from "node:http";
 import { afterEach, describe, expect, test } from "vitest";
-import { HttpTransportClient, httpTransportClientLayer } from "./HttpTransportClient.ts";
+import {
+  HttpTransportClient,
+  httpTransportClientLayer,
+  makeHttpControlClient,
+} from "./HttpTransportClient.ts";
 import type { ControlEndpoint } from "./managed/control.ts";
 
 const endpointFor = (server: Server): ControlEndpoint => {
@@ -90,6 +95,46 @@ describe("HttpTransportClient", () => {
       await runtime.runPromise(Fiber.interrupt(fiber));
       await withTimeout(connectionClosedPromise, 5_000);
       expect(closed).toBe(true);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  test("reports the owner protocol version mismatch from an HTTP response", async () => {
+    server = createServer((_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          controlProtocol: "supabase-stack-control",
+          controlProtocolVersion: 2,
+          ownershipId: "a".repeat(64),
+          ownerSessionId: "owner-session",
+          kind: "supervisor",
+          state: "running",
+          ready: true,
+          daemonCliVersion: "test",
+        }),
+      );
+    });
+    await listen(server);
+
+    const runtime = ManagedRuntime.make(httpTransportClientLayer);
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const transport = yield* HttpTransportClient;
+          const client = makeHttpControlClient(transport);
+          return yield* client.readOwner(endpointFor(server!), "a".repeat(64)).pipe(Effect.result);
+        }),
+      );
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(Predicate.isTagged(result.failure, "ControlProtocolMismatchError")).toBe(true);
+        if (Predicate.isTagged(result.failure, "ControlProtocolMismatchError")) {
+          expect(result.failure.expectedVersion).toBe(1);
+          expect(result.failure.observedVersion).toBe(2);
+        }
+      }
     } finally {
       await runtime.dispose();
     }

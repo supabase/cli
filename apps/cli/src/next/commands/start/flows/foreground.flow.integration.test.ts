@@ -21,11 +21,10 @@ describe("start foreground flow", () => {
       let startCalls = 0;
       const stack = {
         ...makeTestStack(),
-        getInfo: () => Effect.fail(new StackUnavailableError({ phase: "starting" })),
-        start: () =>
-          Effect.sync(() => {
-            startCalls += 1;
-          }),
+        getInfo: Effect.fail(new StackUnavailableError({ phase: "starting" })),
+        start: Effect.sync(() => {
+          startCalls += 1;
+        }),
       };
       const exit = yield* startForegroundWithStopSignal(Effect.never).pipe(
         Effect.provide(Layer.mergeAll(Layer.succeed(Stack, stack), inkLayer)),
@@ -45,16 +44,17 @@ describe("start foreground flow", () => {
       let startCalls = 0;
       const stack = {
         ...makeTestStack(),
-        start: () =>
-          Effect.gen(function* () {
-            expect(allStateChangesCalled).toBe(true);
-            startCalls += 1;
-            yield* Deferred.succeed(started, undefined);
+        start: Effect.gen(function* () {
+          expect(allStateChangesCalled).toBe(true);
+          startCalls += 1;
+          yield* Deferred.succeed(started, undefined);
+        }),
+        allStateChanges: Stream.unwrap(
+          Effect.sync(() => {
+            allStateChangesCalled = true;
+            return Stream.never;
           }),
-        allStateChanges: () => {
-          allStateChangesCalled = true;
-          return Stream.never;
-        },
+        ),
       };
       const fiber = yield* startForegroundWithStopSignal(Deferred.await(stopRequested)).pipe(
         Effect.provide(Layer.mergeAll(Layer.succeed(Stack, stack), inkLayer)),

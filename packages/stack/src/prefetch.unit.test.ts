@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function -- Prefetch tests call the Promise-returning public helper from Vitest callbacks.
+
 import { describe, expect, test } from "vitest";
 import {
   Cause,

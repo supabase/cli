@@ -1,3 +1,4 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-fetch -- Bun platform tests call native fetch and Promise callbacks to validate the transport implementation.
 import { Cause, Deferred, Effect, Exit, Layer, Predicate, Scope } from "effect";
 import { describe, expect, test } from "vitest";
 import {
@@ -237,8 +238,7 @@ describe("Bun control transport", () => {
     await Effect.runPromise(
       lifecycle.publishStack(
         makeTestStack({
-          stop: () =>
-            Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release))),
+          stop: Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release))),
         }),
       ),
     );
