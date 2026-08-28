@@ -88,11 +88,12 @@ const nativeRelease = (
   platform: PlatformInfo,
   options: {
     readonly requiredRuntimePaths: ReadonlyArray<string>;
+    readonly releaseTagVersion?: (version: string) => string;
   },
 ): NativeReleaseArtifact | undefined => {
   const target = nativeTargetForPlatform(platform);
   if (target === undefined) return undefined;
-  const releaseTag = `${service}-${version}`;
+  const releaseTag = `${service}-${options.releaseTagVersion?.(version) ?? version}`;
   const base = `${SLIM_RELEASE_BASE}/${releaseTag}`;
   const assetName = `${releaseTag}-${target}`;
   return {
@@ -119,6 +120,13 @@ const preparation = (
   default: defaultPolicy,
   dependencies,
 });
+
+const vPrefixedReleaseVersion = (version: string): string => {
+  const normalized = version.trim();
+  return normalized.slice(0, 1).toLowerCase() === "v"
+    ? `v${normalized.slice(1)}`
+    : `v${normalized}`;
+};
 
 /**
  * Exhaustive static identity and capability metadata for public stack services.
@@ -299,6 +307,7 @@ export const SERVICE_CATALOG: {
         resolve: (version, platform) =>
           nativeRelease("pgmeta", version, platform, {
             requiredRuntimePaths: ["node/bin/node", "app/dist/server/server.js"],
+            releaseTagVersion: vPrefixedReleaseVersion,
           }),
       },
     },
@@ -373,7 +382,7 @@ export const SERVICE_CATALOG: {
     defaultVersion: "2.9.10",
     runtimeSupport: "native-preferred",
     artifact: {
-      docker: { registry: SUPABASE_GHCR_REGISTRY, repository: "supavisor" },
+      docker: { registry: SUPABASE_GHCR_REGISTRY, repository: "supavisor", tagPrefix: "v" },
       native: {
         provider: "github.com/supabase/slim-services",
         resolve: (version, platform) =>
@@ -386,6 +395,7 @@ export const SERVICE_CATALOG: {
               "app/bin/supavisor",
               "app/bin/server",
             ],
+            releaseTagVersion: vPrefixedReleaseVersion,
           }),
       },
     },

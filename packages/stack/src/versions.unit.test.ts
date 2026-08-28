@@ -12,7 +12,11 @@ import {
   SERVICE_NAMES,
   type VersionManifest,
 } from "./versions.ts";
-import { SERVICE_CATALOG } from "./ServiceCatalog.ts";
+import {
+  dockerImageForArtifact,
+  nativeReleaseForService,
+  SERVICE_CATALOG,
+} from "./ServiceCatalog.ts";
 
 const sampleDockerfile = `
 FROM supabase/postgres:17.0.0.1 AS pg
@@ -114,7 +118,7 @@ describe("dockerImageForService", () => {
       `ghcr.io/supabase/vector:${DEFAULT_VERSIONS.vector}`,
     );
     expect(dockerImageForService("pooler", DEFAULT_VERSIONS.pooler)).toBe(
-      "ghcr.io/supabase/supavisor:2.9.10",
+      "ghcr.io/supabase/supavisor:v2.9.10",
     );
   });
 
@@ -122,7 +126,7 @@ describe("dockerImageForService", () => {
     expect(dockerImageForService("vector", "0.52.0-alpine")).toBe(
       "ghcr.io/supabase/vector:0.52.0-alpine",
     );
-    expect(dockerImageForService("pooler", "2.9.6")).toBe("ghcr.io/supabase/supavisor:2.9.6");
+    expect(dockerImageForService("pooler", "2.9.6")).toBe("ghcr.io/supabase/supavisor:v2.9.6");
   });
 
   it("publishes native slim-services artifacts for every service", () => {
@@ -138,6 +142,27 @@ describe("dockerImageForService", () => {
       runtimeSupport: "native-preferred",
       artifact: { docker: { repository: "vector" }, native: expect.any(Object) },
     });
+  });
+
+  it("normalizes bare public versions to frozen native release tags", () => {
+    const platform = { os: "linux", arch: "x64" } as const;
+
+    expect(nativeReleaseForService("pgmeta", DEFAULT_VERSIONS.pgmeta, platform)).toMatchObject({
+      releaseTag: "pgmeta-v0.98.0",
+      downloadUrl:
+        "https://github.com/supabase/slim-services/releases/download/pgmeta-v0.98.0/pgmeta-v0.98.0-linux-amd64.tar.zst",
+    });
+    expect(nativeReleaseForService("pooler", DEFAULT_VERSIONS.pooler, platform)).toMatchObject({
+      releaseTag: "pooler-v2.9.10",
+      downloadUrl:
+        "https://github.com/supabase/slim-services/releases/download/pooler-v2.9.10/pooler-v2.9.10-linux-amd64.tar.zst",
+    });
+  });
+
+  it("uses the frozen v-prefixed Pooler Docker tag for its bare public version", () => {
+    expect(dockerImageForArtifact("pooler", DEFAULT_VERSIONS.pooler)).toBe(
+      "ghcr.io/supabase/supavisor:v2.9.10",
+    );
   });
 });
 
