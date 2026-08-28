@@ -37,8 +37,28 @@ test("applies a test-written migration to the remote database", async ({
       cleanupErrors.push(error);
     }
     try {
-      const reset = await cli(["db", "reset", "--db-url", project.dbUrl, "--yes"]);
-      requireLiveSuccess(reset, "db reset cleanup after migration up");
+      const dropped = await cli([
+        "db",
+        "query",
+        `drop table if exists e2e_up_${version}`,
+        "--db-url",
+        project.dbUrl,
+      ]);
+      requireLiveSuccess(dropped, "db query cleanup after migration up");
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    try {
+      const reverted = await cli([
+        "migration",
+        "repair",
+        version,
+        "--status",
+        "reverted",
+        "--db-url",
+        project.dbUrl,
+      ]);
+      requireLiveSuccess(reverted, "migration repair cleanup after migration up");
     } catch (error) {
       cleanupErrors.push(error);
     }
