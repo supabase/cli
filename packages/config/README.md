@@ -15,6 +15,41 @@ It owns:
 - JSON Schema generation for both shapes, at `@supabase/config/schema.json` and
   `@supabase/config/project-schema.json`
 
+## Installing
+
+```sh
+npm install @supabase/config effect@rc
+```
+
+```ts
+import { CliConfigSchema, toProjectConfig } from "@supabase/config";
+
+const projectConfig = toProjectConfig({ cliConfig: someCliConfig });
+```
+
+This package is not yet published (`private: true`; publishing is tracked separately). Once it
+is, install it alongside the peers your runtime needs.
+
+This package requires Effect 4.x, currently only published under the `rc` dist-tag — `effect@latest`
+still resolves to 3.x, which will not satisfy this package's peer range.
+
+`effect` is a required peer dependency. `@effect/platform-bun` and `@effect/platform-node` are
+optional peers — install exactly one, matching your runtime, if you use `./io` or `./effect`'s
+file-IO programs:
+
+| Consumer                                       | Required peers                    |
+| ---------------------------------------------- | --------------------------------- |
+| Pure / browser / edge (`.` only, no file IO)   | `effect`                          |
+| Node (`./io` or `./effect`'s file-IO programs) | `effect`, `@effect/platform-node` |
+| Bun (`./io` or `./effect`'s file-IO programs)  | `effect`, `@effect/platform-bun`  |
+
+Under the `node`/`bun` export conditions, the matching platform peer is imported eagerly at module
+load. A missing peer surfaces as a raw module-resolution error (e.g. `Cannot find package
+'@effect/platform-node'`) the first time something imports `./io` or `./effect` — not a curated
+message — so install the peer for your runtime before importing either subpath. The `browser`
+condition is the one exception: it needs no platform peer, since it resolves to a stub that throws
+its own curated error only when invoked (see "Entrypoints" above).
+
 ## Naming
 
 - `CliConfig` — the config _document_ (`supabase/config.toml`/`.json`) — the full local superset
@@ -30,7 +65,8 @@ Use the `Cli*` prefix for the local checkout side and a bare `Project*` name for
 Supabase project. Config-value helpers follow the config family regardless of their inputs
 (`resolveCliConfigValue`). See
 [ADR 0020](https://github.com/supabase/cli/blob/develop/docs/adr/0020-config-naming-vocabulary.md)
-and [docs/cli-config-loading.md](./docs/cli-config-loading.md) for the full vocabulary.
+and [docs/cli-config-loading.md](https://github.com/supabase/cli/blob/develop/packages/config/docs/cli-config-loading.md)
+for the full vocabulary.
 
 ## Entrypoints
 
@@ -144,35 +180,6 @@ Every runtime and type export of the pure `.` entrypoint, grouped by category:
 | Export                                                                                             | What it is                               |
 | -------------------------------------------------------------------------------------------------- | ---------------------------------------- |
 | `edgeFunctionDenoConfigFileName` / `edgeFunctionEntrypointFileName` / `edgeFunctionsDirectoryName` | Edge Functions on-disk layout filenames. |
-
-## Installing
-
-This package is not yet published (`private: true`; publishing is tracked separately). Once it
-is, install it alongside the peers your runtime needs:
-
-```sh
-npm install @supabase/config effect@rc
-```
-
-This package requires Effect 4.x, currently only published under the `rc` dist-tag — `effect@latest`
-still resolves to 3.x, which will not satisfy this package's peer range.
-
-`effect` is a required peer dependency. `@effect/platform-bun` and `@effect/platform-node` are
-optional peers — install exactly one, matching your runtime, if you use `./io` or `./effect`'s
-file-IO programs:
-
-| Consumer                                       | Required peers                    |
-| ---------------------------------------------- | --------------------------------- |
-| Pure / browser / edge (`.` only, no file IO)   | `effect`                          |
-| Node (`./io` or `./effect`'s file-IO programs) | `effect`, `@effect/platform-node` |
-| Bun (`./io` or `./effect`'s file-IO programs)  | `effect`, `@effect/platform-bun`  |
-
-Under the `node`/`bun` export conditions, the matching platform peer is imported eagerly at module
-load. A missing peer surfaces as a raw module-resolution error (e.g. `Cannot find package
-'@effect/platform-node'`) the first time something imports `./io` or `./effect` — not a curated
-message — so install the peer for your runtime before importing either subpath. The `browser`
-condition is the one exception: it needs no platform peer, since it resolves to a stub that throws
-its own curated error only when invoked (see "Entrypoints" above).
 
 ## ProjectConfig: producing and validating hosted-project values
 
@@ -329,7 +336,10 @@ The runtime export surface of `.`, `./io`, and `./effect`, plus the two generate
 artifacts (`./schema.json`, `./project-schema.json`), is this package's published contract.
 `./internal` carries no such guarantee. See [AGENTS.md](https://github.com/supabase/cli/blob/develop/packages/config/AGENTS.md) for how that contract is
 enforced (export-surface snapshots, purity walkers, and a base-vs-head type-surface diff advisory
-at PR time — a release-time tarball diff hard gate is planned under CLI-2233).
+at PR time). Releases themselves are cut by an independent pipeline: conventional commits scoped to
+`packages/config/` compute the next version, published to npm under the `latest` dist-tag and
+tagged `config-v<version>`, and every publish is human-approved against a type-surface diff of the
+previously published version.
 
 ## Usage
 
@@ -371,9 +381,12 @@ preserve the existing format when possible and default new config files to JSON.
 
 ## Architecture Docs
 
-- [CLI config loading](./docs/cli-config-loading.md)
+- [CLI config loading](https://github.com/supabase/cli/blob/develop/packages/config/docs/cli-config-loading.md)
 
-## Development
+## Development (contributors)
+
+This section is for contributors to the supabase/cli monorepo, not consumers of the published
+package.
 
 Repo-wide quality checks run from the repository root:
 
@@ -391,3 +404,7 @@ pnpm run build       # Compile dist/, generate schema.json/project-schema.json
 ```
 
 See [AGENTS.md](https://github.com/supabase/cli/blob/develop/packages/config/AGENTS.md) for the build pipeline and contract-enforcement details.
+
+## License
+
+MIT — see the bundled [LICENSE](https://github.com/supabase/cli/blob/develop/packages/config/LICENSE) file.
