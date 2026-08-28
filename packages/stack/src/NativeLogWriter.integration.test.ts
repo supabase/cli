@@ -103,6 +103,33 @@ const flakyWriteFileSystemLayer = Layer.effect(
   }),
 ).pipe(Layer.provide(NodeFileSystem.layer));
 
+const flakyRenameFileSystemLayer = Layer.effect(
+  FileSystem.FileSystem,
+  Effect.map(FileSystem.FileSystem, (base) => {
+    let failNextRename = true;
+    return {
+      ...base,
+      rename: (from: string, to: string) =>
+        failNextRename
+          ? Effect.sync(() => {
+              failNextRename = false;
+            }).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  PlatformError.systemError({
+                    _tag: "Unknown",
+                    module: "test",
+                    method: "rename",
+                    description: "injected transient rename failure",
+                  }),
+                ),
+              ),
+            )
+          : base.rename(from, to),
+    } satisfies FileSystem.FileSystem;
+  }),
+).pipe(Layer.provide(NodeFileSystem.layer));
+
 describe("native log writer", () => {
   it.live("journals each LogBuffer entry below only its owning runtime root", () =>
     withLogBuffer((logBuffer, fs, root, sibling) =>
@@ -243,6 +270,62 @@ describe("native log writer", () => {
         });
       }),
     ).pipe(Effect.provide(flakyWriteFileSystemLayer)),
+  );
+
+  it.live("recovers rotation after one rename failure and continues journaling", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-native-logs-" });
+        const services = yield* Layer.build(LogBuffer.layer);
+        const logBuffer = Context.get(services, LogBuffer);
+        const writerScope = yield* Scope.make("sequential");
+        yield* startNativeLogWriter(logBuffer, root).pipe(
+          Effect.provideService(Scope.Scope, writerScope),
+        );
+        const message = "r".repeat(30_000);
+
+        for (let index = 0; index < 4; index += 1) {
+          yield* logBuffer.append("auth", "stdout", `${index}:${message}`);
+          yield* awaitDirectoryState(fs, nativeLogRoot(root), {
+            ["auth.jsonl"]: (content) => content.includes(`"message":"${index}:${message}"`),
+            ...(index >= 2
+              ? {
+                  ["auth.jsonl.1"]: (content: string) => content.length > 0,
+                }
+              : {}),
+          });
+        }
+
+        const paths = yield* fs.readDirectory(nativeLogRoot(root));
+        expect(paths.toSorted()).toEqual(["auth.jsonl", "auth.jsonl.1"]);
+        const records = [];
+        for (const path of paths) {
+          const contents = yield* fs.readFileString(join(nativeLogRoot(root), path));
+          expect(new TextEncoder().encode(contents).byteLength).toBeLessThanOrEqual(64 * 1024);
+          expect(contents.split("\n").filter(Boolean).length).toBeLessThanOrEqual(1_000);
+          records.push(
+            ...contents
+              .trim()
+              .split("\n")
+              .filter(Boolean)
+              .map((line) => JSON.parse(line)),
+          );
+        }
+        expect(records.filter((record) => record.service === "auth")).toHaveLength(4);
+        for (let index = 0; index < 4; index += 1) {
+          expect(records.filter((record) => record.message === `${index}:${message}`)).toHaveLength(
+            1,
+          );
+        }
+        yield* Scope.close(writerScope, Exit.void);
+        const activePath = nativeServiceLogPath(root, "auth");
+        const beforeCloseAppend = yield* fs.readFileString(activePath);
+        yield* logBuffer.append("auth", "stdout", "after-close");
+        expect(yield* fs.readFileString(activePath)).toBe(beforeCloseAppend);
+        yield* fs.rename(activePath, `${activePath}.closed`);
+      }),
+    ).pipe(Effect.provide(flakyRenameFileSystemLayer)),
   );
 
   it.live("rotates active journals on restart and bounds oversized records", () =>

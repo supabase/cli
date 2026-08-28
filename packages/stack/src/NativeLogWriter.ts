@@ -263,6 +263,10 @@ export const startNativeLogWriter = (
             ),
           );
           yield* Scope.close(current.scope, Exit.void);
+          // The handle is now closed. Remove it before any fallible rename or
+          // reopen so a retry can acquire a fresh segment instead of reusing
+          // stale ownership state.
+          segments.delete(current.service);
           for (let index = NATIVE_LOG_SEGMENTS - 1; index >= 1; index -= 1) {
             const from = pathForService(runtimeRoot, current.service, index - 1);
             const to = pathForService(runtimeRoot, current.service, index);
