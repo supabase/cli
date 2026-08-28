@@ -28,10 +28,12 @@ resolve  →  claude-review  →  codex-review  →  post-review
 ```
 
 - **`resolve`** (`.github/scripts/ai-review/resolve.ts`) decides whether this
-  run should happen at all, and in which mode. It applies the once-per-PR
-  dedup guard, the draft/bot/fork skips (for the future automatic trigger),
-  authorization for manual `/ai-review` requests, and a size guard for
-  diffs too large to meaningfully review.
+  run should happen at all. It applies the once-per-PR dedup guard, the
+  draft/bot/fork skips (for the future automatic trigger), and authorization
+  for manual `/ai-review` requests. There is no size cap: Claude and Codex
+  review agentically — reading the diff and the changed files via their own
+  tools over many turns, like the local CLI — so PRs of any size are reviewed
+  (very large diffs best-effort, within the model's context/turn budget).
 - **`claude-review`** gives Claude read-only access to the PR's own head
   commit as review subject matter, and asks it for one exhaustive pass,
   producing structured JSON findings validated against `findings.schema.json`.
@@ -56,7 +58,7 @@ on the same PR:
 - run the workflow manually via `workflow_dispatch` with the PR number.
 
 Both bypass the dedup guard and the draft/fork/bot skips (a human explicitly
-asked), but still respect the size guard.
+asked).
 
 ## Rollout
 

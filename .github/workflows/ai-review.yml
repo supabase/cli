@@ -88,7 +88,6 @@ jobs:
       should_run: ${{ steps.resolve.outputs.should_run }}
       pr_number: ${{ steps.resolve.outputs.pr_number }}
       head_ref: ${{ steps.resolve.outputs.head_ref }}
-      mode: ${{ steps.resolve.outputs.mode }}
       trigger: ${{ steps.resolve.outputs.trigger }}
     steps:
       # Base repo, default ref, pinned explicitly — this job runs trusted
@@ -117,7 +116,7 @@ jobs:
   claude-review:
     name: Claude review
     needs: resolve
-    if: needs.resolve.outputs.should_run == 'true' && needs.resolve.outputs.mode == 'review'
+    if: needs.resolve.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     # SECURITY-CRITICAL: this job checks out the PR's own head commit, which
@@ -400,9 +399,8 @@ jobs:
     # Runs when the diff was too large to review (codex-review never ran, it
     # was skipped by its own dependency chain) or when codex-review actually
     # succeeded. `!cancelled()` is required here because an explicit `if`
-    # replaces the default "all needed jobs succeeded" check, and codex-review
-    # is legitimately skipped (not successful) on the too-large path.
-    if: ${{ !cancelled() && needs.resolve.outputs.should_run == 'true' && (needs.resolve.outputs.mode == 'too-large' || needs.codex-review.result == 'success') }}
+    # replaces the default "all needed jobs succeeded" check.
+    if: ${{ !cancelled() && needs.resolve.outputs.should_run == 'true' && needs.codex-review.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -422,7 +420,6 @@ jobs:
           bun-version-file: ".bun-version"
 
       - name: Download merged review
-        if: needs.resolve.outputs.mode == 'review'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: merged-review
@@ -433,7 +430,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
-          MODE: ${{ needs.resolve.outputs.mode }}
           MERGED_REVIEW_PATH: /tmp/ai-review/merged-review.json
           TRIGGER: ${{ needs.resolve.outputs.trigger }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

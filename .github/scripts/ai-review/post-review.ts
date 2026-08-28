@@ -17,20 +17,18 @@
  *     artifact, so a prompt-injected `Read` of a secret-bearing path can't
  *     smuggle a credential out through the artifact even though the posted
  *     review is already scrubbed at render time.
- *   - `post` — reads `$MODE` (`review` | `too-large`) and posts either a
- *     "diff too large" notice or the consolidated review, THEN best-effort
- *     supersedes any prior AI review on the PR (the marker/dedup guard in
- *     `resolve.ts` should normally prevent a second run, but `/ai-review`
- *     lets a maintainer force one; posting before superseding, and treating
- *     the supersede as best-effort, means a cosmetic supersede failure can
- *     never cost the real review).
+ *   - `post` — posts the consolidated review, THEN best-effort supersedes any
+ *     prior AI review on the PR (the marker/dedup guard in `resolve.ts` should
+ *     normally prevent a second run, but `/ai-review` lets a maintainer force
+ *     one; posting before superseding, and treating the supersede as
+ *     best-effort, means a cosmetic supersede failure can never cost the real
+ *     review).
  *
  * `parseDiffAnchors`, `partitionFindings`, `renderReviewBody`,
  * `renderInlineComment`, `buildReviewPayload`, `foldInlineCommentsIntoBody`,
  * `supersededBody`, `isSuperseded`, `sanitizeFilePath`, and `redactSecrets`
- * are pure and exported for tests. `postTooLargeNotice` and
- * `postConsolidatedReview` are the I/O orchestration functions for the `post`
- * subcommand's two modes; they're exported so a test can drive them against
+ * are pure and exported for tests. `postConsolidatedReview` is the I/O
+ * orchestration function for the `post` subcommand; it's exported so a test can drive it against
  * an injected `ReviewIo` fake without the network, the same way
  * `resolveDecision` is tested in `resolve.ts`. `main()` wires up the real
  * GitHub I/O and argv dispatch.
@@ -54,7 +52,6 @@ export type Severity = "critical" | "major" | "minor" | "nit";
 export type Verdict = "confirmed" | "refuted" | "uncertain";
 export type Source = "claude" | "codex";
 export type Trigger = "auto" | "manual";
-export type Mode = "review" | "too-large";
 
 export interface Finding {
   id: string;
@@ -711,34 +708,6 @@ export function renderReviewBody(
   return sections.join("\n\n");
 }
 
-/** Renders the `+X/-Y lines across Z files` fragment shared by the "too
- * large" skip reason (`resolve.ts`) and the posted notice below — the one
- * source of truth for that phrasing. */
-export function formatDiffStats(stats: {
-  additions: number;
-  deletions: number;
-  changedFiles: number;
-}): string {
-  return `+${stats.additions}/-${stats.deletions} lines across ${stats.changedFiles} files`;
-}
-
-/** Renders the notice posted instead of a review when the diff exceeds the size guard. */
-export function renderTooLargeNotice(stats: {
-  additions: number;
-  deletions: number;
-  changedFiles: number;
-}): string {
-  return [
-    "## 🤖 AI Review",
-    "",
-    `This PR is too large for a full AI review (${formatDiffStats(stats)}).`,
-    "",
-    "A maintainer can request a review anyway with a `/ai-review` comment.",
-    "",
-    AI_REVIEW_MARKER,
-  ].join("\n");
-}
-
 export interface InlineReviewComment {
   path: string;
   line: number;
@@ -848,12 +817,6 @@ export function supersededBody(oldBody: string): string {
 
 // --- Injected GitHub I/O ---
 
-export interface PrStats {
-  additions: number;
-  deletions: number;
-  changedFiles: number;
-}
-
 export interface MarkedEntry {
   id: number;
   body: string;
@@ -862,7 +825,6 @@ export interface MarkedEntry {
 
 export interface ReviewIo {
   fetchPrDiff: (prNumber: number) => Promise<string>;
-  fetchPrStats: (prNumber: number) => Promise<PrStats>;
   listReviews: (prNumber: number) => Promise<MarkedEntry[]>;
   listIssueComments: (prNumber: number) => Promise<MarkedEntry[]>;
   updateReviewBody: (prNumber: number, reviewId: number, body: string) => Promise<void>;
@@ -875,7 +837,6 @@ export interface ReviewIo {
     prNumber: number,
     payload: ReviewPayload,
   ) => Promise<{ status: number; body?: string }>;
-  postIssueComment: (prNumber: number, body: string) => Promise<void>;
 }
 
 /** Wraps every prior AI review/comment on the PR in a superseded `<details>` block. Idempotent. */
@@ -917,12 +878,6 @@ async function supersedePriorRunsBestEffort(io: ReviewIo, prNumber: number): Pro
   } catch (error) {
     console.warn(`Could not supersede prior AI review runs on PR #${prNumber}: ${String(error)}`);
   }
-}
-
-export async function postTooLargeNotice(io: ReviewIo, prNumber: number): Promise<void> {
-  const stats = await io.fetchPrStats(prNumber);
-  await io.postIssueComment(prNumber, renderTooLargeNotice(stats));
-  await supersedePriorRunsBestEffort(io, prNumber);
 }
 
 export async function postConsolidatedReview(
@@ -994,12 +949,6 @@ async function githubFetch(
   return response;
 }
 
-interface RestPullRequest {
-  additions: number;
-  deletions: number;
-  changed_files: number;
-}
-
 interface RestReview {
   id: number;
   body: string | null;
@@ -1028,17 +977,6 @@ async function githubJson<T>(
   const value: unknown = await response.json();
   assert(value);
   return value;
-}
-
-function assertRestPullRequest(value: unknown): asserts value is RestPullRequest {
-  if (
-    !isRecordEntry(value) ||
-    typeof value.additions !== "number" ||
-    typeof value.deletions !== "number" ||
-    typeof value.changed_files !== "number"
-  ) {
-    throw new Error("Malformed GitHub pull request response: missing or mistyped stats fields.");
-  }
 }
 
 function isIdBodyUserEntry(
@@ -1076,12 +1014,6 @@ async function fetchPrDiff(token: string, base: string, prNumber: number): Promi
     "application/vnd.github.v3.diff",
   );
   return response.text();
-}
-
-async function fetchPrStats(token: string, base: string, prNumber: number): Promise<PrStats> {
-  const response = await githubFetch(`${base}/pulls/${prNumber}`, token);
-  const pr = await githubJson(response, assertRestPullRequest);
-  return { additions: pr.additions, deletions: pr.deletions, changedFiles: pr.changed_files };
 }
 
 async function listAllPages<T>(
@@ -1179,22 +1111,9 @@ async function postReview(
   return { status: response.status };
 }
 
-async function postIssueComment(
-  token: string,
-  base: string,
-  prNumber: number,
-  body: string,
-): Promise<void> {
-  await githubFetch(`${base}/issues/${prNumber}/comments`, token, {
-    method: "POST",
-    body: JSON.stringify({ body }),
-  });
-}
-
 function makeGithubReviewIo(token: string, base: string): ReviewIo {
   return {
     fetchPrDiff: (prNumber) => fetchPrDiff(token, base, prNumber),
-    fetchPrStats: (prNumber) => fetchPrStats(token, base, prNumber),
     listReviews: (prNumber) => listReviews(token, base, prNumber),
     listIssueComments: (prNumber) => listIssueComments(token, base, prNumber),
     updateReviewBody: (prNumber, reviewId, body) =>
@@ -1202,15 +1121,7 @@ function makeGithubReviewIo(token: string, base: string): ReviewIo {
     updateIssueCommentBody: (commentId, body) =>
       updateIssueCommentBody(token, base, commentId, body),
     postReview: (prNumber, payload) => postReview(token, base, prNumber, payload),
-    postIssueComment: (prNumber, body) => postIssueComment(token, base, prNumber, body),
   };
-}
-
-function parseMode(value: string): Mode {
-  if (value !== "review" && value !== "too-large") {
-    throw new Error(`Invalid MODE "${value}"; expected "review" or "too-large".`);
-  }
-  return value;
 }
 
 function parseTrigger(value: string): Trigger {
@@ -1228,14 +1139,6 @@ async function runPost(): Promise<void> {
   const io = makeGithubReviewIo(token, base);
 
   const prNumber = Number(requireEnv("PR_NUMBER"));
-  const mode = parseMode(requireEnv("MODE"));
-
-  if (mode === "too-large") {
-    await postTooLargeNotice(io, prNumber);
-    console.log(`Posted "too large" notice on PR #${prNumber}.`);
-    return;
-  }
-
   const trigger = parseTrigger(requireEnv("TRIGGER"));
   const runUrl = requireEnv("RUN_URL");
   const mergedReviewPath = requireEnv("MERGED_REVIEW_PATH");
