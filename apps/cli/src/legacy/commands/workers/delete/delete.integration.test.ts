@@ -542,6 +542,63 @@ describe("legacy workers delete", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  it.live("pluralizes the live instance count in the confirmation", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      promptTextResponses: ["api"],
+      routes: {
+        ...routes,
+        [getRoute]: {
+          status: 200,
+          body: {
+            data: workerResource({
+              name: "api",
+              instances: 3,
+              instanceCounts: { declared: 3, live: 2, ready: 2, stale: 0 },
+            }),
+          },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersDelete({ name: "api", projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("2 running instances will be terminated");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Scaled to zero: there is a tally, and it says nothing is running. Warning
+  // about terminated instances there would invent a consequence.
+  it.live("promises no terminations when nothing is running", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      promptTextResponses: ["api"],
+      routes: {
+        ...routes,
+        [getRoute]: {
+          status: 200,
+          body: {
+            data: workerResource({
+              name: "api",
+              instances: 2,
+              instanceCounts: { declared: 2, live: 0, ready: 0, stale: 0 },
+            }),
+          },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersDelete({ name: "api", projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("permanently deletes");
+      expect(out.stdoutText).not.toContain("will be terminated");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   // An orphan — deployed from another checkout — has no local entry and no local
   // directory, so there is nothing that was "kept" and `push` has no source to
   // redeploy from.

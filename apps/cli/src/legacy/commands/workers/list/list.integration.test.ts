@@ -124,6 +124,63 @@ describe("legacy workers list", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // Two of them, so the advisory has to read as a list rather than as one name
+  // with a stray verb.
+  it.live("calls out every deployed worker config.toml does not know about", () => {
+    const created = makeWorkersProject({
+      "supabase/config.toml": `project_id = "demo"\n`,
+      "supabase/workers/stray/index.js": "export default {};\n",
+      "supabase/workers/spare/index.js": "export default {};\n",
+    });
+    const repo = {
+      dir: created.dir,
+      cleanup: () => rmSync(created.dir, { recursive: true, force: true }),
+    };
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [listRoute]: {
+          status: 200,
+          body: {
+            data: [
+              workerResource({ name: "stray", runtime: "node" }),
+              workerResource({ name: "spare", runtime: "node" }),
+            ],
+          },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersList({ projectRef: Option.none() });
+
+      expect(out.stderrText).toContain("spare, stray are deployed but not in");
+      expect(out.stderrText).toContain("guess the runtime");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Deletion is asynchronous, so a worker can be listed while it is being torn
+  // down. Reporting its build state would show `active` for something on its
+  // way out.
+  it.live("shows a worker being torn down as deleting", () => {
+    const repo = project(`project_id = "demo"\n\n[workers.api]\nruntime = "node"\n`);
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [listRoute]: {
+          status: 200,
+          body: { data: [workerResource({ name: "api", runtime: "node", deleting: true })] },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersList({ projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("deleting");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   // Nothing local at all: `deployOneWorker` checks the source directory before
   // it ever infers a runtime, so "would have to guess the runtime" named the
   // wrong prerequisite for this one.
@@ -385,6 +442,29 @@ describe("legacy workers list", () => {
 
       expect(out.stdoutText).toContain("project_ref = ");
       expect(out.stdoutText).not.toContain("undefined");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("encodes YAML when -o yaml asks for it", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      goOutput: "yaml",
+      routes: {
+        [listRoute]: {
+          status: 200,
+          body: { data: [workerResource({ name: "api", runtime: "node" })] },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersList({ projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("project_ref:");
+      expect(out.stdoutText).toContain("name: api");
+      // The table would have gone to stdout too, and broken the document.
+      expect(out.stdoutText).not.toContain("NAME");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 

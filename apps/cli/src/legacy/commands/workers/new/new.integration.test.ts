@@ -505,6 +505,30 @@ describe("legacy workers new", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // The prompts only ever offer values this CLI knows, so an unrecognized answer
+  // means the prompt layer handed back something off-menu. Recording it verbatim
+  // would put a runtime into config.toml that `push` then refuses; the default
+  // is the one answer that still scaffolds something deployable.
+  it.live("falls back to the defaults when a prompt answers off-menu", () => {
+    const repo = project();
+    const { layer } = setupLegacyWorkers({
+      workdir: repo.dir,
+      promptSelectResponses: ["cobol", "colossal"],
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersNew({
+        name: Option.some("api"),
+        runtime: Option.none(),
+        size: Option.none(),
+        source: Option.none(),
+      });
+
+      expect(repo.config()).toContain(`runtime = "deno"`);
+      expect(repo.config()).toContain(`size = "2gb"`);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("refuses --source pointed at the project config file", () => {
     const repo = project();
     const { layer } = setupLegacyWorkers({ workdir: repo.dir });
