@@ -44,7 +44,7 @@ interface ServiceActivationPolicy {
   readonly owns: ReadonlyArray<ServiceName>;
 }
 
-export interface ServicePreparationMetadata {
+interface ServicePreparationMetadata {
   /** Policies supported by the service's runtime/resource implementation. */
   readonly supported: ReadonlyArray<Exclude<ServicePreparationPolicy, "off">>;
   readonly default: Exclude<ServicePreparationPolicy, "off">;
