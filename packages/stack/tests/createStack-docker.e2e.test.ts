@@ -248,8 +248,8 @@ dockerDescribe("createStack e2e (docker mode)", () => {
 
         const primaryOwnedNamesBeforeSibling = ownedContainers.map((container) => container.name);
         const primaryDbPort = new URL(stack.dbUrl).port;
-        const primaryIsolationTitle = `isolation-primary-${crypto.randomUUID()}`;
-        const siblingIsolationTitle = `isolation-sibling-${crypto.randomUUID()}`;
+        const primaryIsolationTitle = "isolation-primary";
+        const siblingIsolationTitle = "isolation-sibling";
         const primaryIsolationInsert = await supabase
           .from("todos")
           .insert({ title: primaryIsolationTitle })
