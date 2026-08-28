@@ -1,8 +1,11 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Native crash dumps are rooted in the caller-owned runtime directory.
+import { join } from "node:path";
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerPortMapArgs } from "../Platform.ts";
 import type { StackIdentity } from "../StackIdentity.ts";
 import {
   dockerRunService,
+  nativeRunService,
   type ContainerRuntimeOptions,
   type ServiceDependency,
 } from "./service-utils.ts";
@@ -10,11 +13,7 @@ import { stackHealthBudgets } from "./health-budgets.ts";
 
 type PoolMode = "transaction" | "session";
 
-interface DockerPoolerOptions extends ContainerRuntimeOptions {
-  readonly image: string;
-  readonly identity: StackIdentity;
-  readonly hostAdminPort: number;
-  readonly hostPort: number;
+interface PoolerServiceOptions {
   readonly dbHost: string;
   readonly dbPort: number;
   readonly poolMode: PoolMode;
@@ -24,8 +23,31 @@ interface DockerPoolerOptions extends ContainerRuntimeOptions {
   readonly tenantId: string;
   readonly encryptionKey: string;
   readonly secretKeyBase: string;
-  readonly platformOs: string;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
+}
+
+export interface NativePoolerOptions extends Omit<PoolerServiceOptions, "dbHost"> {
+  readonly binPath: string;
+  readonly runtimeRoot: string;
+  readonly adminPort: number;
+  readonly port: number;
+}
+
+export interface NativePoolerServiceBundle {
+  /** Runs the bundled Supavisor migration once before tenant bootstrap. */
+  readonly migrate: ServiceDef;
+  /** Idempotently creates the local tenant after migrations complete. */
+  readonly bootstrap: ServiceDef;
+  /** The public, long-running Supavisor server. */
+  readonly server: ServiceDef;
+}
+
+interface DockerPoolerOptions extends PoolerServiceOptions, ContainerRuntimeOptions {
+  readonly image: string;
+  readonly identity: StackIdentity;
+  readonly platformOs: string;
+  readonly hostAdminPort: number;
+  readonly hostPort: number;
 }
 
 const poolerHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
@@ -40,7 +62,10 @@ const poolerHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
 });
 
 const tenantScript = (
-  opts: DockerPoolerOptions,
+  opts: Pick<
+    PoolerServiceOptions,
+    "tenantId" | "dbHost" | "dbPort" | "maxClientConn" | "defaultPoolSize" | "poolMode"
+  >,
 ) => `{:ok, _} = Application.ensure_all_started(:supavisor)
 {:ok, version} =
   case Supavisor.Repo.query!("select version()") do
@@ -106,12 +131,64 @@ export const makePoolerServiceDocker = (opts: DockerPoolerOptions): ServiceDef =
       cmd: [
         "/bin/sh",
         "-c",
-        `/app/bin/migrate && /app/bin/supavisor eval '${tenantScript(opts)}' && /app/bin/server`,
+        `/app/bin/migrate && /app/bin/supavisor eval '${tenantScript({
+          tenantId: opts.tenantId,
+          dbHost: opts.dbHost,
+          dbPort: opts.dbPort,
+          poolMode: opts.poolMode,
+          defaultPoolSize: opts.defaultPoolSize,
+          maxClientConn: opts.maxClientConn,
+        })}' && /app/bin/server`,
       ],
       dependencies: opts.dependencies,
       healthCheck: poolerHealthCheck(opts.hostAdminPort),
     });
   })();
+
+const poolerNativeEnv = (opts: NativePoolerOptions): Record<string, string> => ({
+  PORT: String(opts.adminPort),
+  PROXY_PORT_SESSION: String(opts.poolMode === "session" ? opts.port : 0),
+  PROXY_PORT_TRANSACTION: String(opts.poolMode === "transaction" ? opts.port : 0),
+  DATABASE_URL: `ecto://postgres:postgres@127.0.0.1:${opts.dbPort}/_supabase`,
+  CLUSTER_POSTGRES: "true",
+  SECRET_KEY_BASE: opts.secretKeyBase,
+  VAULT_ENC_KEY: opts.encryptionKey,
+  API_JWT_SECRET: opts.jwtSecret,
+  METRICS_JWT_SECRET: opts.jwtSecret,
+  REGION: "local",
+  RUN_JANITOR: "true",
+  ERL_AFLAGS: "-proto_dist inet_tcp",
+  RLIMIT_NOFILE: "",
+  ELIXIR_ERL_OPTIONS: "+fnu +S 1:1 +SDio 1 +sbwt none +sbwtdcpu none +sbwtdio none",
+  ERL_CRASH_DUMP: join(opts.runtimeRoot, "pooler", "erl_crash.dump"),
+});
+
+export const makePoolerServicesNative = (opts: NativePoolerOptions): NativePoolerServiceBundle => {
+  const env = poolerNativeEnv(opts);
+  const migrate = nativeRunService({
+    name: "pooler-migrate",
+    command: `${opts.binPath}/bin/migrate`,
+    env,
+    dependencies: opts.dependencies,
+    restart: "no",
+  });
+  const bootstrap = nativeRunService({
+    name: "pooler-bootstrap",
+    command: `${opts.binPath}/bin/supavisor`,
+    args: ["eval", tenantScript({ ...opts, dbHost: "127.0.0.1" })],
+    env,
+    dependencies: [{ service: migrate.name, condition: "completed" }],
+    restart: "no",
+  });
+  const server = nativeRunService({
+    name: "pooler",
+    command: `${opts.binPath}/bin/server`,
+    env,
+    dependencies: [{ service: bootstrap.name, condition: "completed" }],
+    healthCheck: poolerHealthCheck(opts.adminPort),
+  });
+  return { migrate, bootstrap, server };
+};
 
 export const poolerContainerPorts = {
   admin: 4000,
