@@ -18,6 +18,8 @@ export interface ContainerArtifact {
 export interface WorkloadSpec {
   readonly name: string;
   readonly capability: CapabilityName;
+  /** Closed internal lifecycle marker for work that must run before dependents are ready. */
+  readonly bootstrap?: "database";
   readonly dependencies: ReadonlyArray<string>;
   readonly readiness: Readonly<{ readonly mode: "http" | "tcp"; readonly portField?: PortField }>;
   readonly restart: Readonly<{ readonly maxAttempts: number; readonly backoffMs: number }>;
@@ -75,6 +77,7 @@ export const workload = (
   release: string,
   image: string,
   options: {
+    readonly bootstrap?: WorkloadSpec["bootstrap"];
     readonly dependencies?: ReadonlyArray<string>;
     readonly readiness?: WorkloadSpec["readiness"];
     readonly restart?: WorkloadSpec["restart"];
@@ -82,6 +85,7 @@ export const workload = (
 ): WorkloadSpec => ({
   name,
   capability,
+  ...(options.bootstrap === undefined ? {} : { bootstrap: options.bootstrap }),
   dependencies: options.dependencies ?? [],
   readiness: options.readiness ?? { mode: "tcp" },
   restart: options.restart ?? { maxAttempts: 5, backoffMs: 250 },

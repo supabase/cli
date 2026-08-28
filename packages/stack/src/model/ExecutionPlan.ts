@@ -33,6 +33,7 @@ export const CAPABILITY_MODULES = {
 export interface PlannedWorkload {
   readonly id: string;
   readonly capability: CapabilityName;
+  readonly bootstrap?: WorkloadSpec["bootstrap"];
   readonly dependencies: ReadonlyArray<string>;
   readonly readiness: WorkloadSpec["readiness"];
   readonly restart: WorkloadSpec["restart"];
@@ -141,6 +142,7 @@ export const createExecutionPlan = (
     return release.workloads.map((entry) => ({
       id: `${name}:${entry.name}`,
       capability: name,
+      ...(entry.bootstrap === undefined ? {} : { bootstrap: entry.bootstrap }),
       dependencies: entry.dependencies,
       readiness: entry.readiness,
       restart: entry.restart,

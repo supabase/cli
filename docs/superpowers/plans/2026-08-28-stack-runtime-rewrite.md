@@ -416,22 +416,26 @@ artifact keys, state schemas, drivers, or control protocols.
 
 - `prepare` verifies and atomically publishes selected native/container artifacts without state,
   ports, network, secrets, or workload mutation.
-- `NativeRuntime` implements `RuntimeDriver` with exact process-tree ownership and transferred gateway
-  listeners. Bootstrap is idempotent and records ordered revisions inside PostgreSQL only.
+- `NativeRuntime` implements `RuntimeDriver` with exact process-tree ownership. Database bootstrap is
+  a post-probe readiness phase on the real database workload, not a synthetic workload. Task 7 defines
+  the release-plan resolver and PostgreSQL runner; Task 14 supplies each supported release's concrete
+  ordered revision catalog. Applied revisions live inside PostgreSQL only and gate every database
+  dependent on completion. Gateway listener ownership and native transfer belong to Task 8, where the
+  gateway contract is implemented; Task 7 does not add a speculative listener interface.
 
-- [ ] **Step 1: Write preparation/native behavior tests and verify RED**
+- [x] **Step 1: Write preparation/native behavior tests and verify RED**
 
   Cover cached/downloaded outcomes, integrity failure cleanup, Supervisor-local single-flight,
   concurrent Supervisor duplicate safety, cancellation, process readiness/failure, exact process-tree
   termination, parent-loss termination, and bootstrap-before-dependent readiness.
 
-- [ ] **Step 2: Implement leaf foreign boundaries**
+- [x] **Step 2: Implement leaf foreign boundaries**
 
   Wrap foreign Promise/callback APIs once with cancellation signals and typed errors. Publish downloads
   by atomic rename. Run native subprocesses through Effect Platform; attach output to `LogStore` and
   termination to Scope.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
   Run the two targeted files and stack type-check, then commit:
 

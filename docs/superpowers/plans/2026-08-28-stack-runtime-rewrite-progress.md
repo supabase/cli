@@ -185,7 +185,7 @@ Implementation continues after recording a ruling; this file is not a question q
   `functions_root`, dependency closure validation, deterministic start/stop order, semantic
   workload hashes, and runtime-selected native/container logical artifacts. Database versions use
   an explicit supported Supabase release map and fail before output when unknown.
-- Private workload companions are represented for database bootstrap, storage imgproxy, studio
+- Private workload companions are represented for storage imgproxy, studio
   pgmeta, analytics vector, and managed Edge Runtime Functions. Functions remain one capability;
   all serving is through that managed Edge Runtime.
 - Added 19 integration scenarios covering each capability, defaults, unknown fields, stable record
@@ -362,3 +362,36 @@ Implementation continues after recording a ruling; this file is not a question q
 - `pnpm exec oxlint -c .oxlintrc.effect.json` over the eight Task 6 source/test files — passed with
   zero warnings.
 - `pnpm exec oxfmt --check` over the eight Task 6 source/test files and `git diff --check` — passed.
+
+### Task 7 — 2026-08-29
+
+- Added an owner-only verified artifact store with canonical path containment, SHA-256 validation,
+  required-runtime-path checks, executable repair, exact temporary cleanup, same-directory atomic
+  publication, strict cache revalidation, and store-scoped single-flight ownership that survives an
+  individual caller's interruption.
+- Added the native process boundary and runtime driver. Workload commands and environments travel in
+  a private inherited descriptor instead of argv; the parent-loss descriptor terminates the exact
+  launcher process tree. Start is shared, readiness and log persistence are typed startup gates,
+  stop/remove target the exact generation/workload/spec identity, and a stopped identity can start a
+  fresh process without retaining its completed `Deferred` or closed scope.
+- Database bootstrap is a post-probe readiness phase on the real database workload, never a private
+  companion workload. The generic runner validates an ordered release plan, creates its tracking
+  schema under a transaction-scoped advisory lock, applies and records one revision atomically, and
+  reconciles `Redacted` role credentials outside SQL text. Concrete per-release revision catalogs
+  remain Task 14 work; gateway listener ownership/transfer remains Task 8 work with the gateway
+  contract.
+- Added integration coverage for verified cache/download behavior, corruption and containment,
+  concurrent publisher convergence, caller/store-scope cancellation, native readiness/logging/
+  restart/identity ownership, owner-loss process-tree termination, and ordered/concurrent/retried
+  bootstrap behavior without secret disclosure.
+- Ruling: the two-store publication test intentionally uses separate `ArtifactStore` instances in one
+  process. Those instances share no in-memory single-flight state and therefore exercise the atomic
+  filesystem rename/revalidation race that also coordinates separate processes. A child-process-only
+  duplicate of that scenario would add subprocess scaffolding without testing another invariant.
+- `pnpm --dir packages/stack types:check` — passed.
+- Focused Task 7/compiler integration suite — passed (57 tests across 4 files).
+- `pnpm --dir packages/stack test` — passed (4 unit and 132 integration tests).
+- Effect lint over all Task 7 source/test files — passed with zero warnings.
+- Formatting over all Task 7 source/test files and `git diff --check` — passed.
+- Independent re-review found no Critical or Important findings; all earlier lifecycle, bootstrap,
+  credential, logging, cleanup, and cancellation findings are closed.

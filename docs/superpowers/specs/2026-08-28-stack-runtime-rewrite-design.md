@@ -1,7 +1,7 @@
 # Supabase Local Stack Runtime Architecture
 
 Status: final greenfield architecture
-Last updated: 2026-08-28
+Last updated: 2026-08-29
 
 ## Goals and scope
 
@@ -564,9 +564,11 @@ initialization. An exact unsupported version fails before state or data mutation
 artifact is not evidence of compatibility. Changing an initialized database version requires
 destroy/recreate or a future explicit upgrade workflow.
 
-Internal database bootstrap is idempotent. If ordered migration tracking is required, it is stored
-inside the database, never in `state.json`. Bootstrap creates internal roles, passwords, extensions,
-schemas, and grants for the pinned version and is complete before dependents become ready.
+Internal database bootstrap is an idempotent readiness phase of the real database workload, not a
+synthetic companion workload. Its ordered revision plan is selected from the exact pinned database
+release, and tracking is stored inside the database, never in `state.json`. Bootstrap creates the
+internal roles, passwords, extensions, schemas, and grants required by that pinned release. The
+database cannot become ready—and therefore no dependent can activate—until the plan completes.
 
 ## Durable state, secrets, and logs
 
@@ -636,7 +638,9 @@ stop remains available to stop a live owner.
 
 The public surface names only the ten `CapabilityName` values and aggregates each capability into a
 `CapabilityState`. Internally, a capability Module compiles one or more private workloads. Examples
-include storage plus imgproxy, studio plus pgmeta, analytics plus vector, and database bootstrap.
+include storage plus imgproxy, studio plus pgmeta, and analytics plus vector. Database bootstrap is
+deliberately different: it is a post-probe readiness phase on the real database workload and never
+has its own workload id, artifact, process, lifecycle, or dependency node.
 Workload ids drive labels, artifact selection, exact cleanup, readiness, internal log routing,
 dependency edges, and restart policy. Public log entries are attributed to their capability rather
 than exposing workload ids. Capability state is an aggregation of its workloads; an individual

@@ -93,64 +93,43 @@ export const DatabaseModule: CapabilityModule<DatabaseSettings> = {
   releases: {
     "13": release("15.8.1.085", [
       workload("database", "database", "15.8.1.085", "supabase/postgres:15.8.1.085", {
-        readiness: { mode: "tcp", portField: "database" },
-      }),
-      workload("database-bootstrap", "database", "15.8.1.085", "supabase/postgres:15.8.1.085", {
-        dependencies: ["database:database"],
+        bootstrap: "database",
         readiness: { mode: "tcp", portField: "database" },
       }),
     ]),
     "14": release("14.1.0.89", [
       workload("database", "database", "14.1.0.89", "supabase/postgres:14.1.0.89", {
-        readiness: { mode: "tcp", portField: "database" },
-      }),
-      workload("database-bootstrap", "database", "14.1.0.89", "supabase/postgres:14.1.0.89", {
-        dependencies: ["database:database"],
+        bootstrap: "database",
         readiness: { mode: "tcp", portField: "database" },
       }),
     ]),
     "15": release("15.8.1.085", [
       workload("database", "database", "15.8.1.085", "supabase/postgres:15.8.1.085", {
-        readiness: { mode: "tcp", portField: "database" },
-      }),
-      workload("database-bootstrap", "database", "15.8.1.085", "supabase/postgres:15.8.1.085", {
-        dependencies: ["database:database"],
+        bootstrap: "database",
         readiness: { mode: "tcp", portField: "database" },
       }),
     ]),
     "17": release("17.6.1.165", [
       workload("database", "database", "17.6.1.165", "supabase/postgres:17.6.1.165", {
-        readiness: { mode: "tcp", portField: "database" },
-      }),
-      workload("database-bootstrap", "database", "17.6.1.165", "supabase/postgres:17.6.1.165", {
-        dependencies: ["database:database"],
+        bootstrap: "database",
         readiness: { mode: "tcp", portField: "database" },
       }),
     ]),
     "14.1.0.89": release("14.1.0.89", [
       workload("database", "database", "14.1.0.89", "supabase/postgres:14.1.0.89", {
-        readiness: { mode: "tcp", portField: "database" },
-      }),
-      workload("database-bootstrap", "database", "14.1.0.89", "supabase/postgres:14.1.0.89", {
-        dependencies: ["database:database"],
+        bootstrap: "database",
         readiness: { mode: "tcp", portField: "database" },
       }),
     ]),
     "15.8.1.085": release("15.8.1.085", [
       workload("database", "database", "15.8.1.085", "supabase/postgres:15.8.1.085", {
-        readiness: { mode: "tcp", portField: "database" },
-      }),
-      workload("database-bootstrap", "database", "15.8.1.085", "supabase/postgres:15.8.1.085", {
-        dependencies: ["database:database"],
+        bootstrap: "database",
         readiness: { mode: "tcp", portField: "database" },
       }),
     ]),
     "17.6.1.165": release("17.6.1.165", [
       workload("database", "database", "17.6.1.165", "supabase/postgres:17.6.1.165", {
-        readiness: { mode: "tcp", portField: "database" },
-      }),
-      workload("database-bootstrap", "database", "17.6.1.165", "supabase/postgres:17.6.1.165", {
-        dependencies: ["database:database"],
+        bootstrap: "database",
         readiness: { mode: "tcp", portField: "database" },
       }),
     ]),

@@ -40,6 +40,7 @@ export class RuntimeDriverError extends Data.TaggedError("RuntimeDriverError")<{
   readonly message: string;
   readonly stackId?: StackId;
   readonly workloadId?: string;
+  readonly cause?: unknown;
 }> {}
 
 export class RuntimeGenerationMismatchError extends Data.TaggedError(

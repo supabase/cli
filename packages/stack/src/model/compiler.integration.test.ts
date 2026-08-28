@@ -250,6 +250,16 @@ describe("closed capability compiler", () => {
     }),
   );
 
+  it.live("compiles database bootstrap as a marker on the database workload", () =>
+    Effect.gen(function* () {
+      const result = yield* compile({});
+      const database = result.executionPlan.workloads.filter((w) => w.capability === "database");
+      expect(database).toHaveLength(1);
+      expect(database[0]?.id).toBe("database:database");
+      expect(database[0]?.bootstrap).toBe("database");
+    }),
+  );
+
   it.live("rejects a functions root that escapes the project", () =>
     Effect.gen(function* () {
       const result = yield* compile({
