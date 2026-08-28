@@ -1,10 +1,11 @@
 import { Schema } from "effect";
-import { identityMaterialize, workload, type CapabilityModule } from "../CapabilityModule.ts";
+import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
+import { NetworkPortSchema } from "../../public/Status.ts";
 
 const Secret = Schema.Redacted(Schema.String);
 export const AnalyticsSettingsSchema = Schema.Struct({
   backend: Schema.optionalKey(Schema.Literals(["postgres", "bigquery"] as const)),
-  vector_port: Schema.optionalKey(Schema.Finite),
+  vector_port: Schema.optionalKey(NetworkPortSchema),
   gcp_project_id: Schema.optionalKey(Schema.String),
   gcp_project_number: Schema.optionalKey(Schema.String),
   gcp_jwt_path: Schema.optionalKey(Schema.String),
@@ -24,19 +25,20 @@ export const AnalyticsModule: CapabilityModule<AnalyticsSettings> = {
   },
   defaultEnabled: true,
   defaultActivation: "lazy",
+  defaultVersion: "v1.50.6",
   dependencies: ["database"],
-  workloads: [
-    workload("analytics", "analytics", "v1.50.6", "supabase/logflare:v1.50.6", {
-      dependencies: ["database:database", "analytics:vector"],
-      readiness: { mode: "http", portField: "api" },
-    }),
-    workload("vector", "analytics", "0.53.0-alpine", "ghcr.io/supabase/vector:0.53.0-alpine", {
-      dependencies: [],
-      readiness: { mode: "tcp" },
-    }),
-  ],
+  releases: {
+    "v1.50.6": release("v1.50.6", [
+      workload("analytics", "analytics", "v1.50.6", "supabase/logflare:v1.50.6", {
+        dependencies: ["database:database", "analytics:vector"],
+        readiness: { mode: "http", portField: "api" },
+      }),
+      workload("vector", "analytics", "0.53.0-alpine", "ghcr.io/supabase/vector:0.53.0-alpine", {
+        dependencies: [],
+        readiness: { mode: "tcp" },
+      }),
+    ]),
+  },
   routes: [{ listener: "api", protocol: "http" }],
-  materialize: (settings) => identityMaterialize(settings),
-  runtimeArtifact: (entry, runtime) =>
-    runtime.kind === "native" ? entry.artifacts.native : entry.artifacts.container,
+  materialize: (settings) => settings,
 };

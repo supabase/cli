@@ -1,6 +1,6 @@
 import type { Schema } from "effect";
 import type { CapabilityName, ActivationMode } from "../public/Capability.ts";
-import type { StackRuntime } from "../public/Runtime.ts";
+import type { PortField } from "../public/Status.ts";
 
 /** Logical artifact descriptors. Download/image resolution belongs to preparation. */
 export interface NativeArtifact {
@@ -19,7 +19,7 @@ export interface WorkloadSpec {
   readonly name: string;
   readonly capability: CapabilityName;
   readonly dependencies: ReadonlyArray<string>;
-  readonly readiness: Readonly<{ readonly mode: "http" | "tcp"; readonly portField?: string }>;
+  readonly readiness: Readonly<{ readonly mode: "http" | "tcp"; readonly portField?: PortField }>;
   readonly restart: Readonly<{ readonly maxAttempts: number; readonly backoffMs: number }>;
   readonly artifacts: Readonly<{
     readonly native: NativeArtifact;
@@ -34,16 +34,24 @@ export interface CapabilityModule<Settings> {
   readonly defaultEnabled: boolean;
   readonly defaultActivation: ActivationMode;
   readonly dependencies: ReadonlyArray<CapabilityName>;
-  readonly workloads: ReadonlyArray<WorkloadSpec>;
+  readonly defaultVersion: string;
+  /** Release selectors are the only source of workload versions and artifacts. */
+  readonly releases: Readonly<Record<string, CapabilityRelease>>;
   readonly routes: ReadonlyArray<
-    Readonly<{ readonly listener: string; readonly protocol: "http" | "tcp" }>
+    Readonly<{ readonly listener: PortField; readonly protocol: "http" | "tcp" }>
   >;
   readonly materialize: (settings: Settings, projectRoot: string) => Settings;
-  readonly runtimeArtifact: (
-    workload: WorkloadSpec,
-    runtime: StackRuntime,
-  ) => NativeArtifact | ContainerArtifact;
 }
+
+export interface CapabilityRelease {
+  readonly version: string;
+  readonly workloads: ReadonlyArray<WorkloadSpec>;
+}
+
+export const release = (
+  version: string,
+  workloads: ReadonlyArray<WorkloadSpec>,
+): CapabilityRelease => ({ version, workloads });
 
 export const nativeArtifact = (service: string, release: string): NativeArtifact => ({
   kind: "native",
@@ -78,5 +86,3 @@ export const workload = (
     container: containerArtifact(name, image),
   },
 });
-
-export const identityMaterialize = <T>(settings: T): T => settings;

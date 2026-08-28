@@ -16,15 +16,14 @@ import {
 } from "../model/capabilities/analytics.ts";
 import { PoolerSettingsSchema, type PoolerSettings } from "../model/capabilities/pooler.ts";
 import { ActivationModeSchema, type ActivationMode } from "./Capability.ts";
-import { PORT_FIELDS, type PortField } from "./Status.ts";
+import { NetworkPortSchema, PORT_FIELDS, type PortField } from "./Status.ts";
 
-export const ListenerPortSchema = Schema.Union([Schema.Literal("automatic"), Schema.Finite]);
 export const ListenerConfigSchema = Schema.Union([
   Schema.Struct({ enabled: Schema.Literal(false) }),
   Schema.Struct({
     enabled: Schema.optionalKey(Schema.Literal(true)),
     address: Schema.optionalKey(Schema.String),
-    port: Schema.optionalKey(Schema.Finite),
+    port: Schema.optionalKey(NetworkPortSchema),
   }),
 ]);
 export type ListenerConfig = Schema.Schema.Type<typeof ListenerConfigSchema>;
@@ -116,3 +115,4 @@ export type {
   PoolerSettings,
   ActivationMode,
 };
+export { NetworkPortSchema } from "./Status.ts";

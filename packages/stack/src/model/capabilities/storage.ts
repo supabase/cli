@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { identityMaterialize, workload, type CapabilityModule } from "../CapabilityModule.ts";
+import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
 
 const Bucket = Schema.Struct({
   public: Schema.optionalKey(Schema.Boolean),
@@ -32,6 +32,13 @@ export const StorageSettingsSchema = Schema.Struct({
 });
 export type StorageSettings = Schema.Schema.Type<typeof StorageSettingsSchema>;
 
+const bucketDefaults = {
+  public: false,
+  file_size_limit: "50MiB",
+  allowed_mime_types: [],
+  objects_path: "",
+};
+
 export const StorageModule: CapabilityModule<StorageSettings> = {
   name: "storage",
   settings: StorageSettingsSchema,
@@ -45,19 +52,28 @@ export const StorageModule: CapabilityModule<StorageSettings> = {
   },
   defaultEnabled: true,
   defaultActivation: "lazy",
+  defaultVersion: "v1.71.0",
   dependencies: ["database"],
-  workloads: [
-    workload("storage", "storage", "v1.71.0", "supabase/storage-api:v1.71.0", {
-      dependencies: ["database:database", "storage:imgproxy"],
-      readiness: { mode: "http", portField: "api" },
-    }),
-    workload("imgproxy", "storage", "v3.8.0", "darthsim/imgproxy:v3.8.0", {
-      dependencies: ["database:database"],
-      readiness: { mode: "http" },
-    }),
-  ],
+  releases: {
+    "v1.71.0": release("v1.71.0", [
+      workload("storage", "storage", "v1.71.0", "supabase/storage-api:v1.71.0", {
+        dependencies: ["database:database", "storage:imgproxy"],
+        readiness: { mode: "http", portField: "api" },
+      }),
+      workload("imgproxy", "storage", "v3.8.0", "darthsim/imgproxy:v3.8.0", {
+        dependencies: ["database:database"],
+        readiness: { mode: "http" },
+      }),
+    ]),
+  },
   routes: [{ listener: "api", protocol: "http" }],
-  materialize: (settings) => identityMaterialize(settings),
-  runtimeArtifact: (entry, runtime) =>
-    runtime.kind === "native" ? entry.artifacts.native : entry.artifacts.container,
+  materialize: (settings) => ({
+    ...settings,
+    buckets: Object.fromEntries(
+      Object.entries(settings.buckets ?? {}).map(([name, bucket]) => [
+        name,
+        { ...bucketDefaults, ...bucket },
+      ]),
+    ),
+  }),
 };

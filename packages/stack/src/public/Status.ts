@@ -4,7 +4,6 @@ import {
   ActivationModeSchema,
   CAPABILITY_NAMES,
   CapabilityStatusSchema,
-  CapabilityNameSchema,
   type ActivationMode,
   type CapabilityName,
   type CapabilityStatus,
@@ -43,10 +42,16 @@ export const PORT_FIELDS = [
 ] as const;
 export type PortField = (typeof PORT_FIELDS)[number];
 
+/** A concrete host/network port. Automatic assignment is represented by listeners, not here. */
+export const NetworkPortSchema = Schema.Int.check(
+  Schema.isBetween({ minimum: 1, maximum: 65_535 }),
+);
+export type NetworkPort = Schema.Schema.Type<typeof NetworkPortSchema>;
+
 export const StackEndpointSchema = Schema.Struct({
   protocol: Schema.Literals(["http", "tcp"] as const),
   address: Schema.String,
-  port: Schema.Number,
+  port: NetworkPortSchema,
   url: Schema.String,
 });
 export type StackEndpoint = Schema.Schema.Type<typeof StackEndpointSchema>;
@@ -97,7 +102,7 @@ export const StackStatusSchema = Schema.Struct({
   lifecycle: StackLifecycleSchema,
   desiredLifecycle: DesiredStackLifecycleSchema,
   runtime: StackRuntimeSchema,
-  desiredGeneration: Schema.optionalKey(Schema.Number),
+  desiredGeneration: Schema.optionalKey(Schema.Finite),
   endpoints: StackEndpointsSchema,
   versions: CapabilityVersionsSchema,
   capabilities: CompleteCapabilityStatusesSchema,

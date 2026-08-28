@@ -1,5 +1,6 @@
 import { Schema } from "effect";
-import { identityMaterialize, workload, type CapabilityModule } from "../CapabilityModule.ts";
+import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
+import { NetworkPortSchema } from "../../public/Status.ts";
 
 const Secret = Schema.Redacted(Schema.String);
 const OptionalString = Schema.optionalKey(Schema.String);
@@ -56,7 +57,7 @@ const EmailNotificationSchema = Schema.Struct({
 const SmtpSchema = Schema.Struct({
   enabled: OptionalBoolean,
   host: OptionalString,
-  port: OptionalNumber,
+  port: Schema.optionalKey(NetworkPortSchema),
   user: OptionalString,
   pass: Schema.optionalKey(Secret),
   admin_email: OptionalString,
@@ -369,15 +370,16 @@ export const AuthModule: CapabilityModule<AuthSettings> = {
   },
   defaultEnabled: true,
   defaultActivation: "lazy",
+  defaultVersion: "v2.196.0",
   dependencies: ["database"],
-  workloads: [
-    workload("auth", "auth", "v2.196.0", "supabase/auth:v2.196.0", {
-      dependencies: ["database:database"],
-      readiness: { mode: "http", portField: "api" },
-    }),
-  ],
+  releases: {
+    "v2.196.0": release("v2.196.0", [
+      workload("auth", "auth", "v2.196.0", "supabase/auth:v2.196.0", {
+        dependencies: ["database:database"],
+        readiness: { mode: "http", portField: "api" },
+      }),
+    ]),
+  },
   routes: [{ listener: "api", protocol: "http" }],
-  materialize: (settings) => identityMaterialize(settings),
-  runtimeArtifact: (entry, runtime) =>
-    runtime.kind === "native" ? entry.artifacts.native : entry.artifacts.container,
+  materialize: (settings) => settings,
 };

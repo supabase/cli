@@ -1,10 +1,5 @@
 export { AuthModule, AuthSettingsSchema, type AuthSettings } from "./auth.ts";
-export {
-  DatabaseModule,
-  DatabaseSettingsSchema,
-  DatabaseVersionMap,
-  type DatabaseSettings,
-} from "./database.ts";
+export { DatabaseModule, DatabaseSettingsSchema, type DatabaseSettings } from "./database.ts";
 export { FunctionsModule, FunctionsSettingsSchema, type FunctionsSettings } from "./functions.ts";
 export { MailModule, MailSettingsSchema, type MailSettings } from "./mail.ts";
 export { PoolerModule, PoolerSettingsSchema, type PoolerSettings } from "./pooler.ts";

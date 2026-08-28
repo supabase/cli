@@ -17,7 +17,6 @@ import type {
 import { CAPABILITY_NAMES, type CapabilityName } from "../public/Capability.ts";
 import { PORT_FIELDS, type PortField } from "../public/Status.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
-import { DatabaseVersionMap } from "./capabilities/database.ts";
 import {
   AuthModule,
   DatabaseModule,
@@ -31,7 +30,7 @@ import {
   AnalyticsModule,
 } from "./capabilities/index.ts";
 import { CAPABILITY_MODULES, createExecutionPlan, type ExecutionPlan } from "./ExecutionPlan.ts";
-import type { CapabilityModule } from "./CapabilityModule.ts";
+import type { CapabilityModule, CapabilityRelease } from "./CapabilityModule.ts";
 
 export type InputFingerprint = Schema.Schema.Type<typeof InputFingerprintSchema>;
 const InputFingerprintSchema = Schema.String.pipe(Schema.brand("InputFingerprint"));
@@ -109,8 +108,6 @@ export interface CompiledStack {
 export interface PreviousCompilation {
   readonly definition: StackDefinition;
   readonly inputFingerprint: InputFingerprint;
-  readonly executionPlan?: ExecutionPlan;
-  readonly secrets?: ReadonlyArray<SecretSlotInput>;
 }
 
 export interface CompileStackInput {
@@ -235,35 +232,52 @@ const decodeConfig = (config: unknown): Effect.Effect<StackConfig, InvalidStackC
     ),
   );
 
-const versionFor = (
-  name: CapabilityName,
-  raw: unknown,
-): Effect.Effect<string, StackVersionUnsupportedError> => {
-  const selected = extract(raw, "version");
-  const requested = typeof selected === "string" && selected.length > 0 ? selected : undefined;
-  if (name === "database") {
-    const value = requested ?? "17";
-    for (const [key, version] of Object.entries(DatabaseVersionMap))
-      if (key === value) return Effect.succeed(version);
-    return Effect.fail(
-      new StackVersionUnsupportedError({
-        capability: name,
-        version: value,
-        message: `Unsupported database version: ${value}`,
-      }),
-    );
+const validateFunctionKeys = (config: unknown): Effect.Effect<void, InvalidStackConfigError> => {
+  const capabilities = isRecord(config) ? config.capabilities : undefined;
+  const capability = isRecord(capabilities) ? capabilities.functions : undefined;
+  const settings = isRecord(capability) ? capability.settings : undefined;
+  if (!isRecord(settings)) return Effect.void;
+  const functions = settings.functions;
+  if (!isRecord(functions)) return Effect.void;
+  for (const [slug, value] of Object.entries(functions)) {
+    if (!/^[a-zA-Z0-9_-]+$/.test(slug))
+      return Effect.fail(
+        new InvalidStackConfigError({
+          message: `Invalid function slug: ${slug}`,
+          function: slug,
+        }),
+      );
+    if (!isRecord(value)) continue;
+    const env = value.env;
+    if (!isRecord(env)) continue;
+    for (const name of Object.keys(env))
+      if (!/^[A-Z_][A-Z0-9_]*$/.test(name))
+        return Effect.fail(
+          new InvalidStackConfigError({
+            message: `Invalid function environment name: ${name}`,
+            function: slug,
+            environment: name,
+          }),
+        );
   }
-  const fallback = CAPABILITY_MODULES[name].workloads[0]?.artifacts.native.release ?? "";
-  const value = requested ?? fallback;
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value))
-    return Effect.fail(
-      new StackVersionUnsupportedError({
-        capability: name,
-        version: value,
-        message: `Unsupported ${name} version: ${value}`,
-      }),
-    );
-  return Effect.succeed(value);
+  return Effect.void;
+};
+
+const releaseFor = <T>(
+  module: CapabilityModule<T>,
+  raw: unknown,
+): Effect.Effect<CapabilityRelease, StackVersionUnsupportedError> => {
+  const selected = extract(raw, "version");
+  const selector = typeof selected === "string" ? selected : module.defaultVersion;
+  const release = module.releases[selector];
+  if (release !== undefined) return Effect.succeed(release);
+  return Effect.fail(
+    new StackVersionUnsupportedError({
+      capability: module.name,
+      version: selector,
+      message: `Unsupported ${module.name} version: ${selector}`,
+    }),
+  );
 };
 
 const enabledSettings = (
@@ -311,21 +325,22 @@ const materializeCapability = <T>(
   specHashes: Map<string, string>,
   normalizeFunctions: boolean,
 ): Effect.Effect<
-  MaterializedCapability<T>,
+  MaterializedCapability<T> & { readonly release: CapabilityRelease },
   InvalidStackConfigError | StackVersionUnsupportedError,
   Path.Path | Crypto.Crypto
 > => {
   const selected = enabledSettings(module.name, { [module.name]: raw });
   const mergedInput = merge(module.defaultSettings, selected.settings);
   const normalized = normalizeFunctions
-    ? materializeFunctionsRoot(mergedInput, projectRoot, path)
-    : Effect.succeed(mergedInput);
+    ? materializeFunctionsRoot(module.materialize(mergedInput, projectRoot), projectRoot, path)
+    : Effect.succeed(module.materialize(mergedInput, projectRoot));
   return Effect.gen(function* () {
     const normalizedSettings = yield* normalized;
     const merged = materializeAbsence(normalizedSettings);
     const slotted = slotsFor(merged, `${module.name}.settings`, slots);
-    const version = yield* versionFor(module.name, selected.raw);
-    for (const entry of module.workloads) {
+    const selectedRelease = yield* releaseFor(module, selected.raw);
+    const version = selectedRelease.version;
+    for (const entry of selectedRelease.workloads) {
       const bytes = yield* crypto.digest(
         "SHA-256",
         new TextEncoder().encode(canonical({ workload: entry, version, settings: slotted })),
@@ -337,6 +352,7 @@ const materializeCapability = <T>(
       activation: selected.activation,
       version,
       settings: slotted,
+      release: selectedRelease,
     };
   }).pipe(
     Effect.catchTag("PlatformError", (error) =>
@@ -344,6 +360,51 @@ const materializeCapability = <T>(
     ),
   );
 };
+
+const withoutRelease = <T>(
+  capability: MaterializedCapability<T> & { readonly release: CapabilityRelease },
+): MaterializedCapability<T> => ({
+  enabled: capability.enabled,
+  activation: capability.activation,
+  version: capability.version,
+  settings: capability.settings,
+});
+
+const hashDefinitionWorkloads = (
+  definition: StackDefinition,
+  crypto: Crypto.Crypto,
+  specHashes: Map<string, string>,
+): Effect.Effect<void, StackVersionUnsupportedError | InvalidStackConfigError, Crypto.Crypto> =>
+  Effect.gen(function* () {
+    for (const name of CAPABILITY_NAMES) {
+      const capability = definition.capabilities[name];
+      const module = CAPABILITY_MODULES[name];
+      const selectedRelease = module.releases[capability.version];
+      if (selectedRelease === undefined)
+        return yield* new StackVersionUnsupportedError({
+          capability: name,
+          version: capability.version,
+          message: `Unsupported ${name} version: ${capability.version}`,
+        });
+      for (const entry of selectedRelease.workloads) {
+        const bytes = yield* crypto
+          .digest(
+            "SHA-256",
+            new TextEncoder().encode(
+              canonical({
+                workload: entry,
+                version: capability.version,
+                settings: capability.settings,
+              }),
+            ),
+          )
+          .pipe(
+            Effect.mapError((error) => new InvalidStackConfigError({ message: error.message })),
+          );
+        specHashes.set(`${name}:${entry.name}`, digestHex(bytes));
+      }
+    }
+  });
 
 export const compileStack = (
   input: CompileStackInput,
@@ -356,6 +417,7 @@ export const compileStack = (
   Effect.gen(function* () {
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
+    yield* validateFunctionKeys(input.config ?? {});
     const config = yield* decodeConfig(input.config ?? {});
     const rawCapabilities = isRecord(config.capabilities) ? config.capabilities : {};
     const normalizedFunctions = yield* materializeFunctionsRoot(
@@ -385,7 +447,7 @@ export const compileStack = (
     ).pipe(Effect.mapError((error) => new InvalidStackConfigError({ message: String(error) })));
     const slots: SecretSlotInput[] = [];
     const specHashes = new Map<string, string>();
-    const database = yield* materializeCapability(
+    const databaseResult = yield* materializeCapability(
       DatabaseModule,
       extract(rawCapabilities, "database"),
       input.projectRoot,
@@ -395,7 +457,7 @@ export const compileStack = (
       specHashes,
       false,
     );
-    const rest = yield* materializeCapability(
+    const restResult = yield* materializeCapability(
       RestModule,
       extract(rawCapabilities, "rest"),
       input.projectRoot,
@@ -405,7 +467,7 @@ export const compileStack = (
       specHashes,
       false,
     );
-    const auth = yield* materializeCapability(
+    const authResult = yield* materializeCapability(
       AuthModule,
       extract(rawCapabilities, "auth"),
       input.projectRoot,
@@ -415,7 +477,7 @@ export const compileStack = (
       specHashes,
       false,
     );
-    const realtime = yield* materializeCapability(
+    const realtimeResult = yield* materializeCapability(
       RealtimeModule,
       extract(rawCapabilities, "realtime"),
       input.projectRoot,
@@ -425,7 +487,7 @@ export const compileStack = (
       specHashes,
       false,
     );
-    const storage = yield* materializeCapability(
+    const storageResult = yield* materializeCapability(
       StorageModule,
       extract(rawCapabilities, "storage"),
       input.projectRoot,
@@ -435,7 +497,7 @@ export const compileStack = (
       specHashes,
       false,
     );
-    const functions = yield* materializeCapability(
+    const functionsResult = yield* materializeCapability(
       FunctionsModule,
       extract(rawCapabilities, "functions"),
       input.projectRoot,
@@ -445,7 +507,7 @@ export const compileStack = (
       specHashes,
       true,
     );
-    const studio = yield* materializeCapability(
+    const studioResult = yield* materializeCapability(
       StudioModule,
       extract(rawCapabilities, "studio"),
       input.projectRoot,
@@ -455,7 +517,7 @@ export const compileStack = (
       specHashes,
       false,
     );
-    const mail = yield* materializeCapability(
+    const mailResult = yield* materializeCapability(
       MailModule,
       extract(rawCapabilities, "mail"),
       input.projectRoot,
@@ -465,7 +527,7 @@ export const compileStack = (
       specHashes,
       false,
     );
-    const analytics = yield* materializeCapability(
+    const analyticsResult = yield* materializeCapability(
       AnalyticsModule,
       extract(rawCapabilities, "analytics"),
       input.projectRoot,
@@ -475,7 +537,7 @@ export const compileStack = (
       specHashes,
       false,
     );
-    const pooler = yield* materializeCapability(
+    const poolerResult = yield* materializeCapability(
       PoolerModule,
       extract(rawCapabilities, "pooler"),
       input.projectRoot,
@@ -485,6 +547,16 @@ export const compileStack = (
       specHashes,
       false,
     );
+    const database = withoutRelease(databaseResult);
+    const rest = withoutRelease(restResult);
+    const auth = withoutRelease(authResult);
+    const realtime = withoutRelease(realtimeResult);
+    const storage = withoutRelease(storageResult);
+    const functions = withoutRelease(functionsResult);
+    const studio = withoutRelease(studioResult);
+    const mail = withoutRelease(mailResult);
+    const analytics = withoutRelease(analyticsResult);
+    const pooler = withoutRelease(poolerResult);
     const capabilities = {
       database,
       rest,
@@ -546,15 +618,90 @@ export const compileStack = (
       listeners,
       security,
     };
-    const executionPlan = createExecutionPlan(input.runtime, enabled, specHashes);
-    if (previous?.inputFingerprint === inputFingerprint)
+    const versions = {
+      database: database.version,
+      rest: rest.version,
+      auth: auth.version,
+      realtime: realtime.version,
+      storage: storage.version,
+      functions: functions.version,
+      studio: studio.version,
+      mail: mail.version,
+      analytics: analytics.version,
+      pooler: pooler.version,
+    };
+    const currentPlan = yield* createExecutionPlan(input.runtime, enabled, specHashes, versions);
+    if (previous?.inputFingerprint === inputFingerprint) {
+      const previousEnabled = {
+        database: {
+          enabled: previous.definition.capabilities.database.enabled,
+          activation: previous.definition.capabilities.database.activation,
+        },
+        rest: {
+          enabled: previous.definition.capabilities.rest.enabled,
+          activation: previous.definition.capabilities.rest.activation,
+        },
+        auth: {
+          enabled: previous.definition.capabilities.auth.enabled,
+          activation: previous.definition.capabilities.auth.activation,
+        },
+        realtime: {
+          enabled: previous.definition.capabilities.realtime.enabled,
+          activation: previous.definition.capabilities.realtime.activation,
+        },
+        storage: {
+          enabled: previous.definition.capabilities.storage.enabled,
+          activation: previous.definition.capabilities.storage.activation,
+        },
+        functions: {
+          enabled: previous.definition.capabilities.functions.enabled,
+          activation: previous.definition.capabilities.functions.activation,
+        },
+        studio: {
+          enabled: previous.definition.capabilities.studio.enabled,
+          activation: previous.definition.capabilities.studio.activation,
+        },
+        mail: {
+          enabled: previous.definition.capabilities.mail.enabled,
+          activation: previous.definition.capabilities.mail.activation,
+        },
+        analytics: {
+          enabled: previous.definition.capabilities.analytics.enabled,
+          activation: previous.definition.capabilities.analytics.activation,
+        },
+        pooler: {
+          enabled: previous.definition.capabilities.pooler.enabled,
+          activation: previous.definition.capabilities.pooler.activation,
+        },
+      };
+      const previousVersions = {
+        database: previous.definition.capabilities.database.version,
+        rest: previous.definition.capabilities.rest.version,
+        auth: previous.definition.capabilities.auth.version,
+        realtime: previous.definition.capabilities.realtime.version,
+        storage: previous.definition.capabilities.storage.version,
+        functions: previous.definition.capabilities.functions.version,
+        studio: previous.definition.capabilities.studio.version,
+        mail: previous.definition.capabilities.mail.version,
+        analytics: previous.definition.capabilities.analytics.version,
+        pooler: previous.definition.capabilities.pooler.version,
+      };
+      const previousHashes = new Map<string, string>();
+      yield* hashDefinitionWorkloads(previous.definition, crypto, previousHashes);
+      const previousPlan = yield* createExecutionPlan(
+        input.runtime,
+        previousEnabled,
+        previousHashes,
+        previousVersions,
+      );
       return {
         definition: previous.definition,
         inputFingerprint,
         secrets: slots,
-        executionPlan: previous.executionPlan ?? executionPlan,
+        executionPlan: previousPlan,
       };
-    return { definition, inputFingerprint, secrets: slots, executionPlan };
+    }
+    return { definition, inputFingerprint, secrets: slots, executionPlan: currentPlan };
   }).pipe(
     Effect.catchTag("PlatformError", (error) =>
       Effect.fail(new InvalidStackConfigError({ message: error.message })),

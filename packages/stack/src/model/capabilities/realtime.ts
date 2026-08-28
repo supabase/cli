@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { identityMaterialize, workload, type CapabilityModule } from "../CapabilityModule.ts";
+import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
 
 export const RealtimeSettingsSchema = Schema.Struct({
   ip_version: Schema.optionalKey(Schema.Literals(["IPv4", "IPv6"] as const)),
@@ -13,15 +13,16 @@ export const RealtimeModule: CapabilityModule<RealtimeSettings> = {
   defaultSettings: { ip_version: "IPv4", max_header_length: 4096 },
   defaultEnabled: true,
   defaultActivation: "eager",
+  defaultVersion: "v2.129.9",
   dependencies: ["database"],
-  workloads: [
-    workload("realtime", "realtime", "v2.129.9", "supabase/realtime:v2.129.9", {
-      dependencies: ["database:database"],
-      readiness: { mode: "http", portField: "api" },
-    }),
-  ],
+  releases: {
+    "v2.129.9": release("v2.129.9", [
+      workload("realtime", "realtime", "v2.129.9", "supabase/realtime:v2.129.9", {
+        dependencies: ["database:database"],
+        readiness: { mode: "http", portField: "api" },
+      }),
+    ]),
+  },
   routes: [{ listener: "api", protocol: "http" }],
-  materialize: (settings) => identityMaterialize(settings),
-  runtimeArtifact: (entry, runtime) =>
-    runtime.kind === "native" ? entry.artifacts.native : entry.artifacts.container,
+  materialize: (settings) => settings,
 };

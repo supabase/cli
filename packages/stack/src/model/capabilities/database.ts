@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { identityMaterialize, workload, type CapabilityModule } from "../CapabilityModule.ts";
+import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
 
 const settingsFields = {
   effective_cache_size: Schema.optionalKey(Schema.String),
@@ -88,31 +88,73 @@ export const DatabaseModule: CapabilityModule<DatabaseSettings> = {
   defaultSettings: defaults,
   defaultEnabled: true,
   defaultActivation: "eager",
+  defaultVersion: "17.6.1.165",
   dependencies: [],
-  workloads: [
-    workload("database", "database", "17.6.1.165", "supabase/postgres:17.6.1.165", {
-      readiness: { mode: "tcp", portField: "database" },
-    }),
-    workload("database-bootstrap", "database", "17.6.1.165", "supabase/postgres:17.6.1.165", {
-      dependencies: ["database:database"],
-      readiness: { mode: "tcp", portField: "database" },
-    }),
-  ],
+  releases: {
+    "13": release("15.8.1.085", [
+      workload("database", "database", "15.8.1.085", "supabase/postgres:15.8.1.085", {
+        readiness: { mode: "tcp", portField: "database" },
+      }),
+      workload("database-bootstrap", "database", "15.8.1.085", "supabase/postgres:15.8.1.085", {
+        dependencies: ["database:database"],
+        readiness: { mode: "tcp", portField: "database" },
+      }),
+    ]),
+    "14": release("14.1.0.89", [
+      workload("database", "database", "14.1.0.89", "supabase/postgres:14.1.0.89", {
+        readiness: { mode: "tcp", portField: "database" },
+      }),
+      workload("database-bootstrap", "database", "14.1.0.89", "supabase/postgres:14.1.0.89", {
+        dependencies: ["database:database"],
+        readiness: { mode: "tcp", portField: "database" },
+      }),
+    ]),
+    "15": release("15.8.1.085", [
+      workload("database", "database", "15.8.1.085", "supabase/postgres:15.8.1.085", {
+        readiness: { mode: "tcp", portField: "database" },
+      }),
+      workload("database-bootstrap", "database", "15.8.1.085", "supabase/postgres:15.8.1.085", {
+        dependencies: ["database:database"],
+        readiness: { mode: "tcp", portField: "database" },
+      }),
+    ]),
+    "17": release("17.6.1.165", [
+      workload("database", "database", "17.6.1.165", "supabase/postgres:17.6.1.165", {
+        readiness: { mode: "tcp", portField: "database" },
+      }),
+      workload("database-bootstrap", "database", "17.6.1.165", "supabase/postgres:17.6.1.165", {
+        dependencies: ["database:database"],
+        readiness: { mode: "tcp", portField: "database" },
+      }),
+    ]),
+    "14.1.0.89": release("14.1.0.89", [
+      workload("database", "database", "14.1.0.89", "supabase/postgres:14.1.0.89", {
+        readiness: { mode: "tcp", portField: "database" },
+      }),
+      workload("database-bootstrap", "database", "14.1.0.89", "supabase/postgres:14.1.0.89", {
+        dependencies: ["database:database"],
+        readiness: { mode: "tcp", portField: "database" },
+      }),
+    ]),
+    "15.8.1.085": release("15.8.1.085", [
+      workload("database", "database", "15.8.1.085", "supabase/postgres:15.8.1.085", {
+        readiness: { mode: "tcp", portField: "database" },
+      }),
+      workload("database-bootstrap", "database", "15.8.1.085", "supabase/postgres:15.8.1.085", {
+        dependencies: ["database:database"],
+        readiness: { mode: "tcp", portField: "database" },
+      }),
+    ]),
+    "17.6.1.165": release("17.6.1.165", [
+      workload("database", "database", "17.6.1.165", "supabase/postgres:17.6.1.165", {
+        readiness: { mode: "tcp", portField: "database" },
+      }),
+      workload("database-bootstrap", "database", "17.6.1.165", "supabase/postgres:17.6.1.165", {
+        dependencies: ["database:database"],
+        readiness: { mode: "tcp", portField: "database" },
+      }),
+    ]),
+  },
   routes: [{ listener: "database", protocol: "tcp" }],
-  materialize: (settings) => identityMaterialize(settings),
-  runtimeArtifact: (entry, runtime) =>
-    runtime.kind === "native" ? entry.artifacts.native : entry.artifacts.container,
+  materialize: (settings) => settings,
 };
-
-export const DatabaseVersionMap = {
-  "13": "13.3.0",
-  "14": "14.1.0.89",
-  "15": "15.8.1.085",
-  "16": "16.4.0.0",
-  "17": "17.6.1.165",
-  "13.3.0": "13.3.0",
-  "14.1.0.89": "14.1.0.89",
-  "15.8.1.085": "15.8.1.085",
-  "16.4.0.0": "16.4.0.0",
-  "17.6.1.165": "17.6.1.165",
-} as const;

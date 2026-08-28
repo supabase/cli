@@ -1,6 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Redacted } from "effect";
+import { Cause, Effect, Exit, Option, Redacted } from "effect";
+import { InvalidStackConfigError, StackVersionUnsupportedError } from "../public/Errors.ts";
 import { canonicalize, compileStack } from "./Compiler.ts";
 
 const layer = NodeServices.layer;
@@ -12,6 +13,9 @@ const compile = (
   compileStack({ projectRoot: "/tmp/supabase-project", runtime, config }, previous).pipe(
     Effect.provide(layer),
   );
+
+const failureOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
+  Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
 
 describe("closed capability compiler", () => {
   it.live("materializes a non-default database setting", () =>
@@ -51,6 +55,11 @@ describe("closed capability compiler", () => {
         site_url: "https://example.test",
       });
       expect(canonicalize(result.definition)).not.toContain("secret-value");
+      expect(canonicalize(result.inputFingerprint)).not.toContain("secret-value");
+      expect(canonicalize(result.executionPlan)).not.toContain("secret-value");
+      expect(result.secrets).toHaveLength(1);
+      expect(Redacted.isRedacted(result.secrets[0]?.value)).toBe(true);
+      expect(canonicalize(result.executionPlan)).not.toContain("secret-value");
     }),
   );
 
@@ -129,9 +138,11 @@ describe("closed capability compiler", () => {
   it.live("materializes a non-default pooler setting", () =>
     Effect.gen(function* () {
       const result = yield* compile({
-        capabilities: { pooler: { enabled: true, settings: { mode: "session" } } },
+        capabilities: { pooler: { enabled: true, settings: { pool_mode: "session" } } },
       });
-      expect(result.definition.capabilities.pooler.settings).toMatchObject({ mode: "session" });
+      expect(result.definition.capabilities.pooler.settings).toMatchObject({
+        pool_mode: "session",
+      });
       expect(result.definition.capabilities.pooler.enabled).toBe(true);
     }),
   );
@@ -153,8 +164,7 @@ describe("closed capability compiler", () => {
       const exit = yield* compile({
         capabilities: { rest: { settings: { typo: true } } },
       } as never).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) expect(exit.cause).toBeDefined();
+      expect(failureOf(exit)).toBeInstanceOf(InvalidStackConfigError);
     }),
   );
 
@@ -205,8 +215,7 @@ describe("closed capability compiler", () => {
       const result = yield* compile({ capabilities: { database: { version: "99" } } }).pipe(
         Effect.exit,
       );
-      expect(Exit.isFailure(result)).toBe(true);
-      if (Exit.isFailure(result)) expect(result.cause).toBeDefined();
+      expect(failureOf(result)).toBeInstanceOf(StackVersionUnsupportedError);
     }),
   );
 
@@ -225,8 +234,7 @@ describe("closed capability compiler", () => {
       const result = yield* compile({
         capabilities: { functions: { settings: { functions_root: "../outside" } } },
       }).pipe(Effect.exit);
-      expect(Exit.isFailure(result)).toBe(true);
-      if (Exit.isFailure(result)) expect(result.cause).toBeDefined();
+      expect(failureOf(result)).toBeInstanceOf(InvalidStackConfigError);
     }),
   );
 
@@ -235,7 +243,171 @@ describe("closed capability compiler", () => {
       const result = yield* compile({
         capabilities: { rest: { enabled: false }, studio: { enabled: true } },
       }).pipe(Effect.exit);
-      expect(Exit.isFailure(result)).toBe(true);
+      expect(failureOf(result)).toBeInstanceOf(InvalidStackConfigError);
+    }),
+  );
+
+  it.live("resolves each supported database major to its supported release", () =>
+    Effect.gen(function* () {
+      const expected = {
+        13: "15.8.1.085",
+        14: "14.1.0.89",
+        15: "15.8.1.085",
+        17: "17.6.1.165",
+      } as const;
+      for (const [major, release] of Object.entries(expected)) {
+        const result = yield* compile({ capabilities: { database: { version: major } } });
+        expect(result.definition.capabilities.database.version).toBe(release);
+        expect(
+          result.executionPlan.workloads.find((w) => w.id === "database:database")?.artifacts,
+        ).toEqual({
+          native: { kind: "native", service: "database", release },
+          container: {
+            kind: "container",
+            service: "database",
+            image: `supabase/postgres:${release}`,
+          },
+        });
+      }
+    }),
+  );
+
+  it.live("rejects an unknown non-database release", () =>
+    Effect.gen(function* () {
+      const result = yield* compile({ capabilities: { rest: { version: "not-real" } } }).pipe(
+        Effect.exit,
+      );
+      expect(failureOf(result)).toBeInstanceOf(StackVersionUnsupportedError);
+    }),
+  );
+
+  it.live("rejects an empty non-database release", () =>
+    Effect.gen(function* () {
+      const result = yield* compile({ capabilities: { rest: { version: "" } } }).pipe(Effect.exit);
+      expect(failureOf(result)).toBeInstanceOf(StackVersionUnsupportedError);
+    }),
+  );
+
+  it.live("rebuilds a plan from an identical persisted definition", () =>
+    Effect.gen(function* () {
+      const first = yield* compile({
+        capabilities: { rest: { settings: { schemas: ["current"] } } },
+      });
+      const persisted = {
+        ...first.definition,
+        capabilities: {
+          ...first.definition.capabilities,
+          rest: {
+            ...first.definition.capabilities.rest,
+            settings: { ...first.definition.capabilities.rest.settings, schemas: ["persisted"] },
+          },
+        },
+      };
+      const reused = yield* compile(
+        { capabilities: { rest: { settings: { schemas: ["current"] } } } },
+        { kind: "native" },
+        { definition: persisted, inputFingerprint: first.inputFingerprint },
+      );
+      expect(reused.definition).toBe(persisted);
+      const previousHash = first.executionPlan.workloads.find(
+        (w) => w.id === "rest:rest",
+      )?.specHash;
+      const freshHash = reused.executionPlan.workloads.find((w) => w.id === "rest:rest")?.specHash;
+      expect(freshHash).not.toBe(previousHash);
+    }),
+  );
+
+  it.live("rejects a persisted definition whose release is no longer supported", () =>
+    Effect.gen(function* () {
+      const first = yield* compile({});
+      const persisted = {
+        ...first.definition,
+        capabilities: {
+          ...first.definition.capabilities,
+          rest: { ...first.definition.capabilities.rest, version: "not-real" },
+        },
+      };
+      const result = yield* compile(
+        {},
+        { kind: "native" },
+        {
+          definition: persisted,
+          inputFingerprint: first.inputFingerprint,
+        },
+      ).pipe(Effect.exit);
+      expect(failureOf(result)).toBeInstanceOf(StackVersionUnsupportedError);
+    }),
+  );
+
+  it.live("materializes defaults for supplied records", () =>
+    Effect.gen(function* () {
+      const result = yield* compile({
+        capabilities: {
+          storage: { settings: { buckets: { avatars: { public: true } } } },
+          functions: { settings: { functions: { hello: { verify_jwt: false } } } },
+        },
+      });
+      expect(result.definition.capabilities.storage.settings.buckets).toEqual({
+        avatars: {
+          public: true,
+          file_size_limit: "50MiB",
+          allowed_mime_types: [],
+          objects_path: "",
+        },
+      });
+      expect(result.definition.capabilities.functions.settings.functions).toEqual({
+        hello: {
+          enabled: true,
+          verify_jwt: false,
+          import_map: "",
+          entrypoint: "",
+          static_files: [],
+          env: {},
+        },
+      });
+    }),
+  );
+
+  it.live("uses pool_mode and rejects the old mode spelling", () =>
+    Effect.gen(function* () {
+      const result = yield* compile({
+        capabilities: { pooler: { settings: { pool_mode: "session" } } },
+      });
+      expect(result.definition.capabilities.pooler.settings.pool_mode).toBe("session");
+      const invalid = yield* compile({
+        capabilities: { pooler: { settings: { mode: "session" } } },
+      } as never).pipe(Effect.exit);
+      expect(failureOf(invalid)).toBeInstanceOf(InvalidStackConfigError);
+    }),
+  );
+
+  it.live("rejects invalid function slugs and environment names", () =>
+    Effect.gen(function* () {
+      const invalidSlug = yield* compile({
+        capabilities: { functions: { settings: { functions: { "bad.slug": {} } } } },
+      } as never).pipe(Effect.exit);
+      expect(failureOf(invalidSlug)).toBeInstanceOf(InvalidStackConfigError);
+      const invalidEnv = yield* compile({
+        capabilities: {
+          functions: {
+            settings: { functions: { hello: { env: { "bad-name": Redacted.make("x") } } } },
+          },
+        },
+      } as never).pipe(Effect.exit);
+      expect(failureOf(invalidEnv)).toBeInstanceOf(InvalidStackConfigError);
+    }),
+  );
+
+  it.live("enforces network port bounds", () =>
+    Effect.gen(function* () {
+      for (const port of [0, -1, 1.5, 65536]) {
+        const invalid = yield* compile({ listeners: { api: { port } } } as never).pipe(Effect.exit);
+        expect(failureOf(invalid)).toBeInstanceOf(InvalidStackConfigError);
+      }
+      for (const port of [1, 65535]) {
+        const valid = yield* compile({ listeners: { api: { port } } });
+        expect(valid.definition.listeners.api.port).toBe(port);
+      }
     }),
   );
 });

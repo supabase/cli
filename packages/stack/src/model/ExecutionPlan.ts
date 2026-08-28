@@ -1,4 +1,5 @@
 import { CAPABILITY_NAMES, type CapabilityName } from "../public/Capability.ts";
+import type { PortField } from "../public/Status.ts";
 import type { StackRuntime } from "../public/Runtime.ts";
 import {
   AuthModule,
@@ -13,6 +14,8 @@ import {
   AnalyticsModule,
 } from "./capabilities/index.ts";
 import type { WorkloadSpec, NativeArtifact, ContainerArtifact } from "./CapabilityModule.ts";
+import { Effect } from "effect";
+import { InvalidStackConfigError } from "../public/Errors.ts";
 
 export const CAPABILITY_MODULES = {
   database: DatabaseModule,
@@ -49,7 +52,7 @@ export interface ExecutionPlan {
   readonly routes: ReadonlyArray<
     Readonly<{
       readonly capability: CapabilityName;
-      readonly listener: string;
+      readonly listener: PortField;
       readonly protocol: "http" | "tcp";
     }>
   >;
@@ -61,61 +64,99 @@ export interface EnabledCapability {
   readonly activation: "eager" | "lazy";
 }
 
-const dependencyMap = {
-  database: [],
-  rest: ["database"],
-  auth: ["database"],
-  realtime: ["database"],
-  storage: ["database"],
-  functions: ["database"],
-  studio: ["rest", "analytics"],
-  mail: [],
-  analytics: ["database"],
-  pooler: ["database"],
-} satisfies { [Name in CapabilityName]: ReadonlyArray<CapabilityName> };
-
 export const createExecutionPlan = (
   runtime: StackRuntime,
   enabled: Readonly<{ [Name in CapabilityName]: EnabledCapability }>,
   specHashes: ReadonlyMap<string, string>,
-): ExecutionPlan => {
+  versions: Readonly<{ [Name in CapabilityName]: string }>,
+  modules: typeof CAPABILITY_MODULES = CAPABILITY_MODULES,
+): Effect.Effect<ExecutionPlan, InvalidStackConfigError> => {
+  const dependencyMap = {
+    database: modules.database.dependencies,
+    rest: modules.rest.dependencies,
+    auth: modules.auth.dependencies,
+    realtime: modules.realtime.dependencies,
+    storage: modules.storage.dependencies,
+    functions: modules.functions.dependencies,
+    studio: modules.studio.dependencies,
+    mail: modules.mail.dependencies,
+    analytics: modules.analytics.dependencies,
+    pooler: modules.pooler.dependencies,
+  } satisfies { [Name in CapabilityName]: ReadonlyArray<CapabilityName> };
   const start: CapabilityName[] = [];
   const visited = new Set<CapabilityName>();
+  const visitingCapabilities = new Set<CapabilityName>();
+  let capabilityGraphError: InvalidStackConfigError | undefined;
   const visit = (name: CapabilityName): void => {
+    if (visitingCapabilities.has(name)) {
+      capabilityGraphError = new InvalidStackConfigError({
+        message: `Capability dependency cycle detected at ${name}`,
+        capability: name,
+      });
+      return;
+    }
     if (visited.has(name) || !enabled[name].enabled) return;
+    visitingCapabilities.add(name);
     visited.add(name);
-    for (const dependency of dependencyMap[name]) visit(dependency);
+    for (const dependency of dependencyMap[name]) {
+      if (!Object.hasOwn(modules, dependency)) {
+        capabilityGraphError = new InvalidStackConfigError({
+          message: `Unknown capability dependency ${dependency}`,
+          capability: name,
+          dependency,
+        });
+        continue;
+      }
+      visit(dependency);
+    }
+    visitingCapabilities.delete(name);
     start.push(name);
   };
   for (const name of CAPABILITY_NAMES) visit(name);
+  if (capabilityGraphError !== undefined) return Effect.fail(capabilityGraphError);
   const stopOrder = [...start].reverse();
   const routes = CAPABILITY_NAMES.flatMap((name) =>
     enabled[name].enabled
-      ? CAPABILITY_MODULES[name].routes.map((route) => ({ capability: name, ...route }))
+      ? modules[name].routes.map((route) => ({ capability: name, ...route }))
       : [],
   );
-  const declaredWorkloads = CAPABILITY_NAMES.flatMap((name) =>
-    enabled[name].enabled
-      ? CAPABILITY_MODULES[name].workloads.map((entry) => ({
-          id: `${name}:${entry.name}`,
-          capability: name,
-          dependencies: entry.dependencies,
-          readiness: entry.readiness,
-          restart: entry.restart,
-          artifacts: entry.artifacts,
-          selected: runtime.kind === "native" ? entry.artifacts.native : entry.artifacts.container,
-          specHash: specHashes.get(`${name}:${entry.name}`) ?? "",
-        }))
-      : [],
-  );
+  const declaredWorkloads = CAPABILITY_NAMES.flatMap((name) => {
+    if (!enabled[name].enabled) return [];
+    const release = modules[name].releases[versions[name]];
+    if (release === undefined) return [];
+    return release.workloads.map((entry) => ({
+      id: `${name}:${entry.name}`,
+      capability: name,
+      dependencies: entry.dependencies,
+      readiness: entry.readiness,
+      restart: entry.restart,
+      artifacts: entry.artifacts,
+      selected: runtime.kind === "native" ? entry.artifacts.native : entry.artifacts.container,
+      specHash: specHashes.get(`${name}:${entry.name}`) ?? "",
+    }));
+  });
   const byId = new Map(declaredWorkloads.map((entry) => [entry.id, entry]));
   const workloadOrder: typeof declaredWorkloads = [];
   const visiting = new Set<string>();
   const visitedWorkloads = new Set<string>();
+  let graphError: InvalidStackConfigError | undefined;
   const visitWorkload = (id: string): void => {
-    if (visitedWorkloads.has(id) || visiting.has(id)) return;
+    if (visitedWorkloads.has(id)) return;
+    if (visiting.has(id)) {
+      graphError = new InvalidStackConfigError({
+        message: `Workload dependency cycle detected at ${id}`,
+        workload: id,
+      });
+      return;
+    }
     const entry = byId.get(id);
-    if (entry === undefined) return;
+    if (entry === undefined) {
+      graphError = new InvalidStackConfigError({
+        message: `Missing private workload dependency ${id}`,
+        workload: id,
+      });
+      return;
+    }
     visiting.add(id);
     for (const dependency of entry.dependencies) visitWorkload(dependency);
     visiting.delete(id);
@@ -123,12 +164,13 @@ export const createExecutionPlan = (
     workloadOrder.push(entry);
   };
   for (const entry of declaredWorkloads) visitWorkload(entry.id);
-  return {
+  if (graphError !== undefined) return Effect.fail(graphError);
+  return Effect.succeed({
     runtime,
     startOrder: start,
     stopOrder,
     dependencies: dependencyMap,
     routes,
     workloads: workloadOrder,
-  };
+  });
 };

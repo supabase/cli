@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { identityMaterialize, workload, type CapabilityModule } from "../CapabilityModule.ts";
+import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
 
 export const RestSettingsSchema = Schema.Struct({
   schemas: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -30,15 +30,16 @@ export const RestModule: CapabilityModule<RestSettings> = {
   },
   defaultEnabled: true,
   defaultActivation: "lazy",
+  defaultVersion: "v16.2",
   dependencies: ["database"],
-  workloads: [
-    workload("rest", "rest", "v16.2", "postgrest/postgrest:v16.2", {
-      dependencies: ["database:database"],
-      readiness: { mode: "http", portField: "api" },
-    }),
-  ],
+  releases: {
+    "v16.2": release("v16.2", [
+      workload("rest", "rest", "v16.2", "postgrest/postgrest:v16.2", {
+        dependencies: ["database:database"],
+        readiness: { mode: "http", portField: "api" },
+      }),
+    ]),
+  },
   routes: [{ listener: "api", protocol: "http" }],
-  materialize: (settings) => identityMaterialize(settings),
-  runtimeArtifact: (entry, runtime) =>
-    runtime.kind === "native" ? entry.artifacts.native : entry.artifacts.container,
+  materialize: (settings) => settings,
 };

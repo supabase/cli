@@ -197,3 +197,31 @@ Implementation continues after recording a ruling; this file is not a question q
 - `pnpm --dir packages/stack types:check` — passed.
 - `pnpm exec oxlint --config .oxlintrc.effect.json packages/stack/src/public/Config.ts packages/stack/src/model packages/stack/src/public/Errors.ts` — passed with zero warnings.
 - `pnpm exec oxfmt --check packages/stack/src/public/Config.ts packages/stack/src/model packages/stack/src/public/Errors.ts` — passed.
+
+#### Task 3 review fixes — 2026-08-28
+
+- Replaced the parallel version map/workload defaults with one release catalog per capability.
+  Database selectors are limited to supported majors 13, 14, 15, and 17 and resolve to their
+  exact Supabase Postgres releases; non-database selectors must match the current catalog bundle.
+  Native and container descriptors now stay coherent for the selected release, while private
+  companions retain their bundle-owned versions.
+- Previous compilation reuse now carries only the persisted definition and fingerprint. An
+  identical fingerprint reuses the exact definition object but rebuilds a fresh runtime plan and
+  workload hashes from persisted versions/settings, rejecting unsupported persisted releases.
+- Storage bucket and per-function records receive their complete defaults before materialization;
+  Function slug/environment key constraints are checked before schema decoding so invalid Record
+  keys cannot be silently dropped. Pooler uses the current `pool_mode` spelling.
+- Added one shared `NetworkPortSchema` (integer 1..65535) for listeners, endpoints, SMTP,
+  Functions inspector, and analytics vector ports. Capability/module dependencies now drive graph
+  planning and missing private dependencies/cycles fail with `InvalidStackConfigError`.
+- Strengthened compiler scenarios for exact tagged errors, release/artifact coherence, persisted
+  plan rebuilding, record defaults, key/port validation, and secret absence from definition,
+  fingerprint, plan, and formatted values. Task 4 owns the exhaustive materialized
+  `StackDefinitionSchema` and round-trip state codec; Task 3 exposes concrete per-capability input
+  schemas/types and release metadata without an open or generated settings bag.
+- Fix-round RED: 7 new scenarios failed against `06800c953`; GREEN: compiler/public integration
+  suites now pass (31 tests).
+- `pnpm --dir packages/stack types:check` — passed.
+- `pnpm --dir packages/stack exec vitest run --project integration src/model/compiler.integration.test.ts src/public/public-model.integration.test.ts` — 30 tests passed before final empty-release scenario (31 total expected; rerun final command below).
+- `pnpm exec oxlint --config .oxlintrc.effect.json packages/stack/src/model packages/stack/src/public/Config.ts packages/stack/src/public/Status.ts packages/stack/src/public/Errors.ts` — passed with zero warnings.
+- `pnpm exec oxfmt --check packages/stack/src/model packages/stack/src/public/Config.ts packages/stack/src/public/Status.ts packages/stack/src/public/Errors.ts` — passed.
