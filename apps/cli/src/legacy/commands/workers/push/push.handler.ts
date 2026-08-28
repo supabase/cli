@@ -1,6 +1,7 @@
 import { Effect, FileSystem, Option, Predicate, type Schedule } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import {
   legacyEmitWorkersMachineOutput,
@@ -372,6 +373,11 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     );
     yield* output.raw(
       legacyRenderWorkerDetails([
+        // Labelled `State`, and placed first, the way `workers status` renders
+        // the same field: without `--wait` it is the one row that says the
+        // worker is not serving yet, so it should not be hunted for at the
+        // bottom of the block.
+        ["State", settled.buildState],
         ["Runtime", runtime],
         ["Size", formatApiSize(settled.spec.size)],
         // Empty without `--wait`: no image exists until the build produces one,
@@ -382,12 +388,21 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
       ]),
     );
     if (settled.buildState === "building") {
-      // stderr, like every other progress line here: the deploy is accepted but
-      // the worker is not serving yet, and the user needs somewhere to look.
-      yield* output.raw(
-        `The build is still running. Check on it with \`supabase workers status ${name}\`, ` +
-          `or pass --wait to block until it finishes.\n`,
-        "stderr",
+      // A success trailer rather than an inline stderr line: this is a "what to
+      // run next" hint, which `stop`, `bootstrap`, `migration repair` and
+      // `gen signing-key` all route through `emitSuccessTrailer` so it prints
+      // once at the end of the run instead of scrolling away. It matters here
+      // more than for those: pushing several workers would otherwise bury each
+      // worker's hint under the next worker's packaging and deploy output.
+      //
+      // One short sentence per line, with the command and the flag aqua'd the
+      // way every other follow-up hint in this shell writes them. The single
+      // wrapped paragraph this replaced re-flowed differently at every terminal
+      // width and buried both commands mid-sentence.
+      yield* emitSuccessTrailer(
+        `\nYour build was submitted successfully.\n` +
+          `Run ${legacyAqua(`supabase workers status ${name}`)} to check on it.\n` +
+          `Add ${legacyAqua("--wait")} to block on the build next time.\n`,
       );
     }
   }

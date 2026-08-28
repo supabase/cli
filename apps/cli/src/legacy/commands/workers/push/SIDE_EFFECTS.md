@@ -76,6 +76,8 @@ payload always carries a `workers` array, which a flat `KEY=value` list cannot
 express, and discovering that at the end would fail the command with the remote
 project already changed.
 
+Without `--wait` the deploy returns with the build still running, so the follow-up hint (`workers status`, and `--wait`) is emitted as a success trailer: stderr, once, at the end of the run rather than between workers.
+
 The presigned `PUT` above is the one request whose URL is itself a credential.
 `--debug` logs every request URL, so `legacyHttpClientLayer` redacts query
 strings that carry a signature.

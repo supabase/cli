@@ -70,7 +70,9 @@ describe("legacy workers list", () => {
       expect(rows).toHaveLength(3);
       // Sorted by name, so `api`, `box`, then the scaffolded-but-undeployed `old`.
       expect(rows[0]).toContain("2gb (1 vCPU)");
-      expect(rows[0]).toContain(`https://${WORKERS_PROJECT_REF}.supabase.co/workers/v1/api`);
+      // The URL is deliberately not a column: one derivable field pushed the
+      // table past 130 columns. The machine payload still carries it.
+      expect(stdout).not.toContain("https://");
       expect(rows[1]).toContain("sandbox");
       expect(rows[2]).toContain("not deployed");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));

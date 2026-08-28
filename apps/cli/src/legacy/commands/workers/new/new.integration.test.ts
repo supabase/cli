@@ -67,7 +67,8 @@ describe("legacy workers new", () => {
       // the shape `functions new` established.
       expect(out.stdoutText).toContain("Created new Worker at supabase/workers/api");
       expect(out.stdoutText).toContain("Runtime");
-      expect(out.stdoutText).toContain("supabase workers push api");
+      // The deploy hint is a success trailer, which lands on stderr.
+      expect(out.stderrText).toContain("supabase workers push api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
   it.live("asks for the name when the command line carries none", () => {

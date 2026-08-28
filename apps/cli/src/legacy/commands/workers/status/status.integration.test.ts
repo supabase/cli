@@ -223,7 +223,8 @@ describe("legacy workers status", () => {
 
       expect(out.stdoutText).toContain("failed");
       expect(out.stdoutText).toContain("exit status 1");
-      expect(out.stdoutText).toContain("supabase workers push api");
+      // The retry hint is a success trailer, which lands on stderr.
+      expect(out.stderrText).toContain("supabase workers push api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 

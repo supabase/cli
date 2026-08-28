@@ -72,7 +72,8 @@ describe("legacy workers delete", () => {
       // Nothing local is touched — that is what makes `push` a one-command undo.
       expect(existsSync(join(repo.dir, "supabase", "workers", "api", "index.js"))).toBe(true);
       expect(readFileSync(join(repo.dir, "supabase", "config.toml"), "utf8")).toBe(CONFIG);
-      expect(out.stdoutText).toContain("supabase workers push api");
+      // The redeploy hint is a success trailer, which lands on stderr.
+      expect(out.stderrText).toContain("supabase workers push api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
