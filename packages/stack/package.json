@@ -17,11 +17,11 @@
     "types:check": "tsc --noEmit"
   },
   "dependencies": {
+    "@effect/platform-node": "catalog:",
     "effect": "catalog:"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
-    "@effect/platform-node": "catalog:",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
     "typescript": "catalog:",

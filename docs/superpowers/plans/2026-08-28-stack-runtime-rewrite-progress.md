@@ -293,3 +293,36 @@ Implementation continues after recording a ruling; this file is not a question q
 - `pnpm --dir packages/stack exec vitest run --project integration src/model/compiler.integration.test.ts src/public/public-model.integration.test.ts` — passed, 32 tests.
 - `pnpm exec oxlint --config .oxlintrc.effect.json packages/stack/src/model packages/stack/src/public/Config.ts packages/stack/src/public/Status.ts packages/stack/src/public/Errors.ts` — passed with zero warnings.
 - `pnpm exec oxfmt --check packages/stack/src/model packages/stack/src/public/Config.ts packages/stack/src/public/Status.ts packages/stack/src/public/Errors.ts` — passed.
+
+### Task 5 — 2026-08-28
+
+- Added identity-scoped owner metadata and one O_EXCL `runtime/owner.lock`. Ownership is proved
+  only by the lock; metadata is published after endpoint bind through a sibling temporary file,
+  file sync, and same-directory rename. Reads validate the StackId directory and deterministic
+  full-digest endpoint before probing. Session-fenced release never removes a replacement lock or
+  metadata, and transport owns socket unlink only after a successful bind.
+- Added `StackStateStore.initialize`, a registry-lock transaction that returns an existing complete
+  state or writes the candidate once. This closes the concurrent equivalent-create race without a
+  process-global registry.
+- Added the one local control endpoint with frozen maintenance v1 and exact-release Effect RPC,
+  bounded framing, identity/session/release fencing, per-request deadlines, bounded maintenance
+  concurrency, and post-response quiesce completion. Maintenance stop retains the compatible owner;
+  only quiesce releases it for explicit replacement.
+- Added detached Supervisor launching through Effect's `ChildProcessSpawner` and fd3 readiness
+  handoff. Concurrent losers join winner metadata through a pre-started filesystem watcher plus a
+  bounded Schedule reread that closes the platform watch-acquisition gap. Every returned owner is
+  release/session/probe validated. Readiness has a five-second deadline and terminates the exact child
+  and observer on timeout, failure, or caller interruption. Owner processes outlive caller handles.
+- Added managed Effect handles and observational discovery (`openStack`, `findStack`, `listStacks`,
+  `inspectStack`), truthful unconfigured/stopped status, operation-specific public errors, and exact
+  RPC error-tag preservation. POSIX endpoints use `/tmp` plus the complete StackId digest to remain
+  below Unix socket path limits.
+- Added ownership/state initialization, protocol framing/fencing, incompatible-release,
+  project-filter, caller-process-exit, concurrent create, and handle lifecycle integration scenarios.
+- `pnpm --dir packages/stack exec vitest run --project integration src/control/control-transport.integration.test.ts src/state/ownership.integration.test.ts src/supervisor/handles.integration.test.ts`
+  — passed (22 tests).
+- `pnpm --filter @supabase/stack test` — passed (89 integration tests; no unit files).
+- `pnpm --dir packages/stack types:check` — passed.
+- Effect lint over all Task 5 sources and tests — passed with zero warnings.
+- Formatting and `git diff --check` — passed; no matching Supervisor processes or control sockets
+  remained after the integration suites.

@@ -1,0 +1,142 @@
+import { Data, Schema } from "effect";
+import { Rpc, RpcGroup } from "effect/unstable/rpc";
+import * as RpcClient from "effect/unstable/rpc/RpcClient";
+import type { RpcClientError } from "effect/unstable/rpc/RpcClientError";
+import { EffectStackCredentialsSchema } from "../public/Credentials.ts";
+import { StackConfigSchema } from "../public/Config.ts";
+import { CapabilityNameSchema } from "../public/Capability.ts";
+import { LogOptionsSchema, StackLogEntrySchema } from "../public/Logs.ts";
+import { StackStatusSchema } from "../public/Status.ts";
+import type { ControlProtocol } from "./MaintenanceProtocol.ts";
+
+/** Pinned release identifier. A changed release must go through explicit restart. */
+export const STACK_RPC_RELEASE = "stack-rpc-v1@0.1.0" as const;
+
+export class StackRpcProtocolError extends Data.TaggedError("StackRpcProtocolError")<{
+  readonly message: string;
+  readonly expectedRelease?: string;
+  readonly actualRelease?: string;
+}> {}
+
+export class StackRpcTransportError extends Data.TaggedError("StackRpcTransportError")<{
+  readonly message: string;
+}> {}
+
+const StackRpcErrorTagSchema = Schema.Literals([
+  "InvalidStackIdentityError",
+  "InvalidProjectRootError",
+  "InvalidStackConfigError",
+  "StackVersionUnsupportedError",
+  "StackNotFoundError",
+  "StackOwnershipConflictError",
+  "StackRuntimeMismatchError",
+  "StackDefinitionRequiredError",
+  "StackNotRunningError",
+  "StackMustBeStoppedError",
+  "StackLifecycleConflictError",
+  "StackStateInvalidError",
+  "StackStateFormatUnsupportedError",
+  "StackStateGenerationMismatchError",
+  "StackUpgradeRequiredError",
+  "StackUpgradeReplacementError",
+  "StackSecretMismatchError",
+  "InvalidJwtSigningMaterialError",
+  "PortAllocationError",
+  "PortUnavailableError",
+  "GatewayAuthenticationError",
+  "GatewayStaleGenerationError",
+  "GatewayActivationError",
+  "StackPreparationError",
+  "ArtifactIntegrityError",
+  "ContainerPullError",
+  "StackReconciliationError",
+  "ServiceStartError",
+  "ServiceReadinessError",
+  "ContainerEngineError",
+  "StackDestructionError",
+  "StackRpcProtocolError",
+] as const);
+
+export const StackRpcErrorSchema = Schema.Struct({
+  tag: StackRpcErrorTagSchema,
+  message: Schema.String,
+});
+export type StackRpcError = Schema.Schema.Type<typeof StackRpcErrorSchema>;
+
+const PrepareStackResultSchema = Schema.Struct({
+  capabilities: Schema.Array(
+    Schema.Struct({
+      capability: CapabilityNameSchema,
+      version: Schema.String,
+      outcome: Schema.Literals(["cached", "downloaded", "pulled"] as const),
+    }),
+  ),
+});
+
+export const StackRpc = {
+  status: Rpc.make("status", { success: StackStatusSchema, error: StackRpcErrorSchema }),
+  credentials: Rpc.make("credentials", {
+    success: EffectStackCredentialsSchema,
+    error: StackRpcErrorSchema,
+  }),
+  prepare: Rpc.make("prepare", {
+    payload: Schema.Struct({
+      config: Schema.optionalKey(StackConfigSchema),
+      capabilities: Schema.optionalKey(Schema.Array(CapabilityNameSchema)),
+    }),
+    success: PrepareStackResultSchema,
+    error: StackRpcErrorSchema,
+  }),
+  start: Rpc.make("start", {
+    payload: Schema.Struct({ config: Schema.optionalKey(StackConfigSchema) }),
+    success: StackStatusSchema,
+    error: StackRpcErrorSchema,
+  }),
+  restart: Rpc.make("restart", {
+    payload: Schema.Struct({ config: Schema.optionalKey(StackConfigSchema) }),
+    success: StackStatusSchema,
+    error: StackRpcErrorSchema,
+  }),
+  destroy: Rpc.make("destroy", { success: Schema.Void, error: StackRpcErrorSchema }),
+  logs: Rpc.make("logs", {
+    payload: LogOptionsSchema,
+    success: StackLogEntrySchema,
+    error: StackRpcErrorSchema,
+    stream: true,
+  }),
+  watchStatus: Rpc.make("watchStatus", {
+    success: StackStatusSchema,
+    error: StackRpcErrorSchema,
+    stream: true,
+  }),
+} as const;
+
+export const StackRpcGroup = RpcGroup.make(
+  StackRpc.status,
+  StackRpc.credentials,
+  StackRpc.prepare,
+  StackRpc.start,
+  StackRpc.restart,
+  StackRpc.destroy,
+  StackRpc.logs,
+  StackRpc.watchStatus,
+);
+export type StackRpcHandlers = RpcGroup.HandlersFrom<RpcGroup.Rpcs<typeof StackRpcGroup>>;
+export type StackRpcClient = RpcClient.FromGroup<typeof StackRpcGroup, RpcClientError>;
+
+export const rpcProtocol = (
+  identity: { readonly stackId: string; readonly ownerSessionId: string },
+  release = STACK_RPC_RELEASE,
+): ControlProtocol => ({
+  kind: "rpc",
+  release,
+  stackId: identity.stackId,
+  ownerSessionId: identity.ownerSessionId,
+});
+
+export const releaseMismatch = (actualRelease: string): StackRpcProtocolError =>
+  new StackRpcProtocolError({
+    message: `Incompatible Stack RPC release; expected ${STACK_RPC_RELEASE}, received ${actualRelease}`,
+    expectedRelease: STACK_RPC_RELEASE,
+    actualRelease,
+  });

@@ -32,6 +32,15 @@ export interface StackStateStore {
     InvalidProjectRootError | StackStateInvalidError | StackStateFormatUnsupportedError,
     FileSystem.FileSystem | Path.Path | Crypto.Crypto
   >;
+  /** Initializes one identity atomically, returning the winner's complete state. */
+  readonly initialize: (
+    stackId: string,
+    state: PersistedStackState,
+  ) => Effect.Effect<
+    PersistedStackState,
+    InvalidProjectRootError | StackStateInvalidError | StackStateFormatUnsupportedError,
+    FileSystem.FileSystem | Path.Path | Crypto.Crypto
+  >;
   /** Replaces one complete state value after checking the expected generation. */
   readonly replace: (
     stackId: string,
@@ -390,6 +399,38 @@ export const makeStackStateStore = (options: {
         }),
       );
 
+    const initialize = (
+      stackId: string,
+      candidate: PersistedStackState,
+    ): Effect.Effect<
+      PersistedStackState,
+      InvalidProjectRootError | StackStateInvalidError | StackStateFormatUnsupportedError,
+      FileSystem.FileSystem | Path.Path | Crypto.Crypto
+    > =>
+      withRegistryLock(
+        options.stateRoot,
+        Effect.gen(function* () {
+          const existing = yield* read(stackId);
+          if (existing !== undefined) return existing;
+          const paths = yield* pathsFor(stackId);
+          yield* validateIdentityForStackId(candidate.identity, stackId);
+          yield* Schema.decodeEffect(PersistedStackStateSchema)(candidate, {
+            onExcessProperty: "error",
+          }).pipe(
+            Effect.mapError((error) =>
+              stateError(`Invalid persisted stack state: ${String(error)}`),
+            ),
+          );
+          yield* ownerDirectory(fs, paths.stackRoot).pipe(
+            Effect.mapError((error) =>
+              stateError(`Unable to create stack state directory: ${error.message}`),
+            ),
+          );
+          yield* atomicWrite(fs, path, crypto, paths.stateDocument, paths.stackRoot, candidate);
+          return candidate;
+        }),
+      );
+
     const replaceUnlocked = (
       stackId: string,
       next: PersistedStackState,
@@ -462,7 +503,7 @@ export const makeStackStateStore = (options: {
         }),
       );
 
-    return { read, write, replace, replaceUnlocked, cleanup } satisfies StackStateStore;
+    return { read, write, initialize, replace, replaceUnlocked, cleanup } satisfies StackStateStore;
   });
 
 export { PersistedStackStateSchema } from "./StackState.ts";

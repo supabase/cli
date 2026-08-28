@@ -139,15 +139,21 @@ export type StackError =
 export type CreateStackError =
   | InvalidStackIdentityError
   | InvalidProjectRootError
-  | InvalidStackConfigError
-  | StackVersionUnsupportedError
   | StackOwnershipConflictError
-  | StackRuntimeMismatchError;
+  | StackRuntimeMismatchError
+  | StackStateInvalidError
+  | StackStateFormatUnsupportedError
+  | StackUpgradeRequiredError;
 export type OpenStackError =
   | StackNotFoundError
   | StackOwnershipConflictError
-  | StackRuntimeMismatchError;
+  | StackRuntimeMismatchError
+  | InvalidProjectRootError
+  | StackStateInvalidError
+  | StackStateFormatUnsupportedError
+  | StackUpgradeRequiredError;
 export type StackDiscoveryError =
+  | InvalidStackIdentityError
   | InvalidProjectRootError
   | StackStateInvalidError
   | StackStateFormatUnsupportedError;
