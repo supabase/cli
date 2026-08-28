@@ -37,6 +37,25 @@ export function slimImagesEnabled(): boolean {
 }
 
 /**
+ * Catalog-normalized slim tag under `ghcr.io/supabase/cli/<service>`.
+ * `dockerImageForService` still owns v-prefix / tagPrefix rules, but vector
+ * and pooler override that helper onto `ghcr.io/supabase/{vector,supavisor}`
+ * — not the slim CLI repos. Pooler's slim tags are published with a `v`.
+ */
+function slimTagForService(service: ServiceName, rawTag: string): string {
+  const catalogRef = dockerImageForService(service, rawTag);
+  const catalogTag = imageTag(catalogRef) ?? rawTag;
+  if (service === "pooler" && !catalogTag.startsWith("v")) {
+    return `v${catalogTag}`;
+  }
+  return catalogTag;
+}
+
+function slimImageRef(service: ServiceName, rawTag: string): string {
+  return `${SLIM_IMAGE_PREFIX}${service}:${slimTagForService(service, rawTag)}`;
+}
+
+/**
  * Rewrites a docker.io image reference to its `ghcr.io/supabase/cli` slim
  * equivalent, keeping the Dockerfile's pinned version. The catalog owns tag
  * normalization (`v`-prefixing, `tagPrefix`), so pins that differ only in
@@ -58,7 +77,7 @@ export function toSlimImage(alias: string, image: string): string {
 
   const rawTag = image.slice(tagSeparator + 1);
   const tag = alias === "vector" ? rawTag.replace(/-alpine$/, "") : rawTag;
-  return dockerImageForService(service, tag);
+  return slimImageRef(service, tag);
 }
 
 /** `toSlimImage` behind the feature flag; a no-op while the flag is off. */
@@ -93,7 +112,7 @@ export function pinMatchesCurrentImage(
   if (service === undefined) {
     return pin.trim() === currentTag;
   }
-  return dockerImageForService(service, pin) === dockerImageForService(service, currentTag);
+  return slimTagForService(service, pin) === slimTagForService(service, currentTag);
 }
 
 /**
