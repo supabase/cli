@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { Effect } from "effect";
 
 import { dockerfileServiceImageRaw } from "../services/dockerfile-images.ts";
-import { DENO1_EDGE_RUNTIME_VERSION, edgeRuntimeImage } from "./functions.shared.ts";
+import {
+  DENO1_EDGE_RUNTIME_VERSION,
+  edgeRuntimeImage,
+  resolveEdgeRuntimeVersionPin,
+} from "./functions.shared.ts";
 
-const currentEdgeRuntimeTag = dockerfileServiceImageRaw("edgeruntime").split(":")[1] ?? "";
+const rawEdgeRuntimeImage = dockerfileServiceImageRaw("edgeruntime");
+const currentEdgeRuntimeTag = rawEdgeRuntimeImage.slice(rawEdgeRuntimeImage.lastIndexOf(":") + 1);
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -34,5 +40,20 @@ describe("edgeRuntimeImage", () => {
     expect(edgeRuntimeImage(DENO1_EDGE_RUNTIME_VERSION)).toBe(
       `supabase/edge-runtime:${DENO1_EDGE_RUNTIME_VERSION}`,
     );
+  });
+});
+
+describe("resolveEdgeRuntimeVersionPin", () => {
+  it("falls back to the Dockerfile tag, not the ghcr host, when slim is on and no pin file exists", async () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
+    const tag = await Effect.runPromise(resolveEdgeRuntimeVersionPin("/no-such-supabase-dir"));
+    expect(tag).toBe(currentEdgeRuntimeTag);
+    expect(tag.includes("/")).toBe(false);
+  });
+
+  it("falls back to the Dockerfile tag while the flag is off", async () => {
+    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
+    const tag = await Effect.runPromise(resolveEdgeRuntimeVersionPin("/no-such-supabase-dir"));
+    expect(tag).toBe(currentEdgeRuntimeTag);
   });
 });

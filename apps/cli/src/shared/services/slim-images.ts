@@ -66,7 +66,7 @@ export function slimImageForAlias(alias: string, image: string): string {
   return slimImagesEnabled() ? toSlimImage(alias, image) : image;
 }
 
-function imageTag(image: string): string | undefined {
+export function imageTag(image: string): string | undefined {
   const tagSeparator = image.lastIndexOf(":");
   return tagSeparator === -1 ? undefined : image.slice(tagSeparator + 1);
 }

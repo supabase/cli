@@ -702,6 +702,7 @@ describe("legacy db start", () => {
           }
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        expect(volumePruneWasAttempted(child.spawned)).toBe(false);
       });
     },
   );

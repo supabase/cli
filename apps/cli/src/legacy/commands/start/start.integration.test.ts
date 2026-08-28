@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, Fiber, Layer, Option, PlatformError, Sink, Stream } from "effect";
+import { Cause, Effect, Exit, Fiber, Layer, Option, PlatformError, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -50,6 +50,7 @@ import {
 import { LegacyPgDeltaSslProbe } from "../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LEGACY_START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import type { LegacyStartFlags } from "./start.command.ts";
+import { LegacySlimImageVolumeInaccessibleError } from "../../shared/db-bootstrap/start-database.ts";
 import { legacyStart } from "./start.handler.ts";
 import {
   LEGACY_KONG_LOCAL_TLS_CERT,
@@ -254,6 +255,28 @@ function createdContainerNames(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArr
 
 function rollbackWasAttempted(spawned: ReadonlyArray<SpawnRecord>): boolean {
   return spawned.some((s) => s.args[0] === "container" && s.args[1] === "prune");
+}
+
+function volumePruneWasAttempted(spawned: ReadonlyArray<SpawnRecord>): boolean {
+  return spawned.some((s) => s.args[0] === "volume" && s.args[1] === "prune");
+}
+
+/** Fresh Postgres volume + leftover storage volume; the uid write probe is forced. */
+function leftoverStorageVolumeRoute(
+  base: (args: ReadonlyArray<string>) => RouteResult,
+  writable: boolean,
+  storageVolume: string,
+): (args: ReadonlyArray<string>) => RouteResult {
+  return (args) => {
+    if (args[0] === "volume" && args[1] === "inspect") {
+      if ((args[2] ?? "") === storageVolume) return { exitCode: 0 };
+      return { exitCode: 1, stderr: [`Error: No such volume: ${args[2] ?? ""}`] };
+    }
+    if (args[0] === "run" && args.includes("--entrypoint")) {
+      return { exitCode: writable ? 0 : 1 };
+    }
+    return base(args);
+  };
 }
 
 /**
@@ -2676,6 +2699,32 @@ content_path = "./supabase/templates/custom_notice.html"
         expect(seedIndex).toBeGreaterThan(probeIndex);
       }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
     });
+
+    it.live(
+      "refuses a leftover docker.io storage volume under slim images before creating any container, and does not prune it",
+      () => {
+        vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+        const storageVolume = legacyServiceContainerName("storage", "demo");
+        const { layer, child } = setup({
+          route: leftoverStorageVolumeRoute(defaultRoute(), false, storageVolume),
+        });
+        return Effect.gen(function* () {
+          const exit = yield* legacyStart(flags({ exclude: ["edge-runtime"] })).pipe(Effect.exit);
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const error = Cause.squash(exit.cause);
+            expect(error).toBeInstanceOf(LegacySlimImageVolumeInaccessibleError);
+            if (error instanceof LegacySlimImageVolumeInaccessibleError) {
+              expect(error.message).toContain("storage volume");
+              expect(error.suggestion).toContain("supabase stop --no-backup");
+            }
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          expect(rollbackWasAttempted(child.spawned)).toBe(true);
+          expect(volumePruneWasAttempted(child.spawned)).toBe(false);
+        }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
+      },
+    );
 
     it.live(
       "does not seed a configured bucket on a non-fresh volume, even with storage enabled",

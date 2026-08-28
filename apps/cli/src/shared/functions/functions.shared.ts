@@ -1,11 +1,8 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect } from "effect";
-import {
-  dockerfileServiceImage,
-  dockerfileServiceImageRaw,
-} from "../services/dockerfile-images.ts";
-import { slimImageForCurrentPin } from "../services/slim-images.ts";
+import { dockerfileServiceImageRaw } from "../services/dockerfile-images.ts";
+import { imageTag, slimImageForCurrentPin } from "../services/slim-images.ts";
 
 const functionSlugPattern = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
@@ -31,10 +28,6 @@ export const FUNCTIONS_BUNDLER_MUTEX_GROUP = ["use-api", "use-docker", "legacy-b
 // reads the same source) — sourced from there rather than `@supabase/stack`'s
 // independently-maintained catalog, so a Dockerfile pin bump can never drift
 // from what the `functions` Docker paths resolve.
-// Read per call, not captured at import time, so `SUPABASE_USE_SLIM_IMAGES` is
-// observed by every resolution (and by tests that stub the env).
-const defaultEdgeRuntimeImage = () => dockerfileServiceImage("edgeruntime");
-
 // Go's `deno1` image tag (`pkg/config/constants.go:15`,
 // `supabase/edge-runtime:v1.68.4`) — a full tag, since tags flow verbatim
 // into `edgeRuntimeImage` with no `v` synthesis. Shared with
@@ -86,6 +79,6 @@ export const resolveEdgeRuntimeVersionPin = Effect.fnUntraced(function* (supabas
   ).pipe(
     Effect.map((version) => version.trim()),
     Effect.catch(() => Effect.succeed("")),
-    Effect.map((version) => version || (defaultEdgeRuntimeImage().split(":")[1] ?? "")),
+    Effect.map((version) => version || (imageTag(dockerfileServiceImageRaw("edgeruntime")) ?? "")),
   );
 });

@@ -217,10 +217,9 @@ export interface LegacyStartDatabaseInput<E> {
   readonly webhooksEnabled: boolean;
   readonly setup: LegacyFreshDbSetupInput<E>;
   /**
-   * Fired synchronously, exactly once, right after the pre-create volume probe resolves —
-   * the caller's own equivalent of Go's package-level `utils.NoBackupVolume` global, needed by
-   * the caller's OWN `legacyRollbackStart` (which this function does NOT call itself — see this
-   * module's header) even when this function fails partway through, after the probe.
+   * Caller's `utils.NoBackupVolume` equivalent for `legacyRollbackStart`. Fired once
+   * after pre-create refuse guards pass. Skipped on those guards so rollback cannot
+   * treat leftover sibling volumes as this run's fresh data.
    */
   readonly onFreshVolumeResolved: (isFreshVolume: boolean) => void;
 }
@@ -257,13 +256,12 @@ export const legacyStartDatabase = <E>(
     // `VolumeInspect` and the guard both run strictly BEFORE `DockerStart`, which is the ONLY
     // place Go ever creates the network (`docker.go:363-386`).
     const isFreshVolume = !(yield* legacyVolumeExists(spawner, input.dbContainerId));
-    input.onFreshVolumeResolved(isFreshVolume);
-
     const fromBackup = input.postgresSpec.fromBackup;
+
     if (!isFreshVolume && fromBackup !== undefined) {
       // Go's `StartDatabase` (`start.go:170-172`): a `--from-backup` restore into an
       // already-provisioned volume is refused outright, BEFORE any container or network is
-      // created.
+      // created — and before freshness is published, so rollback cannot prune it.
       return yield* Effect.fail(
         new LegacyStartBackupVolumeExistsError({
           message: "backup volume already exists",
@@ -272,11 +270,8 @@ export const legacyStartDatabase = <E>(
       );
     }
 
-    // Go's `StartDatabase` (`start.go:168-175`) prints this unconditionally to stderr — Go has
-    // no output-format concept for this seam at all. Matches every other progress line in this
-    // same pipeline (`db-setup.ts`'s "Initialising schema..."/"Seeding globals...",
-    // `legacy-migrate-and-seed.ts`'s "Applying migration ..."), which are also unguarded
-    // (review: PRRT_kwDOErm0O86VmHkn).
+    // Go prints this before DockerStart (image resolve). Keep that order so a
+    // flag-off cold/failed pull still follows the established progress line.
     yield* output.raw(
       isFreshVolume
         ? LEGACY_START_STARTING_DATABASE_MESSAGE
@@ -286,8 +281,10 @@ export const legacyStartDatabase = <E>(
 
     const resolvedPostgresImage = yield* input.resolvePostgresImage;
 
-    // Gated on the resolved ref, not the env flag alone: a registry override can still land this
-    // run on a docker.io image, which restores fine.
+    // Slim restore has no entrypoint. Refuse before publishing freshness so
+    // rollback cannot prune leftover sibling volumes from a prior image family.
+    // Gated on the resolved ref, not the env flag: a registry override can
+    // still land this run on a docker.io image, which restores fine.
     if (fromBackup !== undefined && legacyIsSlimPostgresImage(resolvedPostgresImage)) {
       return yield* Effect.fail(
         new LegacySlimImagesBackupUnsupportedError({
@@ -296,6 +293,8 @@ export const legacyStartDatabase = <E>(
         }),
       );
     }
+
+    input.onFreshVolumeResolved(isFreshVolume);
 
     // A reused volume's PGDATA ownership is a property of whichever image initialized it, not
     // of the image resolved for THIS run — a docker.io-initialized volume's `700`-mode dirs

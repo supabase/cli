@@ -1534,6 +1534,31 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       // doc comment) tees its own stderr.
       const bringUpDebug = yield* LegacyDebugFlag;
 
+      // Leftover storage after a docker.io stop that kept volumes must be
+      // refused before StartDatabase marks a missing Postgres volume as fresh;
+      // otherwise rollback would prune the leftover data.
+      const storagePlanImage = imagePlan.find((entry) => entry.service === "storage")?.image;
+      if (storagePlanImage !== undefined && legacyUsesSlimRuntime(resolveImage(storagePlanImage))) {
+        const storageVolumeExisted = yield* legacyVolumeExists(spawner, storageContainerName);
+        if (storageVolumeExisted) {
+          const writable = yield* legacyIsVolumeWritableByUid(
+            spawner,
+            resolveImage(postgresImage),
+            storageContainerName,
+            65532,
+          );
+          if (!writable) {
+            return yield* Effect.fail(
+              new LegacySlimImageVolumeInaccessibleError({
+                message:
+                  "the existing storage volume was initialized by a non-slim storage image and is not writable by the slim image's user",
+                suggestion: `Run ${legacyAqua("supabase stop --no-backup")} to reset the local storage volume, or unset SUPABASE_USE_SLIM_IMAGES.`,
+              }),
+            );
+          }
+        }
+      }
+
       // Runs the DB bootstrap sequence (network -> volume probe -> container
       // create+start -> health wait -> fresh-volume setup -> `_current_branch`) — shared
       // with `db start`'s own native container bootstrap, see `legacyStartDatabase`'s own
@@ -1798,26 +1823,6 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         // this handler already produces, matching the fail-fast-at-decode
         // behavior every other field validates with.
         const resolvedServiceImage = resolveImage(image);
-        if (entry.service === "storage" && legacyUsesSlimRuntime(resolvedServiceImage)) {
-          const storageVolumeExisted = yield* legacyVolumeExists(spawner, storageContainerName);
-          if (storageVolumeExisted) {
-            const writable = yield* legacyIsVolumeWritableByUid(
-              spawner,
-              resolveImage(postgresImage),
-              storageContainerName,
-              65532,
-            );
-            if (!writable) {
-              return yield* Effect.fail(
-                new LegacySlimImageVolumeInaccessibleError({
-                  message:
-                    "the existing storage volume was initialized by a non-slim storage image and is not writable by the slim image's user",
-                  suggestion: `Run ${legacyAqua("supabase stop --no-backup")} to reset the local storage volume, or unset SUPABASE_USE_SLIM_IMAGES.`,
-                }),
-              );
-            }
-          }
-        }
         const { spec, excludeFromHealthWatch } = yield* buildSpecForService(
           entry.service,
           resolvedServiceImage,
