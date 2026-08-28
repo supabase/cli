@@ -237,6 +237,10 @@ export const localStackLayer = (
         config.functions === false ? undefined : config.functions,
       );
       const edgeRuntimeConfigRef = yield* Ref.make(config.edgeRuntime);
+      // A whole-stack stop changes the orchestrator desired state for every running service to
+      // `stopped`. Keep that lifecycle intent separate from an explicit service stop so a later
+      // lazy activation can restore only services that were running before the whole-stack stop.
+      const wholeStackStoppedServicesRef = yield* Ref.make<ReadonlySet<ServiceName>>(new Set());
       const disposedSignal = yield* Deferred.make<void>();
       const lifecycleLock = Semaphore.makeUnsafe(1);
       const projectionLock = Semaphore.makeUnsafe(1);
@@ -626,6 +630,22 @@ export const localStackLayer = (
       const withLifecycleLock = lifecycleLock.withPermit;
       const syncRuntimeProjectedStates = (runtime: RuntimeState) =>
         syncProjectedStates(runtime.orchestrator, runtime.serviceProjection);
+      const clearWholeStackStopAllowance = (services: ReadonlyArray<ServiceName>) =>
+        Ref.update(wholeStackStoppedServicesRef, (current) => {
+          const next = new Set(current);
+          for (const service of services) next.delete(service);
+          return next;
+        });
+      const wholeStackStopAllowance = Ref.get(wholeStackStoppedServicesRef);
+      const rememberWholeStackStoppedServices = (runtime: RuntimeState) =>
+        Effect.gen(function* () {
+          const running = (yield* runtime.orchestrator.getAllStates).flatMap((state) => {
+            if (state.desired !== "running") return [];
+            const service = SERVICE_NAMES.find((candidate) => candidate === state.name);
+            return service !== undefined && enabledServices.includes(service) ? [service] : [];
+          });
+          yield* Ref.set(wholeStackStoppedServicesRef, new Set(running));
+        });
       const serviceStartOptions = {
         // Reservation may yield while disposal flips the lifecycle state.
         beforeStart: (name: string) =>
@@ -736,6 +756,11 @@ export const localStackLayer = (
           return yield* new StackNotRunningError({ phase });
         }
       });
+      const clearWholeStackStopAllowanceAfterSuccess = (services: ReadonlyArray<ServiceName>) =>
+        Effect.gen(function* () {
+          yield* requireRunningPhase;
+          yield* clearWholeStackStopAllowance(services);
+        }).pipe(lifecycleLock.withPermit);
       const requireMutable = (operation: string) =>
         Effect.suspend(() =>
           disposed || disposing
@@ -849,6 +874,9 @@ export const localStackLayer = (
             // Close the race with a concurrent stack stop before taking
             // the lock-free healthy-request fast path.
             yield* requireRunningPhase;
+            yield* clearWholeStackStopAllowanceAfterSuccess(
+              lifecycleTargetsForService(enabledServices, service),
+            );
             return;
           }
           if (existing !== undefined) {
@@ -859,6 +887,9 @@ export const localStackLayer = (
                 activationReadinessPolicy(service, config.readiness, config.readinessSource),
               ),
             );
+            yield* clearWholeStackStopAllowanceAfterSuccess(
+              lifecycleTargetsForService(enabledServices, service),
+            );
             return;
           }
           yield* prepareServices([service]);
@@ -866,7 +897,8 @@ export const localStackLayer = (
             yield* requireRunningPhase;
             const concurrentlyStarted = yield* inspectStartedTargets(service);
             if (concurrentlyStarted !== undefined) return concurrentlyStarted;
-            return yield* beginStartTargets(service, new Set());
+            const allowedWholeStackStops = yield* wholeStackStopAllowance;
+            return yield* beginStartTargets(service, allowedWholeStackStops);
           }).pipe(withLifecycleLock);
           yield* waitForTargets(started).pipe((effect) =>
             withReadinessPolicy(
@@ -874,6 +906,9 @@ export const localStackLayer = (
               name,
               activationReadinessPolicy(service, config.readiness, config.readinessSource),
             ),
+          );
+          yield* clearWholeStackStopAllowanceAfterSuccess(
+            lifecycleTargetsForService(enabledServices, service),
           );
         }).pipe(cleanupOnReadinessFailure);
 
@@ -933,6 +968,7 @@ export const localStackLayer = (
                 (effect) => withReadinessPolicy(effect, "stack"),
               );
               yield* syncRuntimeProjectedStates(runtime);
+              yield* clearWholeStackStopAllowance(["postgres", ...eager]);
             } else {
               yield* prepareServices(enabledServices);
               yield* requireMutable("start");
@@ -942,6 +978,7 @@ export const localStackLayer = (
                 withReadinessPolicy(effect, "stack"),
               );
               yield* syncRuntimeProjectedStates(runtime);
+              yield* clearWholeStackStopAllowance(enabledServices);
             }
             yield* requireMutable("start");
             yield* Ref.set(phaseRef, "running");
@@ -957,9 +994,11 @@ export const localStackLayer = (
             return;
           }
           if (runtimeState === undefined) {
+            yield* Ref.set(wholeStackStoppedServicesRef, new Set());
             yield* Ref.set(phaseRef, "stopped");
             return;
           }
+          yield* rememberWholeStackStoppedServices(runtimeState);
           yield* Ref.set(phaseRef, "stopping");
           yield* runtimeState.orchestrator.stop;
           yield* Ref.set(phaseRef, "stopped");
@@ -974,12 +1013,19 @@ export const localStackLayer = (
             const started = yield* Effect.gen(function* () {
               yield* requireMutable(`start service ${name}`);
               yield* requireRunningPhase;
+              const allowedWholeStackStops = yield* wholeStackStopAllowance;
               return yield* beginStartTargets(
                 service,
-                new Set(lifecycleTargetsForService(enabledServices, service)),
+                new Set([
+                  ...allowedWholeStackStops,
+                  ...lifecycleTargetsForService(enabledServices, service),
+                ]),
               );
             }).pipe(withLifecycleLock);
             yield* waitForTargets(started).pipe((effect) => withReadinessPolicy(effect, name));
+            yield* clearWholeStackStopAllowanceAfterSuccess(
+              lifecycleTargetsForService(enabledServices, service),
+            );
           }).pipe(cleanupOnReadinessFailure),
         stopService: (name) =>
           Effect.gen(function* () {
@@ -993,6 +1039,9 @@ export const localStackLayer = (
             ).toReversed()) {
               yield* runtime.orchestrator.stopService(target);
             }
+            yield* clearWholeStackStopAllowance(
+              lifecycleTargetsForService(enabledServices, service),
+            );
             // Settle the public projection before returning so callers observe
             // the stop immediately, matching the start/restart/waitReady paths.
             yield* syncRuntimeProjectedStates(runtime);
@@ -1011,6 +1060,9 @@ export const localStackLayer = (
               return { runtime, targets: [service] };
             }).pipe(withLifecycleLock);
             yield* waitForTargets(started).pipe((effect) => withReadinessPolicy(effect, name));
+            yield* clearWholeStackStopAllowanceAfterSuccess(
+              lifecycleTargetsForService(enabledServices, service),
+            );
           }).pipe(cleanupOnReadinessFailure),
         reloadFunctions: (opts) =>
           Effect.gen(function* () {
