@@ -258,7 +258,9 @@ jobs:
         run: |
           for f in /tmp/ai-review/claude-findings.json /tmp/ai-review/claude-raw.json; do
             if [ -f "$f" ]; then
-              bun .github/scripts/ai-review/post-review.ts redact "$f"
+              # Delete the file if redaction fails, so the always-on upload
+              # below can never publish an unscrubbed artifact.
+              bun .github/scripts/ai-review/post-review.ts redact "$f" || { rm -f "$f"; exit 1; }
             fi
           done
 
@@ -343,7 +345,10 @@ jobs:
         if: always()
         run: |
           if [ -f /tmp/ai-review/codex-findings.json ]; then
-            bun .github/scripts/ai-review/post-review.ts redact /tmp/ai-review/codex-findings.json
+            # Delete on redaction failure so the always-on upload can't publish
+            # an unscrubbed artifact.
+            bun .github/scripts/ai-review/post-review.ts redact /tmp/ai-review/codex-findings.json \
+              || { rm -f /tmp/ai-review/codex-findings.json; exit 1; }
           fi
 
       - name: Upload Codex findings
@@ -475,7 +480,10 @@ jobs:
         working-directory: trusted
         run: |
           if [ -f /tmp/ai-review/merged-review.json ]; then
-            bun .github/scripts/ai-review/post-review.ts redact /tmp/ai-review/merged-review.json
+            # Delete on redaction failure so the always-on upload can't publish
+            # an unscrubbed artifact.
+            bun .github/scripts/ai-review/post-review.ts redact /tmp/ai-review/merged-review.json \
+              || { rm -f /tmp/ai-review/merged-review.json; exit 1; }
           fi
 
       - name: Upload merged review

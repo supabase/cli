@@ -145,11 +145,14 @@ function expectInteger(value: unknown, path: string, context: string): number {
 }
 
 function expectOptionalString(value: unknown, path: string, context: string): string | undefined {
-  return value === undefined ? undefined : expectString(value, path, context);
+  // Treat null the same as absent: the strict-mode schema declares optional
+  // fields as nullable (`["string", "null"]`), so Codex emits them as null
+  // when there's no value, while Claude may omit them entirely.
+  return value === undefined || value === null ? undefined : expectString(value, path, context);
 }
 
 function expectOptionalInteger(value: unknown, path: string, context: string): number | undefined {
-  return value === undefined ? undefined : expectInteger(value, path, context);
+  return value === undefined || value === null ? undefined : expectInteger(value, path, context);
 }
 
 function expectNullableString(value: unknown, path: string, context: string): string | null {

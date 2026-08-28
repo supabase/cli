@@ -36,7 +36,11 @@ resolve  ──────>┤                 ├──> adjudicate ──> po
   for manual `/ai-review` requests. There is no size cap: the models review
   agentically — reading the diff and the changed files via their own tools over
   many turns, like the local CLI — so PRs of any size are reviewed (very large
-  diffs best-effort, within the model's context/turn budget).
+  diffs best-effort, within the model's context/turn budget). One caveat: the
+  diff is fetched with `gh pr diff`, which GitHub itself caps (≈300 files /
+  20k lines / 1 MB); a PR beyond those limits gets a truncated diff, so the
+  review is truncated with it. Generating the diff from the base/head refs
+  instead is a possible follow-up.
 - **`claude-review`** and **`codex-review`** run **in parallel** — each gives
   its model an independent, exhaustive pass and produces structured JSON
   findings validated against `findings.schema.json`. Claude reads the PR's
