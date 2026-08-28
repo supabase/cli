@@ -6,15 +6,16 @@ import { NodeFileSystem } from "@effect/platform-node";
 import {
   Cause,
   Context,
+  Deferred,
   Duration,
   Effect,
   Exit,
   FileSystem,
+  Fiber,
   Layer,
   PlatformError,
-  Pull,
+  PubSub,
   Scope,
-  Stream,
 } from "effect";
 import { LogBuffer } from "@supabase/process-compose";
 import { join } from "node:path";
@@ -26,28 +27,35 @@ const withLogBuffer = <A, E>(
     fs: FileSystem.FileSystem,
     root: string,
     sibling: string,
+    signal: PubSub.PubSub<string>,
   ) => Effect.Effect<A, E, FileSystem.FileSystem | Scope.Scope>,
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
+      const signal = yield* PubSub.unbounded<string>();
+      const fs = yield* FileSystem.FileSystem.pipe(Effect.provide(journalFileSystemLayer(signal)));
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-native-logs-" });
       const sibling = yield* fs.makeTempDirectoryScoped({
         prefix: "supabase-native-logs-sibling-",
       });
       const scope = yield* Effect.scope;
       const services = yield* Layer.buildWithScope(LogBuffer.layer, scope);
-      return yield* f(Context.get(services, LogBuffer), fs, root, sibling);
+      return yield* f(Context.get(services, LogBuffer), fs, root, sibling, signal);
     }),
   ).pipe(Effect.provide(NodeFileSystem.layer));
 
-const awaitDirectoryState = (
+const awaitDirectoryState = <E = never>(
   fs: FileSystem.FileSystem,
   root: string,
   expected: Readonly<Record<string, string | ((content: string) => boolean)>>,
-): Effect.Effect<void, PlatformError.PlatformError | Cause.TimeoutError, Scope.Scope> =>
+  trigger: Effect.Effect<void, E> = Effect.void,
+  signal?: PubSub.PubSub<string>,
+  ready?: Deferred.Deferred<void>,
+): Effect.Effect<void, PlatformError.PlatformError | Cause.TimeoutError | E, Scope.Scope> =>
   Effect.gen(function* () {
-    const pull = yield* Stream.toPull(fs.watch(root));
+    const subscription = signal === undefined ? undefined : yield* PubSub.subscribe(signal);
+    if (ready !== undefined) yield* Deferred.succeed(ready, undefined);
+    yield* trigger;
     const expectedNames = Object.keys(expected).toSorted();
     while (true) {
       const names = (yield* fs.readDirectory(root)).toSorted();
@@ -72,9 +80,48 @@ const awaitDirectoryState = (
           return;
         }
       }
-      yield* pull.pipe(Pull.catchDone(() => Effect.never));
+      if (subscription === undefined) return yield* Effect.never;
+      const changedPath = yield* PubSub.take(subscription);
+      if (!changedPath.startsWith(`${root}/`)) continue;
     }
   }).pipe(Effect.timeout(Duration.seconds(5)));
+
+const journalFileSystemLayer = (
+  signal: PubSub.PubSub<string>,
+  base: Layer.Layer<FileSystem.FileSystem, never, never> = NodeFileSystem.layer,
+) =>
+  Layer.effect(
+    FileSystem.FileSystem,
+    Effect.map(
+      FileSystem.FileSystem,
+      (fileSystem) =>
+        ({
+          ...fileSystem,
+          open: (path: string, options?: Parameters<typeof fileSystem.open>[1]) =>
+            fileSystem.open(path, options).pipe(
+              Effect.map(
+                (file) =>
+                  ({
+                    [FileSystem.FileTypeId]: file[FileSystem.FileTypeId],
+                    get stat() {
+                      return file.stat;
+                    },
+                    seek: (offset, from) => file.seek(offset, from),
+                    get sync() {
+                      return file.sync;
+                    },
+                    read: (buffer) => file.read(buffer),
+                    readAlloc: (size) => file.readAlloc(size),
+                    truncate: (length) => file.truncate(length),
+                    write: (buffer) => file.write(buffer),
+                    writeAll: (buffer) =>
+                      file.writeAll(buffer).pipe(Effect.tap(() => PubSub.publish(signal, path))),
+                  }) satisfies FileSystem.File,
+              ),
+            ),
+        }) satisfies FileSystem.FileSystem,
+    ),
+  ).pipe(Layer.provide(base));
 
 const flakyWriteFileSystemLayer = Layer.effect(
   FileSystem.FileSystem,
@@ -132,15 +179,22 @@ const flakyRenameFileSystemLayer = Layer.effect(
 
 describe("native log writer", () => {
   it.live("journals each LogBuffer entry below only its owning runtime root", () =>
-    withLogBuffer((logBuffer, fs, root, sibling) =>
+    withLogBuffer((logBuffer, fs, root, sibling, signal) =>
       Effect.gen(function* () {
-        yield* startNativeLogWriter(logBuffer, root);
+        yield* startNativeLogWriter(logBuffer, root).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+        );
         const authPath = nativeServiceLogPath(root, "auth");
 
-        yield* logBuffer.append("auth", "stdout", "authenticated");
-        yield* awaitDirectoryState(fs, nativeLogRoot(root), {
-          ["auth.jsonl"]: (content) => content.includes('"message":"authenticated"'),
-        });
+        yield* awaitDirectoryState(
+          fs,
+          nativeLogRoot(root),
+          {
+            ["auth.jsonl"]: (content) => content.includes('"message":"authenticated"'),
+          },
+          logBuffer.append("auth", "stdout", "authenticated"),
+          signal,
+        );
 
         const contents = yield* fs.readFileString(authPath);
         const [event] = contents
@@ -163,7 +217,10 @@ describe("native log writer", () => {
   it.live("rotates only owned segments and releases handles when its scope closes", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
+        const signal = yield* PubSub.unbounded<string>();
+        const fs = yield* FileSystem.FileSystem.pipe(
+          Effect.provide(journalFileSystemLayer(signal)),
+        );
         const root = yield* fs.makeTempDirectory({ prefix: "supabase-native-logs-" });
         const logRoot = nativeLogRoot(root);
         yield* fs.makeDirectory(logRoot, { recursive: true });
@@ -174,11 +231,11 @@ describe("native log writer", () => {
         const logBuffer = Context.get(services, LogBuffer);
 
         yield* startNativeLogWriter(logBuffer, root).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Scope.Scope, writerScope),
         );
         const message = "x".repeat(30_000);
         for (let index = 0; index < 8; index += 1) {
-          yield* logBuffer.append("auth", "stdout", `${index}:${message}`);
           const names =
             index < 2
               ? ["unrelated.sentinel", "auth.jsonl"]
@@ -198,6 +255,8 @@ describe("native log writer", () => {
                     : (content: string) => content.split("\n").filter(Boolean).length >= 1,
               ]),
             ),
+            logBuffer.append("auth", "stdout", `${index}:${message}`),
+            signal,
           );
         }
 
@@ -239,18 +298,28 @@ describe("native log writer", () => {
   it.live("keeps arbitrary service names inside the owning log root", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
+        const signal = yield* PubSub.unbounded<string>();
+        const fs = yield* FileSystem.FileSystem.pipe(
+          Effect.provide(journalFileSystemLayer(signal)),
+        );
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-native-logs-" });
         const services = yield* Layer.build(LogBuffer.layer);
         const logBuffer = Context.get(services, LogBuffer);
-        yield* startNativeLogWriter(logBuffer, root);
+        yield* startNativeLogWriter(logBuffer, root).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+        );
 
         const malicious = "../escaped-service";
-        yield* logBuffer.append(malicious, "stderr", "contained");
-        yield* awaitDirectoryState(fs, nativeLogRoot(root), {
-          [`${encodeURIComponent(malicious)}.jsonl`]: (content) =>
-            content.includes('"message":"contained"'),
-        });
+        yield* awaitDirectoryState(
+          fs,
+          nativeLogRoot(root),
+          {
+            [`${encodeURIComponent(malicious)}.jsonl`]: (content) =>
+              content.includes('"message":"contained"'),
+          },
+          logBuffer.append(malicious, "stderr", "contained"),
+          signal,
+        );
         expect(yield* fs.exists(join(root, "escaped-service.jsonl"))).toBe(false);
       }),
     ).pipe(Effect.provide(NodeFileSystem.layer)),
@@ -259,42 +328,61 @@ describe("native log writer", () => {
   it.live("retries a transient journal write without losing the event", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
+        const signal = yield* PubSub.unbounded<string>();
+        const fs = yield* FileSystem.FileSystem.pipe(
+          Effect.provide(journalFileSystemLayer(signal, flakyWriteFileSystemLayer)),
+        );
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-native-logs-" });
         const services = yield* Layer.build(LogBuffer.layer);
         const logBuffer = Context.get(services, LogBuffer);
-        yield* startNativeLogWriter(logBuffer, root);
-        yield* logBuffer.append("auth", "stdout", "recovered");
-        yield* awaitDirectoryState(fs, nativeLogRoot(root), {
-          ["auth.jsonl"]: (content) => content.includes('"message":"recovered"'),
-        });
+        yield* startNativeLogWriter(logBuffer, root).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+        );
+        yield* awaitDirectoryState(
+          fs,
+          nativeLogRoot(root),
+          {
+            ["auth.jsonl"]: (content) => content.includes('"message":"recovered"'),
+          },
+          logBuffer.append("auth", "stdout", "recovered"),
+          signal,
+        );
       }),
-    ).pipe(Effect.provide(flakyWriteFileSystemLayer)),
+    ).pipe(Effect.provide(NodeFileSystem.layer)),
   );
 
   it.live("recovers rotation after one rename failure and continues journaling", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
+        const signal = yield* PubSub.unbounded<string>();
+        const fs = yield* FileSystem.FileSystem.pipe(
+          Effect.provide(journalFileSystemLayer(signal, flakyRenameFileSystemLayer)),
+        );
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-native-logs-" });
         const services = yield* Layer.build(LogBuffer.layer);
         const logBuffer = Context.get(services, LogBuffer);
         const writerScope = yield* Scope.make("sequential");
         yield* startNativeLogWriter(logBuffer, root).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Scope.Scope, writerScope),
         );
         const message = "r".repeat(30_000);
 
         for (let index = 0; index < 4; index += 1) {
-          yield* logBuffer.append("auth", "stdout", `${index}:${message}`);
-          yield* awaitDirectoryState(fs, nativeLogRoot(root), {
-            ["auth.jsonl"]: (content) => content.includes(`"message":"${index}:${message}"`),
-            ...(index >= 2
-              ? {
-                  ["auth.jsonl.1"]: (content: string) => content.length > 0,
-                }
-              : {}),
-          });
+          yield* awaitDirectoryState(
+            fs,
+            nativeLogRoot(root),
+            {
+              ["auth.jsonl"]: (content) => content.includes(`"message":"${index}:${message}"`),
+              ...(index >= 2
+                ? {
+                    ["auth.jsonl.1"]: (content: string) => content.length > 0,
+                  }
+                : {}),
+            },
+            logBuffer.append("auth", "stdout", `${index}:${message}`),
+            signal,
+          );
         }
 
         const paths = yield* fs.readDirectory(nativeLogRoot(root));
@@ -325,13 +413,16 @@ describe("native log writer", () => {
         expect(yield* fs.readFileString(activePath)).toBe(beforeCloseAppend);
         yield* fs.rename(activePath, `${activePath}.closed`);
       }),
-    ).pipe(Effect.provide(flakyRenameFileSystemLayer)),
+    ).pipe(Effect.provide(NodeFileSystem.layer)),
   );
 
   it.live("rotates active journals on restart and bounds oversized records", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
+        const signal = yield* PubSub.unbounded<string>();
+        const fs = yield* FileSystem.FileSystem.pipe(
+          Effect.provide(journalFileSystemLayer(signal)),
+        );
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-native-logs-" });
         const logRoot = nativeLogRoot(root);
         yield* fs.makeDirectory(logRoot, { recursive: true });
@@ -351,21 +442,29 @@ describe("native log writer", () => {
         const services = yield* Layer.build(LogBuffer.layer);
         const logBuffer = Context.get(services, LogBuffer);
         yield* startNativeLogWriter(logBuffer, root).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Scope.Scope, writerScope),
         );
         yield* awaitDirectoryState(fs, logRoot, {
           ["auth.jsonl.1"]: seeded,
         });
 
-        for (let index = 0; index < 151; index += 1) {
-          yield* logBuffer.append("auth", "stdout", `after-restart-${index}`);
-        }
-        yield* logBuffer.append("postgres", "stderr", "😀".repeat(100_000));
-        yield* awaitDirectoryState(fs, logRoot, {
-          ["auth.jsonl"]: (content) => content.includes('"message":"after-restart-150"'),
-          ["auth.jsonl.1"]: seeded,
-          ["postgres.jsonl"]: (content) => content.includes('"service":"postgres"'),
-        });
+        yield* awaitDirectoryState(
+          fs,
+          logRoot,
+          {
+            ["auth.jsonl"]: (content) => content.includes('"message":"after-restart-150"'),
+            ["auth.jsonl.1"]: seeded,
+            ["postgres.jsonl"]: (content) => content.includes('"service":"postgres"'),
+          },
+          Effect.gen(function* () {
+            for (let index = 0; index < 151; index += 1) {
+              yield* logBuffer.append("auth", "stdout", `after-restart-${index}`);
+            }
+            yield* logBuffer.append("postgres", "stderr", "😀".repeat(100_000));
+          }),
+          signal,
+        );
 
         const rotated = yield* fs.readFileString(join(logRoot, "auth.jsonl.1"));
         expect(rotated.split("\n").filter(Boolean)).toHaveLength(850);
@@ -392,24 +491,57 @@ describe("native log writer", () => {
   it.live("keeps concurrent real buffers isolated to their distinct runtime roots", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
+        const signal = yield* PubSub.unbounded<string>();
+        const fs = yield* FileSystem.FileSystem.pipe(
+          Effect.provide(journalFileSystemLayer(signal)),
+        );
         const firstRoot = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-native-logs-a-" });
         const secondRoot = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-native-logs-b-" });
         const firstServices = yield* Layer.build(LogBuffer.layer);
         const secondServices = yield* Layer.build(LogBuffer.layer);
         const firstBuffer = Context.get(firstServices, LogBuffer);
         const secondBuffer = Context.get(secondServices, LogBuffer);
-        yield* startNativeLogWriter(firstBuffer, firstRoot);
-        yield* startNativeLogWriter(secondBuffer, secondRoot);
+        yield* startNativeLogWriter(firstBuffer, firstRoot).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+        );
+        yield* startNativeLogWriter(secondBuffer, secondRoot).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+        );
 
+        const firstReady = yield* Deferred.make<void>();
+        const secondReady = yield* Deferred.make<void>();
+        const firstWait = yield* Effect.forkChild(
+          awaitDirectoryState(
+            fs,
+            nativeLogRoot(firstRoot),
+            {
+              ["auth.jsonl"]: (content) => content.includes('"message":"first-stack"'),
+            },
+            Effect.void,
+            signal,
+            firstReady,
+          ),
+          { startImmediately: true },
+        );
+        const secondWait = yield* Effect.forkChild(
+          awaitDirectoryState(
+            fs,
+            nativeLogRoot(secondRoot),
+            {
+              ["auth.jsonl"]: (content) => content.includes('"message":"second-stack"'),
+            },
+            Effect.void,
+            signal,
+            secondReady,
+          ),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(firstReady);
+        yield* Deferred.await(secondReady);
         yield* firstBuffer.append("auth", "stdout", "first-stack");
         yield* secondBuffer.append("auth", "stdout", "second-stack");
-        yield* awaitDirectoryState(fs, nativeLogRoot(firstRoot), {
-          ["auth.jsonl"]: (content) => content.includes('"message":"first-stack"'),
-        });
-        yield* awaitDirectoryState(fs, nativeLogRoot(secondRoot), {
-          ["auth.jsonl"]: (content) => content.includes('"message":"second-stack"'),
-        });
+        yield* Fiber.join(firstWait);
+        yield* Fiber.join(secondWait);
 
         expect(yield* fs.readFileString(nativeServiceLogPath(firstRoot, "auth"))).not.toContain(
           "second-stack",
