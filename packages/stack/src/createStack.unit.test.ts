@@ -18,6 +18,7 @@ import {
 } from "./StackConfigResolver.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
 import type { PortField, PortSet } from "./PortCatalog.ts";
+import { portFieldsForService } from "./ServicePorts.ts";
 
 const testPorts = (config?: Parameters<typeof resolveConfigEffect>[0]): PortSet => {
   const ports = {
@@ -37,6 +38,7 @@ const testPorts = (config?: Parameters<typeof resolveConfigEffect>[0]): PortSet 
     pgmetaPort: 40_013,
     studioPort: 40_014,
     analyticsPort: 40_015,
+    vectorAdminPort: 40_018,
     poolerPort: 40_016,
     poolerApiPort: 40_017,
   } satisfies Record<PortField, number>;
@@ -284,6 +286,25 @@ describe("portRequestsForConfig explicit ports", () => {
       selection: { kind: "exact", port: sharedCandidate },
     });
     expect(requests[1]?.field).toBe("apiPort");
+  });
+});
+
+describe("native Vector private port allocation", () => {
+  it("leases Vector's private health port only for native mode", async () => {
+    const nativeFields = await Effect.runPromise(
+      portRequestsForConfig({ mode: "native", analytics: {}, vector: {} }),
+    );
+    expect(nativeFields.map((request) => request.field)).toContain("vectorAdminPort");
+
+    const dockerFields = await Effect.runPromise(
+      portRequestsForConfig(
+        { mode: "docker", analytics: {}, vector: {} },
+        { runtime: { mode: "docker", containerRuntime: "docker" } },
+      ),
+    );
+    expect(dockerFields.map((request) => request.field)).not.toContain("vectorAdminPort");
+    expect(portFieldsForService("vector", "native")).toContain("vectorAdminPort");
+    expect(portFieldsForService("vector", "docker")).not.toContain("vectorAdminPort");
   });
 });
 

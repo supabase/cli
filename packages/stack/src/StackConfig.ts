@@ -287,6 +287,8 @@ export interface ResolvedAnalyticsConfig {
 
 export interface ResolvedVectorConfig {
   readonly version: string;
+  /** Native Vector's private administration/health listener; absent for Docker. */
+  readonly adminPort?: number;
 }
 
 export interface ResolvedPoolerConfig {

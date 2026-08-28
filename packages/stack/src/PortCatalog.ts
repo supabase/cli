@@ -18,6 +18,8 @@ export interface AllocatedPorts {
   readonly pgmetaPort: number;
   readonly studioPort: number;
   readonly analyticsPort: number;
+  /** Native Vector's private administration/health listener. Docker keeps this internal. */
+  readonly vectorAdminPort: number;
   readonly poolerPort: number;
   readonly poolerApiPort: number;
 }
@@ -119,6 +121,11 @@ const PORT_CATALOG_ENTRIES: {
     service: "analytics",
     persistence: "sticky",
   },
+  vectorAdminPort: {
+    field: "vectorAdminPort",
+    service: "vector",
+    persistence: "runtime",
+  },
   poolerPort: {
     field: "poolerPort",
     configKey: "db.pooler.port",
@@ -147,6 +154,7 @@ export const PORT_FIELDS = [
   "pgmetaPort",
   "studioPort",
   "analyticsPort",
+  "vectorAdminPort",
   "poolerPort",
   "poolerApiPort",
 ] as const satisfies ReadonlyArray<PortField>;
@@ -197,6 +205,7 @@ export const AllocatedPortsSchema = Schema.Struct({
   pgmetaPort: Schema.Finite,
   studioPort: Schema.Finite,
   analyticsPort: Schema.Finite,
+  vectorAdminPort: Schema.Finite,
   poolerPort: Schema.Finite,
   poolerApiPort: Schema.Finite,
 });
@@ -218,6 +227,7 @@ export const PortSetSchema = Schema.Struct({
   pgmetaPort: Schema.optionalKey(Schema.Finite),
   studioPort: Schema.optionalKey(Schema.Finite),
   analyticsPort: Schema.optionalKey(Schema.Finite),
+  vectorAdminPort: Schema.optionalKey(Schema.Finite),
   poolerPort: Schema.optionalKey(Schema.Finite),
   poolerApiPort: Schema.optionalKey(Schema.Finite),
 });

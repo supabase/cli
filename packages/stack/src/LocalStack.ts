@@ -661,9 +661,10 @@ export const localStackLayer = (
         // Reservation may yield while disposal flips the lifecycle state.
         beforeStart: (name: string) =>
           portLease
-            .reserve(portFieldsForService(name))
+            .reserve(portFieldsForService(name, config.runtime.mode))
             .pipe(Effect.andThen(requireMutable(`start service ${name}`))),
-        beforeSpawn: (name: string) => portLease.release(portFieldsForService(name)),
+        beforeSpawn: (name: string) =>
+          portLease.release(portFieldsForService(name, config.runtime.mode)),
       };
       const knownServiceError = (service: string, cause: ServiceNotFoundError) =>
         new StackBuildError({

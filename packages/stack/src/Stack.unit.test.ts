@@ -44,6 +44,7 @@ const defaultPorts: AllocatedPorts = {
   pgmetaPort: 54336,
   studioPort: 54337,
   analyticsPort: 54338,
+  vectorAdminPort: 54341,
   poolerPort: 54339,
   poolerApiPort: 54340,
 };

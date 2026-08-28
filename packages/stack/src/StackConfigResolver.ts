@@ -384,12 +384,17 @@ function resolveAnalyticsConfig(
 function resolveVectorConfig(
   input: VectorConfig | undefined,
   raw: VectorConfig | false | undefined,
+  ports: PortSet,
+  mode: StackRuntimeSelection["mode"],
 ): Effect.Effect<ResolvedVectorConfig | false, StackBuildError> {
   if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  return Effect.succeed({
-    version: cfg.version ?? DEFAULT_VERSIONS.vector,
-  });
+  const resolved = { version: cfg.version ?? DEFAULT_VERSIONS.vector };
+  return mode === "native"
+    ? requiredPort(ports, "vectorAdminPort").pipe(
+        Effect.map((adminPort) => ({ ...resolved, adminPort })),
+      )
+    : Effect.succeed(resolved);
 }
 
 function resolvePoolerConfig(
@@ -613,6 +618,8 @@ export const portRequestsForConfig = (
           return studioInput?.port;
         case "analyticsPort":
           return analyticsInput?.port;
+        case "vectorAdminPort":
+          return undefined;
         case "poolerPort":
           return poolerInput?.port;
         case "poolerApiPort":
@@ -794,7 +801,9 @@ export function resolveConfig(
         analytics: analyticsEnabled
           ? yield* resolveAnalyticsConfig(analyticsInput, config.analytics, ports)
           : false,
-        vector: vectorEnabled ? yield* resolveVectorConfig(vectorInput, config.vector) : false,
+        vector: vectorEnabled
+          ? yield* resolveVectorConfig(vectorInput, config.vector, ports, runtime.mode)
+          : false,
         pooler: poolerEnabled
           ? yield* resolvePoolerConfig(poolerInput, config.pooler, ports)
           : false,

@@ -361,7 +361,9 @@ export const SERVICE_CATALOG: {
     },
     activation: { activates: [], owns: [] },
     preparation: preparation(["lazy", "eager"], "lazy", ["analytics"]),
-    portFields: [],
+    // Vector's admin/health listener is private and only exists for native
+    // processes. ServicePorts filters this field out for Docker allocations.
+    portFields: ["vectorAdminPort"],
   },
   pooler: {
     name: "pooler",
@@ -374,7 +376,7 @@ export const SERVICE_CATALOG: {
         provider: "github.com/supabase/slim-services",
         resolve: (version, platform) =>
           nativeRelease("pooler", version, platform, {
-            requiredRuntimePaths: ["bin/migrate", "bin/server"],
+            requiredRuntimePaths: ["bin/migrate", "bin/supavisor", "bin/server"],
           }),
       },
     },

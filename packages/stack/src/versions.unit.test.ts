@@ -191,7 +191,7 @@ describe("dockerImageForService", () => {
       requiredRuntimePaths: ["bin/logflare"],
     });
     expect(nativeReleaseForService("pooler", DEFAULT_VERSIONS.pooler, platform)).toMatchObject({
-      requiredRuntimePaths: ["bin/migrate", "bin/server"],
+      requiredRuntimePaths: ["bin/migrate", "bin/supavisor", "bin/server"],
     });
   });
 });

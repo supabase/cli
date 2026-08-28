@@ -1,6 +1,6 @@
 import { PORT_CATALOG, PORT_FIELDS, type PortField } from "./PortCatalog.ts";
 import { SERVICE_CATALOG, SERVICE_NAMES } from "./ServiceCatalog.ts";
-import type { StackConfig } from "./StackConfig.ts";
+import type { StackConfig, StackMode } from "./StackConfig.ts";
 
 const serviceEnabledForConfig = (config: StackConfig, service: keyof typeof SERVICE_CATALOG) => {
   if (config.servicePolicies?.[service] === "off") return false;
@@ -21,16 +21,22 @@ const serviceEnabledForConfig = (config: StackConfig, service: keyof typeof SERV
 };
 
 /** Classifies active services before any ports are resolved. */
-export const portFieldsForConfigInput = (config: StackConfig = {}): ReadonlyArray<PortField> =>
-  PORT_FIELDS.filter(
-    (field) =>
-      field === "apiPort" ||
-      field === "dbPort" ||
-      (PORT_CATALOG[field].service !== undefined &&
-        serviceEnabledForConfig(config, PORT_CATALOG[field].service)),
-  );
+export const portFieldsForConfigInput = (config: StackConfig = {}): ReadonlyArray<PortField> => {
+  const mode = config.mode ?? "native";
+  return PORT_FIELDS.filter((field) => {
+    if (field === "apiPort" || field === "dbPort") return true;
+    const service = PORT_CATALOG[field].service;
+    if (service === undefined || !serviceEnabledForConfig(config, service)) return false;
+    // Vector's admin/health endpoint is a private native listener. Docker's
+    // admin API stays inside the container and must not consume a host lease.
+    return !(field === "vectorAdminPort" && mode !== "native");
+  });
+};
 
-export const portFieldsForService = (name: string): ReadonlyArray<PortField> => {
+export const portFieldsForService = (name: string, mode: StackMode): ReadonlyArray<PortField> => {
   const service = SERVICE_NAMES.find((candidate) => candidate === name);
-  return service === undefined ? [] : SERVICE_CATALOG[service].portFields;
+  if (service === undefined) return [];
+  return SERVICE_CATALOG[service].portFields.filter(
+    (field) => !(field === "vectorAdminPort" && mode !== "native"),
+  );
 };

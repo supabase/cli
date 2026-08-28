@@ -47,6 +47,7 @@ const basePorts: AllocatedPorts = {
   pgmetaPort: 3016,
   studioPort: 3017,
   analyticsPort: 3018,
+  vectorAdminPort: 3021,
   poolerPort: 3019,
   poolerApiPort: 3020,
 };

@@ -8,31 +8,37 @@ import { StackBuildError } from "./errors.ts";
 import { generateJwks } from "./JwtGenerator.ts";
 import { detectPlatform, dockerHostAddress } from "./Platform.ts";
 import { shortTempPrefixRoot } from "./paths.ts";
-import { makeAnalyticsServiceDocker } from "./services/analytics.ts";
 import { makeAuthServiceDocker, makeAuthServiceNative } from "./services/auth.ts";
 import {
   makeEdgeRuntimeServiceDocker,
+  makeEdgeRuntimeServiceNative,
   prepareEdgeRuntimeBootstrap,
 } from "./services/edge-runtime.ts";
-import { makeImgproxyServiceDocker } from "./services/imgproxy.ts";
-import { makeMailpitServiceDocker } from "./services/mailpit.ts";
-import { makePgmetaServiceDocker } from "./services/pgmeta.ts";
-import { makePoolerServiceDocker } from "./services/pooler.ts";
+import { makeImgproxyServiceDocker, makeImgproxyServiceNative } from "./services/imgproxy.ts";
+import { makeMailpitServiceDocker, makeMailpitServiceNative } from "./services/mailpit.ts";
+import { makePgmetaServiceDocker, makePgmetaServiceNative } from "./services/pgmeta.ts";
+import { makePoolerServiceDocker, makePoolerServicesNative } from "./services/pooler.ts";
 import {
   makePostgresInitService,
   makePostgresInitServiceDocker,
 } from "./services/postgres-init.ts";
 import { makePostgresService, makePostgresServiceDocker } from "./services/postgres.ts";
 import { makePostgrestService, makePostgrestServiceDocker } from "./services/postgrest.ts";
-import { makeRealtimeServiceDocker } from "./services/realtime.ts";
+import { makeRealtimeServiceDocker, makeRealtimeServicesNative } from "./services/realtime.ts";
 import { type ServiceDependency } from "./services/service-utils.ts";
 import {
   LOCAL_S3_PROTOCOL_ACCESS_KEY_ID,
   LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET,
   makeStorageServiceDocker,
+  makeStorageServiceNative,
 } from "./services/storage.ts";
-import { makeStudioServiceDocker } from "./services/studio.ts";
-import { makeVectorServiceDocker } from "./services/vector.ts";
+import { makeStudioServiceDocker, makeStudioServiceNative } from "./services/studio.ts";
+import {
+  makeVectorServiceDocker,
+  makeVectorServiceNative,
+  prepareVectorConfig,
+} from "./services/vector.ts";
+import { makeAnalyticsServiceDocker, makeAnalyticsServicesNative } from "./services/analytics.ts";
 import {
   dependencyTimeoutSecondsForServices,
   POSTGRES_INIT_COMPLETION_BUDGET_SECONDS,
@@ -70,24 +76,39 @@ const postgresDependencies: ReadonlyArray<ServiceDependency> = [
   { service: "postgres-init", condition: "completed" },
 ];
 
+const privateServiceOwners: Readonly<Record<string, string>> = {
+  "postgres-init": "postgres",
+  "realtime-migrate": "realtime",
+  "realtime-seed": "realtime",
+  "analytics-migrate": "analytics",
+  "pooler-migrate": "pooler",
+  "pooler-bootstrap": "pooler",
+};
+
 const publicServiceProjection = (
   defs: ReadonlyArray<ServiceDef>,
 ): StackServiceProjectionCatalog => {
-  const serviceProjection: Map<
+  const serviceProjection = new Map<
     string,
     {
       visibility: "public" | "internal";
       owner?: string;
       ownerStatusWhileActive?: "Initializing";
     }
-  > = new Map(defs.map((def) => [def.name, { visibility: "public" as const }] as const));
-
-  serviceProjection.set("postgres-init", {
-    visibility: "internal",
-    owner: "postgres",
-    ownerStatusWhileActive: "Initializing",
-  });
-
+  >();
+  for (const def of defs) {
+    if (SERVICE_NAMES.some((service) => service === def.name)) {
+      serviceProjection.set(def.name, { visibility: "public" });
+    }
+    const owner = privateServiceOwners[def.name];
+    if (owner !== undefined) {
+      serviceProjection.set(def.name, {
+        visibility: "internal",
+        owner,
+        ownerStatusWhileActive: "Initializing",
+      });
+    }
+  }
   return serviceProjection;
 };
 
@@ -99,8 +120,22 @@ const hasAutoManagedPath = (config: ResolvedStackConfig, path: string) =>
       path.startsWith(`${managedPath}\\`),
   );
 
+const prepareNativeDirectory = (
+  path: string,
+  detail: string,
+): Effect.Effect<void, StackBuildError, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs
+      .makeDirectory(path, { recursive: true, mode: 0o700 })
+      .pipe(Effect.mapError((cause) => new StackBuildError({ detail, cause })));
+  });
+
 const resolvedConfigForService = (config: ResolvedStackConfig, service: ServiceName) =>
   config[serviceMetadata(service).configKey];
+
+const configuredServiceEnabled = (config: ResolvedStackConfig, service: ServiceName): boolean =>
+  config.servicePolicies[service] !== "off" && resolvedConfigForService(config, service) !== false;
 
 const prepareNativePostgresAlias = (
   preparedPath: string,
@@ -166,21 +201,27 @@ export const validateResolvedConfig = (
       }
     }
 
-    if (config.imgproxy !== false && config.storage === false) {
+    if (
+      configuredServiceEnabled(config, "imgproxy") &&
+      !configuredServiceEnabled(config, "storage")
+    ) {
       return yield* new StackBuildError({
         detail: "imgproxy requires storage to be enabled",
         reason: "invalid_config",
       });
     }
 
-    if (config.vector !== false && config.analytics === false) {
+    if (
+      configuredServiceEnabled(config, "vector") &&
+      !configuredServiceEnabled(config, "analytics")
+    ) {
       return yield* new StackBuildError({
         detail: "vector requires analytics to be enabled",
         reason: "invalid_config",
       });
     }
 
-    if (config.studio !== false && config.pgmeta === false) {
+    if (configuredServiceEnabled(config, "studio") && !configuredServiceEnabled(config, "pgmeta")) {
       return yield* new StackBuildError({
         detail: "studio requires pgmeta to be enabled",
         reason: "invalid_config",
@@ -219,22 +260,6 @@ const requirePreparedResolution = (
         }),
       );
 };
-
-const requirePreparedDockerImage = (
-  prepared: PreparedStackArtifacts,
-  service: ServiceName,
-): Effect.Effect<string, StackBuildError> =>
-  requirePreparedResolution(prepared, service).pipe(
-    Effect.flatMap((resolution) =>
-      resolution.type === "docker"
-        ? Effect.succeed(resolution.image)
-        : Effect.fail(
-            new StackBuildError({
-              detail: `Expected a docker image for ${service}`,
-            }),
-          ),
-    ),
-  );
 
 export class StackBuilder extends Context.Service<
   StackBuilder,
@@ -280,13 +305,19 @@ export class StackBuilder extends Context.Service<
           );
         }
 
-        const authResolution =
-          config.auth === false ? false : yield* requirePreparedResolution(prepared, "auth");
+        const authResolution = !configuredServiceEnabled(config, "auth")
+          ? false
+          : yield* requirePreparedResolution(prepared, "auth");
 
-        const postgrestResolution =
-          config.postgrest === false
-            ? false
-            : yield* requirePreparedResolution(prepared, "postgrest");
+        const postgrestResolution = !configuredServiceEnabled(config, "postgrest")
+          ? false
+          : yield* requirePreparedResolution(prepared, "postgrest");
+        const mailpitEnabled =
+          config.mailpit !== false && configuredServiceEnabled(config, "mailpit");
+        const mailpitSmtpHost = mailpitEnabled ? serviceHost : undefined;
+        const mailpitSmtpPort = mailpitEnabled ? config.mailpit.smtpPort : undefined;
+        const mailpitAdminEmail = mailpitEnabled ? config.mailpit.adminEmail : undefined;
+        const mailpitSenderName = mailpitEnabled ? config.mailpit.senderName : undefined;
 
         const postgresInitCompletionBudgetSeconds = POSTGRES_INIT_COMPLETION_BUDGET_SECONDS;
         const postgresConsumerDependencyTimeoutSeconds =
@@ -350,7 +381,11 @@ export class StackBuilder extends Context.Service<
           enabled: true,
         });
 
-        if (config.postgrest !== false && postgrestResolution !== false) {
+        if (
+          config.postgrest !== false &&
+          configuredServiceEnabled(config, "postgrest") &&
+          postgrestResolution !== false
+        ) {
           defs.push({
             ...(postgrestResolution.type === "binary"
               ? makePostgrestService({
@@ -383,7 +418,11 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (config.auth !== false && authResolution !== false) {
+        if (
+          config.auth !== false &&
+          configuredServiceEnabled(config, "auth") &&
+          authResolution !== false
+        ) {
           defs.push({
             ...(authResolution.type === "binary"
               ? makeAuthServiceNative({
@@ -394,10 +433,10 @@ export class StackBuilder extends Context.Service<
                   jwtSecret: config.jwtSecret,
                   jwtExpiry: config.auth.jwtExpiry,
                   externalUrl: config.auth.externalUrl,
-                  smtpHost: config.mailpit !== false ? serviceHost : undefined,
-                  smtpPort: config.mailpit !== false ? config.mailpit.smtpPort : undefined,
-                  smtpAdminEmail: config.mailpit !== false ? config.mailpit.adminEmail : undefined,
-                  smtpSenderName: config.mailpit !== false ? config.mailpit.senderName : undefined,
+                  smtpHost: mailpitSmtpHost,
+                  smtpPort: mailpitSmtpPort,
+                  smtpAdminEmail: mailpitAdminEmail,
+                  smtpSenderName: mailpitSenderName,
                   dependencies: postgresDependencies,
                 })
               : makeAuthServiceDocker({
@@ -410,10 +449,10 @@ export class StackBuilder extends Context.Service<
                   jwtSecret: config.jwtSecret,
                   jwtExpiry: config.auth.jwtExpiry,
                   externalUrl: config.auth.externalUrl,
-                  smtpHost: config.mailpit !== false ? serviceHost : undefined,
-                  smtpPort: config.mailpit !== false ? config.mailpit.smtpPort : undefined,
-                  smtpAdminEmail: config.mailpit !== false ? config.mailpit.adminEmail : undefined,
-                  smtpSenderName: config.mailpit !== false ? config.mailpit.senderName : undefined,
+                  smtpHost: mailpitSmtpHost,
+                  smtpPort: mailpitSmtpPort,
+                  smtpAdminEmail: mailpitAdminEmail,
+                  smtpSenderName: mailpitSenderName,
                   platformOs: platform.os,
                   identity,
                   dependencies: postgresDependencies,
@@ -423,55 +462,79 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (config.edgeRuntime !== false) {
-          const edgeRuntimeImage = yield* requirePreparedDockerImage(prepared, "edge-runtime");
+        if (config.edgeRuntime !== false && configuredServiceEnabled(config, "edge-runtime")) {
+          const edgeRuntimeResolution = yield* requirePreparedResolution(prepared, "edge-runtime");
           const edgeRuntimeBootstrapDir = yield* prepareEdgeRuntimeBootstrap(config.runtimeRoot);
           defs.push({
-            ...makeEdgeRuntimeServiceDocker({
-              runtime: yield* requireContainerRuntime,
-              image: edgeRuntimeImage,
-              identity,
-              runtimeRoot: config.runtimeRoot,
-              bootstrapDir: edgeRuntimeBootstrapDir,
-              projectDir,
-              port: config.edgeRuntime.port,
-              inspectorPort: config.edgeRuntime.inspectorPort,
-              policy: config.edgeRuntime.policy,
-              env: config.edgeRuntime.env,
-              platformOs: platform.os,
-              dependencies: postgresDependencies,
-            }),
+            ...(edgeRuntimeResolution.type === "binary"
+              ? makeEdgeRuntimeServiceNative({
+                  binPath: edgeRuntimeResolution.path,
+                  runtimeRoot: config.runtimeRoot,
+                  bootstrapDir: edgeRuntimeBootstrapDir,
+                  projectDir,
+                  port: config.edgeRuntime.port,
+                  inspectorPort: config.edgeRuntime.inspectorPort,
+                  policy: config.edgeRuntime.policy,
+                  env: config.edgeRuntime.env,
+                  dependencies: postgresDependencies,
+                })
+              : makeEdgeRuntimeServiceDocker({
+                  runtime: yield* requireContainerRuntime,
+                  image: edgeRuntimeResolution.image,
+                  identity,
+                  runtimeRoot: config.runtimeRoot,
+                  bootstrapDir: edgeRuntimeBootstrapDir,
+                  projectDir,
+                  port: config.edgeRuntime.port,
+                  inspectorPort: config.edgeRuntime.inspectorPort,
+                  policy: config.edgeRuntime.policy,
+                  env: config.edgeRuntime.env,
+                  platformOs: platform.os,
+                  dependencies: postgresDependencies,
+                })),
             dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
         }
 
-        if (config.mailpit !== false) {
-          const mailpitImage = yield* requirePreparedDockerImage(prepared, "mailpit");
+        if (config.mailpit !== false && configuredServiceEnabled(config, "mailpit")) {
+          const mailpitResolution = yield* requirePreparedResolution(prepared, "mailpit");
           defs.push({
-            ...makeMailpitServiceDocker({
-              runtime: yield* requireContainerRuntime,
-              image: mailpitImage,
-              identity,
-              webPort: config.mailpit.port,
-              smtpPort: config.mailpit.smtpPort,
-              pop3Port: config.mailpit.pop3Port,
-              platformOs: platform.os,
-              dependencies: [],
-            }),
+            ...(mailpitResolution.type === "binary"
+              ? makeMailpitServiceNative({
+                  binPath: mailpitResolution.path,
+                  dataDir: join(config.stackRoot, "data", "mailpit"),
+                  webPort: config.mailpit.port,
+                  smtpPort: config.mailpit.smtpPort,
+                  pop3Port: config.mailpit.pop3Port,
+                  dependencies: [],
+                })
+              : makeMailpitServiceDocker({
+                  runtime: yield* requireContainerRuntime,
+                  image: mailpitResolution.image,
+                  identity,
+                  webPort: config.mailpit.port,
+                  smtpPort: config.mailpit.smtpPort,
+                  pop3Port: config.mailpit.pop3Port,
+                  platformOs: platform.os,
+                  dependencies: [],
+                })),
             enabled: true,
           });
+          if (mailpitResolution.type === "binary") {
+            yield* prepareNativeDirectory(
+              join(config.stackRoot, "data", "mailpit"),
+              "Failed to prepare the native Mailpit data directory",
+            );
+          }
         }
 
-        if (config.realtime !== false) {
-          const realtimeImage = yield* requirePreparedDockerImage(prepared, "realtime");
-          defs.push({
-            ...makeRealtimeServiceDocker({
-              runtime: yield* requireContainerRuntime,
-              image: realtimeImage,
+        if (config.realtime !== false && configuredServiceEnabled(config, "realtime")) {
+          const realtimeResolution = yield* requirePreparedResolution(prepared, "realtime");
+          if (realtimeResolution.type === "binary") {
+            const bundle = makeRealtimeServicesNative({
+              binPath: realtimeResolution.path,
               port: config.realtime.port,
-              identity,
-              dbHost: serviceHost,
               dbPort: config.dbPort,
               jwtSecret: config.jwtSecret,
               jwtJwks,
@@ -479,129 +542,264 @@ export class StackBuilder extends Context.Service<
               encryptionKey: config.realtime.encryptionKey,
               secretKeyBase: config.realtime.secretKeyBase,
               maxHeaderLength: config.realtime.maxHeaderLength,
-              platformOs: platform.os,
               dependencies: postgresDependencies,
-            }),
-            dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
-            enabled: true,
-          });
+            });
+            defs.push(
+              {
+                ...bundle.migrate,
+                dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
+                enabled: true,
+              },
+              {
+                ...bundle.seed,
+                dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
+                enabled: true,
+              },
+              {
+                ...bundle.server,
+                dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
+                enabled: true,
+              },
+            );
+          } else {
+            defs.push({
+              ...makeRealtimeServiceDocker({
+                runtime: yield* requireContainerRuntime,
+                image: realtimeResolution.image,
+                port: config.realtime.port,
+                identity,
+                dbHost: serviceHost,
+                dbPort: config.dbPort,
+                jwtSecret: config.jwtSecret,
+                jwtJwks,
+                tenantId: config.realtime.tenantId,
+                encryptionKey: config.realtime.encryptionKey,
+                secretKeyBase: config.realtime.secretKeyBase,
+                maxHeaderLength: config.realtime.maxHeaderLength,
+                platformOs: platform.os,
+                dependencies: postgresDependencies,
+              }),
+              dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
+              enabled: true,
+            });
+          }
         }
 
-        if (config.storage !== false) {
-          const storageImage = yield* requirePreparedDockerImage(prepared, "storage");
+        if (config.storage !== false && configuredServiceEnabled(config, "storage")) {
+          const storageResolution = yield* requirePreparedResolution(prepared, "storage");
+          const imgproxyEnabled = configuredServiceEnabled(config, "imgproxy");
+          const imgproxyPort = config.imgproxy === false ? 0 : config.imgproxy.port;
+          if (storageResolution.type === "binary") {
+            yield* prepareNativeDirectory(
+              config.storage.dataDir,
+              "Failed to prepare the native Storage data directory",
+            );
+          }
           defs.push({
-            ...makeStorageServiceDocker({
-              runtime: yield* requireContainerRuntime,
-              image: storageImage,
-              port: config.storage.port,
-              identity,
-              dbHost: serviceHost,
-              dbPort: config.dbPort,
-              dataDir: config.storage.dataDir,
-              anonKey: config.publishableKey,
-              serviceKey: config.secretKey,
-              jwtSecret: config.jwtSecret,
-              jwtJwks,
-              fileSizeLimit: config.storage.fileSizeLimit,
-              enableImageTransformation: config.imgproxy !== false,
-              imgproxyUrl:
-                config.imgproxy !== false ? `http://${serviceHost}:${config.imgproxy.port}` : "",
-              s3ProtocolEnabled: config.storage.s3ProtocolEnabled,
-              platformOs: platform.os,
-              dependencies: postgresDependencies,
-              cleanupDataDirOnExit: hasAutoManagedPath(config, config.storage.dataDir),
-            }),
+            ...(storageResolution.type === "binary"
+              ? makeStorageServiceNative({
+                  binPath: storageResolution.path,
+                  port: config.storage.port,
+                  dbPort: config.dbPort,
+                  dataDir: config.storage.dataDir,
+                  anonKey: config.publishableKey,
+                  serviceKey: config.secretKey,
+                  jwtSecret: config.jwtSecret,
+                  jwtJwks,
+                  fileSizeLimit: config.storage.fileSizeLimit,
+                  enableImageTransformation: imgproxyEnabled,
+                  imgproxyUrl: imgproxyEnabled ? `http://127.0.0.1:${imgproxyPort}` : "",
+                  s3ProtocolEnabled: config.storage.s3ProtocolEnabled,
+                  dependencies: postgresDependencies,
+                  cleanupDataDirOnExit: hasAutoManagedPath(config, config.storage.dataDir),
+                })
+              : makeStorageServiceDocker({
+                  runtime: yield* requireContainerRuntime,
+                  image: storageResolution.image,
+                  port: config.storage.port,
+                  identity,
+                  dbHost: serviceHost,
+                  dbPort: config.dbPort,
+                  dataDir: config.storage.dataDir,
+                  anonKey: config.publishableKey,
+                  serviceKey: config.secretKey,
+                  jwtSecret: config.jwtSecret,
+                  jwtJwks,
+                  fileSizeLimit: config.storage.fileSizeLimit,
+                  enableImageTransformation: imgproxyEnabled,
+                  imgproxyUrl: imgproxyEnabled ? `http://${serviceHost}:${imgproxyPort}` : "",
+                  s3ProtocolEnabled: config.storage.s3ProtocolEnabled,
+                  platformOs: platform.os,
+                  dependencies: postgresDependencies,
+                  cleanupDataDirOnExit: hasAutoManagedPath(config, config.storage.dataDir),
+                })),
             dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
         }
 
-        if (config.imgproxy !== false) {
+        if (config.imgproxy !== false && configuredServiceEnabled(config, "imgproxy")) {
           const storageConfig = config.storage;
-          const imgproxyImage = yield* requirePreparedDockerImage(prepared, "imgproxy");
+          const imgproxyResolution = yield* requirePreparedResolution(prepared, "imgproxy");
           defs.push({
-            ...makeImgproxyServiceDocker({
-              runtime: yield* requireContainerRuntime,
-              image: imgproxyImage,
-              port: config.imgproxy.port,
-              identity,
-              dataDir: storageConfig === false ? "" : storageConfig.dataDir,
-              platformOs: platform.os,
-              dependencies: [{ service: "storage", condition: "healthy" }],
-            }),
+            ...(imgproxyResolution.type === "binary"
+              ? makeImgproxyServiceNative({
+                  binPath: imgproxyResolution.path,
+                  port: config.imgproxy.port,
+                  dependencies: [{ service: "storage", condition: "healthy" }],
+                })
+              : makeImgproxyServiceDocker({
+                  runtime: yield* requireContainerRuntime,
+                  image: imgproxyResolution.image,
+                  port: config.imgproxy.port,
+                  identity,
+                  dataDir: storageConfig === false ? "" : storageConfig.dataDir,
+                  platformOs: platform.os,
+                  dependencies: [{ service: "storage", condition: "healthy" }],
+                })),
             dependencyTimeoutSeconds: storageDependencyTimeoutSeconds,
             enabled: true,
           });
         }
 
-        if (config.pgmeta !== false) {
-          const pgmetaImage = yield* requirePreparedDockerImage(prepared, "pgmeta");
+        if (config.pgmeta !== false && configuredServiceEnabled(config, "pgmeta")) {
+          const pgmetaResolution = yield* requirePreparedResolution(prepared, "pgmeta");
           defs.push({
-            ...makePgmetaServiceDocker({
-              runtime: yield* requireContainerRuntime,
-              image: pgmetaImage,
-              identity,
-              port: config.pgmeta.port,
-              dbHost: serviceHost,
-              dbPort: config.dbPort,
-              platformOs: platform.os,
-              dependencies: postgresDependencies,
-            }),
+            ...(pgmetaResolution.type === "binary"
+              ? makePgmetaServiceNative({
+                  binPath: pgmetaResolution.path,
+                  port: config.pgmeta.port,
+                  dbPort: config.dbPort,
+                  dependencies: postgresDependencies,
+                })
+              : makePgmetaServiceDocker({
+                  runtime: yield* requireContainerRuntime,
+                  image: pgmetaResolution.image,
+                  identity,
+                  port: config.pgmeta.port,
+                  dbHost: serviceHost,
+                  dbPort: config.dbPort,
+                  platformOs: platform.os,
+                  dependencies: postgresDependencies,
+                })),
             dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
             enabled: true,
           });
         }
 
-        if (config.analytics !== false) {
-          const analyticsImage = yield* requirePreparedDockerImage(prepared, "analytics");
-          defs.push({
-            ...makeAnalyticsServiceDocker({
-              runtime: yield* requireContainerRuntime,
-              image: analyticsImage,
-              identity,
+        if (config.analytics !== false && configuredServiceEnabled(config, "analytics")) {
+          const analyticsResolution = yield* requirePreparedResolution(prepared, "analytics");
+          if (analyticsResolution.type === "binary") {
+            yield* prepareNativeDirectory(
+              join(config.runtimeRoot, "analytics"),
+              "Failed to prepare the native Analytics runtime directory",
+            );
+            const bundle = makeAnalyticsServicesNative({
+              binPath: analyticsResolution.path,
+              runtimeRoot: config.runtimeRoot,
               hostPort: config.analytics.port,
-              platformOs: platform.os,
-              dbHost: serviceHost,
               dbPort: config.dbPort,
               apiKey: config.analytics.apiKey,
               backend: config.analytics.backend,
               dependencies: postgresDependencies,
-            }),
-            dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
-            enabled: true,
-          });
+            });
+            defs.push(
+              {
+                ...bundle.migrate,
+                dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
+                enabled: true,
+              },
+              {
+                ...bundle.server,
+                dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
+                enabled: true,
+              },
+            );
+          } else {
+            defs.push({
+              ...makeAnalyticsServiceDocker({
+                runtime: yield* requireContainerRuntime,
+                image: analyticsResolution.image,
+                identity,
+                hostPort: config.analytics.port,
+                platformOs: platform.os,
+                dbHost: serviceHost,
+                dbPort: config.dbPort,
+                apiKey: config.analytics.apiKey,
+                backend: config.analytics.backend,
+                dependencies: postgresDependencies,
+              }),
+              dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
+              enabled: true,
+            });
+          }
         }
 
-        if (config.vector !== false) {
+        if (config.vector !== false && configuredServiceEnabled(config, "vector")) {
           const analyticsConfig = config.analytics;
-          const vectorImage = yield* requirePreparedDockerImage(prepared, "vector");
-          defs.push({
-            ...makeVectorServiceDocker({
-              runtime: yield* requireContainerRuntime,
-              image: vectorImage,
-              identity,
-              serviceHost,
-              analyticsPort: analyticsConfig === false ? 0 : analyticsConfig.port,
-              analyticsApiKey: analyticsConfig === false ? "api-key" : analyticsConfig.apiKey,
-              platformOs: platform.os,
-              dependencies: [{ service: "analytics", condition: "healthy" }],
-            }),
-            dependencyTimeoutSeconds: analyticsDependencyTimeoutSeconds,
-            enabled: true,
-          });
+          const vectorResolution = yield* requirePreparedResolution(prepared, "vector");
+          if (analyticsConfig === false) {
+            return yield* new StackBuildError({
+              detail: "vector requires analytics to be enabled",
+              reason: "invalid_config",
+            });
+          }
+          if (vectorResolution.type === "binary") {
+            const adminPort = config.vector.adminPort;
+            if (adminPort === undefined) {
+              return yield* new StackBuildError({
+                detail: "Native Vector requires a resolved private admin port",
+                reason: "invalid_config",
+              });
+            }
+            yield* prepareVectorConfig({
+              runtimeRoot: config.runtimeRoot,
+              adminPort,
+              analyticsPort: analyticsConfig.port,
+              analyticsApiKey: analyticsConfig.apiKey,
+            });
+            defs.push({
+              ...makeVectorServiceNative({
+                binPath: vectorResolution.path,
+                runtimeRoot: config.runtimeRoot,
+                adminPort,
+                analyticsPort: analyticsConfig.port,
+                analyticsApiKey: analyticsConfig.apiKey,
+                dependencies: [{ service: "analytics", condition: "healthy" }],
+              }),
+              dependencyTimeoutSeconds: analyticsDependencyTimeoutSeconds,
+              enabled: true,
+            });
+          } else {
+            defs.push({
+              ...makeVectorServiceDocker({
+                runtime: yield* requireContainerRuntime,
+                image: vectorResolution.image,
+                identity,
+                serviceHost,
+                analyticsPort: analyticsConfig.port,
+                analyticsApiKey: analyticsConfig.apiKey,
+                platformOs: platform.os,
+                dependencies: [{ service: "analytics", condition: "healthy" }],
+              }),
+              dependencyTimeoutSeconds: analyticsDependencyTimeoutSeconds,
+              enabled: true,
+            });
+          }
         }
 
-        if (config.pooler !== false) {
-          const poolerImage = yield* requirePreparedDockerImage(prepared, "pooler");
-          defs.push({
-            ...makePoolerServiceDocker({
-              runtime: yield* requireContainerRuntime,
-              image: poolerImage,
-              identity,
-              hostAdminPort: config.pooler.apiPort,
-              hostPort: config.pooler.port,
-              platformOs: platform.os,
-              dbHost: serviceHost,
+        if (config.pooler !== false && configuredServiceEnabled(config, "pooler")) {
+          const poolerResolution = yield* requirePreparedResolution(prepared, "pooler");
+          if (poolerResolution.type === "binary") {
+            yield* prepareNativeDirectory(
+              join(config.runtimeRoot, "pooler"),
+              "Failed to prepare the native Pooler runtime directory",
+            );
+            const bundle = makePoolerServicesNative({
+              binPath: poolerResolution.path,
+              runtimeRoot: config.runtimeRoot,
+              adminPort: config.pooler.apiPort,
+              port: config.pooler.port,
               dbPort: config.dbPort,
               poolMode: config.pooler.mode,
               defaultPoolSize: config.pooler.defaultPoolSize,
@@ -611,43 +809,109 @@ export class StackBuilder extends Context.Service<
               encryptionKey: config.pooler.encryptionKey,
               secretKeyBase: config.pooler.secretKeyBase,
               dependencies: postgresDependencies,
-            }),
-            dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
-            enabled: true,
-          });
+            });
+            defs.push(
+              {
+                ...bundle.migrate,
+                dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
+                enabled: true,
+              },
+              {
+                ...bundle.bootstrap,
+                dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
+                enabled: true,
+              },
+              {
+                ...bundle.server,
+                dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
+                enabled: true,
+              },
+            );
+          } else {
+            defs.push({
+              ...makePoolerServiceDocker({
+                runtime: yield* requireContainerRuntime,
+                image: poolerResolution.image,
+                identity,
+                hostAdminPort: config.pooler.apiPort,
+                hostPort: config.pooler.port,
+                platformOs: platform.os,
+                dbHost: serviceHost,
+                dbPort: config.dbPort,
+                poolMode: config.pooler.mode,
+                defaultPoolSize: config.pooler.defaultPoolSize,
+                maxClientConn: config.pooler.maxClientConn,
+                jwtSecret: config.jwtSecret,
+                tenantId: config.pooler.tenantId,
+                encryptionKey: config.pooler.encryptionKey,
+                secretKeyBase: config.pooler.secretKeyBase,
+                dependencies: postgresDependencies,
+              }),
+              dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
+              enabled: true,
+            });
+          }
         }
 
-        if (config.studio !== false) {
+        if (config.studio !== false && configuredServiceEnabled(config, "studio")) {
           const pgmetaConfig = config.pgmeta;
-          const studioImage = yield* requirePreparedDockerImage(prepared, "studio");
+          const studioResolution = yield* requirePreparedResolution(prepared, "studio");
+          const analyticsConfig = config.analytics;
+          const pgmetaEnabled = configuredServiceEnabled(config, "pgmeta");
+          const analyticsEnabled = configuredServiceEnabled(config, "analytics");
+          const pgmetaPort = pgmetaConfig === false ? 0 : pgmetaConfig.port;
+          const analyticsPort = analyticsConfig === false ? 0 : analyticsConfig.port;
+          const analyticsBackend = analyticsConfig === false ? "postgres" : analyticsConfig.backend;
+          const analyticsApiKey = analyticsConfig === false ? "api-key" : analyticsConfig.apiKey;
           defs.push({
-            ...makeStudioServiceDocker({
-              runtime: yield* requireContainerRuntime,
-              image: studioImage,
-              identity,
-              port: config.studio.port,
-              apiUrl: config.studio.apiUrl,
-              publicApiUrl: `http://127.0.0.1:${config.apiPort}`,
-              pgmetaUrl: pgmetaConfig === false ? "" : `http://${serviceHost}:${pgmetaConfig.port}`,
-              publishableKey: config.publishableKey,
-              secretKey: config.secretKey,
-              s3ProtocolAccessKeyId: LOCAL_S3_PROTOCOL_ACCESS_KEY_ID,
-              s3ProtocolAccessKeySecret: LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET,
-              jwtSecret: config.jwtSecret,
-              analyticsEnabled: config.analytics !== false,
-              analyticsBackend: config.analytics !== false ? config.analytics.backend : "postgres",
-              analyticsUrl:
-                config.analytics !== false ? `http://${serviceHost}:${config.analytics.port}` : "",
-              analyticsApiKey: config.analytics !== false ? config.analytics.apiKey : "api-key",
-              platformOs: platform.os,
-              dependencies:
-                config.analytics === false
-                  ? [{ service: "pgmeta", condition: "healthy" }]
-                  : [
-                      { service: "pgmeta", condition: "healthy" },
-                      { service: "analytics", condition: "healthy" },
-                    ],
-            }),
+            ...(studioResolution.type === "binary"
+              ? makeStudioServiceNative({
+                  binPath: studioResolution.path,
+                  port: config.studio.port,
+                  apiUrl: config.studio.apiUrl,
+                  publicApiUrl: `http://127.0.0.1:${config.apiPort}`,
+                  pgmetaUrl: !pgmetaEnabled ? "" : `http://127.0.0.1:${pgmetaPort}`,
+                  publishableKey: config.publishableKey,
+                  secretKey: config.secretKey,
+                  s3ProtocolAccessKeyId: LOCAL_S3_PROTOCOL_ACCESS_KEY_ID,
+                  s3ProtocolAccessKeySecret: LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET,
+                  jwtSecret: config.jwtSecret,
+                  analyticsEnabled,
+                  analyticsBackend: analyticsEnabled ? analyticsBackend : "postgres",
+                  analyticsUrl: !analyticsEnabled ? "" : `http://127.0.0.1:${analyticsPort}`,
+                  analyticsApiKey: analyticsEnabled ? analyticsApiKey : "api-key",
+                  dependencies: !analyticsEnabled
+                    ? [{ service: "pgmeta", condition: "healthy" }]
+                    : [
+                        { service: "pgmeta", condition: "healthy" },
+                        { service: "analytics", condition: "healthy" },
+                      ],
+                })
+              : makeStudioServiceDocker({
+                  runtime: yield* requireContainerRuntime,
+                  image: studioResolution.image,
+                  identity,
+                  port: config.studio.port,
+                  apiUrl: config.studio.apiUrl,
+                  publicApiUrl: `http://127.0.0.1:${config.apiPort}`,
+                  pgmetaUrl: !pgmetaEnabled ? "" : `http://${serviceHost}:${pgmetaPort}`,
+                  publishableKey: config.publishableKey,
+                  secretKey: config.secretKey,
+                  s3ProtocolAccessKeyId: LOCAL_S3_PROTOCOL_ACCESS_KEY_ID,
+                  s3ProtocolAccessKeySecret: LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET,
+                  jwtSecret: config.jwtSecret,
+                  analyticsEnabled,
+                  analyticsBackend: analyticsEnabled ? analyticsBackend : "postgres",
+                  analyticsUrl: analyticsEnabled ? `http://${serviceHost}:${analyticsPort}` : "",
+                  analyticsApiKey: analyticsEnabled ? analyticsApiKey : "api-key",
+                  platformOs: platform.os,
+                  dependencies: !analyticsEnabled
+                    ? [{ service: "pgmeta", condition: "healthy" }]
+                    : [
+                        { service: "pgmeta", condition: "healthy" },
+                        { service: "analytics", condition: "healthy" },
+                      ],
+                })),
             dependencyTimeoutSeconds: analyticsDependencyTimeoutSeconds,
             enabled: true,
           });
