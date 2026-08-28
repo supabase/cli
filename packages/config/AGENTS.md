@@ -100,8 +100,9 @@ surface must update that test deliberately — it is not meant to be a silent pa
 `dist/` is gitignored and rebuilt on demand — no build output is checked in. The public type
 surface is instead enforced per-PR by export snapshots and purity walkers (see "Testing" below)
 plus the repo-root `pnpm check:config-api` (`tools/config-api-compare.ts`), which diffs this
-package's declaration output between the PR base and head commits and is advisory at PR time. A
-release-time tarball diff is planned under CLI-2233 as the hard gate.
+package's declaration output between the PR base and head commits and is advisory at PR time. The
+hard gate is a release-time tarball diff — `tools/config-release-gate.ts`, run by the `plan` job in
+`.github/workflows/release-config.yml` — see "Releases" below.
 
 ### Publishing the tarball (CLI-2234)
 
@@ -132,3 +133,38 @@ own guarantees and must stay green after any entrypoint or type-surface change:
 - `scripts/json-schema-postprocess.unit.test.ts` / `scripts/build-artifacts.unit.test.ts` — the
   JSON Schema post-processing `renderJsonSchema` applies (non-finite-number `anyOf` collapse,
   `$id`/`title`/`description`), the second against the real generated documents.
+
+## Releases (CLI-2233)
+
+This package has its own release train, independent of the CLI's — a `fix:`/`feat:` commit
+elsewhere in the monorepo never releases `@supabase/config`, and vice versa.
+
+- **Path-filtered conventional commits.** `semantic-release` computes the next version from commits
+  scoped to `packages/config/` via `scripts/semantic-release-path-filter.ts`.
+- **Tag format:** `config-v<version>` — never collides with the CLI's `v<version>` tags.
+- **Stable-only, from `develop`.** No beta/alpha channel; every release publishes to npm under the
+  `latest` dist-tag.
+- **Workflow:** `.github/workflows/release-config.yml` — a `plan` job computes the version and runs
+  the type-surface gate, a human approves the `config-release` GitHub environment (reviewing the
+  plan job's step summary: release notes + type-surface diff), then an OIDC/provenance publish job
+  runs.
+- **`package.json`'s `version` field is never committed.** It is set at publish time from the
+  computed version — never hand-bump it, and never hand-push a `config-v*` tag.
+- **Local dry runs:** `scripts/release-plan.ts` runs the plan locally without publishing;
+  `tools/config-release-gate.ts --tarball` rehearses the type-surface gate locally.
+
+### One-time setup (tracked under CLI-2169)
+
+Three things must be settled before the first real publish:
+
+1. The `config-release` GitHub environment needs required reviewers configured in repo settings. An
+   environment referenced by a workflow is auto-created WITHOUT protection rules — until reviewers
+   are added, the approval gate is inert.
+2. npm trusted publishing must be configured for the package, which requires the package to exist
+   first. The very first publish is a manual/token bootstrap; afterward, the trusted publisher is
+   set to repo `supabase/cli`, workflow `release-config.yml`, environment `config-release`.
+3. Decide the first version. With no `config-v*` tag on `develop`, semantic-release cuts `1.0.0`.
+   To start on the `0.x` line instead, push a seed tag (e.g. `config-v0.1.0`) on a `develop` commit
+   before flipping `private` — semantic-release then treats `0.1.0` as the last release and
+   computes the next version from the commits after that tag. This is the single exception to the
+   "never hand-push a `config-v*` tag" rule above.

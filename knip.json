@@ -35,7 +35,7 @@
       "ignoreDependencies": ["undici"]
     },
     "packages/config": {
-      "entry": ["src/**/*.test.ts"]
+      "entry": ["scripts/semantic-release-path-filter.ts", "src/**/*.test.ts"]
     },
     "packages/process-compose": {
       "entry": ["src/**/*.test.ts", "tests/**/*.ts"]

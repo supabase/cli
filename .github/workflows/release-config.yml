@@ -1,0 +1,231 @@
+name: Release Config
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - "packages/config/**"
+      - ".github/workflows/release-config.yml"
+  # workflow_dispatch is the manual re-cut path, mirroring the CLI's Release
+  # workflow. Defaults to `true` so a stray "Run workflow" click can't
+  # accidentally publish — operators must consciously untick this.
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Dry run (skip actual publishing)
+        required: false
+        type: boolean
+        default: true
+
+# A distinct group from the CLI Release workflow's (keyed on the workflow
+# name, which differs) — a config release never queues behind a CLI release.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Plan release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      should_release: ${{ steps.plan.outputs.should_release }}
+      version: ${{ steps.plan.outputs.version }}
+      npm_tag: ${{ steps.plan.outputs.npm_tag }}
+      blocked_on_private: ${{ steps.plan.outputs.blocked_on_private }}
+      dry_run: ${{ steps.plan.outputs.dry_run }}
+      notes: ${{ steps.notes.outputs.notes }}
+    steps:
+      # semantic-release runs `git push --dry-run HEAD:<branch>` as part of
+      # verifyAuth even in `dry_run: true` mode, so the token must have push
+      # access to the protected `develop` branch. The default GITHUB_TOKEN
+      # doesn't, so we mint an App-installation token from the same App used
+      # by the CLI's release pipeline.
+      - id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      # `persist-credentials: false` is required: otherwise checkout caches the
+      # default GITHUB_TOKEN as an `http.extraheader` in git config, and that
+      # Authorization header overrides the App token semantic-release puts in
+      # the push URL — making the dry-push identify as `github-actions[bot]`
+      # and get rejected by branch protection.
+      - uses: useblacksmith/checkout@6fd481652155169ed4d2f25ebaf97464f685175f # v1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Unlike the CLI's plan job, the plan driver here runs from inside the
+      # workspace (turbo, semantic-release, effect, …), so it needs node_modules.
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      - id: plan
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          EVENT: ${{ github.event_name }}
+          DISPATCH_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          pnpm exec bun packages/config/scripts/release-plan.ts --notes-out "$RUNNER_TEMP/config-release-notes.md"
+          # Push events are never dry; workflow_dispatch dry-runs unless the
+          # operator explicitly unticks the input.
+          if [[ "$EVENT" == "workflow_dispatch" && "$DISPATCH_DRY_RUN" == "true" ]]; then
+            echo "dry_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "dry_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: notes
+        if: steps.plan.outputs.version != ''
+        run: |
+          delimiter="$(uuidgen)"
+          {
+            echo "notes<<${delimiter}"
+            cat "$RUNNER_TEMP/config-release-notes.md"
+            echo "${delimiter}"
+          } >> "$GITHUB_OUTPUT"
+
+      # Both steps also run on private-blocked pushes (should_release=false,
+      # version set) — every config push rehearses the full release train
+      # while CLI-2169 hasn't flipped `private` yet.
+      - name: Build @supabase/config
+        if: steps.plan.outputs.version != ''
+        run: pnpm exec turbo run @supabase/config#build
+
+      - name: Run type-surface release gate
+        if: steps.plan.outputs.version != ''
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: pnpm exec bun tools/config-release-gate.ts --version "$VERSION"
+
+  publish:
+    name: Publish
+    needs: plan
+    if: needs.plan.outputs.should_release == 'true' && needs.plan.outputs.dry_run != 'true'
+    # npm provenance verification rejects non-GitHub-hosted runners with
+    # E422 ("Unsupported GitHub Actions runner environment: self-hosted").
+    # Blacksmith runners count as self-hosted from sigstore's POV, so the
+    # publish job must stay on a github-hosted runner. The job is short and
+    # not compute-bound, so the wall-clock cost is negligible.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: config-release
+      # This environment must be configured with required reviewers in repo
+      # settings. The approver reviews the plan job's step summary (release
+      # notes + type-surface gate diff) before approving — that approval IS
+      # the hard semver gate.
+      url: https://www.npmjs.com/package/@supabase/config/v/${{ needs.plan.outputs.version }}
+    # OIDC trusted publishing + provenance — same as release-shared.yml; no
+    # NPM_TOKEN anywhere.
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      NPM_TAG: ${{ needs.plan.outputs.npm_tag }}
+    steps:
+      - name: Generate release repository token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Setup
+        uses: ./.github/actions/setup
+        with:
+          dependency-firewall-token: ${{ secrets.DF_FIREWALL_TOKEN }}
+
+      # Rebuild in-job: same commit and pinned toolchain as the plan job's
+      # gated build, not an artifact carried over between jobs.
+      - name: Build @supabase/config
+        run: pnpm exec turbo run @supabase/config#build
+
+      # Versions live in `config-v*` tags, never committed — mirroring how the
+      # CLI never commits versions either.
+      - name: Set package version
+        working-directory: packages/config
+        run: npm pkg set version="${VERSION}"
+
+      - name: Guard against a still-private package
+        working-directory: packages/config
+        run: |
+          set -euo pipefail
+          if [[ "$(npm pkg get private)" == "true" ]]; then
+            echo "packages/config is still private: true — flip it under CLI-2169 before publishing." >&2
+            exit 1
+          fi
+
+      # Idempotent, mirroring publish.ts's registry-probe intent: a re-run
+      # after a post-publish failure must not die on EPUBLISHCONFLICT.
+      - name: Publish to npm
+        working-directory: packages/config
+        run: |
+          set -euo pipefail
+          if npm view "@supabase/config@${VERSION}" version >/dev/null 2>&1; then
+            echo "@supabase/config@${VERSION} already on npm; skipping publish."
+          else
+            pnpm publish --provenance --tag "${NPM_TAG}" --no-git-checks
+          fi
+
+      - name: Configure git for release pushes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      # Push the tag to origin as soon as npm has the bytes, before any
+      # downstream step that can fail. Without this, a failure in the GH
+      # release step leaves origin with no tag for the version that is now
+      # live on npm — and a subsequent plan would recompute the same version
+      # against stale bytes. Idempotent: skips push if the tag is already on
+      # origin (e.g. a re-run of a job that previously got past this step).
+      - name: Push version tag
+        run: |
+          set -euo pipefail
+          tag="config-v${VERSION}"
+          if git ls-remote --tags origin "refs/tags/${tag}" | grep -q .; then
+            echo "Tag ${tag} already on origin; skipping push."
+          else
+            git tag -a "${tag}" -m "Release ${tag}"
+            git push origin "${tag}"
+          fi
+
+      # Write via env-var indirection, never inline shell interpolation of the
+      # notes — the notes are LLM/commit-derived markdown and must not be
+      # spliced directly into a shell command line.
+      - name: Write release notes to file
+        env:
+          NOTES: ${{ needs.plan.outputs.notes }}
+        run: printf '%s\n' "$NOTES" > "$RUNNER_TEMP/config-release-notes.md"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+        with:
+          tag_name: config-v${{ needs.plan.outputs.version }}
+          name: "@supabase/config v${{ needs.plan.outputs.version }}"
+          body_path: ${{ runner.temp }}/config-release-notes.md
+          draft: false
+          prerelease: false
+          # The CLI's install scripts and setup-cli resolve
+          # releases/latest/download/..., so a config release must never
+          # become the repo's "latest" release.
+          make_latest: "false"

@@ -431,6 +431,12 @@ importers:
       '@effect/platform-node':
         specifier: 'catalog:'
         version: 4.0.0-rc.111(effect@4.0.0-rc.111)(redis@6.2.1)
+      '@semantic-release/commit-analyzer':
+        specifier: ^13.0.1
+        version: 13.0.1(semantic-release@25.0.9(typescript@7.0.2))
+      '@semantic-release/release-notes-generator':
+        specifier: ^14.1.1
+        version: 14.1.1(semantic-release@25.0.9(typescript@7.0.2))
       '@tsconfig/bun':
         specifier: 'catalog:'
         version: 1.0.11
@@ -443,6 +449,9 @@ importers:
       effect:
         specifier: 'catalog:'
         version: 4.0.0-rc.111
+      semantic-release:
+        specifier: ^25.0.9
+        version: 25.0.9(typescript@7.0.2)
       typescript:
         specifier: 'catalog:'
         version: 7.0.2
