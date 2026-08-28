@@ -2233,9 +2233,7 @@ describe("legacy db pull", () => {
         resolvedRef: "abcdefghijklmnopqrst",
       });
       return Effect.gen(function* () {
-        yield* legacyDbPull(
-          flags({ linked: Option.some(true), diffEngine: Option.some("migra") }),
-        );
+        yield* legacyDbPull(flags({ linked: Option.some(true), diffEngine: Option.some("migra") }));
         const createArgs = s.shadowSpawned.find((c) => c.args[0] === "create")?.args ?? [];
         expect(createArgs).toContain("--tmpfs");
       }).pipe(Effect.provide(s.layer));
