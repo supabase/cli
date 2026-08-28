@@ -68,6 +68,22 @@ updated in the same commit as each completed slice. Scratch review packages live
 > before Docker/Podman adapters exist — this separates protocol authority from engine mechanics —
 > cost if wrong: the engine task may require a small activation interface adjustment.
 
+> **Ruling:** Validate `StackId` as the actual 64-character lowercase SHA-256 digest before it can
+> reach identity-scoped filesystem paths — “opaque” means callers do not interpret it, not that
+> arbitrary path-like strings are valid — cost if wrong: a future non-SHA identity encoding will need
+> an explicitly versioned schema change.
+
+> **Ruling:** Derive Git `workspaceId` and `checkoutId` from the canonical common Git directory and
+> checkout-specific Git directory, with the full symbolic branch ref as `branchContext`; ordinary
+> folders use their canonical project root and the documented ordinary-workspace marker — this avoids
+> another mutable identity registry — cost if wrong: physically moving a checkout intentionally
+> produces a new identity instead of reattaching its old stacks.
+
+> **Ruling:** Hash each identity tuple field as a four-byte big-endian UTF-8 byte length followed by
+> the field bytes, then SHA-256 the concatenation — this is a single unambiguous mechanism with no
+> separator escaping — cost if wrong: fields larger than 4 GiB are unrepresentable, which is outside
+> any valid filesystem/ref/name input.
+
 When the design does not determine another choice, record it here as:
 
 > **Ruling:** decision — reason — cost if wrong.
@@ -119,3 +135,22 @@ Implementation continues after recording a ruling; this file is not a question q
 - `pnpm --dir packages/stack exec vitest run --project integration src/public/public-model.integration.test.ts`
   RED: failed before implementation with `Cannot find module './Status.ts'`; GREEN: 3 tests passed.
 - `pnpm --dir packages/stack types:check` — passed.
+
+### Task 2 — 2026-08-28
+
+- Added read-only deterministic identity resolution for canonical Git checkouts, linked worktrees,
+  detached HEADs, nested project roots, and ordinary folders. Git metadata is read through Effect
+  `FileSystem`/`Path`; no registry or identity-marker writes occur during discovery.
+- Added length-delimited UTF-8 tuple hashing through Effect `Crypto`; `StackIdSchema` now accepts
+  only the 64 lowercase hexadecimal characters emitted by SHA-256.
+- Added exact StackId-scoped state/data/log/runtime/control/temporary paths with runtime id
+  validation and no path traversal; changed the public status fixture to a valid digest.
+- Added real temporary Git/worktree and path-safety integration scenarios (9 tests).
+- `pnpm --dir packages/stack exec vitest run --project integration src/identity/identity.integration.test.ts`
+  RED before implementation: failed to import the missing `../state/Paths.ts` module.
+- `pnpm --dir packages/stack exec vitest run --project integration src/identity/identity.integration.test.ts`
+  GREEN: 9 tests passed.
+- `pnpm --dir packages/stack exec vitest run --project integration src/public/public-model.integration.test.ts`
+  GREEN: 3 tests passed.
+- `pnpm --dir packages/stack types:check` — passed.
+- `pnpm exec oxfmt --check packages/stack/src/identity packages/stack/src/state packages/stack/src/public/StackId.ts packages/stack/src/public/public-model.integration.test.ts` — passed.

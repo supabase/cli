@@ -16,7 +16,7 @@ const CAPABILITY_NAMES = [
 ] as const;
 
 const STATUS_FIXTURE = {
-  id: "stack_local",
+  id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
   lifecycle: "stopped",
   desiredLifecycle: "stopped",
   runtime: { kind: "native" },

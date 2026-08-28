@@ -183,15 +183,20 @@ artifact keys, state schemas, drivers, or control protocols.
 - Create: `packages/stack/src/identity/Identity.ts`, `GitIdentity.ts`, `FolderIdentity.ts`
 - Create: `packages/stack/src/state/Paths.ts`
 - Create: `packages/stack/src/identity/identity.integration.test.ts`
+- Modify: `packages/stack/src/public/StackId.ts`, `public-model.integration.test.ts`
+- Modify: `packages/stack/package.json`, `pnpm-lock.yaml` to add the concrete Node platform test layer;
+  core identity/path functions retain visible `FileSystem` and `Path` requirements
 
 **Interfaces:**
 
 - Produces `resolveStackIdentity({ projectRoot, name })`, `deriveStackId(identity)`, and
   exact identity-scoped paths beneath the user-local stack state root.
+- `StackIdSchema` accepts exactly the 64 lowercase hexadecimal characters produced by SHA-256; path
+  APIs accept only this decoded branded value.
 - Path construction accepts only validated `StackId` values and cannot address a parent, sibling, or
   another identity.
 
-- [ ] **Step 1: Write real filesystem/worktree and path-safety tests and verify RED**
+- [x] **Step 1: Write real filesystem/worktree and path-safety tests and verify RED**
 
   Cover repeat identity, named isolation, sibling worktrees, detached checkout, nested project roots,
   branch changes, invalid ids, and exact path containment.
@@ -201,23 +206,25 @@ artifact keys, state schemas, drivers, or control protocols.
     src/identity/identity.integration.test.ts
   ```
 
-- [ ] **Step 2: Implement identity without a registry daemon**
+- [x] **Step 2: Implement identity without a registry daemon**
 
   Canonicalize the project root, derive the tuple documented by the spec, and hash length-delimited
   UTF-8 components into an opaque lowercase digest. Discovery performs no writes.
 
-- [ ] **Step 3: Implement exact state-path derivation with platform services**
+- [x] **Step 3: Implement exact state-path derivation with platform services**
 
   Keep `FileSystem` and `Path` requirements visible. Validate identity before joining path segments;
   expose stack root, state document, data, logs, control metadata, and temporary sibling paths without
   performing lifecycle mutation.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
   Run the targeted identity file and package type-check, update progress, then commit:
 
   ```bash
-  git add packages/stack docs/superpowers/plans/2026-08-28-stack-runtime-rewrite-progress.md
+  git add packages/stack pnpm-lock.yaml \
+    docs/superpowers/plans/2026-08-28-stack-runtime-rewrite.md \
+    docs/superpowers/plans/2026-08-28-stack-runtime-rewrite-progress.md
   git commit -m "feat(stack): add identity and safe state paths"
   ```
 
