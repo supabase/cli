@@ -63,7 +63,11 @@ describe("public stack model", () => {
     Effect.gen(function* () {
       const exit = yield* Schema.decodeUnknownEffect(StackStatusSchema)({
         ...STATUS_FIXTURE,
-        capabilities: [...STATUS_FIXTURE.capabilities, STATUS_FIXTURE.capabilities[0]],
+        capabilities: STATUS_FIXTURE.capabilities.map((capability, index) =>
+          index === STATUS_FIXTURE.capabilities.length - 1
+            ? { ...capability, name: "database" }
+            : capability,
+        ),
       }).pipe(Effect.exit);
 
       expect(Exit.isFailure(exit)).toBe(true);
