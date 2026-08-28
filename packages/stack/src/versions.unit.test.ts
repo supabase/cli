@@ -169,6 +169,31 @@ describe("dockerImageForService", () => {
       "ghcr.io/supabase/supavisor:v2.9.10",
     );
   });
+
+  it("publishes portable host launcher paths for native service artifacts", () => {
+    const platform = { os: "linux", arch: "x64" } as const;
+
+    expect(nativeReleaseForService("realtime", DEFAULT_VERSIONS.realtime, platform)).toMatchObject({
+      requiredRuntimePaths: ["bin/migrate", "bin/realtime", "bin/server"],
+    });
+    expect(nativeReleaseForService("storage", DEFAULT_VERSIONS.storage, platform)).toMatchObject({
+      requiredRuntimePaths: ["bin/storage"],
+    });
+    expect(nativeReleaseForService("pgmeta", DEFAULT_VERSIONS.pgmeta, platform)).toMatchObject({
+      requiredRuntimePaths: ["bin/pgmeta"],
+    });
+    expect(nativeReleaseForService("studio", DEFAULT_VERSIONS.studio, platform)).toMatchObject({
+      requiredRuntimePaths: ["bin/studio"],
+    });
+    expect(
+      nativeReleaseForService("analytics", DEFAULT_VERSIONS.analytics, platform),
+    ).toMatchObject({
+      requiredRuntimePaths: ["bin/logflare"],
+    });
+    expect(nativeReleaseForService("pooler", DEFAULT_VERSIONS.pooler, platform)).toMatchObject({
+      requiredRuntimePaths: ["bin/migrate", "bin/server"],
+    });
+  });
 });
 
 describe("normalizeServiceVersion", () => {

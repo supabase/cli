@@ -222,7 +222,7 @@ export const SERVICE_CATALOG: {
         provider: "github.com/supabase/slim-services",
         resolve: (version, platform) =>
           nativeRelease("realtime", version, platform, {
-            requiredRuntimePaths: ["usr/bin/tini", "usr/bin/sh", "app/entry.sh", "app/bin/server"],
+            requiredRuntimePaths: ["bin/migrate", "bin/realtime", "bin/server"],
           }),
       },
     },
@@ -241,7 +241,7 @@ export const SERVICE_CATALOG: {
         provider: "github.com/supabase/slim-services",
         resolve: (version, platform) =>
           nativeRelease("storage", version, platform, {
-            requiredRuntimePaths: ["node/bin/node", "app/dist/start/server.js"],
+            requiredRuntimePaths: ["bin/storage"],
           }),
       },
     },
@@ -298,7 +298,7 @@ export const SERVICE_CATALOG: {
         provider: "github.com/supabase/slim-services",
         resolve: (version, platform) =>
           nativeRelease("pgmeta", version, platform, {
-            requiredRuntimePaths: ["node/bin/node", "app/dist/server/server.js"],
+            requiredRuntimePaths: ["bin/pgmeta"],
           }),
       },
     },
@@ -317,11 +317,7 @@ export const SERVICE_CATALOG: {
         provider: "github.com/supabase/slim-services",
         resolve: (version, platform) =>
           nativeRelease("studio", version, platform, {
-            requiredRuntimePaths: [
-              "node/bin/node",
-              "app/apps/studio/docker-entrypoint.mjs",
-              "app/apps/studio/server.js",
-            ],
+            requiredRuntimePaths: ["bin/studio"],
           }),
       },
     },
@@ -340,7 +336,7 @@ export const SERVICE_CATALOG: {
         provider: "github.com/supabase/slim-services",
         resolve: (version, platform) =>
           nativeRelease("analytics", version, platform, {
-            requiredRuntimePaths: ["usr/bin/tini", "usr/bin/sh", "app/entry.sh"],
+            requiredRuntimePaths: ["bin/logflare"],
           }),
       },
     },
@@ -378,14 +374,7 @@ export const SERVICE_CATALOG: {
         provider: "github.com/supabase/slim-services",
         resolve: (version, platform) =>
           nativeRelease("pooler", version, platform, {
-            requiredRuntimePaths: [
-              "usr/bin/tini",
-              "usr/bin/sh",
-              "app/entry.sh",
-              "app/bin/migrate",
-              "app/bin/supavisor",
-              "app/bin/server",
-            ],
+            requiredRuntimePaths: ["bin/migrate", "bin/server"],
           }),
       },
     },
