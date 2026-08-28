@@ -7,10 +7,12 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "test": "nx run-many -t test:core test:e2e --projects=$npm_package_name",
-    "test:core": "nx run-many -t test:unit test:integration --projects=$npm_package_name",
-    "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name,@supabase/root",
-    "fix:all": "nx run-many -t lint:fix fmt:fix knip:fix --projects=$npm_package_name,@supabase/root"
+    "test": "pnpm run test:unit && pnpm run test:integration",
+    "test:unit": "pnpm exec turbo run @supabase/process-compose#test:unit:run --",
+    "test:unit:run": "bun --bun vitest run --project unit --coverage.reportsDirectory=coverage/unit",
+    "test:integration": "pnpm exec turbo run @supabase/process-compose#test:integration:run --",
+    "test:integration:run": "bun --bun vitest run --project integration --coverage.reportsDirectory=coverage/integration",
+    "types:check": "tsc --noEmit"
   },
   "dependencies": {
     "effect": "catalog:"

@@ -3,6 +3,7 @@ import { loadCliConfig } from "@supabase/config/effect";
 import {
   DEFAULT_MANAGED_STACK_NAME,
   daemonLayer,
+  restartManagedStackForUpgrade,
   fillServiceVersionManifest,
   resolveStackSummary,
   type StackSummary,
@@ -35,31 +36,7 @@ import { inkLayer } from "../../../shared/runtime/ink.layer.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { withCommandInstrumentation } from "../../../shared/telemetry/command-instrumentation.ts";
 import { start } from "./start.handler.ts";
-
-/**
- * Deprecation warning shown when `[api].auto_expose_new_tables = true` is loaded from
- * config.toml. Mirrors the Go CLI warning emitted during config validation
- * (`apps/cli-go/pkg/config/config.go`).
- */
-export const AUTO_EXPOSE_NEW_TABLES_DEPRECATION_WARNING =
-  "api.auto_expose_new_tables is deprecated and will be removed on 2026-10-30. Remove the field or set it to false to adopt the new default of revoking Data API privileges on new entities in the public schema.";
-
-/**
- * Resolves the tri-state `[api].auto_expose_new_tables` flag from config.toml.
- *
- *   - unset (`undefined`): defaults to `false` (revoke), matching the 2026-05-30 cloud flip.
- *   - `true`: keep the legacy auto-expose behaviour, but surface a deprecation warning.
- *   - `false`: revoke explicitly (no warning).
- */
-export function resolveAutoExposeNewTables(value: boolean | undefined): {
-  readonly autoExposeNewTables: boolean;
-  readonly deprecationWarning: string | undefined;
-} {
-  return {
-    autoExposeNewTables: value ?? false,
-    deprecationWarning: value === true ? AUTO_EXPOSE_NEW_TABLES_DEPRECATION_WARNING : undefined,
-  };
-}
+import { CLI_VERSION } from "../../../shared/cli/version.ts";
 
 export const excludeFlag = Flag.choice("exclude", excludedStackServices).pipe(
   Flag.atMost(excludedStackServices.length),
@@ -89,7 +66,12 @@ interface StartVersionStateShape {
   readonly launch: {
     readonly mode?: StartMode;
     readonly versions: Readonly<Record<string, string>>;
-    readonly excludedServices: ReadonlyArray<ExcludedStackService>;
+    /**
+     * Preserve the managed document's raw exclusions. The document may contain
+     * service names introduced by a newer CLI; narrowing is only appropriate
+     * when deriving the current runtime configuration.
+     */
+    readonly excludedServices: ReadonlyArray<string>;
   };
   readonly previousUpdateFingerprint?: string;
   readonly drift?: NonNullable<StackSummary["drift"]>;
@@ -99,12 +81,28 @@ interface StartVersionStateShape {
     readonly workspacePath: string;
     readonly stackName: string;
     readonly cwd: string;
+    readonly cliVersion: string;
   };
 }
 
 export class StartVersionState extends Context.Service<StartVersionState, StartVersionStateShape>()(
   "supabase/commands/start/StartVersionState",
 ) {}
+
+/**
+ * Project the managed launch metadata observed after daemon startup into the
+ * state consumed by the start handler. The post-start summary is authoritative:
+ * an incompatible-owner upgrade restart may preserve selections from the existing
+ * daemon even when this invocation supplied different flags or version defaults.
+ * @internal
+ */
+export const startVersionStateLaunch = (
+  summary: Pick<StackSummary, "launch">,
+): StartVersionStateShape["launch"] => ({
+  mode: summary.launch.mode,
+  versions: summary.launch.versions,
+  excludedServices: summary.launch.excludedServices ?? [],
+});
 
 const flags = {
   stack: Flag.string("stack").pipe(
@@ -186,17 +184,10 @@ export const startCommand = Command.make("start", flags).pipe(
           ? undefined
           : fillServiceVersionManifest(existingSummary.versions),
       );
-      // The flag is tri-state in config.toml: unset / true / false. As of the 2026-05-30 flip,
-      // unset behaves as false (revoke the default Data API GRANTs) to match the new cloud
-      // default. Explicit true preserves the legacy auto-expose behaviour but is deprecated and
-      // emits a warning; the field is removed entirely on 2026-10-30.
       const loadedCliConfig = yield* loadCliConfig(cliProjectHome.projectRoot);
-      const { autoExposeNewTables, deprecationWarning } = resolveAutoExposeNewTables(
-        loadedCliConfig?.config.api.auto_expose_new_tables,
-      );
-      if (deprecationWarning !== undefined) {
-        yield* output.warn(deprecationWarning);
-      }
+      // Tri-state in config.toml: unset and explicit `true` both auto-expose new entities in
+      // `public` (the cloud default); only explicit `false` revokes the default Data API GRANTs.
+      const autoExposeNewTables = loadedCliConfig?.config.api.auto_expose_new_tables ?? true;
       const effectiveMode = flags.mode ?? existingSummary?.launch.mode;
       const baseStackConfig = withServiceVersions(
         toStartStackConfig(flags.exclude, effectiveMode),
@@ -229,7 +220,8 @@ export const startCommand = Command.make("start", flags).pipe(
           : { lastNotifiedUpdateFingerprint: existingSummary.lastNotifiedUpdateFingerprint }),
       };
 
-      const stackLayer = yield* daemonLayer({
+      const managedInput = {
+        cliVersion: CLI_VERSION,
         cacheRoot: cliSettings.supabaseHome,
         cwd: runtimeInfo.cwd,
         projectDir: cliProjectHome.projectRoot,
@@ -237,7 +229,20 @@ export const startCommand = Command.make("start", flags).pipe(
         portIntents,
         launch,
         ...stackConfig,
-      });
+      };
+      const stackLayer = yield* daemonLayer(managedInput).pipe(
+        Effect.catchTag("DaemonUpgradeRequired", (error) =>
+          output
+            .warn(
+              [
+                `Local stack was started with CLI v${error.oldCliVersion}. Restarting it with CLI v${error.newCliVersion}.`,
+                "Database and storage data, pinned service versions, and sticky ports will be preserved.",
+                "Existing connections will briefly disconnect.",
+              ].join("\n"),
+            )
+            .pipe(Effect.andThen(restartManagedStackForUpgrade(managedInput, error))),
+        ),
+      );
       const summary = yield* resolveStackSummary({
         cacheRoot: cliSettings.supabaseHome,
         projectDir: cliProjectHome.projectRoot,
@@ -247,11 +252,7 @@ export const startCommand = Command.make("start", flags).pipe(
       return {
         stackLayer,
         startVersionState: StartVersionState.of({
-          launch: {
-            mode: summary.launch.mode,
-            versions: serviceVersionContext.pinnedBaseline,
-            excludedServices: flags.exclude,
-          },
+          launch: startVersionStateLaunch(summary),
           ...(summary.lastNotifiedUpdateFingerprint === undefined
             ? {}
             : { previousUpdateFingerprint: summary.lastNotifiedUpdateFingerprint }),
@@ -264,6 +265,7 @@ export const startCommand = Command.make("start", flags).pipe(
             workspacePath: cliProjectHome.projectRoot,
             stackName: flags.stack,
             cwd: runtimeInfo.cwd,
+            cliVersion: CLI_VERSION,
           },
         }),
       };

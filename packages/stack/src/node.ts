@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/multiple-effect-provide -- Public Node Promise facades intentionally bridge host async calls; platform and transport layers are staged to preserve dependency and scope ordering.
+
 import { NodeServices } from "@effect/platform-node";
 import { Effect, Layer } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";

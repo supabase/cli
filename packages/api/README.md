@@ -83,9 +83,17 @@ The public binary input contract is:
 
 ## Development
 
+Repo-wide quality checks run from the repository root:
+
 ```sh
-pnpm check:all       # Run all quality checks in parallel
-pnpm fix:all         # Auto-fix lint, format, and unused exports in parallel
+pnpm check:all
+pnpm fix:all
+```
+
+Package-local checks and development commands run from `packages/api`:
+
+```sh
+pnpm types:check
 pnpm test            # Run tests
 pnpm generate        # Refresh the OpenAPI spec and regenerate the SDK
 pnpm generate:check  # Regenerate in place and fail on any resulting diff

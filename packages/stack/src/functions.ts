@@ -1,4 +1,6 @@
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Synchronous path checks validate project-owned files before entering Effect filesystem operations.
 import { existsSync, realpathSync } from "node:fs";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Pure path normalization supports the project-boundary validation helper.
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Effect, FileSystem, Path, Schema } from "effect";
 import type { ResolvedStackConfig } from "./StackConfig.ts";
@@ -204,10 +206,14 @@ const writeFunctionsRuntimeConfig = Effect.fnUntraced(function* (
   const path = yield* Path.Path;
   const filePath = functionsRuntimeConfigPath(runtimeRoot);
   const directory = path.dirname(filePath);
+  // A unique suffix prevents concurrent writers from sharing the atomic temp file.
+  // oxlint-disable-next-line effecttsgo/crypto-random-uuid-in-effect -- This native filename boundary does not represent domain randomness.
   const temporaryPath = `${filePath}.tmp-${crypto.randomUUID()}`;
 
   yield* fs.makeDirectory(directory, { recursive: true, mode: 0o700 });
   yield* Effect.gen(function* () {
+    // The on-disk runtime config is an explicitly JSON-defined host boundary.
+    // oxlint-disable-next-line effecttsgo/prefer-schema-over-json -- Runtime bootstrap consumes this stable JSON wire format.
     yield* fs.writeFileString(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, {
       flag: "wx",
       mode: 0o600,

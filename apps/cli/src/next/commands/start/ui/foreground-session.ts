@@ -1,7 +1,7 @@
 import { clearTimeout, setTimeout } from "node:timers";
 import { createElement } from "react";
 import * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry";
-import { Cause, Effect, Layer } from "effect";
+import { Cause, Context, Effect, Layer } from "effect";
 import { RegistryContext } from "@effect/atom-react";
 import { Stack } from "@supabase/stack/effect";
 import { Ink } from "../../../../shared/runtime/ink.service.ts";
@@ -25,8 +25,11 @@ export const makeStartForegroundSession = Effect.fnUntraced(function* () {
   const stack = yield* Stack;
   const ink = yield* Ink;
   const registry = AtomRegistry.make({ scheduleTask });
-  const model = createStartDashboardModel(
+  const stateContext = yield* Layer.build(
     Layer.provide(StartDashboardState.live, Layer.succeed(Stack, stack)),
+  );
+  const model = createStartDashboardModel(
+    Layer.succeed(StartDashboardState, Context.get(stateContext, StartDashboardState)),
   );
 
   yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));

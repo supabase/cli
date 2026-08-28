@@ -283,6 +283,12 @@ const expectedPureGraphFiles = [
   "tls.ts",
   "lib/env.ts",
   "lib/schema.ts",
+  "lib/secret-paths.ts",
+  "project-config/api-attributes.ts",
+  "project-config/project-config.ts",
+  "project-config/registry-auth.ts",
+  "project-config/registry-row.ts",
+  "project-config/registry.ts",
   "analytics.ts",
   "api.ts",
   "auth/index.ts",
@@ -304,6 +310,7 @@ const expectedPureGraphFiles = [
   "realtime.ts",
   "storage.ts",
   "studio.ts",
+  "workers.ts",
 ]
   .map((relativePath) => join(srcDir, relativePath))
   .sort();
@@ -331,6 +338,7 @@ describe("src/index.ts export surface", () => {
   test("pins the exact set of runtime export names", () => {
     expect(Object.keys(defaultEntrypoint).sort()).toMatchInlineSnapshot(`
       [
+        "AUTH_HOOK_NAMES",
         "CLI_CONFIG_SCHEMA_URL",
         "CliConfigParseError",
         "CliConfigSchema",
@@ -340,16 +348,26 @@ describe("src/index.ts export surface", () => {
         "InvalidRemoteProjectIdError",
         "KONG_LOCAL_CA_CERT",
         "MissingCliConfigValueError",
+        "ProjectConfigParseError",
+        "attachApiResponse",
         "cliConfigValueSourceAt",
+        "comparableProjectConfigPaths",
         "edgeFunctionDenoConfigFileName",
         "edgeFunctionEntrypointFileName",
         "edgeFunctionsDirectoryName",
         "encodeCliConfigToJson",
         "encodeCliConfigToToml",
+        "fromApiProjectConfig",
+        "fromConfigDocument",
         "getDefaultCliConfig",
+        "isComparableProjectConfigPath",
         "omitDefaultValues",
+        "projectConfigMappingRows",
         "subtractCliConfig",
         "toCliConfigJsonSchema",
+        "toProjectConfig",
+        "unmappedApiFields",
+        "unmappedSecretApiPaths",
       ]
     `);
   });
@@ -359,6 +377,7 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
   test("pins the exact set of runtime export names", () => {
     expect(Object.keys(effectEntrypoint).sort()).toMatchInlineSnapshot(`
       [
+        "AUTH_HOOK_NAMES",
         "CLI_CONFIG_SCHEMA_URL",
         "CliConfigParseError",
         "CliConfigSchema",
@@ -369,8 +388,11 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
         "InvalidRemoteProjectIdError",
         "KONG_LOCAL_CA_CERT",
         "MissingCliConfigValueError",
+        "ProjectConfigParseError",
+        "attachApiResponse",
         "cliConfigStoreLayer",
         "cliConfigValueSourceAt",
+        "comparableProjectConfigPaths",
         "configJsonPath",
         "configTomlPath",
         "edgeFunctionDenoConfigFileName",
@@ -380,18 +402,25 @@ describe("src/effect.ts is a superset of src/index.ts", () => {
         "encodeCliConfigToToml",
         "findCliProjectPaths",
         "findCliProjectRoot",
+        "fromApiProjectConfig",
+        "fromConfigDocument",
         "getDefaultCliConfig",
         "inferFunctionsManifest",
+        "isComparableProjectConfigPath",
         "loadCliConfig",
         "loadCliConfigFile",
         "loadCliProjectEnvironment",
         "loadDotEnvFile",
         "omitDefaultValues",
+        "projectConfigMappingRows",
         "resolveCliConfigSubtree",
         "resolveCliConfigValue",
         "saveCliConfig",
         "subtractCliConfig",
         "toCliConfigJsonSchema",
+        "toProjectConfig",
+        "unmappedApiFields",
+        "unmappedSecretApiPaths",
       ]
     `);
   });

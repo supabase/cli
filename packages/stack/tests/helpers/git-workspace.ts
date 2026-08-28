@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/node-builtin-import -- Git workspace fixtures invoke native child-process, filesystem, and path APIs.
+
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { devNull, tmpdir } from "node:os";

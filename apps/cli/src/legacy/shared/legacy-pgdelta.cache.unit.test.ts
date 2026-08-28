@@ -649,7 +649,7 @@ describe("legacyResolveSetupInputs", () => {
             authEnabled: true,
             storageEnabled: false,
             realtimeEnabled: true,
-            autoExpose: false,
+            autoExpose: true,
             vaultNames: ["a_secret"],
             rolesSql: "",
           });
@@ -669,14 +669,14 @@ describe("legacyResolveSetupInputs", () => {
         authEnabled: true,
         storageEnabled: true,
         realtimeEnabled: true,
-        apiAutoExposeNewTables: Option.some(true),
+        apiAutoExposeNewTables: Option.some(false),
         vaultNames: [],
       }),
     ).pipe(
       Effect.tap((inputs) =>
         Effect.sync(() => {
           expect(inputs.rolesSql).toBe("create role app;");
-          expect(inputs.autoExpose).toBe(true);
+          expect(inputs.autoExpose).toBe(false);
           rmSync(dir, { recursive: true, force: true });
         }),
       ),

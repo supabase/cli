@@ -143,13 +143,15 @@ The pre-recording cleanup deletes projects named `cli-e2e-test`, `my-project`, a
 
 ## Running the suite
 
+Run the following orchestration commands from the repository root.
+
 ```sh
 # Replay (no credentials needed)
-pnpm nx run @supabase/cli-e2e:test:legacy   # ts-legacy target
+pnpm exec turbo run @supabase/cli-e2e#test:e2e:run   # ts-legacy target
 
 # Record (requires staging access)
 SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_STAGING_URL=https://api.supabase.green \
-  pnpm nx run @supabase/cli-e2e:record
+  pnpm run record
 ```
 
 See `apps/cli-e2e/.env.example` for replay/record env vars (copy to a gitignored
@@ -163,7 +165,7 @@ After recording, replay must pass with no changes between the two commands.
 CI splits the replay suite across 3 parallel shards via vitest's `--shard`
 flag (https://vitest.dev/guide/improving-performance.html#sharding).
 Locally, invoke vitest directly so the flag isn't eaten by a `--`
-passthrough quirk in `pnpm run` / `nx run-many`:
+passthrough quirk in package-script argument forwarding:
 
 ```sh
 pnpm --filter @supabase/cli-e2e exec bun --bun vitest run --shard=1/3
@@ -186,15 +188,16 @@ The ts-legacy CLI proxies a fixed, small set of commands to a Go binary (`SUPABA
 Build the Go CLI from source and point `SUPABASE_GO_BINARY` at it:
 
 ```sh
-cd apps/cli-go && go build -o /tmp/supabase-test-binary .
+(cd apps/cli-go && go build -o /tmp/supabase-test-binary .)
 
 # Replay
-SUPABASE_GO_BINARY=/tmp/supabase-test-binary pnpm nx run @supabase/cli-e2e:test:legacy
+SUPABASE_GO_BINARY=/tmp/supabase-test-binary \
+  pnpm exec turbo run @supabase/cli-e2e#test:e2e:run
 
 # Record
 SUPABASE_GO_BINARY=/tmp/supabase-test-binary \
   SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_STAGING_URL=https://api.supabase.green \
-  pnpm nx run @supabase/cli-e2e:record
+  pnpm run record
 ```
 
 `SUPABASE_GO_BINARY` is inherited by the ts-legacy subprocess via `exec()` in the harness, so you only need to set it once in the shell.

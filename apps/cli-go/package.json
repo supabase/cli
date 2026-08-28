@@ -1,0 +1,11 @@
+{
+  "name": "@supabase/cli-go",
+  "private": true,
+  "scripts": {
+    "build": "go build -o supabase-go .",
+    "lint:check": "golangci-lint run --timeout 5m",
+    "lint:fix": "golangci-lint run --fix",
+    "test:unit": "pnpm exec turbo run @supabase/cli-go#test:unit:run --",
+    "test:unit:run": "go test ./..."
+  }
+}

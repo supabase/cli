@@ -1624,48 +1624,32 @@ describe("legacy db start", () => {
   });
 
   it.live(
-    "warns when api.auto_expose_new_tables is true, matching Go's unconditional Config.Validate print",
+    "never mentions api.auto_expose_new_tables on stderr, whatever the flag is set to",
     () => {
-      // This warning is printed unconditionally right after the `project_id`
-      // check, before any `api.enabled`/`auth.enabled` gate — so it must
-      // fire on a fresh start regardless of those flags. The removed hidden
-      // bootstrap child used to print this itself; the native path has no
-      // equivalent call without this fix (review: PRRT_kwDOErm0O86WC8J7).
-      const { layer, out } = setup({
-        configContents: 'project_id = "test"\n[api]\nauto_expose_new_tables = true\n',
-        route: freshVolumeRoute(defaultRoute()),
-      });
+      // Auto-exposing new `public` entities is the default and an explicit `false` is a
+      // supported opt-out, so neither value is worth a line of start output. Each case's
+      // config.toml is written just before that case's run — `setup()` writes eagerly into
+      // the shared temp workdir, so writing all three up front would let the last write
+      // clobber the earlier ones before their runs ever execute.
+      const configContentsCases = [
+        'project_id = "test"\n[api]\nauto_expose_new_tables = true\n',
+        'project_id = "test"\n[api]\nauto_expose_new_tables = false\n',
+        undefined,
+      ];
       return Effect.gen(function* () {
-        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(out.stderrText).toContain(
-          "WARN: api.auto_expose_new_tables is deprecated and will be removed on 2026-10-30.",
-        );
+        for (const configContents of configContentsCases) {
+          const { layer, out } = setup({ configContents, route: freshVolumeRoute(defaultRoute()) });
+          const onDiskConfig = readFileSync(
+            join(tempRoot.current, "supabase", "config.toml"),
+            "utf8",
+          );
+          expect(onDiskConfig).toBe(configContents ?? 'project_id = "test"\n');
+          yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+          expect(out.stderrText).not.toContain("auto_expose_new_tables");
+        }
       });
     },
   );
-
-  it.live("does not warn about api.auto_expose_new_tables when it is unset", () => {
-    const { layer, out } = setup({ route: freshVolumeRoute(defaultRoute()) });
-    return Effect.gen(function* () {
-      yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-      expect(out.stderrText).not.toContain("auto_expose_new_tables");
-    });
-  });
-
-  it.live("warns about api.auto_expose_new_tables even when the db is already running", () => {
-    // Config loading (Load + Validate, including this print) runs before
-    // the already-running check — the warning must fire even on the
-    // already-running short-circuit, not be masked by it.
-    const { layer, out } = setup({
-      configContents: 'project_id = "test"\n[api]\nauto_expose_new_tables = true\n',
-      running: true,
-    });
-    return Effect.gen(function* () {
-      yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-      expect(out.stderrText).toContain("WARN: api.auto_expose_new_tables is deprecated");
-      expect(out.stderrText).toContain("Postgres database is already running.");
-    });
-  });
 
   it.live(
     "prints @supabase/config's deprecated-[inbucket]-section WARN only once on a fresh, not-already-running start",

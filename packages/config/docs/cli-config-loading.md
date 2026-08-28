@@ -8,8 +8,17 @@ This document explains how the CLI's on-disk config document loading works, acro
 - `CliConfig`: the persisted config-file document (`supabase/config.toml` / `supabase/config.json`)
   — the full local superset, including local-only sections (`studio`, ports, `edge_runtime`,
   `analytics`, …) plus `[remotes.*]` overrides. Owned by `@supabase/config`.
-- `ProjectConfig`: reserved. Not implemented in this package yet — it will be the hosted-project
-  subset produced by mapping a Management API project-config response, once CLI-2230/CLI-2156 land.
+- `ProjectConfig`: the hosted-project subset — the sections a hosted project manages (`api`,
+  `auth`, `db`, `realtime`, `storage`, `workers`, `experimental`), produced by `toProjectConfig`
+  from either a `CliConfig` document or a Management API v2 project-config response (CLI-2230).
+  Sparse by design: it carries only what its source actually said, so it composes with the
+  subtraction core (`subtractCliConfig`/`omitDefaultValues`, operand type `EffectiveConfig`)
+  without fabricating drift from schema defaults. An API-sourced value may speak for fewer
+  fields than the section list implies — `realtime` maps no fields today, and `workers`/
+  `experimental` have no v2 project-config API counterpart at all — so a comparison consumer
+  should restrict itself to `comparableProjectConfigPaths`/`isComparableProjectConfigPath`
+  rather than treating a section's presence in that list as a per-field guarantee. Owned by
+  `@supabase/config` (`packages/config/src/project-config/`).
 - `CliSettings`: the CLI's effective runtime settings bundle (platform `apiUrl`, `dashboardUrl`,
   access token, telemetry flags, `supabaseHome`, `noKeyring`, `debug`). Lives in `apps/cli`, not
   this package.
@@ -21,6 +30,13 @@ This document explains how the CLI's on-disk config document loading works, acro
 - `LegacyCliSettings`: apps/cli's legacy shell's own equivalent of `CliSettings` — same role,
   scoped to the legacy shell, and pending deletion once the legacy/next shells consolidate.
   Defined at `apps/cli/src/legacy/config/legacy-cli-settings.service.ts`.
+
+The `Cli*` prefix is a rule, not a per-name coincidence: it names the local checkout side — what
+the CLI reads, writes, or resolves about itself on disk. A bare `Project*` name is reserved for the
+hosted Supabase project. Value-helpers follow the config family regardless of their inputs, not the
+shape of whatever they're passed — `resolveCliConfigValue` and `MissingCliConfigValueError` are
+`Cli*`-named for this reason. See [ADR 0020](../../../docs/adr/0020-config-naming-vocabulary.md)
+for the full decision record.
 
 Within `CliConfig` itself, `project_id` is overloaded by position: the root-scope `project_id` is
 a local identifier that defaults to the working directory name when running `supabase init` (see
@@ -363,10 +379,11 @@ For example:
 
 Those are different meanings and should remain separate.
 
-The reserved `ProjectConfig` — the not-yet-implemented hosted-project subset — will sit alongside
-these two: it converges the same committed-intent fields from a Management API response, without
-the local-only sections (`studio`, ports, `edge_runtime`, `analytics`, `[remotes.*]`, …) that only
-make sense for a local checkout.
+`ProjectConfig` — the hosted-project subset (CLI-2230) — sits alongside these two: it converges
+the same committed-intent fields from either a `CliConfig` document or a Management API response,
+without the local-only sections (`studio`, ports, `edge_runtime`, `analytics`, `[remotes.*]`, …)
+that only make sense for a local checkout. See the Vocabulary entry above for its sparse
+semantics and comparison contract.
 
 ## Process Env as Input
 
@@ -386,4 +403,4 @@ So the public architecture intentionally stays at:
 - `CliProjectPaths`
 - `CliProjectContext`
 - `CliSettings`
-- `ProjectConfig` (reserved, not yet implemented)
+- `ProjectConfig`

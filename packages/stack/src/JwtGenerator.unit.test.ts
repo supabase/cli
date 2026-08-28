@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/global-date -- JWT assertions compare generated claims against the wall clock used by the native signer.
+
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { defaultJwtSecret, generateJwks, generateJwt } from "./JwtGenerator.ts";

@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-date, effecttsgo/node-builtin-import -- Stack e2e tests await subprocess-backed operations and inspect native filesystem paths and timestamps.
+
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -137,13 +139,14 @@ describe("createStack e2e", () => {
   });
 });
 
+function codeSafeJson(value: string) {
+  return JSON.stringify(value).replaceAll("\u2028", "\\u2028").replaceAll("\u2029", "\\u2029");
+}
+
 function writeFunction(projectDir: string, slug: string, body: string) {
   const dir = join(projectDir, "supabase", "functions", slug);
   mkdirSync(dir, { recursive: true });
-  writeFileSync(
-    join(dir, "index.ts"),
-    `Deno.serve(() => new Response(${JSON.stringify(body)}));\n`,
-  );
+  writeFileSync(join(dir, "index.ts"), `Deno.serve(() => new Response(${codeSafeJson(body)}));\n`);
 }
 
 function functionsBundle(

@@ -1,4 +1,4 @@
 {
   "extends": "@tsconfig/bun/tsconfig.json",
-  "exclude": ["supabase"]
+  "exclude": ["supabase", "src/shared/workers/stacks"]
 }

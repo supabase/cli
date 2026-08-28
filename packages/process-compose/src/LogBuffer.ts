@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, PubSub, Ref, Semaphore, Stream } from "effect";
+import { Clock, Context, Effect, Layer, PubSub, Ref, Semaphore, Stream } from "effect";
 
 export interface LogEntry {
   readonly timestamp: number;
@@ -18,7 +18,7 @@ export class LogBuffer extends Context.Service<
       line: string,
     ) => Effect.Effect<void>;
     readonly subscribe: (service: string) => Stream.Stream<LogEntry>;
-    readonly subscribeAll: () => Stream.Stream<LogEntry>;
+    readonly subscribeAll: Stream.Stream<LogEntry>;
     readonly history: (service: string, limit?: number) => Effect.Effect<ReadonlyArray<LogEntry>>;
     readonly historyAll: (
       limit?: number,
@@ -54,7 +54,7 @@ export class LogBuffer extends Context.Service<
         append: (service, stream, line) =>
           Effect.gen(function* () {
             const entry: LogEntry = {
-              timestamp: Date.now(),
+              timestamp: yield* Clock.currentTimeMillis,
               service,
               stream,
               line,
@@ -80,7 +80,7 @@ export class LogBuffer extends Context.Service<
             }),
           ),
 
-        subscribeAll: () => Stream.fromPubSub(globalPubSub),
+        subscribeAll: Stream.fromPubSub(globalPubSub),
 
         history: (service, limit = 100) =>
           Effect.gen(function* () {

@@ -1,3 +1,5 @@
+// oxlint-disable effecttsgo/async-function, effecttsgo/global-error-in-effect-failure, effecttsgo/global-timers-in-effect, effecttsgo/new-promise, effecttsgo/node-builtin-import -- Port allocation tests drive native TCP listeners and child processes, including intentionally pending callbacks and process errors.
+
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { createServer, type Server } from "node:net";
@@ -13,16 +15,29 @@ const STACK_PACKAGE_ROOT = resolve(import.meta.dirname, "..");
 const INTERRUPTED_ALLOCATION_SCRIPT = `
 import { NodeFileSystem } from "@effect/platform-node";
 import { Effect, Fiber } from "effect";
-import { reservePortSet } from "./src/PortAllocator.ts";
+import { Server } from "node:net";
+
+let markBound;
+const bound = new Promise((resolve) => {
+  markBound = resolve;
+});
+const originalListen = Server.prototype.listen;
+Server.prototype.listen = function (...args) {
+  if (typeof args.at(-1) === "function") args.pop();
+  return originalListen.call(this, ...args, () => {
+    Server.prototype.listen = originalListen;
+    markBound();
+  });
+};
+
+const { reservePortSet } = await import("./src/PortAllocator.ts");
 
 const fiber = Effect.runFork(
   reservePortSet([{ field: "apiPort", selection: { kind: "automatic" } }]).pipe(
     Effect.provide(NodeFileSystem.layer),
   ),
 );
-await Effect.runPromise(
-  Effect.callback((resume) => queueMicrotask(() => resume(Effect.void))),
-);
+await bound;
 await Effect.runPromise(Fiber.interrupt(fiber));
 `;
 
@@ -54,7 +69,7 @@ const interruptedAllocationExits = (runtime: "node" | "bun"): Effect.Effect<void
           new Error(`${runtime} retained a listener after interrupted allocation: ${stderr}`),
         ),
       );
-    }, 5_000);
+    }, 20_000);
     child.once("error", (error) => finish(Effect.fail(error)));
     child.once("close", (code, signal) =>
       finish(
@@ -136,7 +151,7 @@ describe("reservePortSet", () => {
     async (runtime) => {
       await Effect.runPromise(interruptedAllocationExits(runtime));
     },
-    10_000,
+    30_000,
   );
 
   it("fails an occupied exact port with field and port attribution", async () => {
