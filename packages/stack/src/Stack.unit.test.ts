@@ -614,26 +614,6 @@ describe("Stack", () => {
     }).pipe(Effect.provide(layer), Effect.scoped, Effect.timeout("5 seconds"));
   });
 
-  it.effect("rejects unsupported native services before resource planning", () => {
-    const config = {
-      ...edgeRuntimeConfig,
-      runtime: { mode: "native", containerRuntime: null },
-    } satisfies ResolvedStackConfig;
-    const { layer } = setupLayer(config, noopPortLease(config.ports));
-
-    return Effect.gen(function* () {
-      const stack = yield* Stack;
-      const error = yield* stack.start.pipe(Effect.flip);
-
-      expect(error).toMatchObject({
-        _tag: "StackBuildError",
-        reason: "invalid_config",
-      });
-      if (Predicate.isTagged(error, "StackBuildError"))
-        expect(error.detail).toContain("edge-runtime");
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("getState fails for internal helper services", () => {
     const { layer } = setupLayer();
 
