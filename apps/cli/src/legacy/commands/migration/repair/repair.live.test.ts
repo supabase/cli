@@ -58,7 +58,6 @@ test("amends the migration history status on the remote database", async ({
     ]);
     expect(reverted.exitCode, reverted.stderr).toBe(0);
     expect(reverted.stderr, reverted.stdout).toContain("=> reverted");
-    versionReverted = true;
 
     const remaining = await queryLiveDb(
       project.dbUrl,
@@ -66,6 +65,8 @@ test("amends the migration history status on the remote database", async ({
       [version],
     );
     expect(remaining).toHaveLength(0);
+    // Only skip the teardown revert once the row is verifiably gone.
+    versionReverted = true;
   } catch (error) {
     targetError = error;
   } finally {

@@ -28,7 +28,11 @@ test("applies a test-written migration to the remote database", async ({
       project.dbUrl,
       "select version from supabase_migrations.schema_migrations order by version",
     );
-  } catch {
+  } catch (error) {
+    // 42P01 (undefined relation) covers the fresh-project case where the
+    // history table or its schema does not exist yet; anything else is a real
+    // failure the test must surface.
+    if ((error as { code?: string }).code !== "42P01") throw error;
     remoteVersions = [];
   }
   for (const row of remoteVersions) {

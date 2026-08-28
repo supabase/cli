@@ -123,9 +123,17 @@ export function requireLiveSuccess(
   }
 }
 
-/** Unique migration version for a live test: epoch millis plus four random digits. */
+/**
+ * Unique migration version for a live test: a sortable `YYYYMMDDHHMMSS` UTC
+ * stamp plus four random digits, so it always orders after any conventional
+ * timestamp version already in the shared project's migration history.
+ */
 export function liveMigrationVersion(): string {
-  return `${Date.now()}${Math.floor(Math.random() * 10_000)
+  const stamp = new Date()
+    .toISOString()
+    .replaceAll(/[-:TZ.]/gu, "")
+    .slice(0, 14);
+  return `${stamp}${Math.floor(Math.random() * 10_000)
     .toString()
     .padStart(4, "0")}`;
 }
