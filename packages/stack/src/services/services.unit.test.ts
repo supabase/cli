@@ -531,6 +531,7 @@ describe("native auxiliary service definitions", () => {
       STUDIO_PG_META_URL: "http://127.0.0.1:54336",
       LOGFLARE_URL: "http://127.0.0.1:54327",
       LOGFLARE_PRIVATE_ACCESS_TOKEN: "native-analytics-key",
+      HOSTNAME: "127.0.0.1",
     });
   });
 

@@ -36,7 +36,10 @@ interface DockerStudioOptions extends StudioServiceOptions, ContainerRuntimeOpti
   readonly platformOs: string;
 }
 
-const studioEnv = (opts: StudioServiceOptions): Record<string, string> => ({
+const studioEnv = (
+  opts: StudioServiceOptions,
+  host: "127.0.0.1" | "0.0.0.0",
+): Record<string, string> => ({
   PORT: String(opts.port),
   CURRENT_CLI_VERSION: "local",
   STUDIO_PG_META_URL: opts.pgmetaUrl,
@@ -54,7 +57,7 @@ const studioEnv = (opts: StudioServiceOptions): Record<string, string> => ({
   LOGFLARE_URL: opts.analyticsUrl,
   NEXT_PUBLIC_ENABLE_LOGS: String(opts.analyticsEnabled),
   NEXT_ANALYTICS_BACKEND_PROVIDER: opts.analyticsBackend,
-  HOSTNAME: "0.0.0.0",
+  HOSTNAME: host,
   POSTGRES_USER_READ_WRITE: "postgres",
   OPENAI_API_KEY: "",
   PGRST_DB_SCHEMAS: "public,graphql_public",
@@ -80,7 +83,7 @@ export const makeStudioServiceDocker = (opts: DockerStudioOptions): ServiceDef =
     identity: opts.identity,
     image: opts.image,
     networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port]),
-    env: studioEnv(opts),
+    env: studioEnv(opts, "0.0.0.0"),
     dependencies: opts.dependencies,
     healthCheck: studioHealthCheck(opts.port),
   });
@@ -89,7 +92,7 @@ export const makeStudioServiceNative = (opts: NativeStudioOptions): ServiceDef =
   nativeRunService({
     name: "studio",
     command: `${opts.binPath}/bin/studio`,
-    env: studioEnv(opts),
+    env: studioEnv(opts, "127.0.0.1"),
     dependencies: opts.dependencies,
     healthCheck: studioHealthCheck(opts.port),
   });
