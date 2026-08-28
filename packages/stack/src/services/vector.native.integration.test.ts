@@ -30,9 +30,7 @@ describe("prepareVectorConfig", () => {
       expect(config).toContain(`- "${runtimeRoot}/logs/vector.jsonl"`);
       expect(config).toContain(`- "${runtimeRoot}/logs/vector.jsonl.3"`);
       expect(config).toContain("codec: json");
-      expect(config).toContain(
-        'uri: "http://127.0.0.1:54327/api/logs?source_name=native.logs.local"',
-      );
+      expect(config).toContain('uri: "http://127.0.0.1:54327/api/logs?source_name=postgres.logs"');
       expect(config).toContain('x-api-key: "analytics-key"');
       expect(config).toContain(`data_dir: "${runtimeRoot}/vector/data_dir"`);
       expect(config).toContain('address: "127.0.0.1:54333"');

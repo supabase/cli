@@ -240,6 +240,7 @@ describe("direct createStack port ownership", () => {
     );
     handles.push(stack);
     const publicStack = toStackHandle(stack);
+    expect(publicStack.serviceEndpoints).toBe(stack.serviceEndpoints);
 
     const secondInvoked = Deferred.makeUnsafe<void>();
     const secondDone = Deferred.makeUnsafe<void>();

@@ -81,6 +81,9 @@ sinks:
 const yamlString = (value: string): string => JSON.stringify(value);
 
 const nativeVectorConfig = (opts: VectorConfigPreparationOptions): string => {
+  // The seeded single-tenant Logflare source is postgres.logs. Keep native
+  // ingestion on that source so the Analytics release accepts the payload;
+  // each stack owns an isolated Analytics database and source backend.
   const logRoot = nativeLogRoot(opts.runtimeRoot);
   const vectorLogPath = nativeServiceLogPath(opts.runtimeRoot, "vector");
   const include = [
@@ -120,7 +123,7 @@ sinks:
       retry_max_duration_secs: 10
       headers:
         x-api-key: ${yamlString(opts.analyticsApiKey)}
-    uri: ${yamlString(`http://127.0.0.1:${opts.analyticsPort}/api/logs?source_name=native.logs.local`)}
+    uri: ${yamlString(`http://127.0.0.1:${opts.analyticsPort}/api/logs?source_name=postgres.logs`)}
 `;
 };
 

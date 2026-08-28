@@ -68,6 +68,8 @@ type CreateStackAttemptError =
 export interface ForegroundStackHandle {
   readonly url: string;
   readonly dbUrl: string;
+  /** Published endpoints for configured services. */
+  readonly serviceEndpoints: Readonly<Record<string, string>>;
   readonly publishableKey: string;
   readonly secretKey: string;
   readonly start: Effect.Effect<void, StackError>;
@@ -232,6 +234,7 @@ const createStackAttempt = (
         return {
           url: info.url,
           dbUrl: info.dbUrl,
+          serviceEndpoints: info.serviceEndpoints,
           publishableKey: info.publishableKey,
           secretKey: info.secretKey,
           start: run(localStack.start),

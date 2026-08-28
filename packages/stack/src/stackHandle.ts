@@ -10,6 +10,7 @@ import type { StackServiceState } from "./StackServiceState.ts";
 export interface StackHandle extends AsyncDisposable {
   readonly url: string;
   readonly dbUrl: string;
+  readonly serviceEndpoints: Readonly<Record<string, string>>;
   readonly publishableKey: string;
   readonly secretKey: string;
   start(): Promise<void>;
@@ -33,6 +34,7 @@ export interface StackHandle extends AsyncDisposable {
 export const toStackHandle = (handle: ForegroundStackHandle): StackHandle => ({
   url: handle.url,
   dbUrl: handle.dbUrl,
+  serviceEndpoints: handle.serviceEndpoints,
   publishableKey: handle.publishableKey,
   secretKey: handle.secretKey,
   start: () => Effect.runPromise(handle.start),
