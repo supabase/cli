@@ -244,9 +244,9 @@ Implementation continues after recording a ruling; this file is not a question q
   and per-function overrides; recursive unknown-field tests reject the removed controls.
 - Persisted-definition codecs remain a Task 4 responsibility; Task 3 intentionally exports concrete
   input schemas/types and release metadata without a generated or open materialized settings bag.
-- Round-2 RED/GREEN: the targeted compiler/public suites pass (33 tests), including the DB13 alias,
+- Round-2 RED/GREEN: the targeted compiler/public suites pass (32 tests), including the DB13 alias,
   immediate reuse, removed Functions controls, exact tagged failures, and closure checks.
 - `pnpm --dir packages/stack types:check` — passed.
-- `pnpm --dir packages/stack exec vitest run --project integration src/model/compiler.integration.test.ts src/public/public-model.integration.test.ts` — passed, 33 tests.
+- `pnpm --dir packages/stack exec vitest run --project integration src/model/compiler.integration.test.ts src/public/public-model.integration.test.ts` — passed, 32 tests.
 - `pnpm exec oxlint --config .oxlintrc.effect.json packages/stack/src/model packages/stack/src/public/Config.ts packages/stack/src/public/Status.ts packages/stack/src/public/Errors.ts` — passed with zero warnings.
 - `pnpm exec oxfmt --check packages/stack/src/model packages/stack/src/public/Config.ts packages/stack/src/public/Status.ts packages/stack/src/public/Errors.ts` — passed.

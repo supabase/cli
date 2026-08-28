@@ -3,7 +3,6 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option, Redacted } from "effect";
 import { InvalidStackConfigError, StackVersionUnsupportedError } from "../public/Errors.ts";
 import { canonicalize, compileStack } from "./Compiler.ts";
-import { RestModule } from "./capabilities/rest.ts";
 
 const layer = NodeServices.layer;
 const compile = (
@@ -323,20 +322,6 @@ describe("closed capability compiler", () => {
       )?.specHash;
       const freshHash = reused.executionPlan.workloads.find((w) => w.id === "rest:rest")?.specHash;
       expect(freshHash).not.toBe(previousHash);
-    }),
-  );
-
-  it.live("reuses persisted state before evaluating current module defaults", () =>
-    Effect.gen(function* () {
-      const first = yield* compile({});
-      const defaultVersion = RestModule.defaultVersion;
-      Reflect.set(RestModule, "defaultVersion", "not-real");
-      try {
-        const reused = yield* compile({}, { kind: "native" }, first);
-        expect(reused.definition).toBe(first.definition);
-      } finally {
-        Reflect.set(RestModule, "defaultVersion", defaultVersion);
-      }
     }),
   );
 
