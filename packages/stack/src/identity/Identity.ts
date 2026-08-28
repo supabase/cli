@@ -85,8 +85,8 @@ export const resolveStackIdentity = (
 > =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const projectRoot = options.projectRoot.trim();
-    if (projectRoot.length === 0) {
+    const projectRoot = options.projectRoot;
+    if (projectRoot.trim().length === 0) {
       return yield* new InvalidProjectRootError({
         projectRoot: options.projectRoot,
         message: "The project root must not be blank",

@@ -62,6 +62,3 @@ export const resolveStackPaths = (
       temporarySibling: path.join(stackRoot, "state.json.tmp"),
     };
   });
-
-/** Alias used by state consumers that refer to these as stack state paths. */
-export const stackStatePaths = resolveStackPaths;

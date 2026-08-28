@@ -2,6 +2,9 @@ import { Effect, FileSystem, Path } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import { InvalidStackIdentityError } from "../public/Errors.ts";
 
+const FULL_REF_PATTERN = /^refs\/.+$/;
+const OBJECT_ID_PATTERN = /^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$/;
+
 export interface GitIdentityParts {
   readonly workspaceId: string;
   readonly checkoutId: string;
@@ -95,7 +98,12 @@ const resolveCommonDirectory = (
     if (target.length === 0) {
       return yield* invalidMetadata(commondir, "The commondir target is empty");
     }
-    return yield* fs.realPath(path.resolve(gitDirectory, target));
+    const commonDirectory = path.resolve(gitDirectory, target);
+    const info = yield* fs.stat(commonDirectory);
+    if (info.type !== "Directory") {
+      return yield* invalidMetadata(commondir, "The commondir target is not a directory");
+    }
+    return yield* fs.realPath(commonDirectory);
   }).pipe(
     Effect.catchTag("PlatformError", (error: PlatformError) =>
       Effect.fail(invalidMetadata(commondir, `Unable to read commondir: ${error.message}`)),
@@ -116,10 +124,16 @@ const resolveBranchContext = (
     }
     if (head.startsWith("ref:")) {
       const ref = head.slice("ref:".length).trim();
-      if (ref.length === 0) {
-        return yield* invalidMetadata(headPath, "HEAD has an empty symbolic ref");
+      if (!FULL_REF_PATTERN.test(ref)) {
+        return yield* invalidMetadata(headPath, "HEAD must name a full symbolic ref under refs/");
       }
       return ref;
+    }
+    if (!OBJECT_ID_PATTERN.test(head)) {
+      return yield* invalidMetadata(
+        headPath,
+        "Detached HEAD must contain a 40- or 64-character hexadecimal Git object id",
+      );
     }
     return "detached";
   }).pipe(

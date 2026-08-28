@@ -154,3 +154,21 @@ Implementation continues after recording a ruling; this file is not a question q
   GREEN: 3 tests passed.
 - `pnpm --dir packages/stack types:check` — passed.
 - `pnpm exec oxfmt --check packages/stack/src/identity packages/stack/src/state packages/stack/src/public/StackId.ts packages/stack/src/public/public-model.integration.test.ts` — passed.
+
+#### Task 2 review fixes — 2026-08-28
+
+- Preserved the supplied project-root string (including valid leading/trailing-space path names),
+  while still trimming only for blankness checks; canonicalization remains filesystem-backed.
+- Linked-worktree `commondir` targets are now statted and must resolve to directories. Git `HEAD`
+  metadata now accepts only full `refs/...` symbolic refs or 40/64-character hexadecimal object
+  ids, with malformed content failing as `InvalidStackIdentityError`.
+- Reworked identity integration coverage to scoped `it.live` Effects with the Node platform layer,
+  typed Git subprocess failures, symlink canonicalization, malformed metadata cases, and exact names
+  for every state-path field including the temporary sibling.
+- `pnpm --dir packages/stack exec vitest run --project integration src/identity/identity.integration.test.ts`
+  — 13 tests passed.
+- `pnpm --dir packages/stack exec vitest run --project integration src/public/public-model.integration.test.ts`
+  — 3 tests passed.
+- `pnpm --dir packages/stack types:check` — passed.
+- `pnpm exec oxlint --config .oxlintrc.effect.json packages/stack/src/identity packages/stack/src/state/Paths.ts packages/stack/src/public/StackId.ts packages/stack/src/public/public-model.integration.test.ts` — passed with zero warnings.
+- `pnpm exec oxfmt --check packages/stack/src/identity packages/stack/src/state/Paths.ts packages/stack/src/public/StackId.ts packages/stack/src/public/public-model.integration.test.ts` — passed.
