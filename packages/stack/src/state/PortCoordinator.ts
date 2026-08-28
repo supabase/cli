@@ -1,10 +1,11 @@
-import { Crypto, Effect, FileSystem, Path, Scope, Schema } from "effect";
+import { Crypto, Effect, Exit, FileSystem, Path, Scope, Schema } from "effect";
 import type { StackRuntime } from "../public/Runtime.ts";
 import { NetworkPortSchema, PORT_FIELDS, type PortField } from "../public/Status.ts";
 import {
   PortAllocationError,
   PortUnavailableError,
   InvalidProjectRootError,
+  StackLifecycleConflictError,
   StackStateFormatUnsupportedError,
   StackStateGenerationMismatchError,
   StackStateInvalidError,
@@ -71,6 +72,7 @@ export interface PortCoordinator {
     PortReservation,
     | PortAllocationError
     | PortUnavailableError
+    | StackLifecycleConflictError
     | StackStateInvalidError
     | StackStateFormatUnsupportedError
     | InvalidProjectRootError
@@ -88,6 +90,19 @@ const validPort = (port: number): boolean => Schema.is(NetworkPortSchema)(port);
 
 const unavailable = (port: number, field: PortField) =>
   new PortUnavailableError({ port, field, message: `Port ${port} for ${field} is unavailable` });
+
+const automaticConflict = (port: number, field: PortField) =>
+  new PortAllocationError({
+    port,
+    field,
+    message: `Port ${port} for ${field} is reserved by another stack's automatic assignment`,
+  });
+
+const lifecycleConflict = (field: PortField) =>
+  new StackLifecycleConflictError({
+    field,
+    message: `Cannot change the ${field} port assignment while the stack is running`,
+  });
 
 export const makePortCoordinator = (
   registry: PortRegistry,
@@ -127,6 +142,19 @@ export const makePortCoordinator = (
             }
           }
           const existing = assignmentMap(current.ports);
+          if (lifecycle === "running" && current.desiredLifecycle === "running") {
+            for (const field of fields) {
+              const intent = listenerIntents[field];
+              const prior = existing.get(field);
+              const unchanged =
+                intent.enabled && prior !== undefined
+                  ? intent.port === "automatic"
+                    ? prior.intent === "automatic"
+                    : prior.intent === "exact" && prior.port === intent.port
+                  : !intent.enabled && prior === undefined;
+              if (!unchanged) return yield* lifecycleConflict(field);
+            }
+          }
           const assignments: HostPortAssignment[] = [];
           const byField: Partial<Record<PortField, HostPortAssignment>> = {};
           const usedByThisStack = new Set<number>();
@@ -165,6 +193,8 @@ export const makePortCoordinator = (
               }
             } else {
               if (!validPort(intent.port)) return yield* unavailable(intent.port, field);
+              if (usedAutomatic.has(intent.port))
+                return yield* automaticConflict(intent.port, field);
               if (usedByThisStack.has(intent.port)) return yield* unavailable(intent.port, field);
               if (lifecycle === "running" && usedLive.has(intent.port))
                 return yield* unavailable(intent.port, field);
@@ -197,16 +227,30 @@ export const makePortCoordinator = (
           const first = enabledAssignments[0];
           return yield* unavailable(first?.assignment.port ?? 0, first?.field ?? "api");
         }
-        for (const { field, intent, assignment } of enabledAssignments) {
-          const listener = yield* options
-            .bindNative(intent.address, assignment.port, field)
-            .pipe(
-              Effect.catchTag("PortUnavailableError", () =>
-                Effect.fail(unavailable(assignment.port, field)),
+        const parentScope = yield* Scope.Scope;
+        const acquired = yield* Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            const listenerScope = yield* Scope.fork(parentScope, "sequential");
+            const exit = yield* Effect.exit(
+              restore(
+                Effect.forEach(enabledAssignments, ({ field, intent, assignment }) =>
+                  options.bindNative!(intent.address, assignment.port, field).pipe(
+                    Effect.catchTag("PortUnavailableError", () =>
+                      Effect.fail(unavailable(assignment.port, field)),
+                    ),
+                    Effect.provideService(Scope.Scope, listenerScope),
+                  ),
+                ),
               ),
             );
-          nativeListeners.push(listener);
-        }
+            if (Exit.isFailure(exit)) {
+              yield* Scope.close(listenerScope, exit);
+              return yield* Effect.failCause(exit.cause);
+            }
+            return exit.value;
+          }),
+        );
+        nativeListeners.push(...acquired);
       }
       if (committed.lifecycle === "running" && committed.runtime.kind === "container") {
         if (options.publishContainer === undefined) {

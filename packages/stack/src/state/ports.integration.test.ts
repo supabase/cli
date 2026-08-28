@@ -3,7 +3,11 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Scope } from "effect";
 import { createServer, type Server } from "node:net";
 import { deriveStackId, type StackIdentity } from "../identity/Identity.ts";
-import { PortUnavailableError } from "../public/Errors.ts";
+import {
+  PortAllocationError,
+  PortUnavailableError,
+  StackLifecycleConflictError,
+} from "../public/Errors.ts";
 import { makePortRegistry } from "./PortRegistry.ts";
 import { makePortCoordinator, type ListenerIntents } from "./PortCoordinator.ts";
 import { makeStackStateStore, type PersistedStackState } from "./StackStateStore.ts";
@@ -108,6 +112,132 @@ describe("sticky port coordination", () => {
         expect(repeat.assignments).toEqual(first.assignments);
         const second = yield* coordinator.planAndReserve(b, intents("automatic"));
         expect(second.assignments.api?.port).not.toBe(first.assignments.api?.port);
+      }),
+    ),
+  );
+
+  it.live("rejects an exact request for another stack's automatic assignment", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-port-auto-exact-",
+        });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const aIdentity = makeIdentity(root, "automatic-owner");
+        const bIdentity = makeIdentity(root, "exact-requester");
+        const a = yield* deriveStackId(aIdentity);
+        const b = yield* deriveStackId(bIdentity);
+        yield* store.write(a, baseState(a, aIdentity));
+        yield* store.write(b, baseState(b, bIdentity));
+        const registry = yield* makePortRegistry({ stateRoot: root, store });
+        const coordinator = makePortCoordinator(registry, store);
+        const automatic = yield* coordinator.planAndReserve(a, intents("automatic"));
+        const occupied = automatic.assignments.api?.port;
+        expect(occupied).toBeTypeOf("number");
+        if (occupied === undefined) return;
+        const exit = yield* coordinator
+          .planAndReserve(
+            b,
+            {
+              ...disabledIntents(),
+              api: { enabled: true, address: "127.0.0.1", port: occupied },
+            },
+            { lifecycle: "stopped" },
+          )
+          .pipe(Effect.exit);
+        expect(errorOf(exit)).toBeInstanceOf(PortAllocationError);
+        expect(yield* registry.assignments(b)).toEqual([]);
+      }),
+    ),
+  );
+
+  it.live("rejects assignment changes while a stack is running", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-port-running-" });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const exactIdentity = makeIdentity(root, "running-exact");
+        const automaticIdentity = makeIdentity(root, "running-automatic");
+        const exactId = yield* deriveStackId(exactIdentity);
+        const automaticId = yield* deriveStackId(automaticIdentity);
+        yield* store.write(exactId, {
+          ...baseState(exactId, exactIdentity, "running"),
+          desiredGeneration: 7,
+          ports: [{ field: "api", port: 55435, intent: "exact" }],
+        });
+        yield* store.write(automaticId, {
+          ...baseState(automaticId, automaticIdentity, "running"),
+          desiredGeneration: 9,
+          ports: [{ field: "api", port: 55436, intent: "automatic" }],
+        });
+        const registry = yield* makePortRegistry({ stateRoot: root, store });
+        const coordinator = makePortCoordinator(registry, store);
+        const exactToDifferent = yield* coordinator
+          .planAndReserve(
+            exactId,
+            {
+              ...disabledIntents(),
+              api: { enabled: true, address: "127.0.0.1", port: 55437 },
+            },
+            { lifecycle: "running", runtime: { kind: "native" } },
+          )
+          .pipe(Effect.exit);
+        expect(errorOf(exactToDifferent)).toBeInstanceOf(StackLifecycleConflictError);
+        expect((yield* store.read(exactId))?.desiredGeneration).toBe(7);
+
+        const automaticToExact = yield* coordinator
+          .planAndReserve(
+            automaticId,
+            {
+              ...disabledIntents(),
+              api: { enabled: true, address: "127.0.0.1", port: 55438 },
+            },
+            { lifecycle: "running", runtime: { kind: "native" } },
+          )
+          .pipe(Effect.exit);
+        expect(errorOf(automaticToExact)).toBeInstanceOf(StackLifecycleConflictError);
+        expect((yield* store.read(automaticId))?.desiredGeneration).toBe(9);
+      }),
+    ),
+  );
+
+  it.live("keeps an unchanged running assignment without advancing generation", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-port-running-repeat-",
+        });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const identity = makeIdentity(root, "running-repeat");
+        const stackId = yield* deriveStackId(identity);
+        yield* store.write(stackId, {
+          ...baseState(stackId, identity, "running"),
+          desiredGeneration: 11,
+          ports: [{ field: "api", port: 55439, intent: "exact" }],
+        });
+        const registry = yield* makePortRegistry({ stateRoot: root, store });
+        const coordinator = makePortCoordinator(registry, store, {
+          bindNative: (address, port, field) =>
+            Effect.succeed({
+              address,
+              port,
+              field,
+              close: Effect.void,
+            }),
+        });
+        const result = yield* coordinator.planAndReserve(
+          stackId,
+          {
+            ...disabledIntents(),
+            api: { enabled: true, address: "127.0.0.1", port: 55439 },
+          },
+          { lifecycle: "running", runtime: { kind: "native" } },
+        );
+        expect(result.assignments.api?.port).toBe(55439);
+        expect((yield* store.read(stackId))?.desiredGeneration).toBe(11);
       }),
     ),
   );
@@ -267,6 +397,55 @@ describe("sticky port coordination", () => {
       expect(closed).toBe(2);
       expect(bound.size).toBe(0);
     }),
+  );
+
+  it.live("releases earlier native listeners when a later bind fails", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-port-native-failure-",
+        });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const identity = makeIdentity(root, "native-failure");
+        const stackId = yield* deriveStackId(identity);
+        yield* store.write(stackId, baseState(stackId, identity));
+        const registry = yield* makePortRegistry({ stateRoot: root, store });
+        const bound = new Set<number>();
+        let attempts = 0;
+        const coordinator = makePortCoordinator(registry, store, {
+          bindNative: (address, port, field) => {
+            attempts += 1;
+            if (attempts === 2)
+              return Effect.fail(
+                new PortUnavailableError({ port, field, message: "simulated second bind failure" }),
+              );
+            return Effect.acquireRelease(
+              Effect.sync(() => {
+                bound.add(port);
+                return {
+                  address,
+                  port,
+                  field,
+                  close: Effect.sync(() => {
+                    bound.delete(port);
+                  }),
+                };
+              }),
+              (listener) => listener.close,
+            );
+          },
+        });
+        const exit = yield* coordinator
+          .planAndReserve(stackId, intents("automatic"), {
+            lifecycle: "running",
+            runtime: { kind: "native" },
+          })
+          .pipe(Effect.exit);
+        expect(errorOf(exit)).toBeInstanceOf(PortUnavailableError);
+        expect(bound).toHaveLength(0);
+      }),
+    ),
   );
 
   it.live("retains a chosen assignment when container publication races", () =>

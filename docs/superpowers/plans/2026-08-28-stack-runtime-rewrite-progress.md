@@ -254,6 +254,21 @@ Implementation continues after recording a ruling; this file is not a question q
 - `pnpm --dir packages/stack types:check` — passed.
 - Effect lint over changed Task 4 sources — passed with zero warnings.
 
+#### Task 4 port review fixes — 2026-08-28
+
+- Exact requests now reject ports held by another stack's automatic reservation with the canonical
+  `PortAllocationError`, while exact reservations on stopped stacks continue to coexist.
+- Running stacks are assignment-fenced: exact/automatic changes and enablement changes fail with
+  `StackLifecycleConflictError`; an unchanged repeat is accepted without advancing generation.
+- Native multi-listener acquisition is transactional in an operation-owned child `Scope`; a later
+  bind failure closes earlier listeners before the failure escapes, while successful listeners remain
+  owned by the caller's scope. The fork/acquire/handoff boundary is masked against interruption,
+  with the actual bind effects restored to interruptible execution.
+- Review RED evidence: the three new scenarios initially observed the missing automatic conflict,
+  missing running-assignment fence, and leaked first native listener; all now pass.
+- `pnpm --dir packages/stack exec vitest run --project integration src/state/ports.integration.test.ts` — passed (10 tests).
+- `pnpm --dir packages/stack test` — passed (67 integration tests; no unit files).
+
 #### Task 3 review fixes — round 2 — 2026-08-28
 
 - Preserved the authoritative database major alias: selector `13` intentionally resolves to the
