@@ -318,8 +318,10 @@ describe("legacyCredentialsLayer.getAccessToken", () => {
       const { getAccessToken } = yield* LegacyCredentials;
       const exit = yield* Effect.exit(getAccessToken);
       expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidAccessTokenError");
+      const errorOption = Exit.findErrorOption(exit);
+      expect(Option.isSome(errorOption)).toBe(true);
+      if (Option.isSome(errorOption)) {
+        expect(errorOption.value).toBeInstanceOf(LegacyInvalidAccessTokenError);
       }
     }).pipe(
       Effect.provide(makeLayer({ env: { SUPABASE_ACCESS_TOKEN: "sbp_v1_" + "c".repeat(40) } })),
@@ -331,8 +333,10 @@ describe("legacyCredentialsLayer.getAccessToken", () => {
       const { getAccessToken } = yield* LegacyCredentials;
       const exit = yield* Effect.exit(getAccessToken);
       expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidAccessTokenError");
+      const errorOption = Exit.findErrorOption(exit);
+      expect(Option.isSome(errorOption)).toBe(true);
+      if (Option.isSome(errorOption)) {
+        expect(errorOption.value).toBeInstanceOf(LegacyInvalidAccessTokenError);
       }
     }).pipe(
       Effect.provide(makeLayer({ env: { SUPABASE_ACCESS_TOKEN: "sbp_v0_" + "c".repeat(39) } })),
