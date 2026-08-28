@@ -30,6 +30,7 @@ export type { ServiceResolution, StackPreparationError } from "./StackPreparatio
 export type { PrefetchOptions, PrefetchResult } from "./prefetch.ts";
 export type { StackHandle } from "./stackHandle.ts";
 export { StackError } from "./errors.ts";
+export { nativeLogRoot, nativeServiceLogPath, startNativeLogWriter } from "./NativeLogWriter.ts";
 export type {
   FunctionsReloadConfig,
   FunctionsRuntimeConfig,

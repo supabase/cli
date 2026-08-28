@@ -64,6 +64,7 @@ import { projectStackStates, type StackServiceProjectionCatalog } from "./StackS
 import { StackServiceState } from "./StackServiceState.ts";
 import { Stack } from "./Stack.ts";
 import type { EdgeRuntimeReloadConfig, StackInfo } from "./Stack.ts";
+import { startNativeLogWriter } from "./NativeLogWriter.ts";
 import { SERVICE_NAMES, type ServiceName } from "./versions.ts";
 
 type LifecyclePhase = "idle" | "starting" | "running" | "stopping" | "stopped" | "disposed";
@@ -509,6 +510,13 @@ export const localStackLayer = (
               });
             }
             exactCleanupTargets = cleanupTargets;
+
+            if (config.runtime.mode === "native") {
+              yield* startNativeLogWriter(logBuffer, config.runtimeRoot).pipe(
+                Effect.provideService(FileSystem.FileSystem, fs),
+                Effect.provideService(Scope.Scope, scope),
+              );
+            }
 
             const orchLayer = Orchestrator.layer(graph).pipe(
               Layer.provide(Layer.succeed(LogBuffer, logBuffer)),
