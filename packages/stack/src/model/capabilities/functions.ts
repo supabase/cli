@@ -1,6 +1,5 @@
 import { Schema } from "effect";
 import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
-import { NetworkPortSchema } from "../../public/Status.ts";
 
 const Secret = Schema.Redacted(Schema.String);
 const FunctionSlug = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]+$/));
@@ -15,11 +14,10 @@ const FunctionOverride = Schema.Struct({
 });
 export const FunctionsSettingsSchema = Schema.Struct({
   functions_root: Schema.optionalKey(Schema.String),
+  /** Edge Runtime behavior; capability enabled and functionsInspector port are public fields. */
   edge_runtime: Schema.optionalKey(
     Schema.Struct({
-      enabled: Schema.optionalKey(Schema.Boolean),
       policy: Schema.optionalKey(Schema.Literals(["oneshot", "per_worker"] as const)),
-      inspector_port: Schema.optionalKey(NetworkPortSchema),
       deno_version: Schema.optionalKey(Schema.Finite),
       secrets: Schema.optionalKey(Schema.Record(Schema.String, Secret)),
     }),
@@ -43,9 +41,7 @@ export const FunctionsModule: CapabilityModule<FunctionsSettings> = {
   defaultSettings: {
     functions_root: "supabase/functions",
     edge_runtime: {
-      enabled: true,
       policy: "per_worker",
-      inspector_port: 8083,
       deno_version: 2,
       secrets: {},
     },

@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option, Redacted } from "effect";
 import { InvalidStackConfigError, StackVersionUnsupportedError } from "../public/Errors.ts";
 import { canonicalize, compileStack } from "./Compiler.ts";
+import { RestModule } from "./capabilities/rest.ts";
 
 const layer = NodeServices.layer;
 const compile = (
@@ -165,6 +166,14 @@ describe("closed capability compiler", () => {
         capabilities: { rest: { settings: { typo: true } } },
       } as never).pipe(Effect.exit);
       expect(failureOf(exit)).toBeInstanceOf(InvalidStackConfigError);
+      const edgeEnabled = yield* compile({
+        capabilities: { functions: { settings: { edge_runtime: { enabled: false } } } },
+      } as never).pipe(Effect.exit);
+      expect(failureOf(edgeEnabled)).toBeInstanceOf(InvalidStackConfigError);
+      const inspectorPort = yield* compile({
+        capabilities: { functions: { settings: { edge_runtime: { inspector_port: 8083 } } } },
+      } as never).pipe(Effect.exit);
+      expect(failureOf(inspectorPort)).toBeInstanceOf(InvalidStackConfigError);
     }),
   );
 
@@ -317,6 +326,20 @@ describe("closed capability compiler", () => {
     }),
   );
 
+  it.live("reuses persisted state before evaluating current module defaults", () =>
+    Effect.gen(function* () {
+      const first = yield* compile({});
+      const defaultVersion = RestModule.defaultVersion;
+      Reflect.set(RestModule, "defaultVersion", "not-real");
+      try {
+        const reused = yield* compile({}, { kind: "native" }, first);
+        expect(reused.definition).toBe(first.definition);
+      } finally {
+        Reflect.set(RestModule, "defaultVersion", defaultVersion);
+      }
+    }),
+  );
+
   it.live("rejects a persisted definition whose release is no longer supported", () =>
     Effect.gen(function* () {
       const first = yield* compile({});
@@ -336,6 +359,25 @@ describe("closed capability compiler", () => {
         },
       ).pipe(Effect.exit);
       expect(failureOf(result)).toBeInstanceOf(StackVersionUnsupportedError);
+    }),
+  );
+
+  it.live("validates persisted capability closure before rebuilding its plan", () =>
+    Effect.gen(function* () {
+      const first = yield* compile({});
+      const persisted = {
+        ...first.definition,
+        capabilities: {
+          ...first.definition.capabilities,
+          rest: { ...first.definition.capabilities.rest, enabled: false },
+        },
+      };
+      const result = yield* compile(
+        {},
+        { kind: "native" },
+        { definition: persisted, inputFingerprint: first.inputFingerprint },
+      ).pipe(Effect.exit);
+      expect(failureOf(result)).toBeInstanceOf(InvalidStackConfigError);
     }),
   );
 

@@ -83,6 +83,20 @@ export const createExecutionPlan = (
     analytics: modules.analytics.dependencies,
     pooler: modules.pooler.dependencies,
   } satisfies { [Name in CapabilityName]: ReadonlyArray<CapabilityName> };
+  for (const name of CAPABILITY_NAMES) {
+    if (!enabled[name].enabled) continue;
+    for (const dependency of dependencyMap[name]) {
+      if (!enabled[dependency].enabled) {
+        return Effect.fail(
+          new InvalidStackConfigError({
+            message: `${name} requires disabled capability ${dependency}`,
+            capability: name,
+            dependency,
+          }),
+        );
+      }
+    }
+  }
   const start: CapabilityName[] = [];
   const visited = new Set<CapabilityName>();
   const visitingCapabilities = new Set<CapabilityName>();

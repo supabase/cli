@@ -212,7 +212,7 @@ Implementation continues after recording a ruling; this file is not a question q
   Function slug/environment key constraints are checked before schema decoding so invalid Record
   keys cannot be silently dropped. Pooler uses the current `pool_mode` spelling.
 - Added one shared `NetworkPortSchema` (integer 1..65535) for listeners, endpoints, SMTP,
-  Functions inspector, and analytics vector ports. Capability/module dependencies now drive graph
+  the public Functions inspector listener, and analytics vector ports. Capability/module dependencies now drive graph
   planning and missing private dependencies/cycles fail with `InvalidStackConfigError`.
 - Strengthened compiler scenarios for exact tagged errors, release/artifact coherence, persisted
   plan rebuilding, record defaults, key/port validation, and secret absence from definition,
@@ -223,5 +223,30 @@ Implementation continues after recording a ruling; this file is not a question q
   suites now pass (31 tests).
 - `pnpm --dir packages/stack types:check` — passed.
 - `pnpm --dir packages/stack exec vitest run --project integration src/model/compiler.integration.test.ts src/public/public-model.integration.test.ts` — 30 tests passed before final empty-release scenario (31 total expected; rerun final command below).
+- `pnpm exec oxlint --config .oxlintrc.effect.json packages/stack/src/model packages/stack/src/public/Config.ts packages/stack/src/public/Status.ts packages/stack/src/public/Errors.ts` — passed with zero warnings.
+- `pnpm exec oxfmt --check packages/stack/src/model packages/stack/src/public/Config.ts packages/stack/src/public/Status.ts packages/stack/src/public/Errors.ts` — passed.
+
+#### Task 3 review fixes — round 2 — 2026-08-28
+
+- Preserved the authoritative database major alias: selector `13` intentionally resolves to the
+  current Supabase Postgres `15.8.1.085` release. This follows
+  `apps/cli-go/pkg/config/config.go:825-831` and the documented fallthrough in
+  `apps/cli/src/shared/services/services.shared.ts:107-116`; the legacy `pg13` constant is not
+  an active runtime artifact. The native and container descriptors remain coherent for that
+  selected release (and for majors 14, 15, and 17).
+- Identical-fingerprint reuse now branches immediately after strict decode, Functions-root
+  normalization, and fingerprint calculation. It collects only supplied Redacted slots, validates
+  persisted versions and capability/workload closure, and rebuilds a fresh runtime plan from the
+  persisted definition. Candidate defaults/materializers are not evaluated on this path.
+- Removed duplicate Functions authorities from `edge_runtime`: capability enablement remains on
+  `capabilities.functions.enabled`, and the inspector gateway port remains on the public
+  `functionsInspector` listener. Functions settings persist only runtime behavior, root, secrets,
+  and per-function overrides; recursive unknown-field tests reject the removed controls.
+- Persisted-definition codecs remain a Task 4 responsibility; Task 3 intentionally exports concrete
+  input schemas/types and release metadata without a generated or open materialized settings bag.
+- Round-2 RED/GREEN: the targeted compiler/public suites pass (33 tests), including the DB13 alias,
+  immediate reuse, removed Functions controls, exact tagged failures, and closure checks.
+- `pnpm --dir packages/stack types:check` — passed.
+- `pnpm --dir packages/stack exec vitest run --project integration src/model/compiler.integration.test.ts src/public/public-model.integration.test.ts` — passed, 33 tests.
 - `pnpm exec oxlint --config .oxlintrc.effect.json packages/stack/src/model packages/stack/src/public/Config.ts packages/stack/src/public/Status.ts packages/stack/src/public/Errors.ts` — passed with zero warnings.
 - `pnpm exec oxfmt --check packages/stack/src/model packages/stack/src/public/Config.ts packages/stack/src/public/Status.ts packages/stack/src/public/Errors.ts` — passed.

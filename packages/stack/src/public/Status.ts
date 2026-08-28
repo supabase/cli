@@ -29,7 +29,7 @@ export const DesiredStackLifecycleSchema = Schema.Literals([
 ] as const);
 export type DesiredStackLifecycle = Schema.Schema.Type<typeof DesiredStackLifecycleSchema>;
 
-/** Listener keys are kept here until Task 3 introduces the closed config schema. */
+/** Listener keys are shared by the public status and closed config schemas. */
 export const PORT_FIELDS = [
   "api",
   "database",

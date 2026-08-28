@@ -374,7 +374,7 @@ const hashDefinitionWorkloads = (
   definition: StackDefinition,
   crypto: Crypto.Crypto,
   specHashes: Map<string, string>,
-): Effect.Effect<void, StackVersionUnsupportedError | InvalidStackConfigError, Crypto.Crypto> =>
+): Effect.Effect<void, StackVersionUnsupportedError | InvalidStackConfigError> =>
   Effect.gen(function* () {
     for (const name of CAPABILITY_NAMES) {
       const capability = definition.capabilities[name];
@@ -405,6 +405,82 @@ const hashDefinitionWorkloads = (
       }
     }
   });
+
+const planForDefinition = (
+  runtime: StackRuntime,
+  definition: StackDefinition,
+  crypto: Crypto.Crypto,
+): Effect.Effect<ExecutionPlan, InvalidStackConfigError | StackVersionUnsupportedError> => {
+  const enabled = {
+    database: {
+      enabled: definition.capabilities.database.enabled,
+      activation: definition.capabilities.database.activation,
+    },
+    rest: {
+      enabled: definition.capabilities.rest.enabled,
+      activation: definition.capabilities.rest.activation,
+    },
+    auth: {
+      enabled: definition.capabilities.auth.enabled,
+      activation: definition.capabilities.auth.activation,
+    },
+    realtime: {
+      enabled: definition.capabilities.realtime.enabled,
+      activation: definition.capabilities.realtime.activation,
+    },
+    storage: {
+      enabled: definition.capabilities.storage.enabled,
+      activation: definition.capabilities.storage.activation,
+    },
+    functions: {
+      enabled: definition.capabilities.functions.enabled,
+      activation: definition.capabilities.functions.activation,
+    },
+    studio: {
+      enabled: definition.capabilities.studio.enabled,
+      activation: definition.capabilities.studio.activation,
+    },
+    mail: {
+      enabled: definition.capabilities.mail.enabled,
+      activation: definition.capabilities.mail.activation,
+    },
+    analytics: {
+      enabled: definition.capabilities.analytics.enabled,
+      activation: definition.capabilities.analytics.activation,
+    },
+    pooler: {
+      enabled: definition.capabilities.pooler.enabled,
+      activation: definition.capabilities.pooler.activation,
+    },
+  };
+  const versions = {
+    database: definition.capabilities.database.version,
+    rest: definition.capabilities.rest.version,
+    auth: definition.capabilities.auth.version,
+    realtime: definition.capabilities.realtime.version,
+    storage: definition.capabilities.storage.version,
+    functions: definition.capabilities.functions.version,
+    studio: definition.capabilities.studio.version,
+    mail: definition.capabilities.mail.version,
+    analytics: definition.capabilities.analytics.version,
+    pooler: definition.capabilities.pooler.version,
+  };
+  const specHashes = new Map<string, string>();
+  return hashDefinitionWorkloads(definition, crypto, specHashes).pipe(
+    Effect.flatMap(() => createExecutionPlan(runtime, enabled, specHashes, versions)),
+  );
+};
+
+const collectSuppliedSecrets = (config: StackConfig, slots: SecretSlotInput[]): void => {
+  const capabilities = config.capabilities;
+  for (const name of CAPABILITY_NAMES) {
+    const capability = capabilities?.[name];
+    if (capability === undefined) continue;
+    slotsFor("settings" in capability ? capability.settings : undefined, `${name}.settings`, slots);
+  }
+  const signing = config.security?.jwt?.signing;
+  if (signing !== undefined) slotsFor(signing, "security.jwt.signing", slots);
+};
 
 export const compileStack = (
   input: CompileStackInput,
@@ -445,6 +521,17 @@ export const compileStack = (
     const inputFingerprint = yield* Schema.decodeEffect(InputFingerprintSchema)(
       digestHex(fingerprintBytes),
     ).pipe(Effect.mapError((error) => new InvalidStackConfigError({ message: String(error) })));
+    if (previous?.inputFingerprint === inputFingerprint) {
+      const slots: SecretSlotInput[] = [];
+      collectSuppliedSecrets(config, slots);
+      const executionPlan = yield* planForDefinition(input.runtime, previous.definition, crypto);
+      return {
+        definition: previous.definition,
+        inputFingerprint,
+        secrets: slots,
+        executionPlan,
+      };
+    }
     const slots: SecretSlotInput[] = [];
     const specHashes = new Map<string, string>();
     const databaseResult = yield* materializeCapability(
@@ -581,17 +668,6 @@ export const compileStack = (
       analytics: { enabled: analytics.enabled, activation: analytics.activation },
       pooler: { enabled: pooler.enabled, activation: pooler.activation },
     };
-    for (const name of CAPABILITY_NAMES) {
-      if (!enabled[name].enabled) continue;
-      for (const dependency of CAPABILITY_MODULES[name].dependencies) {
-        if (!enabled[dependency].enabled)
-          return yield* new InvalidStackConfigError({
-            message: `${name} requires disabled capability ${dependency}`,
-            capability: name,
-            dependency,
-          });
-      }
-    }
     const rawListeners = isRecord(config.listeners) ? config.listeners : {};
     const listeners = {
       [PORT_FIELDS[0]]: materializeListener(rawListeners[PORT_FIELDS[0]], true),
@@ -630,78 +706,8 @@ export const compileStack = (
       analytics: analytics.version,
       pooler: pooler.version,
     };
-    const currentPlan = yield* createExecutionPlan(input.runtime, enabled, specHashes, versions);
-    if (previous?.inputFingerprint === inputFingerprint) {
-      const previousEnabled = {
-        database: {
-          enabled: previous.definition.capabilities.database.enabled,
-          activation: previous.definition.capabilities.database.activation,
-        },
-        rest: {
-          enabled: previous.definition.capabilities.rest.enabled,
-          activation: previous.definition.capabilities.rest.activation,
-        },
-        auth: {
-          enabled: previous.definition.capabilities.auth.enabled,
-          activation: previous.definition.capabilities.auth.activation,
-        },
-        realtime: {
-          enabled: previous.definition.capabilities.realtime.enabled,
-          activation: previous.definition.capabilities.realtime.activation,
-        },
-        storage: {
-          enabled: previous.definition.capabilities.storage.enabled,
-          activation: previous.definition.capabilities.storage.activation,
-        },
-        functions: {
-          enabled: previous.definition.capabilities.functions.enabled,
-          activation: previous.definition.capabilities.functions.activation,
-        },
-        studio: {
-          enabled: previous.definition.capabilities.studio.enabled,
-          activation: previous.definition.capabilities.studio.activation,
-        },
-        mail: {
-          enabled: previous.definition.capabilities.mail.enabled,
-          activation: previous.definition.capabilities.mail.activation,
-        },
-        analytics: {
-          enabled: previous.definition.capabilities.analytics.enabled,
-          activation: previous.definition.capabilities.analytics.activation,
-        },
-        pooler: {
-          enabled: previous.definition.capabilities.pooler.enabled,
-          activation: previous.definition.capabilities.pooler.activation,
-        },
-      };
-      const previousVersions = {
-        database: previous.definition.capabilities.database.version,
-        rest: previous.definition.capabilities.rest.version,
-        auth: previous.definition.capabilities.auth.version,
-        realtime: previous.definition.capabilities.realtime.version,
-        storage: previous.definition.capabilities.storage.version,
-        functions: previous.definition.capabilities.functions.version,
-        studio: previous.definition.capabilities.studio.version,
-        mail: previous.definition.capabilities.mail.version,
-        analytics: previous.definition.capabilities.analytics.version,
-        pooler: previous.definition.capabilities.pooler.version,
-      };
-      const previousHashes = new Map<string, string>();
-      yield* hashDefinitionWorkloads(previous.definition, crypto, previousHashes);
-      const previousPlan = yield* createExecutionPlan(
-        input.runtime,
-        previousEnabled,
-        previousHashes,
-        previousVersions,
-      );
-      return {
-        definition: previous.definition,
-        inputFingerprint,
-        secrets: slots,
-        executionPlan: previousPlan,
-      };
-    }
-    return { definition, inputFingerprint, secrets: slots, executionPlan: currentPlan };
+    const executionPlan = yield* createExecutionPlan(input.runtime, enabled, specHashes, versions);
+    return { definition, inputFingerprint, secrets: slots, executionPlan };
   }).pipe(
     Effect.catchTag("PlatformError", (error) =>
       Effect.fail(new InvalidStackConfigError({ message: error.message })),
