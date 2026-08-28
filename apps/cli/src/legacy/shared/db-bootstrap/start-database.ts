@@ -8,20 +8,14 @@
  * Go's `StartDatabase` now only has one TS home to update.
  *
  * Exact Go call order: pre-create volume-existence probe (+ the `fromBackup`-on-an-existing-volume
- * guard) -> image resolve (+ a TS-only slim-image reused-volume access guard, see below) +
- * network ensure (Go's `DockerStart` resolves the image, THEN creates the network, both strictly
+ * guard) -> image resolve + network ensure (Go's `DockerStart` resolves the image, THEN creates
+ * the network, both strictly
  * ahead of container create — `docker.go:363-386` — so NEITHER one ever runs on a request the
  * volume guard above already rejected) -> Postgres container create+start -> health wait
  * (swallowed ONLY when `fromBackup` is set — "restoring a large backup may take longer than 2
  * minutes") -> the fresh-volume `SetupLocalDatabase`-equivalent pipeline (skipped IN FULL when
  * `fromBackup` is set) -> `initCurrentBranch`, unconditionally (the LAST line of `StartDatabase`,
  * reached on every path that doesn't already return/fail above).
- *
- * The slim-image volume-access guard has no Go equivalent (`SUPABASE_USE_SLIM_IMAGES` is a TS-only
- * feature): on an existing volume, once the image is resolved, a cheap `docker run` probe checks
- * whether a slim (non-root `65532`) image can actually read and write PGDATA before any container is
- * created — a docker.io-initialized volume's `700`-mode dirs otherwise crash-loop the slim
- * process until the health check times out with no useful message.
  *
  * Deliberately has ZERO knowledge of `--ignore-health-check` — matching Go exactly: that flag is
  * `internal/start/start.go`'s `Run()`'s own concern, entirely OUTSIDE `StartDatabase` (Go's
@@ -73,7 +67,6 @@ import type { LegacyDockerRun } from "../legacy-docker-run.service.ts";
 import {
   legacyEnsureNetwork,
   legacyCreateContainer,
-  legacyIsVolumeAccessibleToImage,
   legacyVolumeExists,
   LEGACY_COMPOSE_PROJECT_LABEL,
   type LegacyContainerCreateError,
@@ -103,7 +96,6 @@ import {
 } from "./messages.ts";
 import {
   legacyBuildPostgresStartContainerSpec,
-  legacyIsSlimPostgresImage,
   type LegacyPostgresStartServiceInput,
 } from "./postgres.service.ts";
 
@@ -130,59 +122,11 @@ export class LegacyStartBackupVolumeExistsError extends Data.TaggedError(
   }
 }
 
-/**
- * `--from-backup` reached a slim Postgres image. The docker.io restore path is entirely a
- * property of that image's entrypoint — `docker-entrypoint.sh` running the restore script
- * this port heredocs into `/docker-entrypoint-initdb.d/migrate.sh` against the
- * `/etc/backup.sql` bind (`postgres.service.ts`'s restore entrypoint variant) — and the slim
- * build ships neither seam, so a restore would silently start an empty cluster instead.
- * Refused before any container is created. Exported only so the exhaustive actionability
- * guard can inspect its declaration.
- */
-export class LegacySlimImagesBackupUnsupportedError extends Data.TaggedError(
-  "LegacySlimImagesBackupUnsupportedError",
-)<{
-  readonly message: string;
-  readonly suggestion?: string;
-}> {
-  // The remediation is to change what the caller passed in — the env flag, not the config file
-  // — and the error carries the concrete instruction, so this matches `provideFlags` rather
-  // than the suggestion-free `invalidInput`.
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
-/**
- * An existing db volume was initialized by a docker.io Postgres image (PGDATA owned by that
- * image's `postgres` uid, `700`-mode dirs) and is being reused under the slim image, whose
- * `65532` runtime user cannot read it — the slim process would otherwise crash-loop until the
- * health check times out with no useful message. Detected by a pre-create access probe (read + write —
- * Postgres must write under PGDATA)
- * (`legacyIsVolumeAccessibleToImage`), reached only when the resolved image is slim AND the volume
- * already existed. Exported only so the exhaustive actionability guard can inspect its
- * declaration.
- */
-export class LegacySlimImageVolumeInaccessibleError extends Data.TaggedError(
-  "LegacySlimImageVolumeInaccessibleError",
-)<{
-  readonly message: string;
-  readonly suggestion?: string;
-}> {
-  // Same shape as `LegacySlimImagesBackupUnsupportedError`: the fix is to change what the
-  // caller passed in — reset the volume or unset the env flag — not a suggestion-free default.
-  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.provideFlags;
-  }
-}
-
 /** Every failure {@link legacyStartDatabase} itself can produce, independent of the caller's own `E`. */
 export type LegacyStartDatabaseError =
   | LegacyNetworkCreateError
   | LegacyVolumeInspectError
   | LegacyStartBackupVolumeExistsError
-  | LegacySlimImagesBackupUnsupportedError
-  | LegacySlimImageVolumeInaccessibleError
   | LegacyVolumeCreateError
   | LegacyContainerCreateError
   | LegacyContainerStartError
@@ -281,41 +225,7 @@ export const legacyStartDatabase = <E>(
 
     const resolvedPostgresImage = yield* input.resolvePostgresImage;
 
-    // Slim restore has no entrypoint. Refuse before publishing freshness so
-    // rollback cannot prune leftover sibling volumes from a prior image family.
-    // Gated on the resolved ref, not the env flag: a registry override can
-    // still land this run on a docker.io image, which restores fine.
-    if (fromBackup !== undefined && legacyIsSlimPostgresImage(resolvedPostgresImage)) {
-      return yield* Effect.fail(
-        new LegacySlimImagesBackupUnsupportedError({
-          message: "--from-backup is not supported with SUPABASE_USE_SLIM_IMAGES",
-          suggestion: "Unset SUPABASE_USE_SLIM_IMAGES to restore from a backup.",
-        }),
-      );
-    }
-
     input.onFreshVolumeResolved(isFreshVolume);
-
-    // A reused volume's PGDATA ownership is a property of whichever image initialized it, not
-    // of the image resolved for THIS run — a docker.io-initialized volume's `700`-mode dirs
-    // block the slim image's non-root user. Only reachable on an existing volume; a fresh one
-    // has no pre-existing ownership to conflict with.
-    if (!isFreshVolume && legacyIsSlimPostgresImage(resolvedPostgresImage)) {
-      const accessible = yield* legacyIsVolumeAccessibleToImage(
-        spawner,
-        resolvedPostgresImage,
-        input.dbContainerId,
-      );
-      if (!accessible) {
-        return yield* Effect.fail(
-          new LegacySlimImageVolumeInaccessibleError({
-            message:
-              "the existing database volume was initialized by a non-slim postgres image and is not readable and writable by the slim image's user",
-            suggestion: `Run ${legacyAqua("supabase stop --no-backup")} to reset the local database, or unset SUPABASE_USE_SLIM_IMAGES.`,
-          }),
-        );
-      }
-    }
 
     // Go's `DockerStart` (`docker.go:363-386`): image resolve, THEN network create, both
     // strictly ahead of container create — hoisted here to run ONCE per `start` run instead of

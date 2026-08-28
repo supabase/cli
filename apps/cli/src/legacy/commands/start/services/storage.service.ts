@@ -38,7 +38,6 @@ import type { CliConfig } from "@supabase/config";
 
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
-import { legacyUsesSlimRuntime } from "../../../shared/db-bootstrap/slim-runtime.ts";
 import { ramInBytes } from "../../../shared/legacy-size-units.ts";
 import { legacyEnvOrDefault } from "../lib/legacy-env-or-default.ts";
 import {
@@ -202,14 +201,12 @@ export interface LegacyStorageContainerSpecInput {
 /**
  * Builds the `docker create` spec for the Storage container. `binds` mounts
  * the container's own named volume at `/mnt` — no `ports`/`exposedPorts`,
- * Storage is reached only via its Docker network alias. Slim `/mnt` is owned
- * by uid 65532 so an empty volume inherits that owner.
+ * Storage is reached only via its Docker network alias.
  */
 export function legacyBuildStorageContainerSpec(
   input: LegacyStorageContainerSpecInput,
 ): LegacyStartContainerSpec {
   const containerName = legacyServiceContainerName("storage", input.projectId);
-  const slim = legacyUsesSlimRuntime(input.image);
   const env = {
     ...legacyBuildStorageEnv({
       targetMigration: input.targetMigration,
@@ -236,30 +233,21 @@ export function legacyBuildStorageContainerSpec(
     containerName,
     env,
     binds: [`${containerName}:${LEGACY_STORAGE_DOCKER_PATH}`],
-    // Distroless slim storage has no /bin/sh (nor wget) and Docker CLI
-    // healthchecks are always CMD-SHELL, so there is no probe to declare here.
-    // `start` gates readiness on Kong's `/storage/v1/status` instead — see
-    // `health-check.ts` — because `legacyCheckContainerReady` would otherwise
-    // accept a merely-Running container.
-    ...(slim
-      ? {}
-      : {
-          healthcheck: {
-            // "For some reason, localhost resolves to IPv6 address on GitPod which breaks
-            // healthcheck." — IPv4 loopback pinned.
-            test: [
-              "CMD",
-              "wget",
-              "--no-verbose",
-              "--tries=1",
-              "--spider",
-              "http://127.0.0.1:5000/status",
-            ],
-            intervalSeconds: 10,
-            timeoutSeconds: 2,
-            retries: 3,
-          },
-        }),
+    healthcheck: {
+      // "For some reason, localhost resolves to IPv6 address on GitPod which breaks
+      // healthcheck." — IPv4 loopback pinned.
+      test: [
+        "CMD",
+        "wget",
+        "--no-verbose",
+        "--tries=1",
+        "--spider",
+        "http://127.0.0.1:5000/status",
+      ],
+      intervalSeconds: 10,
+      timeoutSeconds: 2,
+      retries: 3,
+    },
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
     // The Storage network alias.

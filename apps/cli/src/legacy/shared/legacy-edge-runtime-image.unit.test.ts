@@ -122,7 +122,7 @@ describe("legacyResolveEdgeRuntimeImage", () => {
       );
     });
 
-    it.effect("keeps the shell-pinned resolution on docker.io, pin included", () => {
+    it.effect("keeps a historical shell pin on docker.io", () => {
       vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
       const dir = mkdtempSync(join(tmpdir(), "legacy-edge-img-"));
       mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
@@ -131,6 +131,24 @@ describe("legacyResolveEdgeRuntimeImage", () => {
         Effect.tap((image) =>
           Effect.sync(() => {
             expect(image).toBe("supabase/edge-runtime:v9.9.9");
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    });
+
+    it.effect("rewrites the shell resolver's current pin onto the slim base", () => {
+      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+      const dir = mkdtempSync(join(tmpdir(), "legacy-edge-img-"));
+      mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
+      writeFileSync(
+        join(dir, "supabase", ".temp", "edge-runtime-version"),
+        `${currentEdgeRuntimeTag}\n`,
+      );
+      return resolveShell(dir, 2).pipe(
+        Effect.tap((image) =>
+          Effect.sync(() => {
+            expect(image).toBe(toSlimImage("edgeruntime", currentEdgeRuntime));
             rmSync(dir, { recursive: true, force: true });
           }),
         ),

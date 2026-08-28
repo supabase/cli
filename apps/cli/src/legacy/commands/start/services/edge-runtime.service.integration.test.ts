@@ -9,7 +9,6 @@ import { afterEach, beforeEach, vi } from "vitest";
 
 import { useLegacyTempWorkdir } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
-import { SlimEdgeRuntimeMultilineSecretError } from "../../../../shared/functions/serve.errors.ts";
 import {
   legacyStartEdgeRuntimeContainer,
   type LegacyEdgeRuntimeBringUpInput,
@@ -352,7 +351,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
   );
 
   it.effect(
-    "slim edge-runtime: copies the main service to /tmp (uid 65532 cannot read /root) and drops --entrypoint sh",
+    "slim edge-runtime uses the docker.io entrypoint, /root main service, and shared cache volume",
     () =>
       Effect.gen(function* () {
         vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
@@ -369,21 +368,15 @@ describe("legacyStartEdgeRuntimeContainer", () => {
         );
 
         const createArgs = mock.runCall!.args;
-        expect(createArgs).not.toContain("--entrypoint");
-        expect(createArgs).toContain("start");
-        expect(createArgs).toContain("--main-service=/tmp");
-        expect(createArgs).not.toContain("--main-service=/root");
+        expect(createArgs).toContain("--entrypoint");
+        expect(createArgs).toContain("sh");
+        const script = createArgs.at(-1);
+        expect(script).toContain("--main-service=/root");
+        expect(script).not.toContain("--main-service=/tmp");
 
-        // Slim runs ensure their own Deno-cache volume (mounted over the
-        // nonroot home by the per-function binds): the shared docker.io
-        // volume mounts at /root/.cache/deno, which uid 65532 neither reaches
-        // nor uses (Deno caches under $HOME), and a docker.io-seeded volume
-        // is root-owned anyway. This input serves no functions, so no cache
-        // bind appears at all — the per-function bind itself is covered by
-        // `buildDockerBinds`' own slim test (`deploy.unit.test.ts`).
         const volumeCreate = mock.calls.find((call) => call.args[0] === "volume");
-        expect(volumeCreate?.args.at(-1)).toBe("supabase_edge_runtime_slim_proj");
-        expect(createArgs).not.toContain("supabase_edge_runtime_proj:/root/.cache/deno:rw");
+        expect(volumeCreate?.args.at(-1)).toBe("supabase_edge_runtime_proj");
+        expect(createArgs).not.toContain("supabase_edge_runtime_slim_proj:/home/nonroot:rw");
 
         const cp = mock.calls.find((call) => call.args[0] === "cp");
         expect(cp?.args).toEqual(["cp", "-", "supabase_edge_runtime_proj:/"]);
@@ -397,32 +390,7 @@ describe("legacyStartEdgeRuntimeContainer", () => {
           return yield* Effect.die("docker cp stdin did not contain archive bytes");
         }
         const files = yield* Effect.promise(() => new Bun.Archive(archiveBytes).files());
-        expect([...files.keys()]).toEqual(["tmp/index.ts"]);
-      }),
-  );
-
-  it.effect(
-    "slim edge-runtime: refuses a multiline secret it has no shell to source, before creating anything",
-    () =>
-      Effect.gen(function* () {
-        vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-        const mock = mockDockerSpawner();
-        const out = mockOutput();
-        const input = {
-          ...baseInput(tempWorkdir.current),
-          image: "ghcr.io/supabase/cli/edge-runtime:v1.74.2",
-          edgeRuntimeSecrets: { MULTI_LINE_KEY: "-----BEGIN KEY-----\nsecret\n-----END KEY-----" },
-        };
-
-        const error = yield* legacyStartEdgeRuntimeContainer(input).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
-          Effect.provide(out.layer),
-          Effect.flip,
-        );
-
-        expect(error).toBeInstanceOf(SlimEdgeRuntimeMultilineSecretError);
-        expect(String(error)).toContain("cannot source multiline function secrets");
-        expect(mock.runCall).toBeUndefined();
+        expect([...files.keys()]).toEqual(["root/index.ts"]);
       }),
   );
 

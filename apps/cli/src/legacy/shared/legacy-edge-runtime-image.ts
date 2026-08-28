@@ -26,18 +26,11 @@ export const legacyEdgeRuntimeImage = () => dockerfileServiceImage("edgeruntime"
 // applies for the functions Docker paths reading the SAME pin file.
 const LEGACY_EDGE_RUNTIME_DENO1_IMAGE = `supabase/edge-runtime:${DENO1_EDGE_RUNTIME_VERSION}`;
 
-/** `pkg/config/utils.go:81` — replace everything after the first `:` with `tag`. */
-function replaceImageTag(image: string, tag: string): string {
-  const index = image.indexOf(":");
-  return image.slice(0, index + 1) + tag.trim();
-}
-
 const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   workdir: string,
   denoVersion: number,
-  slim: boolean,
 ) {
   if (denoVersion === 1) {
     return LEGACY_EDGE_RUNTIME_DENO1_IMAGE;
@@ -50,9 +43,6 @@ const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
   );
   if (pinned === DENO1_EDGE_RUNTIME_VERSION) {
     return LEGACY_EDGE_RUNTIME_DENO1_IMAGE;
-  }
-  if (!slim) {
-    return pinned.length > 0 ? replaceImageTag(raw, pinned) : raw;
   }
   return slimImageForCurrentPin("edgeruntime", raw, pinned.length > 0 ? pinned : undefined);
 });
@@ -69,17 +59,10 @@ export const legacyResolveEdgeRuntimeImage = (
   path: Path.Path,
   workdir: string,
   denoVersion: number,
-) => resolveEdgeRuntimeImage(fs, path, workdir, denoVersion, true);
+) => resolveEdgeRuntimeImage(fs, path, workdir, denoVersion);
 
 /**
- * Same resolution pinned to docker.io, for callers that replace the image
- * entrypoint with a shell. The slim edge-runtime image is distroless: its only
- * executables are `/usr/bin/edge-runtime` and its wrapper, so `sh -c …` cannot
- * run there at all — the same locked exception the `deno1` tag already carries.
+ * Same resolution as {@link legacyResolveEdgeRuntimeImage}. The slim image now
+ * ships `sh`, so shell-entrypoint callers no longer need a docker.io pin.
  */
-export const legacyResolveEdgeRuntimeShellImage = (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  workdir: string,
-  denoVersion: number,
-) => resolveEdgeRuntimeImage(fs, path, workdir, denoVersion, false);
+export const legacyResolveEdgeRuntimeShellImage = legacyResolveEdgeRuntimeImage;

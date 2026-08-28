@@ -258,16 +258,23 @@ describe("legacyBuildStorageContainerSpec", () => {
     );
   });
 
-  test("omits the Docker healthcheck on a slim distroless storage image", () => {
+  test("emits the wget Docker healthcheck on a slim storage image", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const spec = legacyBuildStorageContainerSpec({
       ...input,
       image: "ghcr.io/supabase/cli/storage:v1.70.3",
     });
-    expect(spec.healthcheck).toBeUndefined();
+    expect(spec.healthcheck?.test).toEqual([
+      "CMD",
+      "wget",
+      "--no-verbose",
+      "--tries=1",
+      "--spider",
+      "http://127.0.0.1:5000/status",
+    ]);
   });
 
-  test("mounts the named volume at /mnt on a slim image (uid 65532 owns /mnt)", () => {
+  test("mounts the named volume at /mnt on a slim image", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const spec = legacyBuildStorageContainerSpec({
       ...input,

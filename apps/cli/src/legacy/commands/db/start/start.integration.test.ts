@@ -22,10 +22,6 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import {
-  LegacySlimImagesBackupUnsupportedError,
-  LegacySlimImageVolumeInaccessibleError,
-} from "../../../shared/db-bootstrap/start-database.ts";
-import {
   LegacyDebugFlag,
   LegacyExperimentalFlag,
   LegacyNetworkIdFlag,
@@ -231,27 +227,6 @@ function runningCheckFailsRoute(
     }
     return base(args);
   };
-}
-
-/** Overrides the default route's answer to the slim-image reused-volume access probe
- * (`docker run --rm --entrypoint /usr/bin/sh -v <vol>:/probe <image> -c "test -r
- * /probe/PG_VERSION && test -w /probe"`) so a test can force it accessible/inaccessible
- * without a real container. */
-function slimVolumeProbeRoute(
-  base: (args: ReadonlyArray<string>) => RouteResult,
-  accessible: boolean,
-): (args: ReadonlyArray<string>) => RouteResult {
-  return (args) => {
-    if (args[0] === "run" && args.includes("--entrypoint")) {
-      return { exitCode: accessible ? 0 : 1 };
-    }
-    return base(args);
-  };
-}
-
-/** Whether the slim-image reused-volume access probe (see {@link slimVolumeProbeRoute}) ran. */
-function slimVolumeProbeWasRun(spawned: ReadonlyArray<SpawnRecord>): boolean {
-  return spawned.some((s) => s.args[0] === "run" && s.args.includes("--entrypoint"));
 }
 
 const alwaysReadyHttpClientLayer = Layer.succeed(
@@ -678,87 +653,6 @@ describe("legacy db start", () => {
     },
   );
 
-  // The restore path is entirely a docker.io entrypoint feature, so the slim
-  // image is refused rather than silently starting an empty cluster.
-  it.live(
-    "--from-backup under SUPABASE_USE_SLIM_IMAGES is refused before any container is created",
-    () => {
-      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-      const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
-      return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(flags("/abs/host/backup.sql")).pipe(
-          Effect.provide(layer),
-          Effect.exit,
-        );
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const error = Cause.squash(exit.cause);
-          expect(error).toBeInstanceOf(LegacySlimImagesBackupUnsupportedError);
-          if (error instanceof LegacySlimImagesBackupUnsupportedError) {
-            expect(error.message).toBe(
-              "--from-backup is not supported with SUPABASE_USE_SLIM_IMAGES",
-            );
-            expect(error.suggestion).toContain("Unset SUPABASE_USE_SLIM_IMAGES");
-          }
-        }
-        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-        expect(volumePruneWasAttempted(child.spawned)).toBe(false);
-      });
-    },
-  );
-
-  // A reused volume's PGDATA ownership is a property of whichever image initialized it: a
-  // docker.io-initialized volume's `700`-mode dirs (owned by that image's `postgres` uid) block
-  // the slim image's non-root `65532` user, crash-looping until the health check times out with
-  // no useful message. `legacyIsVolumeAccessibleToImage` probes for this before any container is
-  // created.
-  it.live(
-    "SUPABASE_USE_SLIM_IMAGES against an existing volume inaccessible to the slim image fails before any container is created",
-    () => {
-      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-      const { layer, child } = setup({ route: slimVolumeProbeRoute(defaultRoute(), false) });
-      return Effect.gen(function* () {
-        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
-        expect(Exit.isFailure(exit)).toBe(true);
-        if (Exit.isFailure(exit)) {
-          const error = Cause.squash(exit.cause);
-          expect(error).toBeInstanceOf(LegacySlimImageVolumeInaccessibleError);
-          if (error instanceof LegacySlimImageVolumeInaccessibleError) {
-            expect(error.message).toContain("not readable and writable");
-            expect(error.suggestion).toContain("supabase stop --no-backup");
-            expect(error.suggestion).toContain("SUPABASE_USE_SLIM_IMAGES");
-          }
-        }
-        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
-      });
-    },
-  );
-
-  it.live(
-    "SUPABASE_USE_SLIM_IMAGES against an existing volume accessible to the slim image proceeds to create the container",
-    () => {
-      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-      const { layer, child, out } = setup({ route: slimVolumeProbeRoute(defaultRoute(), true) });
-      return Effect.gen(function* () {
-        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(slimVolumeProbeWasRun(child.spawned)).toBe(true);
-        expect(createArgs(child.spawned)).not.toBeUndefined();
-        expect(out.stderrText).toContain("Starting database from backup...\n");
-      });
-    },
-  );
-
-  it.live(
-    "no SUPABASE_USE_SLIM_IMAGES: an existing volume never runs the slim-image readability probe",
-    () => {
-      const { layer, child } = setup();
-      return Effect.gen(function* () {
-        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-        expect(slimVolumeProbeWasRun(child.spawned)).toBe(false);
-      });
-    },
-  );
-
   it.live(
     '--from-backup against an existing volume fails with "backup volume already exists" and rolls back without creating a container',
     () => {
@@ -786,6 +680,25 @@ describe("legacy db start", () => {
         expect(rollbackWasAttempted(child.spawned)).toBe(true);
         expect(volumePruneWasAttempted(child.spawned)).toBe(false);
       });
+    },
+  );
+
+  it.live(
+    "--from-backup under SUPABASE_USE_SLIM_IMAGES uses the same restore entrypoint as docker.io",
+    () => {
+      vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
+      const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
+      return Effect.gen(function* () {
+        yield* legacyDbStart(flags("/abs/host/backup.sql")).pipe(Effect.provide(layer));
+        const args = createArgs(child.spawned);
+        expect(args).not.toBeUndefined();
+        const script = args?.[(args?.indexOf("-c") ?? -1) + 1];
+        expect(script).toContain("/docker-entrypoint-initdb.d/migrate.sh");
+        expect(bindsFromCreateArgs(args ?? [])).toContain(
+          "/abs/host/backup.sql:/etc/backup.sql:ro",
+        );
+        expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
+      }).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
     },
   );
 

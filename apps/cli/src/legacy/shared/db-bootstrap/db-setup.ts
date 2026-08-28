@@ -162,10 +162,8 @@ import {
   type LegacyVaultSecret,
   legacyUpsertVaultSecrets,
 } from "../legacy-vault.ts";
-import { dockerfileServiceImageRaw } from "../../../shared/services/dockerfile-images.ts";
 import { legacyEnsureImagesCached, type LegacyImagePrepullError } from "./image-prepull.ts";
 import { legacyResolvePinnedImage } from "./pinned-image.ts";
-import { legacyUsesSlimRuntime } from "./slim-runtime.ts";
 import { LEGACY_COMPOSE_PROJECT_LABEL } from "./container-lifecycle.ts";
 import { LEGACY_REALTIME_TENANT_ID, legacyBuildRealtimeEnv } from "./realtime-env.ts";
 import { LEGACY_START_DB_GLOBALS_SQL } from "./templates/db-globals.sql.ts";
@@ -846,9 +844,6 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (
     // fix already applied to `resolveDbHealthTimeoutSeconds` and the
     // long-running Storage container's own file-size-limit parsing
     // (`start.handler.ts`).
-    // Slim storage has no `migrate-call.js`. Run the one-shot on the docker.io
-    // pin so `legacyGetRegistryImageUrl` can rewrite it — same locked
-    // exception as the pg-delta shell image.
     const storageEnv = yield* Effect.try({
       try: () =>
         legacyStartStorageMigrateEnv({
@@ -867,9 +862,7 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (
         }),
     });
     yield* legacyRunStartMigrateJob(spawner, {
-      image: legacyUsesSlimRuntime(input.images.storage)
-        ? dockerfileServiceImageRaw("storage")
-        : input.images.storage,
+      image: input.images.storage,
       networkId: input.networkId,
       projectId: input.projectId,
       projectEnvValues: input.projectEnvValues,
@@ -879,10 +872,6 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (
     });
   }
   if (input.config.auth.enabled) {
-    // Slim auth bakes `/usr/local/bin/auth` as ENTRYPOINT, so `["gotrue", "migrate"]`
-    // would become `auth gotrue migrate`. The docker.io image has an empty
-    // entrypoint and expects the binary name in argv.
-    const slimAuth = legacyUsesSlimRuntime(input.images.auth);
     yield* legacyRunStartMigrateJob(spawner, {
       image: input.images.auth,
       networkId: input.networkId,
@@ -897,7 +886,7 @@ const legacyStartInitSchema15 = Effect.fnUntraced(function* (
         dbHost,
         dbPassword,
       }),
-      cmd: slimAuth ? ["migrate"] : ["gotrue", "migrate"],
+      cmd: ["gotrue", "migrate"],
     });
   }
 });

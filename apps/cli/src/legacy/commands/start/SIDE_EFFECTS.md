@@ -106,26 +106,14 @@ Kong's `custom_nginx.template`, Vector's `vector.yaml`, and Postgres's own boots
 script (`postgresql.conf`-equivalent setup) are all rendered in memory and injected
 directly into each container's entrypoint (a `sh -c '... heredoc ...'` command) —
 never written to the host filesystem, since none of them carries secret content.
-Exception: with `SUPABASE_USE_SLIM_IMAGES` enabled the Postgres container keeps the
-slim image's own entrypoint — settings travel as `-c` argv and the bootstrap schema is
-delivered via `docker cp` alongside the root key instead (see `db start`'s
-SIDE_EFFECTS.md, which documents the slim container shape both commands share).
-The same flag also keeps Vector's image entrypoint (`vector --config /etc/vector/vector.yaml`)
-and copies `vector.yaml` via `secretFiles` instead of a `sh` heredoc, because the slim Vector
-image has no shell-based entrypoint override. Distroless slim services with no `/bin/sh`
-(auth, storage, studio, pg-meta) omit Docker healthchecks — `docker create --health-cmd` is
-always `CMD-SHELL` — and `legacyCheckContainerReady` treats `Running` as ready; slim Storage
-is the exception, gated instead on a `HEAD /storage/v1/status` probe through Kong (the same
-gateway shape PostgREST and Edge Runtime use) so bucket seeding below cannot race its
-startup. That probe is skipped when Kong itself is `--exclude`d, since nothing then routes
-to Storage. Realtime and
-analytics keep a busybox `wget --spider` probe; slim Edge Runtime is started without
-`--entrypoint sh` (the wrapped binary has no shell) and the main-service template is
-copied to `/tmp/index.ts` (`--main-service=/tmp`) because the image runs as uid 65532
-and cannot read `/root`. Slim Storage mounts its named volume at `/mnt` (owned by
-uid 65532 in the image). An existing docker.io storage volume is write-probed as
-uid 65532 before create; a family mismatch fails with `stop --no-backup` or unset
-the flag (same remediation as the slim Postgres volume probe).
+`SUPABASE_USE_SLIM_IMAGES` rewrites image names to `ghcr.io/supabase/cli/*`. Postgres,
+storage, and edge-runtime share the docker.io container specs (root start, `sh`/`wget`,
+`/mnt` and `/root/.cache/deno` mounts). Distroless slim services with no `/bin/sh`
+(auth, studio, pg-meta) omit Docker healthchecks — `docker create --health-cmd` is
+always `CMD-SHELL` — and `legacyCheckContainerReady` treats `Running` as ready.
+The same flag keeps Vector's image entrypoint (`vector --config /etc/vector/vector.yaml`)
+and copies `vector.yaml` via `secretFiles` instead of a `sh` heredoc. Realtime and
+analytics keep a busybox `wget --spider` probe.
 Kong's `kong.yml`/TLS cert/TLS key, Postgres's `pgsodium_root.key`, and Supavisor's
 `pooler_tenant.exs` DO carry secret content (a service-role-key-derived bearer/query
 key, TLS private key material, and the DB password respectively). Since
@@ -160,8 +148,7 @@ recreates its own subdirectory fresh on every call (self-healing), so a
 shrinking env set never leaves stale files behind. The bootstrap `index.ts` template
 carries no secret content and, as of supabase/cli#6254, never touches host disk at all:
 it is streamed via `docker cp` straight into the created (not yet started) Edge Runtime
-container at `/root/index.ts` (docker.io) or `/tmp/index.ts` (slim, uid 65532 cannot
-read `/root`) — a single-file host bind mount materializes as an empty directory on daemons
+container at `/root/index.ts` — a single-file host bind mount materializes as an empty directory on daemons
 that cannot see the client's filesystem (remote `DOCKER_HOST`/Docker-context daemons,
 podman machines), which broke `start` with edge-runtime's "failed to determine
 entrypoint". Only the bootstrap template is daemon-independent: user function

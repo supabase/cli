@@ -27,7 +27,6 @@ import {
   hasExplicitLongFlag,
   lastExplicitLongFlagValue,
 } from "../cli/cobra-flag-groups.ts";
-import { usesSlimImageRuntime } from "../services/slim-images.ts";
 import {
   edgeRuntimeImage,
   FUNCTIONS_BUNDLER_MUTEX_GROUP,
@@ -1201,12 +1200,6 @@ export async function buildDockerBinds(
     readonly additionalModuleRoots?: ReadonlyArray<string>;
     readonly onWarning?: (message: string) => Promise<void>;
     readonly skipMissingImportMapTargets?: boolean;
-    /**
-     * Resolved edge-runtime ref — a slim (uid 65532) ref selects the
-     * slim-only Deno-cache volume (`edgeRuntimeCacheVolume`) instead of the
-     * root-owned docker.io one.
-     */
-    readonly image?: string;
   } = {},
 ): Promise<ReadonlyArray<DockerBind>> {
   const hostFunctionsDir = resolve(functionsDir);
@@ -1238,10 +1231,7 @@ export async function buildDockerBinds(
     },
   ];
   if (process.env["BITBUCKET_CLONE_DIR"] === undefined) {
-    const cacheVolume = edgeRuntimeCacheVolume(
-      projectId,
-      options.image !== undefined && usesSlimImageRuntime(options.image),
-    );
+    const cacheVolume = edgeRuntimeCacheVolume(projectId);
     binds.unshift({
       hostPath: cacheVolume.name,
       containerPath: cacheVolume.containerPath,
@@ -1436,16 +1426,11 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     const outputPath = join(outputDir, "output.eszip");
     // `edgeRuntimeImage` applies the tag VERBATIM (Go's `replaceImageTag`)
     // — a `.temp/edge-runtime-version` pin flows through unmodified, `v`
-    // prefix or not (see the helper's doc in `functions.shared.ts`). The
-    // slim gate reads the raw reference: registry-candidate mapping never
-    // moves an image into or out of the slim `ghcr.io/supabase/cli/`
-    // namespace, so raw and pull-resolved refs agree on slim-ness.
+    // prefix or not (see the helper's doc in `functions.shared.ts`).
     const rawImage = edgeRuntimeImage(edgeRuntimeVersion);
-    const slim = usesSlimImageRuntime(rawImage);
     const binds = yield* Effect.promise(() =>
       buildDockerBinds(projectId, functionsDir, outputDir, config, {
         onWarning: (message) => Effect.runPromise(output.raw(message, "stderr")),
-        image: rawImage,
       }),
     );
     // Go: `DockerStart` -> `DockerResolveImageIfNotCached` (`internal/utils/docker.go:326-386`)
@@ -1457,7 +1442,7 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     // so the only cost is one cached `docker image inspect` per function.
     const image = yield* resolveFunctionsDockerImage(rawImage, projectEnvValues);
     yield* ensureDockerNetwork(networkMode, projectId);
-    yield* ensureDockerNamedVolume(edgeRuntimeCacheVolume(projectId, slim).name, projectId);
+    yield* ensureDockerNamedVolume(edgeRuntimeCacheVolume(projectId).name, projectId);
 
     const env: Array<string> = [];
     if (

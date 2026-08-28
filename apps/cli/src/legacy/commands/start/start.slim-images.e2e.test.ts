@@ -61,16 +61,6 @@ function readSectionPort(config: string, section: string): number {
   }
   return Number(match[1]);
 }
-
-async function volumeExists(name: string): Promise<boolean> {
-  try {
-    await execFileAsync("docker", ["volume", "inspect", name]);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 async function containerImage(name: string): Promise<string> {
   const { stdout } = await execFileAsync("docker", [
     "inspect",
@@ -165,81 +155,6 @@ describe("supabase start slim images (e2e)", () => {
       const body = await invoked.text();
       expect(invoked.ok, body).toBe(true);
       expect(JSON.parse(body)).toEqual({ message: "Hello Functions!" });
-    },
-  );
-
-  test(
-    "refuses leftover docker.io volumes without pruning them, then starts after stop --no-backup",
-    { timeout: START_TIMEOUT_MS * 3 + LIFECYCLE_OVERHEAD_MS },
-    async () => {
-      projectDir = await mkdtemp(path.join(tmpdir(), "sb-slim-leftover-e2e-"));
-      const projectId = legacySanitizeProjectId(path.basename(projectDir));
-      const dbVolume = localDbContainerId(projectId);
-      const storageVolume = legacyServiceContainerName("storage", projectId);
-
-      const init = await runSupabase(["init"], {
-        entrypoint: "legacy",
-        cwd: projectDir,
-        exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
-        env: DOCKER_IO_ENV,
-      });
-      requireCliSuccess(init, "init");
-      await overrideStackPorts(projectDir);
-
-      const dockerIoStart = await runSupabase(START_ARGS, {
-        entrypoint: "legacy",
-        cwd: projectDir,
-        exitTimeoutMs: START_TIMEOUT_MS,
-        env: DOCKER_IO_ENV,
-      });
-      expect(
-        dockerIoStart.exitCode,
-        `stdout:\n${dockerIoStart.stdout}\nstderr:\n${dockerIoStart.stderr}`,
-      ).toBe(0);
-
-      const stopped = await runSupabase(["stop"], {
-        entrypoint: "legacy",
-        cwd: projectDir,
-        exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
-        env: DOCKER_IO_ENV,
-      });
-      requireCliSuccess(stopped, "stop keep volumes");
-      expect(await volumeExists(dbVolume)).toBe(true);
-      expect(await volumeExists(storageVolume)).toBe(true);
-
-      await execFileAsync("docker", ["volume", "rm", dbVolume]);
-      expect(await volumeExists(dbVolume)).toBe(false);
-
-      const refused = await runSupabase(START_ARGS, {
-        entrypoint: "legacy",
-        cwd: projectDir,
-        exitTimeoutMs: START_TIMEOUT_MS,
-        env: SLIM_ENV,
-      });
-      expect(refused.exitCode).not.toBe(0);
-      expect(refused.stderr).toContain("storage volume");
-      expect(refused.stderr).toContain("supabase stop --no-backup");
-      expect(await volumeExists(storageVolume)).toBe(true);
-      expect(await volumeExists(dbVolume)).toBe(false);
-
-      const reset = await runSupabase(["stop", "--no-backup"], {
-        entrypoint: "legacy",
-        cwd: projectDir,
-        exitTimeoutMs: SHORT_E2E_TIMEOUT_MS,
-        env: SLIM_ENV,
-      });
-      requireCliSuccess(reset, "stop --no-backup");
-      expect(await volumeExists(storageVolume)).toBe(false);
-
-      const slimStart = await runSupabase(START_ARGS, {
-        entrypoint: "legacy",
-        cwd: projectDir,
-        exitTimeoutMs: START_TIMEOUT_MS,
-        env: SLIM_ENV,
-      });
-      expect(slimStart.exitCode, `stdout:\n${slimStart.stdout}\nstderr:\n${slimStart.stderr}`).toBe(
-        0,
-      );
     },
   );
 });

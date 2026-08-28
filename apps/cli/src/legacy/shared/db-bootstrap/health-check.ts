@@ -57,16 +57,6 @@ const LEGACY_POSTGREST_READY_PATH = "/rest-admin/v1/ready";
  */
 const LEGACY_EDGE_RUNTIME_READY_PATH = "/functions/v1/_internal/health";
 
-/**
- * Storage's own `/status` (the endpoint its docker.io HEALTHCHECK probes with
- * `wget --spider`), reached through Kong's `/storage/v1/` route. Only the slim
- * image needs it: distroless Storage carries no Docker healthcheck (no shell
- * for `CMD-SHELL`, see `slim-runtime.ts`), so {@link legacyCheckContainerReady}
- * would report it ready the moment it is `Running` — before it can answer the
- * bucket-seeding calls `start` makes right after this gate.
- */
-const LEGACY_STORAGE_READY_PATH = "/storage/v1/status";
-
 /** Identifies a single container's readiness failure this round. */
 export interface LegacyHealthCheckFailure {
   /**
@@ -148,8 +138,6 @@ export interface LegacyWaitForHealthyServicesOptions {
   readonly postgrest?: LegacyHealthCheckPostgrestGateway;
   /** See {@link LEGACY_EDGE_RUNTIME_READY_PATH}'s doc comment for why this reuses the same gateway shape as {@link postgrest}. */
   readonly edgeRuntime?: LegacyHealthCheckPostgrestGateway;
-  /** Set only for the slim Storage image — see {@link LEGACY_STORAGE_READY_PATH}. */
-  readonly storage?: LegacyHealthCheckPostgrestGateway;
   /** Each watched container's already-resolved image, keyed by container name. */
   readonly images?: ReadonlyMap<string, string>;
 }
@@ -362,7 +350,6 @@ export function legacyWaitForHealthyServices(
   const timeoutSeconds = opts.timeoutSeconds ?? LEGACY_HEALTH_CHECK_TIMEOUT_SECONDS;
   const postgrest = opts.postgrest;
   const edgeRuntime = opts.edgeRuntime;
-  const storage = opts.storage;
 
   const checkOne = (containerId: string): Effect.Effect<void, string, HttpClient.HttpClient> => {
     if (postgrest !== undefined && containerId === postgrest.containerId) {
@@ -370,9 +357,6 @@ export function legacyWaitForHealthyServices(
     }
     if (edgeRuntime !== undefined && containerId === edgeRuntime.containerId) {
       return legacyCheckHttpReady(edgeRuntime, LEGACY_EDGE_RUNTIME_READY_PATH);
-    }
-    if (storage !== undefined && containerId === storage.containerId) {
-      return legacyCheckHttpReady(storage, LEGACY_STORAGE_READY_PATH);
     }
     return legacyCheckContainerReady(spawner, containerId);
   };

@@ -135,15 +135,10 @@ import {
   legacyRollbackStart,
 } from "../../shared/db-bootstrap/rollback.ts";
 import { legacyResolveDbBootstrapConfig } from "../../shared/db-bootstrap/bootstrap-config.ts";
-import {
-  LegacySlimImageVolumeInaccessibleError,
-  legacyStartDatabase,
-} from "../../shared/db-bootstrap/start-database.ts";
+import { legacyStartDatabase } from "../../shared/db-bootstrap/start-database.ts";
 import { LEGACY_START_SERVICES } from "./start.services.ts";
 import {
   legacyCreateContainer,
-  legacyIsVolumeWritableByUid,
-  legacyVolumeExists,
   type LegacyContainerOpts,
 } from "../../shared/db-bootstrap/container-lifecycle.ts";
 import { legacyEnsureImagesCached } from "../../shared/db-bootstrap/image-prepull.ts";
@@ -183,7 +178,6 @@ import {
 import { legacyBuildMailpitContainerSpec } from "./services/mailpit.service.ts";
 import { legacyBuildRealtimeContainerSpec } from "./services/realtime.service.ts";
 import { LEGACY_REALTIME_TENANT_ID } from "../../shared/db-bootstrap/realtime-env.ts";
-import { legacyUsesSlimRuntime } from "../../shared/db-bootstrap/slim-runtime.ts";
 import { legacyBuildPostgrestContainerSpec } from "./services/postgrest.service.ts";
 import { legacyBuildStorageContainerSpec } from "./services/storage.service.ts";
 import { legacyBuildImgproxyContainerSpec } from "./services/imgproxy.service.ts";
@@ -1534,31 +1528,6 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       // doc comment) tees its own stderr.
       const bringUpDebug = yield* LegacyDebugFlag;
 
-      // Leftover storage after a docker.io stop that kept volumes must be
-      // refused before StartDatabase marks a missing Postgres volume as fresh;
-      // otherwise rollback would prune the leftover data.
-      const storagePlanImage = imagePlan.find((entry) => entry.service === "storage")?.image;
-      if (storagePlanImage !== undefined && legacyUsesSlimRuntime(resolveImage(storagePlanImage))) {
-        const storageVolumeExisted = yield* legacyVolumeExists(spawner, storageContainerName);
-        if (storageVolumeExisted) {
-          const writable = yield* legacyIsVolumeWritableByUid(
-            spawner,
-            resolveImage(postgresImage),
-            storageContainerName,
-            65532,
-          );
-          if (!writable) {
-            return yield* Effect.fail(
-              new LegacySlimImageVolumeInaccessibleError({
-                message:
-                  "the existing storage volume was initialized by a non-slim storage image and is not writable by the slim image's user",
-                suggestion: `Run ${legacyAqua("supabase stop --no-backup")} to reset the local storage volume, or unset SUPABASE_USE_SLIM_IMAGES.`,
-              }),
-            );
-          }
-        }
-      }
-
       // Runs the DB bootstrap sequence (network -> volume probe -> container
       // create+start -> health wait -> fresh-volume setup -> `_current_branch`) — shared
       // with `db start`'s own native container bootstrap, see `legacyStartDatabase`'s own
@@ -1698,7 +1667,6 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       const started = new Map<string, string>();
       let postgrestGateway: LegacyHealthCheckPostgrestGateway | undefined;
       let edgeRuntimeGateway: LegacyHealthCheckPostgrestGateway | undefined;
-      let storageGateway: LegacyHealthCheckPostgrestGateway | undefined;
       let storageContainerId: string | undefined;
       const imagePlanByService = new Map(imagePlan.map((entry) => [entry.service, entry.image]));
       for (const entry of LEGACY_START_SERVICES) {
@@ -1848,18 +1816,6 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         }
         if (entry.service === "storage") {
           storageContainerId = spec.containerName;
-          // The slim Storage spec declares no Docker healthcheck (distroless —
-          // see `storage.service.ts`), so without this gateway the health wait
-          // would accept it as soon as it is `Running` and bucket seeding below
-          // would race its startup. Needs Kong to reach it; with Kong excluded
-          // there is no route to probe, so fall back to the Running-only check.
-          if (legacyUsesSlimRuntime(spec.image) && gates.kong) {
-            storageGateway = {
-              containerId: spec.containerName,
-              apiExternalUrl: values.apiUrl,
-              secretKey: values.secretKey,
-            };
-          }
         }
       }
 
@@ -1868,7 +1824,6 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         started,
         postgrestGateway,
         edgeRuntimeGateway,
-        storageGateway,
         storageContainerId,
       };
     }).pipe(
@@ -1932,8 +1887,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // but never re-entering these later steps once the DB bootstrap has
     // already returned.
     if (bringUpResult.kind === "started") {
-      const { started, postgrestGateway, edgeRuntimeGateway, storageGateway, storageContainerId } =
-        bringUpResult;
+      const { started, postgrestGateway, edgeRuntimeGateway, storageContainerId } = bringUpResult;
 
       // Wraps steps 9-11 below (bulk health wait, the ignore-health-check
       // storage-only recheck-and-seed, the success-path bucket seeding, and
@@ -2044,7 +1998,6 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           legacyWaitForHealthyServices(spawner, [...started.keys()], {
             postgrest: postgrestGateway,
             edgeRuntime: edgeRuntimeGateway,
-            storage: storageGateway,
             images: started,
           }),
         ).pipe(Effect.result);
@@ -2070,7 +2023,6 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               // containers that actually appear in this call's own failures.
               const storageHealthResult = yield* withLocalKongCa(
                 legacyWaitForHealthyServices(spawner, [storageContainerId], {
-                  storage: storageGateway,
                   images: started,
                 }),
               ).pipe(Effect.result);

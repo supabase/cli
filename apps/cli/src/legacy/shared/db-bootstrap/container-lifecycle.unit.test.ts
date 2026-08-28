@@ -20,7 +20,6 @@ import {
   legacyRemoveContainer,
   legacyRemoveVolume,
   legacyCreateContainer,
-  legacyIsVolumeWritableByUid,
   legacyVolumeExists,
 } from "./container-lifecycle.ts";
 import type { LegacyStartContainerSpec } from "./docker-create-args.ts";
@@ -895,43 +894,4 @@ describe("legacyCreateContainer with an empty containerName (the shadow database
       );
     },
   );
-});
-
-describe("legacyIsVolumeWritableByUid", () => {
-  it.live("probes as the given uid with sh, not the storage image", () => {
-    const mock = mockSpawner(() => ({ exitCode: 0 }));
-    return legacyIsVolumeWritableByUid(
-      mock.spawner,
-      "ghcr.io/supabase/cli/postgres:17.6.1.166",
-      "supabase_storage_proj",
-      65532,
-    ).pipe(
-      Effect.map((writable) => {
-        expect(writable).toBe(true);
-        expect(mock.spawned[0]).toEqual([
-          "run",
-          "--rm",
-          "--user",
-          "65532",
-          "--entrypoint",
-          "/bin/sh",
-          "-v",
-          "supabase_storage_proj:/probe",
-          "ghcr.io/supabase/cli/postgres:17.6.1.166",
-          "-c",
-          "test -w /probe",
-        ]);
-      }),
-    );
-  });
-
-  it.live("treats exit 1 as not writable", () => {
-    const mock = mockSpawner(() => ({ exitCode: 1 }));
-    return legacyIsVolumeWritableByUid(
-      mock.spawner,
-      "ghcr.io/supabase/cli/postgres:17.6.1.166",
-      "supabase_storage_proj",
-      65532,
-    ).pipe(Effect.map((writable) => expect(writable).toBe(false)));
-  });
 });

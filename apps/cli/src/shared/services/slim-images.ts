@@ -124,7 +124,7 @@ export function isSlimImageRef(image: string): boolean {
 /**
  * True when the flag is on AND `image` is a slim ghcr ref. Spec builders and
  * one-shot jobs use this so a ghcr-shaped override with the flag off stays on
- * the docker.io contract (same gate as {@link legacyIsSlimPostgresImage}).
+ * the docker.io contract.
  */
 export function usesSlimImageRuntime(image: string): boolean {
   return slimImagesEnabled() && isSlimImageRef(image);

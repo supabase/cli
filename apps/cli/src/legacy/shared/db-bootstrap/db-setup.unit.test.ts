@@ -9,7 +9,6 @@ import { afterEach, vi } from "vitest";
 import { Deferred, Effect, FileSystem, Layer, Path, Schema, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
-import { dockerfileServiceImageRaw } from "../../../shared/services/dockerfile-images.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
 import { LegacyDbExecError } from "../legacy-db-connection.errors.ts";
 import { LegacyDbConnection, type LegacyDbSession } from "../legacy-db-connection.service.ts";
@@ -29,8 +28,6 @@ import {
   legacyStartSetupLocalDatabase,
   type LegacyStartSetupLocalDatabaseInput,
 } from "./db-setup.ts";
-
-const currentStorageTag = dockerfileServiceImageRaw("storage").split(":")[1] ?? "";
 
 const decodeConfig = Schema.decodeUnknownSync(CliConfigSchema);
 
@@ -372,7 +369,7 @@ describe("legacyStartSetupLocalDatabase", () => {
     });
 
     it.effect(
-      "slim refs: runs realtime one-shot, storage on docker.io, and auth as migrate",
+      "slim refs: runs realtime, storage, and auth one-shots on the resolved slim images",
       () => {
         vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
         const workdir = makeWorkdir();
@@ -394,12 +391,12 @@ describe("legacyStartSetupLocalDatabase", () => {
           Effect.map(() => {
             expect(docker.runs.map((job) => job.image)).toEqual([
               "ghcr.io/supabase/cli/realtime:v2.129.3",
-              `public.ecr.aws/supabase/storage-api:${currentStorageTag}`,
+              "ghcr.io/supabase/cli/storage:v1.70.3",
               "ghcr.io/supabase/cli/auth:v2.196.0",
             ]);
             expect(docker.runs[0]?.cmd?.[0]).toBe("/app/bin/realtime");
             expect(docker.runs[1]?.cmd).toEqual(["node", "dist/scripts/migrate-call.js"]);
-            expect(docker.runs[2]?.cmd).toEqual(["migrate"]);
+            expect(docker.runs[2]?.cmd).toEqual(["gotrue", "migrate"]);
             rmSync(workdir, { recursive: true, force: true });
           }),
         );

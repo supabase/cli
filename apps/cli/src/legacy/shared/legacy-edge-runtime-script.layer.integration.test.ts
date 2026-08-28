@@ -193,9 +193,7 @@ describe("legacyEdgeRuntimeScriptLayer sentinel handling", () => {
     },
   );
 
-  it.effect("keeps the runner on the docker.io image with the slim-images flag on", () => {
-    // The runner replaces the entrypoint with `sh -c <heredoc>`; the distroless
-    // slim image ships no shell, so it must never be selected here.
+  it.effect("rewrites the runner onto the slim image with the slim-images flag on", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const { layer, docker } = setup({
       exitCode: 1,
@@ -206,7 +204,7 @@ describe("legacyEdgeRuntimeScriptLayer sentinel handling", () => {
       Effect.tap(() =>
         Effect.sync(() => {
           expect(docker.lastOpts?.entrypoint).toStrictEqual(Option.some("sh"));
-          expect(docker.lastOpts?.image).not.toContain("ghcr.io/supabase/cli/");
+          expect(docker.lastOpts?.image).toContain("ghcr.io/supabase/cli/");
           expect(docker.lastOpts?.image).toContain("edge-runtime:");
         }),
       ),

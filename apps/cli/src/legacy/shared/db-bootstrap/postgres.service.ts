@@ -22,7 +22,6 @@
 
 import type { CliConfig } from "@supabase/config";
 
-import { isSlimImageRef, slimImagesEnabled } from "../../../shared/services/slim-images.ts";
 import { localDbContainerId } from "../legacy-docker-ids.ts";
 import { legacyToDockerPath } from "../legacy-docker-path.ts";
 import { encodeToml } from "../legacy-go-output.encoders.ts";
@@ -52,13 +51,10 @@ const LEGACY_POSTGRES_PASSWORD = "postgres";
 const LEGACY_POSTGRES_PGSODIUM_ROOT_KEY_PATH = "/etc/postgresql-custom/pgsodium_root.key";
 
 /**
- * The post-migration hook path both image families read: `supabase/postgres`'s
- * bundled `migrate.sh` execs `psql -v ON_ERROR_STOP=1 -U supabase_admin -f
- * /etc/postgresql.schema.sql` as its last step when the file exists. The
- * docker.io entrypoint heredocs it (see
- * {@link legacyPostgresEntrypointScriptPg15}); the slim image's own entrypoint
- * has no heredoc seam, so the slim path stages the same bytes at the same path
- * via `secretFiles` instead — see {@link legacyPostgresSlimBootFields}.
+ * The post-migration hook path: `supabase/postgres`'s bundled `migrate.sh` execs
+ * `psql -v ON_ERROR_STOP=1 -U supabase_admin -f /etc/postgresql.schema.sql` as
+ * its last step when the file exists. The docker.io entrypoint heredocs it
+ * (see {@link legacyPostgresEntrypointScriptPg15}).
  */
 const LEGACY_POSTGRES_SCHEMA_SQL_PATH = "/etc/postgresql.schema.sql";
 
@@ -77,22 +73,6 @@ const LEGACY_POSTGRES_HEALTHCHECK_TEST: ReadonlyArray<string> = [
   "127.0.0.1",
   "-p",
   "5432",
-];
-
-/**
- * The slim image's first boot runs initdb + bundled migrations against a TEMPORARY server
- * before `entry.sh` execs the final `postgres` process, so PID 1 is still the entrypoint
- * shell during that window and a bare `pg_isready` would pass against the temporary
- * server. Gate on the final Postgres process the same way `packages/stack`'s own slim
- * Docker healthcheck does (`postgresDockerHealthCheck`,
- * `packages/stack/src/services/postgres.ts`).
- */
-const LEGACY_POSTGRES_SLIM_HEALTHCHECK_TEST: ReadonlyArray<string> = [
-  "CMD",
-  "sh",
-  "-ec",
-  // Linux /proc/1/comm truncates `.postgres-wrapped` to 15 characters.
-  'case "$(cat /proc/1/comm)" in postgres|.postgres-wrapp) pg_isready -U postgres -h 127.0.0.1 -p 5432 ;; *) exit 1 ;; esac',
 ];
 
 /** Go's `utils.DbAliases` (`apps/cli-go/internal/utils/config.go:36`). */
@@ -196,24 +176,6 @@ function legacyDefinedPostgresSettings(
   return Object.entries(settings ?? {}).filter(
     (entry): entry is [string, string | number | boolean] => entry[1] !== undefined,
   );
-}
-
-/**
- * The same `[db.settings]` source as {@link legacyPostgresSettingsToPostgresConfig},
- * rendered as repeated `-c key=value` argv pairs instead of `postgresql.conf`
- * lines. The slim image's entrypoint ends in `exec postgres -D $PGDATA "$@"`, so
- * the container's trailing argv reaches the server verbatim — no conf-file append
- * seam, and no shell quoting to get right, since each pair travels as its own
- * argv element. Values are unquoted on purpose: the TOML renderer's single quotes
- * are TOML syntax, whereas `postgres -c` takes the raw value.
- */
-export function legacyPostgresSettingsToConfigArgs(
-  settings: CliConfig["db"]["settings"],
-): ReadonlyArray<string> {
-  return legacyDefinedPostgresSettings(settings).flatMap(([key, value]) => [
-    "-c",
-    `${key}=${String(value)}`,
-  ]);
 }
 
 /**
@@ -418,86 +380,6 @@ function legacyPostgresEntrypointScriptRestore(postgresConfig: string): string {
 }
 
 /**
- * Whether this container runs the `ghcr.io/supabase/cli` slim Postgres build rather than the
- * docker.io one. The single gate shared by both spec builders and `start-database.ts`'s
- * `--from-backup` refusal, so the guard can never drift from what the builders actually emit.
- */
-export function legacyIsSlimPostgresImage(image: string): boolean {
-  return slimImagesEnabled() && isSlimImageRef(image);
-}
-
-/**
- * The bytes the slim image's `migrate.sh` runs as `supabase_admin` after bundled
- * migrations: schema.sql + webhook.sql + _supabase.sql — the same postinit both
- * image families run (the bundled demote migration leaves `postgres`
- * NOSUPERUSER on both).
- */
-const LEGACY_POSTGRES_SLIM_SCHEMA_SQL = `${LEGACY_START_DB_SCHEMA_SQL}\n${LEGACY_START_DB_WEBHOOK_SQL}\n${LEGACY_START_DB_SUPABASE_SQL}`;
-
-/**
- * The image-dependent half of a Postgres container spec: how the entrypoint is
- * driven, which env it reads, and which files have to be staged before it runs.
- * Shared by the real `db` container and the shadow, whose slim wiring differs
- * only by the shadow's extra worker-cap argv.
- */
-type LegacyPostgresBootFields = Pick<
-  LegacyStartContainerSpec,
-  "env" | "entrypoint" | "cmd" | "secretFiles"
->;
-
-/**
- * Slim-image wiring. The slim build has none of the seams the docker.io
- * entrypoint script relies on (no `docker-entrypoint.sh`, no writable
- * `/etc/postgresql/postgresql.conf`, and a non-root `65532` runtime user), so
- * instead of overriding the entrypoint this keeps the image's own
- * `sh /usr/local/bin/entry.sh` and drives it through the two seams it does
- * expose:
- *
- *  - **Trailing argv** — `entry.sh` ends in `exec postgres -D $PGDATA "$@"`, so
- *    `[db.settings]` travels as `-c key=value` pairs
- *    ({@link legacyPostgresSettingsToConfigArgs}) rather than a conf-file append.
- *    Everything the docker.io script appends by hand (`listen_addresses`, `port`,
- *    `wal_level`, the `host all all all scram-sha-256` HBA rule) `entry.sh`
- *    already applies itself on first boot.
- *  - **{@link LEGACY_POSTGRES_SCHEMA_SQL_PATH}** — staged as a `secretFiles`
- *    entry so the bundled `migrate.sh` finds it and runs it exactly once, at
- *    initdb, as `supabase_admin` under `ON_ERROR_STOP=1`. That is the same
- *    post-migration hook the docker.io image runs, which is why this needs no
- *    first-boot bookkeeping of its own: a reused data directory skips
- *    `migrate.sh` entirely, so the non-idempotent schema SQL cannot re-apply.
- *
- * `PGSODIUM_KEY_FILE` points pgsodium/vault's bundled `getkey_script` at the
- * root key this port already delivers via `docker cp`; without it the script
- * generates a fresh random key under `$HOME`, so the cluster's encryption key
- * would differ from `db.root_key` on every provision. `POSTGRES_HOST` and
- * `POSTGRES_INITDB_ARGS` are deliberately absent: both configure the docker.io
- * entrypoint only, and the slim bundle owns its own initdb flags.
- */
-function legacyPostgresSlimBootFields(input: {
-  readonly settings: CliConfig["db"]["settings"];
-  readonly rootKey: string;
-  readonly password: string;
-  readonly jwtSecret: string;
-  readonly jwtExpiry: number;
-  /** Extra `postgres` argv appended after the `[db.settings]` pairs — the shadow's own worker cap. */
-  readonly extraArgs: ReadonlyArray<string>;
-}): LegacyPostgresBootFields {
-  return {
-    env: {
-      POSTGRES_PASSWORD: input.password,
-      JWT_SECRET: input.jwtSecret,
-      JWT_EXP: String(input.jwtExpiry),
-      PGSODIUM_KEY_FILE: LEGACY_POSTGRES_PGSODIUM_ROOT_KEY_PATH,
-    },
-    cmd: [...legacyPostgresSettingsToConfigArgs(input.settings), ...input.extraArgs],
-    secretFiles: [
-      { containerPath: LEGACY_POSTGRES_PGSODIUM_ROOT_KEY_PATH, content: input.rootKey },
-      { containerPath: LEGACY_POSTGRES_SCHEMA_SQL_PATH, content: LEGACY_POSTGRES_SLIM_SCHEMA_SQL },
-    ],
-  };
-}
-
-/**
  * Builds the {@link LegacyStartContainerSpec} for the Postgres container — shared by `supabase
  * start` (always {@link LegacyPostgresStartServiceInput.fromBackup} `undefined`) and `db start`'s
  * native bootstrap (the only caller that ever sets it) — see this module's header for what's
@@ -511,7 +393,6 @@ export function legacyBuildPostgresStartContainerSpec(
   const postgresConfig = legacyPostgresSettingsToPostgresConfig(input.db.settings);
   const isPg14OrEarlier = input.db.major_version <= 14;
   const isRestore = input.fromBackup !== undefined;
-  const isSlim = legacyIsSlimPostgresImage(input.image);
 
   const env: Record<string, string> = {
     // The constant `"postgres"` literal, matching Go, where `Db.Password` is
@@ -533,37 +414,24 @@ export function legacyBuildPostgresStartContainerSpec(
       ? legacyPostgresEntrypointScriptPg14(postgresConfig)
       : legacyPostgresEntrypointScriptPg15(postgresConfig);
 
-  const bootFields: LegacyPostgresBootFields = isSlim
-    ? legacyPostgresSlimBootFields({
-        settings: input.db.settings,
-        rootKey: rootKeyValue,
-        password: LEGACY_POSTGRES_PASSWORD,
-        jwtSecret: input.jwtSecret,
-        jwtExpiry: input.jwtExpiry,
-        extraArgs: [],
-      })
-    : {
-        env,
-        entrypoint: "sh",
-        cmd: ["-c", script],
-        // The pgsodium root key heredoc/bind is present whenever the ACTUAL entrypoint in use
-        // embeds it: both `legacyPostgresEntrypointScriptPg15` and
-        // `legacyPostgresEntrypointScriptRestore` do (Go's `fromBackup` override always re-adds
-        // its own root-key heredoc, `start.go:147,155`, regardless of major version); only the
-        // PG<=14 script never references it.
-        ...(isPg14OrEarlier && !isRestore
-          ? {}
-          : {
-              secretFiles: [
-                { containerPath: LEGACY_POSTGRES_PGSODIUM_ROOT_KEY_PATH, content: rootKeyValue },
-              ],
-            }),
-      };
-
   return {
     image: input.image,
     containerName,
-    ...bootFields,
+    env,
+    entrypoint: "sh",
+    cmd: ["-c", script],
+    // The pgsodium root key heredoc/bind is present whenever the ACTUAL entrypoint in use
+    // embeds it: both `legacyPostgresEntrypointScriptPg15` and
+    // `legacyPostgresEntrypointScriptRestore` do (Go's `fromBackup` override always re-adds
+    // its own root-key heredoc, `start.go:147,155`, regardless of major version); only the
+    // PG<=14 script never references it.
+    ...(isPg14OrEarlier && !isRestore
+      ? {}
+      : {
+          secretFiles: [
+            { containerPath: LEGACY_POSTGRES_PGSODIUM_ROOT_KEY_PATH, content: rootKeyValue },
+          ],
+        }),
     binds: [
       `${containerName}:/var/lib/postgresql/data`,
       // Go's `StartDatabase` (`start.go:163`) appends this bind ONLY on the `fromBackup` branch —
@@ -578,7 +446,7 @@ export function legacyBuildPostgresStartContainerSpec(
     ...(isPg14OrEarlier ? { tmpfs: { "/docker-entrypoint-initdb.d": "" } } : {}),
     ports: [{ hostPort: String(input.db.port), containerPort: "5432" }],
     healthcheck: {
-      test: isSlim ? LEGACY_POSTGRES_SLIM_HEALTHCHECK_TEST : LEGACY_POSTGRES_HEALTHCHECK_TEST,
+      test: LEGACY_POSTGRES_HEALTHCHECK_TEST,
       intervalSeconds: LEGACY_POSTGRES_HEALTHCHECK_INTERVAL_SECONDS,
       timeoutSeconds: LEGACY_POSTGRES_HEALTHCHECK_TIMEOUT_SECONDS,
       retries: LEGACY_POSTGRES_HEALTHCHECK_RETRIES,
@@ -593,10 +461,8 @@ export function legacyBuildPostgresStartContainerSpec(
 /**
  * Go's `NewContainerConfig("-c", "max_worker_processes=0")` (`CreateShadowDatabase`,
  * `apps/cli-go/internal/db/diff/diff.go:140`) — disables background workers in the
- * shadow database. Declared as argv because that is the shape the slim image
- * consumes (trailing container argv, see {@link legacyPostgresSlimBootFields});
- * {@link LEGACY_SHADOW_ENTRYPOINT_ARGS} joins it back for the docker.io
- * entrypoint script's own `<args>` splice point.
+ * shadow database. {@link LEGACY_SHADOW_ENTRYPOINT_ARGS} joins it for the
+ * docker.io entrypoint script's own `<args>` splice point.
  */
 const LEGACY_SHADOW_ENTRYPOINT_ARGV: ReadonlyArray<string> = ["-c", "max_worker_processes=0"];
 
@@ -668,10 +534,6 @@ export interface LegacyShadowPostgresContainerSpecInput {
  *    it delivered before `docker start` — via `docker cp` straight into the container
  *    (`container-lifecycle.ts`), same as every other container's `secretFiles`, never a
  *    host temp file.
- *  - **Under the slim image the whole entrypoint/env/`secretFiles` group comes from
- *    {@link legacyPostgresSlimBootFields} instead**, with the shadow's worker cap appended to
- *    the container's trailing argv rather than spliced into a script — everything below stays
- *    as described.
  *  - **Labels ARE still applied** (merged in by `legacyCreateContainer`, same as every
  *    other container) so `supabase stop`'s label-filtered sweep catches an orphaned shadow
  *    too — Go's `DockerStart` sets `CliProjectLabel`/`composeProjectLabel` unconditionally,
@@ -685,7 +547,6 @@ export function legacyBuildShadowPostgresContainerSpec(
   const rootKeyValue = input.rootKey ?? LEGACY_POSTGRES_DEFAULT_ROOT_KEY;
   const postgresConfig = legacyPostgresSettingsToPostgresConfig(input.db.settings);
   const isPg14OrEarlier = input.db.major_version <= 14;
-  const isSlim = legacyIsSlimPostgresImage(input.image);
 
   const env: Record<string, string> = {
     POSTGRES_PASSWORD: input.password,
@@ -699,38 +560,25 @@ export function legacyBuildShadowPostgresContainerSpec(
     ? legacyPostgresEntrypointScriptPg14(postgresConfig, LEGACY_SHADOW_ENTRYPOINT_ARGS)
     : legacyPostgresEntrypointScriptPg15(postgresConfig, LEGACY_SHADOW_ENTRYPOINT_ARGS);
 
-  const bootFields: LegacyPostgresBootFields = isSlim
-    ? legacyPostgresSlimBootFields({
-        settings: input.db.settings,
-        rootKey: rootKeyValue,
-        password: input.password,
-        jwtSecret: input.jwtSecret,
-        jwtExpiry: input.jwtExpiry,
-        extraArgs: LEGACY_SHADOW_ENTRYPOINT_ARGV,
-      })
-    : {
-        env,
-        entrypoint: "sh",
-        cmd: ["-c", script],
-        ...(isPg14OrEarlier
-          ? {}
-          : {
-              secretFiles: [
-                { containerPath: LEGACY_POSTGRES_PGSODIUM_ROOT_KEY_PATH, content: rootKeyValue },
-              ],
-            }),
-      };
-
   return {
     image: input.image,
     containerName: "",
-    ...bootFields,
+    env,
+    entrypoint: "sh",
+    cmd: ["-c", script],
+    ...(isPg14OrEarlier
+      ? {}
+      : {
+          secretFiles: [
+            { containerPath: LEGACY_POSTGRES_PGSODIUM_ROOT_KEY_PATH, content: rootKeyValue },
+          ],
+        }),
     binds: [],
     autoRemove: true,
     ...(isPg14OrEarlier ? { tmpfs: { "/docker-entrypoint-initdb.d": "" } } : {}),
     ports: [{ hostPort: String(input.shadowPort), containerPort: "5432" }],
     healthcheck: {
-      test: isSlim ? LEGACY_POSTGRES_SLIM_HEALTHCHECK_TEST : LEGACY_POSTGRES_HEALTHCHECK_TEST,
+      test: LEGACY_POSTGRES_HEALTHCHECK_TEST,
       intervalSeconds: LEGACY_POSTGRES_HEALTHCHECK_INTERVAL_SECONDS,
       timeoutSeconds: LEGACY_POSTGRES_HEALTHCHECK_TIMEOUT_SECONDS,
       retries: LEGACY_POSTGRES_HEALTHCHECK_RETRIES,

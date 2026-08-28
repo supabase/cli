@@ -74,10 +74,10 @@ describe("legacyStreamPgDump entrypoint wiring", () => {
     expect(opts.cmd).toEqual(["bash", "-c", "pg_dump", "--"]);
   });
 
-  test("slim image + flag on: overrides the entrypoint to bash, since entry.sh would otherwise initdb and exec the dump script as postgres argv", () => {
+  test("slim image + flag on: uses the same bash cmd as docker.io", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const opts = runStreamPgDump(SLIM_IMAGE);
-    expect(Option.getOrUndefined(opts.entrypoint ?? Option.none())).toBe("bash");
-    expect(opts.cmd).toEqual(["-c", "pg_dump", "--"]);
+    expect(opts.entrypoint).toBeUndefined();
+    expect(opts.cmd).toEqual(["bash", "-c", "pg_dump", "--"]);
   });
 });

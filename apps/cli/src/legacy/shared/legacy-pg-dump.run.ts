@@ -3,7 +3,6 @@ import { Effect, Option } from "effect";
 import { LegacyNetworkIdFlag } from "../../shared/legacy/global-flags.ts";
 import { legacyViperEnvStringWithProjectFallback } from "../../shared/legacy/legacy-viper-env.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
-import { legacyIsSlimPostgresImage } from "./db-bootstrap/postgres.service.ts";
 import { legacyGetRegistryImageUrl } from "./legacy-docker-registry.ts";
 import { LegacyDockerRun } from "./legacy-docker-run.service.ts";
 
@@ -65,18 +64,10 @@ export const legacyStreamPgDump = Effect.fnUntraced(function* <E>(params: {
         : { _tag: "host" as const };
   const extraHosts = runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
 
-  // The docker.io entrypoint execs non-`postgres` argv directly, so a plain `["bash", "-c",
-  // script, "--"]` cmd runs under the image's own entrypoint. The slim image's `entry.sh`
-  // instead always initdb's and execs `postgres` with whatever argv it is given, so this
-  // one-shot job needs its entrypoint overridden to the shell the cmd expects.
-  const isSlim = legacyIsSlimPostgresImage(params.image);
-
   return yield* docker.runStream<E>(
     {
       image: legacyGetRegistryImageUrl(params.image),
-      ...(isSlim
-        ? { entrypoint: Option.some("bash"), cmd: ["-c", params.script, "--"] }
-        : { cmd: ["bash", "-c", params.script, "--"] }),
+      cmd: ["bash", "-c", params.script, "--"],
       env: params.env,
       binds: [],
       workingDir: Option.none(),

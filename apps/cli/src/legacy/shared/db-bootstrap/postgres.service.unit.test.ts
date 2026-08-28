@@ -11,7 +11,6 @@ import {
   legacyBuildPostgresStartContainerSpec,
   legacyBuildShadowPostgresContainerSpec,
   legacyPostgresImageVersionTag,
-  legacyPostgresSettingsToConfigArgs,
   legacyPostgresSettingsToPostgresConfig,
   legacyPostgresVersionCompare,
   type LegacyPostgresStartServiceInput,
@@ -19,8 +18,6 @@ import {
 } from "./postgres.service.ts";
 
 const POSTGRES_CONFIG_HEADER = "\n# supabase [db.settings] configuration\n";
-
-const SLIM_POSTGRES_IMAGE = "ghcr.io/supabase/cli/postgres:17.6.1.165";
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -472,144 +469,5 @@ describe("legacyBuildShadowPostgresContainerSpec", () => {
   test("initializes POSTGRES_PASSWORD from the resolved [db] password, not a hardcoded literal — the deliberate TS extension the input's own doc describes (Go rejects the toml key at config load and always uses 'postgres')", () => {
     const spec = legacyBuildShadowPostgresContainerSpec(baseShadowInput({ password: "hunter2" }));
     expect(spec.env?.["POSTGRES_PASSWORD"]).toBe("hunter2");
-  });
-});
-
-describe("legacyPostgresSettingsToConfigArgs", () => {
-  test("renders each set value as its own -c key=value pair, unquoted", () => {
-    expect(
-      legacyPostgresSettingsToConfigArgs({
-        max_connections: 100,
-        shared_buffers: "128MB",
-        session_replication_role: "origin",
-        track_commit_timestamp: true,
-      }),
-    ).toEqual([
-      "-c",
-      "max_connections=100",
-      "-c",
-      "shared_buffers=128MB",
-      "-c",
-      "session_replication_role=origin",
-      "-c",
-      "track_commit_timestamp=true",
-    ]);
-  });
-
-  test("emits nothing for empty settings, unlike the conf renderer's header-only output", () => {
-    expect(legacyPostgresSettingsToConfigArgs({})).toEqual([]);
-    expect(legacyPostgresSettingsToConfigArgs(undefined)).toEqual([]);
-  });
-});
-
-describe("slim Postgres image spec", () => {
-  test("keeps the image's own entrypoint and passes [db.settings] as trailing -c argv instead of a heredoc script", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-    const spec = legacyBuildPostgresStartContainerSpec(
-      baseInput({
-        image: SLIM_POSTGRES_IMAGE,
-        db: baseDb({ settings: { max_connections: 120, effective_cache_size: "512MB" } }),
-      }),
-    );
-
-    expect(spec.entrypoint).toBeUndefined();
-    expect(spec.cmd).toEqual(["-c", "max_connections=120", "-c", "effective_cache_size=512MB"]);
-    expect(spec.cmd?.join(" ")).not.toContain("docker-entrypoint.sh");
-  });
-
-  test("stages the schema SQL the bundled migrate.sh hook runs, plus the pgsodium root key it is pointed at by env", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-    const spec = legacyBuildPostgresStartContainerSpec(
-      baseInput({ image: SLIM_POSTGRES_IMAGE, rootKey: "custom-root-key" }),
-    );
-
-    expect(spec.env).toEqual({
-      POSTGRES_PASSWORD: "postgres",
-      JWT_SECRET: "super-secret-jwt-token-with-at-least-32-characters-long",
-      JWT_EXP: "3600",
-      PGSODIUM_KEY_FILE: "/etc/postgresql-custom/pgsodium_root.key",
-    });
-    expect(spec.secretFiles).toEqual([
-      { containerPath: "/etc/postgresql-custom/pgsodium_root.key", content: "custom-root-key" },
-      {
-        containerPath: "/etc/postgresql.schema.sql",
-        content: `${LEGACY_START_DB_SCHEMA_SQL}\n${LEGACY_START_DB_WEBHOOK_SQL}\n${LEGACY_START_DB_SUPABASE_SQL}`,
-      },
-    ]);
-  });
-
-  test("leaves the volume bind, published port, healthcheck, and network wiring untouched", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-    const spec = legacyBuildPostgresStartContainerSpec(
-      baseInput({ image: SLIM_POSTGRES_IMAGE, db: baseDb({ port: 12345 }) }),
-    );
-
-    expect(spec.binds).toEqual(["supabase_db_myproj:/var/lib/postgresql/data"]);
-    expect(spec.ports).toEqual([{ hostPort: "12345", containerPort: "5432" }]);
-    expect(spec.healthcheck).toEqual({
-      test: [
-        "CMD",
-        "sh",
-        "-ec",
-        'case "$(cat /proc/1/comm)" in postgres|.postgres-wrapp) pg_isready -U postgres -h 127.0.0.1 -p 5432 ;; *) exit 1 ;; esac',
-      ],
-      intervalSeconds: 10,
-      timeoutSeconds: 2,
-      retries: 3,
-    });
-    expect(spec.networkAliases).toEqual(["db", "db.supabase.internal"]);
-    expect(spec.restartPolicy).toBe("unless-stopped");
-  });
-
-  test("healthcheck gates on the final postgres process, not the entrypoint shell PID 1 stays during first-boot init", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-    const dbSpec = legacyBuildPostgresStartContainerSpec(baseInput({ image: SLIM_POSTGRES_IMAGE }));
-    const shadowSpec = legacyBuildShadowPostgresContainerSpec(
-      baseShadowInput({ image: SLIM_POSTGRES_IMAGE }),
-    );
-    const expected = [
-      "CMD",
-      "sh",
-      "-ec",
-      'case "$(cat /proc/1/comm)" in postgres|.postgres-wrapp) pg_isready -U postgres -h 127.0.0.1 -p 5432 ;; *) exit 1 ;; esac',
-    ];
-    expect(dbSpec.healthcheck?.test).toEqual(expected);
-    expect(shadowSpec.healthcheck?.test).toEqual(expected);
-  });
-
-  test("appends the shadow's worker cap to the same trailing argv", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-    const spec = legacyBuildShadowPostgresContainerSpec(
-      baseShadowInput({
-        image: SLIM_POSTGRES_IMAGE,
-        db: { major_version: 17, settings: { max_connections: 120 } },
-        password: "hunter2",
-      }),
-    );
-
-    expect(spec.entrypoint).toBeUndefined();
-    expect(spec.cmd).toEqual(["-c", "max_connections=120", "-c", "max_worker_processes=0"]);
-    expect(spec.env?.["POSTGRES_PASSWORD"]).toBe("hunter2");
-    expect(spec.autoRemove).toBe(true);
-    expect(spec.secretFiles?.map((file) => file.containerPath)).toEqual([
-      "/etc/postgresql-custom/pgsodium_root.key",
-      "/etc/postgresql.schema.sql",
-    ]);
-  });
-
-  // The whole slim path hangs off the resolved ref, so a registry override that
-  // lands on docker.io keeps the heredoc entrypoint even with the flag set.
-  test("stays on the docker.io entrypoint when the flag is set but the resolved image is not a slim ref", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-    const spec = legacyBuildPostgresStartContainerSpec(baseInput());
-    expect(spec.entrypoint).toBe("sh");
-    expect(spec.cmd?.[1]).toContain("exec docker-entrypoint.sh");
-  });
-
-  test("stays on the docker.io entrypoint for a slim ref while the flag is off", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
-    const spec = legacyBuildPostgresStartContainerSpec(baseInput({ image: SLIM_POSTGRES_IMAGE }));
-    expect(spec.entrypoint).toBe("sh");
-    expect(spec.cmd?.[1]).toContain("exec docker-entrypoint.sh");
   });
 });

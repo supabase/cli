@@ -31,15 +31,9 @@ composition reuses too — see that command's `SIDE_EFFECTS.md`):
    `cron.launch_active_jobs = off` appended to `postgresql.conf` — applies regardless of
    `db.major_version`. The backup file itself is bind-mounted `:ro` at `/etc/backup.sql`
    (host path resolved against the CALLER's cwd when relative).
-   `SUPABASE_USE_SLIM_IMAGES` changes the container's shape (never its volume, published
-   port, healthcheck, or labels): the image's own entrypoint is kept instead of a `sh -c`
-   heredoc script, `[db.settings]` travels as trailing `-c key=value` argv rather than a
-   `postgresql.conf` append, and `/etc/postgresql.schema.sql` plus the pgsodium root key are
-   `docker cp`'d in before start (the slim image's bundled `migrate.sh` runs that schema file
-   once, at initdb, exactly like the docker.io image does). `--from-backup` combined with a
-   resolved slim image is refused here instead — the restore entrypoint has no slim
-   equivalent. A historical `.temp/postgres-version` pin stays on docker.io; only the
-   current Dockerfile pin is slim-translated.
+   `SUPABASE_USE_SLIM_IMAGES` rewrites the current Dockerfile pin to
+   `ghcr.io/supabase/cli/postgres`; a historical `.temp/postgres-version` pin stays on
+   docker.io. The restore entrypoint is the same on both families.
 6. Wait for the container to become healthy (`db.health_timeout`, default `2m`). A timeout
    fails the command UNLESS `--from-backup` is set, in which case it is swallowed (a large
    restore can exceed the timeout) — the container-logs dump to stderr still happens
@@ -48,8 +42,7 @@ composition reuses too — see that command's `SIDE_EFFECTS.md`):
    pipeline (`legacy/shared/db-bootstrap/db-setup.ts`) — initial schema (PG<=14: SQL over a
    direct `LegacyDbConnection`; PG>=15: up to three one-shot `docker run --rm` migrate jobs
    for realtime/storage/auth, each gated on its own `enabled` flag; slim Realtime still
-   runs its one-shot so user migrations see the tenant; slim Storage's one-shot uses the
-   docker.io storage image), API-privilege
+   runs its one-shot so user migrations see the tenant), API-privilege
    revocation, `[db.vault]` secret upsert, `supabase/roles.sql` seed, and finally either every
    pending migration + seed, OR — when `--experimental`/`SUPABASE_EXPERIMENTAL` is set AND
    `[experimental.pgdelta] enabled` is false — every `db.migrations.schema_paths` file

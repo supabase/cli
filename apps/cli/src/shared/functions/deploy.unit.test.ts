@@ -667,11 +667,7 @@ describe("buildDockerBinds — edge-runtime Deno-cache volume selection", () => 
     }
   });
 
-  it("mounts the slim-only volume over /home/nonroot when the image is slim", async () => {
-    // The slim (uid 65532) edge-runtime resolves Deno's cache under its own
-    // $HOME, and a docker.io-seeded volume is root-owned — so slim runs get a
-    // separate volume mounted over the nonroot home (see
-    // `edgeRuntimeCacheVolume`).
+  it("mounts the shared /root/.cache/deno volume when the image is slim", async () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const { root, functionsDir, outputDir, config } = await createHelloFunctionProject(
       {},
@@ -679,12 +675,10 @@ describe("buildDockerBinds — edge-runtime Deno-cache volume selection", () => 
     );
 
     try {
-      const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config, {
-        image: "ghcr.io/supabase/cli/edge-runtime:v1.74.3",
-      });
+      const binds = await buildDockerBinds("test-project", functionsDir, outputDir, config);
       const formatted = binds.map(formatDockerBind);
-      expect(formatted).toContain("supabase_edge_runtime_slim_test-project:/home/nonroot:rw");
-      expect(formatted).not.toContain("supabase_edge_runtime_test-project:/root/.cache/deno:rw");
+      expect(formatted).toContain("supabase_edge_runtime_test-project:/root/.cache/deno:rw");
+      expect(formatted).not.toContain("supabase_edge_runtime_slim_test-project:/home/nonroot:rw");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
