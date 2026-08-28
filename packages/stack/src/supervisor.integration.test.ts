@@ -1079,6 +1079,33 @@ describe("detached supervisor child journeys", () => {
     }
   });
 
+  test("rejects a persisted native stack when restart requests Docker mode", async () => {
+    const roots = await workspace();
+    const native = spawnChild(messageFor(roots));
+    let docker: ChildHandle | undefined;
+    try {
+      const started = await native.started;
+      await remoteStop(started.endpoint);
+      await waitForExit(native.child);
+      expect(readStackDocument(roots)?.launch).toMatchObject({ mode: "native" });
+
+      docker = spawnChild(
+        messageFor(roots, {
+          config: { ...messageFor(roots).config, mode: "docker" },
+        }),
+      );
+      await expect(docker.started).rejects.toThrow(
+        "Stack runtime is already native; requested docker",
+      );
+      await waitForExit(docker.child);
+      expect(readStackDocument(roots)?.launch).toMatchObject({ mode: "native" });
+    } finally {
+      if (native.child.exitCode === null) await kill(native.child);
+      if (docker?.child.exitCode === null) await kill(docker.child);
+      cleanupRoots(roots);
+    }
+  });
+
   test("preserves retryable managed data when upgrade restart startup fails", async () => {
     const roots = await workspace();
     const oldOwner = spawnChild(

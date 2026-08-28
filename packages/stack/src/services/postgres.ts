@@ -31,7 +31,6 @@ interface DockerPostgresOptions extends PostgresServiceOptions, ContainerRuntime
 
 const postgresEnv = (opts: NativePostgresOptions): Record<string, string> => ({
   PGDATA: opts.dataDir,
-  LC_ALL: "C",
   POSTGRES_PASSWORD: "postgres",
   DYLD_LIBRARY_PATH: `${opts.binPath}/lib`,
   LD_LIBRARY_PATH: `${opts.binPath}/lib`,
