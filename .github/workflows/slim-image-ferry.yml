@@ -25,10 +25,7 @@ jobs:
     timeout-minutes: 30
     env:
       IMAGES: >-
-        ghcr.io/supabase/cli/edge-runtime:v1.74.3
-        ghcr.io/supabase/cli/postgres:17.6.1.166
-        ghcr.io/supabase/cli/storage:v1.72.1
-        ghcr.io/supabase/cli/auth:v2.196.0
+        ghcr.io/supabase/cli/storage:v1.71.0
     defaults:
       run:
         shell: bash
@@ -44,11 +41,11 @@ jobs:
           done
           docker images --digests | grep supabase/cli || true
           mkdir -p ferry
-          docker save $IMAGES | zstd -T0 -8 -o ferry/slim-images.tar.zst
+          docker save $IMAGES | zstd -T0 -8 -o ferry/slim-images-2.tar.zst
           ls -l ferry
-          sha256sum ferry/slim-images.tar.zst | tee ferry/slim-images.tar.zst.sha256
-          split -b 45m -d --additional-suffix=.part ferry/slim-images.tar.zst ferry/slim-images.tar.zst.
-          rm ferry/slim-images.tar.zst
+          sha256sum ferry/slim-images-2.tar.zst | tee ferry/slim-images-2.tar.zst.sha256
+          split -b 45m -d --additional-suffix=.part ferry/slim-images-2.tar.zst ferry/slim-images-2.tar.zst.
+          rm ferry/slim-images-2.tar.zst
           for image in $IMAGES; do
             docker image inspect "$image" \
               --format '{{index .RepoTags 0}} {{.Id}} User={{.Config.User}}'
