@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
+import pg from "pg";
 import { inject, test as vitestTest } from "vitest";
 
 import { makeTempHome, runSupabase } from "./cli.ts";
@@ -119,6 +120,33 @@ export function requireLiveSuccess(
     throw new Error(
       `${command} failed (exit ${result.exitCode})\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
     );
+  }
+}
+
+/** Unique migration version for a live test: epoch millis plus four random digits. */
+export function liveMigrationVersion(): string {
+  return `${Date.now()}${Math.floor(Math.random() * 10_000)
+    .toString()
+    .padStart(4, "0")}`;
+}
+
+/**
+ * Runs one query against the live project over a direct pg connection, so
+ * live assertions can verify database state without invoking another CLI
+ * command.
+ */
+export async function queryLiveDb<T extends Record<string, unknown>>(
+  dbUrl: string,
+  query: string,
+  values?: ReadonlyArray<unknown>,
+): Promise<T[]> {
+  const client = new pg.Client({ connectionString: dbUrl });
+  await client.connect();
+  try {
+    const result = await client.query(query, values === undefined ? undefined : [...values]);
+    return result.rows as T[];
+  } finally {
+    await client.end();
   }
 }
 
