@@ -41,8 +41,8 @@ composition reuses too — see that command's `SIDE_EFFECTS.md`):
 7. On a fresh volume with `--from-backup` unset: run the `SetupLocalDatabase`-equivalent
    pipeline (`legacy/shared/db-bootstrap/db-setup.ts`) — initial schema (PG<=14: SQL over a
    direct `LegacyDbConnection`; PG>=15: up to three one-shot `docker run --rm` migrate jobs
-   for realtime/storage/auth, each gated on its own `enabled` flag; slim Realtime still
-   runs its one-shot so user migrations see the tenant), API-privilege
+   for realtime/storage/auth, each gated on its own `enabled` flag; the realtime
+   one-shot runs so user migrations see the tenant), API-privilege
    revocation, `[db.vault]` secret upsert, `supabase/roles.sql` seed, and finally either every
    pending migration + seed, OR — when `--experimental`/`SUPABASE_EXPERIMENTAL` is set AND
    `[experimental.pgdelta] enabled` is false — every `db.migrations.schema_paths` file
@@ -113,7 +113,7 @@ native container command in this codebase — never `supabase-go`.
 | Variable                                                                                                             | Purpose                                                                                                                                                                                                                                         | Required? |
 | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
 | `SUPABASE_PROJECT_ID`                                                                                                | overrides the local container id                                                                                                                                                                                                                | no        |
-| `SUPABASE_USE_SLIM_IMAGES`                                                                                           | resolves the current Dockerfile pin from the slim `ghcr.io/supabase/cli/<service>` builds (`true`/`1` enable); historical `.temp` pins, the pg 13/14/15 fallbacks, OrioleDB images, and the pg-delta catalog-warmup container stay on docker.io | no        |
+| `SUPABASE_USE_SLIM_IMAGES`                                                                                           | resolves the current Dockerfile pin from the slim `ghcr.io/supabase/cli/<service>` builds (`true`/`1` enable); historical `.temp` pins, the pg 13/14/15 fallbacks, and OrioleDB images stay on docker.io | no        |
 | `SUPABASE_DB_PORT`                                                                                                   | overrides `db.port` (the published host port)                                                                                                                                                                                                   | no        |
 | `SUPABASE_DB_MAJOR_VERSION`                                                                                          | overrides `db.major_version` (image selection, schema branch)                                                                                                                                                                                   | no        |
 | `SUPABASE_DB_HEALTH_TIMEOUT`                                                                                         | overrides `db.health_timeout`                                                                                                                                                                                                                   | no        |

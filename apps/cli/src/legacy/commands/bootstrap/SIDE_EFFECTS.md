@@ -80,7 +80,7 @@ neither branch ever reaches the temp-login-role/Management-API path a passwordle
 | `SUPABASE_EXPERIMENTAL_PG_DELTA`   | enables the legacy opt-out's catalog cache when `[experimental.pgdelta].enabled` is unset, read project-`.env`-aware                                                          | no        |
 | `SUPABASE_USE_PG_DELTA_NEXT`       | set to `false` for legacy catalog warming, read project-`.env`-aware                                                                                                          | no        |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY` | legacy opt-out's edge-runtime image registry, read project-`.env`-aware                                                                                                       | no        |
-| `SUPABASE_USE_SLIM_IMAGES`         | does not reach the legacy opt-out's edge-runtime image: it runs its script through an `sh -c` entrypoint the distroless slim build has no shell for, so it stays on docker.io | no        |
+| `SUPABASE_USE_SLIM_IMAGES`         | resolves the legacy opt-out's edge-runtime image from the slim `ghcr.io/supabase/cli/edge-runtime` build (`true`/`1` enable); `deno_version = 1` keeps its docker.io image | no        |
 | `PGDELTA_NPM_REGISTRY`             | legacy opt-out's edge-runtime npm registry, read project-`.env`-aware                                                                                                         | no        |
 
 ## Exit Codes
