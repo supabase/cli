@@ -4,21 +4,7 @@ import { join } from "node:path";
 import { expect } from "vitest";
 
 import { requireLiveSuccess, test, throwWithCleanup } from "../../../../../tests/helpers/live.ts";
-
-const STORAGE_FLAGS = ["--linked", "--experimental"];
-
-async function removeObject(
-  cli: (args: string[]) => Promise<{ exitCode: number; stdout: string; stderr: string }>,
-  remote: string,
-): Promise<void> {
-  const removed = await cli(["storage", "rm", remote, "--yes", ...STORAGE_FLAGS]);
-  if (
-    removed.exitCode !== 0 &&
-    !/not found|does not exist/i.test(`${removed.stdout}\n${removed.stderr}`)
-  ) {
-    throw new Error(`storage rm cleanup failed:\n${removed.stdout}\n${removed.stderr}`);
-  }
-}
+import { legacyRemoveStorageLiveObject, legacyStorageLiveFlags } from "../storage.live-helpers.ts";
 
 test("copies a local file to the remote bucket", async ({ cli, project, workspace }) => {
   const suffix = randomUUID().slice(0, 8);
@@ -34,13 +20,13 @@ test("copies a local file to the remote bucket", async ({ cli, project, workspac
     });
     requireLiveSuccess(linked, "link setup for storage cp");
 
-    const result = await cli(["storage", "cp", local, remote, ...STORAGE_FLAGS]);
+    const result = await cli(["storage", "cp", local, remote, ...legacyStorageLiveFlags]);
     expect(result.exitCode, result.stderr).toBe(0);
   } catch (error) {
     targetError = error;
   } finally {
     try {
-      await removeObject(cli, remote);
+      await legacyRemoveStorageLiveObject(cli, remote);
     } catch (error) {
       cleanupError = error;
     }
