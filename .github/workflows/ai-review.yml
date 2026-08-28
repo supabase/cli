@@ -36,7 +36,7 @@ permissions: {}
 # third time, and `post-review`'s footer reads them too (see the "Post
 # review" step below).
 env:
-  CLAUDE_MODEL: claude-fable-5
+  CLAUDE_MODEL: claude-opus-5
   CODEX_MODEL: gpt-5.6-sol
 
 # Ordinary (non-command) issue_comment events fire this workflow for EVERY
@@ -82,7 +82,6 @@ jobs:
       should_run: ${{ steps.resolve.outputs.should_run }}
       pr_number: ${{ steps.resolve.outputs.pr_number }}
       head_ref: ${{ steps.resolve.outputs.head_ref }}
-      mode: ${{ steps.resolve.outputs.mode }}
       trigger: ${{ steps.resolve.outputs.trigger }}
     steps:
       # Base repo, default ref, pinned explicitly — this job runs trusted
@@ -111,7 +110,7 @@ jobs:
   claude-review:
     name: Claude review
     needs: resolve
-    if: needs.resolve.outputs.should_run == 'true' && needs.resolve.outputs.mode == 'review'
+    if: needs.resolve.outputs.should_run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     # SECURITY-CRITICAL: this job checks out the PR's own head commit, which
@@ -172,7 +171,14 @@ jobs:
       - name: Install Claude Code CLI
         working-directory: trusted
         run: |
-          npm install -g --userconfig /dev/null --globalconfig /dev/null \
+          # Isolate npm config with two DISTINCT empty paths — npm rejects the
+          # same path for --userconfig and --globalconfig ("double-loading
+          # config '/dev/null'"). These paths don't exist, so npm uses empty
+          # user/global config; running from `trusted/` already avoids the
+          # untrusted `pr` checkout's project `.npmrc`.
+          npm install -g \
+            --userconfig "${RUNNER_TEMP}/ai-review-npmrc-user" \
+            --globalconfig "${RUNNER_TEMP}/ai-review-npmrc-global" \
             --registry=https://registry.npmjs.org/ @anthropic-ai/claude-code@2.1.247
 
       # SECURITY-CRITICAL invariant: PR code is only ever READ by `claude`,
@@ -192,7 +198,11 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
-          set -uo pipefail
+          # GitHub launches this with `bash -e`; the retry loop below inspects
+          # exit codes manually (a non-zero `claude` is expected and retried),
+          # so errexit must be OFF — otherwise the failing subshell aborts the
+          # step before cli_exit/is_error are checked and the retry never runs.
+          set +e -uo pipefail
           success=false
           for attempt in 1 2; do
             (
@@ -248,7 +258,9 @@ jobs:
         run: |
           for f in /tmp/ai-review/claude-findings.json /tmp/ai-review/claude-raw.json; do
             if [ -f "$f" ]; then
-              bun .github/scripts/ai-review/post-review.ts redact "$f"
+              # Delete the file if redaction fails, so the always-on upload
+              # below can never publish an unscrubbed artifact.
+              bun .github/scripts/ai-review/post-review.ts redact "$f" || { rm -f "$f"; exit 1; }
             fi
           done
 
@@ -263,17 +275,18 @@ jobs:
           retention-days: 3
 
   codex-review:
-    name: Codex review and adjudication
-    needs:
-      - resolve
-      - claude-review
-    # Codex works purely from /tmp/ai-review/pr.diff + claude-findings.json
-    # (absolute paths in its prompt), so it needs no PR-head checkout at all.
-    # This job's ONLY checkout is the trusted default branch.
+    name: Codex review
+    needs: resolve
+    if: needs.resolve.outputs.should_run == 'true'
+    # Codex's INDEPENDENT review. It no longer depends on claude-review, so it
+    # runs IN PARALLEL with it. It works purely from /tmp/ai-review/pr.diff
+    # (absolute path in its prompt), so it needs no PR-head checkout — its ONLY
+    # checkout is the trusted default branch. The verify-by-reading step (which
+    # does need the PR's files) is the separate `adjudicate` job below.
     permissions:
       contents: read
       pull-requests: read
-    timeout-minutes: 30
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     steps:
       - name: Checkout default branch (trusted; the only checkout this job needs)
@@ -287,20 +300,6 @@ jobs:
           bun-version-file: ".bun-version"
           no-cache: true
 
-      - name: Download Claude findings
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: claude-findings
-          path: ${{ runner.temp }}/ai-review-in
-
-      - name: Stage Claude findings
-        run: |
-          mkdir -p /tmp/ai-review
-          # Copy only the expected filename across rather than trusting the
-          # zip's own entry paths (an artifact is, in principle, attacker
-          # influenced upstream — see claude-review's untrusted `pr` checkout).
-          cp "${{ runner.temp }}/ai-review-in/claude-findings.json" /tmp/ai-review/claude-findings.json
-
       - name: Fetch PR diff
         env:
           GH_TOKEN: ${{ github.token }}
@@ -310,7 +309,130 @@ jobs:
           # Pass --repo explicitly so `gh` never depends on cwd being a git repo.
           gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" > /tmp/ai-review/pr.diff
 
+      - name: Prepare findings output schema
+        run: |
+          mkdir -p /tmp/ai-review
+          jq 'del(.["$schema"])' .github/ai-review/findings.schema.json > /tmp/ai-review/findings.schema.json
+
+      # Safety strategy (drop-sudo + read-only), verified against the pinned
+      # openai/codex-action@86365089…'s action.yml + src/runCodexExec.ts — see
+      # the adjudicate job below for the full rationale. In short: Codex runs as
+      # a non-sudo-capable user, in a sandbox with no filesystem writes and no
+      # network, with no `codex-args`/`--sandbox` duplication.
+      - name: Run Codex independent review
+        uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e # v1.12
+        with:
+          openai-api-key: ${{ secrets.OPENAI_API_KEY }}
+          prompt-file: .github/ai-review/codex-review-prompt.md
+          model: ${{ env.CODEX_MODEL }}
+          effort: high
+          output-schema-file: /tmp/ai-review/findings.schema.json
+          output-file: /tmp/ai-review/codex-findings.json
+          # Pinned explicitly (verified via `npm view @openai/codex version`);
+          # never left floating.
+          codex-version: "0.150.1"
+          working-directory: ${{ github.workspace }}
+          safety-strategy: drop-sudo
+          sandbox: read-only
+
+      - name: Validate Codex findings
+        run: bun .github/scripts/ai-review/post-review.ts validate-findings /tmp/ai-review/codex-findings.json
+
+      # Same defense-in-depth as claude-review's redact step: scrub any
+      # secret-shaped substring out of the findings before they're uploaded as
+      # a (public-repo) artifact.
+      - name: Redact secrets from Codex findings
+        if: always()
+        run: |
+          if [ -f /tmp/ai-review/codex-findings.json ]; then
+            # Delete on redaction failure so the always-on upload can't publish
+            # an unscrubbed artifact.
+            bun .github/scripts/ai-review/post-review.ts redact /tmp/ai-review/codex-findings.json \
+              || { rm -f /tmp/ai-review/codex-findings.json; exit 1; }
+          fi
+
+      - name: Upload Codex findings
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codex-findings
+          path: /tmp/ai-review/codex-findings.json
+          retention-days: 3
+
+  adjudicate:
+    name: Adjudicate reviews
+    needs:
+      - resolve
+      - claude-review
+      - codex-review
+    if: ${{ !cancelled() && needs.resolve.outputs.should_run == 'true' && needs.claude-review.result == 'success' && needs.codex-review.result == 'success' }}
+    # SECURITY-CRITICAL: this job checks out the PR head (untrusted subject
+    # matter) so Codex can VERIFY findings by reading the real files. Codex runs
+    # with its working directory at the workspace ROOT, which holds only the
+    # `pr/` and `trusted/` checkouts (no AGENTS.md/config of its own), and reads
+    # `pr/` read-only; the adjudicate prompt's injection guard treats every file
+    # under `pr/` (including any AGENTS.md/CLAUDE.md) as untrusted data. Every
+    # `bun` invocation runs from `trusted/`. Blast radius of a prompt-injected
+    # Codex here is bounded to review CONTENT: read-only sandbox, no network,
+    # key proxied by the action, and the output is secret-scrubbed before it
+    # leaves this job.
+    permissions:
+      contents: read
+      pull-requests: read
+    timeout-minutes: 45
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR head (untrusted; read-only, for verify-by-reading)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.resolve.outputs.head_ref }}
+          path: pr
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout default branch (trusted; everything we execute comes from here)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: trusted
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          # The PR head's own `.bun-version` is untrusted; read it from trusted.
+          bun-version-file: "trusted/.bun-version"
+          no-cache: true
+
+      - name: Download Claude findings
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: claude-findings
+          path: ${{ runner.temp }}/claude-in
+
+      - name: Download Codex findings
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: codex-findings
+          path: ${{ runner.temp }}/codex-in
+
+      - name: Stage findings
+        run: |
+          mkdir -p /tmp/ai-review
+          # Copy only the expected filenames rather than trusting the zips' own
+          # entry paths (artifacts are, in principle, upstream-influenced).
+          cp "${{ runner.temp }}/claude-in/claude-findings.json" /tmp/ai-review/claude-findings.json
+          cp "${{ runner.temp }}/codex-in/codex-findings.json" /tmp/ai-review/codex-findings.json
+
+      - name: Fetch PR diff
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.resolve.outputs.pr_number }}
+        run: |
+          mkdir -p /tmp/ai-review
+          gh pr diff "$PR" --repo "$GITHUB_REPOSITORY" > /tmp/ai-review/pr.diff
+
       - name: Prepare merged-review output schema
+        working-directory: trusted
         run: |
           mkdir -p /tmp/ai-review
           jq 'del(.["$schema"])' .github/ai-review/merged-review.schema.json > /tmp/ai-review/merged-review.schema.json
@@ -327,44 +449,41 @@ jobs:
       #     from the user running Codex, closing that hole, but says nothing
       #     on its own about Codex's filesystem/network sandbox.
       #   - `determinePermissionSelection()` only forces the legacy read-only
-      #     sandbox when `safety-strategy === "read-only"`; otherwise it
-      #     honors a separately-set `sandbox` input as-is. So setting BOTH
-      #     `safety-strategy: drop-sudo` and `sandbox: read-only` composes
-      #     them safely: Codex runs as a non-sudo-capable user, in a sandbox
-      #     with no filesystem writes and no network — with no
-      #     `codex-args`/`--sandbox` duplication (we don't set `codex-args`
-      #     at all: `--ask-for-approval` isn't a valid `codex exec` flag).
+      #     sandbox when `safety-strategy === "read-only"`; otherwise it honors
+      #     a separately-set `sandbox` input as-is. So setting BOTH
+      #     `safety-strategy: drop-sudo` and `sandbox: read-only` composes them
+      #     safely: non-sudo user, no filesystem writes, no network — with no
+      #     `codex-args`/`--sandbox` duplication.
+      # `working-directory` is the workspace root so Codex's cwd holds no
+      # untrusted AGENTS.md/config; it reads the PR from `pr/` and executes
+      # nothing from it.
       - name: Run Codex adjudication
         uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e # v1.12
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
-          prompt-file: .github/ai-review/codex-adjudicate-prompt.md
+          prompt-file: trusted/.github/ai-review/adjudicate-prompt.md
           model: ${{ env.CODEX_MODEL }}
           effort: high
           output-schema-file: /tmp/ai-review/merged-review.schema.json
           output-file: /tmp/ai-review/merged-review.json
-          # Pinned explicitly (verified via `npm view @openai/codex version`);
-          # never left floating.
           codex-version: "0.150.1"
           working-directory: ${{ github.workspace }}
           safety-strategy: drop-sudo
           sandbox: read-only
 
       - name: Validate merged review
+        working-directory: trusted
         run: bun .github/scripts/ai-review/post-review.ts validate-merged /tmp/ai-review/merged-review.json
 
-      # Same defense-in-depth as claude-review's redact step: scrubs any
-      # secret-shaped substring out of the merged review before it's uploaded
-      # as a (public-repo) artifact. `if: always()` + existence guard so a
-      # `merged-review.json` produced before a failing validation is still
-      # scrubbed ahead of the always-on upload step below. This job's cwd is
-      # already the trusted checkout (its only checkout), same as every other
-      # `bun` invocation here.
       - name: Redact secrets from merged review
         if: always()
+        working-directory: trusted
         run: |
           if [ -f /tmp/ai-review/merged-review.json ]; then
-            bun .github/scripts/ai-review/post-review.ts redact /tmp/ai-review/merged-review.json
+            # Delete on redaction failure so the always-on upload can't publish
+            # an unscrubbed artifact.
+            bun .github/scripts/ai-review/post-review.ts redact /tmp/ai-review/merged-review.json \
+              || { rm -f /tmp/ai-review/merged-review.json; exit 1; }
           fi
 
       - name: Upload merged review
@@ -379,13 +498,11 @@ jobs:
     name: Post review
     needs:
       - resolve
-      - codex-review
-    # Runs when the diff was too large to review (codex-review never ran, it
-    # was skipped by its own dependency chain) or when codex-review actually
-    # succeeded. `!cancelled()` is required here because an explicit `if`
-    # replaces the default "all needed jobs succeeded" check, and codex-review
-    # is legitimately skipped (not successful) on the too-large path.
-    if: ${{ !cancelled() && needs.resolve.outputs.should_run == 'true' && (needs.resolve.outputs.mode == 'too-large' || needs.codex-review.result == 'success') }}
+      - adjudicate
+    # Runs only when adjudication succeeded (it produced the merged review this
+    # job posts). `!cancelled()` is required here because an explicit `if`
+    # replaces the default "all needed jobs succeeded" check.
+    if: ${{ !cancelled() && needs.resolve.outputs.should_run == 'true' && needs.adjudicate.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -405,7 +522,6 @@ jobs:
           bun-version-file: ".bun-version"
 
       - name: Download merged review
-        if: needs.resolve.outputs.mode == 'review'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: merged-review
@@ -416,7 +532,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
-          MODE: ${{ needs.resolve.outputs.mode }}
           MERGED_REVIEW_PATH: /tmp/ai-review/merged-review.json
           TRIGGER: ${{ needs.resolve.outputs.trigger }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
