@@ -12,34 +12,41 @@ The Codex app's automatic review re-runs on every push, producing dozens of
 short, repetitive review rounds per PR and burning reviewer attention on
 churn instead of substance. This pipeline instead:
 
-1. Lets Claude do one unhurried, exhaustive pass over the whole diff.
-2. Lets Codex do its own independent pass, then adjudicate every Claude
-   finding (confirmed / refuted / uncertain) instead of taking it at face
-   value.
+1. Lets Claude and Codex each do their own unhurried, exhaustive pass over the
+   diff, **in parallel**.
+2. Then a separate adjudicator (Codex) reconciles the two, verifying every
+   finding by reading the real code (confirmed / refuted / uncertain) instead
+   of taking either review at face value.
 3. Posts ONE consolidated, deterministic review — no model call decides what
    gets posted or how; a plain TypeScript script does.
 
 ## Stages
 
 ```
-resolve  →  claude-review  →  codex-review  →  post-review
-(decide)     (Claude JSON      (Codex review +    (post ONE
-              findings)         adjudication)      GitHub review)
+                ┌─ claude-review ─┐
+resolve  ──────>┤                 ├──> adjudicate ──> post-review
+(decide)        └─ codex-review  ─┘   (Codex reconciles  (post ONE
+              (two independent reviews  + verifies by      GitHub review)
+               in parallel → JSON)      reading the code)
 ```
 
 - **`resolve`** (`.github/scripts/ai-review/resolve.ts`) decides whether this
   run should happen at all. It applies the once-per-PR dedup guard, the
   draft/bot/fork skips (for the future automatic trigger), and authorization
-  for manual `/ai-review` requests. There is no size cap: Claude and Codex
-  review agentically — reading the diff and the changed files via their own
-  tools over many turns, like the local CLI — so PRs of any size are reviewed
-  (very large diffs best-effort, within the model's context/turn budget).
-- **`claude-review`** gives Claude read-only access to the PR's own head
-  commit as review subject matter, and asks it for one exhaustive pass,
-  producing structured JSON findings validated against `findings.schema.json`.
-- **`codex-review`** performs its own independent review of the diff, then
-  adjudicates every Claude finding, merging both into one deduplicated,
-  structured result validated against `merged-review.schema.json`.
+  for manual `/ai-review` requests. There is no size cap: the models review
+  agentically — reading the diff and the changed files via their own tools over
+  many turns, like the local CLI — so PRs of any size are reviewed (very large
+  diffs best-effort, within the model's context/turn budget).
+- **`claude-review`** and **`codex-review`** run **in parallel** — each gives
+  its model an independent, exhaustive pass and produces structured JSON
+  findings validated against `findings.schema.json`. Claude reads the PR's
+  checked-out head commit; Codex reviews the diff.
+- **`adjudicate`** checks out the PR head read-only, then runs Codex to
+  reconcile the two finding sets — verifying each finding by **reading the real
+  code**, merging duplicates (tagging `sources: claude | codex | both`), and
+  preserving refuted findings with their reasons — into one result validated
+  against `merged-review.schema.json`. Splitting this from the independent
+  reviews lets those run concurrently and gives each job its own timeout.
 - **`post-review`** (`.github/scripts/ai-review/post-review.ts`) is the only
   job with write access. It posts one `COMMENT`-event GitHub review (inline
   comments where the diff can anchor them, a summary body for everything
