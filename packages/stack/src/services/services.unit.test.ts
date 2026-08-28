@@ -475,7 +475,13 @@ describe("native auxiliary service definitions", () => {
       SECRET_KEY_BASE: "native-secret-key-base",
       MAX_HEADER_LENGTH: "4096",
     });
-    expect(bundle.server.healthCheck?.probe).toEqual(expect.objectContaining({ _tag: "Exec" }));
+    expect(bundle.server.healthCheck?.probe).toEqual({
+      _tag: "Http",
+      host: "127.0.0.1",
+      port: 54330,
+      path: "/healthcheck",
+      scheme: "http",
+    });
   });
 
   it("starts PgMeta from its published host launcher against loopback PostgreSQL", () => {

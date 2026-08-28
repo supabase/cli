@@ -65,7 +65,7 @@ const realtimeEnv = (
   MAX_HEADER_LENGTH: String(opts.maxHeaderLength),
 });
 
-const realtimeHealthCheck = (port: number, tenantId: string): ServiceDef["healthCheck"] => ({
+const realtimeDockerHealthCheck = (port: number, tenantId: string): ServiceDef["healthCheck"] => ({
   probe: {
     _tag: "Exec",
     command: "curl",
@@ -82,6 +82,17 @@ const realtimeHealthCheck = (port: number, tenantId: string): ServiceDef["health
   ...stackHealthBudgets.realtime,
 });
 
+const realtimeNativeHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
+  probe: {
+    _tag: "Http",
+    host: "127.0.0.1",
+    port,
+    path: "/healthcheck",
+    scheme: "http",
+  },
+  ...stackHealthBudgets.realtime,
+});
+
 export const makeRealtimeServiceDocker = (opts: DockerRealtimeOptions): ServiceDef =>
   dockerRunService({
     runtime: opts.runtime,
@@ -91,7 +102,7 @@ export const makeRealtimeServiceDocker = (opts: DockerRealtimeOptions): ServiceD
     networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port]),
     env: realtimeEnv(opts),
     dependencies: opts.dependencies,
-    healthCheck: realtimeHealthCheck(opts.port, opts.tenantId),
+    healthCheck: realtimeDockerHealthCheck(opts.port, opts.tenantId),
   });
 
 export const makeRealtimeServicesNative = (
@@ -118,7 +129,7 @@ export const makeRealtimeServicesNative = (
     command: `${opts.binPath}/bin/server`,
     env,
     dependencies: [{ service: seed.name, condition: "completed" }],
-    healthCheck: realtimeHealthCheck(opts.port, opts.tenantId),
+    healthCheck: realtimeNativeHealthCheck(opts.port),
   });
   return { migrate, seed, server };
 };
