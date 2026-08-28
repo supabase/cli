@@ -145,6 +145,7 @@ describe("makeStudioServiceDocker", () => {
       SUPABASE_SECRET_KEY: "sb_secret_test",
       S3_PROTOCOL_ACCESS_KEY_ID: LOCAL_S3_PROTOCOL_ACCESS_KEY_ID,
       S3_PROTOCOL_ACCESS_KEY_SECRET: LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET,
+      HOSTNAME: "0.0.0.0",
     });
     expect(def.args).not.toContain("sb_secret_test");
   });
