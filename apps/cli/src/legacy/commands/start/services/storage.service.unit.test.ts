@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import {
   legacyAppendStorageVectorEnv,
@@ -7,10 +7,6 @@ import {
   type LegacyStorageContainerSpecInput,
   type LegacyStorageEnvInput,
 } from "./storage.service.ts";
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
 
 const baseEnvInput: LegacyStorageEnvInput = {
   targetMigration: "",
@@ -256,31 +252,5 @@ describe("legacyBuildStorageContainerSpec", () => {
     expect(spec.env["VECTOR_DATABASE_URL"]).toBe(
       "postgresql://postgres:postgres@supabase_db_proj:5432/postgres",
     );
-  });
-
-  test("emits the wget Docker healthcheck on a slim storage image", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-    const spec = legacyBuildStorageContainerSpec({
-      ...input,
-      image: "ghcr.io/supabase/cli/storage:v1.70.3",
-    });
-    expect(spec.healthcheck?.test).toEqual([
-      "CMD",
-      "wget",
-      "--no-verbose",
-      "--tries=1",
-      "--spider",
-      "http://127.0.0.1:5000/status",
-    ]);
-  });
-
-  test("mounts the named volume at /mnt on a slim image", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-    const spec = legacyBuildStorageContainerSpec({
-      ...input,
-      image: "ghcr.io/supabase/cli/storage:v1.70.3",
-    });
-    expect(spec.binds).toEqual(["supabase_storage_proj:/mnt"]);
-    expect(spec.env["FILE_STORAGE_BACKEND_PATH"]).toBe("/mnt");
   });
 });

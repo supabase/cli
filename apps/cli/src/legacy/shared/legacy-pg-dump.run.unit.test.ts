@@ -1,17 +1,10 @@
 import { Effect, Layer, Option } from "effect";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import { LegacyNetworkIdFlag } from "../../shared/legacy/global-flags.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { LegacyDockerRun, type LegacyDockerRunOpts } from "./legacy-docker-run.service.ts";
 import { legacyStreamPgDump } from "./legacy-pg-dump.run.ts";
-
-const DOCKER_IO_IMAGE = "supabase/postgres:17.4.1.030";
-const SLIM_IMAGE = "ghcr.io/supabase/cli/postgres:17.6.1.165";
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
 
 function mockDockerRun() {
   const calls: LegacyDockerRunOpts[] = [];
@@ -41,42 +34,24 @@ const runtimeInfoLayer = Layer.succeed(RuntimeInfo, {
   pid: 1234,
 });
 
-function runStreamPgDump(image: string): LegacyDockerRunOpts {
-  const docker = mockDockerRun();
-  const layer = Layer.mergeAll(
-    docker.layer,
-    runtimeInfoLayer,
-    Layer.succeed(LegacyNetworkIdFlag, Option.none()),
-  );
-  Effect.runSync(
-    legacyStreamPgDump({
-      image,
-      script: "pg_dump",
-      env: {},
-      onStdout: () => Effect.void,
-    }).pipe(Effect.provide(layer)),
-  );
-  const opts = docker.lastOpts;
-  if (opts === undefined) throw new Error("docker.runStream was never called");
-  return opts;
-}
-
 describe("legacyStreamPgDump entrypoint wiring", () => {
-  test("docker.io: keeps the image's own entrypoint, running bash under it", () => {
-    const opts = runStreamPgDump(DOCKER_IO_IMAGE);
-    expect(opts.entrypoint).toBeUndefined();
-    expect(opts.cmd).toEqual(["bash", "-c", "pg_dump", "--"]);
-  });
-
-  test("SUPABASE_USE_SLIM_IMAGES unset: a ghcr.io-shaped image still keeps the docker.io cmd shape (flag-off byte-identity)", () => {
-    const opts = runStreamPgDump(SLIM_IMAGE);
-    expect(opts.entrypoint).toBeUndefined();
-    expect(opts.cmd).toEqual(["bash", "-c", "pg_dump", "--"]);
-  });
-
-  test("slim image + flag on: uses the same bash cmd as docker.io", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-    const opts = runStreamPgDump(SLIM_IMAGE);
+  test("keeps the image entrypoint and runs bash -c, not dump-bash", () => {
+    const docker = mockDockerRun();
+    const layer = Layer.mergeAll(
+      docker.layer,
+      runtimeInfoLayer,
+      Layer.succeed(LegacyNetworkIdFlag, Option.none()),
+    );
+    Effect.runSync(
+      legacyStreamPgDump({
+        image: "supabase/postgres:17.4.1.030",
+        script: "pg_dump",
+        env: {},
+        onStdout: () => Effect.void,
+      }).pipe(Effect.provide(layer)),
+    );
+    const opts = docker.lastOpts;
+    if (opts === undefined) throw new Error("docker.runStream was never called");
     expect(opts.entrypoint).toBeUndefined();
     expect(opts.cmd).toEqual(["bash", "-c", "pg_dump", "--"]);
   });

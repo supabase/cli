@@ -60,9 +60,3 @@ export const legacyResolveEdgeRuntimeImage = (
   workdir: string,
   denoVersion: number,
 ) => resolveEdgeRuntimeImage(fs, path, workdir, denoVersion);
-
-/**
- * Same resolution as {@link legacyResolveEdgeRuntimeImage}. The slim image now
- * ships `sh`, so shell-entrypoint callers no longer need a docker.io pin.
- */
-export const legacyResolveEdgeRuntimeShellImage = legacyResolveEdgeRuntimeImage;

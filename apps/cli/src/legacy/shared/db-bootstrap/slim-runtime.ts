@@ -7,11 +7,11 @@
  * `/bin/sh -c` (`docker-create-args.ts`). Distroless images with no `/bin/sh`
  * (auth, studio, pg-meta) therefore cannot carry a Docker healthcheck through
  * this CLI — omit it and let `legacyCheckContainerReady` treat `Running` as
- * ready, the same as PostgREST. Elixir/busybox images (realtime, analytics)
- * and Vector do ship `/bin/sh` plus a wget applet, so they keep an exec-form
- * probe that the CLI quotes into CMD-SHELL. Postgres, storage, and
- * edge-runtime now match docker.io (root start, `sh`/`wget`), so they share
- * the docker.io specs; the flag only rewrites their image names.
+ * ready, the same as PostgREST. Elixir/busybox images (realtime, analytics,
+ * pooler) ship `/bin/sh` plus a wget applet, so they keep an exec-form probe
+ * that the CLI quotes into CMD-SHELL. Vector, Postgres, storage, and
+ * edge-runtime match docker.io (`sh`/`wget`), so they share those specs; the
+ * flag only rewrites their image names.
  */
 
 import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";

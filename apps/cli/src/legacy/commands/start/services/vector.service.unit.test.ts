@@ -301,25 +301,22 @@ describe("legacyBuildVectorContainerSpec", () => {
     expect(script).toContain('.appname == "supabase_kong_proj"');
   });
 
-  test("delivers vector.yaml via secretFiles and uses busybox wget on a slim image", () => {
+  test("slim image still waits on Logflare before exec, with the docker.io wget healthcheck", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const spec = legacyBuildVectorContainerSpec({
       ...base,
       image: "ghcr.io/supabase/cli/vector:0.53.0",
     });
-    expect(spec.entrypoint).toBeUndefined();
-    expect(spec.cmd).toEqual(["--config", "/etc/vector/vector.yaml"]);
-    expect(spec.secretFiles).toEqual([
-      {
-        containerPath: "/etc/vector/vector.yaml",
-        content: expect.stringContaining('"supabase_vector_proj"'),
-      },
-    ]);
+    expect(spec.entrypoint).toBe("sh");
+    expect(spec.secretFiles).toBeUndefined();
+    expect(String(spec.cmd?.[1])).toContain(
+      "until wget --no-verbose --tries=1 -T 2 --spider http://supabase_analytics_proj:4000/health",
+    );
     expect(spec.healthcheck?.test).toEqual([
       "CMD",
-      "/bin/busybox",
       "wget",
-      "-q",
+      "--no-verbose",
+      "--tries=1",
       "--spider",
       "http://127.0.0.1:9001/health",
     ]);

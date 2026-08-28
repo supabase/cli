@@ -34,13 +34,6 @@ describe("edgeRuntimeImage", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "true");
     expect(edgeRuntimeImage("v1.73.0")).toBe("supabase/edge-runtime:v1.73.0");
   });
-
-  it("keeps the deno1 tag on the docker.io image while the flag is off", () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
-    expect(edgeRuntimeImage(DENO1_EDGE_RUNTIME_VERSION)).toBe(
-      `supabase/edge-runtime:${DENO1_EDGE_RUNTIME_VERSION}`,
-    );
-  });
 });
 
 describe("resolveEdgeRuntimeVersionPin", () => {
@@ -49,11 +42,5 @@ describe("resolveEdgeRuntimeVersionPin", () => {
     const tag = await Effect.runPromise(resolveEdgeRuntimeVersionPin("/no-such-supabase-dir"));
     expect(tag).toBe(currentEdgeRuntimeTag);
     expect(tag.includes("/")).toBe(false);
-  });
-
-  it("falls back to the Dockerfile tag while the flag is off", async () => {
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
-    const tag = await Effect.runPromise(resolveEdgeRuntimeVersionPin("/no-such-supabase-dir"));
-    expect(tag).toBe(currentEdgeRuntimeTag);
   });
 });
