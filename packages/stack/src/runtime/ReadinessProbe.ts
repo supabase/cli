@@ -33,13 +33,23 @@ const runtimeError = (
     cause,
   });
 
+const containsControl = (value: string): boolean =>
+  [...value].some((character) => {
+    const code = character.charCodeAt(0);
+    return code <= 0x1f || code === 0x7f;
+  });
+
 const validateTarget = (target: ReadinessTarget): Effect.Effect<void, StackPreparationError> => {
-  if (target.host.length === 0 || target.host.includes("\u0000") || /[\r\n]/u.test(target.host))
+  if (target.host.length === 0 || containsControl(target.host))
     return Effect.fail(preparationError("Readiness host is invalid"));
   if (!Number.isInteger(target.port) || target.port < 1 || target.port > 65_535)
     return Effect.fail(preparationError("Readiness port is invalid"));
-  if (target.mode === "http" && target.path !== undefined && !target.path.startsWith("/"))
-    return Effect.fail(preparationError("Readiness HTTP path must begin with '/'"));
+  if (target.mode === "http" && target.path !== undefined) {
+    if (!target.path.startsWith("/"))
+      return Effect.fail(preparationError("Readiness HTTP path must begin with '/'"));
+    if (containsControl(target.path))
+      return Effect.fail(preparationError("Readiness HTTP path contains control characters"));
+  }
   return Effect.void;
 };
 

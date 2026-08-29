@@ -1,8 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Data, Deferred, Effect, Exit, Fiber } from "effect";
+import { Cause, Data, Deferred, Effect, Exit, Fiber, Option } from "effect";
 /* oxlint-disable effecttsgo/node-builtin-import -- integration test owns real listeners. */
 import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import { createServer as createTcpServer, type Server as TcpServer } from "node:net";
+import { StackPreparationError } from "../public/Errors.ts";
 import { probeReadiness } from "./ReadinessProbe.ts";
 
 class ListenerError extends Data.TaggedError("ListenerError")<{ readonly message: string }> {}
@@ -48,6 +49,24 @@ const listenTcp = (server: TcpServer): Effect.Effect<number, ListenerError> =>
   });
 
 describe("private endpoint readiness probe", () => {
+  it.live("rejects control characters in HTTP paths as typed preparation failures", () =>
+    Effect.gen(function* () {
+      for (const path of ["/ready\nX", "/ready\rX", "/ready\u0000X"]) {
+        const result = yield* probeReadiness({
+          mode: "http",
+          host: "127.0.0.1",
+          port: 1,
+          path,
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        if (Exit.isFailure(result)) {
+          const cause = Option.getOrUndefined(Cause.findErrorOption(result.cause));
+          expect(cause).toBeInstanceOf(StackPreparationError);
+        }
+      }
+    }),
+  );
+
   it.live("probes HTTP and TCP endpoints with a Schedule retry policy", () =>
     Effect.scoped(
       Effect.gen(function* () {
