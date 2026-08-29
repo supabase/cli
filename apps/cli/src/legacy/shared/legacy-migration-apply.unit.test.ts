@@ -1187,17 +1187,17 @@ describe("legacyIsPipelineIncompatible", () => {
     ["alter table set tablespace single", "ALTER TABLE t SET TABLESPACE fast", false],
     ["alter database set tablespace multiline", "ALTER DATABASE demo\n SET TABLESPACE fast", true],
     [
-      "alter database with tablespace inside a literal",
+      "alter database with tablespace inside a literal over-routes conservatively",
       "ALTER DATABASE demo SET application_name TO 'foo SET TABLESPACE bar'",
-      false,
+      true,
     ],
     ["detach partition concurrently", "ALTER TABLE m DETACH PARTITION p CONCURRENTLY", true],
     ["detach partition finalize", "ALTER TABLE m DETACH PARTITION p FINALIZE", true],
     ["detach partition plain", "ALTER TABLE m DETACH PARTITION p", false],
     [
-      "detach only inside a comment",
+      "detach inside a comment over-routes conservatively",
       "ALTER TABLE m ADD COLUMN x int /* DETACH PARTITION p CONCURRENTLY */",
-      false,
+      true,
     ],
     [
       "detach partition qualified concurrently",
@@ -1207,6 +1207,11 @@ describe("legacyIsPipelineIncompatible", () => {
     [
       "detach partition quoted qualified concurrently",
       'ALTER TABLE "tenant schema".events DETACH PARTITION "p 1" CONCURRENTLY',
+      true,
+    ],
+    [
+      "detach partition spaced qualification",
+      'ALTER TABLE "tenant schema" . events DETACH PARTITION p CONCURRENTLY',
       true,
     ],
     ["create subscription", "CREATE SUBSCRIPTION sub CONNECTION 'host=h' PUBLICATION pub", true],

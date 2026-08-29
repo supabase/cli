@@ -69,14 +69,13 @@ const TABLESPACE_DDL_PATTERN = /^(?:CREATE|DROP)\s+TABLESPACE(?:\s|$)/u;
 const REINDEX_DATABASE_PATTERN = /^REINDEX(?:\s+\([^)]*\))?\s+(?:DATABASE|SYSTEM|SCHEMA)(?:\s|$)/u;
 const SUBSCRIPTION_DDL_PATTERN = /^(?:CREATE|DROP)\s+SUBSCRIPTION(?:\s|$)/u;
 const DISCARD_ALL_PATTERN = /^DISCARD\s+ALL(?:\s|$)/u;
-const ALTER_DATABASE_TABLESPACE_PATTERN =
-  /^ALTER\s+DATABASE\s+(?:"[^"]*"|\S+)\s+SET\s+TABLESPACE(?:\s|$)/u;
+const ALTER_DATABASE_TABLESPACE_PATTERN = /^ALTER\s+DATABASE\s[\s\S]*\sSET\s+TABLESPACE(?:\s|$)/u;
 const ALTER_SUBSCRIPTION_REFRESH_PATTERN =
-  /^ALTER\s+SUBSCRIPTION\s+(?:"[^"]*"|\S+)\s+(?:REFRESH\s+PUBLICATION|(?:SET|ADD|DROP)\s+PUBLICATION)(?:\s|$)/u;
+  /^ALTER\s+SUBSCRIPTION\s[\s\S]*\s(?:REFRESH\s+PUBLICATION|(?:SET|ADD|DROP)\s+PUBLICATION)(?:\s|$)/u;
 const ALL_IN_TABLESPACE_PATTERN =
   /^ALTER\s+(?:TABLE|INDEX|MATERIALIZED\s+VIEW)\s+ALL\s+IN\s+TABLESPACE(?:\s|$)/u;
 const DETACH_PARTITION_PATTERN =
-  /^ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(?:"[^"]*"|[^\s"])+\s+DETACH\s+PARTITION\s+(?:"[^"]*"|[^\s"])+\s+(?:CONCURRENTLY|FINALIZE)(?:\s|$)/u;
+  /^ALTER\s+TABLE\s[\s\S]*\sDETACH\s+PARTITION\s[\s\S]*\s(?:CONCURRENTLY|FINALIZE)(?:\s|$)/u;
 const TRANSACTION_CONTROL_PATTERN =
   /^(?:BEGIN|START\s+TRANSACTION|COMMIT|END|ABORT|PREPARE\s+TRANSACTION)(?:\s|$)/u;
 
@@ -122,6 +121,12 @@ const legacyTrimLeadingSqlComments = (sql: string): string => {
  * Port of `isPipelineIncompatible` (`pkg/migration/file.go`, supabase/cli#5156),
  * extended with the remaining statement kinds PostgreSQL refuses inside the
  * explicit transaction the batch runs in since supabase/cli#6347.
+ *
+ * Deliberately loose, keyword-anchored matching — never identifier-aware: a match
+ * inside a comment or literal over-routes the statement standalone, which is always
+ * valid SQL placement and at worst adds a documented flush boundary, while an
+ * under-match is a hard SQLSTATE 25001 failure. Do not tighten these into
+ * identifier parsing.
  */
 export const legacyIsPipelineIncompatible = (sql: string): boolean => {
   const upper = legacyTrimLeadingSqlComments(sql).toUpperCase();
