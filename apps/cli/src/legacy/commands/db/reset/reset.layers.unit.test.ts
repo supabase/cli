@@ -1,11 +1,9 @@
 /**
  * Layer-exposure test for `legacyDbResetRuntimeLayer`.
  *
- * Regression guard (review CLI-1958): the post-reset best-effort pg-delta
- * catalog cache (`legacyTryCacheMigrationsCatalog` in `reset.handler.ts`, gated
- * on `[experimental.pgdelta].enabled` / `SUPABASE_EXPERIMENTAL_PG_DELTA`) reaches
- * `LegacyEdgeRuntimeScript` and `LegacyPgDeltaSslProbe` via
- * `legacyExportCatalogPgDelta` (`legacy-pgdelta.ts`). `legacyDbResetRuntimeLayer`
+ * Regression guard (review CLI-1958): reset code paths can reach
+ * `LegacyEdgeRuntimeScript` and `LegacyPgDeltaSslProbe` (today through the shared
+ * pg-delta command runtime backing the migra fallback). `legacyDbResetRuntimeLayer`
  * previously omitted both services (and the `LegacyDockerRun` layer the real
  * edge-runtime implementation needs) — unlike `legacyDbPushRuntimeLayer`, which
  * already composes all three. That gap was invisible to `reset.integration.test.ts`

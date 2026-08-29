@@ -39,7 +39,6 @@ const ctx = (cwd: string, declarativeDir: string): LegacyDeclarativeRunContext =
 // write a `config.toml`).
 const toml: LegacyDbTomlValues = {
   projectEnv: {},
-  envLookup: () => undefined,
   apiSchemas: ["public", "graphql_public"],
   port: 54322,
   shadowPort: 54320,

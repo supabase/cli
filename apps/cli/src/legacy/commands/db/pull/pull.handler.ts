@@ -50,7 +50,6 @@ import {
   legacyWriteDeclarativeSchemas,
 } from "../shared/legacy-pgdelta.write.ts";
 import {
-  legacyParseBoolEnv,
   legacyResolveDeclarativeFromArgs,
   legacyResolvePullDiffEngine,
   legacySchemaPathsTransitionWarning,
@@ -435,7 +434,6 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
       pgDeltaDefault: legacyShouldUsePgDelta({
         configEnabled: toml.pgDelta.enabled,
         usePgDeltaFlag: false,
-        envEnabled: legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
       }),
     });
 

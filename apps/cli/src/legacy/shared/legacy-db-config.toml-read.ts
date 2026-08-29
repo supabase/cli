@@ -44,14 +44,6 @@ type EnvLookup = (name: string) => string | undefined;
  */
 export interface LegacyDbTomlValues {
   readonly projectEnv: Readonly<Record<string, string>>;
-  /**
-   * Resolves a `SUPABASE_*` env var with Go's precedence: shell env (non-empty)
-   * wins, then the loaded project `.env*` files (non-empty), else undefined.
-   * Go writes project `.env` into the process env before viper's `AutomaticEnv`
-   * reads these, so handlers must consult both
-   * rather than `process.env` alone (e.g. `SUPABASE_EXPERIMENTAL_PG_DELTA`).
-   */
-  readonly envLookup: (name: string) => string | undefined;
   readonly apiSchemas: ReadonlyArray<string>;
   /** `[db] port`, default 54322 (`packages/config/src/db.ts`). */
   readonly port: number;
@@ -979,7 +971,7 @@ const DEFAULT_SUPABASE_ENV = "development";
  * would leave that process.env-only reader blind to a project-`.env`-scoped
  * override the shell never set.
  * Everything else is read from {@link legacyLoadProjectEnv}'s returned map
- * (`envLookup`, `legacyResolveYesWithProjectEnv`, `resolveDbPassword`) or resolved
+ * (`envOverride`, `legacyResolveYesWithProjectEnv`, `resolveDbPassword`) or resolved
  * eagerly from the shell before any `.env` load — Go's root globals (workdir /
  * profile / `SUPABASE_ENV` / project-ref) are frozen before `loadNestedEnv`, so
  * writing them here would let our lazily-built resolvers diverge from Go (retarget
@@ -2658,7 +2650,6 @@ const readDbTomlCore = Effect.fnUntraced(function* (
 
   const values: LegacyDbTomlValues = {
     projectEnv,
-    envLookup: envOverride,
     apiSchemas,
     port,
     shadowPort,

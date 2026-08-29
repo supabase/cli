@@ -89,10 +89,13 @@ export PGDELTA_NPM_REGISTRY=http://host.docker.internal:4873
 # or: export PGDELTA_NPM_REGISTRY=http://172.17.0.1:4873
 ```
 
-Then run any pg-delta-backed command, for example:
+Then run one of the delegated commands that still reach the Go binary's edge-runtime
+pg-delta path (ordinary `db diff` / `db pull` run the TypeScript in-process engine and
+ignore this registry), for example:
 
 ```sh
-supabase db pull --db-url "$DATABASE_URL" --diff-engine pg-delta
+supabase db pull --experimental --db-url "$DATABASE_URL"
+# or: supabase db remote commit
 ```
 
 When set, the CLI injects a scoped `.npmrc` and forwards `NPM_CONFIG_REGISTRY` into the edge-runtime container (`PgDeltaNpmRegistryOption` in `internal/utils/pgdelta_local.go`).

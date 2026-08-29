@@ -1939,22 +1939,30 @@ describe("legacy db pull", () => {
     },
   );
 
-  it.effect("a project supabase/.env enabling pg-delta selects the pg-delta engine", () => {
-    // A project .env must select pg-delta even when the shell env doesn't set it.
-    // The handler reads it via toml.envLookup, not process.env.
-    seedMigration(tmp.current, "20240101000000");
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_EXPERIMENTAL_PG_DELTA=true\n");
-    const s = setup(tmp.current, {
-      remoteVersions: ["20240101000000"],
-      edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table remote ();" }]),
-      yes: true,
-    });
-    return Effect.gen(function* () {
-      yield* legacyDbPull(flags());
-      expect(s.engineCalls[0]?.operation).toBe("diff");
-    }).pipe(Effect.provide(s.layer));
-  });
+  it.effect(
+    "config enabled = false selects migra even with a stale SUPABASE_EXPERIMENTAL_PG_DELTA opt-in",
+    () => {
+      // The explicit config rollback is authoritative: the historical
+      // SUPABASE_EXPERIMENTAL_PG_DELTA opt-in (here in the project .env) is no
+      // longer consulted, so it cannot silently defeat `enabled = false`.
+      seedMigration(tmp.current, "20240101000000");
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        "[experimental.pgdelta]\nenabled = false\n",
+      );
+      writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_EXPERIMENTAL_PG_DELTA=true\n");
+      const s = setup(tmp.current, {
+        remoteVersions: ["20240101000000"],
+        edgeStdout: "create table remote ();\n",
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(flags());
+        expect(s.engineCalls).toHaveLength(0);
+        expect(s.edgeRunCount).toBe(1);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect(
     "defaults to the pg-delta engine when config has no [experimental.pgdelta] section",

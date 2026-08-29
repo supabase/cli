@@ -18,7 +18,6 @@ import (
 	"github.com/jackc/pgconn"
 	"github.com/jackc/pgx/v4"
 	"github.com/spf13/afero"
-	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/gen/types"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/config"
@@ -91,7 +90,7 @@ func TryCacheMigrationsCatalog(ctx context.Context, config pgconn.Config, prefix
 }
 
 func ShouldCacheMigrationsCatalog() bool {
-	return utils.IsPgDeltaEnabled() || viper.GetBool("EXPERIMENTAL_PG_DELTA")
+	return utils.IsPgDeltaEnabled()
 }
 
 func CatalogPrefixFromConfig(config pgconn.Config) string {

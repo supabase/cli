@@ -40,7 +40,6 @@ import {
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import {
-  legacyParseBoolEnv,
   legacyResolveDiffEngine,
   legacySchemaPathsTransitionWarning,
   legacyShouldUsePgDelta,
@@ -550,12 +549,11 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     };
     const formatOptions = Option.getOrElse(cfg.pgDelta.formatOptions, () => "");
 
-    // Engine resolution: the pg-delta env/config/flag gate, read from the
+    // Engine resolution: the pg-delta config/flag gate, read from the
     // (possibly remote-merged) config.
     const pgDeltaDefault = legacyShouldUsePgDelta({
       configEnabled: cfg.pgDelta.enabled,
       usePgDeltaFlag: Option.getOrElse(flags.usePgDelta, () => false),
-      envEnabled: legacyParseBoolEnv(cfg.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
     });
     const useDelta = legacyResolveDiffEngine({
       useMigraChanged: Option.isSome(flags.useMigra),

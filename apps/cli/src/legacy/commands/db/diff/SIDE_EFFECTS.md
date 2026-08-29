@@ -88,7 +88,6 @@ of this command's own target resolve, ahead of the differ container.
 | `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow container/network onto an existing Docker network                                                                                                                                                 | no        |
 | `SUPABASE_HOME`                                                                       | overrides the `~/.supabase` root used for the shadow baseline cache (and other CLI state)                                                                                                                           | no        |
 | `SUPABASE_SHADOW_CACHE`                                                               | shadow baseline cache; opt-in (`1`/`true`); the shadow's post-baseline PGDATA is snapshotted to a tar and restored into the next run's fresh container (see Notes)                                                  | no        |
-| `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                      | force pg-delta engine                                                                                                                                                                                               | no        |
 | `PGDELTA_DEBUG`                                                                       | pg-delta debug capture                                                                                                                                                                                              | no        |
 | `SUPABASE_SSL_DEBUG`                                                                  | migra SSL debug logging                                                                                                                                                                                             | no        |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                    | overrides the differ's / shadow's image registry (shell **or** project `.env`, applied for the run via `legacyApplyProjectEnv`, matching `db push`/`db pull`/`db dump`)                                             | no        |
@@ -97,10 +96,9 @@ of this command's own target resolve, ahead of the differ container.
 `SUPABASE_DB_HEALTH_TIMEOUT` all apply to `--use-pgadmin` too — its shadow is provisioned
 through the same primitives.
 
-`SUPABASE_EXPERIMENTAL_PG_DELTA` is **read, no effect** on the pgadmin path: the pg-delta
-engine-selection lookup (`legacyShouldUsePgDelta`) runs unconditionally, before the
-`--use-pgadmin` branch, but the pgadmin branch is chosen first and never consults the
-resulting `useDelta` value.
+The historical `SUPABASE_EXPERIMENTAL_PG_DELTA` opt-in env var is **no longer read**:
+pg-delta is the default engine, and the explicit `[experimental.pgdelta] enabled = false`
+config rollback is authoritative.
 
 `SUPABASE_INTERNAL_IMAGE_REGISTRY` applies to the differ's own image resolution too. The
 docker-run layer's resolver (`legacy-docker-run.layer.ts`) is built once, statically, with

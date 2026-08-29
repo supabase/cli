@@ -175,8 +175,12 @@ var (
 	}
 )
 
+// pg-delta is the default engine; an explicit `[experimental.pgdelta] enabled = false`
+// is the rollback, overridable per run by --use-pg-delta. The historical
+// SUPABASE_EXPERIMENTAL_PG_DELTA opt-in env var is no longer consulted so the
+// config rollback stays authoritative.
 func shouldUsePgDelta() bool {
-	return utils.IsPgDeltaEnabled() || usePgDelta || viper.GetBool("EXPERIMENTAL_PG_DELTA")
+	return utils.IsPgDeltaEnabled() || usePgDelta
 }
 
 // resolveDiffEngine reports whether `db diff` should run in pg-delta mode. The config /
