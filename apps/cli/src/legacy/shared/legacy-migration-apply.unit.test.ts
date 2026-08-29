@@ -1178,6 +1178,16 @@ describe("legacyIsPipelineIncompatible", () => {
     ["detach partition concurrently", "ALTER TABLE m DETACH PARTITION p CONCURRENTLY", true],
     ["detach partition finalize", "ALTER TABLE m DETACH PARTITION p FINALIZE", true],
     ["detach partition plain", "ALTER TABLE m DETACH PARTITION p", false],
+    [
+      "detach only inside a comment",
+      "ALTER TABLE m ADD COLUMN x int /* DETACH PARTITION p CONCURRENTLY */",
+      false,
+    ],
+    [
+      "detach partition qualified concurrently",
+      "ALTER TABLE IF EXISTS ONLY s.m\n DETACH PARTITION p CONCURRENTLY",
+      true,
+    ],
     ["create subscription", "CREATE SUBSCRIPTION sub CONNECTION 'host=h' PUBLICATION pub", true],
     ["drop subscription", "DROP SUBSCRIPTION IF EXISTS sub", true],
     ["alter subscription", "ALTER SUBSCRIPTION sub DISABLE", false],
