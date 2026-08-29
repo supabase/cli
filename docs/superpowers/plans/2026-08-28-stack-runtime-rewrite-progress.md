@@ -859,3 +859,45 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
 - Fresh evidence: production-runtime, container-runtime, runtime-artifact, and functions-bootstrap integration
   suites pass (32 tests), and `@supabase/stack` type-checking passes. Complete container log attachment,
   public `credentials`/`prepare` handlers, and owner-resolved service file inputs remain later Task 13 slices.
+
+#### Milestone Fable review — committed rewrite components (2026-08-29)
+
+- Ran six independent Fable reviews over the committed model/state, ownership/lifecycle, artifact/runtime,
+  gateway/Functions, production/database/logging, and public facade/CLI milestones. Active implementation
+  work was paused so the review snapshot contained only committed code.
+- Accepted findings were triaged against the design and reduced to demonstrated lifecycle ownership,
+  production lazy activation, explicit routed workloads, gateway/Functions correctness, runtime startup and
+  persistence contracts, compiler/state error invariants, facade boundaries, and minimal CLI coverage.
+- Rejected speculative work includes database reset placeholders, cross-release RPC migrations before a
+  second released protocol exists, alternate artifact trust roots, archive/cache framework expansion, and
+  broad aesthetic refactors. The implementation remains greenfield and exact-use-case scoped.
+
+#### Task 13B2b5 — service startup contracts (2026-08-29)
+
+- Native workloads now use one strict process plan: sequential scoped service-owned startup one-shots, then
+  the long-lived process and readiness. Fast process exit does not cancel stdout/stderr draining, failures
+  prevent the main process, and interruption kills only the exact owned child.
+- Auth, Storage, Realtime, Analytics, and Pooler use their audited slim-services migration/startup commands.
+  Auth and Storage container command chains compensate for their intentionally empty image entrypoints;
+  Realtime, Analytics, and Pooler retain their derived-image entrypoints. Mailpit uses only `MP_*` environment
+  configuration.
+- Storage owns one `/mnt` volume and imgproxy mounts the same volume read-only with `/mnt` as its filesystem
+  root. Native and container persistence contracts now match.
+- Initial commit `a0c127637`; fix commit `81edf9969` removed the obsolete direct-process resolver fallback.
+  Independent review then found no Critical or Important issue. Targeted native/workload/recovery integration
+  verification passed 37 tests with stack type-check, lint, formatting, and diff checks green.
+
+#### Task 13B2b6 — stack-owned runtime inputs (2026-08-29)
+
+- Added one Effect-native owner for contained project files, all local private signing JWKs and public JWKS,
+  injected third-party OIDC discovery, Auth template mappings, Analytics `gcp_jwt_path`, atomic owner-only
+  Pooler tenant generation files, and materialized Functions secret names/values.
+- Project paths must be relative regular files whose canonical path remains under the canonical project root.
+  Functions rejects reserved `SUPABASE_*` names and all C0/DEL control characters. OIDC error labels remove
+  userinfo, query, and fragment data while network requests retain the configured URL.
+- JWT material is resolved only when at least one of REST, Auth, Realtime, Storage, or Functions is enabled;
+  disabling Auth alone does not omit material still required by another consumer.
+- Initial commit `ff02f4181`; fix commit `a77c0e013` closed the enabled-consumer and diagnostic-redaction review
+  findings. Independent re-review was clean; focused input/secret integration verification passed 27 tests
+  with stack type-check, lint, formatting, and diff checks green. Production and gateway wiring remain the
+  next slice.
