@@ -325,7 +325,7 @@ jobs:
         # its output file — the step sits idle until the job timeout, discarding
         # a completed review (openai/codex-action#150). v1.11 handles the same
         # heavy workload cleanly. There is no released fix above v1.12 yet.
-        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11
+        uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e # v1.12
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: .github/ai-review/codex-review-prompt.md
@@ -489,7 +489,7 @@ jobs:
         # its output file — the step sits idle until the job timeout, discarding
         # a completed review (openai/codex-action#150). v1.11 handles the same
         # heavy workload cleanly. There is no released fix above v1.12 yet.
-        uses: openai/codex-action@52fe01ec70a42f454c9d2ebd47598f9fd6893d56 # v1.11
+        uses: openai/codex-action@86365089eb2b84e0a8fb0717b304f8bdcb13b20e # v1.12
         with:
           openai-api-key: ${{ secrets.OPENAI_API_KEY }}
           prompt-file: trusted/.github/ai-review/adjudicate-prompt.md
