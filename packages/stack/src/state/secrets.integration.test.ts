@@ -42,7 +42,6 @@ describe("managed and pass-through secrets", () => {
       const second = yield* resolveSecrets(candidate, first.persisted, "running");
       for (const slot of [
         "secret:database.internal.password",
-        "secret:security.jwt.signing.secret",
         "secret:auth.settings.publishable_key",
         "secret:auth.settings.secret_key",
       ]) {

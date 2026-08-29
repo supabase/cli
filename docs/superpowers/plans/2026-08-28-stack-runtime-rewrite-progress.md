@@ -705,3 +705,13 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
   preparation/artifact, container, bootstrap, runtime, and gateway integration set (100 tests) pass;
   stack types, Effect/generic lint, formatting, and diff checks pass. Task 13B2b still owns production
   listener allocation/reconciliation and Edge Runtime bootstrap composition.
+
+#### Task 13A fix round 5 — unify local JWT signing material (2026-08-29)
+
+- Symmetric JWT configuration now has one canonical managed `secret:auth.settings.jwt_secret` slot;
+  top-level `security.jwt.signing.secret` is accepted as an alias, equal dual declarations are
+  deduplicated, and conflicting values fail typed before lifecycle mutation.
+- JWKS-file and third-party modes retain Auth's local JWT secret for GoTrue, Edge Runtime, Realtime,
+  Storage, and Supavisor while PostgREST consumes owner-resolved JWKS material where required.
+- Compiler, runtime, and secret-store integration coverage verifies default/one-sided/equal/mismatch
+  inputs, no duplicate slot, internal JWT consumers, and JWKS/third-party resolution semantics.

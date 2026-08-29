@@ -65,7 +65,6 @@ describe("closed capability compiler", () => {
       expect(Redacted.isRedacted(supplied?.value)).toBe(true);
       for (const slot of [
         "secret:database.internal.password",
-        "secret:security.jwt.signing.secret",
         "secret:auth.settings.publishable_key",
         "secret:auth.settings.jwt_secret",
         "secret:auth.settings.anon_key",
@@ -74,6 +73,90 @@ describe("closed capability compiler", () => {
         expect(result.secrets.find((entry) => entry.slot === slot)?.policy).toBe("managed");
       }
       expect(canonicalize(result.executionPlan)).not.toContain("secret-value");
+    }),
+  );
+
+  it.live("uses one canonical JWT secret slot for symmetric signing", () =>
+    Effect.gen(function* () {
+      const result = yield* compile({});
+      expect(result.definition.security.jwt.signing).toEqual({
+        kind: "symmetric",
+        secret: { slot: "secret:auth.settings.jwt_secret" },
+      });
+      expect(result.secrets.filter((entry) => entry.slot.includes("jwt"))).toEqual([
+        expect.objectContaining({ slot: "secret:auth.settings.jwt_secret", policy: "managed" }),
+      ]);
+    }),
+  );
+
+  it.live("accepts either symmetric JWT secret spelling and deduplicates the slot", () =>
+    Effect.gen(function* () {
+      const fromAuth = yield* compile({
+        capabilities: { auth: { settings: { jwt_secret: Redacted.make("auth-secret") } } },
+      });
+      expect(fromAuth.definition.security.jwt.signing).toEqual({
+        kind: "symmetric",
+        secret: { slot: "secret:auth.settings.jwt_secret" },
+      });
+      expect(fromAuth.secrets.filter((entry) => entry.slot.includes("jwt"))).toEqual([
+        expect.objectContaining({
+          slot: "secret:auth.settings.jwt_secret",
+          policy: "managed",
+          value: Redacted.make("auth-secret"),
+        }),
+      ]);
+
+      const fromSecurity = yield* compile({
+        security: { jwt: { signing: { kind: "symmetric", secret: Redacted.make("top-secret") } } },
+      });
+      expect(fromSecurity.definition.capabilities.auth.settings.jwt_secret).toEqual({
+        slot: "secret:auth.settings.jwt_secret",
+      });
+      expect(fromSecurity.secrets.filter((entry) => entry.slot.includes("jwt"))).toEqual([
+        expect.objectContaining({
+          slot: "secret:auth.settings.jwt_secret",
+          policy: "managed",
+          value: Redacted.make("top-secret"),
+        }),
+      ]);
+
+      const equal = yield* compile({
+        capabilities: { auth: { settings: { jwt_secret: Redacted.make("equal-secret") } } },
+        security: {
+          jwt: { signing: { kind: "symmetric", secret: Redacted.make("equal-secret") } },
+        },
+      });
+      expect(equal.secrets.filter((entry) => entry.slot.includes("jwt"))).toHaveLength(1);
+    }),
+  );
+
+  it.live("rejects conflicting symmetric JWT secret spellings without leaking values", () =>
+    Effect.gen(function* () {
+      const exit = yield* compile({
+        capabilities: { auth: { settings: { jwt_secret: Redacted.make("auth-secret") } } },
+        security: {
+          jwt: { signing: { kind: "symmetric", secret: Redacted.make("top-secret") } },
+        },
+      }).pipe(Effect.exit);
+      const error = failureOf(exit);
+      expect(error).toBeInstanceOf(InvalidStackConfigError);
+      expect(String(error)).not.toContain("auth-secret");
+      expect(String(error)).not.toContain("top-secret");
+    }),
+  );
+
+  it.live("retains Auth's local JWT secret when signing uses a JWKS file", () =>
+    Effect.gen(function* () {
+      const result = yield* compile({
+        security: { jwt: { signing: { kind: "jwks-file", path: "jwt.json" } } },
+      });
+      expect(result.definition.security.jwt.signing).toEqual({
+        kind: "jwks-file",
+        path: "jwt.json",
+      });
+      expect(result.secrets.filter((entry) => entry.slot.includes("jwt"))).toEqual([
+        expect.objectContaining({ slot: "secret:auth.settings.jwt_secret", policy: "managed" }),
+      ]);
     }),
   );
 

@@ -161,7 +161,7 @@ export const validateWorkloadRuntimeInputs = (
       jwksConsumer &&
       signing?.kind !== "jwks-file" &&
       thirdParty.value === undefined &&
-      secret(state, "secret:security.jwt.signing.secret").length === 0
+      secret(state, "secret:auth.settings.jwt_secret").length === 0
     )
       return yield* new StackPreparationError({
         message: "Managed JWT signing secret is required for the configured auth mode",
@@ -435,7 +435,7 @@ const withRestSettings = (
     PGRST_DB_ANON_ROLE: "anon",
     PGRST_JWT_SECRET: usesResolvedJwks(state)
       ? (_inputs.auth?.jwks ?? "")
-      : secret(state, "secret:security.jwt.signing.secret"),
+      : secret(state, "secret:auth.settings.jwt_secret"),
     PGRST_SERVER_PORT: String(port),
     PGRST_DB_MAX_ROWS: valueAt(state, "rest", "max_rows") || "1000",
   });
@@ -742,7 +742,7 @@ const withStorageSettings = (
     UPLOAD_FILE_SIZE_LIMIT: "52428800000",
     UPLOAD_FILE_SIZE_LIMIT_STANDARD: "5242880000",
     SIGNED_UPLOAD_URL_EXPIRATION_TIME: "7200",
-    PGRST_JWT_SECRET: secret(state, "secret:security.jwt.signing.secret"),
+    PGRST_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
     ...(inputs.auth?.jwks === undefined ? {} : { JWT_JWKS: inputs.auth.jwks }),
     TUS_URL_PATH: "/storage/v1/upload/resumable",
     IMGPROXY_URL:
@@ -868,9 +868,9 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
         DB_PASSWORD: secret(state, "secret:database.internal.password"),
         DB_NAME: "postgres",
         DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime",
-        API_JWT_SECRET: secret(state, "secret:security.jwt.signing.secret"),
+        API_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
         ...(inputs.auth?.jwks === undefined ? {} : { API_JWT_JWKS: inputs.auth.jwks }),
-        METRICS_JWT_SECRET: secret(state, "secret:security.jwt.signing.secret"),
+        METRICS_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
         DB_ENC_KEY: "supabaserealtime",
         SECRET_KEY_BASE: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
         DNS_NODES: "''",
@@ -1080,12 +1080,12 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       PORT: String(port),
       PROXY_PORT_TRANSACTION: String(port),
       DATABASE_URL: `ecto://postgres:${secret(state, "secret:database.internal.password")}@${dbHost(runtime)}:${runtime === "container" ? 5432 : dbPort(state)}/_supabase`,
-      API_JWT_SECRET: secret(state, "secret:security.jwt.signing.secret"),
+      API_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
       REGION: "local",
       CLUSTER_POSTGRES: "true",
       SECRET_KEY_BASE: valueAt(state, "pooler", "secret_key_base"),
       VAULT_ENC_KEY: valueAt(state, "pooler", "encryption_key"),
-      METRICS_JWT_SECRET: secret(state, "secret:security.jwt.signing.secret"),
+      METRICS_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
       DEFAULT_POOL_SIZE: valueAt(state, "pooler", "default_pool_size") || "20",
       MAX_CLIENT_CONN: valueAt(state, "pooler", "max_client_conn") || "100",
       POOL_MODE: valueAt(state, "pooler", "pool_mode") || "transaction",

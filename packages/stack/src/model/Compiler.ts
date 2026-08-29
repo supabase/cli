@@ -100,6 +100,9 @@ export interface SecretSlotInput {
   readonly value?: Redacted.Redacted<unknown>;
 }
 
+const AUTH_JWT_SECRET_SLOT = "secret:auth.settings.jwt_secret";
+const SECURITY_JWT_SIGNING_SECRET_SLOT = "secret:security.jwt.signing.secret";
+
 /** Internal credentials are not user settings but still need durable managed slots. */
 export const INTERNAL_MANAGED_SECRET_SLOTS = ["secret:database.internal.password"] as const;
 
@@ -189,6 +192,46 @@ function slotsFor(
   }
   return value;
 }
+
+const canonicalJwtSecret = (
+  config: StackConfig,
+): Effect.Effect<Redacted.Redacted<string> | undefined, InvalidStackConfigError> =>
+  Effect.gen(function* () {
+    const auth = config.capabilities?.auth;
+    const authSecret =
+      auth !== undefined && "settings" in auth ? auth.settings?.jwt_secret : undefined;
+    const signing = config.security?.jwt?.signing;
+    const signingSecret = signing?.kind === "symmetric" ? signing.secret : undefined;
+    if (
+      authSecret !== undefined &&
+      signingSecret !== undefined &&
+      Redacted.value(authSecret) !== Redacted.value(signingSecret)
+    )
+      return yield* new InvalidStackConfigError({
+        message: "Auth and stack JWT signing secrets must match in symmetric mode",
+      });
+    return signingSecret ?? authSecret;
+  });
+
+const ensureCanonicalJwtSlot = (
+  slots: SecretSlotInput[],
+  value: Redacted.Redacted<string> | undefined,
+): void => {
+  for (let index = slots.length - 1; index >= 0; index--)
+    if (slots[index]?.slot === SECURITY_JWT_SIGNING_SECRET_SLOT) slots.splice(index, 1);
+  const existingIndex = slots.findIndex((entry) => entry.slot === AUTH_JWT_SECRET_SLOT);
+  if (existingIndex < 0) {
+    slots.push({
+      slot: AUTH_JWT_SECRET_SLOT,
+      policy: "managed",
+      ...(value === undefined ? {} : { value }),
+    });
+    return;
+  }
+  const existing = slots[existingIndex];
+  if (existing !== undefined && existing.value === undefined && value !== undefined)
+    slots[existingIndex] = { ...existing, value };
+};
 
 const setMaterializedPath = (
   value: unknown,
@@ -549,7 +592,11 @@ export const rebuildExecutionPlan = (
     return yield* planForDefinition(runtime, definition, crypto);
   });
 
-const collectSuppliedSecrets = (config: StackConfig, slots: SecretSlotInput[]): void => {
+const collectSuppliedSecrets = (
+  config: StackConfig,
+  slots: SecretSlotInput[],
+  jwtSecret: Redacted.Redacted<string> | undefined,
+): void => {
   const capabilities = config.capabilities;
   for (const name of CAPABILITY_NAMES) {
     const module = CAPABILITY_MODULES[name];
@@ -574,12 +621,8 @@ const collectSuppliedSecrets = (config: StackConfig, slots: SecretSlotInput[]): 
     }
   }
   const signing = config.security?.jwt?.signing;
-  if (signing === undefined) {
-    const slot = "secret:security.jwt.signing.secret";
-    if (!slots.some((entry) => entry.slot === slot)) slots.push({ slot, policy: "managed" });
-  } else {
-    slotsFor(signing, "security.jwt.signing", slots, () => "managed");
-  }
+  if (signing?.kind === "jwks-file") slotsFor(signing, "security.jwt.signing", slots);
+  ensureCanonicalJwtSlot(slots, jwtSecret);
 };
 
 export const compileStack = (
@@ -595,6 +638,7 @@ export const compileStack = (
     const crypto = yield* Crypto.Crypto;
     yield* validateFunctionKeys(input.config ?? {});
     const config = yield* decodeConfig(input.config ?? {});
+    const jwtSecret = yield* canonicalJwtSecret(config);
     const rawCapabilities = isRecord(config.capabilities) ? config.capabilities : {};
     const normalizedFunctions = yield* materializeFunctionsRoot(
       extract(extract(rawCapabilities, "functions"), "settings"),
@@ -624,7 +668,7 @@ export const compileStack = (
     if (previous?.inputFingerprint === inputFingerprint) {
       const slots: SecretSlotInput[] = [];
       for (const slot of INTERNAL_MANAGED_SECRET_SLOTS) slots.push({ slot, policy: "managed" });
-      collectSuppliedSecrets(config, slots);
+      collectSuppliedSecrets(config, slots, jwtSecret);
       const executionPlan = yield* planForDefinition(input.runtime, previous.definition, crypto);
       return {
         definition: previous.definition,
@@ -788,18 +832,14 @@ export const compileStack = (
       [PORT_FIELDS[7]]: materializeListener(rawListeners[PORT_FIELDS[7]], false),
     } satisfies Record<PortField, MaterializedListener>;
     const rawJwt = config.security?.jwt;
+    ensureCanonicalJwtSlot(slots, jwtSecret);
     const security = {
       jwt: {
         issuer: rawJwt?.issuer ?? null,
         signing:
-          rawJwt?.signing === undefined
-            ? (() => {
-                const slot = "secret:security.jwt.signing.secret";
-                if (!slots.some((entry) => entry.slot === slot))
-                  slots.push({ slot, policy: "managed" });
-                return { kind: "symmetric" as const, secret: { slot } };
-              })()
-            : slotsFor<JwtSigning>(rawJwt.signing, "security.jwt.signing", slots, () => "managed"),
+          rawJwt?.signing?.kind === "jwks-file"
+            ? slotsFor<JwtSigning>(rawJwt.signing, "security.jwt.signing", slots)
+            : { kind: "symmetric" as const, secret: { slot: AUTH_JWT_SECRET_SLOT } },
       },
     };
     const definition: StackDefinition = {

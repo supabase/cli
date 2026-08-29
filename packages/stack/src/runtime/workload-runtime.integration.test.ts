@@ -53,7 +53,6 @@ const state: PersistedStackState = {
   ],
   secrets: {
     "secret:database.internal.password": { policy: "managed", value: "postgres" },
-    "secret:security.jwt.signing.secret": { policy: "managed", value: "symmetric-secret" },
     "secret:auth.settings.jwt_secret": { policy: "managed", value: "symmetric-secret" },
   },
 };
@@ -462,6 +461,116 @@ describe("workload runtime catalog", () => {
         planned("rest:rest"),
       ).pipe(Effect.exit);
       expect(Exit.isFailure(unresolved)).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it("uses Auth's local JWT secret for every internal JWT consumer", () => {
+    const consumers = [
+      ["auth:auth", "GOTRUE_JWT_SECRET"],
+      ["realtime:realtime", "API_JWT_SECRET"],
+      ["storage:storage", "AUTH_JWT_SECRET"],
+      ["storage:storage", "PGRST_JWT_SECRET"],
+      ["pooler:pooler", "API_JWT_SECRET"],
+      ["pooler:pooler", "METRICS_JWT_SECRET"],
+      ["functions:edge-runtime", "SUPABASE_INTERNAL_JWT_SECRET"],
+    ] as const;
+    for (const [id, key] of consumers) {
+      const workload = planned(id);
+      const spec = runtimeSpecFor(workload);
+      expect(spec?.env(state, workload, 3000)[key]).toBe("symmetric-secret");
+    }
+  });
+
+  it.live("keeps Auth's local JWT secret alongside resolved JWKS material", () =>
+    Effect.gen(function* () {
+      const compileWith = (config: Parameters<typeof compileStack>[0]["config"]) =>
+        compileStack({
+          projectRoot: state.identity.projectRoot,
+          runtime: { kind: "native" },
+          config,
+        }).pipe(Effect.provide(NodeServices.layer));
+      const jwks = '{"keys":[{"kty":"EC"}]}';
+      const jwksCompiled = yield* compileWith({
+        security: { jwt: { signing: { kind: "jwks-file", path: "jwt.json" } } },
+      });
+      const jwksState: PersistedStackState = {
+        ...state,
+        definition: jwksCompiled.definition,
+      };
+      const internal = [
+        ["auth:auth", "GOTRUE_JWT_SECRET"],
+        ["realtime:realtime", "API_JWT_SECRET"],
+        ["realtime:realtime", "METRICS_JWT_SECRET"],
+        ["storage:storage", "AUTH_JWT_SECRET"],
+        ["storage:storage", "PGRST_JWT_SECRET"],
+        ["pooler:pooler", "API_JWT_SECRET"],
+        ["pooler:pooler", "METRICS_JWT_SECRET"],
+        ["functions:edge-runtime", "SUPABASE_INTERNAL_JWT_SECRET"],
+      ] as const;
+      for (const [id, key] of internal) {
+        const workload = planned(id);
+        const spec = runtimeSpecFor(workload);
+        expect(
+          spec?.env(jwksState, workload, 3000, "native", {
+            auth: { jwtKeys: '[{"kty":"EC"}]', jwks },
+          })[key],
+        ).toBe("symmetric-secret");
+      }
+      expect(
+        runtimeSpecFor(planned("rest:rest"))?.env(jwksState, planned("rest:rest"), 3000, "native", {
+          auth: { jwtKeys: '[{"kty":"EC"}]', jwks },
+        }).PGRST_JWT_SECRET,
+      ).toBe(jwks);
+
+      const thirdPartyCompiled = yield* compileWith({
+        capabilities: {
+          auth: {
+            settings: {
+              third_party: { firebase: { enabled: true, project_id: "project-42" } },
+            },
+          },
+        },
+      });
+      const thirdPartyState: PersistedStackState = {
+        ...state,
+        definition: thirdPartyCompiled.definition,
+      };
+      expect(
+        runtimeSpecFor(planned("realtime:realtime"))?.env(
+          thirdPartyState,
+          planned("realtime:realtime"),
+          3000,
+          "native",
+          { auth: { jwks } },
+        ).API_JWT_SECRET,
+      ).toBe("symmetric-secret");
+      expect(
+        runtimeSpecFor(planned("realtime:realtime"))?.env(
+          thirdPartyState,
+          planned("realtime:realtime"),
+          3000,
+          "native",
+          { auth: { jwks } },
+        ).API_JWT_JWKS,
+      ).toBe(jwks);
+      expect(
+        runtimeSpecFor(planned("storage:storage"))?.env(
+          thirdPartyState,
+          planned("storage:storage"),
+          3000,
+          "native",
+          { auth: { jwks } },
+        ).AUTH_JWT_SECRET,
+      ).toBe("symmetric-secret");
+      expect(
+        runtimeSpecFor(planned("pooler:pooler"))?.env(
+          thirdPartyState,
+          planned("pooler:pooler"),
+          3000,
+          "native",
+          { auth: { jwks } },
+        ).METRICS_JWT_SECRET,
+      ).toBe("symmetric-secret");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
