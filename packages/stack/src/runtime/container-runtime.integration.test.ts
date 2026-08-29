@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Option } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Stream } from "effect";
 import { NodeServices } from "@effect/platform-node";
 import type { ExecutionPlan, PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { ContainerArtifact } from "../model/CapabilityModule.ts";
@@ -14,6 +14,7 @@ import {
   type ContainerProcessRequest,
   type ContainerCommandResult,
   type ContainerContainerSpec,
+  type ContainerLogLine,
   type ContainerEngine,
   type ContainerNetworkSpec,
   type ContainerResource,
@@ -23,6 +24,7 @@ import { makeDockerEngine, serializeDockerCommand } from "./DockerEngine.ts";
 import { makePodmanEngine, serializePodmanCommand } from "./PodmanEngine.ts";
 import { makeContainerRuntime } from "./ContainerRuntime.ts";
 import { RuntimeDriverError, type RuntimeWorkloadKey } from "./RuntimeDriver.ts";
+import { LogStoreError, type LogRecord, type LogStore } from "../supervisor/LogStore.ts";
 
 const stackId = StackIdSchema.make("a".repeat(64));
 const key: RuntimeWorkloadKey = {
@@ -206,6 +208,19 @@ const fakeContainerEngine = (state: FakeContainerState): ContainerEngine => {
   };
 };
 
+const memoryLogStore = (records: LogRecord[]): LogStore => ({
+  path: "memory://container-logs",
+  append: (record) =>
+    Effect.sync(() => ({
+      cursor: { opaque: `v1_${records.length + 1}` },
+      timestamp: "2026-01-01T00:00:00.000Z",
+      ...record,
+    })).pipe(Effect.tap((entry) => Effect.sync(() => records.push(entry)))),
+  read: () => Effect.succeed([]),
+  retained: () => Effect.succeed([]),
+  stream: () => Stream.empty,
+});
+
 describe("container runtime", () => {
   it.live("executes the exact command argv through a bounded process boundary", () =>
     Effect.gen(function* () {
@@ -219,6 +234,24 @@ describe("container runtime", () => {
       const result = yield* runner.run({ args: ["version", "--format", "{{json .}}"] });
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toBe('{"ok":true}');
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("interrupts an owned Docker log follower subprocess", () =>
+    Effect.gen(function* () {
+      const firstChunk = yield* Deferred.make<void>();
+      const runner = yield* makeProcessCommandRunner({
+        executable: process.execPath,
+        baseArgs: ["-e", "process.stdout.write('follower-line\\n'); setInterval(() => {}, 1000)"],
+      });
+      const follower = yield* runner.stream!({
+        args: ["logs", "--follow", "--tail", "0", "container-id"],
+      }).pipe(
+        Stream.runForEach(() => Deferred.succeed(firstChunk, undefined)),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.await(firstChunk);
+      yield* Fiber.interrupt(follower);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
@@ -378,6 +411,146 @@ describe("container runtime", () => {
         .pipe(Effect.exit);
       expect(Exit.isFailure(result)).toBe(true);
       expect(called).toBe(false);
+    }),
+  );
+
+  it.live(
+    "captures container logs before readiness and does not duplicate same-resource followers",
+    () =>
+      Effect.gen(function* () {
+        const state: FakeContainerState = {
+          resources: [],
+          imagePresent: true,
+          calls: [],
+          createdSpecs: [],
+          nextId: 1,
+        };
+        const records: LogRecord[] = [];
+        const appended = yield* Deferred.make<void>();
+        let followerCalls = 0;
+        let followerAttached = false;
+        const base = fakeContainerEngine(state);
+        const baseLogStore = memoryLogStore(records);
+        const logStore: LogStore = {
+          ...baseLogStore,
+          append: (record) =>
+            baseLogStore
+              .append(record)
+              .pipe(Effect.tap(() => Deferred.succeed(appended, undefined))),
+        };
+        const engine: ContainerEngine = {
+          ...base,
+          streamLogs: () => {
+            followerCalls += 1;
+            followerAttached = true;
+            return Stream.fromIterable([
+              { stream: "stdout", message: "container-started" } satisfies ContainerLogLine,
+            ]);
+          },
+        };
+        const runtime = yield* makeContainerRuntime({
+          engine,
+          ownerSessionId: "owner-session",
+          logStore,
+          resolveWorkload: () =>
+            Effect.succeed({
+              waitForReadiness: () =>
+                followerAttached
+                  ? Effect.void
+                  : Effect.fail(
+                      new RuntimeDriverError({
+                        message: "logs not attached",
+                        stackId: key.stackId,
+                        workloadId: key.workloadId,
+                      }),
+                    ),
+            }),
+        });
+        const ready = yield* runtime.start(key, workload());
+        expect(ready.state).toBe("ready");
+        expect(followerCalls).toBe(1);
+        yield* Deferred.await(appended);
+        expect(records.map((record) => record.message)).toEqual(["container-started"]);
+        yield* runtime.start(key, workload());
+        expect(followerCalls).toBe(1);
+        yield* runtime.stop(key);
+        expect(state.calls.some((call) => call.startsWith("stop:"))).toBe(true);
+      }),
+  );
+
+  it.live("fails startup and removes a new container when log persistence fails", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const logError = new LogStoreError({
+        path: "memory://container-logs-failure",
+        message: "disk full",
+      });
+      const readiness = yield* Deferred.make<void>();
+      const logStore: LogStore = {
+        path: logError.path,
+        append: () => Effect.fail(logError),
+        read: () => Effect.succeed([]),
+        retained: () => Effect.succeed([]),
+        stream: () => Stream.empty,
+      };
+      const runtime = yield* makeContainerRuntime({
+        engine: {
+          ...fakeContainerEngine(state),
+          streamLogs: () =>
+            Stream.fromIterable([
+              { stream: "stdout", message: "will-not-persist" } satisfies ContainerLogLine,
+            ]),
+        },
+        ownerSessionId: "owner-session",
+        logStore,
+        resolveWorkload: () =>
+          Effect.succeed({ waitForReadiness: () => Deferred.await(readiness) }),
+      });
+      const result = yield* runtime.start(key, workload()).pipe(Effect.exit);
+      expect(Exit.isFailure(result)).toBe(true);
+      expect(state.resources.some((resource) => resource.kind === "workload")).toBe(false);
+      expect(state.calls.some((call) => call.startsWith("stop:"))).toBe(true);
+      expect(state.calls.some((call) => call.startsWith("remove:"))).toBe(true);
+    }),
+  );
+
+  it.live("marks a running container failed when its log follower fails", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const followerFailure = yield* Deferred.make<never, ContainerEngineProtocolError>();
+      const runtime = yield* makeContainerRuntime({
+        engine: {
+          ...fakeContainerEngine(state),
+          streamLogs: () => Stream.fromEffect(Deferred.await(followerFailure)),
+        },
+        ownerSessionId: "owner-session",
+        logStore: memoryLogStore([]),
+      });
+      const ready = yield* runtime.start(key, workload());
+      expect(ready.state).toBe("ready");
+      yield* Deferred.fail(
+        followerFailure,
+        new ContainerEngineProtocolError({
+          operation: "logs",
+          message: "follower disconnected",
+        }),
+      );
+      yield* Effect.yieldNow;
+      const observed = yield* runtime.observe(key.stackId);
+      expect(observed[0]?.state).toBe("failed");
+      yield* runtime.stop(key);
     }),
   );
 
@@ -601,6 +774,48 @@ describe("container runtime", () => {
     }),
   );
 
+  it.live("follows one Docker or Podman log process and joins split stdout/stderr lines", () =>
+    Effect.gen(function* () {
+      const requests: ContainerProcessRequest[] = [];
+      const chunks: ReadonlyArray<{
+        readonly stream: "stdout" | "stderr";
+        readonly bytes: Uint8Array;
+      }> = [
+        { stream: "stdout", bytes: new TextEncoder().encode("first\nsec") },
+        { stream: "stderr", bytes: new TextEncoder().encode("error\nlast") },
+        { stream: "stdout", bytes: new TextEncoder().encode("ond\n") },
+      ];
+      const runner = makeControlledCommandRunner({
+        run: () => Effect.succeed(commandResult("ok")),
+        stream: (request) => {
+          requests.push(request);
+          return Stream.fromIterable(chunks);
+        },
+      });
+      const docker = makeDockerEngine({
+        runner,
+        platform: { os: "linux", desktop: false },
+      });
+      const podman = makePodmanEngine({
+        runner,
+        platform: { os: "linux", rootless: true },
+      });
+      const dockerLogs = yield* Stream.runCollect(docker.streamLogs!("container-id", { tail: 0 }));
+      const podmanLogs = yield* Stream.runCollect(podman.streamLogs!("podman-id"));
+      expect(dockerLogs).toEqual([
+        { stream: "stdout", message: "first" },
+        { stream: "stderr", message: "error" },
+        { stream: "stdout", message: "second" },
+        { stream: "stderr", message: "last" },
+      ] satisfies ReadonlyArray<ContainerLogLine>);
+      expect(podmanLogs).toEqual(dockerLogs);
+      expect(requests.map((request) => request.args)).toEqual([
+        ["logs", "--follow", "--tail", "0", "container-id"],
+        ["logs", "--follow", "--tail", "all", "podman-id"],
+      ]);
+    }),
+  );
+
   it.live("rejects non-loopback publications before preflight or daemon mutation", () =>
     Effect.gen(function* () {
       const state: FakeContainerState = {
@@ -759,6 +974,68 @@ describe("container runtime", () => {
     }),
   );
 
+  it.live("attaches one current-output follower when recovering a running container", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [
+          {
+            id: "adopted-container",
+            name: "adopted-container",
+            kind: "workload",
+            state: "running",
+            labels: {
+              stackId: key.stackId,
+              ownerSessionId: "previous-owner",
+              desiredGeneration: key.desiredGeneration,
+              workloadId: key.workloadId,
+              specHash: key.specHash,
+              role: "workload",
+            },
+          },
+        ],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const order: string[] = [];
+      const records: LogRecord[] = [];
+      let followers = 0;
+      const runtime = yield* makeContainerRuntime({
+        engine: {
+          ...fakeContainerEngine(state),
+          streamLogs: (_id, options) => {
+            followers += 1;
+            order.push(`attach:${options?.tail ?? "default"}`);
+            return Stream.fromIterable([
+              { stream: "stdout", message: "recovered-current-output" } satisfies ContainerLogLine,
+            ]);
+          },
+        },
+        ownerSessionId: "new-owner",
+        logStore: memoryLogStore(records),
+        waitForReadiness: () => Effect.sync(() => order.push("readiness")),
+      });
+      const recovered = yield* runtime.recover({
+        stackId: key.stackId,
+        desiredGeneration: key.desiredGeneration,
+        desiredLifecycle: "running",
+        plan: recoveryPlan([workload()]),
+      });
+      expect(recovered).toEqual([{ ...key, state: "ready" }]);
+      expect(order).toEqual(["readiness", "attach:0"]);
+      yield* runtime.recover({
+        stackId: key.stackId,
+        desiredGeneration: key.desiredGeneration,
+        desiredLifecycle: "running",
+        plan: recoveryPlan([workload()]),
+      });
+      expect(followers).toBe(1);
+      yield* runtime.cleanup({ stackId: key.stackId, destroy: false });
+      expect(records.map((record) => record.message)).toContain("recovered-current-output");
+    }),
+  );
+
   it.live(
     "stops but does not remove an adopted database after bootstrap failure, then retries",
     () =>
@@ -797,7 +1074,7 @@ describe("container runtime", () => {
           bootstrapDatabase: () =>
             Effect.gen(function* () {
               attempts += 1;
-              if (attempts === 1) return yield* Effect.fail(bootstrapError);
+              if (attempts === 1) return yield* bootstrapError;
             }),
         });
         const databaseWorkload = { ...workload(), bootstrap: "database" as const };
@@ -1059,7 +1336,7 @@ describe("container runtime", () => {
         bootstrapDatabase: () =>
           Effect.gen(function* () {
             attempts += 1;
-            if (attempts === 1) return yield* Effect.fail(bootstrapError);
+            if (attempts === 1) return yield* bootstrapError;
           }),
       });
       const result = yield* adopted

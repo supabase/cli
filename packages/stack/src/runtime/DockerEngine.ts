@@ -7,6 +7,7 @@ import {
   type ContainerEngine,
   type ContainerEngineFailure,
   type ContainerEngineOptions,
+  type ContainerLogOptions,
   type ContainerLabels,
   type ContainerNetworkLabels,
   type ContainerProcessRequest,
@@ -185,6 +186,19 @@ export const serializeDockerCommand = (command: ContainerCommand): ContainerProc
       return { args: ["rm", "--force", command.id] };
   }
 };
+
+export const serializeDockerLogs = (
+  id: string,
+  options: ContainerLogOptions | undefined,
+): ContainerProcessRequest => ({
+  args: [
+    "logs",
+    "--follow",
+    "--tail",
+    options?.tail === undefined ? "all" : String(options.tail),
+    id,
+  ],
+});
 
 const protocol = (operation: string, cause?: unknown): ContainerEngineProtocolError =>
   new ContainerEngineProtocolError({
@@ -386,6 +400,7 @@ const decodeCreate = <R extends ContainerResourceRole>(
 
 export const makeDockerCodecs = () => ({
   serialize: serializeDockerCommand,
+  serializeLogs: serializeDockerLogs,
   decodeProbe: (result: ContainerCommandResult) =>
     scalarString("probe", result.stdout).pipe(Effect.asVoid),
   decodeImage: (result: ContainerCommandResult) =>

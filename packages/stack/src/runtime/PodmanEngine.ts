@@ -7,6 +7,7 @@ import {
   type ContainerEngine,
   type ContainerEngineFailure,
   type ContainerEngineOptions,
+  type ContainerLogOptions,
   type ContainerLabels,
   type ContainerNetworkLabels,
   type ContainerProcessRequest,
@@ -181,6 +182,19 @@ export const serializePodmanCommand = (command: ContainerCommand): ContainerProc
       return { args: ["rm", "--force", command.id] };
   }
 };
+
+export const serializePodmanLogs = (
+  id: string,
+  options: ContainerLogOptions | undefined,
+): ContainerProcessRequest => ({
+  args: [
+    "logs",
+    "--follow",
+    "--tail",
+    options?.tail === undefined ? "all" : String(options.tail),
+    id,
+  ],
+});
 
 const protocol = (operation: string, cause?: unknown): ContainerEngineProtocolError =>
   new ContainerEngineProtocolError({
@@ -364,6 +378,7 @@ const decodeCreate = <R extends ContainerResourceRole>(
 
 export const makePodmanCodecs = () => ({
   serialize: serializePodmanCommand,
+  serializeLogs: serializePodmanLogs,
   decodeProbe: (result: ContainerCommandResult) =>
     scalar("probe", result.stdout).pipe(Effect.asVoid),
   decodeImage: (result: ContainerCommandResult) =>

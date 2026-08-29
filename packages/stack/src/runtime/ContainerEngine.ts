@@ -137,23 +137,43 @@ export interface ContainerProcessRequest {
   readonly stdin?: string;
   readonly env?: Readonly<Record<string, string>>;
 }
+export interface ContainerProcessOutputChunk {
+  readonly stream: "stdout" | "stderr";
+  readonly bytes: Uint8Array;
+}
+export interface ContainerLogLine {
+  readonly stream: "stdout" | "stderr";
+  readonly message: string;
+}
+export interface ContainerLogOptions {
+  /** Number of historical lines to replay before following. `all` is the default. */
+  readonly tail?: "all" | 0;
+}
 export interface ContainerCommandRunner {
   readonly executable: string;
   readonly run: (
     request: ContainerProcessRequest,
   ) => Effect.Effect<ContainerCommandResult, ContainerEngineFailure>;
+  /** Follows one exact process's stdout/stderr until it exits. */
+  readonly stream?: (
+    request: ContainerProcessRequest,
+  ) => Stream.Stream<ContainerProcessOutputChunk, ContainerEngineFailure>;
 }
 export interface ControlledCommandRunnerOptions {
   readonly executable?: string;
   readonly run: (
     request: ContainerProcessRequest,
   ) => Effect.Effect<ContainerCommandResult, ContainerEngineFailure>;
+  readonly stream?: (
+    request: ContainerProcessRequest,
+  ) => Stream.Stream<ContainerProcessOutputChunk, ContainerEngineFailure>;
 }
 export const makeControlledCommandRunner = (
   options: ControlledCommandRunnerOptions,
 ): ContainerCommandRunner => ({
   executable: options.executable ?? "controlled-container-engine",
   run: options.run,
+  ...(options.stream === undefined ? {} : { stream: options.stream }),
 });
 
 export interface ProcessCommandRunnerOptions {
@@ -263,7 +283,72 @@ export const makeProcessCommandRunner = (
         ),
       );
     };
-    return { executable: options.executable, run };
+    const stream = (
+      request: ContainerProcessRequest,
+    ): Stream.Stream<ContainerProcessOutputChunk, ContainerEngineFailure> =>
+      Stream.scoped(
+        Stream.unwrap(
+          ChildProcess.make(options.executable, [...(options.baseArgs ?? []), ...request.args], {
+            stdin: "ignore",
+            stdout: "pipe",
+            stderr: "pipe",
+            ...(request.env === undefined ? {} : { env: request.env }),
+            extendEnv: true,
+          }).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.mapError(
+              () =>
+                new ContainerEngineProtocolError({
+                  operation: request.args[0] ?? "stream",
+                  message: "Container engine log follower failed to start",
+                }),
+            ),
+            Effect.map((handle) => {
+              const mapOutput = (
+                output: Stream.Stream<Uint8Array, unknown>,
+                streamName: "stdout" | "stderr",
+              ): Stream.Stream<ContainerProcessOutputChunk, ContainerEngineFailure> =>
+                output.pipe(
+                  Stream.map((bytes) => ({ stream: streamName, bytes })),
+                  Stream.mapError(
+                    () =>
+                      new ContainerEngineProtocolError({
+                        operation: request.args[0] ?? "stream",
+                        message: "Container engine log follower output failed",
+                      }),
+                  ),
+                );
+              const output = Stream.merge(
+                mapOutput(handle.stdout, "stdout"),
+                mapOutput(handle.stderr, "stderr"),
+              );
+              const verifyExit = Stream.fromEffect(
+                handle.exitCode.pipe(
+                  Effect.mapError(
+                    () =>
+                      new ContainerEngineProtocolError({
+                        operation: request.args[0] ?? "stream",
+                        message: "Container engine log follower exit status failed",
+                      }),
+                  ),
+                  Effect.flatMap((code) =>
+                    Number(code) === 0
+                      ? Effect.void
+                      : Effect.fail(
+                          new ContainerCommandError({
+                            operation: request.args[0] ?? "stream",
+                            message: `Container engine log follower exited (${String(code)})`,
+                          }),
+                        ),
+                  ),
+                ),
+              ).pipe(Stream.flatMap(() => Stream.empty));
+              return output.pipe(Stream.concat(verifyExit));
+            }),
+          ),
+        ),
+      );
+    return { executable: options.executable, run, stream };
   });
 
 export interface ContainerEngineCodecs {
@@ -289,6 +374,10 @@ export interface ContainerEngineCodecs {
     spec: { readonly name: string; readonly labels: ContainerLabels },
     kind: R,
   ) => Effect.Effect<ContainerResource, ContainerEngineFailure>;
+  readonly serializeLogs: (
+    id: string,
+    options: ContainerLogOptions | undefined,
+  ) => ContainerProcessRequest;
 }
 export interface ContainerEngineOptions {
   readonly kind: ContainerEngineKind;
@@ -328,6 +417,11 @@ export interface ContainerEngine {
   readonly startContainer: (id: string) => Effect.Effect<void, ContainerEngineFailure>;
   readonly stopContainer: (id: string) => Effect.Effect<void, ContainerEngineFailure>;
   readonly removeContainer: (id: string) => Effect.Effect<void, ContainerEngineFailure>;
+  /** Follows one exact container and emits complete stdout/stderr lines. */
+  readonly streamLogs?: (
+    id: string,
+    options?: ContainerLogOptions,
+  ) => Stream.Stream<ContainerLogLine, ContainerEngineFailure>;
 }
 export const makeContainerEngineCore = (options: ContainerEngineOptions): ContainerEngine => {
   const run = (command: ContainerCommand) => options.runner.run(options.codecs.serialize(command));
@@ -346,6 +440,51 @@ export const makeContainerEngineCore = (options: ContainerEngineOptions): Contai
     );
   const noResult = (operation: string, command: ContainerCommand) =>
     check(operation, command).pipe(Effect.asVoid);
+  const streamLogs = (
+    id: string,
+    logOptions?: ContainerLogOptions,
+  ): Stream.Stream<ContainerLogLine, ContainerEngineFailure> => {
+    const source = options.runner.stream;
+    if (source === undefined)
+      return Stream.fail(
+        new ContainerEngineProtocolError({
+          operation: "logs",
+          message: "Container engine log streaming is unavailable",
+        }),
+      );
+    interface LineState {
+      readonly stdout: { readonly decoder: TextDecoder; remainder: string };
+      readonly stderr: { readonly decoder: TextDecoder; remainder: string };
+    }
+    const stateFor = (): LineState => ({
+      stdout: { decoder: new TextDecoder(), remainder: "" },
+      stderr: { decoder: new TextDecoder(), remainder: "" },
+    });
+    const split = (
+      state: LineState,
+      chunk: ContainerProcessOutputChunk,
+    ): ReadonlyArray<ContainerLogLine> => {
+      const accumulator = state[chunk.stream];
+      accumulator.remainder += accumulator.decoder.decode(chunk.bytes, { stream: true });
+      const lines = accumulator.remainder.split(/\r?\n/);
+      accumulator.remainder = lines.pop() ?? "";
+      return lines.map((message) => ({ stream: chunk.stream, message }));
+    };
+    const flush = (state: LineState): ReadonlyArray<ContainerLogLine> =>
+      (["stdout", "stderr"] as const).flatMap((streamName) => {
+        const accumulator = state[streamName];
+        accumulator.remainder += accumulator.decoder.decode();
+        if (accumulator.remainder.length === 0) return [];
+        const message = accumulator.remainder;
+        accumulator.remainder = "";
+        return [{ stream: streamName, message }];
+      });
+    return source(options.codecs.serializeLogs(id, logOptions)).pipe(
+      Stream.mapAccum(stateFor, (state, chunk) => [state, split(state, chunk)] as const, {
+        onHalt: flush,
+      }),
+    );
+  };
   const preflight =
     options.kind === "docker"
       ? options.platform.remote === true
@@ -431,6 +570,7 @@ export const makeContainerEngineCore = (options: ContainerEngineOptions): Contai
     startContainer: (id) => noResult("start-container", { operation: "start-container", id }),
     stopContainer: (id) => noResult("stop-container", { operation: "stop-container", id }),
     removeContainer: (id) => noResult("remove-container", { operation: "remove-container", id }),
+    streamLogs,
   };
 };
 export interface SelectContainerEngineOptions {

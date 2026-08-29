@@ -590,7 +590,8 @@ export const makeProductionRuntimeFactory = (
                       Effect.mapError((error) => mapDriverError(key, error)),
                     )
                   : Effect.void,
-            });
+              logStore: logs,
+            }).pipe(Effect.provideService(Scope.Scope, ownerScope));
           }
           const ownedDriver = withOwnedRuntimeFileCleanup(driver, envFiles, functionsBootstrap);
           return {
