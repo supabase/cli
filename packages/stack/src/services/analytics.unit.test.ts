@@ -32,6 +32,7 @@ describe("makeAnalyticsServicesNative", () => {
     expect(bundle.server.env).toMatchObject({
       PORT: "54327",
       PHX_HTTP_PORT: "54327",
+      PHX_HTTP_IP: "127.0.0.1",
       DB_HOSTNAME: "127.0.0.1",
       LOGFLARE_NODE_HOST: "127.0.0.1",
       DB_POOL_SIZE: "2",

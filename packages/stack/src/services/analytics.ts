@@ -72,6 +72,7 @@ const analyticsEnv = (
 ): Record<string, string> => ({
   PORT: String(opts.listenPort),
   PHX_HTTP_PORT: String(opts.listenPort),
+  PHX_HTTP_IP: opts.nodeHost,
   DB_DATABASE: "_supabase",
   DB_HOSTNAME: opts.dbHost,
   DB_PORT: String(opts.dbPort),

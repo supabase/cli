@@ -972,6 +972,7 @@ describe("docker-backed auxiliary services", () => {
     expect(def.healthCheck?.initialDelaySeconds).toBe(10);
     expect(def.env?.PORT).toBe("4000");
     expect(def.env?.PHX_HTTP_PORT).toBe("4000");
+    expect(def.env?.PHX_HTTP_IP).toBe("0.0.0.0");
     expect(def.env?.LOGFLARE_NODE_HOST).toBe("0.0.0.0");
     expect(args).toContain("54328:4000");
   });
@@ -992,6 +993,7 @@ describe("docker-backed auxiliary services", () => {
 
     expect(def.env?.PORT).toBe("4000");
     expect(def.env?.PHX_HTTP_PORT).toBe("4000");
+    expect(def.env?.PHX_HTTP_IP).toBe("0.0.0.0");
     expect(def.env?.LOGFLARE_NODE_HOST).toBe("0.0.0.0");
     expect(def.args).toContain("host.docker.internal:host-gateway");
     expect(def.args).toContain("54328:4000");
