@@ -1,15 +1,22 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Scope } from "effect";
+import { Cause, Deferred, Effect, Exit, Fiber, FileSystem, Option, Scope } from "effect";
 import { createServer, type Server } from "node:net";
+// oxlint-disable-next-line effecttsgo/node-builtin-import
+import { createServer as createHttpServer, type Server as HttpServer } from "node:http";
 import { deriveStackId, type StackIdentity } from "../identity/Identity.ts";
 import {
   PortAllocationError,
   PortUnavailableError,
+  StackStateGenerationMismatchError,
   StackLifecycleConflictError,
 } from "../public/Errors.ts";
 import { makePortRegistry } from "./PortRegistry.ts";
-import { makePortCoordinator, type ListenerIntents } from "./PortCoordinator.ts";
+import {
+  makePortCoordinator,
+  type NativeListener,
+  type ListenerIntents,
+} from "./PortCoordinator.ts";
 import { makeStackStateStore, type PersistedStackState } from "./StackStateStore.ts";
 
 const layer = NodeServices.layer;
@@ -67,7 +74,7 @@ const makeIdentity = (root: string, name: string): StackIdentity => ({
 const holdHostPort = (port: number): Effect.Effect<Server, Error, Scope.Scope> =>
   Effect.acquireRelease(
     Effect.callback<Server, Error>((resume) => {
-      const server = createServer();
+      const server = createServer({ allowHalfOpen: true });
       const onError = (error: Error) => {
         server.removeListener("error", onError);
         resume(Effect.fail(error));
@@ -91,6 +98,74 @@ const holdHostPort = (port: number): Effect.Effect<Server, Error, Scope.Scope> =
         server.close(() => resume(Effect.void));
       }),
   );
+
+const holdHttpPort = (port: number): Effect.Effect<HttpServer, Error, Scope.Scope> =>
+  Effect.acquireRelease(
+    Effect.callback<HttpServer, Error>((resume) => {
+      const server = createHttpServer();
+      const onError = (error: Error) => {
+        server.removeListener("error", onError);
+        resume(Effect.fail(error));
+      };
+      server.once("error", onError);
+      server.listen({ host: "127.0.0.1", port }, () => {
+        server.removeListener("error", onError);
+        resume(Effect.succeed(server));
+      });
+      return Effect.sync(() => server.removeListener("error", onError));
+    }),
+    (server) =>
+      Effect.callback<void, never>((resume) => {
+        if (!server.listening) {
+          resume(Effect.void);
+          return;
+        }
+        server.close(() => resume(Effect.void));
+      }),
+  );
+
+const bindTestNative = (
+  address: string,
+  port: number,
+  field: NativeListener["field"],
+  hooks: { readonly onClose?: () => void } = {},
+): Effect.Effect<NativeListener, PortUnavailableError, Scope.Scope> => {
+  const isHttp =
+    field === "api" || field === "studio" || field === "mailUi" || field === "functionsInspector";
+  if (isHttp)
+    return Effect.acquireRelease(
+      holdHttpPort(port).pipe(
+        Effect.map((server) => ({
+          address,
+          port,
+          field,
+          binding: { kind: "http" as const, server },
+          close: Effect.sync(() => hooks.onClose?.()),
+        })),
+        Effect.mapError(
+          (cause) =>
+            new PortUnavailableError({ port, field, message: "host listener unavailable", cause }),
+        ),
+      ),
+      (listener) => listener.close,
+    );
+  return Effect.acquireRelease(
+    holdHostPort(port).pipe(
+      Effect.map((server) => ({
+        address,
+        port,
+        field,
+        binding: { kind: "tcp" as const, server, allowHalfOpen: true as const },
+        close: Effect.sync(() => hooks.onClose?.()),
+      })),
+      Effect.mapError(
+        (cause) =>
+          new PortUnavailableError({ port, field, message: "host listener unavailable", cause }),
+      ),
+    ),
+    (listener) => listener.close,
+  );
+};
 
 describe("sticky port coordination", () => {
   it.live("keeps automatic assignments sticky and exclusive", () =>
@@ -220,13 +295,7 @@ describe("sticky port coordination", () => {
         });
         const registry = yield* makePortRegistry({ stateRoot: root, store });
         const coordinator = makePortCoordinator(registry, store, {
-          bindNative: (address, port, field) =>
-            Effect.succeed({
-              address,
-              port,
-              field,
-              close: Effect.void,
-            }),
+          bindNative: bindTestNative,
         });
         const result = yield* coordinator.planAndReserve(
           stackId,
@@ -314,23 +383,7 @@ describe("sticky port coordination", () => {
         const occupiedPort = hostAddress.port;
         const registry = yield* makePortRegistry({ stateRoot: root, store });
         const coordinator = makePortCoordinator(registry, store, {
-          bindNative: (address, port, field) =>
-            holdHostPort(port).pipe(
-              Effect.map((server) => ({
-                field,
-                address,
-                port,
-                close: Effect.sync(() => server.close()),
-              })),
-              Effect.mapError(
-                () =>
-                  new PortUnavailableError({
-                    port,
-                    field,
-                    message: "host listener already owns port",
-                  }),
-              ),
-            ),
+          bindNative: bindTestNative,
         });
         const exit = yield* coordinator
           .planAndReserve(
@@ -369,21 +422,12 @@ describe("sticky port coordination", () => {
             bindNative: (address, port, field) =>
               bound.has(port)
                 ? Effect.fail(new PortUnavailableError({ port, field, message: "already bound" }))
-                : Effect.acquireRelease(
-                    Effect.sync(() => {
-                      bound.add(port);
-                      return {
-                        address,
-                        port,
-                        field,
-                        close: Effect.sync(() => {
-                          bound.delete(port);
-                          closed += 1;
-                        }),
-                      };
-                    }),
-                    (listener) => listener.close,
-                  ),
+                : bindTestNative(address, port, field, {
+                    onClose: () => {
+                      bound.delete(port);
+                      closed += 1;
+                    },
+                  }).pipe(Effect.tap(() => Effect.sync(() => bound.add(port)))),
           });
           const result = yield* coordinator.planAndReserve(e, intents("automatic"), {
             lifecycle: "running",
@@ -420,20 +464,9 @@ describe("sticky port coordination", () => {
               return Effect.fail(
                 new PortUnavailableError({ port, field, message: "simulated second bind failure" }),
               );
-            return Effect.acquireRelease(
-              Effect.sync(() => {
-                bound.add(port);
-                return {
-                  address,
-                  port,
-                  field,
-                  close: Effect.sync(() => {
-                    bound.delete(port);
-                  }),
-                };
-              }),
-              (listener) => listener.close,
-            );
+            return bindTestNative(address, port, field, {
+              onClose: () => bound.delete(port),
+            }).pipe(Effect.tap(() => Effect.sync(() => bound.add(port))));
           },
         });
         const exit = yield* coordinator
@@ -444,6 +477,63 @@ describe("sticky port coordination", () => {
           .pipe(Effect.exit);
         expect(errorOf(exit)).toBeInstanceOf(PortUnavailableError);
         expect(bound).toHaveLength(0);
+      }),
+    ),
+  );
+
+  it.live("closes native listeners when the final generation fence fails", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-port-native-fence-",
+        });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const identity = makeIdentity(root, "native-fence");
+        const stackId = yield* deriveStackId(identity);
+        yield* store.write(stackId, baseState(stackId, identity));
+        const registry = yield* makePortRegistry({ stateRoot: root, store });
+        const entered = Deferred.makeUnsafe<void>();
+        const release = Deferred.makeUnsafe<void>();
+        const bound = new Set<number>();
+        const closed = new Set<number>();
+        const coordinator = makePortCoordinator(registry, store, {
+          bindNative: (address, port, field) =>
+            bindTestNative(address, port, field, {
+              onClose: () => {
+                bound.delete(port);
+                closed.add(port);
+              },
+            }).pipe(
+              Effect.tap(() =>
+                Effect.sync(() => {
+                  bound.add(port);
+                }),
+              ),
+              Effect.tap(() => Deferred.succeed(entered, undefined)),
+              Effect.tap(() => Deferred.await(release)),
+            ),
+        });
+        const reservation = yield* Effect.forkChild(
+          coordinator.planAndReserve(
+            stackId,
+            {
+              ...disabledIntents(),
+              api: { enabled: true, address: "127.0.0.1", port: "automatic" },
+            },
+            { lifecycle: "running", runtime: { kind: "native" } },
+          ),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(entered);
+        const current = yield* store.read(stackId);
+        if (current === undefined) return;
+        yield* store.replace(stackId, { ...current, desiredGeneration: 1 }, 0);
+        yield* Deferred.succeed(release, undefined);
+        const result = yield* Fiber.join(reservation).pipe(Effect.exit);
+        expect(errorOf(result)).toBeInstanceOf(StackStateGenerationMismatchError);
+        expect(bound).toHaveLength(0);
+        expect(closed).toHaveLength(1);
       }),
     ),
   );

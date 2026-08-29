@@ -1,5 +1,9 @@
 import { Crypto, Effect, Exit, FileSystem, Path, Scope, Schema } from "effect";
 import type { StackRuntime } from "../public/Runtime.ts";
+// oxlint-disable-next-line effecttsgo/node-builtin-import
+import type { Server as HttpServer } from "node:http";
+// oxlint-disable-next-line effecttsgo/node-builtin-import
+import type { Server as NetServer } from "node:net";
 import { NetworkPortSchema, PORT_FIELDS, type PortField } from "../public/Status.ts";
 import {
   PortAllocationError,
@@ -27,7 +31,13 @@ export interface NativeListener {
   readonly address: string;
   readonly port: number;
   readonly close: Effect.Effect<void>;
+  /** The exact bound listener may be adopted by a gateway without rebind. */
+  readonly binding: NativeListenerBinding;
 }
+
+export type NativeListenerBinding =
+  | { readonly kind: "http"; readonly server: HttpServer }
+  | { readonly kind: "tcp"; readonly server: NetServer; readonly allowHalfOpen: true };
 
 export interface PortPlanOptions {
   readonly lifecycle?: "stopped" | "running";
@@ -39,6 +49,7 @@ export interface PortPlanOptions {
 
 export interface PortReservation {
   readonly assignments: Readonly<Partial<Record<PortField, HostPortAssignment>>>;
+  /** Already-bound native listeners that can be adopted by a gateway. */
   readonly nativeListeners: ReadonlyArray<NativeListener>;
 }
 
@@ -217,6 +228,22 @@ export const makePortCoordinator = (
       );
 
       const nativeListeners: NativeListener[] = [];
+      const runningState: PersistedStackState = {
+        ...committed.next,
+        desiredLifecycle: "running",
+      };
+      const commitRunning = registry.withLock(
+        Effect.gen(function* () {
+          const latest = yield* store.read(stackId);
+          if (latest === undefined || latest.desiredGeneration !== committed.next.desiredGeneration)
+            return yield* new StackStateGenerationMismatchError({
+              expectedGeneration: committed.next.desiredGeneration,
+              actualGeneration: latest?.desiredGeneration,
+              message: "Persisted stack state changed while acquiring runtime ownership",
+            });
+          yield* store.replaceUnlocked(stackId, runningState, latest.desiredGeneration);
+        }),
+      );
       const enabledAssignments = fields.flatMap((field) => {
         const intent = listenerIntents[field];
         const assignment = committed.byField[field];
@@ -227,14 +254,15 @@ export const makePortCoordinator = (
           const first = enabledAssignments[0];
           return yield* unavailable(first?.assignment.port ?? 0, first?.field ?? "api");
         }
+        const bindNative = options.bindNative;
         const parentScope = yield* Scope.Scope;
         const acquired = yield* Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
             const listenerScope = yield* Scope.fork(parentScope, "sequential");
-            const exit = yield* Effect.exit(
+            const bound = yield* Effect.exit(
               restore(
                 Effect.forEach(enabledAssignments, ({ field, intent, assignment }) =>
-                  options.bindNative!(intent.address, assignment.port, field).pipe(
+                  bindNative(intent.address, assignment.port, field).pipe(
                     Effect.catchTag("PortUnavailableError", () =>
                       Effect.fail(unavailable(assignment.port, field)),
                     ),
@@ -243,11 +271,16 @@ export const makePortCoordinator = (
                 ),
               ),
             );
-            if (Exit.isFailure(exit)) {
-              yield* Scope.close(listenerScope, exit);
-              return yield* Effect.failCause(exit.cause);
+            if (Exit.isFailure(bound)) {
+              yield* Scope.close(listenerScope, bound);
+              return yield* Effect.failCause(bound.cause);
             }
-            return exit.value;
+            const committedRunning = yield* Effect.exit(restore(commitRunning));
+            if (Exit.isFailure(committedRunning)) {
+              yield* Scope.close(listenerScope, committedRunning);
+              return yield* Effect.failCause(committedRunning.cause);
+            }
+            return bound.value;
           }),
         );
         nativeListeners.push(...acquired);
@@ -261,27 +294,8 @@ export const makePortCoordinator = (
           yield* options.publishContainer(intent.address, assignment.port, field);
       }
 
-      if (committed.lifecycle === "running") {
-        const runningState: PersistedStackState = {
-          ...committed.next,
-          desiredLifecycle: "running",
-        };
-        yield* registry.withLock(
-          Effect.gen(function* () {
-            const latest = yield* store.read(stackId);
-            if (
-              latest === undefined ||
-              latest.desiredGeneration !== committed.next.desiredGeneration
-            )
-              return yield* new StackStateGenerationMismatchError({
-                expectedGeneration: committed.next.desiredGeneration,
-                actualGeneration: latest?.desiredGeneration,
-                message: "Persisted stack state changed while acquiring runtime ownership",
-              });
-            yield* store.replaceUnlocked(stackId, runningState, latest.desiredGeneration);
-          }),
-        );
-      }
+      if (committed.lifecycle === "running" && committed.runtime.kind !== "native")
+        yield* commitRunning;
       return { assignments: committed.byField, nativeListeners };
     }),
 });

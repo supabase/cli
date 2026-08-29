@@ -459,20 +459,20 @@ artifact keys, state schemas, drivers, or control protocols.
 - Native activation calls Supervisor directly; container activation uses an ephemeral exact-release
   authenticated TCP server and read-only fenced file with activation-only authority.
 
-- [ ] **Step 1: Write observable protocol scenarios and verify RED**
+- [x] **Step 1: Write observable protocol scenarios and verify RED**
 
   Cover HTTP routes/CORS/forwarding/WebSocket, PostgreSQL/TLS/SMTP/POP3/STARTTLS byte transparency,
   backpressure/half-close, 503 activation failure, 502 backend failure, dormant health probes,
   dependency-closure activation, generation/session/gateway fences, bounded frames/concurrency/
   deadlines, and no idle eviction.
 
-- [ ] **Step 2: Implement ingress and activation**
+- [x] **Step 2: Implement ingress and activation**
 
   Use stream/socket platform APIs with scoped cancellation. Capability files contain no labels or
   command-line secrets and rotate with each owner/gateway. The activation server exposes only one
   activation operation and has no runtime/state/filesystem/log authority.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
   Run both gateway integration files and stack type-check, then commit:
 

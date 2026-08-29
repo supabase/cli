@@ -395,3 +395,36 @@ Implementation continues after recording a ruling; this file is not a question q
 - Formatting over all Task 7 source/test files and `git diff --check` — passed.
 - Independent re-review found no Critical or Important findings; all earlier lifecycle, bootstrap,
   credential, logging, cleanup, and cancellation findings are closed.
+
+### Task 8 — 2026-08-29
+
+- Added internal HTTP, WebSocket, and transparent TCP gateways with injected capability routes and
+  private backend resolution. HTTP owns CORS, forwarding headers, health/status dormancy, and
+  503/502 mapping; TCP preserves opaque PostgreSQL, TLS, SMTP, POP3, STARTTLS, backpressure, and
+  half-close behavior.
+- Added mandatory one-way lazy activation per desired generation. Concurrent callers join one
+  owner-scoped activation fiber, dependency closures activate once, successful results remain live,
+  failed attempts may retry, waiter interruption does not cancel shared work, and owner-scope
+  closure interrupts it exactly.
+- Added the container activation-only protocol: bounded exact-schema frames, 16-request concurrency,
+  TestClock-verifiable five-second deadlines, capability/StackId/generation/gateway/session fences,
+  generic wire errors, and a high-entropy Redacted capability. The owner-only activation file uses
+  exact decoding, pre/post-read size bounds, atomic publication, immediate temporary cleanup, and
+  fenced finalization that cannot delete a rotated successor.
+- Native port reservations now carry the exact pre-bound HTTP/TCP listener into the gateway. TCP
+  transfer requires `allowHalfOpen: true`; shutdown is single-flight, closes retained keep-alive and
+  tunnel sockets, invokes the listener release, and never performs a bind-close-rebind. A failed or
+  interrupted final generation fence closes the operation-owned listener scope before returning.
+- Review fixes added partial gateway-acquisition rollback, complete foreign-callback listener
+  cleanup, connection-before-listener race removal, post-header backend failure handling, adopted
+  listener ownership, idle keep-alive cleanup, deterministic deadline coverage, large-stream
+  transfer coverage, and final-fence listener cleanup. Final independent re-review found no Critical
+  or Important findings.
+- RED evidence: both gateway suites initially failed because the new modules did not exist; added
+  lifecycle and protocol regressions failed against the first implementation before each fix.
+- `pnpm --dir packages/stack types:check` — passed.
+- Focused gateway, activation, port, and reconciler suite — passed (45 tests across 5 files).
+- `pnpm --dir packages/stack test` — passed (4 unit and 156 integration tests).
+- Effect/generic lint over all Task 8 sources and tests, formatting, and `git diff --check` — passed.
+- Concrete capability route catalogs remain Task 14; Functions discovery, container engine routing,
+  and full Supervisor lifecycle composition remain Tasks 9, 10, and 11 respectively.

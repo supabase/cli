@@ -47,6 +47,8 @@ export interface PlannedWorkload {
 
 export interface ExecutionPlan {
   readonly runtime: StackRuntime;
+  /** Materialized lazy/eager policy consumed by the Supervisor gateway seam. */
+  readonly activation: Readonly<{ [Name in CapabilityName]: EnabledCapability["activation"] }>;
   readonly startOrder: ReadonlyArray<CapabilityName>;
   readonly stopOrder: ReadonlyArray<CapabilityName>;
   readonly dependencies: Readonly<{ [Name in CapabilityName]: ReadonlyArray<CapabilityName> }>;
@@ -181,8 +183,21 @@ export const createExecutionPlan = (
   };
   for (const entry of declaredWorkloads) visitWorkload(entry.id);
   if (graphError !== undefined) return Effect.fail(graphError);
+  const activation = {
+    database: enabled.database.activation,
+    rest: enabled.rest.activation,
+    auth: enabled.auth.activation,
+    realtime: enabled.realtime.activation,
+    storage: enabled.storage.activation,
+    functions: enabled.functions.activation,
+    studio: enabled.studio.activation,
+    mail: enabled.mail.activation,
+    analytics: enabled.analytics.activation,
+    pooler: enabled.pooler.activation,
+  } satisfies { [Name in CapabilityName]: EnabledCapability["activation"] };
   return Effect.succeed({
     runtime,
+    activation,
     startOrder: start,
     stopOrder,
     dependencies: dependencyMap,

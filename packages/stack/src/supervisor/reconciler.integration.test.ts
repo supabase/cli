@@ -31,6 +31,18 @@ const workload = (
 });
 const planFor = (workloads: ReadonlyArray<PlannedWorkload>): ExecutionPlan => ({
   runtime: { kind: "native" },
+  activation: {
+    database: "eager",
+    rest: "eager",
+    auth: "eager",
+    realtime: "eager",
+    storage: "eager",
+    functions: "eager",
+    studio: "eager",
+    mail: "eager",
+    analytics: "eager",
+    pooler: "eager",
+  },
   startOrder: ["database"],
   stopOrder: ["database"],
   dependencies: {
