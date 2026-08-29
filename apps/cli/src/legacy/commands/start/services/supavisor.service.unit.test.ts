@@ -132,17 +132,17 @@ describe("legacyBuildSupavisorContainerSpec", () => {
     expect(spec.networkAliases).toEqual(["pooler"]);
   });
 
-  test("uses busybox wget for the healthcheck on a slim pooler image", () => {
+  test("uses wget for the healthcheck on a slim pooler image", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const spec = legacyBuildSupavisorContainerSpec({
       ...base,
-      image: "ghcr.io/supabase/cli/pooler:v2.9.10",
+      image: "ghcr.io/supabase/cli/pooler:v2.9.12",
     });
     expect(spec.healthcheck?.test).toEqual([
       "CMD",
-      "/bin/busybox",
       "wget",
-      "-q",
+      "--no-verbose",
+      "--tries=1",
       "--spider",
       "http://127.0.0.1:4000/api/health",
     ]);

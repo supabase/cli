@@ -1,17 +1,13 @@
 /**
- * Slim-image runtime contracts that differ from docker.io. Spec builders switch
- * on {@link usesSlimImageRuntime} so flag-off stays byte-identical even if a
- * caller passes a ghcr-shaped override.
+ * Slim-image runtime contracts that still differ from docker.io. Spec builders
+ * switch on {@link usesSlimImageRuntime} so flag-off stays byte-identical even
+ * if a caller passes a ghcr-shaped override.
  *
- * Docker CLI `--health-cmd` is always stored as `CMD-SHELL` and executed with
- * `/bin/sh -c` (`docker-create-args.ts`). Distroless images with no `/bin/sh`
- * (auth, studio, pg-meta) therefore cannot carry a Docker healthcheck through
- * this CLI — omit it and let `legacyCheckContainerReady` treat `Running` as
- * ready, the same as PostgREST. Elixir/busybox images (realtime, analytics,
- * pooler) ship `/bin/sh` plus a wget applet, so they keep an exec-form probe
- * that the CLI quotes into CMD-SHELL. Vector, Postgres, storage, and
- * edge-runtime match docker.io (`sh`/`wget`), so they share those specs; the
- * flag only rewrites their image names.
+ * Auth, studio, pg-meta, Vector, Postgres, storage, and edge-runtime share the
+ * docker.io specs (`sh`/`wget`/`node`). Elixir images (realtime, analytics,
+ * pooler) ship busybox `wget` on PATH but not `curl`, so they keep a wget
+ * probe instead of docker.io's `curl --head`. Slim analytics also keeps the
+ * image entrypoint (`/app/bin/logflare`, not docker.io's `./logflare`).
  */
 
 import { usesSlimImageRuntime } from "../../../shared/services/slim-images.ts";
@@ -21,9 +17,7 @@ export function legacyUsesSlimRuntime(image: string): boolean {
   return usesSlimImageRuntime(image);
 }
 
-export const LEGACY_SLIM_BUSYBOX = "/bin/busybox";
-
-export function legacySlimBusyboxWgetHealthcheck(
+export function legacySlimWgetHealthcheck(
   url: string,
   opts: { readonly header?: string; readonly startPeriodSeconds?: number } = {},
 ): {
@@ -33,7 +27,7 @@ export function legacySlimBusyboxWgetHealthcheck(
   readonly retries: number;
   readonly startPeriodSeconds?: number;
 } {
-  const test = ["CMD", LEGACY_SLIM_BUSYBOX, "wget", "-q", "--spider"];
+  const test = ["CMD", "wget", "--no-verbose", "--tries=1", "--spider"];
   if (opts.header !== undefined) {
     test.push("--header", opts.header);
   }

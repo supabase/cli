@@ -122,19 +122,19 @@ describe("legacyBuildLogflareContainerSpec", () => {
     expect(spec.binds).toEqual([`${join("/workdir", "")}:/opt/app/rel/logflare/bin/gcloud.json`]);
   });
 
-  test("keeps the image entrypoint and uses busybox wget on a slim analytics image", () => {
+  test("keeps the image entrypoint and uses wget on a slim analytics image", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const spec = legacyBuildLogflareContainerSpec({
       ...base,
-      image: "ghcr.io/supabase/cli/analytics:v1.50.4",
+      image: "ghcr.io/supabase/cli/analytics:v1.50.6",
     });
     expect(spec.entrypoint).toBeUndefined();
     expect(spec.cmd).toBeUndefined();
     expect(spec.healthcheck?.test).toEqual([
       "CMD",
-      "/bin/busybox",
       "wget",
-      "-q",
+      "--no-verbose",
+      "--tries=1",
       "--spider",
       "http://127.0.0.1:4000/health",
     ]);

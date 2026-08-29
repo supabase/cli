@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 
 import {
   legacyBuildGotrueContainerSpec,
@@ -10,10 +10,6 @@ import {
   type LegacyGotrueSigningKey,
   type LegacyGotrueWebauthnInput,
 } from "./gotrue.service.ts";
-
-afterEach(() => {
-  vi.unstubAllEnvs();
-});
 
 // Every field not asserted by a specific subtest below reflects the
 // default config's own values.
@@ -711,19 +707,5 @@ describe("legacyBuildGotrueContainerSpec", () => {
     expect(spec.env["GOTRUE_DB_DATABASE_URL"]).toBe(
       "postgresql://supabase_auth_admin:secret@supabase_db_proj:5432/postgres",
     );
-  });
-
-  test("omits the wget healthcheck only when the slim flag is on", () => {
-    const input = {
-      image: "ghcr.io/supabase/cli/auth:v2.196.0",
-      projectId: "proj",
-      networkId: "supabase_network_proj",
-      dbUrl: "postgresql://postgres:secret@127.0.0.1:54322/postgres",
-      env: baseEnvInput,
-    };
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", undefined);
-    expect(legacyBuildGotrueContainerSpec(input).healthcheck?.test[1]).toBe("wget");
-    vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
-    expect(legacyBuildGotrueContainerSpec(input).healthcheck).toBeUndefined();
   });
 });

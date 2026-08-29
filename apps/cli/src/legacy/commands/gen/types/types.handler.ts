@@ -45,7 +45,6 @@ import type { LegacyGenTypesFlags } from "./types.command.ts";
 import { LegacyGenTypesNetworkError, LegacyGenTypesUnexpectedStatusError } from "./types.errors.ts";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
 import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
-import { usesSlimImageRuntime } from "../../../../shared/services/slim-images.ts";
 import {
   defaultSchemas,
   buildPostgresUrl,
@@ -449,9 +448,8 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
               networkMode,
               ...env.flatMap((entry) => ["--env", entry]),
               pgmetaImage,
-              // Slim pg-meta is already `ENTRYPOINT /node/bin/node`; repeating
-              // `node` here becomes `node node dist/server/server.js`.
-              ...(usesSlimImageRuntime(pgmetaImage) ? [] : ["node", "dist/server/server.js"]),
+              "node",
+              "dist/server/server.js",
             ];
             const child = yield* spawnContainerCli(spawner, args, {
               stdin: "ignore",

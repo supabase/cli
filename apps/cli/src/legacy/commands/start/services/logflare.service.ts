@@ -20,7 +20,7 @@ import { join } from "node:path";
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 import {
-  legacySlimBusyboxWgetHealthcheck,
+  legacySlimWgetHealthcheck,
   legacyUsesSlimRuntime,
 } from "../../../shared/db-bootstrap/slim-runtime.ts";
 
@@ -59,6 +59,9 @@ const LEGACY_LOGFLARE_API_KEY = "api-key";
  * Docker's 10s SIGTERM grace (upstream hang). Forward TERM, wait 3s, then
  * KILL. Interrupted `wait` is >128; a second `wait` recovers the BEAM's
  * status unless it was already reaped (127).
+ *
+ * Slim analytics ships `/app/bin/logflare` (WORKDIR `/app`), so this
+ * `./logflare` wrapper is docker.io-only. Flag-on keeps the image entrypoint.
  */
 const LEGACY_LOGFLARE_ENTRYPOINT_SCRIPT =
   "cat <<'EOF' > run.sh && exec sh run.sh\n" +
@@ -167,7 +170,7 @@ export function legacyBuildLogflareContainerSpec(
     exposedPorts: [{ containerPort: "4000" }],
     ports: [{ hostPort: String(input.port), containerPort: "4000" }],
     healthcheck: slim
-      ? legacySlimBusyboxWgetHealthcheck("http://127.0.0.1:4000/health", {
+      ? legacySlimWgetHealthcheck("http://127.0.0.1:4000/health", {
           startPeriodSeconds: 10,
         })
       : {

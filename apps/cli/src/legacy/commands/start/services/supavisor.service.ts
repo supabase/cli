@@ -41,7 +41,7 @@
 import { legacyServiceContainerName } from "../../../shared/legacy-docker-ids.ts";
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 import {
-  legacySlimBusyboxWgetHealthcheck,
+  legacySlimWgetHealthcheck,
   legacyUsesSlimRuntime,
 } from "../../../shared/db-bootstrap/slim-runtime.ts";
 import {
@@ -184,9 +184,9 @@ export function legacyBuildSupavisorContainerSpec(
       { containerPort: LEGACY_SUPAVISOR_TRANSACTION_PORT },
     ],
     ports: [{ hostPort: String(input.port), containerPort: dockerPort }],
-    // The slim supavisor image is distroless plus /bin/busybox (no curl).
+    // Slim pooler ships wget, not curl.
     healthcheck: legacyUsesSlimRuntime(input.image)
-      ? legacySlimBusyboxWgetHealthcheck("http://127.0.0.1:4000/api/health")
+      ? legacySlimWgetHealthcheck("http://127.0.0.1:4000/api/health")
       : {
           test: [
             "CMD",

@@ -16,7 +16,6 @@
  */
 
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
-import { legacyUsesSlimRuntime } from "../../../shared/db-bootstrap/slim-runtime.ts";
 
 /** The hardcoded pg-meta listen port (`PG_META_PORT=8080`) — never configurable. */
 const PG_META_PORT = 8080;
@@ -65,21 +64,15 @@ export function legacyBuildPgMetaContainerSpec(
       PG_META_DB_PASSWORD: input.dbPassword,
     },
     binds: [],
-    // Distroless slim pg-meta has no /bin/sh; Docker CLI healthchecks are always
-    // CMD-SHELL. Omitting makes `legacyCheckContainerReady` treat Running as ready.
-    ...(legacyUsesSlimRuntime(input.image)
-      ? {}
-      : {
-          healthcheck: {
-            test: [
-              "CMD-SHELL",
-              `node --eval="fetch('http://127.0.0.1:${PG_META_PORT}/health').then((r) => {if (!r.ok) throw new Error(r.status)})"`,
-            ],
-            intervalSeconds: 10,
-            timeoutSeconds: 2,
-            retries: 3,
-          },
-        }),
+    healthcheck: {
+      test: [
+        "CMD-SHELL",
+        `node --eval="fetch('http://127.0.0.1:${PG_META_PORT}/health').then((r) => {if (!r.ok) throw new Error(r.status)})"`,
+      ],
+      intervalSeconds: 10,
+      timeoutSeconds: 2,
+      retries: 3,
+    },
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
     networkAliases: PG_META_NETWORK_ALIASES,

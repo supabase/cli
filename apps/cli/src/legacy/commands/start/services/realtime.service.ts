@@ -18,7 +18,7 @@ import {
 } from "../../../shared/db-bootstrap/realtime-env.ts";
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 import {
-  legacySlimBusyboxWgetHealthcheck,
+  legacySlimWgetHealthcheck,
   legacyUsesSlimRuntime,
 } from "../../../shared/db-bootstrap/slim-runtime.ts";
 import { legacyStartInternalDbPassword } from "../../../shared/db-bootstrap/internal-db-connection.ts";
@@ -62,7 +62,7 @@ export function legacyBuildRealtimeContainerSpec(
     binds: [],
     exposedPorts: [{ containerPort: "4000" }],
     healthcheck: legacyUsesSlimRuntime(input.image)
-      ? legacySlimBusyboxWgetHealthcheck("http://127.0.0.1:4000/api/ping", {
+      ? legacySlimWgetHealthcheck("http://127.0.0.1:4000/api/ping", {
           header: `Host:${LEGACY_REALTIME_TENANT_ID}`,
         })
       : {

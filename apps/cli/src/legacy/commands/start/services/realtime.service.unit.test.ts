@@ -70,17 +70,17 @@ describe("legacyBuildRealtimeContainerSpec", () => {
     expect(spec.env["DB_PASSWORD"]).toBe("another-secret");
   });
 
-  test("uses busybox wget for the healthcheck on a slim realtime image", () => {
+  test("uses wget for the healthcheck on a slim realtime image", () => {
     vi.stubEnv("SUPABASE_USE_SLIM_IMAGES", "1");
     const spec = legacyBuildRealtimeContainerSpec({
       ...input,
-      image: "ghcr.io/supabase/cli/realtime:v2.129.3",
+      image: "ghcr.io/supabase/cli/realtime:v2.130.0",
     });
     expect(spec.healthcheck?.test).toEqual([
       "CMD",
-      "/bin/busybox",
       "wget",
-      "-q",
+      "--no-verbose",
+      "--tries=1",
       "--spider",
       "--header",
       "Host:realtime-dev",
