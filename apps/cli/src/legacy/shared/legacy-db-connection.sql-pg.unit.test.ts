@@ -839,6 +839,49 @@ describe("legacyBatchFailureError", () => {
     );
   });
 
+  it("names the transaction commit when a deferred failure lands on COMMIT", () => {
+    const deferred = new SqlError({
+      reason: new SqlSyntaxError({
+        cause: Object.assign(new Error("deferred constraint failed"), {
+          severity: "ERROR",
+          code: "23514",
+        }),
+        message: "Failed to execute statement",
+        operation: "execute",
+      }),
+    });
+    const error = legacyBatchFailureError(
+      deferred,
+      { completed: 2, outcome: "submitted", began: true, atCommit: true },
+      true,
+    );
+    expect(error).toBeInstanceOf(LegacyDbExecError);
+    expect(error).toMatchObject({
+      message:
+        "failed to commit the batch transaction: ERROR: deferred constraint failed (SQLSTATE 23514)",
+      statementIndex: 2,
+    });
+
+    const dropped = legacyBatchFailureError(
+      new SqlError({
+        reason: new SqlSyntaxError({
+          cause: Object.assign(new Error("terminating connection: database dropped"), {
+            severity: "FATAL",
+            code: "57P04",
+          }),
+          message: "Failed to execute statement",
+          operation: "execute",
+        }),
+      }),
+      { completed: 2, outcome: "submitted", began: true, atCommit: true },
+      true,
+    );
+    expect(dropped).toBeInstanceOf(LegacyDbExecError);
+    expect(dropped.message).toBe(
+      "FATAL: terminating connection: database dropped (SQLSTATE 57P04)",
+    );
+  });
+
   it("keeps server-error mapping and the completed count for a statement failure", () => {
     const error = legacyBatchFailureError(
       new SqlError({

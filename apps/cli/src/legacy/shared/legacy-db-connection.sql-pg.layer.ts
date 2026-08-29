@@ -235,6 +235,7 @@ export function legacyBatchFailureError(
         readonly completed: number;
         readonly outcome: LegacyBatchOutcome;
         readonly began?: boolean;
+        readonly atCommit?: boolean;
       }
     | undefined,
   isLocal: boolean,
@@ -252,15 +253,15 @@ export function legacyBatchFailureError(
   // failure. Gated on SQLSTATE class, never the severity string, which arrives
   // localized (e.g. "FEHLER").
   const server = legacyExtractPgServerError(error);
-  const beganFailed =
-    batch.outcome === "submitted" &&
-    batch.began === false &&
-    server !== undefined &&
-    !legacyIsConnectionEndingSqlState(server.code);
+  const statementFailure = server !== undefined && !legacyIsConnectionEndingSqlState(server.code);
+  const beganFailed = batch.outcome === "submitted" && batch.began === false && statementFailure;
+  const commitFailed = batch.outcome === "submitted" && batch.atCommit === true && statementFailure;
   return new LegacyDbExecError({
     message: beganFailed
       ? `failed to begin the batch transaction: ${mapped.message}`
-      : mapped.message,
+      : commitFailed
+        ? `failed to commit the batch transaction: ${mapped.message}`
+        : mapped.message,
     code: mapped.code,
     detail: mapped.detail,
     position: mapped.position,
@@ -312,6 +313,11 @@ export class LegacyPgBatchQuery implements Pg.Submittable {
   completed = 0;
   outcome: LegacyBatchOutcome = "unsent";
   began = false;
+
+  // An error arriving once every caller statement completed can only be COMMIT's.
+  get atCommit(): boolean {
+    return this.began && this.completed >= this.statements.length;
+  }
 
   constructor(
     statements: ReadonlyArray<LegacyDbBatchStatement>,
