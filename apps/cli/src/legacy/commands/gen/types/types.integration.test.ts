@@ -3,7 +3,6 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
-import { vi } from "vitest";
 import { BunServices } from "@effect/platform-bun";
 import type {
   V1CreateLoginRoleOutput,
