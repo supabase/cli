@@ -41,6 +41,7 @@ const tunnel = (
   Effect.callback<void, GatewayActivationError>((resume) => {
     const target = new Socket();
     let settled = false;
+    let targetEnded = false;
     const onSourceError = (cause: Error) => {
       if (settled) return;
       settled = true;
@@ -59,22 +60,25 @@ const tunnel = (
       }
     };
     const onTargetClose = () => {
-      source.destroy();
       if (!settled) {
-        settled = true;
-        cleanup();
-        resume(Effect.void);
+        if (!targetEnded) {
+          settled = true;
+          cleanup();
+          source.destroy();
+          resume(Effect.void);
+        }
       }
     };
     const onSourceEnd = () => target.end();
-    const onTargetEnd = () => source.end();
+    const onTargetEnd = () => {
+      targetEnded = true;
+      source.end();
+    };
     const onConnect = () => {
       // Node's pipe implementation naturally propagates backpressure. Keeping
       // both streams open here preserves protocol half-close semantics.
       source.pipe(target, { end: false });
       target.pipe(source, { end: false });
-      source.once("end", onSourceEnd);
-      target.once("end", onTargetEnd);
     };
     const cleanup = () => {
       source.off("error", onSourceError);
@@ -89,6 +93,8 @@ const tunnel = (
     target.once("error", onTargetError);
     source.once("close", onSourceClose);
     target.once("close", onTargetClose);
+    source.once("end", onSourceEnd);
+    target.once("end", onTargetEnd);
     target.once("connect", onConnect);
     target.connect(backend.port, backend.host);
     return Effect.sync(() => {

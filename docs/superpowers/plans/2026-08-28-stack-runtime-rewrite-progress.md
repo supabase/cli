@@ -443,5 +443,9 @@ Implementation continues after recording a ruling; this file is not a question q
   preflight activation fencing, and HTTP/WebSocket dispatch descriptor handoff.
 - RED evidence: the first functions integration run failed because the new discovery modules were
   absent; subsequent gateway preflight coverage initially exposed eager activation construction.
+- A parallel full-package run exposed a 512 KiB TCP response truncation: normal target close could
+  destroy the source before its buffered response drained. The tunnel now distinguishes normal EOF
+  from abrupt close and registers half-close listeners before connect; 48 concurrent targeted runs
+  passed after the fix.
 - `pnpm --dir packages/stack types:check`, focused Functions/gateway integration, full package
   integration (163 tests), Effect lint, formatting, and `git diff --check` passed.
