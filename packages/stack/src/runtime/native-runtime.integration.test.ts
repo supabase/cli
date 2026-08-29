@@ -56,6 +56,8 @@ const oneShotProcess = (stdout: string, exitCode = 0) => ({
   ],
 });
 
+const processPlan = <A>(main: A) => ({ startup: [], main });
+
 const withPlatform = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.scoped(effect).pipe(Effect.provide(NodeServices.layer));
 
@@ -68,7 +70,7 @@ describe("native runtime", () => {
           resolveProcess: () =>
             Effect.sync(() => {
               resolved = true;
-              return fixtureProcess("unexpected");
+              return processPlan(fixtureProcess("unexpected"));
             }),
           waitForReadiness: () => Effect.void,
         });
@@ -97,7 +99,8 @@ describe("native runtime", () => {
         });
         let startedProcess: NativeProcess | undefined;
         const runtime = yield* makeNativeRuntime({
-          resolveProcess: (_key, _entry) => Effect.succeed(fixtureProcess("secret-value")),
+          resolveProcess: (_key, _entry) =>
+            Effect.succeed(processPlan(fixtureProcess("secret-value"))),
           logStore,
           waitForReadiness: (_key, _workload, process) =>
             Effect.sync(() => {
@@ -129,7 +132,7 @@ describe("native runtime", () => {
     withPlatform(
       Effect.gen(function* () {
         const runtime = yield* makeNativeRuntime({
-          resolveProcess: () => Effect.succeed(fixtureProcess("fails")),
+          resolveProcess: () => Effect.succeed(processPlan(fixtureProcess("fails"))),
           waitForReadiness: (key) =>
             Effect.fail(
               new RuntimeDriverError({
@@ -152,10 +155,12 @@ describe("native runtime", () => {
         const readiness = yield* Deferred.make<void>();
         const runtime = yield* makeNativeRuntime({
           resolveProcess: () =>
-            Effect.succeed({
-              executable: process.execPath,
-              args: ["-e", "process.stderr.write('native failed\\n'); process.exit(3)"],
-            }),
+            Effect.succeed(
+              processPlan({
+                executable: process.execPath,
+                args: ["-e", "process.stderr.write('native failed\\n'); process.exit(3)"],
+              }),
+            ),
           waitForReadiness: () => Deferred.await(readiness),
         });
         const result = yield* runtime
@@ -175,7 +180,7 @@ describe("native runtime", () => {
           resolveProcess: () =>
             Effect.sync(() => {
               launches += 1;
-              return fixtureProcess(`restart-${launches}`);
+              return processPlan(fixtureProcess(`restart-${launches}`));
             }),
           waitForReadiness: () => Effect.void,
         });
@@ -200,7 +205,7 @@ describe("native runtime", () => {
           resolveProcess: () =>
             Effect.sync(() => {
               launches += 1;
-              return fixtureProcess("shared-start");
+              return processPlan(fixtureProcess("shared-start"));
             }).pipe(Effect.tap(() => Deferred.succeed(spawned, undefined))),
           waitForReadiness: () => Deferred.await(readiness),
         });
@@ -234,7 +239,7 @@ describe("native runtime", () => {
           stream: () => Stream.empty,
         };
         const runtime = yield* makeNativeRuntime({
-          resolveProcess: () => Effect.succeed(fixtureProcess("log-failure")),
+          resolveProcess: () => Effect.succeed(processPlan(fixtureProcess("log-failure"))),
           waitForReadiness: () => Deferred.await(readiness),
           logStore,
         });
@@ -435,7 +440,8 @@ describe("native runtime", () => {
           stream: () => Stream.empty,
         };
         const runtime = yield* makeNativeRuntime({
-          resolveProcess: () => Effect.succeed(fixtureProcess("log-failure-after-ready")),
+          resolveProcess: () =>
+            Effect.succeed(processPlan(fixtureProcess("log-failure-after-ready"))),
           waitForReadiness: () => Effect.void,
           logStore,
         });
@@ -463,7 +469,7 @@ describe("native runtime", () => {
       Effect.gen(function* () {
         let applied = false;
         const runtime = yield* makeNativeRuntime({
-          resolveProcess: () => Effect.succeed(fixtureProcess("database")),
+          resolveProcess: () => Effect.succeed(processPlan(fixtureProcess("database"))),
           waitForReadiness: () => Effect.void,
           bootstrapDatabase: () =>
             Effect.sync(() => {
@@ -484,7 +490,7 @@ describe("native runtime", () => {
     withPlatform(
       Effect.gen(function* () {
         const runtime = yield* makeNativeRuntime({
-          resolveProcess: () => Effect.succeed(fixtureProcess("database")),
+          resolveProcess: () => Effect.succeed(processPlan(fixtureProcess("database"))),
           waitForReadiness: () => Effect.void,
         });
         const result = yield* runtime
@@ -505,7 +511,7 @@ describe("native runtime", () => {
           workloadId: "database:failed-bootstrap",
         });
         const runtime = yield* makeNativeRuntime({
-          resolveProcess: () => Effect.succeed(fixtureProcess("database")),
+          resolveProcess: () => Effect.succeed(processPlan(fixtureProcess("database"))),
           waitForReadiness: () => Effect.void,
           bootstrapDatabase: () => Effect.fail(bootstrapError),
         });
@@ -522,7 +528,7 @@ describe("native runtime", () => {
     withPlatform(
       Effect.gen(function* () {
         const runtime = yield* makeNativeRuntime({
-          resolveProcess: (_key, entry) => Effect.succeed(fixtureProcess(entry.id)),
+          resolveProcess: (_key, entry) => Effect.succeed(processPlan(fixtureProcess(entry.id))),
           waitForReadiness: () => Effect.void,
         });
         const first = keyFor("isolated-one");

@@ -38,7 +38,7 @@ export interface NativeRuntimeOptions {
   readonly resolveProcess: (
     key: RuntimeWorkloadKey,
     workload: NativeWorkload,
-  ) => Effect.Effect<NativeProcessSpec | NativeProcessPlan, RuntimeDriverError>;
+  ) => Effect.Effect<NativeProcessPlan, RuntimeDriverError>;
   /** Private readiness is resolved by the owning Supervisor/gateway seam. */
   readonly waitForReadiness: (
     key: RuntimeWorkloadKey,
@@ -154,14 +154,6 @@ const observeOutput = (
   Stream.runForEach(process[stream], (bytes) =>
     appendLines(logStore, resource, stream, bytes),
   ).pipe(Effect.andThen(flushLines(logStore, resource, stream)));
-
-const nativeProcessPlan = (resolved: NativeProcessSpec | NativeProcessPlan): NativeProcessPlan =>
-  "main" in resolved
-    ? resolved
-    : {
-        startup: [],
-        main: resolved,
-      };
 
 /** Creates a Supervisor-owned native runtime with exact process identity fencing. */
 export const makeNativeRuntime = (
@@ -365,9 +357,7 @@ export const makeNativeRuntime = (
             options.resolveLauncher === undefined
               ? undefined
               : yield* options.resolveLauncher(key, workload);
-          const resolved = yield* options
-            .resolveProcess(key, workload)
-            .pipe(Effect.map(nativeProcessPlan));
+          const resolved = yield* options.resolveProcess(key, workload);
           for (const startup of resolved.startup)
             yield* runStartupProcess(resource, startup, launcher);
           const process = yield* spawnNativeProcess(resolved.main, launcher).pipe(

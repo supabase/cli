@@ -44,6 +44,8 @@ const workload = (selected: PlannedWorkload["selected"] = artifact): PlannedWork
   specHash: key.specHash,
 });
 
+const processPlan = <A>(main: A) => ({ startup: [], main });
+
 const planFor = (workloads: ReadonlyArray<PlannedWorkload>): ExecutionPlan => ({
   runtime: { kind: "native" },
   activation: {
@@ -420,10 +422,12 @@ describe("runtime recovery", () => {
       Effect.gen(function* () {
         const runtime = yield* makeNativeRuntime({
           resolveProcess: () =>
-            Effect.succeed({
-              executable: process.execPath,
-              args: ["-e", "setInterval(() => {}, 1000)"],
-            }),
+            Effect.succeed(
+              processPlan({
+                executable: process.execPath,
+                args: ["-e", "setInterval(() => {}, 1000)"],
+              }),
+            ),
           waitForReadiness: () => Effect.void,
         });
         const otherKey = { ...key, stackId: otherStackId };
@@ -447,7 +451,10 @@ describe("runtime recovery", () => {
           resolveProcess: () =>
             Effect.sync(() => {
               launches += 1;
-              return { executable: process.execPath, args: ["-e", "setInterval(() => {}, 1000)"] };
+              return processPlan({
+                executable: process.execPath,
+                args: ["-e", "setInterval(() => {}, 1000)"],
+              });
             }),
           waitForReadiness: () => Effect.void,
         });
