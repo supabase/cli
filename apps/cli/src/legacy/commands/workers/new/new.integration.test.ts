@@ -67,7 +67,8 @@ describe("legacy workers new", () => {
       // the shape `functions new` established.
       expect(out.stdoutText).toContain("Created new Worker at supabase/workers/api");
       expect(out.stdoutText).toContain("Runtime");
-      expect(out.stdoutText).toContain("supabase workers push api");
+      // The deploy hint is a success trailer, which lands on stderr.
+      expect(out.stderrText).toContain("supabase workers push api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
   it.live("asks for the name when the command line carries none", () => {
@@ -524,6 +525,30 @@ describe("legacy workers new", () => {
       // The defaults stand, because there was nowhere to ask.
       expect(payload).toMatchObject({ runtime: "deno", size: "2gb" });
       expect(out.promptSelectCalls).toEqual([]);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The prompts only ever offer values this CLI knows, so an unrecognized answer
+  // means the prompt layer handed back something off-menu. Recording it verbatim
+  // would put a runtime into config.toml that `push` then refuses; the default
+  // is the one answer that still scaffolds something deployable.
+  it.live("falls back to the defaults when a prompt answers off-menu", () => {
+    const repo = project();
+    const { layer } = setupLegacyWorkers({
+      workdir: repo.dir,
+      promptSelectResponses: ["cobol", "colossal"],
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersNew({
+        name: Option.some("api"),
+        runtime: Option.none(),
+        size: Option.none(),
+        source: Option.none(),
+      });
+
+      expect(repo.config()).toContain(`runtime = "deno"`);
+      expect(repo.config()).toContain(`size = "2gb"`);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 

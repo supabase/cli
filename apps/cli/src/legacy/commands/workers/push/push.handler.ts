@@ -6,6 +6,7 @@ import {
   legacyEmitWorkersMachineOutput,
   legacyRejectWorkersEnvOutput,
   legacyWorkersMachineOutputRequested,
+  legacyWorkersProjectRefSuffix,
 } from "../workers.output.ts";
 import { legacyAqua } from "../../../shared/legacy-colors.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
@@ -175,6 +176,12 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
   readonly project: LegacyWorkersProject;
   readonly name: string;
   readonly projectRef: string;
+  /**
+   * ` --project-ref <ref>` when the flag supplied the ref, `""` when the link
+   * did — the follow-up hint below is copy-pasted verbatim, so it has to carry
+   * whatever the user typed to reach this project.
+   */
+  readonly refSuffix: string;
   readonly instances: Option.Option<number>;
   readonly pollSchedule?: Schedule.Schedule<unknown>;
   readonly pollRetrySchedule?: Schedule.Schedule<unknown>;
@@ -322,6 +329,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
   const settled = yield* awaitWorkerBuild(api, projectRef, name, {
     schedule: input.pollSchedule,
     retrySchedule: input.pollRetrySchedule,
+    refSuffix: input.refSuffix,
     onPoll: (polled) =>
       polled.buildState === "building" ? deploying.message("Building worker...") : Effect.void,
   }).pipe(Effect.tapError(() => deploying.fail()));
@@ -333,7 +341,7 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
         detail: `The build for "${name}" failed${
           settled.stateReason === undefined ? "" : `: ${settled.stateReason}`
         }.`,
-        suggestion: `Fix the issue, then re-run \`supabase workers push ${name}\`.`,
+        suggestion: `Fix the issue, then re-run \`supabase workers push ${name}${input.refSuffix}\`.`,
       }),
     );
   }
@@ -378,6 +386,28 @@ const deployOneWorker = Effect.fnUntraced(function* (input: {
     build_state: settled.buildState,
     ...(url === undefined ? {} : { url }),
   };
+});
+
+/**
+ * Names the workers a failed run never got to.
+ *
+ * The loop stops on the first failure, so everything after it was never
+ * attempted — and the error itself only names the worker that broke. Left
+ * unsaid, the user has to reconstruct the remainder from argument order, or
+ * from the discovery walk's ordering when the push was a bare `push`.
+ *
+ * Written on stderr in every format, unlike the per-worker announcements: a
+ * machine-format run is a CI run, which is exactly where nobody is watching the
+ * loop and "what still needs deploying" is the question the failure raises.
+ */
+const reportUnattempted = Effect.fnUntraced(function* (skipped: ReadonlyArray<string>) {
+  if (skipped.length === 0) {
+    return;
+  }
+  const output = yield* Output;
+  // A label rather than a sentence, so it reads the same for one name or six
+  // and carries no verb to agree with the count.
+  yield* output.raw(`Not attempted: ${skipped.join(", ")}\n`, "stderr");
 });
 
 /**
@@ -436,26 +466,46 @@ export const legacyWorkersPush = Effect.fn("legacy.workers.push")(function* (
     yield* legacyRejectWorkersEnvOutput();
 
     const machineOutput = yield* legacyWorkersMachineOutputRequested();
+    // Computed once for the whole run, the way `status` and `delete` do: an
+    // explicit `--project-ref` has to survive into every hint this push emits.
+    const refSuffix = legacyWorkersProjectRefSuffix(flags.projectRef);
     const deployed: Array<Record<string, unknown>> = [];
-    for (const name of names) {
+    for (const [index, name] of names.entries()) {
       if (names.length > 1 && !machineOutput) {
         // stderr, unblanked and labelled, the way `functions deploy` announces
         // each function: a bare name with a leading blank line put a section
         // header into whatever was consuming stdout.
-        yield* output.raw(`Deploying Worker: ${legacyAqua(name)}\n`, "stderr");
+        //
+        // Counted, because each worker's package/upload/build takes minutes and
+        // the name alone says nothing about how much of the run is left.
+        yield* output.raw(
+          `Deploying Worker ${index + 1}/${names.length}: ${legacyAqua(name)}\n`,
+          "stderr",
+        );
       }
       deployed.push(
         yield* deployOneWorker({
           project,
           name,
           projectRef,
+          refSuffix,
           instances: flags.instances,
           machineOutput,
           ...(options.pollSchedule === undefined ? {} : { pollSchedule: options.pollSchedule }),
           ...(options.pollRetrySchedule === undefined
             ? {}
             : { pollRetrySchedule: options.pollRetrySchedule }),
-        }),
+        }).pipe(Effect.tapError(() => reportUnattempted(names.slice(index + 1)))),
+      );
+    }
+
+    // Only for a run that deployed several: one worker already said so itself,
+    // and repeating it as a summary reads like a second deploy.
+    if (names.length > 1 && !machineOutput && output.format === "text") {
+      yield* output.raw(
+        `Deployed ${names.length} Workers to project ${projectRef}: ${names
+          .map((name) => legacyAqua(name, process.stdout))
+          .join(", ")}\n`,
       );
     }
 

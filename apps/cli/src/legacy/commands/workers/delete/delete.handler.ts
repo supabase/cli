@@ -1,5 +1,6 @@
 import { Effect, Option } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
 import { legacyAqua } from "../../../shared/legacy-colors.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import {
@@ -232,7 +233,10 @@ export const legacyWorkersDelete = Effect.fn("legacy.workers.delete")(function* 
         // alone is not enough to redeploy from, so `push` would fail on the very
         // command this line recommends.
         if (keptSource !== undefined) {
-          yield* output.raw(`Redeploy it with supabase workers push ${name}${refSuffix}.\n`);
+          // Trailer, like every other "what to run next" line in this shell.
+          yield* emitSuccessTrailer(
+            `Redeploy it with ${legacyAqua(`supabase workers push ${name}${refSuffix}`)}.\n`,
+          );
         }
       } else {
         yield* output.raw(

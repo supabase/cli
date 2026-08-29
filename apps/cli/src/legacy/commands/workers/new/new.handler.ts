@@ -1,6 +1,8 @@
 import { join, relative, sep } from "node:path";
 import { Effect, FileSystem, Option } from "effect";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
+import { legacyAqua, legacyBold } from "../../../shared/legacy-colors.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import {
   legacyEmitWorkersMachineOutput,
@@ -328,7 +330,7 @@ export const legacyWorkersNew = Effect.fn("legacy.workers.new")(function* (
     // then the details. Guidance goes in a closing sentence rather than a
     // pseudo-row, since no other command puts a next step inside its output
     // table.
-    yield* output.raw(`Created new Worker at ${sourceDisplay}\n`);
+    yield* output.raw(`Created new Worker at ${legacyBold(sourceDisplay, process.stdout)}\n`);
     yield* output.raw(
       legacyRenderWorkerDetails([
         ["Runtime", runtime],
@@ -336,6 +338,9 @@ export const legacyWorkersNew = Effect.fn("legacy.workers.new")(function* (
         ["Access", "public"],
       ]),
     );
-    yield* output.raw(`Deploy it with supabase workers push ${name}.\n`);
+    // On the success trailer rather than inline, the way `bootstrap` emits its
+    // "start your app" line: the shell prints trailers once at the end of the
+    // run, so the next step is the last thing on screen.
+    yield* emitSuccessTrailer(`Deploy it with ${legacyAqua(`supabase workers push ${name}`)}.\n`);
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

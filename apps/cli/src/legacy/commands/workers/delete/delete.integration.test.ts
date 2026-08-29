@@ -72,7 +72,8 @@ describe("legacy workers delete", () => {
       // Nothing local is touched — that is what makes `push` a one-command undo.
       expect(existsSync(join(repo.dir, "supabase", "workers", "api", "index.js"))).toBe(true);
       expect(readFileSync(join(repo.dir, "supabase", "config.toml"), "utf8")).toBe(CONFIG);
-      expect(out.stdoutText).toContain("supabase workers push api");
+      // The redeploy hint is a success trailer, which lands on stderr.
+      expect(out.stderrText).toContain("supabase workers push api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -538,6 +539,63 @@ describe("legacy workers delete", () => {
 
       expect(out.stdoutText).toContain("1 running instance will be terminated");
       expect(out.stdoutText).not.toContain("3 running");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("pluralizes the live instance count in the confirmation", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      promptTextResponses: ["api"],
+      routes: {
+        ...routes,
+        [getRoute]: {
+          status: 200,
+          body: {
+            data: workerResource({
+              name: "api",
+              instances: 3,
+              instanceCounts: { declared: 3, live: 2, ready: 2, stale: 0 },
+            }),
+          },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersDelete({ name: "api", projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("2 running instances will be terminated");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Scaled to zero: there is a tally, and it says nothing is running. Warning
+  // about terminated instances there would invent a consequence.
+  it.live("promises no terminations when nothing is running", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      promptTextResponses: ["api"],
+      routes: {
+        ...routes,
+        [getRoute]: {
+          status: 200,
+          body: {
+            data: workerResource({
+              name: "api",
+              instances: 2,
+              instanceCounts: { declared: 2, live: 0, ready: 0, stale: 0 },
+            }),
+          },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersDelete({ name: "api", projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("permanently deletes");
+      expect(out.stdoutText).not.toContain("will be terminated");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
