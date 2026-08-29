@@ -27,7 +27,10 @@ const state: PersistedStackState = {
   runtime: { kind: "native" },
   desiredGeneration: 1,
   desiredLifecycle: "running",
-  ports: [{ field: "database", port: 55432, intent: "exact" }],
+  ports: [
+    { field: "database", port: 55432, intent: "exact" },
+    { field: "api", port: 54321, intent: "exact" },
+  ],
   secrets: {
     "secret:database.internal.password": { policy: "managed", value: "postgres" },
   },
@@ -69,6 +72,12 @@ describe("workload runtime catalog", () => {
       expect(spec.args(state, workload, port)).toBeInstanceOf(Array);
       expect(spec.cwd(state, workload)).toBeTruthy();
       expect(spec.privateEndpoint(port)).toEqual({ host: "127.0.0.1", port });
+      expect(spec.privateEndpoint(spec.containerPort, "container")).toEqual({
+        host: WORKLOAD_CATALOG[id]?.containerAlias,
+        port: spec.containerPort,
+      });
+      expect(spec.privateEndpoint(49_999, "container").port).toBe(spec.containerPort);
+      expect(spec.networkAliases).toEqual([WORKLOAD_CATALOG[id]?.containerAlias]);
     }
   });
 
@@ -100,12 +109,15 @@ describe("workload runtime catalog", () => {
                 settings: {
                   site_url: "https://example.test",
                   additional_redirect_urls: ["https://example.test/callback"],
+                  jwt_issuer: "https://issuer.example",
                   enable_signup: false,
                   minimum_password_length: 12,
                   password_requirements: "letters_digits",
+                  email: { double_confirm_changes: true, secure_password_change: false },
                   sms: {
                     enable_signup: true,
                     twilio: { enabled: true, account_sid: "AC123", message_service_sid: "MG123" },
+                    twilio_verify: { enabled: true, account_sid: "VA123" },
                     test_otp: { "+33123456789": "123456" },
                   },
                   mfa: { phone: { otp_length: 8 } },
@@ -116,8 +128,10 @@ describe("workload runtime catalog", () => {
                   backend: "bigquery",
                   gcp_project_id: "project-42",
                   gcp_project_number: "42",
+                  gcp_jwt_path: "secrets/gcp.json",
                 },
               },
+              realtime: { settings: { ip_version: "IPv6" } },
             },
           },
         });
@@ -162,18 +176,61 @@ describe("workload runtime catalog", () => {
           GOTRUE_MFA_PHONE_OTP_LENGTH: "8",
           GOTRUE_SMS_PROVIDER: "twilio",
           GOTRUE_SMS_TEST_OTP: "+33123456789:123456",
+          GOTRUE_SMS_OTP_LENGTH: "6",
+          GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED: "true",
+          GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION: "false",
+          GOTRUE_SMTP_HOST: "127.0.0.1",
+          GOTRUE_SMTP_PORT: "1025",
         });
+        expect(auth?.env(configured, planned("auth:auth"), 9999)).toMatchObject({
+          GOTRUE_JWT_ISSUER: "https://issuer.example",
+          GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI: "https://issuer.example/callback",
+          GOTRUE_SMS_TWILIO_ACCOUNT_SID: "AC123",
+          GOTRUE_SMS_TWILIO_VERIFY_ACCOUNT_SID: "VA123",
+        });
+        expect(
+          auth?.env(configured, planned("auth:auth"), 9999, "container", {
+            auth: { jwtKeys: '[{"kty":"EC"}]' },
+          }).GOTRUE_JWT_KEYS,
+        ).toBe('[{"kty":"EC"}]');
+        const realtime = runtimeSpecFor(planned("realtime:realtime"));
+        expect(
+          realtime?.env(configured, planned("realtime:realtime"), 4000, "container", {
+            auth: { jwks: '{"keys":[]}' },
+          }),
+        ).toMatchObject({ ERL_AFLAGS: "-proto_dist inet6_tcp", API_JWT_JWKS: '{"keys":[]}' });
         const analytics = runtimeSpecFor(planned("analytics:analytics"));
-        expect(analytics?.env(configured, planned("analytics:analytics"), 4000)).toMatchObject({
+        const analyticsInputs = { analytics: { gcpJwtPath: "/tmp/gcp.json" } };
+        expect(
+          analytics?.env(
+            configured,
+            planned("analytics:analytics"),
+            4000,
+            "native",
+            analyticsInputs,
+          ),
+        ).toMatchObject({
           GOOGLE_PROJECT_ID: "project-42",
           GOOGLE_PROJECT_NUMBER: "42",
+          GOOGLE_APPLICATION_CREDENTIALS: "/tmp/gcp.json",
         });
+        expect(
+          analytics?.containerMounts?.(configured, planned("analytics:analytics"), analyticsInputs),
+        ).toEqual([
+          {
+            source: "/tmp/gcp.json",
+            target: "/opt/app/rel/logflare/bin/gcloud.json",
+            readOnly: true,
+          },
+        ]);
         const pooler = runtimeSpecFor(planned("pooler:pooler"));
         expect(pooler?.env(configured, planned("pooler:pooler"), 6543)).toMatchObject({
           POOL_MODE: "session",
           MAX_CLIENT_CONN: "250",
         });
-        const resolution = containerResolutionFor(configured, functions, 9000);
+        const resolution = containerResolutionFor(configured, functions, {
+          hostRoute: { host: "host.docker.internal", gateway: "host-gateway" },
+        });
         expect(resolution?.command.join(" ")).toContain(
           `--main-service=${FUNCTIONS_CONTAINER_ROOT}`,
         );
@@ -191,6 +248,68 @@ describe("workload runtime catalog", () => {
           INSPECTOR_MAIN: "true",
           FUNCTIONS_FUNCTIONS_HELLO_VERIFY_JWT: "false",
         });
+        expect(resolution?.env.EDGE_RUNTIME_PORT).toBe("9000");
+        expect(resolution?.hostRoute).toEqual({
+          host: "host.docker.internal",
+          gateway: "host-gateway",
+        });
+        const studio = runtimeSpecFor(planned("studio:studio"));
+        expect(
+          studio?.env(configured, planned("studio:studio"), 3000, "container", {
+            hostRoute: { host: "host.docker.internal", gateway: "host-gateway" },
+          }),
+        ).toMatchObject({
+          SUPABASE_URL: "http://host.docker.internal:54321",
+          STUDIO_PG_META_URL: "http://supabase-pgmeta:8080",
+          LOGFLARE_URL: "http://supabase-analytics:4000",
+        });
+        expect(
+          runtimeSpecFor(planned("storage:storage"))?.env(
+            configured,
+            planned("storage:storage"),
+            5000,
+            "container",
+          ).IMGPROXY_URL,
+        ).toBe("http://supabase-imgproxy:8080");
+        const nodeArtifactRoot = "/tmp/native-artifact";
+        expect(
+          studio?.nativeProcess(nodeArtifactRoot, configured, planned("studio:studio"), 3000),
+        ).toEqual({
+          executable: "/tmp/native-artifact/node/bin/node",
+          args: ["/tmp/native-artifact/app/apps/studio/docker-entrypoint.mjs"],
+          cwd: "/tmp/native-artifact/app/apps/studio",
+        });
+        expect(
+          runtimeSpecFor(planned("analytics:vector"))?.nativeProcess(
+            nodeArtifactRoot,
+            configured,
+            planned("analytics:vector"),
+            9001,
+          ),
+        ).toEqual({
+          executable: "/tmp/native-artifact/bin/vector",
+          args: [
+            "--config",
+            "/tmp/native-artifact/share/doc/vector/config/vector.yaml",
+            "--watch-config",
+            "false",
+          ],
+          cwd: "/tmp/supabase-runtime-spec",
+        });
+        const vector = planned("analytics:vector");
+        expect(containerResolutionFor(configured, vector)?.command).toEqual([]);
+        const vectorResolution = containerResolutionFor(configured, vector, {
+          analytics: { vectorConfigPath: "/tmp/vector.yaml" },
+        });
+        expect(vectorResolution?.command).toEqual([
+          "--config",
+          "/etc/vector/vector.yaml",
+          "--watch-config",
+          "false",
+        ]);
+        expect(vectorResolution?.mounts).toEqual([
+          { source: "/tmp/vector.yaml", target: "/etc/vector/vector.yaml", readOnly: true },
+        ]);
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

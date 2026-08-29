@@ -17,6 +17,15 @@ export interface NativeWorkloadArtifact {
   readonly checksumUrl: string;
   readonly requiredRuntimePaths: ReadonlyArray<string>;
   readonly executablePath: string;
+  readonly nativeProcess?: NativeWorkloadProcess;
+  readonly containerAlias?: string;
+}
+
+/** Artifact-root-relative process metadata for native Node workloads. */
+export interface NativeWorkloadProcess {
+  readonly executablePath: string;
+  readonly args: ReadonlyArray<string>;
+  readonly cwd: string;
 }
 
 export interface WorkloadCatalogEntry {
@@ -27,6 +36,10 @@ export interface WorkloadCatalogEntry {
   readonly containerImage: string;
   readonly requiredRuntimePaths: ReadonlyArray<string>;
   readonly executablePath: string;
+  /** Stable, stack-local DNS identity used by container dependants. */
+  readonly containerAlias: string;
+  /** Present when the artifact is launched through an interpreter. */
+  readonly nativeProcess?: NativeWorkloadProcess;
 }
 
 const native = (
@@ -37,6 +50,10 @@ const native = (
   executablePath: string,
   requiredRuntimePaths: ReadonlyArray<string> = [executablePath],
   supportedNativeVersions: ReadonlyArray<string> = [nativeVersion],
+  options: {
+    readonly containerAlias?: string;
+    readonly nativeProcess?: NativeWorkloadProcess;
+  } = {},
 ): WorkloadCatalogEntry => ({
   workloadId,
   service,
@@ -45,6 +62,8 @@ const native = (
   containerImage,
   requiredRuntimePaths,
   executablePath,
+  containerAlias: options.containerAlias ?? `supabase-${service}`,
+  ...(options.nativeProcess === undefined ? {} : { nativeProcess: options.nativeProcess }),
 });
 
 /** The single authoritative private workload identity table. */
@@ -65,6 +84,7 @@ export const WORKLOAD_CATALOG: Readonly<Record<string, WorkloadCatalogEntry>> = 
       "lib",
     ],
     ["14.1.0.89", "15.8.1.085", "17.6.1.165"],
+    { containerAlias: "supabase-database" },
   ),
   "rest:rest": native(
     "rest:rest",
@@ -72,8 +92,19 @@ export const WORKLOAD_CATALOG: Readonly<Record<string, WorkloadCatalogEntry>> = 
     "v16.2",
     "postgrest/postgrest:v16.2",
     "bin/postgrest",
+    ["bin/postgrest"],
+    ["v16.2"],
+    { containerAlias: "supabase-rest" },
   ),
-  "auth:auth": native("auth:auth", "auth", "v2.196.0", "supabase/auth:v2.196.0", "bin/auth"),
+  "auth:auth": native(
+    "auth:auth",
+    "auth",
+    "v2.196.0",
+    "supabase/auth:v2.196.0",
+    "bin/auth",
+    ["bin/auth"],
+    ["v2.196.0"],
+  ),
   "realtime:realtime": native(
     "realtime:realtime",
     "realtime",
@@ -89,6 +120,14 @@ export const WORKLOAD_CATALOG: Readonly<Record<string, WorkloadCatalogEntry>> = 
     "supabase/storage-api:v1.71.0",
     "app/dist/start/server.js",
     ["node/bin/node", "app/dist/start/server.js"],
+    ["v1.71.0"],
+    {
+      nativeProcess: {
+        executablePath: "node/bin/node",
+        args: ["app/dist/start/server.js"],
+        cwd: "app",
+      },
+    },
   ),
   "storage:imgproxy": native(
     "storage:imgproxy",
@@ -103,6 +142,9 @@ export const WORKLOAD_CATALOG: Readonly<Record<string, WorkloadCatalogEntry>> = 
     "v1.74.3",
     "supabase/edge-runtime:v1.74.3",
     "bin/.edge-runtime-wrapped",
+    ["bin/.edge-runtime-wrapped"],
+    ["v1.74.3"],
+    { containerAlias: "supabase-functions" },
   ),
   "studio:studio": native(
     "studio:studio",
@@ -111,6 +153,14 @@ export const WORKLOAD_CATALOG: Readonly<Record<string, WorkloadCatalogEntry>> = 
     "supabase/studio:2026.08.24-sha-8ec45b2",
     "app/apps/studio/server.js",
     ["node/bin/node", "app/apps/studio/docker-entrypoint.mjs", "app/apps/studio/server.js"],
+    ["2026.08.24-sha-8ec45b2"],
+    {
+      nativeProcess: {
+        executablePath: "node/bin/node",
+        args: ["app/apps/studio/docker-entrypoint.mjs"],
+        cwd: "app/apps/studio",
+      },
+    },
   ),
   "studio:pgmeta": native(
     "studio:pgmeta",
@@ -120,8 +170,24 @@ export const WORKLOAD_CATALOG: Readonly<Record<string, WorkloadCatalogEntry>> = 
     "app/dist/server/server.js",
     ["node/bin/node", "app/dist/server/server.js"],
     ["0.98.0", "v0.98.0"],
+    {
+      nativeProcess: {
+        executablePath: "node/bin/node",
+        args: ["app/dist/server/server.js"],
+        cwd: "app",
+      },
+    },
   ),
-  "mail:mail": native("mail:mail", "mailpit", "v1.30.2", "axllent/mailpit:v1.30.2", "bin/mailpit"),
+  "mail:mail": native(
+    "mail:mail",
+    "mailpit",
+    "v1.30.2",
+    "axllent/mailpit:v1.30.2",
+    "bin/mailpit",
+    ["bin/mailpit"],
+    ["v1.30.2"],
+    { containerAlias: "supabase-mail" },
+  ),
   "analytics:analytics": native(
     "analytics:analytics",
     "analytics",
@@ -138,6 +204,7 @@ export const WORKLOAD_CATALOG: Readonly<Record<string, WorkloadCatalogEntry>> = 
     "bin/vector",
     ["bin/vector"],
     ["0.53.0", "0.53.0-alpine"],
+    { containerAlias: "supabase-vector" },
   ),
   "pooler:pooler": native(
     "pooler:pooler",
@@ -181,6 +248,8 @@ const artifactFor = (
     checksumUrl: `${base}/SHA256SUMS`,
     requiredRuntimePaths: entry.requiredRuntimePaths,
     executablePath: entry.executablePath,
+    ...(entry.nativeProcess === undefined ? {} : { nativeProcess: entry.nativeProcess }),
+    containerAlias: entry.containerAlias,
   };
 };
 

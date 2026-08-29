@@ -7,12 +7,23 @@ export interface DatabaseRow {
   readonly [column: string]: unknown;
 }
 
-export type DatabaseBootstrapRole = "supabase_admin" | "anon" | "authenticated" | "service_role";
+/** Login roles provisioned by the managed database template. */
+export type DatabaseBootstrapRole =
+  | "postgres"
+  | "authenticator"
+  | "pgbouncer"
+  | "supabase_auth_admin"
+  | "supabase_storage_admin"
+  | "supabase_replication_admin"
+  | "supabase_read_only_user";
 const DATABASE_BOOTSTRAP_ROLES: ReadonlyArray<DatabaseBootstrapRole> = [
-  "supabase_admin",
-  "anon",
-  "authenticated",
-  "service_role",
+  "postgres",
+  "authenticator",
+  "pgbouncer",
+  "supabase_auth_admin",
+  "supabase_storage_admin",
+  "supabase_replication_admin",
+  "supabase_read_only_user",
 ];
 
 /** Values come from resolved managed secret slots and never become SQL text. */
@@ -187,10 +198,9 @@ export const runDatabaseBootstrap = (
             if (password === undefined) continue;
             yield* transaction.setRolePassword(role, password).pipe(
               Effect.mapError(
-                (error) =>
+                () =>
                   new DatabaseBootstrapError({
                     message: `Unable to configure internal database role ${role}`,
-                    cause: error,
                   }),
               ),
             );

@@ -4,7 +4,12 @@ import { Cause, Crypto, Deferred, Effect, Exit, Fiber, FileSystem, Option } from
 import { zstdCompress } from "node:zlib";
 import { makeArtifactStore, type ArtifactRequest } from "./ArtifactStore.ts";
 import { digestHex } from "./Integrity.ts";
-import { makeSlimServicesSource, slimServicesChecksum } from "./SlimServicesSource.ts";
+import {
+  makeSlimServicesSource,
+  slimServicesChecksum,
+  systemTarBoundary,
+  type ZstdDecompressor,
+} from "./SlimServicesSource.ts";
 import type { NativeWorkloadArtifact } from "../model/WorkloadCatalog.ts";
 
 const artifact: NativeWorkloadArtifact = {
@@ -213,6 +218,42 @@ describe("slim-services artifact source", () => {
     ),
   );
 
+  it.live("rejects links whose targets escape the artifact root", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const archive = yield* compress(
+          tarEntries([
+            { name: "bin/demo", content: "demo" },
+            { name: "bin/escape", link: "../../outside" },
+          ]),
+        );
+        const crypto = yield* Crypto.Crypto;
+        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
+        const fetcher: FetchLike = (input) => {
+          const url = requestUrl(input);
+          if (url.endsWith("SHA256SUMS"))
+            return Promise.resolve(new Response(`${expected}  demo-v1.0.0-linux-amd64.tar.zst\n`));
+          if (url.endsWith("manifest.json"))
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
+              ),
+            );
+          return Promise.resolve(new Response(archive));
+        };
+        const fs = yield* FileSystem.FileSystem;
+        const destination = yield* fs.makeTempDirectoryScoped({
+          prefix: "slim-services-link-escape-",
+        });
+        const failed = yield* makeSlimServicesSource(() => artifact, fetcher)
+          .materialize({ ...request, sha256: expected }, destination)
+          .pipe(Effect.exit);
+        expect(errorOf(failed)).toBeDefined();
+        expect(yield* fs.exists(`${destination}/outside`)).toBe(false);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
   it.live("interrupts an in-flight download without publishing a staging artifact", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -249,6 +290,55 @@ describe("slim-services artifact source", () => {
         yield* Deferred.await(started);
         yield* Fiber.interrupt(fiber);
         expect(signal?.aborted).toBe(true);
+        expect(yield* fs.readDirectory(destination)).toEqual([]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live("interrupts owned decompression without publishing a staging artifact", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const archive = yield* compress(tar("bin/demo", "demo"));
+        const crypto = yield* Crypto.Crypto;
+        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
+        const started = yield* Deferred.make<void>();
+        let destroyed = false;
+        const decompressor: ZstdDecompressor = {
+          decompress: () =>
+            Effect.callback((_resume) => {
+              // oxlint-disable-next-line effecttsgo/run-effect-inside-effect -- test boundary signal
+              void Effect.runPromise(Deferred.succeed(started, undefined));
+              return Effect.sync(() => {
+                destroyed = true;
+              });
+            }),
+        };
+        const fetcher: FetchLike = (input) => {
+          const url = requestUrl(input);
+          if (url.endsWith("SHA256SUMS"))
+            return Promise.resolve(new Response(`${expected}  demo-v1.0.0-linux-amd64.tar.zst\n`));
+          if (url.endsWith("manifest.json"))
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
+              ),
+            );
+          return Promise.resolve(new Response(archive));
+        };
+        const fs = yield* FileSystem.FileSystem;
+        const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-zstd-" });
+        const fiber = yield* Effect.forkChild(
+          makeSlimServicesSource(
+            () => artifact,
+            fetcher,
+            systemTarBoundary,
+            decompressor,
+          ).materialize({ ...request, sha256: expected }, destination),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(started);
+        yield* Fiber.interrupt(fiber);
+        expect(destroyed).toBe(true);
         expect(yield* fs.readDirectory(destination)).toEqual([]);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),

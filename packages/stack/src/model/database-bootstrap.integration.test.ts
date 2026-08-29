@@ -54,11 +54,20 @@ const makeSession = (
                   if (revision !== undefined) successfulRevisions.push(revision.id);
                 }),
               setRolePassword: (
-                role: "supabase_admin" | "anon" | "authenticated" | "service_role",
+                role:
+                  | "postgres"
+                  | "authenticator"
+                  | "pgbouncer"
+                  | "supabase_auth_admin"
+                  | "supabase_storage_admin"
+                  | "supabase_replication_admin"
+                  | "supabase_read_only_user",
                 password: Redacted.Redacted<string>,
               ) =>
                 options.failPassword
-                  ? Effect.fail(new DatabaseBootstrapError({ message: "password rejected" }))
+                  ? Effect.fail(
+                      new DatabaseBootstrapError({ message: "password rejected secret-password" }),
+                    )
                   : Effect.sync(() => passwords.push([role, Redacted.value(password)])),
               query: () => Effect.succeed(applied.map((revision) => ({ revision }))),
             };
@@ -75,7 +84,7 @@ describe("database bootstrap", () => {
     Effect.gen(function* () {
       const state = yield* makeSession();
       const credentials: DatabaseBootstrapCredentials = {
-        roles: { supabase_admin: Redacted.make("secret-password") },
+        roles: { postgres: Redacted.make("secret-password") },
       };
       yield* runDatabaseBootstrap(state.session, {
         revisions,
@@ -90,8 +99,8 @@ describe("database bootstrap", () => {
       // phase. It runs on each invocation so a changed managed password is
       // applied even when every schema revision is already recorded.
       expect(state.passwords).toEqual([
-        ["supabase_admin", "secret-password"],
-        ["supabase_admin", "secret-password"],
+        ["postgres", "secret-password"],
+        ["postgres", "secret-password"],
       ]);
       expect(state.operations.join(" ")).not.toContain("secret-password");
     }),
@@ -116,11 +125,42 @@ describe("database bootstrap", () => {
       const state = yield* makeSession({ failPassword: true });
       const result = yield* runDatabaseBootstrap(state.session, {
         revisions: [],
-        credentials: { roles: { anon: Redacted.make("secret-password") } },
+        credentials: { roles: { postgres: Redacted.make("secret-password") } },
       }).pipe(Effect.exit);
       expect(Exit.isFailure(result)).toBe(true);
       if (Exit.isFailure(result))
         expect(Cause.pretty(result.cause)).not.toContain("secret-password");
+      expect(state.operations.join(" ")).not.toContain("secret-password");
+    }),
+  );
+
+  it.live("applies the managed password to every login role", () =>
+    Effect.gen(function* () {
+      const state = yield* makeSession();
+      const password = Redacted.make("secret-password");
+      yield* runDatabaseBootstrap(state.session, {
+        revisions: [],
+        credentials: {
+          roles: {
+            postgres: password,
+            authenticator: password,
+            pgbouncer: password,
+            supabase_auth_admin: password,
+            supabase_storage_admin: password,
+            supabase_replication_admin: password,
+            supabase_read_only_user: password,
+          },
+        },
+      });
+      expect(state.passwords).toEqual([
+        ["postgres", "secret-password"],
+        ["authenticator", "secret-password"],
+        ["pgbouncer", "secret-password"],
+        ["supabase_auth_admin", "secret-password"],
+        ["supabase_storage_admin", "secret-password"],
+        ["supabase_replication_admin", "secret-password"],
+        ["supabase_read_only_user", "secret-password"],
+      ]);
       expect(state.operations.join(" ")).not.toContain("secret-password");
     }),
   );

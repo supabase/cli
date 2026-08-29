@@ -1,5 +1,6 @@
 import { Crypto, Effect, FileSystem, Path, Schema } from "effect";
-import { zstdDecompress } from "node:zlib";
+import { createZstdDecompress } from "node:zlib";
+import type { Transform } from "node:stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ArtifactRequest, ArtifactSource } from "./ArtifactStore.ts";
 import type { NativeWorkloadArtifact } from "../model/WorkloadCatalog.ts";
@@ -7,6 +8,10 @@ import { StackPreparationError } from "../public/Errors.ts";
 import { verifySha256 } from "./Integrity.ts";
 
 type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
+
+export interface ZstdDecompressor {
+  readonly decompress: (bytes: Uint8Array) => Effect.Effect<Uint8Array, StackPreparationError>;
+}
 
 export interface TarBoundary {
   readonly list: (
@@ -77,41 +82,56 @@ const fetchBytes = (
     catch: (cause) => new StackPreparationError({ message: `Unable to download ${url}`, cause }),
   });
 
-const decompress = (bytes: Uint8Array): Effect.Effect<Uint8Array, StackPreparationError> =>
-  Effect.callback<Uint8Array, StackPreparationError>((resume) => {
-    let done = false;
-    const complete = (effect: Effect.Effect<Uint8Array, StackPreparationError>) => {
-      if (done) return;
-      done = true;
-      resume(effect);
-    };
-    try {
-      zstdDecompress(bytes, (cause, output) =>
+/** Owned streaming zstd boundary. Cancellation destroys the exact transform. */
+export const nodeZstdDecompressor: ZstdDecompressor = {
+  decompress: (bytes) =>
+    Effect.callback<Uint8Array, StackPreparationError>((resume) => {
+      const transform: Transform = createZstdDecompress();
+      const chunks: Uint8Array[] = [];
+      let done = false;
+      const cleanup = () => {
+        transform.removeListener("data", onData);
+        transform.removeListener("error", onError);
+        transform.removeListener("end", onEnd);
+      };
+      const complete = (effect: Effect.Effect<Uint8Array, StackPreparationError>) => {
+        if (done) return;
+        done = true;
+        cleanup();
+        resume(effect);
+      };
+      const onData = (chunk: Uint8Array) => chunks.push(new Uint8Array(chunk));
+      const onError = (cause: unknown) =>
         complete(
-          cause === null
-            ? Effect.succeed(output)
-            : Effect.fail(
-                new StackPreparationError({
-                  message: "Unable to decompress slim-services archive",
-                  cause,
-                }),
-              ),
-        ),
-      );
-    } catch (cause) {
-      complete(
-        Effect.fail(
-          new StackPreparationError({
-            message: "Unable to decompress slim-services archive",
-            cause,
-          }),
-        ),
-      );
-    }
-    return Effect.sync(() => {
-      done = true;
-    });
-  });
+          Effect.fail(
+            new StackPreparationError({
+              message: "Unable to decompress slim-services archive",
+              cause,
+            }),
+          ),
+        );
+      const onEnd = () => {
+        const size = chunks.reduce((total, chunk) => total + chunk.length, 0);
+        const output = new Uint8Array(size);
+        let offset = 0;
+        for (const chunk of chunks) {
+          output.set(chunk, offset);
+          offset += chunk.length;
+        }
+        complete(Effect.succeed(output));
+      };
+      transform.on("data", onData);
+      transform.once("error", onError);
+      transform.once("end", onEnd);
+      transform.end(bytes);
+      return Effect.sync(() => {
+        if (done) return;
+        done = true;
+        cleanup();
+        transform.destroy();
+      });
+    }),
+};
 
 const checksumFor = (contents: string, archiveName: string): string | undefined =>
   contents
@@ -208,6 +228,7 @@ export const makeSlimServicesSource = (
   resolve: (request: ArtifactRequest) => NativeWorkloadArtifact | undefined,
   fetchRequest: Fetcher = fetcher,
   tarBoundary: TarBoundary = systemTarBoundary,
+  decompressor: ZstdDecompressor = nodeZstdDecompressor,
 ): ArtifactSource => ({
   materialize: (request, destination) => {
     const artifact = resolve(request);
@@ -282,7 +303,7 @@ export const makeSlimServicesSource = (
             }),
         ),
       );
-      const archive = yield* decompress(compressed);
+      const archive = yield* decompressor.decompress(compressed);
       const archivePath = path.join(destination, ".slim-services.tar");
       yield* fs.writeFile(archivePath, archive).pipe(
         Effect.mapError(

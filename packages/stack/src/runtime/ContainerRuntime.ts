@@ -4,6 +4,7 @@ import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { StackId } from "../public/StackId.ts";
 import {
   type ContainerContainerSpec,
+  type ContainerHostRoute,
   type ContainerEngine,
   type ContainerEngineFailure,
   type ContainerLabels,
@@ -40,6 +41,7 @@ export interface ContainerWorkloadResolution {
   /** Path to an owned env file; secret bytes are kept out of engine argv. */
   readonly envFile?: string;
   readonly networkAliases?: ReadonlyArray<string>;
+  readonly hostRoute?: ContainerHostRoute;
   readonly command?: ReadonlyArray<string>;
   readonly waitForReadiness?: (
     key: RuntimeWorkloadKey,
@@ -358,6 +360,7 @@ export const makeContainerRuntime = (
               ...(resolution.networkAliases === undefined
                 ? {}
                 : { networkAliases: resolution.networkAliases }),
+              ...(resolution.hostRoute === undefined ? {} : { hostRoute: resolution.hostRoute }),
               ...(resolution.command === undefined ? {} : { command: resolution.command }),
             } satisfies ContainerContainerSpec),
           );

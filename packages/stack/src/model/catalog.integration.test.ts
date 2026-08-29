@@ -46,6 +46,38 @@ describe("complete workload catalog", () => {
       "bin/supavisor",
       "bin/server",
     ]);
+    expect(Object.values(WORKLOAD_CATALOG).map((entry) => entry.containerAlias)).toEqual(
+      expect.arrayContaining([
+        "supabase-database",
+        "supabase-rest",
+        "supabase-auth",
+        "supabase-realtime",
+        "supabase-storage",
+        "supabase-imgproxy",
+        "supabase-functions",
+        "supabase-studio",
+        "supabase-pgmeta",
+        "supabase-mail",
+        "supabase-analytics",
+        "supabase-vector",
+        "supabase-pooler",
+      ]),
+    );
+    expect(WORKLOAD_CATALOG["storage:storage"]?.nativeProcess).toEqual({
+      executablePath: "node/bin/node",
+      args: ["app/dist/start/server.js"],
+      cwd: "app",
+    });
+    expect(WORKLOAD_CATALOG["studio:pgmeta"]?.nativeProcess).toEqual({
+      executablePath: "node/bin/node",
+      args: ["app/dist/server/server.js"],
+      cwd: "app",
+    });
+    expect(WORKLOAD_CATALOG["studio:studio"]?.nativeProcess).toEqual({
+      executablePath: "node/bin/node",
+      args: ["app/apps/studio/docker-entrypoint.mjs"],
+      cwd: "app/apps/studio",
+    });
   });
 
   it.live("resolves every declared workload to a slim-services native release", () =>

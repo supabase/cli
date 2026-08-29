@@ -1,9 +1,29 @@
 import type { PersistedStackState } from "../state/StackState.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { CapabilityName } from "../public/Capability.ts";
-import type { ContainerMount } from "./ContainerEngine.ts";
+import type { ContainerHostRoute, ContainerMount } from "./ContainerEngine.ts";
+import { WORKLOAD_CATALOG, type NativeWorkloadProcess } from "../model/WorkloadCatalog.ts";
 
 export type WorkloadRuntimeKind = "native" | "container";
+
+/** Inputs resolved by the owner before a process/container is created. */
+export interface WorkloadRuntimeInputs {
+  /** Resolved GoTrue signing key JSON and public JWKS. */
+  readonly auth?: Readonly<{ readonly jwtKeys?: string; readonly jwks?: string }>;
+  /** Resolved host path for the BigQuery service-account file. */
+  readonly analytics?: Readonly<{
+    readonly gcpJwtPath?: string;
+    readonly vectorConfigPath?: string;
+  }>;
+  /** Host route used by containers to reach StackGateway. */
+  readonly hostRoute?: ContainerHostRoute;
+}
+
+export interface NativeProcessResolution {
+  readonly executable: string;
+  readonly args: ReadonlyArray<string>;
+  readonly cwd: string;
+}
 
 /** Complete process-side contract for one catalog workload. */
 export interface WorkloadRuntimeSpec {
@@ -24,38 +44,61 @@ export interface WorkloadRuntimeSpec {
     workload: PlannedWorkload,
     port: number,
     runtime?: WorkloadRuntimeKind,
+    inputs?: WorkloadRuntimeInputs,
   ) => Readonly<Record<string, string>>;
   readonly containerArgs: (
     state: PersistedStackState,
     workload: PlannedWorkload,
     port: number,
+    inputs?: WorkloadRuntimeInputs,
   ) => ReadonlyArray<string>;
   readonly containerMounts?: (
     state: PersistedStackState,
     workload: PlannedWorkload,
+    inputs?: WorkloadRuntimeInputs,
   ) => ReadonlyArray<ContainerMount>;
   readonly networkAliases?: ReadonlyArray<string>;
   readonly readiness: Readonly<{ readonly protocol: "http" | "tcp"; readonly path?: string }>;
+  readonly nativeProcess: (
+    artifactRoot: string,
+    state: PersistedStackState,
+    workload: PlannedWorkload,
+    port: number,
+  ) => NativeProcessResolution;
 }
 
-type WorkloadRuntimeSpecDefinition = Omit<WorkloadRuntimeSpec, "cwd" | "privateEndpoint"> &
-  Partial<Pick<WorkloadRuntimeSpec, "cwd" | "privateEndpoint">>;
+type WorkloadRuntimeSpecDefinition = Omit<
+  WorkloadRuntimeSpec,
+  "cwd" | "privateEndpoint" | "nativeProcess"
+> &
+  Partial<Pick<WorkloadRuntimeSpec, "cwd" | "privateEndpoint" | "nativeProcess">>;
 
 export interface ContainerWorkloadResolution {
   readonly command: ReadonlyArray<string>;
   readonly env: Readonly<Record<string, string>>;
   readonly mounts: ReadonlyArray<ContainerMount>;
   readonly networkAliases: ReadonlyArray<string>;
+  readonly hostRoute?: ContainerHostRoute;
 }
 
 export const FUNCTIONS_CONTAINER_ROOT = "/__supabase_functions";
 const DATABASE_NETWORK_ALIAS = "supabase-database";
+
+const MAIL_NETWORK_ALIAS = "supabase-mail";
+
+const compactEnvironment = (
+  environment: Readonly<Record<string, string>>,
+): Readonly<Record<string, string>> =>
+  Object.fromEntries(Object.entries(environment).filter(([, value]) => value.length > 0));
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 const settingsFor = (state: PersistedStackState, capability: CapabilityName): unknown =>
   state.definition === undefined ? undefined : state.definition.capabilities[capability].settings;
+
+const capabilityEnabled = (state: PersistedStackState, capability: CapabilityName): boolean =>
+  state.definition?.capabilities[capability].enabled ?? true;
 
 const secret = (state: PersistedStackState, slot: string): string =>
   state.secrets[slot]?.value ?? "";
@@ -105,10 +148,12 @@ const capabilityEnv = (
   state: PersistedStackState,
   capability: CapabilityName,
   prefix: string,
+  omit: (key: string) => boolean = () => false,
 ): Record<string, string> => {
   const out: Record<string, string> = {};
   const settings = settingsFor(state, capability);
   if (settings !== undefined) flattenSettings(state, settings, prefix, out);
+  for (const key of Object.keys(out)) if (omit(key)) delete out[key];
   return out;
 };
 
@@ -150,24 +195,67 @@ const privateEndpointFor = (
   port,
 });
 
+const aliasFor = (workload: PlannedWorkload): string =>
+  WORKLOAD_CATALOG[workload.id]?.containerAlias ?? `supabase-${workload.id.replace(/:/gu, "-")}`;
+
+const artifactPath = (root: string, relative: string): string =>
+  relative === "." ? root : `${root.replace(/\/+$/u, "")}/${relative}`;
+
+const nativeProcessFor = (
+  artifactRoot: string,
+  state: PersistedStackState,
+  workload: PlannedWorkload,
+  port: number,
+  spec: WorkloadRuntimeSpecDefinition,
+): NativeProcessResolution => {
+  const metadata: NativeWorkloadProcess | undefined = WORKLOAD_CATALOG[workload.id]?.nativeProcess;
+  if (metadata !== undefined)
+    return {
+      executable: artifactPath(artifactRoot, metadata.executablePath),
+      args: metadata.args.map((arg) =>
+        arg.startsWith("app/") || arg.startsWith("share/") ? artifactPath(artifactRoot, arg) : arg,
+      ),
+      cwd: artifactPath(artifactRoot, metadata.cwd),
+    };
+  const executablePath = WORKLOAD_CATALOG[workload.id]?.executablePath;
+  return {
+    executable:
+      executablePath === undefined ? artifactRoot : artifactPath(artifactRoot, executablePath),
+    args: spec
+      .args(state, workload, port, "native")
+      .map((arg) =>
+        arg.startsWith("app/") || arg.startsWith("share/") ? artifactPath(artifactRoot, arg) : arg,
+      ),
+    cwd: spec.cwd?.(state, workload) ?? state.identity.projectRoot,
+  };
+};
+
 const withRestSettings = (
   state: PersistedStackState,
   runtime: WorkloadRuntimeKind,
   port: number,
   workload: PlannedWorkload,
-): Record<string, string> => ({
-  ...common(workload, port),
-  ...capabilityEnv(state, "rest", "PGRST"),
-  PGRST_DB_URI: dbUrl(state, "authenticator", runtime),
-  PGRST_DB_SCHEMAS: valueAt(state, "rest", "schemas") || "public,graphql_public",
-  PGRST_DB_EXTRA_SEARCH_PATH: valueAt(state, "rest", "extra_search_path") || "public,extensions",
-  PGRST_DB_ANON_ROLE: "anon",
-  PGRST_JWT_SECRET: secret(state, "secret:security.jwt.signing.secret"),
-  PGRST_SERVER_PORT: String(port),
-  PGRST_DB_MAX_ROWS: valueAt(state, "rest", "max_rows") || "1000",
-});
+  _inputs: WorkloadRuntimeInputs = {},
+): Record<string, string> =>
+  compactEnvironment({
+    ...common(workload, port),
+    ...capabilityEnv(state, "rest", "PGRST"),
+    PGRST_DB_URI: dbUrl(state, "authenticator", runtime),
+    PGRST_DB_SCHEMAS: valueAt(state, "rest", "schemas") || "public,graphql_public",
+    PGRST_DB_EXTRA_SEARCH_PATH: valueAt(state, "rest", "extra_search_path") || "public,extensions",
+    PGRST_DB_ANON_ROLE: "anon",
+    // PostgREST validates the compact JWT with the managed signing secret;
+    // resolved JWKS belongs to services that consume public key sets (Auth,
+    // Realtime and Storage), not this HMAC setting.
+    PGRST_JWT_SECRET: secret(state, "secret:security.jwt.signing.secret"),
+    PGRST_SERVER_PORT: String(port),
+    PGRST_DB_MAX_ROWS: valueAt(state, "rest", "max_rows") || "1000",
+  });
 
-const authNestedEnvironment = (state: PersistedStackState): Record<string, string> => {
+const authNestedEnvironment = (
+  state: PersistedStackState,
+  jwtIssuer: string,
+): Record<string, string> => {
   const out: Record<string, string> = {};
   const settings = settingsFor(state, "auth");
   if (!isRecord(settings)) return out;
@@ -182,7 +270,7 @@ const authNestedEnvironment = (state: PersistedStackState): Record<string, strin
           entry,
         );
       const configuredRedirect = settingValue(state, value.redirect_uri);
-      out[`${prefix}_REDIRECT_URI`] = configuredRedirect || `${authExternalUrl(state)}/callback`;
+      out[`${prefix}_REDIRECT_URI`] = configuredRedirect || `${jwtIssuer}/callback`;
     }
   const hooks = settings.hook;
   if (isRecord(hooks))
@@ -233,10 +321,23 @@ const authExternalUrl = (state: PersistedStackState): string => {
   return `http://127.0.0.1${apiPort === undefined ? "" : `:${apiPort}`}/auth/v1`;
 };
 
+const apiGatewayUrl = (state: PersistedStackState, inputs?: WorkloadRuntimeInputs): string => {
+  const apiPort = state.ports.find((assignment) => assignment.field === "api")?.port;
+  if (inputs?.hostRoute !== undefined)
+    return `http://${inputs.hostRoute.host}${apiPort === undefined ? "" : `:${apiPort}`}`;
+  return (
+    valueAt(state, "studio", "api_url") ||
+    `http://127.0.0.1${apiPort === undefined ? "" : `:${apiPort}`}`
+  );
+};
+
 const authSmsProvider = (state: PersistedStackState): string => {
   const sms = settingsFor(state, "auth");
   if (!isRecord(sms) || !isRecord(sms.sms)) return "";
-  const providers = ["twilio_verify", "twilio", "messagebird", "textlocal", "vonage"];
+  // Keep the same fixed priority as the legacy GoTrue builder. If multiple
+  // providers are enabled, the first one wins and only its credentials are
+  // consumed by GoTrue.
+  const providers = ["twilio", "twilio_verify", "messagebird", "textlocal", "vonage"];
   for (const provider of providers) {
     const value = sms.sms[provider];
     if (isRecord(value) && value.enabled === true) return provider;
@@ -270,139 +371,173 @@ const withAuthSettings = (
   runtime: WorkloadRuntimeKind,
   port: number,
   workload: PlannedWorkload,
-): Record<string, string> => ({
-  ...common(workload, port),
-  ...capabilityEnv(state, "auth", "GOTRUE"),
-  ...authNestedEnvironment(state),
-  GOTRUE_DB_DATABASE_URL: dbUrl(state, "supabase_auth_admin", runtime),
-  GOTRUE_DB_DRIVER: "postgres",
-  GOTRUE_SITE_URL: valueAt(state, "auth", "site_url") || "http://127.0.0.1:3000",
-  GOTRUE_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
-  GOTRUE_JWT_EXP: valueAt(state, "auth", "jwt_expiry") || "3600",
-  GOTRUE_JWT_AUD: "authenticated",
-  GOTRUE_JWT_ADMIN_ROLES: "service_role",
-  GOTRUE_JWT_DEFAULT_GROUP_NAME: "authenticated",
-  GOTRUE_JWT_VALIDMETHODS: "HS256,RS256,ES256",
-  GOTRUE_JWT_VALID_METHODS: "HS256,RS256,ES256",
-  GOTRUE_API_HOST: "0.0.0.0",
-  GOTRUE_API_PORT: String(port),
-  API_EXTERNAL_URL: authExternalUrl(state),
-  GOTRUE_MAILER_URLPATHS_INVITE: `${authExternalUrl(state)}/verify`,
-  GOTRUE_MAILER_URLPATHS_CONFIRMATION: `${authExternalUrl(state)}/verify`,
-  GOTRUE_MAILER_URLPATHS_RECOVERY: `${authExternalUrl(state)}/verify`,
-  GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: `${authExternalUrl(state)}/verify`,
-  GOTRUE_URI_ALLOW_LIST: valueAt(state, "auth", "additional_redirect_urls"),
-  GOTRUE_REFRESH_TOKEN_ROTATION_ENABLED: valueAt(state, "auth", "enable_refresh_token_rotation"),
-  GOTRUE_REFRESH_TOKEN_REUSE_INTERVAL: valueAt(state, "auth", "refresh_token_reuse_interval"),
-  GOTRUE_DISABLE_SIGNUP: valueAt(state, "auth", "enable_signup") === "false" ? "true" : "false",
-  GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: valueAt(state, "auth", "enable_anonymous_sign_ins"),
-  GOTRUE_PASSWORD_MIN_LENGTH: valueAt(state, "auth", "minimum_password_length"),
-  GOTRUE_PASSWORD_REQUIREMENTS: valueAt(state, "auth", "password_requirements"),
-  GOTRUE_PASSWORD_REQUIRED_CHARACTERS: passwordRequiredCharacters(state),
-  GOTRUE_JWT_ISSUER: valueAt(state, "auth", "jwt_issuer"),
-  GOTRUE_SECURITY_MANUAL_LINKING_ENABLED: valueAt(state, "auth", "enable_manual_linking"),
-  GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: valueAt(
-    state,
-    "auth",
-    "enable_refresh_token_rotation",
-  ),
-  GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL: valueAt(
-    state,
-    "auth",
-    "refresh_token_reuse_interval",
-  ),
-  GOTRUE_RATE_LIMIT_EMAIL_SENT: valueAt(state, "auth", "rate_limit.email_sent"),
-  GOTRUE_RATE_LIMIT_SMS_SENT: valueAt(state, "auth", "rate_limit.sms_sent"),
-  GOTRUE_RATE_LIMIT_ANONYMOUS_USERS: valueAt(state, "auth", "rate_limit.anonymous_users"),
-  GOTRUE_RATE_LIMIT_TOKEN_REFRESH: valueAt(state, "auth", "rate_limit.token_refresh"),
-  GOTRUE_RATE_LIMIT_VERIFY: valueAt(state, "auth", "rate_limit.token_verifications"),
-  GOTRUE_RATE_LIMIT_OTP: valueAt(state, "auth", "rate_limit.sign_in_sign_ups"),
-  GOTRUE_RATE_LIMIT_WEB3: valueAt(state, "auth", "rate_limit.web3"),
-  GOTRUE_SECURITY_CAPTCHA_ENABLED: valueAt(state, "auth", "captcha.enabled"),
-  GOTRUE_SECURITY_CAPTCHA_PROVIDER: valueAt(state, "auth", "captcha.provider"),
-  GOTRUE_SECURITY_CAPTCHA_SECRET: valueAt(state, "auth", "captcha.secret"),
-  GOTRUE_MFA_TOTP_ENROLL_ENABLED: valueAt(state, "auth", "mfa.totp.enroll_enabled"),
-  GOTRUE_MFA_TOTP_VERIFY_ENABLED: valueAt(state, "auth", "mfa.totp.verify_enabled"),
-  GOTRUE_MFA_PHONE_ENROLL_ENABLED: valueAt(state, "auth", "mfa.phone.enroll_enabled"),
-  GOTRUE_MFA_PHONE_VERIFY_ENABLED: valueAt(state, "auth", "mfa.phone.verify_enabled"),
-  GOTRUE_MFA_PHONE_OTP_LENGTH: valueAt(state, "auth", "mfa.phone.otp_length"),
-  GOTRUE_MFA_PHONE_TEMPLATE: valueAt(state, "auth", "mfa.phone.template"),
-  GOTRUE_MFA_PHONE_MAX_FREQUENCY: valueAt(state, "auth", "mfa.phone.max_frequency"),
-  GOTRUE_MFA_WEB_AUTHN_ENROLL_ENABLED: valueAt(state, "auth", "mfa.web_authn.enroll_enabled"),
-  GOTRUE_MFA_WEB_AUTHN_VERIFY_ENABLED: valueAt(state, "auth", "mfa.web_authn.verify_enabled"),
-  GOTRUE_MFA_MAX_ENROLLED_FACTORS: valueAt(state, "auth", "mfa.max_enrolled_factors"),
-  GOTRUE_SESSIONS_TIMEBOX: valueAt(state, "auth", "sessions.timebox"),
-  GOTRUE_SESSIONS_INACTIVITY_TIMEOUT: valueAt(state, "auth", "sessions.inactivity_timeout"),
-  GOTRUE_MAILER_AUTOCONFIRM:
-    valueAt(state, "auth", "email.enable_confirmations") === "false" ? "true" : "false",
-  GOTRUE_MAILER_TEMPLATE_RELOADING_ENABLED: "true",
-  GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED: valueAt(state, "auth", "email.secure_password_change"),
-  GOTRUE_MAILER_MAX_FREQUENCY: valueAt(state, "auth", "email.max_frequency"),
-  GOTRUE_SMTP_MAX_FREQUENCY: valueAt(state, "auth", "email.max_frequency"),
-  GOTRUE_MAILER_OTP_LENGTH: valueAt(state, "auth", "email.otp_length"),
-  GOTRUE_MAILER_OTP_EXP: valueAt(state, "auth", "email.otp_expiry"),
-  GOTRUE_SMTP_HOST: valueAt(state, "auth", "email.smtp.host"),
-  GOTRUE_SMTP_PORT: valueAt(state, "auth", "email.smtp.port"),
-  GOTRUE_SMTP_USER: valueAt(state, "auth", "email.smtp.user"),
-  GOTRUE_SMTP_PASS: valueAt(state, "auth", "email.smtp.pass"),
-  GOTRUE_SMTP_ADMIN_EMAIL: valueAt(state, "auth", "email.smtp.admin_email"),
-  GOTRUE_SMTP_SENDER_NAME: valueAt(state, "auth", "email.smtp.sender_name"),
-  GOTRUE_SMS_AUTOCONFIRM:
-    valueAt(state, "auth", "sms.enable_confirmations") === "false" ? "true" : "false",
-  GOTRUE_SMS_MAX_FREQUENCY: valueAt(state, "auth", "sms.max_frequency"),
-  GOTRUE_SMS_OTP_LENGTH: valueAt(state, "auth", "mfa.phone.otp_length"),
-  GOTRUE_SMS_TEMPLATE: valueAt(state, "auth", "sms.template"),
-  GOTRUE_SMS_PROVIDER: authSmsProvider(state),
-  GOTRUE_SMS_TEST_OTP: authSmsTestOtp(state),
-  GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED: valueAt(state, "auth", "web3.solana.enabled"),
-  GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED: valueAt(state, "auth", "web3.ethereum.enabled"),
-  GOTRUE_EXTERNAL_EMAIL_ENABLED: valueAt(state, "auth", "email.enable_signup"),
-  GOTRUE_EXTERNAL_PHONE_ENABLED: valueAt(state, "auth", "sms.enable_signup"),
-  GOTRUE_OAUTH_SERVER_ENABLED: valueAt(state, "auth", "oauth_server.enabled"),
-  GOTRUE_OAUTH_SERVER_AUTHORIZATION_PATH: valueAt(
-    state,
-    "auth",
-    "oauth_server.authorization_url_path",
-  ),
-  GOTRUE_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION: valueAt(
-    state,
-    "auth",
-    "oauth_server.allow_dynamic_registration",
-  ),
-});
+  inputs: WorkloadRuntimeInputs = {},
+): Record<string, string> =>
+  compactEnvironment({
+    ...common(workload, port),
+    ...capabilityEnv(
+      state,
+      "auth",
+      "GOTRUE",
+      (key) => key === "GOTRUE_SIGNING_KEYS_PATH" || key.startsWith("GOTRUE_THIRD_PARTY_"),
+    ),
+    ...authNestedEnvironment(state, valueAt(state, "auth", "jwt_issuer") || authExternalUrl(state)),
+    GOTRUE_DB_DATABASE_URL: dbUrl(state, "supabase_auth_admin", runtime),
+    GOTRUE_DB_DRIVER: "postgres",
+    GOTRUE_SITE_URL: valueAt(state, "auth", "site_url") || "http://127.0.0.1:3000",
+    GOTRUE_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
+    GOTRUE_JWT_EXP: valueAt(state, "auth", "jwt_expiry") || "3600",
+    GOTRUE_JWT_AUD: "authenticated",
+    GOTRUE_JWT_ADMIN_ROLES: "service_role",
+    GOTRUE_JWT_DEFAULT_GROUP_NAME: "authenticated",
+    GOTRUE_JWT_VALIDMETHODS: "HS256,RS256,ES256",
+    GOTRUE_JWT_VALID_METHODS: "HS256,RS256,ES256",
+    ...(inputs.auth?.jwtKeys === undefined ? {} : { GOTRUE_JWT_KEYS: inputs.auth.jwtKeys }),
+    GOTRUE_API_HOST: "0.0.0.0",
+    GOTRUE_API_PORT: String(port),
+    API_EXTERNAL_URL: authExternalUrl(state),
+    GOTRUE_MAILER_URLPATHS_INVITE: `${authExternalUrl(state)}/verify`,
+    GOTRUE_MAILER_URLPATHS_CONFIRMATION: `${authExternalUrl(state)}/verify`,
+    GOTRUE_MAILER_URLPATHS_RECOVERY: `${authExternalUrl(state)}/verify`,
+    GOTRUE_MAILER_URLPATHS_EMAIL_CHANGE: `${authExternalUrl(state)}/verify`,
+    GOTRUE_URI_ALLOW_LIST: valueAt(state, "auth", "additional_redirect_urls"),
+    GOTRUE_REFRESH_TOKEN_ROTATION_ENABLED: valueAt(state, "auth", "enable_refresh_token_rotation"),
+    GOTRUE_REFRESH_TOKEN_REUSE_INTERVAL: valueAt(state, "auth", "refresh_token_reuse_interval"),
+    GOTRUE_DISABLE_SIGNUP: valueAt(state, "auth", "enable_signup") === "false" ? "true" : "false",
+    GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED: valueAt(state, "auth", "enable_anonymous_sign_ins"),
+    GOTRUE_PASSWORD_MIN_LENGTH: valueAt(state, "auth", "minimum_password_length"),
+    GOTRUE_PASSWORD_REQUIREMENTS: valueAt(state, "auth", "password_requirements"),
+    GOTRUE_PASSWORD_REQUIRED_CHARACTERS: passwordRequiredCharacters(state),
+    GOTRUE_JWT_ISSUER: valueAt(state, "auth", "jwt_issuer") || authExternalUrl(state),
+    GOTRUE_SECURITY_MANUAL_LINKING_ENABLED: valueAt(state, "auth", "enable_manual_linking"),
+    GOTRUE_SECURITY_REFRESH_TOKEN_ROTATION_ENABLED: valueAt(
+      state,
+      "auth",
+      "enable_refresh_token_rotation",
+    ),
+    GOTRUE_SECURITY_REFRESH_TOKEN_REUSE_INTERVAL: valueAt(
+      state,
+      "auth",
+      "refresh_token_reuse_interval",
+    ),
+    GOTRUE_RATE_LIMIT_EMAIL_SENT: valueAt(state, "auth", "rate_limit.email_sent"),
+    GOTRUE_RATE_LIMIT_SMS_SENT: valueAt(state, "auth", "rate_limit.sms_sent"),
+    GOTRUE_RATE_LIMIT_ANONYMOUS_USERS: valueAt(state, "auth", "rate_limit.anonymous_users"),
+    GOTRUE_RATE_LIMIT_TOKEN_REFRESH: valueAt(state, "auth", "rate_limit.token_refresh"),
+    GOTRUE_RATE_LIMIT_VERIFY: valueAt(state, "auth", "rate_limit.token_verifications"),
+    GOTRUE_RATE_LIMIT_OTP: valueAt(state, "auth", "rate_limit.sign_in_sign_ups"),
+    GOTRUE_RATE_LIMIT_WEB3: valueAt(state, "auth", "rate_limit.web3"),
+    GOTRUE_SECURITY_CAPTCHA_ENABLED: valueAt(state, "auth", "captcha.enabled"),
+    GOTRUE_SECURITY_CAPTCHA_PROVIDER: valueAt(state, "auth", "captcha.provider"),
+    GOTRUE_SECURITY_CAPTCHA_SECRET: valueAt(state, "auth", "captcha.secret"),
+    GOTRUE_MFA_TOTP_ENROLL_ENABLED: valueAt(state, "auth", "mfa.totp.enroll_enabled"),
+    GOTRUE_MFA_TOTP_VERIFY_ENABLED: valueAt(state, "auth", "mfa.totp.verify_enabled"),
+    GOTRUE_MFA_PHONE_ENROLL_ENABLED: valueAt(state, "auth", "mfa.phone.enroll_enabled"),
+    GOTRUE_MFA_PHONE_VERIFY_ENABLED: valueAt(state, "auth", "mfa.phone.verify_enabled"),
+    GOTRUE_MFA_PHONE_OTP_LENGTH: valueAt(state, "auth", "mfa.phone.otp_length"),
+    GOTRUE_MFA_PHONE_TEMPLATE: valueAt(state, "auth", "mfa.phone.template"),
+    GOTRUE_MFA_PHONE_MAX_FREQUENCY: valueAt(state, "auth", "mfa.phone.max_frequency"),
+    GOTRUE_MFA_WEB_AUTHN_ENROLL_ENABLED: valueAt(state, "auth", "mfa.web_authn.enroll_enabled"),
+    GOTRUE_MFA_WEB_AUTHN_VERIFY_ENABLED: valueAt(state, "auth", "mfa.web_authn.verify_enabled"),
+    GOTRUE_MFA_MAX_ENROLLED_FACTORS: valueAt(state, "auth", "mfa.max_enrolled_factors"),
+    GOTRUE_SESSIONS_TIMEBOX: valueAt(state, "auth", "sessions.timebox"),
+    GOTRUE_SESSIONS_INACTIVITY_TIMEOUT: valueAt(state, "auth", "sessions.inactivity_timeout"),
+    GOTRUE_MAILER_AUTOCONFIRM:
+      valueAt(state, "auth", "email.enable_confirmations") === "false" ? "true" : "false",
+    GOTRUE_MAILER_TEMPLATE_RELOADING_ENABLED: "true",
+    GOTRUE_MAILER_SECURE_EMAIL_CHANGE_ENABLED: valueAt(
+      state,
+      "auth",
+      "email.double_confirm_changes",
+    ),
+    GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION: valueAt(
+      state,
+      "auth",
+      "email.secure_password_change",
+    ),
+    GOTRUE_MAILER_MAX_FREQUENCY: valueAt(state, "auth", "email.max_frequency"),
+    GOTRUE_SMTP_MAX_FREQUENCY: valueAt(state, "auth", "email.max_frequency"),
+    GOTRUE_MAILER_OTP_LENGTH: valueAt(state, "auth", "email.otp_length"),
+    GOTRUE_MAILER_OTP_EXP: valueAt(state, "auth", "email.otp_expiry"),
+    ...(valueAt(state, "auth", "email.smtp.enabled") === "true"
+      ? {
+          GOTRUE_SMTP_HOST: valueAt(state, "auth", "email.smtp.host"),
+          GOTRUE_SMTP_PORT: valueAt(state, "auth", "email.smtp.port"),
+          GOTRUE_SMTP_USER: valueAt(state, "auth", "email.smtp.user"),
+          GOTRUE_SMTP_PASS: valueAt(state, "auth", "email.smtp.pass"),
+          GOTRUE_SMTP_ADMIN_EMAIL: valueAt(state, "auth", "email.smtp.admin_email"),
+          GOTRUE_SMTP_SENDER_NAME: valueAt(state, "auth", "email.smtp.sender_name"),
+        }
+      : capabilityEnabled(state, "mail")
+        ? {
+            GOTRUE_SMTP_HOST: runtime === "container" ? MAIL_NETWORK_ALIAS : "127.0.0.1",
+            GOTRUE_SMTP_PORT: "1025",
+            GOTRUE_SMTP_ADMIN_EMAIL: valueAt(state, "mail", "admin_email") || "admin@email.com",
+            GOTRUE_SMTP_SENDER_NAME: valueAt(state, "mail", "sender_name") || "Admin",
+          }
+        : {}),
+    GOTRUE_SMS_AUTOCONFIRM:
+      valueAt(state, "auth", "sms.enable_confirmations") === "false" ? "true" : "false",
+    GOTRUE_SMS_MAX_FREQUENCY: valueAt(state, "auth", "sms.max_frequency"),
+    GOTRUE_SMS_OTP_EXP: "6000",
+    GOTRUE_SMS_OTP_LENGTH: "6",
+    GOTRUE_SMS_TEMPLATE: valueAt(state, "auth", "sms.template"),
+    GOTRUE_SMS_PROVIDER: authSmsProvider(state),
+    GOTRUE_SMS_TEST_OTP: authSmsTestOtp(state),
+    GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED: valueAt(state, "auth", "web3.solana.enabled"),
+    GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED: valueAt(state, "auth", "web3.ethereum.enabled"),
+    GOTRUE_EXTERNAL_EMAIL_ENABLED: valueAt(state, "auth", "email.enable_signup"),
+    GOTRUE_EXTERNAL_PHONE_ENABLED: valueAt(state, "auth", "sms.enable_signup"),
+    GOTRUE_OAUTH_SERVER_ENABLED: valueAt(state, "auth", "oauth_server.enabled"),
+    GOTRUE_OAUTH_SERVER_AUTHORIZATION_PATH: valueAt(
+      state,
+      "auth",
+      "oauth_server.authorization_url_path",
+    ),
+    GOTRUE_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION: valueAt(
+      state,
+      "auth",
+      "oauth_server.allow_dynamic_registration",
+    ),
+  });
 
 const withStorageSettings = (
   state: PersistedStackState,
   runtime: WorkloadRuntimeKind,
   port: number,
   workload: PlannedWorkload,
-): Record<string, string> => ({
-  ...common(workload, port),
-  ...capabilityEnv(state, "storage", "STORAGE"),
-  PORT: String(port),
-  ANON_KEY: secret(state, "secret:auth.settings.anon_key"),
-  SERVICE_KEY: secret(state, "secret:auth.settings.service_role_key"),
-  AUTH_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
-  DATABASE_URL: dbUrl(state, "supabase_storage_admin", runtime),
-  FILE_SIZE_LIMIT: valueAt(state, "storage", "file_size_limit") || "50MiB",
-  STORAGE_BACKEND: "file",
-  FILE_STORAGE_BACKEND_PATH: "/var/lib/storage",
-  STORAGE_FILE_BACKEND_PATH: "/var/lib/storage",
-  ENABLE_IMAGE_TRANSFORMATION: valueAt(state, "storage", "image_transformation.enabled") || "false",
-  S3_PROTOCOL_ENABLED: valueAt(state, "storage", "s3_protocol.enabled") || "true",
-  S3_PROTOCOL_ACCESS_KEY_ID: "local",
-  S3_PROTOCOL_ACCESS_KEY_SECRET: "local-secret",
-  STORAGE_S3_REGION: "local",
-  GLOBAL_S3_BUCKET: "stub",
-  TENANT_ID: "stub",
-  S3_PROTOCOL_PREFIX: "/storage/v1",
-  UPLOAD_FILE_SIZE_LIMIT: "52428800000",
-  UPLOAD_FILE_SIZE_LIMIT_STANDARD: "5242880000",
-  SIGNED_UPLOAD_URL_EXPIRATION_TIME: "7200",
-  PGRST_JWT_SECRET: secret(state, "secret:security.jwt.signing.secret"),
-  TUS_URL_PATH: "/storage/v1/upload/resumable",
-  IMGPROXY_URL: runtime === "container" ? "http://supabase-workload:8080" : "http://127.0.0.1:8080",
-});
+  inputs: WorkloadRuntimeInputs = {},
+): Record<string, string> =>
+  compactEnvironment({
+    ...common(workload, port),
+    ...capabilityEnv(state, "storage", "STORAGE"),
+    PORT: String(port),
+    ANON_KEY: secret(state, "secret:auth.settings.anon_key"),
+    SERVICE_KEY: secret(state, "secret:auth.settings.service_role_key"),
+    AUTH_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
+    DATABASE_URL: dbUrl(state, "supabase_storage_admin", runtime),
+    FILE_SIZE_LIMIT: valueAt(state, "storage", "file_size_limit") || "50MiB",
+    STORAGE_BACKEND: "file",
+    FILE_STORAGE_BACKEND_PATH: "/var/lib/storage",
+    STORAGE_FILE_BACKEND_PATH: "/var/lib/storage",
+    ENABLE_IMAGE_TRANSFORMATION:
+      valueAt(state, "storage", "image_transformation.enabled") || "false",
+    S3_PROTOCOL_ENABLED: valueAt(state, "storage", "s3_protocol.enabled") || "true",
+    S3_PROTOCOL_ACCESS_KEY_ID: "local",
+    S3_PROTOCOL_ACCESS_KEY_SECRET: "local-secret",
+    STORAGE_S3_REGION: "local",
+    GLOBAL_S3_BUCKET: "stub",
+    TENANT_ID: "stub",
+    S3_PROTOCOL_PREFIX: "/storage/v1",
+    UPLOAD_FILE_SIZE_LIMIT: "52428800000",
+    UPLOAD_FILE_SIZE_LIMIT_STANDARD: "5242880000",
+    SIGNED_UPLOAD_URL_EXPIRATION_TIME: "7200",
+    PGRST_JWT_SECRET: secret(state, "secret:security.jwt.signing.secret"),
+    ...(inputs.auth?.jwks === undefined ? {} : { JWT_JWKS: inputs.auth.jwks }),
+    TUS_URL_PATH: "/storage/v1/upload/resumable",
+    IMGPROXY_URL:
+      runtime === "container" ? "http://supabase-imgproxy:8080" : "http://127.0.0.1:8080",
+  });
 
 const databaseArgs = (
   state: PersistedStackState,
@@ -430,11 +565,13 @@ const analyticsEnv = (
   runtime: WorkloadRuntimeKind,
   port: number,
   workload: PlannedWorkload,
+  inputs: WorkloadRuntimeInputs = {},
 ): Record<string, string> => {
   const backend = valueAt(state, "analytics", "backend") || "postgres";
-  return {
+  const gcpJwtPath = inputs.analytics?.gcpJwtPath ?? "";
+  return compactEnvironment({
     ...common(workload, port),
-    ...capabilityEnv(state, "analytics", "ANALYTICS"),
+    ...capabilityEnv(state, "analytics", "ANALYTICS", (key) => key === "ANALYTICS_GCP_JWT_PATH"),
     PORT: String(port),
     PHX_HTTP_PORT: String(port),
     DB_HOSTNAME: dbHost(runtime),
@@ -446,6 +583,7 @@ const analyticsEnv = (
     LOGFLARE_SUPABASE_MODE: "true",
     LOGFLARE_SINGLE_TENANT: "true",
     LOGFLARE_PRIVATE_ACCESS_TOKEN: valueAt(state, "analytics", "api_key"),
+    LOGFLARE_FEATURE_FLAG_OVERRIDE: "'multibackend=true'",
     LOGFLARE_MIN_CLUSTER_SIZE: "1",
     LOGFLARE_LOG_LEVEL: "warn",
     LOGFLARE_NODE_HOST: runtime === "container" ? "0.0.0.0" : "127.0.0.1",
@@ -459,24 +597,29 @@ const analyticsEnv = (
           GOOGLE_DATASET_ID_APPEND: "_prod",
           GOOGLE_PROJECT_ID: valueAt(state, "analytics", "gcp_project_id") || "local",
           GOOGLE_PROJECT_NUMBER: valueAt(state, "analytics", "gcp_project_number") || "0",
+          GOOGLE_APPLICATION_CREDENTIALS:
+            runtime === "container" && gcpJwtPath.length > 0
+              ? "/opt/app/rel/logflare/bin/gcloud.json"
+              : gcpJwtPath,
         }),
-  };
+  });
 };
 
 const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "database:database": {
     containerPort: 5432,
     args: (state, _workload, port) => databaseArgs(state, port, "native"),
-    env: (state, workload, port, runtime = "native") => ({
-      ...common(workload, port),
-      ...capabilityEnv(state, "database", "POSTGRES"),
-      PGDATA:
-        runtime === "container"
-          ? "/var/lib/postgresql/data"
-          : `${state.identity.projectRoot}/.supabase/db/data`,
-      POSTGRES_PASSWORD: secret(state, "secret:database.internal.password"),
-      TZDIR: "/var/db/timezone/zoneinfo",
-    }),
+    env: (state, workload, port, runtime = "native", _inputs = {}) =>
+      compactEnvironment({
+        ...common(workload, port),
+        ...capabilityEnv(state, "database", "POSTGRES"),
+        PGDATA:
+          runtime === "container"
+            ? "/var/lib/postgresql/data"
+            : `${state.identity.projectRoot}/.supabase/db/data`,
+        POSTGRES_PASSWORD: secret(state, "secret:database.internal.password"),
+        TZDIR: "/var/db/timezone/zoneinfo",
+      }),
     containerArgs: (state, _workload, port) => databaseArgs(state, port, "container"),
     readiness: { protocol: "tcp" },
     networkAliases: [DATABASE_NETWORK_ALIAS],
@@ -484,49 +627,61 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "rest:rest": {
     containerPort: 3000,
     args: () => [],
-    env: (state, workload, port, runtime = "native") =>
-      withRestSettings(state, runtime, port, workload),
+    env: (state, workload, port, runtime = "native", inputs = {}) =>
+      withRestSettings(state, runtime, port, workload, inputs),
     containerArgs: () => [],
+    networkAliases: ["supabase-rest"],
     readiness: { protocol: "http", path: "/" },
   },
   "auth:auth": {
     containerPort: 9999,
     args: () => [],
-    env: (state, workload, port, runtime = "native") =>
-      withAuthSettings(state, runtime, port, workload),
+    env: (state, workload, port, runtime = "native", inputs = {}) =>
+      withAuthSettings(state, runtime, port, workload, inputs),
     containerArgs: () => [],
+    networkAliases: ["supabase-auth"],
     readiness: { protocol: "http", path: "/health" },
   },
   "realtime:realtime": {
     containerPort: 4000,
     args: () => [],
-    env: (state, workload, port, runtime = "native") => ({
-      ...common(workload, port),
-      ...capabilityEnv(state, "realtime", "REALTIME"),
-      PORT: String(port),
-      DB_HOST: dbHost(runtime),
-      DB_PORT: String(runtime === "container" ? 5432 : dbPort(state)),
-      DB_USER: "postgres",
-      DB_PASSWORD: secret(state, "secret:database.internal.password"),
-      DB_NAME: "postgres",
-      DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime",
-      API_JWT_SECRET: secret(state, "secret:security.jwt.signing.secret"),
-      API_JWT_JWKS: "",
-      METRICS_JWT_SECRET: secret(state, "secret:security.jwt.signing.secret"),
-      APP_NAME: "realtime",
-      SEED_SELF_HOST: "true",
-      MAX_HEADER_LENGTH: valueAt(state, "realtime", "max_header_length") || "4096",
-      RUN_JANITOR: "true",
-    }),
+    env: (state, workload, port, runtime = "native", inputs = {}) =>
+      compactEnvironment({
+        ...common(workload, port),
+        ...capabilityEnv(state, "realtime", "REALTIME"),
+        PORT: String(port),
+        DB_HOST: dbHost(runtime),
+        DB_PORT: String(runtime === "container" ? 5432 : dbPort(state)),
+        DB_USER: "postgres",
+        DB_PASSWORD: secret(state, "secret:database.internal.password"),
+        DB_NAME: "postgres",
+        DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime",
+        API_JWT_SECRET: secret(state, "secret:security.jwt.signing.secret"),
+        ...(inputs.auth?.jwks === undefined ? {} : { API_JWT_JWKS: inputs.auth.jwks }),
+        METRICS_JWT_SECRET: secret(state, "secret:security.jwt.signing.secret"),
+        DB_ENC_KEY: "supabaserealtime",
+        SECRET_KEY_BASE: "EAx3IQ/wRG1v47ZD4NE4/9RzBI8Jmil3x0yhcW4V2NHBP6c2iPIzwjofi2Ep4HIG",
+        DNS_NODES: "''",
+        APP_NAME: "realtime",
+        SEED_SELF_HOST: "true",
+        MAX_HEADER_LENGTH: valueAt(state, "realtime", "max_header_length") || "4096",
+        ERL_AFLAGS:
+          valueAt(state, "realtime", "ip_version") === "IPv6"
+            ? "-proto_dist inet6_tcp"
+            : "-proto_dist inet_tcp",
+        RUN_JANITOR: "true",
+      }),
     containerArgs: () => [],
+    networkAliases: ["supabase-realtime"],
     readiness: { protocol: "http", path: "/api/ping" },
   },
   "storage:storage": {
     containerPort: 5000,
     args: () => [],
-    env: (state, workload, port, runtime = "native") =>
-      withStorageSettings(state, runtime, port, workload),
+    env: (state, workload, port, runtime = "native", inputs = {}) =>
+      withStorageSettings(state, runtime, port, workload, inputs),
     containerArgs: () => [],
+    networkAliases: ["supabase-storage"],
     readiness: { protocol: "http", path: "/status" },
   },
   "storage:imgproxy": {
@@ -538,6 +693,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       IMGPROXY_LOCAL_FILESYSTEM_ROOT: "/",
     }),
     containerArgs: () => [],
+    networkAliases: ["supabase-imgproxy"],
     readiness: { protocol: "http", path: "/health" },
   },
   "functions:edge-runtime": {
@@ -569,26 +725,42 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     containerMounts: (state) => [
       { source: functionsRoot(state), target: FUNCTIONS_CONTAINER_ROOT, readOnly: true },
     ],
+    networkAliases: ["supabase-functions"],
     readiness: { protocol: "http", path: "/_internal/health" },
   },
   "studio:studio": {
     containerPort: 3000,
     args: () => [],
-    env: (state, workload, port) => ({
-      ...common(workload, port),
-      ...capabilityEnv(state, "studio", "STUDIO"),
-      PORT: String(port),
-      HOSTNAME: "0.0.0.0",
-      SUPABASE_URL: valueAt(state, "studio", "api_url") || "http://127.0.0.1",
-      SUPABASE_PUBLIC_URL: valueAt(state, "studio", "api_url") || "http://127.0.0.1",
-      CURRENT_CLI_VERSION: "local",
-      POSTGRES_PASSWORD: secret(state, "secret:database.internal.password"),
-      POSTGRES_USER_READ_WRITE: "postgres",
-      PGRST_DB_SCHEMAS: "public,graphql_public",
-      PGRST_DB_EXTRA_SEARCH_PATH: "public,extensions",
-      PGRST_DB_MAX_ROWS: "1000",
-    }),
+    env: (state, workload, port, runtime = "native", inputs = {}) =>
+      compactEnvironment({
+        ...common(workload, port),
+        ...capabilityEnv(state, "studio", "STUDIO"),
+        PORT: String(port),
+        HOSTNAME: "0.0.0.0",
+        STUDIO_PG_META_URL:
+          runtime === "container" ? "http://supabase-pgmeta:8080" : "http://127.0.0.1:8080",
+        LOGFLARE_URL:
+          runtime === "container" ? "http://supabase-analytics:4000" : "http://127.0.0.1:4000",
+        LOGFLARE_PRIVATE_ACCESS_TOKEN: valueAt(state, "analytics", "api_key"),
+        NEXT_PUBLIC_ENABLE_LOGS:
+          valueAt(state, "analytics", "backend").length > 0 ? "true" : "false",
+        NEXT_ANALYTICS_BACKEND_PROVIDER: valueAt(state, "analytics", "backend") || "postgres",
+        SUPABASE_URL: apiGatewayUrl(state, runtime === "container" ? inputs : undefined),
+        SUPABASE_PUBLIC_URL: apiGatewayUrl(state, runtime === "container" ? inputs : undefined),
+        SUPABASE_ANON_KEY: secret(state, "secret:auth.settings.anon_key"),
+        SUPABASE_SERVICE_KEY: secret(state, "secret:auth.settings.service_role_key"),
+        SUPABASE_PUBLISHABLE_KEY: secret(state, "secret:auth.settings.anon_key"),
+        SUPABASE_SECRET_KEY: secret(state, "secret:auth.settings.service_role_key"),
+        OPENAI_API_KEY: secret(state, "secret:studio.settings.openai_api_key"),
+        CURRENT_CLI_VERSION: "local",
+        POSTGRES_PASSWORD: secret(state, "secret:database.internal.password"),
+        POSTGRES_USER_READ_WRITE: "postgres",
+        PGRST_DB_SCHEMAS: "public,graphql_public",
+        PGRST_DB_EXTRA_SEARCH_PATH: "public,extensions",
+        PGRST_DB_MAX_ROWS: "1000",
+      }),
     containerArgs: () => [],
+    networkAliases: ["supabase-studio"],
     readiness: { protocol: "http", path: "/api/platform/profile" },
   },
   "studio:pgmeta": {
@@ -605,6 +777,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       PG_META_DB_PASSWORD: secret(state, "secret:database.internal.password"),
     }),
     containerArgs: () => [],
+    networkAliases: ["supabase-pgmeta"],
     readiness: { protocol: "http", path: "/health" },
   },
   "mail:mail": {
@@ -619,21 +792,36 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       MP_SMTP_DISABLE_RDNS: "true",
     }),
     containerArgs: (_state, _workload, port) => ["--ui", `0.0.0.0:${port}`],
+    networkAliases: [MAIL_NETWORK_ALIAS],
     readiness: { protocol: "http", path: "/readyz" },
   },
   "analytics:analytics": {
     containerPort: 4000,
     args: () => [],
-    env: (state, workload, port, runtime = "native") =>
-      analyticsEnv(state, runtime, port, workload),
+    env: (state, workload, port, runtime = "native", inputs = {}) =>
+      analyticsEnv(state, runtime, port, workload, inputs),
     containerArgs: () => [],
+    containerMounts: (state, _workload, inputs = {}) => {
+      const backend = valueAt(state, "analytics", "backend") || "postgres";
+      const source = inputs.analytics?.gcpJwtPath ?? "";
+      return backend === "bigquery" && source.length > 0
+        ? [
+            {
+              source,
+              target: "/opt/app/rel/logflare/bin/gcloud.json",
+              readOnly: true,
+            },
+          ]
+        : [];
+    },
+    networkAliases: ["supabase-analytics"],
     readiness: { protocol: "http", path: "/health" },
   },
   "analytics:vector": {
     containerPort: 9001,
     args: (_state, _workload, _port) => [
       "--config",
-      "/etc/vector/vector.yaml",
+      "share/doc/vector/config/vector.yaml",
       "--watch-config",
       "false",
     ],
@@ -642,12 +830,21 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       ...capabilityEnv(state, "analytics", "VECTOR"),
       VECTOR_API_PORT: String(port),
     }),
-    containerArgs: (_state, _workload, _port) => [
-      "--config",
-      "/etc/vector/vector.yaml",
-      "--watch-config",
-      "false",
-    ],
+    containerArgs: (_state, _workload, _port, inputs = {}) =>
+      inputs.analytics?.vectorConfigPath === undefined
+        ? []
+        : ["--config", "/etc/vector/vector.yaml", "--watch-config", "false"],
+    containerMounts: (_state, _workload, inputs = {}) =>
+      inputs.analytics?.vectorConfigPath === undefined
+        ? []
+        : [
+            {
+              source: inputs.analytics.vectorConfigPath,
+              target: "/etc/vector/vector.yaml",
+              readOnly: true,
+            },
+          ],
+    networkAliases: ["supabase-vector"],
     readiness: { protocol: "http", path: "/health" },
   },
   "pooler:pooler": {
@@ -670,6 +867,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       POOL_MODE: valueAt(state, "pooler", "pool_mode") || "transaction",
     }),
     containerArgs: () => ["/bin/sh", "-c", "/app/bin/migrate && /app/bin/server"],
+    networkAliases: ["supabase-pooler"],
     readiness: { protocol: "tcp" },
   },
 };
@@ -679,9 +877,18 @@ export const runtimeSpecFor = (workload: PlannedWorkload): WorkloadRuntimeSpec |
   if (spec === undefined) return undefined;
   return {
     ...spec,
+    networkAliases: [aliasFor(workload)],
     cwd: spec.cwd ?? ((state) => state.identity.projectRoot),
     privateEndpoint:
-      spec.privateEndpoint ?? ((port, runtime = "native") => privateEndpointFor(port, runtime)),
+      spec.privateEndpoint ??
+      ((port, runtime = "native") =>
+        privateEndpointFor(
+          runtime === "container" ? spec.containerPort : port,
+          runtime,
+          aliasFor(workload),
+        )),
+    nativeProcess: (artifactRoot, state, currentWorkload, port) =>
+      nativeProcessFor(artifactRoot, state, currentWorkload, port, spec),
   };
 };
 
@@ -689,14 +896,15 @@ export const runtimeSpecFor = (workload: PlannedWorkload): WorkloadRuntimeSpec |
 export const containerResolutionFor = (
   state: PersistedStackState,
   workload: PlannedWorkload,
-  port: number,
+  inputs: WorkloadRuntimeInputs = {},
 ): ContainerWorkloadResolution | undefined => {
   const spec = runtimeSpecFor(workload);
   if (spec === undefined) return undefined;
   return {
-    command: spec.containerArgs(state, workload, spec.containerPort),
-    env: spec.env(state, workload, port, "container"),
-    mounts: spec.containerMounts?.(state, workload) ?? [],
-    networkAliases: spec.networkAliases ?? [],
+    command: spec.containerArgs(state, workload, spec.containerPort, inputs),
+    env: spec.env(state, workload, spec.containerPort, "container", inputs),
+    mounts: spec.containerMounts?.(state, workload, inputs) ?? [],
+    networkAliases: [aliasFor(workload)],
+    ...(inputs.hostRoute === undefined ? {} : { hostRoute: inputs.hostRoute }),
   };
 };

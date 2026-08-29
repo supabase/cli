@@ -587,18 +587,18 @@ Implementation continues after recording a ruling; this file is not a question q
 
 ### Task 13A — 2026-08-29 (foundation)
 
-| Capability           | Native/container artifacts                             | Settings/dependencies                                                         | Ports/routes/probes                                                              | Secrets/logs/activation                                | Evidence                                           |
-| -------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------- |
-| database             | `postgres` slim release; `supabase/postgres` image     | database settings and bootstrap workload                                      | database TCP readiness                                                           | managed database password; eager                       | compiler + runtime integration                     |
-| rest                 | `postgrest`; `postgrest/postgrest`                     | REST settings/env; database dependency                                        | API HTTP route; private HTTP readiness                                           | passthrough settings; lazy activation                  | compiler + workload-runtime                        |
-| auth                 | `auth`; `supabase/auth`                                | Auth settings/env and managed key slots; database dependency                  | API HTTP route; private `/health` readiness                                      | managed JWT/key slots; lazy activation                 | compiler + workload-runtime                        |
-| realtime             | `realtime`; `supabase/realtime`                        | Realtime settings/env; database dependency                                    | API HTTP route; private `/api/ping` readiness                                    | passthrough settings; lazy activation                  | compiler + workload-runtime integration            |
-| storage (+ imgproxy) | `storage`/`imgproxy`; storage-api/imgproxy images      | Storage settings/env and volume; image transformation selects companion       | API route/readiness; companion private HTTP endpoint                             | passthrough settings; lazy activation                  | catalog conditional + workload-runtime integration |
-| functions            | Edge Runtime slim artifact/container                   | functions root, policy, inspector, per-function env                           | `/functions/v1/*` route; request-time activation and private `/_internal/health` | functionsRoot is the sole read-only `/workspace` mount | catalog + workload-runtime + container-runtime     |
-| studio (+ pgmeta)    | studio/pgmeta slim artifacts; studio/pg-meta images    | Studio settings/env; REST/analytics deps                                      | Studio HTTP route; private profile/health probes                                 | passthrough settings; eager activation                 | compiler + workload-runtime integration            |
-| mail                 | mailpit slim artifact/container                        | Mail settings/env                                                             | mail UI/SMTP/POP3 listeners; private `/readyz` probe                             | passthrough settings; eager activation                 | compiler + workload-runtime integration            |
-| analytics (+ vector) | logflare/vector slim artifacts; Logflare/vector images | Analytics settings/env; vector selected by `vector_port`; database dependency | API route/readiness; vector private HTTP endpoint                                | passthrough settings; lazy activation                  | catalog conditional + workload-runtime integration |
-| pooler               | `supavisor` slim release `v2.9.12`; matching image     | Pooler settings/env and database dependency                                   | pooler TCP route/readiness; private transaction endpoint                         | managed pooler key slots; eager activation             | compiler + catalog + workload-runtime integration  |
+| Capability           | Native/container artifacts                             | Settings/dependencies                                                         | Ports/routes/probes                                                              | Secrets/logs/activation                                           | Evidence                                           |
+| -------------------- | ------------------------------------------------------ | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------- | -------------------------------------------------- |
+| database             | `postgres` slim release; `supabase/postgres` image     | database settings and bootstrap workload                                      | database TCP readiness                                                           | managed database password; eager                                  | compiler + runtime integration                     |
+| rest                 | `postgrest`; `postgrest/postgrest`                     | REST settings/env; database dependency                                        | API HTTP route; private HTTP readiness                                           | passthrough settings; lazy activation                             | compiler + workload-runtime                        |
+| auth                 | `auth`; `supabase/auth`                                | Auth settings/env and managed key slots; database dependency                  | API HTTP route; private `/health` readiness                                      | managed JWT/key slots; lazy activation                            | compiler + workload-runtime                        |
+| realtime             | `realtime`; `supabase/realtime`                        | Realtime settings/env; database dependency                                    | API HTTP route; private `/api/ping` readiness                                    | passthrough settings; lazy activation                             | compiler + workload-runtime integration            |
+| storage (+ imgproxy) | `storage`/`imgproxy`; storage-api/imgproxy images      | Storage settings/env and volume; image transformation selects companion       | API route/readiness; companion private HTTP endpoint                             | passthrough settings; lazy activation                             | catalog conditional + workload-runtime integration |
+| functions            | Edge Runtime slim artifact/container                   | functions root, policy, inspector, per-function env                           | `/functions/v1/*` route; request-time activation and private `/_internal/health` | functionsRoot is the sole read-only `/__supabase_functions` mount | catalog + workload-runtime + container-runtime     |
+| studio (+ pgmeta)    | studio/pgmeta slim artifacts; studio/pg-meta images    | Studio settings/env; REST/analytics deps                                      | Studio HTTP route; private profile/health probes                                 | passthrough settings; eager activation                            | compiler + workload-runtime integration            |
+| mail                 | mailpit slim artifact/container                        | Mail settings/env                                                             | mail UI/SMTP/POP3 listeners; private `/readyz` probe                             | passthrough settings; eager activation                            | compiler + workload-runtime integration            |
+| analytics (+ vector) | logflare/vector slim artifacts; Logflare/vector images | Analytics settings/env; vector selected by `vector_port`; database dependency | API route/readiness; vector private HTTP endpoint                                | passthrough settings; lazy activation                             | catalog conditional + workload-runtime integration |
+| pooler               | `supavisor` slim release `v2.9.12`; matching image     | Pooler settings/env and database dependency                                   | pooler TCP route/readiness; private transaction endpoint                         | managed pooler key slots; eager activation                        | compiler + catalog + workload-runtime integration  |
 
 Common Task 13A source/test coverage: `model/WorkloadCatalog.ts` is the exhaustive slim-services identity table
 with darwin-arm64, linux-amd64, and linux-arm64 target validation; `ExecutionPlan` materializes optional
@@ -628,3 +628,25 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
 - Docker/Podman serializers accept only owned env-file paths (never secret `NAME=value` argv) and serialize
   exact network aliases. Compiler integration proves the managed database password slot is persisted once
   and reused. Task 13B still owns env-file creation, gateway/port lifecycle, and production composition.
+
+#### Task 13A fix round 2 — complete workload execution contracts (2026-08-29)
+
+- Every catalog workload now has one stable container DNS alias, reused by private endpoints and
+  intra-stack URLs (`supabase-database`, `supabase-pgmeta`, `supabase-imgproxy`, and companions).
+  Studio's host-owned API URL and Analytics credentials use explicit owner-resolved inputs; no engine
+  hostname or host-file path is guessed in this layer.
+- Native Node workloads carry artifact-root-relative executable, script arguments, and working-directory
+  metadata. Vector's native command targets the shipped `share/doc/vector/config/vector.yaml`; container
+  resolution retains its separate `/etc/vector/vector.yaml` contract. Functions remains one Edge Runtime
+  workload with its sole read-only `/__supabase_functions` mount and aligned `--main-service` argument.
+- Runtime settings now include Realtime's IPv4/IPv6 `ERL_AFLAGS` and resolved JWKS input, Auth's exact
+  SMS/double-confirm/password semantics, Mailpit fallback SMTP, Storage's imgproxy alias, Studio's
+  pg-meta/analytics aliases, and BigQuery's read-only service-account mount. Optional values are omitted
+  rather than emitted as blank service environment values.
+- Database bootstrap credentials use the seven managed login roles from `schema.sql` and one Redacted
+  `secret:database.internal.password`; integration coverage verifies all roles and no password leakage.
+- Slim artifact decompression is an owned transform stream that is destroyed on interruption; checksum,
+  manifest, safe archive extraction, and atomic publication remain injected/offline-testable.
+- Fix-round evidence: catalog/compiler/database-bootstrap/runtime/slim/container integration tests pass
+  (80 targeted tests in the latest run); Task 13B still owns env-file materialization, gateway/port
+  lifecycle, credentials wiring, and production composition.
