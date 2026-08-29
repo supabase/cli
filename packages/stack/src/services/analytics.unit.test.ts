@@ -7,6 +7,7 @@ describe("makeAnalyticsServicesNative", () => {
     const bundle = makeAnalyticsServicesNative({
       binPath: "/cache/analytics/v1.50.3/darwin-arm64",
       runtimeRoot: "/tmp/stacks/project-a/runtime",
+      nodeName: "logflare_stack_a",
       hostPort: 54327,
       dbPort: 54322,
       apiKey: "analytics-key",
@@ -24,7 +25,7 @@ describe("makeAnalyticsServicesNative", () => {
     expect(bundle.server).toMatchObject({
       name: "analytics",
       command: "/cache/analytics/v1.50.3/darwin-arm64/bin/logflare",
-      args: ["start", "--sname", "logflare"],
+      args: ["start", "--sname", "logflare_stack_a"],
       restart: "unless-stopped",
       dependencies: [{ service: "analytics-migrate", condition: "completed" }],
     });

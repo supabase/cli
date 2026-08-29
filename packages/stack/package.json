@@ -26,7 +26,7 @@
     "test:unit": "pnpm exec turbo run @supabase/stack#test:unit:run --",
     "test:unit:run": "bun --bun vitest run --project unit --coverage.reportsDirectory=coverage/unit",
     "test:integration": "pnpm exec turbo run @supabase/stack#test:integration:run --",
-    "test:integration:run": "bun --bun vitest run --project integration --coverage.reportsDirectory=coverage/integration",
+    "test:integration:run": "bun --bun vitest run --project integration --coverage.reportsDirectory=coverage/integration && bun --bun vitest run --project integration-supervisor --coverage.reportsDirectory=coverage/integration",
     "test:e2e": "pnpm exec turbo run @supabase/stack#test:e2e:run --",
     "test:e2e:run": "bun --bun vitest run --project e2e",
     "test:e2e:warmup": "bun run tests/warmup-e2e.ts",

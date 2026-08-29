@@ -70,6 +70,10 @@ const postgresStartupPath: ReadonlyArray<ServiceName> = ["postgres"];
 const storageStartupPath: ReadonlyArray<ServiceName> = ["postgres", "storage"];
 const analyticsStartupPath: ReadonlyArray<ServiceName> = ["postgres", "analytics"];
 
+/** Derive a stack-unique, valid Erlang short node name from the owned identity. */
+const analyticsNodeName = (identityKey: string): string =>
+  `logflare_${identityKey.replaceAll("-", "_")}`;
+
 const postgresDependencyTimeoutSeconds = dependencyTimeoutSecondsForServices(postgresStartupPath);
 
 const postgresDependencies: ReadonlyArray<ServiceDependency> = [
@@ -315,6 +319,7 @@ export class StackBuilder extends Context.Service<
         const mailpitEnabled =
           config.mailpit !== false && configuredServiceEnabled(config, "mailpit");
         const mailpitSmtpHost = mailpitEnabled ? serviceHost : undefined;
+        const nativeMailpitSmtpHost = mailpitEnabled ? "127.0.0.1" : undefined;
         const mailpitSmtpPort = mailpitEnabled ? config.mailpit.smtpPort : undefined;
         const mailpitAdminEmail = mailpitEnabled ? config.mailpit.adminEmail : undefined;
         const mailpitSenderName = mailpitEnabled ? config.mailpit.senderName : undefined;
@@ -433,7 +438,7 @@ export class StackBuilder extends Context.Service<
                   jwtSecret: config.jwtSecret,
                   jwtExpiry: config.auth.jwtExpiry,
                   externalUrl: config.auth.externalUrl,
-                  smtpHost: mailpitSmtpHost,
+                  smtpHost: nativeMailpitSmtpHost,
                   smtpPort: mailpitSmtpPort,
                   smtpAdminEmail: mailpitAdminEmail,
                   smtpSenderName: mailpitSenderName,
@@ -697,6 +702,7 @@ export class StackBuilder extends Context.Service<
             const bundle = makeAnalyticsServicesNative({
               binPath: analyticsResolution.path,
               runtimeRoot: config.runtimeRoot,
+              nodeName: analyticsNodeName(identity.key),
               hostPort: config.analytics.port,
               dbPort: config.dbPort,
               apiKey: config.analytics.apiKey,

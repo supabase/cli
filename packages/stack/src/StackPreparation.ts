@@ -12,8 +12,8 @@ import type {
 import { BinaryNotFoundError, DockerPullError, isDockerDaemonDownMessage } from "./errors.ts";
 import { isDockerOnlyService, requiredPreparationDependencies } from "./ServiceCatalog.ts";
 import {
-  DEFAULT_VERSIONS,
   SERVICE_NAMES,
+  defaultVersionsForRuntime,
   dockerImageForService,
   normalizeServiceVersions,
   type ServiceName,
@@ -123,8 +123,8 @@ const selectedServices = (input: StackPreparationInput): ReadonlyArray<ServiceNa
 };
 
 const versionsForInput = (input: StackPreparationInput): VersionManifest => ({
-  ...DEFAULT_VERSIONS,
-  ...normalizeServiceVersions(input.versions ?? {}),
+  ...defaultVersionsForRuntime(input.mode),
+  ...normalizeServiceVersions(input.versions ?? {}, input.mode),
 });
 
 const plannedResolution = (

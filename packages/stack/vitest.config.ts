@@ -22,6 +22,15 @@ export default defineConfig({
         test: {
           name: "integration",
           include: ["**/*.integration.test.ts"],
+          exclude: ["src/supervisor.integration.test.ts"],
+          testTimeout: 60_000,
+        },
+      },
+      {
+        test: {
+          name: "integration-supervisor",
+          include: ["src/supervisor.integration.test.ts"],
+          fileParallelism: false,
           testTimeout: 60_000,
         },
       },

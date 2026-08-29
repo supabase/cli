@@ -121,6 +121,15 @@ describe("StackBuilder native graph", () => {
         DATABASE_URL: `postgresql://supabase_storage_admin:postgres@127.0.0.1:${ports.dbPort}/postgres`,
         IMGPROXY_URL: `http://127.0.0.1:${ports.imgproxyPort}`,
       });
+      expect(result.graph.startOrder.find((service) => service.name === "auth")?.env).toMatchObject(
+        {
+          GOTRUE_SMTP_HOST: "127.0.0.1",
+          GOTRUE_SMTP_PORT: String(ports.mailpitSmtpPort),
+        },
+      );
+      expect(result.graph.startOrder.find((service) => service.name === "analytics")?.args).toEqual(
+        ["start", "--sname", "logflare_41000"],
+      );
       expect(
         result.graph.startOrder.find((service) => service.name === "studio")?.env,
       ).toMatchObject({
@@ -160,6 +169,131 @@ describe("StackBuilder native graph", () => {
       expect(vectorConfig).toContain(nativeServiceLogPath(join(root, "runtime"), "vector"));
       expect(vectorConfig).toContain("exclude:");
       expect(vectorConfig).toContain("native_logs");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("derives distinct valid Analytics short node names for sibling identities", async () => {
+    const roots: Array<string> = [];
+    const buildAnalytics = async (
+      instanceId: string,
+      apiPort: number,
+    ): Promise<ReadonlyArray<string>> => {
+      const root = mkdtempSync(join(tmpdir(), "supabase-stack-builder-identity-"));
+      roots.push(root);
+      const resolver = mockBinaryResolver({ binaries: binaryRoots });
+      const spawner = mockChildProcessSpawner();
+      const layer = Layer.mergeAll(
+        StackBuilder.layer,
+        NodeFileSystem.layer,
+        StackPreparation.layer.pipe(Layer.provide(resolver.layer), Layer.provide(spawner.layer)),
+      );
+      return Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const config = yield* resolveConfig(
+              { ...fullNativeConfig, instanceId },
+              {
+                ports: { ...ports, apiPort },
+                stackRoot: join(root, "stack"),
+                runtimeRoot: join(root, "runtime"),
+                runtime: { mode: "native", containerRuntime: null },
+              },
+            );
+            const preparation = yield* StackPreparation;
+            const builder = yield* StackBuilder;
+            const prepared = yield* preparation.prepare({
+              mode: "native",
+              services: SERVICE_NAMES,
+              versions: {},
+            });
+            const scope = yield* Effect.scope;
+            const result = yield* builder
+              .build(config, prepared)
+              .pipe(Effect.provideService(Scope.Scope, scope));
+            return (
+              result.graph.startOrder.find((service) => service.name === "analytics")?.args ?? []
+            );
+          }).pipe(Effect.provide(layer)),
+        ),
+      );
+    };
+
+    try {
+      const first = await buildAnalytics("stack-a", 42000);
+      const second = await buildAnalytics("stack-b", 42001);
+      const maximum = await buildAnalytics(`a${"-".repeat(63)}`, 42002);
+      expect(first).toEqual(["start", "--sname", "logflare_id_stack_a"]);
+      expect(second).toEqual(["start", "--sname", "logflare_id_stack_b"]);
+      expect(first).not.toEqual(second);
+      expect(maximum[2]).toBe(`logflare_id_a${"_".repeat(63)}`);
+      expect(maximum[2]).toMatch(/^[A-Za-z0-9_]+$/);
+      expect(maximum[2]?.length).toBeLessThanOrEqual(255);
+    } finally {
+      for (const root of roots) rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps Docker Auth pointed at the container-to-host Mailpit address", async () => {
+    const root = mkdtempSync(join(tmpdir(), "supabase-stack-builder-docker-smtp-"));
+    const resolver = mockBinaryResolver({ binaries: binaryRoots });
+    const spawner = mockChildProcessSpawner();
+    const layer = Layer.mergeAll(
+      StackBuilder.layer,
+      NodeFileSystem.layer,
+      StackPreparation.layer.pipe(Layer.provide(resolver.layer), Layer.provide(spawner.layer)),
+    );
+
+    try {
+      const result = await Effect.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const config = yield* resolveConfig(
+              {
+                mode: "docker",
+                postgrest: false,
+                auth: {},
+                edgeRuntime: false,
+                realtime: false,
+                storage: false,
+                imgproxy: false,
+                mailpit: {},
+                pgmeta: false,
+                studio: false,
+                analytics: false,
+                vector: false,
+                pooler: false,
+              },
+              {
+                ports,
+                stackRoot: join(root, "stack"),
+                runtimeRoot: join(root, "runtime"),
+                runtime: { mode: "docker", containerRuntime: "docker" },
+              },
+            );
+            const preparation = yield* StackPreparation;
+            const builder = yield* StackBuilder;
+            const prepared = yield* preparation.prepare({
+              mode: "docker",
+              containerRuntime: "docker",
+              services: ["postgres", "auth", "mailpit"],
+              versions: {},
+            });
+            const scope = yield* Effect.scope;
+            return yield* builder
+              .build(config, prepared)
+              .pipe(Effect.provideService(Scope.Scope, scope));
+          }).pipe(Effect.provide(layer)),
+        ),
+      );
+
+      expect(result.graph.startOrder.find((service) => service.name === "auth")?.env).toMatchObject(
+        {
+          GOTRUE_SMTP_HOST: "host.docker.internal",
+          GOTRUE_SMTP_PORT: String(ports.mailpitSmtpPort),
+        },
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

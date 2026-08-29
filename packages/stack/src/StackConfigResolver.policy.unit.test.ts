@@ -17,6 +17,8 @@ const testPorts: PortSet = {
   authPort: 40_002,
   postgrestPort: 40_003,
   postgrestAdminPort: 40_004,
+  edgeRuntimePort: 40_016,
+  edgeRuntimeInspectorPort: 40_017,
   realtimePort: 40_005,
   storagePort: 40_006,
   imgproxyPort: 40_007,
@@ -26,6 +28,7 @@ const testPorts: PortSet = {
   pgmetaPort: 40_011,
   studioPort: 40_012,
   analyticsPort: 40_013,
+  vectorAdminPort: 40_018,
   poolerPort: 40_014,
   poolerApiPort: 40_015,
 };
@@ -84,6 +87,27 @@ describe("resolved service preparation policies", () => {
     expect(config.servicePolicies.postgrest).toBe("eager");
     expect(config.servicePolicies.auth).toBe("lazy");
     expect(config.servicePolicies.mailpit).toBe("eager");
+  });
+
+  it("resolves Docker-specific Vector and Pooler defaults", async () => {
+    const config = await resolveConfig(
+      { mode: "docker", analytics: {}, vector: {}, pooler: {} },
+      { runtime: { mode: "docker", containerRuntime: "docker" } },
+    );
+
+    expect(config.vector).toMatchObject({ version: "0.53.0-alpine" });
+    expect(config.pooler).toMatchObject({ version: "2.9.7" });
+  });
+
+  it("normalizes explicit Pooler versions for the selected runtime", async () => {
+    const native = await resolveConfig({ pooler: { version: "2.9.10" } });
+    expect(native.pooler).toMatchObject({ version: "v2.9.10" });
+
+    const docker = await resolveConfig(
+      { mode: "docker", pooler: { version: "v2.9.7" } },
+      { runtime: { mode: "docker", containerRuntime: "docker" } },
+    );
+    expect(docker.pooler).toMatchObject({ version: "2.9.7" });
   });
 
   it("rejects an unsupported lazy policy before port allocation", async () => {

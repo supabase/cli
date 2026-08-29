@@ -22,6 +22,8 @@ interface AnalyticsServiceOptions {
 export interface NativeAnalyticsOptions extends AnalyticsServiceOptions {
   readonly binPath: string;
   readonly runtimeRoot: string;
+  /** A stack-unique, valid BEAM short node name for Logflare distribution. */
+  readonly nodeName: string;
 }
 
 export interface NativeAnalyticsServiceBundle {
@@ -148,7 +150,7 @@ export const makeAnalyticsServicesNative = (
   const server = nativeRunService({
     name: "analytics",
     command: `${opts.binPath}/bin/logflare`,
-    args: ["start", "--sname", "logflare"],
+    args: ["start", "--sname", opts.nodeName],
     env,
     dependencies: [{ service: migrate.name, condition: "completed" }],
     healthCheck: analyticsHealthCheck(opts.hostPort),

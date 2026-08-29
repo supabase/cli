@@ -5,7 +5,9 @@ import {
 } from "../scripts/sync-versions-from-dockerfile.ts";
 import {
   DEFAULT_VERSIONS,
+  DOCKER_DEFAULT_VERSIONS,
   diffPinnedAndAvailableVersions,
+  defaultVersionsForRuntime,
   dockerImageForService,
   fillServiceVersionManifest,
   normalizeServiceVersion,
@@ -42,7 +44,7 @@ describe("syncDefaultVersionsSource", () => {
       (service) => `  ${JSON.stringify(service)}: {
     name: ${JSON.stringify(service)},
     configKey: "example",
-    defaultVersion: "old",
+    defaultVersions: { native: "native-old", docker: "old" },
   },`,
     ).join("\n");
 
@@ -52,15 +54,16 @@ describe("syncDefaultVersionsSource", () => {
     );
 
     expect(updated).toContain(
-      'name: "postgres",\n    configKey: "example",\n    defaultVersion: "17.0.0.1"',
+      'name: "postgres",\n    configKey: "example",\n    defaultVersions: { native: "native-old", docker: "17.0.0.1" }',
     );
     expect(updated).toContain(
-      'name: "edge-runtime",\n    configKey: "example",\n    defaultVersion: "v1.70.0"',
+      'name: "edge-runtime",\n    configKey: "example",\n    defaultVersions: { native: "native-old", docker: "v1.70.0" }',
     );
     expect(updated).toContain(
-      'name: "mailpit",\n    configKey: "example",\n    defaultVersion: "v1.2.3"',
+      'name: "mailpit",\n    configKey: "example",\n    defaultVersions: { native: "native-old", docker: "v1.2.3" }',
     );
-    expect(updated).not.toContain('defaultVersion: "old"');
+    expect(updated).toContain('native: "native-old"');
+    expect(updated).not.toContain('docker: "old"');
   });
 
   it("fails when a required Dockerfile image alias is missing", () => {
@@ -114,11 +117,25 @@ describe("dockerImageForService", () => {
   });
 
   it("uses the upstream mirror repositories for vector and pooler", () => {
-    expect(dockerImageForService("vector", DEFAULT_VERSIONS.vector)).toBe(
-      `ghcr.io/supabase/vector:${DEFAULT_VERSIONS.vector}`,
+    expect(dockerImageForService("vector", DOCKER_DEFAULT_VERSIONS.vector)).toBe(
+      `ghcr.io/supabase/vector:${DOCKER_DEFAULT_VERSIONS.vector}`,
     );
-    expect(dockerImageForService("pooler", DEFAULT_VERSIONS.pooler)).toBe(
-      "ghcr.io/supabase/supavisor:v2.9.10",
+    expect(dockerImageForService("pooler", DOCKER_DEFAULT_VERSIONS.pooler)).toBe(
+      "ghcr.io/supabase/supavisor:2.9.7",
+    );
+  });
+
+  it("keeps runtime-specific defaults for native and Docker consumers", () => {
+    expect(defaultVersionsForRuntime("native")).toEqual(DEFAULT_VERSIONS);
+    expect(DOCKER_DEFAULT_VERSIONS.vector).toBe("0.53.0-alpine");
+    expect(DOCKER_DEFAULT_VERSIONS.pooler).toBe("2.9.7");
+    expect(DEFAULT_VERSIONS.vector).toBe("0.53.0");
+    expect(DEFAULT_VERSIONS.pooler).toBe("v2.9.10");
+    expect(dockerImageForService("vector", DOCKER_DEFAULT_VERSIONS.vector)).toBe(
+      "ghcr.io/supabase/vector:0.53.0-alpine",
+    );
+    expect(dockerImageForService("pooler", DOCKER_DEFAULT_VERSIONS.pooler)).toBe(
+      "ghcr.io/supabase/supavisor:2.9.7",
     );
   });
 
@@ -126,7 +143,7 @@ describe("dockerImageForService", () => {
     expect(dockerImageForService("vector", "0.52.0-alpine")).toBe(
       "ghcr.io/supabase/vector:0.52.0-alpine",
     );
-    expect(dockerImageForService("pooler", "2.9.6")).toBe("ghcr.io/supabase/supavisor:v2.9.6");
+    expect(dockerImageForService("pooler", "2.9.6")).toBe("ghcr.io/supabase/supavisor:2.9.6");
   });
 
   it("publishes native slim-services artifacts for every service", () => {
@@ -161,12 +178,12 @@ describe("dockerImageForService", () => {
     });
   });
 
-  it("uses the frozen v-prefixed Docker tags for the public versions", () => {
+  it("uses the frozen Docker tags for the public versions", () => {
     expect(dockerImageForArtifact("pgmeta", DEFAULT_VERSIONS.pgmeta)).toBe(
       "ghcr.io/supabase/cli/pgmeta:v0.98.0",
     );
-    expect(dockerImageForArtifact("pooler", DEFAULT_VERSIONS.pooler)).toBe(
-      "ghcr.io/supabase/supavisor:v2.9.10",
+    expect(dockerImageForArtifact("pooler", DOCKER_DEFAULT_VERSIONS.pooler)).toBe(
+      "ghcr.io/supabase/supavisor:2.9.7",
     );
   });
 
@@ -219,6 +236,11 @@ describe("normalizeServiceVersion", () => {
     expect(dockerImageForService("pgmeta", normalizeServiceVersion("pgmeta", "v0.98.0"))).toBe(
       "ghcr.io/supabase/cli/pgmeta:v0.98.0",
     );
+  });
+
+  it("normalizes Pooler overrides according to the selected runtime", () => {
+    expect(normalizeServiceVersion("pooler", "2.9.10", "native")).toBe("v2.9.10");
+    expect(normalizeServiceVersion("pooler", "v2.9.7", "docker")).toBe("2.9.7");
   });
 });
 

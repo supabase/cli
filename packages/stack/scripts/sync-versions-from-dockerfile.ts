@@ -71,7 +71,7 @@ export function readVersionManifestFromDockerfile(dockerfile: string): VersionMa
       throw new Error(`Duplicate Dockerfile version for '${service}'.`);
     }
 
-    versions[service] = normalizeServiceVersion(service, tag);
+    versions[service] = normalizeServiceVersion(service, tag, "docker");
   }
 
   assertFullManifest(versions);
@@ -87,19 +87,24 @@ export function syncDefaultVersionsSource(source: string, versions: VersionManif
       throw new Error(`Could not find catalog entry for '${service}'.`);
     }
 
-    const versionMarker = "    defaultVersion: ";
-    const versionStart = updated.indexOf(versionMarker, entryStart + nameMarker.length);
-    if (versionStart === -1 || versionStart - entryStart > 300) {
-      throw new Error(`Could not find defaultVersion for '${service}'.`);
+    const defaultsMarker = "    defaultVersions:";
+    const defaultsStart = updated.indexOf(defaultsMarker, entryStart + nameMarker.length);
+    if (defaultsStart === -1 || defaultsStart - entryStart > 300) {
+      throw new Error(`Could not find defaultVersions for '${service}'.`);
     }
-    const versionEnd = updated.indexOf("\n", versionStart);
-    if (versionEnd === -1) {
-      throw new Error(`Could not find defaultVersion line end for '${service}'.`);
+    const defaultsEnd = updated.indexOf("},", defaultsStart);
+    const dockerMarker = "docker: ";
+    const dockerStart = updated.indexOf(dockerMarker, defaultsStart);
+    if (defaultsEnd === -1 || dockerStart === -1 || dockerStart > defaultsEnd) {
+      throw new Error(`Could not find Docker defaultVersion for '${service}'.`);
     }
-
-    updated = `${updated.slice(0, versionStart)}${versionMarker}${JSON.stringify(
-      versions[service],
-    )},${updated.slice(versionEnd)}`;
+    const valueStart = dockerStart + dockerMarker.length;
+    const quoteStart = updated.indexOf('"', valueStart);
+    const quoteEnd = quoteStart === -1 ? -1 : updated.indexOf('"', quoteStart + 1);
+    if (quoteStart === -1 || quoteEnd === -1) {
+      throw new Error(`Could not find Docker defaultVersion value for '${service}'.`);
+    }
+    updated = `${updated.slice(0, quoteStart + 1)}${versions[service]}${updated.slice(quoteEnd)}`;
   }
   return updated;
 }

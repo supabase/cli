@@ -37,6 +37,11 @@ interface ServiceArtifactDefinition {
   readonly native?: NativeReleaseSource;
 }
 
+interface ServiceVersionDefaults {
+  readonly native: string;
+  readonly docker: string;
+}
+
 interface ServiceActivationPolicy {
   /** Other public services required when this service is activated. */
   readonly activates: ReadonlyArray<ServiceName>;
@@ -70,7 +75,7 @@ type ServiceConfigKey =
 export interface ServiceCatalogEntry<Name extends ServiceName> {
   readonly name: Name;
   readonly configKey: ServiceConfigKey;
-  readonly defaultVersion: string;
+  readonly defaultVersions: ServiceVersionDefaults;
   readonly runtimeSupport: ServiceRuntimeSupport;
   readonly artifact: ServiceArtifactDefinition;
   readonly activation: ServiceActivationPolicy;
@@ -130,7 +135,7 @@ export const SERVICE_CATALOG: {
   postgres: {
     name: "postgres",
     configKey: "postgres",
-    defaultVersion: "17.6.1.167",
+    defaultVersions: { native: "17.6.1.165", docker: "17.6.1.165" },
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "postgres" },
@@ -157,7 +162,7 @@ export const SERVICE_CATALOG: {
   postgrest: {
     name: "postgrest",
     configKey: "postgrest",
-    defaultVersion: "v16.2",
+    defaultVersions: { native: "v16.2", docker: "v16.2" },
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "postgrest" },
@@ -176,7 +181,7 @@ export const SERVICE_CATALOG: {
   auth: {
     name: "auth",
     configKey: "auth",
-    defaultVersion: "v2.196.0",
+    defaultVersions: { native: "v2.196.0", docker: "v2.196.0" },
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "auth" },
@@ -195,7 +200,7 @@ export const SERVICE_CATALOG: {
   "edge-runtime": {
     name: "edge-runtime",
     configKey: "edgeRuntime",
-    defaultVersion: "v1.74.3",
+    defaultVersions: { native: "v1.74.3", docker: "v1.74.3" },
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "edge-runtime" },
@@ -214,7 +219,7 @@ export const SERVICE_CATALOG: {
   realtime: {
     name: "realtime",
     configKey: "realtime",
-    defaultVersion: "v2.129.1",
+    defaultVersions: { native: "v2.129.1", docker: "v2.129.9" },
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "realtime" },
@@ -233,7 +238,7 @@ export const SERVICE_CATALOG: {
   storage: {
     name: "storage",
     configKey: "storage",
-    defaultVersion: "v1.70.1",
+    defaultVersions: { native: "v1.70.1", docker: "v1.71.0" },
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "storage" },
@@ -252,7 +257,7 @@ export const SERVICE_CATALOG: {
   imgproxy: {
     name: "imgproxy",
     configKey: "imgproxy",
-    defaultVersion: "v3.8.0",
+    defaultVersions: { native: "v3.8.0", docker: "v3.8.0" },
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "imgproxy" },
@@ -271,7 +276,7 @@ export const SERVICE_CATALOG: {
   mailpit: {
     name: "mailpit",
     configKey: "mailpit",
-    defaultVersion: "v1.30.2",
+    defaultVersions: { native: "v1.30.2", docker: "v1.30.2" },
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "mailpit" },
@@ -290,7 +295,7 @@ export const SERVICE_CATALOG: {
   pgmeta: {
     name: "pgmeta",
     configKey: "pgmeta",
-    defaultVersion: "v0.98.0",
+    defaultVersions: { native: "v0.98.0", docker: "v0.98.0" },
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "pgmeta" },
@@ -309,7 +314,10 @@ export const SERVICE_CATALOG: {
   studio: {
     name: "studio",
     configKey: "studio",
-    defaultVersion: "2026.08.17-sha-0c1da8f",
+    defaultVersions: {
+      native: "2026.08.17-sha-0c1da8f",
+      docker: "2026.08.24-sha-8ec45b2",
+    },
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "studio" },
@@ -328,7 +336,7 @@ export const SERVICE_CATALOG: {
   analytics: {
     name: "analytics",
     configKey: "analytics",
-    defaultVersion: "v1.50.3",
+    defaultVersions: { native: "v1.50.3", docker: "v1.50.6" },
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "analytics" },
@@ -347,7 +355,7 @@ export const SERVICE_CATALOG: {
   vector: {
     name: "vector",
     configKey: "vector",
-    defaultVersion: "0.53.0",
+    defaultVersions: { native: "0.53.0", docker: "0.53.0-alpine" },
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { registry: SUPABASE_GHCR_REGISTRY, repository: "vector" },
@@ -368,7 +376,7 @@ export const SERVICE_CATALOG: {
   pooler: {
     name: "pooler",
     configKey: "pooler",
-    defaultVersion: "v2.9.10",
+    defaultVersions: { native: "v2.9.10", docker: "2.9.7" },
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { registry: SUPABASE_GHCR_REGISTRY, repository: "supavisor" },
@@ -390,7 +398,12 @@ export const SERVICE_NAMES: ReadonlyArray<ServiceName> = Record.keys(SERVICE_CAT
 
 export const DEFAULT_VERSIONS: Readonly<Record<ServiceName, string>> = Record.map(
   SERVICE_CATALOG,
-  (metadata) => metadata.defaultVersion,
+  (metadata) => metadata.defaultVersions.native,
+);
+
+export const DOCKER_DEFAULT_VERSIONS: Readonly<Record<ServiceName, string>> = Record.map(
+  SERVICE_CATALOG,
+  (metadata) => metadata.defaultVersions.docker,
 );
 
 export const serviceMetadata = (service: ServiceName): ServiceCatalogEntry<ServiceName> =>

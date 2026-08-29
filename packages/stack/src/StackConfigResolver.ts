@@ -51,12 +51,17 @@ import type {
 import type { StackRuntimeSelection } from "./ContainerRuntime.ts";
 import {
   DEFAULT_SERVICE_POLICIES,
-  DEFAULT_VERSIONS,
   SERVICE_CATALOG,
   SERVICE_NAMES,
   serviceMetadata,
 } from "./ServiceCatalog.ts";
 import type { ServiceName } from "./ServiceName.ts";
+import {
+  defaultVersionsForRuntime,
+  normalizeServiceVersion,
+  type VersionManifest,
+  type VersionRuntime,
+} from "./versions.ts";
 
 export interface ResolveConfigOptions {
   /** Ports selected by the caller-owned lease. Resolution never allocates ports. */
@@ -65,6 +70,20 @@ export interface ResolveConfigOptions {
   readonly runtimeRoot?: string;
   readonly runtime?: StackRuntimeSelection;
 }
+
+interface VersionResolutionOptions {
+  readonly defaults: VersionManifest;
+  readonly runtime: VersionRuntime;
+}
+
+const resolveServiceVersion = (
+  service: ServiceName,
+  configured: string | undefined,
+  options: VersionResolutionOptions,
+): string =>
+  configured === undefined
+    ? options.defaults[service]
+    : normalizeServiceVersion(service, configured, options.runtime);
 
 interface ResolvedRoots {
   readonly cacheRoot: string;
@@ -159,6 +178,7 @@ function resolvePostgrestConfig(
   input: PostgrestConfig | undefined,
   raw: PostgrestConfig | false | undefined,
   ports: PortSet,
+  versions: VersionResolutionOptions,
 ): Effect.Effect<ResolvedPostgrestConfig | false, StackBuildError> {
   if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
@@ -172,7 +192,7 @@ function resolvePostgrestConfig(
       schemas: cfg.schemas ?? ["public", "graphql_public"],
       extraSearchPath: cfg.extraSearchPath ?? ["public", "extensions"],
       maxRows: cfg.maxRows ?? 1000,
-      version: cfg.version ?? DEFAULT_VERSIONS.postgrest,
+      version: resolveServiceVersion("postgrest", cfg.version, versions),
     })),
   );
 }
@@ -182,6 +202,7 @@ function resolveAuthConfig(
   raw: AuthConfig | false | undefined,
   ports: PortSet,
   apiPort: number,
+  versions: VersionResolutionOptions,
 ): Effect.Effect<ResolvedAuthConfig | false, StackBuildError> {
   if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
@@ -191,7 +212,7 @@ function resolveAuthConfig(
       siteUrl: cfg.siteUrl ?? "http://localhost:3000",
       jwtExpiry: cfg.jwtExpiry ?? 3600,
       externalUrl: cfg.externalUrl ?? `http://127.0.0.1:${apiPort}`,
-      version: cfg.version ?? DEFAULT_VERSIONS.auth,
+      version: resolveServiceVersion("auth", cfg.version, versions),
     })),
   );
 }
@@ -200,13 +221,14 @@ function resolveRealtimeConfig(
   input: RealtimeConfig | undefined,
   raw: RealtimeConfig | false | undefined,
   ports: PortSet,
+  versions: VersionResolutionOptions,
 ): Effect.Effect<ResolvedRealtimeConfig | false, StackBuildError> {
   if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
   return requiredPort(ports, "realtimePort").pipe(
     Effect.map((port) => ({
       port,
-      version: cfg.version ?? DEFAULT_VERSIONS.realtime,
+      version: resolveServiceVersion("realtime", cfg.version, versions),
       tenantId: cfg.tenantId ?? "realtime-dev",
       encryptionKey: cfg.encryptionKey ?? "supabaserealtime",
       secretKeyBase:
@@ -220,6 +242,7 @@ function resolveEdgeRuntimeConfig(
   input: EdgeRuntimeConfig | undefined,
   raw: EdgeRuntimeConfig | false | undefined,
   ports: PortSet,
+  versions: VersionResolutionOptions,
 ): Effect.Effect<ResolvedEdgeRuntimeConfig | false, StackBuildError> {
   if (raw === false || raw?.enabled === false) return Effect.succeed(false);
   const cfg = input ?? {};
@@ -232,7 +255,7 @@ function resolveEdgeRuntimeConfig(
       port,
       inspectorPort,
       policy: cfg.policy ?? "per_worker",
-      version: cfg.version ?? DEFAULT_VERSIONS["edge-runtime"],
+      version: resolveServiceVersion("edge-runtime", cfg.version, versions),
       env: cfg.env ?? {},
     })),
   );
@@ -280,13 +303,14 @@ function resolveStorageConfig(
   raw: StorageConfig | false | undefined,
   ports: PortSet,
   opts: ResolveConfigOptions,
+  versions: VersionResolutionOptions,
 ): Effect.Effect<ResolvedStorageConfig | false, StackBuildError> {
   if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
   return requiredPort(ports, "storagePort").pipe(
     Effect.map((port) => ({
       port,
-      version: cfg.version ?? DEFAULT_VERSIONS.storage,
+      version: resolveServiceVersion("storage", cfg.version, versions),
       dataDir: resolveDataDir(cfg.dataDir, opts.stackRoot!, "storage"),
       fileSizeLimit: cfg.fileSizeLimit ?? "50MiB",
       s3ProtocolEnabled: cfg.s3ProtocolEnabled ?? true,
@@ -298,13 +322,14 @@ function resolveImgproxyConfig(
   input: ImgproxyConfig | undefined,
   raw: ImgproxyConfig | false | undefined,
   ports: PortSet,
+  versions: VersionResolutionOptions,
 ): Effect.Effect<ResolvedImgproxyConfig | false, StackBuildError> {
   if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
   return requiredPort(ports, "imgproxyPort").pipe(
     Effect.map((port) => ({
       port,
-      version: cfg.version ?? DEFAULT_VERSIONS.imgproxy,
+      version: resolveServiceVersion("imgproxy", cfg.version, versions),
     })),
   );
 }
@@ -313,6 +338,7 @@ function resolveMailpitConfig(
   input: MailpitConfig | undefined,
   raw: MailpitConfig | false | undefined,
   ports: PortSet,
+  versions: VersionResolutionOptions,
 ): Effect.Effect<ResolvedMailpitConfig | false, StackBuildError> {
   if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
@@ -325,7 +351,7 @@ function resolveMailpitConfig(
       port,
       smtpPort,
       pop3Port,
-      version: cfg.version ?? DEFAULT_VERSIONS.mailpit,
+      version: resolveServiceVersion("mailpit", cfg.version, versions),
       adminEmail: cfg.adminEmail ?? "admin@email.com",
       senderName: cfg.senderName ?? "Admin",
     })),
@@ -336,13 +362,14 @@ function resolvePgmetaConfig(
   input: PgmetaConfig | undefined,
   raw: PgmetaConfig | false | undefined,
   ports: PortSet,
+  versions: VersionResolutionOptions,
 ): Effect.Effect<ResolvedPgmetaConfig | false, StackBuildError> {
   if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
   return requiredPort(ports, "pgmetaPort").pipe(
     Effect.map((port) => ({
       port,
-      version: cfg.version ?? DEFAULT_VERSIONS.pgmeta,
+      version: resolveServiceVersion("pgmeta", cfg.version, versions),
     })),
   );
 }
@@ -352,13 +379,14 @@ function resolveStudioConfig(
   raw: StudioConfig | false | undefined,
   ports: PortSet,
   apiPort: number,
+  versions: VersionResolutionOptions,
 ): Effect.Effect<ResolvedStudioConfig | false, StackBuildError> {
   if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
   return requiredPort(ports, "studioPort").pipe(
     Effect.map((port) => ({
       port,
-      version: cfg.version ?? DEFAULT_VERSIONS.studio,
+      version: resolveServiceVersion("studio", cfg.version, versions),
       apiUrl: cfg.apiUrl ?? `http://127.0.0.1:${apiPort}`,
     })),
   );
@@ -368,13 +396,14 @@ function resolveAnalyticsConfig(
   input: AnalyticsConfig | undefined,
   raw: AnalyticsConfig | false | undefined,
   ports: PortSet,
+  versions: VersionResolutionOptions,
 ): Effect.Effect<ResolvedAnalyticsConfig | false, StackBuildError> {
   if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
   return requiredPort(ports, "analyticsPort").pipe(
     Effect.map((port) => ({
       port,
-      version: cfg.version ?? DEFAULT_VERSIONS.analytics,
+      version: resolveServiceVersion("analytics", cfg.version, versions),
       backend: cfg.backend ?? "postgres",
       apiKey: cfg.apiKey ?? "api-key",
     })),
@@ -386,10 +415,11 @@ function resolveVectorConfig(
   raw: VectorConfig | false | undefined,
   ports: PortSet,
   mode: StackRuntimeSelection["mode"],
+  versions: VersionResolutionOptions,
 ): Effect.Effect<ResolvedVectorConfig | false, StackBuildError> {
   if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
-  const resolved = { version: cfg.version ?? DEFAULT_VERSIONS.vector };
+  const resolved = { version: resolveServiceVersion("vector", cfg.version, versions) };
   return mode === "native"
     ? requiredPort(ports, "vectorAdminPort").pipe(
         Effect.map((adminPort) => ({ ...resolved, adminPort })),
@@ -401,6 +431,7 @@ function resolvePoolerConfig(
   input: PoolerConfig | undefined,
   raw: PoolerConfig | false | undefined,
   ports: PortSet,
+  versions: VersionResolutionOptions,
 ): Effect.Effect<ResolvedPoolerConfig | false, StackBuildError> {
   if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
@@ -412,7 +443,7 @@ function resolvePoolerConfig(
       port,
       apiPort,
       mode: cfg.mode ?? "transaction",
-      version: cfg.version ?? DEFAULT_VERSIONS.pooler,
+      version: resolveServiceVersion("pooler", cfg.version, versions),
       tenantId: cfg.tenantId ?? "pooler-dev",
       encryptionKey: cfg.encryptionKey ?? "12345678901234567890123456789032",
       secretKeyBase:
@@ -673,6 +704,10 @@ export function resolveConfig(
         mode: "native",
         containerRuntime: null,
       };
+      const versionResolution: VersionResolutionOptions = {
+        defaults: defaultVersionsForRuntime(runtime.mode),
+        runtime: runtime.mode,
+      };
       const config: StackConfig = { ...inputConfig, mode: runtime.mode };
       // Deliberately first: unsupported policies must not create roots or reserve ports.
       const servicePolicies = yield* resolveServicePolicies(config);
@@ -760,52 +795,82 @@ export function resolveConfig(
         postgres: {
           port: dbPort,
           dataDir: postgresDataDir,
-          version: postgresInput.version ?? DEFAULT_VERSIONS.postgres,
+          version: resolveServiceVersion("postgres", postgresInput.version, versionResolution),
           autoExposeNewTables: postgresInput.autoExposeNewTables ?? true,
         },
         postgrest: yield* resolvePostgrestConfig(
           postgrestInput,
           servicePolicies.postgrest === "off" ? false : config.postgrest,
           ports,
+          versionResolution,
         ),
         auth: yield* resolveAuthConfig(
           authInput,
           servicePolicies.auth === "off" ? false : config.auth,
           ports,
           apiPort,
+          versionResolution,
         ),
         edgeRuntime: edgeRuntimeEnabled
-          ? yield* resolveEdgeRuntimeConfig(edgeRuntimeInput, config.edgeRuntime, ports)
+          ? yield* resolveEdgeRuntimeConfig(
+              edgeRuntimeInput,
+              config.edgeRuntime,
+              ports,
+              versionResolution,
+            )
           : false,
         realtime: realtimeEnabled
-          ? yield* resolveRealtimeConfig(realtimeInput, config.realtime, ports)
+          ? yield* resolveRealtimeConfig(realtimeInput, config.realtime, ports, versionResolution)
           : false,
         storage: storageEnabled
-          ? yield* resolveStorageConfig(storageInput, config.storage, ports, {
-              ...opts,
-              stackRoot: roots.stackRoot,
-            })
+          ? yield* resolveStorageConfig(
+              storageInput,
+              config.storage,
+              ports,
+              {
+                ...opts,
+                stackRoot: roots.stackRoot,
+              },
+              versionResolution,
+            )
           : false,
         imgproxy: imgproxyEnabled
-          ? yield* resolveImgproxyConfig(imgproxyInput, config.imgproxy, ports)
+          ? yield* resolveImgproxyConfig(imgproxyInput, config.imgproxy, ports, versionResolution)
           : false,
         mailpit: mailpitEnabled
-          ? yield* resolveMailpitConfig(mailpitInput, config.mailpit, ports)
+          ? yield* resolveMailpitConfig(mailpitInput, config.mailpit, ports, versionResolution)
           : false,
         pgmeta: pgmetaEnabled
-          ? yield* resolvePgmetaConfig(pgmetaInput, config.pgmeta, ports)
+          ? yield* resolvePgmetaConfig(pgmetaInput, config.pgmeta, ports, versionResolution)
           : false,
         studio: studioEnabled
-          ? yield* resolveStudioConfig(studioInput, config.studio, ports, apiPort)
+          ? yield* resolveStudioConfig(
+              studioInput,
+              config.studio,
+              ports,
+              apiPort,
+              versionResolution,
+            )
           : false,
         analytics: analyticsEnabled
-          ? yield* resolveAnalyticsConfig(analyticsInput, config.analytics, ports)
+          ? yield* resolveAnalyticsConfig(
+              analyticsInput,
+              config.analytics,
+              ports,
+              versionResolution,
+            )
           : false,
         vector: vectorEnabled
-          ? yield* resolveVectorConfig(vectorInput, config.vector, ports, runtime.mode)
+          ? yield* resolveVectorConfig(
+              vectorInput,
+              config.vector,
+              ports,
+              runtime.mode,
+              versionResolution,
+            )
           : false,
         pooler: poolerEnabled
-          ? yield* resolvePoolerConfig(poolerInput, config.pooler, ports)
+          ? yield* resolvePoolerConfig(poolerInput, config.pooler, ports, versionResolution)
           : false,
       };
     }).pipe(

@@ -24,7 +24,12 @@ import {
   PreparationCompleted,
   StackPreparation,
 } from "./StackPreparation.ts";
-import { DEFAULT_VERSIONS, SERVICE_NAMES, dockerImageForService } from "./versions.ts";
+import {
+  DEFAULT_VERSIONS,
+  DOCKER_DEFAULT_VERSIONS,
+  SERVICE_NAMES,
+  dockerImageForService,
+} from "./versions.ts";
 
 const encoder = new TextEncoder();
 const defaultAuthGhcrImage = `ghcr.io/supabase/cli/auth:${DEFAULT_VERSIONS.auth}`;
@@ -150,6 +155,40 @@ describe("prefetch", () => {
         { service: "vector", version: "0.53.0" },
       ]),
     );
+  });
+
+  test("Docker preparation uses valid Vector and Pooler image defaults", async () => {
+    const resolver = mockBinaryResolver();
+    const spawner = mockSequenceSpawner(Array.from({ length: 5 }, () => ({ exitCode: 0 })));
+    const layer = StackPreparation.layer.pipe(
+      Layer.provide(resolver.layer),
+      Layer.provide(spawner.layer),
+    );
+
+    const result = await Effect.runPromise(
+      prefetch({
+        mode: "docker",
+        containerRuntime: "docker",
+        services: ["vector", "pooler"],
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(result.vector).toEqual({
+      type: "docker",
+      image: "ghcr.io/supabase/vector:0.53.0-alpine",
+    });
+    expect(result.pooler).toEqual({
+      type: "docker",
+      image: "ghcr.io/supabase/supavisor:2.9.7",
+    });
+    expect(spawner.spawned).toContainEqual({
+      command: "docker",
+      args: ["image", "inspect", dockerImageForService("vector", DOCKER_DEFAULT_VERSIONS.vector)],
+    });
+    expect(spawner.spawned).toContainEqual({
+      command: "docker",
+      args: ["image", "inspect", dockerImageForService("pooler", DOCKER_DEFAULT_VERSIONS.pooler)],
+    });
   });
 
   test("limits concurrent image preparation to four services", async () => {
@@ -316,7 +355,11 @@ describe("prefetch", () => {
       expect(spawner.spawned.every(({ command }) => command === containerRuntime)).toBe(true);
       expect(spawner.spawned).toContainEqual({
         command: containerRuntime,
-        args: ["image", "inspect", dockerImageForService(service, DEFAULT_VERSIONS[service])],
+        args: [
+          "image",
+          "inspect",
+          dockerImageForService(service, DOCKER_DEFAULT_VERSIONS[service]),
+        ],
       });
     },
   );
