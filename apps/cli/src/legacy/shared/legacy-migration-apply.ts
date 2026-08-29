@@ -793,6 +793,16 @@ const execMigrationBatch = <E>(
               // `statementIndex` is set by every batch failure the driver raises; a
               // session that omits it can only have failed before the first statement.
               const raw = cause.statementIndex ?? 0;
+              // A failure past every operation is the wrapper's COMMIT (e.g. a
+              // deferred constraint): there is no statement to blame, so keep the
+              // driver's commit-labeled message without an `At statement` tail.
+              if (raw >= operations.length) {
+                const msg = [legacyErrorMessage(cause)];
+                if (cause.detail !== undefined && cause.detail.length > 0) {
+                  msg.push(cause.detail);
+                }
+                return formattedExecBatchFailure(msg.join("\n"), cause);
+              }
               const globalIndex = base + raw - (injectedBefore[raw] ?? injected);
               return legacyFormatExecBatchError(
                 cause,

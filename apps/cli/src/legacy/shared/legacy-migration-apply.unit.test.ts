@@ -284,7 +284,7 @@ describe("legacyApplyMigrationFile", () => {
     );
   });
 
-  it.effect("defaults a deferred batch failure to the migration history statement", () => {
+  it.effect("reports a deferred commit failure without blaming a statement", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
     const file = join(dir, "20240101120000_deferred.sql");
     writeFileSync(file, "SELECT 1;");
@@ -293,8 +293,8 @@ describe("legacyApplyMigrationFile", () => {
       Effect.flip,
       Effect.tap((error) =>
         Effect.sync(() => {
-          expect(error.message).toContain("At statement: 2");
-          expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
+          expect(error.message).not.toContain("At statement");
+          expect(error.message).not.toContain("INSERT INTO supabase_migrations.schema_migrations");
         }),
       ),
       Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
@@ -656,10 +656,9 @@ describe("legacyApplyMigrationFile", () => {
     );
   });
 
-  it.effect("keeps the deferred-failure index when a restore op is appended", () => {
-    // Mirrors "defaults a deferred batch failure to the migration history
-    // statement": the restore op between the statements and the insert must not
-    // shift the deferred (post-Sync) index either.
+  it.effect("reports a deferred commit failure cleanly when a restore op is appended", () => {
+    // The restore op between the statements and the insert must not resurrect a
+    // statement tail for a commit-phase failure.
     const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
     const file = join(dir, "20240101120000_deferred.sql");
     writeFileSync(file, "SELECT 1;");
@@ -671,8 +670,8 @@ describe("legacyApplyMigrationFile", () => {
       Effect.flip,
       Effect.tap((error) =>
         Effect.sync(() => {
-          expect(error.message).toContain("At statement: 2");
-          expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
+          expect(error.message).not.toContain("At statement");
+          expect(error.message).not.toContain("INSERT INTO supabase_migrations.schema_migrations");
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -808,7 +807,7 @@ describe("legacyApplyMigrationFile", () => {
     );
   });
 
-  it.effect("keeps the deferred-failure index when mid-file restores were injected", () => {
+  it.effect("reports a deferred commit failure cleanly with mid-file restores injected", () => {
     // The `injectedBefore[raw] ?? injected` fallback only matters when the
     // deferred (post-Sync) index lands past the ops array AND injections exist.
     const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
@@ -822,8 +821,8 @@ describe("legacyApplyMigrationFile", () => {
       Effect.flip,
       Effect.tap((error) =>
         Effect.sync(() => {
-          expect(error.message).toContain("At statement: 4");
-          expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
+          expect(error.message).not.toContain("At statement");
+          expect(error.message).not.toContain("INSERT INTO supabase_migrations.schema_migrations");
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
