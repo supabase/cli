@@ -8,5 +8,7 @@ describe("stack-owned functions bootstrap", () => {
     expect(bundled).not.toContain("jsr:");
     expect(bundled).not.toContain("https://");
     expect(bundled).not.toMatch(/from\s*["']jose["']/u);
+    expect(bundled).toContain("forceCreate:!0");
+    expect(bundled).toContain("noModuleCache:!0");
   });
 });

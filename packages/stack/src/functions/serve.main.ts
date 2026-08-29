@@ -4,7 +4,7 @@ declare const EdgeRuntime: any;
 
 import { dirname, STATUS_CODE, STATUS_TEXT, toFileUrl } from "./serve-main-deps.ts";
 import {
-  packageJsonPathFor,
+  packageJsonContainedFor,
   resolveFunctionConfig,
   type FunctionConfig,
   type FunctionFileSystem,
@@ -173,12 +173,7 @@ const functionConfig = (slug: string): Promise<FunctionConfig | undefined> =>
 
 const shouldUsePackageJsonDiscovery = async (config: FunctionConfig): Promise<boolean> => {
   if (config.importMapPath) return false;
-  try {
-    await denoFileSystem.lstat(packageJsonPathFor(config));
-    return true;
-  } catch {
-    return false;
-  }
+  return packageJsonContainedFor({ root: FUNCTIONS_ROOT, config, fs: denoFileSystem });
 };
 
 export function prepareUserRequest(request: Request): Request {

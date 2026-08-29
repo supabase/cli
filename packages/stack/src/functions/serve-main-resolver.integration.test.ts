@@ -12,7 +12,11 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { resolveFunctionConfig, type FunctionFileSystem } from "./serve-main-resolver.ts";
+import {
+  packageJsonContainedFor,
+  resolveFunctionConfig,
+  type FunctionFileSystem,
+} from "./serve-main-resolver.ts";
 
 const nodeFileSystem: FunctionFileSystem = {
   lstat: async (path) => {
@@ -28,7 +32,7 @@ const nodeFileSystem: FunctionFileSystem = {
 };
 
 describe("Edge Runtime request-time function resolver", () => {
-  it("discovers defaults and reflects live create/edit/delete without caching", async () => {
+  it("resolves current filesystem paths for create/edit/delete", async () => {
     const root = await mkdtemp(join(tmpdir(), "stack-functions-resolver-"));
     try {
       const hello = join(root, "hello");
@@ -48,6 +52,14 @@ describe("Edge Runtime request-time function resolver", () => {
         importMapPath: join(canonicalRoot, "hello", "deno.json"),
         verifyJWT: true,
       });
+      await writeFile(join(hello, "package.json"), "{}");
+      expect(
+        await packageJsonContainedFor({
+          root,
+          config: { ...defaults!, importMapPath: "" },
+          fs: nodeFileSystem,
+        }),
+      ).toBe(true);
 
       await writeFile(join(hello, "index.ts"), "export default 2");
       const edited = await resolveFunctionConfig({
@@ -120,6 +132,16 @@ describe("Edge Runtime request-time function resolver", () => {
       const publicRoot = join(functionRoot, "public");
       await mkdir(publicRoot, { recursive: true });
       await writeFile(join(functionRoot, "index.ts"), "export default 1");
+      await writeFile(join(outside, "package.json"), "{}");
+      await symlink(join(outside, "package.json"), join(functionRoot, "package.json"));
+      const config = {
+        entrypointPath: join(functionRoot, "index.ts"),
+        importMapPath: "",
+        staticFiles: [],
+        verifyJWT: true,
+      };
+      expect(await packageJsonContainedFor({ root, config, fs: nodeFileSystem })).toBe(false);
+      await unlink(join(functionRoot, "package.json"));
       await writeFile(join(publicRoot, "ok.txt"), "ok");
       expect(
         await resolveFunctionConfig({

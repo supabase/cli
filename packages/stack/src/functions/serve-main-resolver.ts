@@ -173,3 +173,20 @@ export const resolveFunctionConfig = async (options: {
 
 export const packageJsonPathFor = (config: FunctionConfig): string =>
   join(dirname(config.entrypointPath), "package.json");
+
+/** Checks package discovery without allowing a package.json symlink to leave the root. */
+export const packageJsonContainedFor = async (options: {
+  readonly root: string;
+  readonly config: FunctionConfig;
+  readonly fs: FunctionFileSystem;
+}): Promise<boolean> => {
+  if (!options.root.startsWith("/")) return false;
+  const rootInfo = await optionalInfo(options.fs, options.root);
+  if (rootInfo === undefined || !rootInfo.isDirectory || rootInfo.isSymbolicLink) return false;
+  const canonicalRoot = await options.fs.realPath(options.root).catch(() => "");
+  if (!canonicalRoot.startsWith("/")) return false;
+  const packagePath = packageJsonPathFor(options.config);
+  const packageInfo = await optionalInfo(options.fs, packagePath);
+  if (packageInfo === undefined || !packageInfo.isFile || packageInfo.isSymbolicLink) return false;
+  return safeRealPath(options.fs, canonicalRoot, packagePath);
+};
