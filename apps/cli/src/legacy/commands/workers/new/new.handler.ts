@@ -8,6 +8,7 @@ import {
 } from "../workers.output.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
+import { Tty } from "../../../../shared/runtime/tty.service.ts";
 import {
   commitWorkerEntry,
   planWorkerEntry,
@@ -58,6 +59,26 @@ function defaultFirst<T>(values: ReadonlyArray<T>, defaultValue: T): Array<T> {
 }
 
 /**
+ * Whether this run has a terminal to ask on.
+ *
+ * `-o json|yaml|toml|env` leaves `output.format` as `text`, and the prompts go
+ * through Clack, which writes its terminal UI to stdout with no stream
+ * override — so a machine format is as non-interactive as a redirected stdout,
+ * whichever flag asked for it.
+ *
+ * `output.interactive` only tracks *stdout*, so on its own it still let
+ * `printf 'api\n' | supabase workers new` feed the pipe straight into the name
+ * prompt instead of taking the documented non-interactive path. A prompt is
+ * only answerable from a keyboard, so stdin has to be a terminal too — the same
+ * pair `workers delete` guards its confirmation with.
+ */
+const canPromptFor = Effect.fnUntraced(function* (machineOutput: boolean) {
+  const output = yield* Output;
+  const tty = yield* Tty;
+  return output.format === "text" && output.interactive && !machineOutput && tty.stdinIsTty;
+});
+
+/**
  * The worker name, asked for when the command line did not carry one.
  *
  * The name is the one input here that cannot be defaulted — it is the
@@ -69,16 +90,16 @@ function defaultFirst<T>(values: ReadonlyArray<T>, defaultValue: T): Array<T> {
  */
 const resolveName = Effect.fnUntraced(function* (options: {
   readonly explicit: Option.Option<string>;
-  /** `-o json|yaml|toml|env` — stdout belongs to the payload, so do not prompt. */
-  readonly machineOutput: boolean;
+  /** Whether there is a terminal to ask on — see `canPromptFor`. */
+  readonly canPrompt: boolean;
   readonly project: LegacyWorkersProject;
 }) {
   if (Option.isSome(options.explicit)) {
     return options.explicit.value;
   }
 
-  const output = yield* Output;
-  if (output.format === "text" && output.interactive && !options.machineOutput) {
+  if (options.canPrompt) {
+    const output = yield* Output;
     return yield* output.promptText("What should this worker be called?", {
       validate: (value) => {
         const invalid = validateWorkerNameMessage(value);
@@ -102,8 +123,8 @@ const resolveName = Effect.fnUntraced(function* (options: {
 
 const resolveRuntime = Effect.fnUntraced(function* (options: {
   readonly explicit: Option.Option<WorkerRuntime>;
-  /** `-o json|yaml|toml|env` — stdout belongs to the payload, so do not prompt. */
-  readonly machineOutput: boolean;
+  /** Whether there is a terminal to ask on — see `canPromptFor`. */
+  readonly canPrompt: boolean;
 }) {
   // `--runtime` is a choice flag, so the parser has already rejected anything
   // outside the catalog by the time it gets here.
@@ -111,8 +132,8 @@ const resolveRuntime = Effect.fnUntraced(function* (options: {
     return options.explicit.value;
   }
 
-  const output = yield* Output;
-  if (output.format === "text" && output.interactive && !options.machineOutput) {
+  if (options.canPrompt) {
+    const output = yield* Output;
     const selected = yield* output.promptSelect(
       "Which runtime should this worker use?",
       defaultFirst([...WORKER_RUNTIMES], DEFAULT_WORKER_RUNTIME).map((runtime) => ({
@@ -129,15 +150,15 @@ const resolveRuntime = Effect.fnUntraced(function* (options: {
 
 const resolveSize = Effect.fnUntraced(function* (options: {
   readonly explicit: Option.Option<WorkerSize>;
-  /** `-o json|yaml|toml|env` — stdout belongs to the payload, so do not prompt. */
-  readonly machineOutput: boolean;
+  /** Whether there is a terminal to ask on — see `canPromptFor`. */
+  readonly canPrompt: boolean;
 }) {
   if (Option.isSome(options.explicit)) {
     return options.explicit.value;
   }
 
-  const output = yield* Output;
-  if (output.format === "text" && output.interactive && !options.machineOutput) {
+  if (options.canPrompt) {
+    const output = yield* Output;
     const selected = yield* output.promptSelect(
       "Which instance size should this worker use?",
       defaultFirst([...WORKER_SIZES], DEFAULT_WORKER_SIZE).map((size) => ({
@@ -181,14 +202,12 @@ export const legacyWorkersNew = Effect.fn("legacy.workers.new")(function* (
   yield* Effect.gen(function* () {
     const project = yield* legacyLoadWorkersProjectForEntryWrite();
 
-    // `-o` leaves `output.format` as `text`, and the prompts go through Clack,
-    // which writes its terminal UI to stdout with no stream override — so a
-    // prompt would land in front of the payload just as the notices did. Read
-    // before the first prompt rather than beside the last, since the name is
-    // now asked for too.
+    // Decided once, before the first prompt rather than beside the last, since
+    // the name is now asked for too — every prompt below shares the answer.
     const machineOutput = yield* legacyWorkersMachineOutputRequested();
+    const canPrompt = yield* canPromptFor(machineOutput);
 
-    const name = yield* resolveName({ explicit: flags.name, machineOutput, project });
+    const name = yield* resolveName({ explicit: flags.name, canPrompt, project });
     yield* legacyValidateWorkerName(name);
 
     // Refused before anything is asked or written. `new` creates a worker;
@@ -206,10 +225,10 @@ export const legacyWorkersNew = Effect.fn("legacy.workers.new")(function* (
     }
 
     // Resolved before anything is written, so cancelling either prompt leaves
-    // nothing behind — the name included. With a machine format requested there
-    // is nowhere to ask, so the defaults stand.
-    const runtime = yield* resolveRuntime({ explicit: flags.runtime, machineOutput });
-    const size = yield* resolveSize({ explicit: flags.size, machineOutput });
+    // nothing behind — the name included. With nowhere to ask, the defaults
+    // stand; only the name has nothing to fall back to.
+    const runtime = yield* resolveRuntime({ explicit: flags.runtime, canPrompt });
+    const size = yield* resolveSize({ explicit: flags.size, canPrompt });
 
     // Validated before anything is written: this is the directory the starter
     // files land in, so a value naming the project root, `supabase/`, or

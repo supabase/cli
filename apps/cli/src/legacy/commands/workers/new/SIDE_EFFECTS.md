@@ -38,9 +38,11 @@ absent — rather than in the ancestor project's.
 The name is prompted for when the command line does not carry one, and the
 prompt refuses a name that is not a DNS label or that `config.toml` already
 records — so nothing is asked, and nothing written, for a name the command was
-going to refuse. With `-o json|yaml|toml|env` or no interactive terminal there is
-nowhere to ask, and the command fails instead of defaulting: unlike the runtime
-and size, the name has no default to fall back on.
+going to refuse. With `-o json|yaml|toml|env`, a redirected stdout, or a stdin
+that is not a terminal, there is nowhere to ask, and the command fails instead
+of defaulting: unlike the runtime and size, the name has no default to fall back
+on. Every prompt is gated on both streams, so `printf 'api\n' | supabase workers
+new` takes that failure path rather than reading the worker name off the pipe.
 
 Writes to `config.toml` are append-only. A worker already recorded under
 `[workers.<name>]` is refused outright — before the runtime and size prompts,
@@ -64,15 +66,15 @@ root.
 
 ## Exit Codes
 
-| Code | Condition                                                                           |
-| ---- | ----------------------------------------------------------------------------------- |
-| `0`  | success                                                                             |
-| `1`  | invalid worker name — the name must be a DNS label                                  |
-| `1`  | no name given, and nowhere to ask for one — not a terminal, or `-o` is in force     |
-| `1`  | bad `--source`: outside the project, or a path the CLI owns                         |
-| `1`  | destination exists and is not empty                                                 |
-| `1`  | the worker is already recorded in `config.toml`, in any form                        |
-| `1`  | the rendered `config.toml` would not parse, or `[workers]` is a sealed inline table |
+| Code | Condition                                                                                          |
+| ---- | -------------------------------------------------------------------------------------------------- |
+| `0`  | success                                                                                            |
+| `1`  | invalid worker name — the name must be a DNS label                                                 |
+| `1`  | no name given, and nowhere to ask for one — stdin or stdout is not a terminal, or `-o` is in force |
+| `1`  | bad `--source`: outside the project, or a path the CLI owns                                        |
+| `1`  | destination exists and is not empty                                                                |
+| `1`  | the worker is already recorded in `config.toml`, in any form                                       |
+| `1`  | the rendered `config.toml` would not parse, or `[workers]` is a sealed inline table                |
 
 ## Environment Variables
 

@@ -119,6 +119,10 @@ describe("legacy workers new", () => {
     { label: "not interactive", setup: { interactive: false } },
     // A TTY, but stdout was claimed by the payload, so a prompt would corrupt it.
     { label: "-o json", setup: { goOutput: "json" as const } },
+    // `printf 'orders\n' | supabase workers new`: stdout is still a terminal, so
+    // `output.interactive` on its own would have fed the pipe straight into the
+    // name prompt instead of taking this documented path.
+    { label: "piped stdin", setup: { stdinIsTty: false } },
   ])("refuses a bare new when there is nowhere to ask ($label)", ({ setup }) => {
     const repo = project();
     const { layer, out } = setupLegacyWorkers({
@@ -156,6 +160,25 @@ describe("legacy workers new", () => {
       expect(repo.config()).toContain('runtime = "node"');
       expect(repo.config()).toContain('size = "4gb"');
       expect(existsSync(join(repo.dir, "supabase", "workers", "api", "index.mjs"))).toBe(true);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The runtime and size prompts do have defaults to fall back on, so a piped
+  // stdin must leave them unasked rather than consuming the pipe.
+  it.live("takes the defaults without prompting when stdin is piped", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      stdinIsTty: false,
+      promptSelectResponses: ["node", "4gb"],
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersNew(flags({ name: Option.some("api") }));
+
+      expect(out.promptSelectCalls).toEqual([]);
+      expect(repo.config()).toContain('runtime = "deno"');
+      expect(repo.config()).toContain('size = "2gb"');
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
