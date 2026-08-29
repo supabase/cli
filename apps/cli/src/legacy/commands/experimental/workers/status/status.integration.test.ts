@@ -223,7 +223,8 @@ describe("legacy workers status", () => {
 
       expect(out.stdoutText).toContain("failed");
       expect(out.stdoutText).toContain("exit status 1");
-      expect(out.stdoutText).toContain("supabase experimental workers push api");
+      // The retry hint is a success trailer, which lands on stderr.
+      expect(out.stderrText).toContain("supabase experimental workers push api");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -483,6 +484,32 @@ describe("legacy workers status", () => {
 
       expect(http.routeKeys).toEqual([`GET /v2/projects/${otherRef}/workers/api`]);
       expect(out.stdoutText).toContain("active");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The URL is derived from the exposure the platform reports, not assumed: a
+  // worker it did not expose has no address to print, and the row is dropped
+  // rather than rendered empty.
+  it.live("omits the URL for a worker that is not publicly exposed", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: {
+        [getRoute]: {
+          status: 200,
+          body: {
+            data: workerResource({ name: "api", runtime: "node", exposure: "private" }),
+          },
+        },
+      },
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersStatus({ name: "api", projectRef: Option.none() });
+
+      expect(out.stdoutText).toContain("private");
+      expect(out.stdoutText).not.toContain("URL");
+      expect(out.stdoutText).not.toContain("https://");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 

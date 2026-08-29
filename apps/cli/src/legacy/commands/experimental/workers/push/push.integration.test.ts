@@ -1,4 +1,4 @@
-import { chmodSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Option, Predicate, Schedule } from "effect";
@@ -14,10 +14,13 @@ import { LegacyProjectNotLinkedError } from "../../../../config/legacy-project-r
 import { LegacyWorkersEnvNotSupportedError } from "../workers.errors.ts";
 import {
   NoWorkersToDeployError,
+  UnknownWorkerRuntimeError,
+  UnknownWorkerSizeError,
   WorkerBuildFailedError,
   WorkerBuildTimeoutError,
   WorkerProjectNotFoundError,
   WorkersUnavailableError,
+  WorkerSourceEscapingLinkError,
   WorkerSourceMissingError,
   WorkerUploadFailedError,
 } from "../../../../../shared/workers/workers.errors.ts";
@@ -96,6 +99,16 @@ function listableAsCurrentUser(path: string): boolean {
   }
 }
 
+/** The same question one level down: can this path still be stat-ed? */
+function stattableAsCurrentUser(path: string): boolean {
+  try {
+    statSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function push(flagOverrides: Partial<LegacyWorkersPushFlags> = {}) {
   // Both schedules are injected: the outer poll and the per-read retry. The
   // production retry is spaced in seconds, so leaving it in place made the
@@ -143,6 +156,7 @@ describe("legacy workers push", () => {
       expect(out.stdoutText).toContain("Deployed Worker api");
       expect(out.stdoutText).toContain("Runtime");
       expect(out.stdoutText).toContain(`https://${WORKERS_PROJECT_REF}.supabase.co/workers/v1/api`);
+      expect(out.stdoutText).toContain("v1");
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -190,6 +204,42 @@ describe("legacy workers push", () => {
 
       const deploy = http.requests.find((request) => request.url.endsWith("/deploy"));
       expect(JSON.parse(deploy?.body ?? "{}").data.attributes.spec.runtime).toBe("node");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // `[workers.*] runtime` and `size` are plain strings in the config schema, so
+  // an unrecognized value reaches the handler rather than failing the parse.
+  // Naming the accepted values beats echoing a schema error, and the refusal
+  // has to land before anything is packaged or uploaded.
+  it.live("names the runtimes on offer when config records one it does not know", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "cobol"\n`,
+    });
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      const error = yield* push().pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(UnknownWorkerRuntimeError);
+      expect((error as UnknownWorkerRuntimeError).detail).toContain("cobol");
+      expect((error as UnknownWorkerRuntimeError).suggestion).toContain("dockerfile, node, deno");
+      expect(http.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  it.live("names the sizes on offer when config records one it does not know", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\nsize = "huge"\n`,
+    });
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      const error = yield* push().pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(UnknownWorkerSizeError);
+      expect((error as UnknownWorkerSizeError).detail).toContain("huge");
+      expect((error as UnknownWorkerSizeError).suggestion).toContain("2gb, 4gb");
+      expect(http.requests).toHaveLength(0);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -301,6 +351,76 @@ describe("legacy workers push", () => {
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
+  // The reason is optional in the API contract, so the detail has to read as a
+  // sentence without one rather than trailing a bare colon.
+  it.live("reports a failed build that came with no reason", () => {
+    const repo = project();
+    const { layer } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: routes({
+        [`GET ${workersRoute("/api")}`]: {
+          status: 200,
+          body: { data: workerResource({ name: "api", runtime: "node", buildState: "failed" }) },
+        },
+      }),
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* push().pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerBuildFailedError);
+      expect((error as WorkerBuildFailedError).detail).toBe(`The build for "api" failed.`);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Every deploy this CLI sends asks for public exposure, but the accepted spec
+  // is the platform's answer, not the request echoed back. A worker it did not
+  // expose has no URL to print, and inventing one from the ref would name an
+  // address that does not resolve.
+  it.live("omits the URL for a worker the platform did not expose publicly", () => {
+    const repo = project();
+    const { layer, out } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: routes({
+        [`GET ${workersRoute("/api")}`]: {
+          status: 200,
+          body: {
+            data: workerResource({
+              name: "api",
+              runtime: "node",
+              buildState: "active",
+              exposure: "private",
+            }),
+          },
+        },
+      }),
+    });
+
+    return Effect.gen(function* () {
+      yield* push();
+
+      expect(out.stdoutText).toContain("Deployed Worker api");
+      expect(out.stdoutText).toContain("private");
+      expect(out.stdoutText).not.toContain("https://");
+      expect(out.stdoutText).not.toContain("URL");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The schedules every other test injects are a seam: the command itself calls
+  // the handler with no options at all. The stubbed worker settles on the first
+  // poll, so the production schedules never get to space anything out.
+  it.live("deploys when called the way the command wires it, with no test seams", () => {
+    const repo = project();
+    const { layer, out, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      yield* legacyWorkersPush(flags());
+
+      expect(http.routeKeys).toContain(`POST ${workersRoute("/api/deploy")}`);
+      expect(out.stdoutText).toContain("Deployed Worker api");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("stops waiting on a build that never settles, and says where to look", () => {
     const repo = project();
     const { layer } = setupLegacyWorkers({
@@ -314,15 +434,93 @@ describe("legacy workers push", () => {
     });
 
     return Effect.gen(function* () {
-      const error = yield* legacyWorkersPush(flags(), { pollSchedule: Schedule.recurs(2) }).pipe(
-        Effect.flip,
-      );
+      const error = yield* legacyWorkersPush(flags(), {
+        pollSchedule: Schedule.recurs(2),
+      }).pipe(Effect.flip);
 
       expect(error).toBeInstanceOf(WorkerBuildTimeoutError);
       expect((error as { suggestion: string }).suggestion).toContain(
         "supabase experimental workers status api",
       );
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // Every "run this next" string here is copy-pasted verbatim. From an unlinked
+  // checkout — or one linked elsewhere — dropping the `--project-ref` the user
+  // typed either fails to resolve or silently addresses a same-named worker in
+  // whatever project this checkout points at.
+  describe("carries an explicit --project-ref into its hints", () => {
+    const unlinked = (repoDir: string, routeOverrides = {}) =>
+      setupLegacyWorkers({
+        workdir: repoDir,
+        linked: false,
+        routes: routes(routeOverrides),
+      });
+    const withRef = { projectRef: Option.some(WORKERS_PROJECT_REF) };
+
+    it.live("in the failed-build retry suggestion", () => {
+      const repo = project();
+      const { layer } = unlinked(repo.dir, {
+        [`GET ${workersRoute("/api")}`]: {
+          status: 200,
+          body: { data: workerResource({ name: "api", runtime: "node", buildState: "failed" }) },
+        },
+      });
+
+      return Effect.gen(function* () {
+        const error = yield* push(withRef).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkerBuildFailedError);
+        expect((error as WorkerBuildFailedError).suggestion).toContain(
+          `supabase experimental workers push api --project-ref ${WORKERS_PROJECT_REF}`,
+        );
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    });
+
+    it.live("in the give-up-waiting suggestion", () => {
+      const repo = project();
+      const { layer } = unlinked(repo.dir, {
+        [`GET ${workersRoute("/api")}`]: {
+          status: 200,
+          body: { data: workerResource({ name: "api", buildState: "building" }) },
+        },
+      });
+
+      return Effect.gen(function* () {
+        const error = yield* legacyWorkersPush(flags(withRef), {
+          pollSchedule: Schedule.recurs(2),
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkerBuildTimeoutError);
+        expect((error as { suggestion: string }).suggestion).toContain(
+          `supabase experimental workers status api --project-ref ${WORKERS_PROJECT_REF}`,
+        );
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    });
+
+    // The mirror image: when the link supplied the ref, repeating it back is
+    // noise on a command that already resolves to the right project.
+    it.live("but leaves it off when the link supplied the ref", () => {
+      const repo = project();
+      const { layer } = setupLegacyWorkers({
+        workdir: repo.dir,
+        routes: routes({
+          [`GET ${workersRoute("/api")}`]: {
+            status: 200,
+            body: { data: workerResource({ name: "api", buildState: "failed" }) },
+          },
+        }),
+      });
+
+      return Effect.gen(function* () {
+        const error = yield* push().pipe(Effect.flip);
+
+        expect((error as WorkerBuildFailedError).suggestion).toContain(
+          "supabase experimental workers push api",
+        );
+        expect((error as WorkerBuildFailedError).suggestion).not.toContain("--project-ref");
+      }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+    });
   });
 
   it.live("fails before deploying when the presigned upload is rejected", () => {
@@ -344,6 +542,26 @@ describe("legacy workers push", () => {
   // section, so it has to honour one: loading TOML-only left the section empty,
   // which meant a guessed runtime and default size and instance count for a
   // worker that had configured all three.
+  // The context is already uploaded by the time the deploy is refused, so the
+  // failure has to be reported as the deploy's, not the upload's.
+  it.live("reports a rejected deploy after the context has been uploaded", () => {
+    const repo = project();
+    const { layer, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: routes({
+        [`POST ${workersRoute("/api/deploy")}`]: { status: 500, body: { message: "boom" } },
+      }),
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* push().pipe(Effect.flip);
+
+      expect(Predicate.isTagged(error, "WorkersApiUnexpectedStatusError")).toBe(true);
+      expect(http.routeKeys).toContain("PUT /deploy-context/api.tar.gz");
+      expect(http.routeKeys).toContain(`POST ${workersRoute("/api/deploy")}`);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("deploys a worker configured in config.json, not just config.toml", () => {
     const created = makeWorkersProject({
       "supabase/config.json": JSON.stringify({
@@ -623,6 +841,24 @@ describe("legacy workers push", () => {
     );
   });
 
+  // Packaging stores symlinks rather than following them, so a link out of the
+  // tree would package a path the build cannot resolve. It is refused while
+  // packaging — before a slot is minted — so nothing is uploaded for a context
+  // that could never build.
+  it.live("refuses a source that links outside itself, before minting a slot", () => {
+    const repo = project();
+    symlinkSync("../../config.toml", join(repo.dir, "supabase", "workers", "api", "escape.toml"));
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      const error = yield* push().pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerSourceEscapingLinkError);
+      expect((error as WorkerSourceEscapingLinkError).detail).toContain("escape.toml");
+      expect(http.requests).toHaveLength(0);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
   it.live("rides out a transient failure while polling the build", () => {
     const repo = project();
     const { layer, http } = setupLegacyWorkers({
@@ -702,6 +938,65 @@ describe("legacy workers push", () => {
         http.routeKeys.indexOf(`POST ${workersRoute("/web/deploy")}`),
       );
       expect(out.stdoutText).toContain("web");
+      // Each worker is announced with its place in the run, and the run closes
+      // by naming everything it deployed.
+      expect(out.stderrText).toContain("Deploying Worker 1/2: api");
+      expect(out.stderrText).toContain("Deploying Worker 2/2: web");
+      expect(out.stdoutText).toContain(
+        `Deployed 2 Workers to project ${WORKERS_PROJECT_REF}: api, web`,
+      );
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
+  });
+
+  // The other half of that stat: an entry that is there but cannot be read is a
+  // real filesystem problem, not a name to skip. Dropping it would deploy a
+  // subset of the project and report success. Root ignores the permission bits,
+  // and CI sometimes runs as root, so this asserts the outcome that actually
+  // applies rather than skipping.
+  it.live("fails rather than skipping a workers entry it cannot stat", () => {
+    const repo = project();
+    const workersRoot = join(repo.dir, "supabase", "workers");
+    // Readable, so the listing still names `api`; not traversable, so stat-ing
+    // anything inside it fails with a permission error.
+    chmodSync(workersRoot, 0o600);
+    const stattable = stattableAsCurrentUser(join(workersRoot, "api"));
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      if (stattable) {
+        yield* push({ names: [] });
+        expect(http.routeKeys).toContain(`POST ${workersRoute("/api/deploy")}`);
+        return;
+      }
+      const error = yield* push({ names: [] }).pipe(Effect.flip);
+
+      expect(error).not.toBeInstanceOf(NoWorkersToDeployError);
+      expect(Predicate.isTagged(error, "PlatformError")).toBe(true);
+      expect(http.requests).toHaveLength(0);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(
+        Effect.sync(() => {
+          chmodSync(workersRoot, 0o700);
+          repo.cleanup();
+        }),
+      ),
+    );
+  });
+
+  // A dangling link in the workers root is listed by the directory read but has
+  // nothing to stat. Discovery skips it rather than failing the whole run over a
+  // path that names no worker.
+  it.live("skips a dangling link in the workers root while discovering", () => {
+    const repo = project();
+    symlinkSync("nowhere", join(repo.dir, "supabase", "workers", "ghost"));
+    const { layer, http } = setupLegacyWorkers({ workdir: repo.dir, routes: routes() });
+
+    return Effect.gen(function* () {
+      yield* push({ names: [] });
+
+      expect(http.routeKeys).toContain(`POST ${workersRoute("/api/deploy")}`);
+      expect(http.routeKeys.some((key) => key.includes("/ghost"))).toBe(false);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
@@ -737,6 +1032,41 @@ describe("legacy workers push", () => {
         }),
       ),
     );
+  });
+
+  it.live("names the workers a failed run never got to", () => {
+    const repo = project({
+      "supabase/config.toml": `project_id = "demo"\n\n[workers.api]\nruntime = "node"\n\n[workers.web]\nruntime = "node"\n`,
+      "supabase/workers/web/index.js": "export default {};\n",
+    });
+    const { layer, out, http } = setupLegacyWorkers({
+      workdir: repo.dir,
+      routes: routes({
+        // `api` sorts first, so the run stops before `web` is ever touched.
+        [`GET ${workersRoute("/api")}`]: {
+          status: 200,
+          body: {
+            data: workerResource({
+              name: "api",
+              runtime: "node",
+              buildState: "failed",
+              stateReason: "error building image: exit status 1",
+            }),
+          },
+        },
+      }),
+    });
+
+    return Effect.gen(function* () {
+      const error = yield* push({ names: [] }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(WorkerBuildFailedError);
+      expect(out.stderrText).toContain("Not attempted: web");
+      // Named rather than deployed: the run really did stop.
+      expect(http.routeKeys).not.toContain(`POST ${workersRoute("/web/deploy")}`);
+      // No summary either — nothing finished.
+      expect(out.stdoutText).not.toContain("Deployed 2 Workers");
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(repo.cleanup)));
   });
 
   it.live("fails when there are no workers to deploy at all", () => {

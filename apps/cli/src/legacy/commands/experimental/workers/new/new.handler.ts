@@ -1,6 +1,8 @@
 import { join, relative, sep } from "node:path";
 import { Effect, FileSystem, Option } from "effect";
 import { Output } from "../../../../../shared/output/output.service.ts";
+import { emitSuccessTrailer } from "../../../../../shared/cli/success-trailer.ts";
+import { legacyAqua, legacyBold } from "../../../../shared/legacy-colors.ts";
 import { legacyRenderWorkerDetails } from "../workers.format.ts";
 import {
   legacyEmitWorkersMachineOutput,
@@ -67,7 +69,7 @@ function defaultFirst<T>(values: ReadonlyArray<T>, defaultValue: T): Array<T> {
  * whichever flag asked for it.
  *
  * `output.interactive` only tracks *stdout*, so on its own it still let
- * `printf 'api\n' | supabase workers new` feed the pipe straight into the name
+ * `printf 'api\n' | supabase experimental workers new` feed the pipe straight into the name
  * prompt instead of taking the documented non-interactive path. A prompt is
  * only answerable from a keyboard, so stdin has to be a terminal too — the same
  * pair `workers delete` guards its confirmation with.
@@ -83,7 +85,7 @@ const canPromptFor = Effect.fnUntraced(function* (machineOutput: boolean) {
  *
  * The name is the one input here that cannot be defaulted — it is the
  * directory, the `config.toml` key and the hostname — so a bare
- * `supabase workers new` asks rather than failing the parse. The prompt
+ * `supabase experimental workers new` asks rather than failing the parse. The prompt
  * validates against everything the command would otherwise refuse a moment
  * later, so a mistyped or already-recorded name is corrected in place instead
  * of ending the run.
@@ -116,7 +118,7 @@ const resolveName = Effect.fnUntraced(function* (options: {
   return yield* Effect.fail(
     new MissingWorkerNameError({
       detail: "Worker name is required in non-interactive mode.",
-      suggestion: "Pass a worker name, for example `supabase workers new api`.",
+      suggestion: "Pass a worker name, for example `supabase experimental workers new api`.",
     }),
   );
 });
@@ -190,7 +192,7 @@ const destinationIsFree = Effect.fnUntraced(function* (target: string) {
   return entries.length === 0;
 });
 
-export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(function* (
+export const legacyWorkersNew = Effect.fn("legacy.workers.new")(function* (
   flags: LegacyWorkersNewFlags,
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -328,7 +330,7 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
     // then the details. Guidance goes in a closing sentence rather than a
     // pseudo-row, since no other command puts a next step inside its output
     // table.
-    yield* output.raw(`Created new Worker at ${sourceDisplay}\n`);
+    yield* output.raw(`Created new Worker at ${legacyBold(sourceDisplay, process.stdout)}\n`);
     yield* output.raw(
       legacyRenderWorkerDetails([
         ["Runtime", runtime],
@@ -336,6 +338,11 @@ export const legacyWorkersNew = Effect.fn("legacy.experimental.workers.new")(fun
         ["Access", "public"],
       ]),
     );
-    yield* output.raw(`Deploy it with supabase experimental workers push ${name}.\n`);
+    // On the success trailer rather than inline, the way `bootstrap` emits its
+    // "start your app" line: the shell prints trailers once at the end of the
+    // run, so the next step is the last thing on screen.
+    yield* emitSuccessTrailer(
+      `Deploy it with ${legacyAqua(`supabase experimental workers push ${name}`)}.\n`,
+    );
   }).pipe(Effect.ensuring(telemetryState.flush));
 });
