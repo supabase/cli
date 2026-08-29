@@ -88,6 +88,9 @@ const JwkSchema = Schema.Struct({
   p: Schema.optionalKey(Schema.String),
   q: Schema.optionalKey(Schema.String),
   qi: Schema.optionalKey(Schema.String),
+  use: Schema.optionalKey(Schema.String),
+  key_ops: Schema.optionalKey(Schema.Array(Schema.String)),
+  ext: Schema.optionalKey(Schema.Boolean),
   x: Schema.optionalKey(Schema.String),
   y: Schema.optionalKey(Schema.String),
 });
@@ -143,11 +146,14 @@ const randomEncoded = (
     ),
   );
 
-interface SigningJwk {
+export interface SigningJwk {
   readonly kty: "EC" | "RSA";
   readonly alg: "ES256" | "RS256";
   readonly d: string;
   readonly kid?: string;
+  readonly use?: string;
+  readonly key_ops?: Array<string>;
+  readonly ext?: boolean;
   readonly crv?: string;
   readonly x?: string;
   readonly y?: string;
@@ -168,6 +174,23 @@ const stringField = (record: Record<string, unknown>, key: string): string | und
   return value === undefined ? undefined : typeof value === "string" ? value : undefined;
 };
 
+const booleanField = (record: Record<string, unknown>, key: string): boolean | undefined => {
+  const value = record[key];
+  return value === undefined ? undefined : typeof value === "boolean" ? value : undefined;
+};
+
+const stringArrayField = (
+  record: Record<string, unknown>,
+  key: string,
+): Array<string> | undefined => {
+  const value = record[key];
+  return value === undefined
+    ? undefined
+    : Array.isArray(value) && value.every((entry) => typeof entry === "string")
+      ? value
+      : undefined;
+};
+
 const privateSigningJwk = (value: unknown): SigningJwk | undefined => {
   if (!isRecord(value)) return undefined;
   const kty = value.kty;
@@ -175,12 +198,26 @@ const privateSigningJwk = (value: unknown): SigningJwk | undefined => {
   const d = stringField(value, "d");
   if (typeof d !== "string") return undefined;
   const kid = stringField(value, "kid");
+  const use = stringField(value, "use");
+  const keyOps = stringArrayField(value, "key_ops");
+  const ext = booleanField(value, "ext");
   if (kty === "EC" && alg === "ES256") {
     const crv = stringField(value, "crv");
     const x = stringField(value, "x");
     const y = stringField(value, "y");
     if (crv !== "P-256" || x === undefined || y === undefined) return undefined;
-    return { kty, alg, d, ...(kid === undefined ? {} : { kid }), crv, x, y };
+    return {
+      kty,
+      alg,
+      d,
+      ...(kid === undefined ? {} : { kid }),
+      ...(use === undefined ? {} : { use }),
+      ...(keyOps === undefined ? {} : { key_ops: keyOps }),
+      ...(ext === undefined ? {} : { ext }),
+      crv,
+      x,
+      y,
+    };
   }
   if (kty === "RSA" && alg === "RS256") {
     const n = stringField(value, "n");
@@ -196,6 +233,9 @@ const privateSigningJwk = (value: unknown): SigningJwk | undefined => {
       alg,
       d,
       ...(kid === undefined ? {} : { kid }),
+      ...(use === undefined ? {} : { use }),
+      ...(keyOps === undefined ? {} : { key_ops: keyOps }),
+      ...(ext === undefined ? {} : { ext }),
       n,
       e,
       p,
@@ -211,9 +251,13 @@ const privateSigningJwk = (value: unknown): SigningJwk | undefined => {
 const invalidSigningMaterial = () =>
   new InvalidJwtSigningMaterialError({ message: "Unable to resolve JWT signing material" });
 
-const readSigningJwk = (
+const readSigningJwks = (
   signing: Extract<SecretJwtSigning, { readonly kind: "jwks-file" }>,
-): Effect.Effect<SigningJwk, InvalidJwtSigningMaterialError, FileSystem.FileSystem | Path.Path> =>
+): Effect.Effect<
+  ReadonlyArray<SigningJwk>,
+  InvalidJwtSigningMaterialError,
+  FileSystem.FileSystem | Path.Path
+> =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
     const fs = yield* FileSystem.FileSystem;
@@ -242,12 +286,58 @@ const readSigningJwk = (
       Effect.mapError(() => invalidSigningMaterial()),
     );
     const entries = Array.isArray(parsed) ? parsed : [parsed];
-    for (const entry of entries) {
+    const keys = entries.flatMap((entry) => {
       const jwk = privateSigningJwk(entry);
-      if (jwk !== undefined) return jwk;
-    }
-    return yield* invalidSigningMaterial();
+      return jwk === undefined ? [] : [jwk];
+    });
+    return keys.length === 0 ? yield* invalidSigningMaterial() : keys;
   });
+
+const readSigningJwk = (
+  signing: Extract<SecretJwtSigning, { readonly kind: "jwks-file" }>,
+): Effect.Effect<SigningJwk, InvalidJwtSigningMaterialError, FileSystem.FileSystem | Path.Path> =>
+  readSigningJwks(signing).pipe(Effect.map((keys) => keys[0]!));
+
+export interface ResolvedSigningKeyMaterial {
+  /** The private signing keys as a JSON array for GoTrue's signing-key input. */
+  readonly privateKeysJson: string;
+  /** Public-only JWKs suitable for JWT verification. */
+  readonly publicKeys: ReadonlyArray<Readonly<Record<string, unknown>>>;
+  /** Public-only JWKs wrapped in a JWKS document. */
+  readonly publicJwksJson: string;
+}
+
+const publicSigningJwk = (key: SigningJwk): Readonly<Record<string, unknown>> => ({
+  kty: key.kty,
+  ...(key.kid === undefined ? {} : { kid: key.kid }),
+  ...(key.use === undefined ? {} : { use: key.use }),
+  ...(() => {
+    const operations = key.key_ops?.filter((operation) => operation === "verify");
+    return operations === undefined || operations.length === 0 ? {} : { key_ops: operations };
+  })(),
+  alg: key.alg,
+  ...(key.ext === undefined ? {} : { ext: key.ext }),
+  ...(key.kty === "RSA" ? { n: key.n, e: key.e } : { crv: key.crv, x: key.x, y: key.y }),
+});
+
+/** Reads every valid private key from a contained JWKS file and derives public material. */
+export const resolveSigningKeyMaterial = (
+  signing: Extract<SecretJwtSigning, { readonly kind: "jwks-file" }>,
+): Effect.Effect<
+  ResolvedSigningKeyMaterial,
+  InvalidJwtSigningMaterialError,
+  FileSystem.FileSystem | Path.Path
+> =>
+  readSigningJwks(signing).pipe(
+    Effect.map((keys) => {
+      const publicKeys = keys.map(publicSigningJwk);
+      return {
+        privateKeysJson: JSON.stringify(keys),
+        publicKeys,
+        publicJwksJson: JSON.stringify({ keys: publicKeys }),
+      };
+    }),
+  );
 
 const signWithJwk = (
   jwk: SigningJwk,
