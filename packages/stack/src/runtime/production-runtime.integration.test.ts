@@ -1,13 +1,14 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Path, Crypto, Stream } from "effect";
+import { Effect, Exit, FileSystem, Path, Crypto, Stream } from "effect";
 import type { StackLogEntry } from "../public/Logs.ts";
 import { StackIdSchema } from "../public/StackId.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import type { StackStateStore } from "../state/StackStateStore.ts";
 import type { SupervisorIngress } from "../supervisor/Ingress.ts";
 import type { LogStore } from "../supervisor/LogStore.ts";
-import { makeProductionRuntimeFactory } from "./ProductionRuntime.ts";
+import { makeProductionRuntimeFactory, withOwnedRuntimeFileCleanup } from "./ProductionRuntime.ts";
+import { RuntimeDriverError, type RuntimeDriver } from "./RuntimeDriver.ts";
 import type { RuntimeArtifactPreparer } from "../preparation/RuntimeArtifacts.ts";
 import {
   makeFunctionsBootstrapOwner,
@@ -173,4 +174,38 @@ describe("production runtime composition", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );
+
+  it("attempts both owner cleanups when runtime cleanup fails", () => {
+    const calls: string[] = [];
+    const runtimeFailure = new RuntimeDriverError({
+      message: "runtime cleanup failed",
+      stackId,
+    });
+    const driver: RuntimeDriver = {
+      observe: () => Effect.succeed([]),
+      start: () => Effect.die("unused"),
+      stop: () => Effect.void,
+      remove: () => Effect.void,
+      cleanup: () => Effect.fail(runtimeFailure),
+      recover: () => Effect.succeed([]),
+    };
+    const envOwner: RuntimeEnvFileOwner = {
+      write: () => Effect.die("unused"),
+      cleanupGeneration: () => Effect.void,
+      cleanupAll: Effect.sync(() => {
+        calls.push("env");
+      }),
+    };
+    const functionsOwner: FunctionsBootstrapOwner = {
+      write: () => Effect.die("unused"),
+      cleanupGeneration: () => Effect.void,
+      cleanupAll: Effect.sync(() => {
+        calls.push("functions");
+      }),
+    };
+    const wrapped = withOwnedRuntimeFileCleanup(driver, envOwner, functionsOwner);
+    const result = Effect.runSyncExit(wrapped.cleanup({ stackId, destroy: false }));
+    expect(Exit.isFailure(result)).toBe(true);
+    expect(calls.sort()).toEqual(["env", "functions"]);
+  });
 });

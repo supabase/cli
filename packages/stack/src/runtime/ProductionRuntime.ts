@@ -1,4 +1,4 @@
-import { Context, Crypto, Effect, FileSystem, Path, Ref, Scope, Stream } from "effect";
+import { Cause, Context, Crypto, Effect, Exit, FileSystem, Path, Ref, Scope, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import { bundleServeMainTemplate } from "../functions/serve-main-bundler.ts";
@@ -200,6 +200,35 @@ const mapDriverError = (
   error: unknown,
 ): RuntimeDriverError =>
   driverError(key, error instanceof Error ? error.message : "Runtime operation failed", error);
+
+/** Ensures owner files are attempted even when the selected runtime cleanup fails. */
+export const withOwnedRuntimeFileCleanup = (
+  driver: RuntimeDriver,
+  envFiles: RuntimeEnvFileOwner,
+  functionsBootstrap: FunctionsBootstrapOwner,
+): RuntimeDriver => {
+  const cleanupFiles = (stackId: StackId): Effect.Effect<void, RuntimeDriverError> =>
+    Effect.all([envFiles.cleanupAll, functionsBootstrap.cleanupAll], {
+      concurrency: "unbounded",
+      discard: true,
+    }).pipe(
+      Effect.mapError((error) =>
+        driverError({ stackId, workloadId: "" }, "Unable to clean runtime files", error),
+      ),
+    );
+  return {
+    ...driver,
+    cleanup: (request) =>
+      Effect.gen(function* () {
+        const runtime = yield* Effect.exit(driver.cleanup(request));
+        const files = yield* Effect.exit(cleanupFiles(request.stackId));
+        if (Exit.isFailure(runtime) && Exit.isFailure(files))
+          return yield* Effect.failCause(Cause.combine(runtime.cause, files.cause));
+        if (Exit.isFailure(runtime)) return yield* Effect.failCause(runtime.cause);
+        if (Exit.isFailure(files)) return yield* Effect.failCause(files.cause);
+      }),
+  };
+};
 
 /** Composes concrete runtime owners around one persisted stack identity. */
 export const makeProductionRuntimeFactory = (
@@ -563,21 +592,7 @@ export const makeProductionRuntimeFactory = (
                   : Effect.void,
             });
           }
-          const runtimeDriver = driver;
-          const ownedCleanup = (stackId: StackId): Effect.Effect<void, RuntimeDriverError> =>
-            Effect.all([envFiles.cleanupAll, functionsBootstrap.cleanupAll], {
-              concurrency: "unbounded",
-              discard: true,
-            }).pipe(
-              Effect.mapError((error) =>
-                driverError({ stackId, workloadId: "" }, "Unable to clean runtime files", error),
-              ),
-            );
-          const ownedDriver: RuntimeDriver = {
-            ...runtimeDriver,
-            cleanup: (request) =>
-              runtimeDriver.cleanup(request).pipe(Effect.andThen(ownedCleanup(request.stackId))),
-          };
+          const ownedDriver = withOwnedRuntimeFileCleanup(driver, envFiles, functionsBootstrap);
           return {
             driver: ownedDriver,
             preflight,
