@@ -20,10 +20,17 @@ import (
 )
 
 func TestWriteDeclarativeSchemas(t *testing.T) {
-	// This verifies the main happy path for declarative export materialization:
-	// files are written to expected locations and config is updated accordingly.
+	// This verifies the main happy path for declarative export materialization
+	// with pg-delta explicitly disabled: files are written to expected locations
+	// and [db.migrations] schema_paths is updated accordingly. (With pg-delta
+	// enabled — the default — the config update is skipped; see the tests below.)
 	fsys := afero.NewMemMapFs()
 	require.NoError(t, afero.WriteFile(fsys, utils.ConfigPath, []byte("[db]\n"), 0644))
+	original := utils.Config.Experimental.PgDelta
+	utils.Config.Experimental.PgDelta = &config.PgDeltaConfig{Enabled: false}
+	t.Cleanup(func() {
+		utils.Config.Experimental.PgDelta = original
+	})
 
 	output := diff.DeclarativeOutput{
 		Files: []diff.DeclarativeFile{
