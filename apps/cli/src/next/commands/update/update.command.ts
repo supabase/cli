@@ -1,12 +1,10 @@
 import { Layer } from "effect";
-import { DEFAULT_MANAGED_STACK_NAME } from "@supabase/stack/effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { credentialsLayer } from "../../auth/credentials.layer.ts";
 import { platformApiLayer } from "../../auth/platform-api.layer.ts";
 import { projectLinkRemoteLayer } from "../../config/project-link-remote.layer.ts";
 import { projectLinkStateLayer } from "../../config/project-link-state.layer.ts";
-import { cliProjectLocalServiceVersionsLayer } from "../../config/cli-project-local-service-versions.layer.ts";
 import {
   discoveredCliSettingsLayer,
   provideCliProjectCommandRuntime,
@@ -15,6 +13,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { withCommandInstrumentation } from "../../../shared/telemetry/command-instrumentation.ts";
 import { update } from "./update.handler.ts";
+import { DEFAULT_MANAGED_STACK_NAME } from "../../../shared/stack-constants.ts";
 
 const flags = {
   stack: Flag.string("stack").pipe(
@@ -34,7 +33,6 @@ const updateProjectLinkRemoteLayer = projectLinkRemoteLayer.pipe(
 const updateRuntimeLayer = provideCliProjectCommandRuntime(
   Layer.mergeAll(
     projectLinkStateLayer,
-    cliProjectLocalServiceVersionsLayer,
     updateProjectLinkRemoteLayer,
     commandRuntimeLayer(["stack", "update"]),
   ),
@@ -42,14 +40,13 @@ const updateRuntimeLayer = provideCliProjectCommandRuntime(
 
 export const updateCommand = Command.make("update", flags).pipe(
   Command.withDescription(
-    "Fetch the latest linked remote service versions when available, then update the pinned local stack versions from the linked project snapshot and CLI defaults without starting the stack.",
+    "Refresh the linked project metadata used by local stack commands without starting the stack.",
   ),
-  Command.withShortDescription("Update pinned local stack versions"),
+  Command.withShortDescription("Refresh linked project metadata"),
   Command.withExamples([
     {
       command: "supabase stack update",
-      description:
-        "Fetch remote linked versions and update the pinned service versions for the default local stack",
+      description: "Refresh linked project metadata for the default local stack",
     },
   ]),
   Command.withHandler((commandFlags) =>

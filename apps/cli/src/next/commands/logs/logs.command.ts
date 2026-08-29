@@ -1,4 +1,4 @@
-import { DEFAULT_MANAGED_STACK_NAME } from "@supabase/stack/effect";
+import { DEFAULT_MANAGED_STACK_NAME } from "../../../shared/stack-constants.ts";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";

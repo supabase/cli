@@ -1,77 +1,55 @@
 import { Effect } from "effect";
-import { updateManagedLaunch } from "@supabase/stack/effect";
+import { createStack } from "@supabase/stack/effect";
+import { loadCliConfig } from "@supabase/config/effect";
+import { CliProjectHome } from "../../config/cli-project-home.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
+import { ensureProjectStateIgnored } from "../../config/project-gitignore.ts";
+import { runtimePreference, toStartStackConfig } from "../../config/stack-config.ts";
 import type { StartFlags } from "./start.command.ts";
-import { StartVersionState } from "./start.command.ts";
-import { startBackground } from "./flows/background.flow.ts";
-import { startForeground } from "./flows/foreground.flow.ts";
-import { startNonInteractive } from "./flows/non-interactive.flow.ts";
-import { formatPortDriftWarning } from "../../stack/port-drift.ts";
 
 export const start = Effect.fnUntraced(function* (flags: StartFlags) {
-  return yield* Effect.scoped(
+  const output = yield* Output;
+  const project = yield* CliProjectHome;
+  const analytics = yield* Analytics;
+  yield* output.intro("Start local Supabase stack");
+  yield* ensureProjectStateIgnored(project.projectRoot);
+  const loadedConfig = yield* loadCliConfig(project.projectRoot);
+  yield* Effect.scoped(
     Effect.gen(function* () {
-      const output = yield* Output;
-      const analytics = yield* Analytics;
-      const startVersionState = yield* StartVersionState;
-      const { launch, previousUpdateFingerprint, serviceVersionContext, lifecycleInput, drift } =
-        startVersionState;
-
-      const driftWarning = drift === undefined ? undefined : formatPortDriftWarning(drift);
-      if (driftWarning !== undefined) yield* output.warn(driftWarning);
-
-      if (serviceVersionContext.activeOverrides.length > 0) {
-        yield* output.warn(
-          [
-            "Local service version overrides are active (at your own risk):",
-            ...serviceVersionContext.activeOverrides.map(
-              ({ service, version, source }) => `  ${service}: ${version} [${source}]`,
-            ),
-            "These overrides are local to this checkout and may break compatibility.",
-          ].join("\n"),
-        );
-      }
-
-      if (
-        serviceVersionContext.updateFingerprint !== undefined &&
-        previousUpdateFingerprint !== serviceVersionContext.updateFingerprint
-      ) {
-        yield* output.warn(
-          [
-            "Updated linked or default service versions are available for this local stack:",
-            ...serviceVersionContext.availableUpdates.map(
-              ({ service, pinnedVersion, availableVersion }) =>
-                `  ${service}: ${pinnedVersion} -> ${availableVersion}`,
-            ),
-            "Run `supabase stack update` to adopt these pinned versions.",
-          ].join("\n"),
-        );
-        yield* updateManagedLaunch({
-          ...lifecycleInput,
-          launch: {
-            versions: launch.versions,
-            excludedServices: launch.excludedServices,
-            lastNotifiedUpdateFingerprint: serviceVersionContext.updateFingerprint,
-          },
-        });
-      }
-
-      let result: void;
-      if (flags.detach) {
-        result = yield* startBackground();
-      } else if (output.interactive) {
-        result = yield* startForeground();
-      } else {
-        result = yield* startNonInteractive();
-      }
-
+      const stack = yield* createStack({
+        projectRoot: project.projectRoot,
+        name: flags.stack,
+        runtime: runtimePreference(flags.mode),
+      });
+      const status = yield* stack.start({
+        config: toStartStackConfig(
+          loadedConfig?.config,
+          flags.exclude,
+          flags.mode,
+          project.projectRoot,
+        ),
+      });
+      yield* output.success(
+        status.lifecycle === "running"
+          ? "Local Supabase stack is running."
+          : `Local Supabase stack is ${status.lifecycle}.`,
+        {
+          stack: flags.stack,
+          lifecycle: status.lifecycle,
+          desired_lifecycle: status.desiredLifecycle,
+          runtime: status.runtime,
+          endpoints: status.endpoints,
+          capabilities: status.capabilities,
+        },
+      );
       yield* analytics.capture("cli_stack_started", {
-        mode: launch.mode,
+        mode: flags.mode,
         detach: flags.detach,
         stack: flags.stack,
       });
-      return result;
+      if (!flags.detach)
+        yield* output.info(`Stack ${flags.stack} remains managed after this command exits.`);
     }),
   );
 });

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { FunctionResponse } from "@supabase/api/effect";
 import { BunServices } from "@effect/platform-bun";
-import { httpTransportClientLayer } from "@supabase/stack/effect";
 import { mkdtempSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -95,7 +94,6 @@ function cliSettingsLayer() {
 function commandTreeSupportLayer(cwd: string) {
   const projectHomeDir = join(cwd, ".supabase");
   return Layer.mergeAll(
-    httpTransportClientLayer,
     cliSettingsLayer(),
     Layer.succeed(
       CliProjectHome,

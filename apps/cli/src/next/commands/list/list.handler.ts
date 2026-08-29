@@ -1,57 +1,31 @@
 import { Effect } from "effect";
 import { listStacks } from "@supabase/stack/effect";
-import { CliSettings } from "../../config/cli-settings.service.ts";
 import { CliProjectHome } from "../../config/cli-project-home.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 
 export const list = Effect.fnUntraced(function* () {
   const output = yield* Output;
-  const cliSettings = yield* CliSettings;
-  const cliProjectHome = yield* CliProjectHome;
-
+  const project = yield* CliProjectHome;
   yield* output.intro("List local Supabase stacks");
-
-  const stacks = yield* listStacks({
-    cacheRoot: cliSettings.supabaseHome,
-    projectDir: cliProjectHome.projectRoot,
-  });
-
+  const stacks = yield* listStacks({ projectRoot: project.projectRoot });
   if (stacks.length === 0) {
     const message = "No local Supabase stacks are known for this project.";
-    if (output.format === "text") {
-      yield* output.outro(message);
-      return;
-    }
-
-    yield* output.success(message, { stacks: [] });
-    return;
+    if (output.format === "text") return yield* output.outro(message);
+    return yield* output.success(message, { stacks: [] });
   }
-
   const data = {
     stacks: stacks.map((stack) => ({
+      id: stack.id,
       name: stack.name,
-      running: stack.running,
-      ports: stack.ports,
-      started_at: stack.startedAt,
+      lifecycle: stack.desiredLifecycle,
+      runtime: stack.runtime,
+      project_root: stack.projectRoot,
     })),
   };
-
-  if (output.format !== "text") {
-    yield* output.success("Known local Supabase stacks.", data);
-    return;
-  }
-
+  if (output.format !== "text") return yield* output.success("Known local Supabase stacks.", data);
   yield* output.success("Known local Supabase stacks.");
   for (const stack of stacks) {
-    const parts = [
-      stack.running ? "running" : "stopped",
-      `API ${stack.ports.apiPort}`,
-      `DB ${stack.ports.dbPort}`,
-    ];
-    if (stack.running && stack.startedAt !== undefined) {
-      parts.push(`started ${stack.startedAt}`);
-    }
-    yield* output.info(`${stack.name}: ${parts.join(" | ")}`);
+    yield* output.info(`${stack.name}: ${stack.desiredLifecycle} (${stack.runtime.kind})`);
   }
   yield* output.outro(
     `Found ${stacks.length} local Supabase stack${stacks.length === 1 ? "" : "s"}.`,

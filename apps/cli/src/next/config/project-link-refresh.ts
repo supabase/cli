@@ -1,17 +1,35 @@
-import type { AvailableServiceVersionUpdate, VersionManifest } from "@supabase/stack/effect";
-import {
-  diffPinnedAndAvailableVersions,
-  fillServiceVersionManifest,
-  normalizeServiceVersions,
-} from "@supabase/stack/effect";
 import { Effect } from "effect";
 import { ProjectLinkRemote } from "./project-link-remote.service.ts";
 import { ProjectLinkState } from "./project-link-state.service.ts";
+
+export interface VersionManifest {
+  readonly [service: string]: string | undefined;
+}
+
+export interface AvailableServiceVersionUpdate {
+  readonly service: string;
+  readonly pinnedVersion: string | undefined;
+  readonly availableVersion: string | undefined;
+}
 
 interface StackNeedsVersionUpdate {
   readonly stackName: string;
   readonly diff: ReadonlyArray<AvailableServiceVersionUpdate>;
 }
+
+const fillServiceVersionManifest = (versions: VersionManifest): VersionManifest => ({
+  ...versions,
+});
+const normalizeServiceVersions = (versions: VersionManifest): VersionManifest => ({ ...versions });
+const diffPinnedAndAvailableVersions = (
+  pinned: VersionManifest,
+  available: VersionManifest,
+): ReadonlyArray<AvailableServiceVersionUpdate> =>
+  Object.keys(available).flatMap((service) =>
+    pinned[service] === available[service]
+      ? []
+      : [{ service, pinnedVersion: pinned[service], availableVersion: available[service] }],
+  );
 
 interface RefreshedLinkedProjectSnapshot {
   readonly linkedProject: {

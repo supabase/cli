@@ -1,4 +1,4 @@
-import { isDockerDaemonDownMessage } from "@supabase/stack/effect";
+import { isDockerDaemonDownMessage } from "../../shared/stack-constants.ts";
 import { Data, Effect, Stream } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 

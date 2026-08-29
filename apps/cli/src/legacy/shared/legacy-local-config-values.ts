@@ -2,7 +2,11 @@ import { readFileSync } from "node:fs";
 import { basename } from "node:path";
 
 import { ENV_CAPTURE_REGEX, type CliConfig } from "@supabase/config";
-import { defaultJwtSecret, defaultPublishableKey, defaultSecretKey } from "@supabase/stack/effect";
+import {
+  defaultJwtSecret,
+  defaultPublishableKey,
+  defaultSecretKey,
+} from "../../shared/stack-constants.ts";
 import { Schema } from "effect";
 
 import {

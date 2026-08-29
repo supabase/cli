@@ -2,87 +2,30 @@ import { describe, expect, it } from "vitest";
 import { toStartStackConfig, withServiceVersions } from "./stack-config.ts";
 
 describe("toStartStackConfig", () => {
-  it("leaves mode unset so the stack package can select the usable runtime", () => {
-    expect(toStartStackConfig([], undefined)).not.toHaveProperty("mode");
-  });
-
-  it("uses the requested runtime mode and catalog service defaults", () => {
-    expect(toStartStackConfig([], "docker")).toMatchObject({
-      mode: "docker",
-    });
-    expect(toStartStackConfig([], "docker")).toMatchObject({
-      mode: "docker",
-    });
-    expect(toStartStackConfig([], "native")).toMatchObject({
-      mode: "native",
-      realtime: false,
-      storage: false,
-      imgproxy: false,
-      mailpit: false,
-      pgmeta: false,
-      studio: false,
-      analytics: false,
-      vector: false,
-      pooler: false,
+  it("leaves runtime selection to the stack when mode is unset", () => {
+    expect(toStartStackConfig(undefined, [], undefined)).toMatchObject({
+      capabilities: expect.any(Object),
     });
   });
 
-  it("dedupes excluded services when building stack config", () => {
-    expect(toStartStackConfig(["auth", "auth"], "docker")).toMatchObject({
-      mode: "docker",
-      auth: false,
-    });
-    expect(toStartStackConfig(["auth", "postgrest"], "docker")).toMatchObject({
-      mode: "docker",
-      auth: false,
-      postgrest: false,
-    });
+  it("keeps configured capabilities enabled for native mode", () => {
+    const config = toStartStackConfig(undefined, [], "native");
+    expect(config.capabilities?.database).toMatchObject({ settings: expect.any(Object) });
+    expect(config.capabilities?.rest).toEqual({ settings: expect.any(Object) });
+    expect(config.capabilities?.functions).toEqual({ settings: expect.any(Object) });
   });
 
-  it("excludes graph companions for storage, pgmeta, and analytics", () => {
-    expect(toStartStackConfig(["storage"], "docker")).toMatchObject({
-      storage: false,
-      imgproxy: false,
-    });
-    expect(toStartStackConfig(["pgmeta"], "docker")).toMatchObject({
-      pgmeta: false,
-      studio: false,
-    });
-    expect(toStartStackConfig(["analytics"], "docker")).toMatchObject({
-      analytics: false,
-      vector: false,
-    });
+  it("disables explicitly excluded capabilities in container mode", () => {
+    const config = toStartStackConfig(undefined, ["auth", "storage"], "docker");
+    expect(config.capabilities?.auth).toEqual({ enabled: false });
+    expect(config.capabilities?.storage).toEqual({ enabled: false });
+    expect(config.capabilities?.rest).toMatchObject({ settings: expect.any(Object) });
   });
 });
 
 describe("withServiceVersions", () => {
-  it("injects linked service versions without re-enabling excluded services", () => {
-    expect(
-      withServiceVersions(toStartStackConfig([], "docker"), {
-        postgres: "17.6.1.090",
-        postgrest: "14.5",
-        auth: "2.187.0",
-        storage: "1.39.2",
-        realtime: "2.78.10",
-      }),
-    ).toMatchObject({
-      postgres: { version: "17.6.1.090" },
-      postgrest: { version: "14.5" },
-      auth: { version: "2.187.0" },
-      storage: { version: "1.39.2" },
-      realtime: { version: "2.78.10" },
-    });
-
-    expect(
-      withServiceVersions(toStartStackConfig(["auth", "storage"], "docker"), {
-        postgres: "17.6.1.090",
-        auth: "2.187.0",
-        storage: "1.39.2",
-      }),
-    ).toMatchObject({
-      postgres: { version: "17.6.1.090" },
-      auth: false,
-      storage: false,
-    });
+  it("preserves capability configuration while catalog versions are stack-owned", () => {
+    const config = toStartStackConfig(undefined, [], "docker");
+    expect(withServiceVersions(config, { postgres: "17.6.1" })).toEqual(config);
   });
 });

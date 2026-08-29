@@ -1,9 +1,3 @@
-import {
-  MANAGED_ERROR_CODES,
-  MANAGED_ERROR_TAG_BY_CODE,
-  type ManagedErrorCode,
-  type UnsupportedGitWorkspaceCause,
-} from "@supabase/stack/managed-model";
 import { Cause, Option } from "effect";
 import type { CliError as EffectCliError } from "effect/unstable/cli";
 
@@ -794,123 +788,8 @@ const effectCliActionabilityByTag = {
   UnrecognizedOption: () => actionability.invalidInput,
 } satisfies Record<EffectCliAdapterTag, ErrorActionabilityAdapter>;
 
-/**
- * The materially different reasons {@link UnsupportedGitWorkspaceCause} names,
- * projected onto a distinct closed fingerprint suffix each — so a refusal
- * because the CLI ran inside git metadata, a malformed-metadata refusal, and a
- * reftable refusal never group together as repeats of one another.
- */
-const UNSUPPORTED_GIT_WORKSPACE_FINGERPRINT_SUFFIX_BY_CAUSE: Record<
-  UnsupportedGitWorkspaceCause,
-  CliErrorFingerprintSuffix
-> = {
-  "inside-git-directory": "managed_git_workspace_inside_git_directory",
-  "malformed-metadata": "managed_git_workspace_malformed_metadata",
-  "metadata-inaccessible": "managed_git_workspace_metadata_inaccessible",
-  reftable: "managed_git_workspace_reftable",
-};
-
-function isUnsupportedGitWorkspaceCause(value: string): value is UnsupportedGitWorkspaceCause {
-  return (
-    value === "inside-git-directory" ||
-    value === "malformed-metadata" ||
-    value === "metadata-inaccessible" ||
-    value === "reftable"
-  );
-}
-
-/** Branches on the error's own typed `workspaceCause` field, never on reason text. */
-function unsupportedGitWorkspaceFingerprintSuffix(error: ErrorRecord): CliErrorFingerprintSuffix {
-  const cause = readString(error, "workspaceCause");
-  return cause !== undefined && isUnsupportedGitWorkspaceCause(cause)
-    ? UNSUPPORTED_GIT_WORKSPACE_FINGERPRINT_SUFFIX_BY_CAUSE[cause]
-    : "managed_git_workspace_malformed_metadata";
-}
-
-/**
- * `@supabase/stack` managed registry failures, keyed by the stable `code`
- * literal each class declares. `code` is the package's wire-level contract: it
- * survives the identifier minification of release builds, and Node/Bun callers
- * outside an Effect runtime branch on it. Dispatch, however, goes through
- * `_tag` like every other external error — {@link managedActionabilityByTag}
- * projects this table onto the tags via the package's own tag/code map.
- *
- * Keyed by the package's exported {@link ManagedErrorCode} union, so the table
- * is exhaustive by construction: a new managed failure cannot be added in
- * `@supabase/stack` without being classified here. Values are adapters (not
- * bare declarations) so an entry — like `UNSUPPORTED_GIT_WORKSPACE` below — can
- * branch on the raised instance's own fields.
- */
-const managedActionabilityByCode: Record<ManagedErrorCode, ErrorActionabilityAdapter> = {
-  INVALID_MANAGED_IDENTITY: () => ({
-    ...actionability.invalidInput,
-    fingerprint_suffix: "managed_identity",
-  }),
-  INVALID_MANAGED_STACK_NAME: () => ({
-    ...actionability.invalidInput,
-    fingerprint_suffix: "managed_stack_name",
-  }),
-  MANAGED_STACK_NOT_FOUND: () => ({
-    ...actionability.invalidInput,
-    fingerprint_suffix: "not_found",
-  }),
-  // The directory the command ran in holds git metadata rather than a working
-  // tree — a bare repository or a `.git` — so the remediation is to run it from a
-  // checkout instead. The suffix is split by the error's own `workspaceCause` field: see
-  // unsupportedGitWorkspaceFingerprintSuffix.
-  UNSUPPORTED_GIT_WORKSPACE: (error) => ({
-    ...actionability.invalidInput,
-    fingerprint_suffix: unsupportedGitWorkspaceFingerprintSuffix(error),
-  }),
-  MANAGED_STACK_NOT_STOPPED: () => ({
-    ...actionability.stopStack,
-    fingerprint_suffix: "managed_stack_not_stopped",
-  }),
-  MANAGED_EXACT_PORT_OCCUPIED: () => ({
-    ...actionability.invalidConfig,
-    fingerprint_suffix: "port_conflict",
-  }),
-  MANAGED_PORT_ALLOCATION_FAILED: () => ({
-    ...actionability.startStack,
-    fingerprint_suffix: "port_allocation",
-  }),
-  // The registry derives every stack root itself, so a path that fails the
-  // containment check means the CLI passed a rejected argument.
-  UNSAFE_MANAGED_STACK_PATH: () => ({
-    ...actionability.impossibleState,
-    fingerprint_suffix: "bad_argument",
-  }),
-};
-
-/**
- * The managed table above, re-keyed by the `_tag` of the class that declares
- * each code. Generated from `@supabase/stack`'s own tag/code map so every
- * managed tag is classified without restating a single verdict:
- * {@link managedActionabilityByCode} stays the one place a managed failure is
- * classified, and a tag/code pair the package renames cannot silently fall
- * through to `unknown`.
- */
-const managedActionabilityByTag: Record<string, ErrorActionabilityAdapter> = Object.fromEntries(
-  MANAGED_ERROR_CODES.map((code) => [
-    MANAGED_ERROR_TAG_BY_CODE[code],
-    managedActionabilityByCode[code],
-  ]),
-);
-
-/**
- * Whether a `@supabase/stack` managed error code has a classification in
- * {@link managedActionabilityByCode}. Used by the coverage test to keep the
- * table exhaustive against the managed classes; the tags themselves are checked
- * through {@link isClassifiedExternalErrorTag}, which the generated entries
- * satisfy.
- */
-export function isClassifiedManagedErrorCode(code: string): boolean {
-  return Object.hasOwn(managedActionabilityByCode, code);
-}
-
 const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   ...effectCliActionabilityByTag,
-  ...managedActionabilityByTag,
 
   // effect PlatformError — OS/filesystem operations. `reason` is
   // `BadArgument | SystemError`; BadArgument means the CLI itself passed a
@@ -1009,6 +888,35 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
     readString(error, "code") === "PORT_ALLOCATION"
       ? { ...actionability.invalidConfig, fingerprint_suffix: "port_allocation" }
       : actionability.unknown,
+  InvalidStackIdentityError: () => actionability.invalidInput,
+  InvalidProjectRootError: () => actionability.invalidInput,
+  InvalidStackConfigError: () => actionability.invalidConfig,
+  StackVersionUnsupportedError: () => actionability.invalidConfig,
+  StackNotFoundError: () => actionability.invalidInput,
+  StackOwnershipConflictError: () => actionability.invalidInput,
+  StackRuntimeMismatchError: () => actionability.invalidConfig,
+  StackDefinitionRequiredError: () => actionability.startStack,
+  StackMustBeStoppedError: () => actionability.stopStack,
+  StackLifecycleConflictError: () => actionability.startStack,
+  StackStateInvalidError: () => actionability.invalidConfig,
+  StackStateFormatUnsupportedError: () => actionability.invalidConfig,
+  StackStateGenerationMismatchError: () => actionability.startStack,
+  StackUpgradeRequiredError: () => actionability.startStack,
+  StackUpgradeReplacementError: () => actionability.startStack,
+  StackSecretMismatchError: () => actionability.invalidConfig,
+  InvalidJwtSigningMaterialError: () => actionability.invalidConfig,
+  PortUnavailableError: () => actionability.invalidConfig,
+  GatewayAuthenticationError: () => actionability.startStack,
+  GatewayStaleGenerationError: () => actionability.startStack,
+  GatewayActivationError: () => actionability.startStack,
+  StackPreparationError: () => actionability.startStack,
+  ArtifactIntegrityError: () => actionability.externalNetwork,
+  ContainerPullError: () => actionability.externalNetwork,
+  StackReconciliationError: () => actionability.startStack,
+  ServiceStartError: () => actionability.startStack,
+  ServiceReadinessError: () => actionability.startStack,
+  ContainerEngineError: () => actionability.dockerNotRunning,
+  StackDestructionError: () => actionability.stopStack,
   BinaryNotFoundError: () => actionability.invalidConfig,
   BinaryManifestError: () => actionability.externalNetwork,
   BinaryRuntimeError: () => actionability.externalNetwork,

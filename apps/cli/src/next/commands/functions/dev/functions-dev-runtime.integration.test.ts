@@ -1,37 +1,22 @@
-import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
+import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Option, Redacted, Schema, Stream } from "effect";
 import { CliConfigSchema } from "@supabase/config";
 import type { EffectStack } from "@supabase/stack/effect";
-import {
-  mockLegacyCliSettings,
-  mockLegacyTelemetryStateLayer,
-} from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
-import type { LegacyFunctionsServeFlags } from "./serve.handler.ts";
-import { legacyFunctionsServe } from "./serve.handler.ts";
-
-const baseFlags = (): LegacyFunctionsServeFlags => ({
-  noVerifyJwt: Option.none(),
-  envFile: Option.none(),
-  importMap: Option.none(),
-  inspect: false,
-  inspectMode: Option.none(),
-  inspectMain: false,
-  all: true,
-});
+import { serveManagedFunctions } from "./functions-dev-runtime.ts";
 
 const fakeStatus = {
-  lifecycle: "running" as const,
-  desiredLifecycle: "running" as const,
-  runtime: { kind: "container" as const, engine: "docker" as const },
+  lifecycle: "running",
+  desiredLifecycle: "running",
+  runtime: { kind: "container", engine: "docker" },
   endpoints: {},
   versions: {},
   capabilities: [],
 };
 
-describe("legacy functions serve", () => {
-  it.live("starts the managed Functions capability with config and streams stack logs", () => {
+describe("managed Functions serving", () => {
+  it.live("starts the Functions capability with the live functions root and streams logs", () => {
     let startedConfig: unknown;
     const stack = {
       id: "stack-test",
@@ -52,7 +37,7 @@ describe("legacy functions serve", () => {
         ]),
       close: () => Effect.void,
     } as unknown as EffectStack;
-    const output = mockOutput({ interactive: false });
+    const out = mockOutput({ interactive: false });
     const operations = {
       findStack: () => Effect.succeed(Option.none()),
       createStack: () => Effect.succeed(stack),
@@ -68,39 +53,32 @@ describe("legacy functions serve", () => {
           }),
         ),
     } as const;
-
-    return legacyFunctionsServe(baseFlags(), operations).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          output.layer,
-          BunServices.layer,
-          mockLegacyCliSettings({ workdir: "/tmp/project" }),
-          mockLegacyTelemetryStateLayer,
-        ),
-      ),
+    return Effect.scoped(
+      serveManagedFunctions({ projectRoot: "/tmp/project", stackName: "default" }, operations),
+    ).pipe(
+      Effect.provide(Layer.mergeAll(out.layer, BunServices.layer)),
       Effect.tap(() =>
         Effect.sync(() => {
           expect(startedConfig).toMatchObject({
             capabilities: {
-              rest: { settings: { schemas: ["private"] } },
-              functions: {
-                settings: { functions_root: expect.stringContaining("supabase/functions") },
-              },
+              functions: { settings: { functions_root: "/tmp/project/supabase/functions" } },
             },
           });
           const config = startedConfig as {
             capabilities: {
+              rest: { settings: { schemas: string[] } };
               auth: { settings: { jwt_secret: Redacted.Redacted<string> } };
               database: { settings: { vault: { DB_PASSWORD: Redacted.Redacted<string> } } };
             };
           };
+          expect(config.capabilities.rest.settings.schemas).toEqual(["private"]);
           expect(Redacted.value(config.capabilities.auth.settings.jwt_secret)).toBe(
             "jwt-secret-for-tests",
           );
           expect(Redacted.value(config.capabilities.database.settings.vault.DB_PASSWORD)).toBe(
             "vault-secret",
           );
-          expect(output.messages.some((message) => message.message.includes("ready"))).toBe(true);
+          expect(out.messages.some((message) => message.message.includes("ready"))).toBe(true);
         }),
       ),
     );

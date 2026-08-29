@@ -533,3 +533,24 @@ Implementation continues after recording a ruling; this file is not a question q
 - Focused lifecycle/runtime/reconciliation/Supervisor/handle/control verification passed (90 tests
   across 8 integration files), followed by the stack type-check. Generic and Effect lint over all 14
   changed TypeScript files, formatting, and `git diff --check` passed.
+
+### Task 12 — 2026-08-29
+
+- Added the Promise facade as a mechanical outer adapter over the authoritative Effect handle. Each
+  Promise handle owns a private scope, closes idempotently without implicit destruction, unwraps every
+  Redacted leaf to plain strings, maps absent Options to `undefined`, and exposes cancellation-safe
+  AsyncIterables without an async-dispose symbol.
+- Added `createTestStack` as the sole AsyncDisposable resource. It creates a unique temporary identity,
+  starts and waits for readiness, and on disposal or startup failure destroys only its owned identity and
+  removes its exact temporary root.
+- Migrated CLI stack consumers to `@supabase/stack/effect` and current descriptors/status projections.
+  `start` and managed Functions serving load `CliConfig` and translate the complete closed `StackConfig`,
+  including listener/security settings, Functions root, and recursively redacted secret leaves. Both
+  Functions serving command paths use the managed stack Functions capability and log stream.
+- Retained non-stack command behavior (link, update, services, branch switch, and Functions list/new)
+  while removing obsolete manager/daemon/version/transport compatibility helpers and stale fixtures.
+  Running start-input changes retain explicit restart guidance; legacy start's integrated Edge Runtime
+  channel remains intentionally outside this slice by ruling.
+- RED/GREEN evidence: facade integration (`promise.integration.test.ts`, `testing.integration.test.ts`)
+  passed 3 tests; migrated CLI integration scenarios passed 36 tests across 12 files. Stack and CLI type
+  checks passed; generic and Effect lint, oxfmt, and `git diff --check` passed.

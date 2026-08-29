@@ -1,12 +1,6 @@
-import {
-  fillServiceVersionManifest,
-  planStackVersions,
-  resolveStackSummary,
-} from "@supabase/stack/effect";
 import { Effect, Exit, Option } from "effect";
 import { Credentials } from "../../auth/credentials.service.ts";
 import { CliSettings } from "../../config/cli-settings.service.ts";
-import { CliProjectHome } from "../../config/cli-project-home.service.ts";
 import { CliProjectLocalServiceVersions } from "../../config/cli-project-local-service-versions.service.ts";
 import { ProjectLinkState } from "../../config/project-link-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -29,32 +23,14 @@ export const services = Effect.fnUntraced(function* () {
   const credentials = yield* Credentials;
   const cliProjectLocalServiceVersions = yield* CliProjectLocalServiceVersions;
   const projectLinkState = yield* ProjectLinkState;
-  const cliProjectHome = yield* CliProjectHome;
   const commandRuntime = yield* CommandRuntime;
 
   const linkedStateExit = yield* projectLinkState.load.pipe(Effect.exit);
   const linkedState = Exit.isSuccess(linkedStateExit) ? linkedStateExit.value : Option.none();
   const accessToken = yield* credentials.getAccessToken;
   const localServiceVersions = yield* cliProjectLocalServiceVersions.load;
-  const existingSummary = yield* resolveStackSummary({
-    cacheRoot: cliSettings.supabaseHome,
-    projectDir: cliProjectHome.projectRoot,
-    name: "default",
-  }).pipe(
-    Effect.map(Option.some),
-    Effect.catchTag("NoRunningStackError", () => Effect.succeed(Option.none())),
-  );
-  const serviceVersionContext = planStackVersions({
-    ...(Option.isSome(linkedState) ? { candidateBaseline: linkedState.value.versions } : {}),
-    ...(Option.isSome(existingSummary)
-      ? { pinnedBaseline: fillServiceVersionManifest(existingSummary.value.versions) }
-      : {}),
-    ...(Option.isSome(localServiceVersions)
-      ? { localOverrides: localServiceVersions.value.versions }
-      : {}),
-  });
   const localImageOptions = {
-    serviceVersions: serviceVersionContext.runtimeVersions,
+    serviceVersions: Option.isSome(localServiceVersions) ? localServiceVersions.value.versions : {},
   };
 
   let rows = listLocalServiceVersions(localImageOptions);

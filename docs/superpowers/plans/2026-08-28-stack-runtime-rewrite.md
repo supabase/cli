@@ -609,24 +609,24 @@ artifact keys, state schemas, drivers, or control protocols.
 - CLI translates `CliConfig` to `StackConfig`; `supabase functions serve` starts/opens the managed
   stack Functions capability and streams its logs through Edge Runtime.
 
-- [ ] **Step 1: Write facade ownership tests and CLI handler integration tests first**
+- [x] **Step 1: Write facade ownership tests and CLI handler integration tests first**
 
   Cover plain-string credentials/config, `Option` to `undefined`, stream cancellation, explicit handle
   close survival, test-wrapper disposal cleanup/startup failure cleanup, CLI start/restart guidance,
   complete status rendering, stop/destroy, and managed Functions serving/live edits.
 
-- [ ] **Step 2: Implement mechanical adapters**
+- [x] **Step 2: Implement mechanical adapters**
 
   Give each Promise handle one private Scope closed by `close()`. Unwrap `Redacted` only at the outer
   boundary and preserve tagged errors. Implement the test wrapper as the sole `AsyncDisposable`.
 
-- [ ] **Step 3: Migrate CLI consumers to the new API**
+- [x] **Step 3: Migrate CLI consumers to the new API**
 
   Update call sites directly; do not recreate `daemonLayer`, `foregroundLayer`, managed manager,
   launch metadata, old port/version helpers, or compatibility subpaths. Move configuration translation
   into the CLI and use new descriptors/status projections.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
   Run both stack facade integration files plus only changed CLI handler integration files, then stack
   and CLI type-checks. Commit:

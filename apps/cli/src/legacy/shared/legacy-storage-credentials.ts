@@ -1,5 +1,5 @@
 import { KONG_LOCAL_CA_CERT } from "@supabase/config";
-import { defaultJwtSecret, generateJwt } from "@supabase/stack/effect";
+import { defaultJwtSecret, generateJwt } from "../../shared/stack-constants.ts";
 import { Effect, FileSystem, Path } from "effect";
 
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";

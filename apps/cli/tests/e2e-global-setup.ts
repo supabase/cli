@@ -1,23 +1,4 @@
-import { execSync } from "node:child_process";
-import { prefetch } from "@supabase/stack";
-
-function hasDockerDaemon(): boolean {
-  try {
-    execSync("docker info", { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
+/** E2E setup intentionally performs no global stack warmup. Each scenario owns its test resource. */
 export default async function globalSetup() {
-  const dockerAvailable = hasDockerDaemon();
-
-  const warmups = [prefetch()];
-
-  if (dockerAvailable) {
-    warmups.push(prefetch({ mode: "docker" }));
-  }
-
-  await Promise.all(warmups);
+  await Promise.resolve();
 }

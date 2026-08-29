@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
-import { edgeRuntimeNofileUlimit } from "@supabase/stack/effect";
+import { edgeRuntimeNofileUlimit } from "../../../../shared/stack-constants.ts";
 import { Deferred, Effect, Exit, Sink, Stream } from "effect";
 import { type ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { beforeEach } from "vitest";

@@ -1,6 +1,4 @@
 import { Effect, Option } from "effect";
-import { fillServiceVersionManifest, listStacks } from "@supabase/stack/effect";
-import { CliSettings } from "../../config/cli-settings.service.ts";
 import { ensureProjectStateIgnored } from "../../config/project-gitignore.ts";
 import { CliProjectHome } from "../../config/cli-project-home.service.ts";
 import { refreshLinkedProjectSnapshot } from "../../config/project-link-refresh.ts";
@@ -116,22 +114,12 @@ export const link = Effect.fnUntraced(function* (flags: LinkFlags) {
   const output = yield* Output;
   const analytics = yield* Analytics;
   const cliProjectHome = yield* CliProjectHome;
-  const cliSettings = yield* CliSettings;
 
   yield* output.intro("Link local project to Supabase");
 
   const projectRef = yield* chooseProjectRef(flags.projectRef);
   yield* ensureProjectStateIgnored(cliProjectHome.projectRoot);
-  const refreshed = yield* refreshLinkedProjectSnapshot(
-    projectRef,
-    (yield* listStacks({
-      cacheRoot: cliSettings.supabaseHome,
-      projectDir: cliProjectHome.projectRoot,
-    })).map((stack) => ({
-      stackName: stack.name,
-      services: fillServiceVersionManifest(stack.versions),
-    })),
-  );
+  const refreshed = yield* refreshLinkedProjectSnapshot(projectRef, []);
   const linkedProject = refreshed.linkedProject;
 
   yield* output.success(`Linked to project ${linkedProject.ref}.`, {

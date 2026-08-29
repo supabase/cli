@@ -1,32 +1,14 @@
-import {
-  connectLayer,
-  daemonLayer,
-  resolveManagedStack,
-  Stack,
-  stopDaemon,
-} from "@supabase/stack/effect";
-import { loadCliConfig } from "@supabase/config/effect";
+import { findStack } from "@supabase/stack/effect";
 import { Effect, Option } from "effect";
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
-import { CliSettings } from "../../../config/cli-settings.service.ts";
 import { CliProjectHome } from "../../../config/cli-project-home.service.ts";
-import { managedPortIntents } from "../../../config/managed-port-intents.ts";
 import {
   ProjectLinkState,
   ProjectNotLinkedError,
 } from "../../../config/project-link-state.service.ts";
-import {
-  excludedStackServices,
-  toStartStackConfig,
-  withServiceVersions,
-  type ExcludedStackService,
-} from "../../../config/stack-config.ts";
 import { NonInteractiveError } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
-import { printStackConnectionInfo, startStackWithProgress } from "../../../stack/stack.shared.ts";
 import { BranchNotFoundError } from "../errors.ts";
-import { CLI_VERSION } from "../../../../shared/cli/version.ts";
 
 export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
   name: Option.Option<string>;
@@ -34,9 +16,7 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
   const output = yield* Output;
   const projectLinkState = yield* ProjectLinkState;
   const api = yield* PlatformApi;
-  const cliSettings = yield* CliSettings;
   const cliProjectHome = yield* CliProjectHome;
-  const runtimeInfo = yield* RuntimeInfo;
 
   yield* output.intro("Switch branch");
 
@@ -104,99 +84,17 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
     return;
   }
 
-  // If a local stack is running, stop and restart it against the new branch.
-  const stackCheck = yield* resolveManagedStack({
-    cacheRoot: cliSettings.supabaseHome,
-    cwd: runtimeInfo.cwd,
-    projectDir: cliProjectHome.projectRoot,
-  }).pipe(
-    Effect.map(Option.some),
-    Effect.catchTag("NoRunningStackError", () => Effect.succeed(Option.none())),
-    // Branch switching is also valid outside a local project checkout. In
-    // that case managed discovery cannot canonicalize the synthetic/nonexistent
-    // project root supplied by the command context, which is equivalent to no
-    // local stack being present for this lifecycle check.
-    Effect.catchTag("InvalidManagedIdentityError", () => Effect.succeed(Option.none())),
-  );
-
-  if (Option.isSome(stackCheck) && stackCheck.value.lifecycle === "running") {
-    const stackName = stackCheck.value.identity.name;
-
-    // Branch switching restarts a running stack, but it is not authorized to
-    // restart an incompatible daemon. Capture the same-version RPC owner/session
-    // before stopping it so a mismatch leaves the old stack intact.
-    const existingLayer = yield* connectLayer({
-      cliVersion: CLI_VERSION,
-      cwd: runtimeInfo.cwd,
-      cacheRoot: cliSettings.supabaseHome,
-      projectDir: cliProjectHome.projectRoot,
-      name: stackName,
-    }).pipe(
-      Effect.map(Option.some),
-      // A running document without a live owner is stale. Continue into the
-      // normal stop path, which acquires ownership and records it stopped.
-      Effect.catchTag("NoRunningStackError", () => Effect.succeed(Option.none())),
+  // Branch switching updates the linked project state. A running local stack
+  // remains untouched; users can restart it explicitly with `supabase start`.
+  const descriptor = yield* findStack({ projectRoot: cliProjectHome.projectRoot });
+  if (
+    Option.isSome(descriptor) &&
+    descriptor.value.desiredLifecycle === "running" &&
+    output.format === "text"
+  ) {
+    yield* output.info(
+      "The local stack is running. Restart it with `supabase start` to apply the new branch.",
     );
-
-    if (Option.isSome(existingLayer)) {
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const stack = yield* Stack;
-          const stopping = yield* output.task("Stopping local stack...");
-          yield* stack.stop.pipe(Effect.tapError(() => stopping.fail()));
-          yield* stopping.clear();
-        }).pipe(Effect.provide(existingLayer.value)),
-      );
-    } else {
-      const stopping = yield* output.task("Stopping local stack...");
-      yield* stopDaemon({
-        cwd: runtimeInfo.cwd,
-        cacheRoot: cliSettings.supabaseHome,
-        projectDir: cliProjectHome.projectRoot,
-        name: stackName,
-      }).pipe(Effect.tapError(() => stopping.fail()));
-      yield* stopping.clear();
-    }
-
-    // TODO: run `supabase pull` against the new branch before restarting the stack
-    // so the local config reflects the branch's migrations and seed state.
-    // `pull` does not exist yet.
-    const launch = stackCheck.value.launch;
-    const launchConfig = withServiceVersions(
-      toStartStackConfig(
-        launch.excludedServices?.filter((service): service is ExcludedStackService =>
-          excludedStackServices.some((candidate) => candidate === service),
-        ) ?? [],
-        launch.mode,
-      ),
-      launch.versions,
-    );
-    const loadedCliConfig = yield* loadCliConfig(cliProjectHome.projectRoot);
-
-    const stackLayer = yield* daemonLayer({
-      cliVersion: CLI_VERSION,
-      cacheRoot: cliSettings.supabaseHome,
-      cwd: runtimeInfo.cwd,
-      projectDir: cliProjectHome.projectRoot,
-      name: stackName,
-      portIntents: managedPortIntents(launchConfig, loadedCliConfig ?? undefined),
-      launch,
-      ...launchConfig,
-    });
-
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        yield* startStackWithProgress().pipe(Effect.provide(stackLayer));
-        yield* printStackConnectionInfo().pipe(Effect.provide(stackLayer));
-      }),
-    );
-
-    if (output.format === "text") {
-      yield* output.info(
-        "The local stack was restarted in detach mode.\n" +
-          "Run `supabase stop` to stop it or `supabase status` to check its status.",
-      );
-    }
   }
 
   yield* projectLinkState.setActiveBranch({
