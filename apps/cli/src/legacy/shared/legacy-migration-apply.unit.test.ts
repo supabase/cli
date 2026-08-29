@@ -1204,6 +1204,11 @@ describe("legacyIsPipelineIncompatible", () => {
       "ALTER TABLE IF EXISTS ONLY s.m\n DETACH PARTITION p CONCURRENTLY",
       true,
     ],
+    [
+      "detach partition quoted qualified concurrently",
+      'ALTER TABLE "tenant schema".events DETACH PARTITION "p 1" CONCURRENTLY',
+      true,
+    ],
     ["create subscription", "CREATE SUBSCRIPTION sub CONNECTION 'host=h' PUBLICATION pub", true],
     ["drop subscription", "DROP SUBSCRIPTION IF EXISTS sub", true],
     ["alter subscription", "ALTER SUBSCRIPTION sub DISABLE", false],
