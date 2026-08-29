@@ -10,6 +10,7 @@ import {
   Scope,
   Semaphore,
 } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { ArtifactIntegrityError, StackPreparationError } from "../public/Errors.ts";
 import { validateRelativePath, validateSha256, verifySha256 } from "./Integrity.ts";
 
@@ -36,7 +37,11 @@ export interface ArtifactSource {
   readonly materialize: (
     request: ArtifactRequest,
     destination: string,
-  ) => Effect.Effect<Uint8Array, StackPreparationError, FileSystem.FileSystem>;
+  ) => Effect.Effect<
+    Uint8Array,
+    StackPreparationError,
+    FileSystem.FileSystem | Path.Path | Crypto.Crypto | ChildProcessSpawner.ChildProcessSpawner
+  >;
 }
 
 export interface ArtifactStoreOptions {
@@ -400,6 +405,7 @@ const makeArtifactOperation = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   crypto: Crypto.Crypto,
+  childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
   cacheRoot: string,
   source: ArtifactSource,
   request: ArtifactRequest,
@@ -476,9 +482,14 @@ const makeArtifactOperation = (
     yield* ensureDirectory(fs, path, temporary, cacheRoot);
     const temporaryRoot = yield* ensureSafeRoot(fs, path, temporary, cacheRoot);
     const published = yield* Effect.gen(function* () {
-      const archive = yield* source
-        .materialize(request, temporary)
-        .pipe(Effect.provideService(FileSystem.FileSystem, fs));
+      const archive = yield* source.materialize(request, temporary).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(Crypto.Crypto, crypto),
+        // The source owns the exact tar process boundary; the store only supplies the
+        // already-owned process service captured by its constructor.
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+      );
       yield* verifySha256(archive, expectedSha256).pipe(
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.mapError((error) =>
@@ -538,12 +549,17 @@ export const makeArtifactStore = (
 ): Effect.Effect<
   ArtifactStore,
   StackPreparationError,
-  FileSystem.FileSystem | Path.Path | Crypto.Crypto | Scope.Scope
+  | FileSystem.FileSystem
+  | Path.Path
+  | Crypto.Crypto
+  | Scope.Scope
+  | ChildProcessSpawner.ChildProcessSpawner
 > =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const crypto = yield* Crypto.Crypto;
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     if (options.cacheRoot.trim().length === 0)
       return yield* artifactError("Artifact cache root must not be blank");
     const requestedRoot = path.resolve(options.cacheRoot);
@@ -590,6 +606,7 @@ export const makeArtifactStore = (
           fs,
           path,
           crypto,
+          childProcessSpawner,
           cacheRoot,
           options.source,
           request,

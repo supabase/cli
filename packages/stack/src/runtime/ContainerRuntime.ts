@@ -37,7 +37,9 @@ export interface ContainerRuntimeOptions {
 export interface ContainerWorkloadResolution {
   readonly mounts?: ReadonlyArray<ContainerMount>;
   readonly volume?: ContainerVolumeRequest;
-  readonly env?: Readonly<Record<string, string>>;
+  /** Path to an owned env file; secret bytes are kept out of engine argv. */
+  readonly envFile?: string;
+  readonly networkAliases?: ReadonlyArray<string>;
   readonly command?: ReadonlyArray<string>;
   readonly waitForReadiness?: (
     key: RuntimeWorkloadKey,
@@ -352,7 +354,10 @@ export const makeContainerRuntime = (
               publications: [],
               volumeMounts: volumeRequest === undefined ? [] : [volumeMountFor(key, volumeRequest)],
               role: "workload",
-              ...(resolution.env === undefined ? {} : { env: resolution.env }),
+              ...(resolution.envFile === undefined ? {} : { envFile: resolution.envFile }),
+              ...(resolution.networkAliases === undefined
+                ? {}
+                : { networkAliases: resolution.networkAliases }),
               ...(resolution.command === undefined ? {} : { command: resolution.command }),
             } satisfies ContainerContainerSpec),
           );

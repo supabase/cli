@@ -99,7 +99,9 @@ export interface ContainerContainerSpec {
   readonly hostRoute?: ContainerHostRoute;
   readonly role: "workload" | "gateway";
   readonly command?: ReadonlyArray<string>;
-  readonly env?: Readonly<Record<string, string>>;
+  /** Path to an owned 0600 env file. Secret values must never be argv. */
+  readonly envFile?: string;
+  readonly networkAliases?: ReadonlyArray<string>;
 }
 
 export type ContainerCommand =

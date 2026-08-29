@@ -613,3 +613,18 @@ redacting runtime logs. Functions remains stack-owned Edge Runtime; `functions s
 Narrow rulings and cost if wrong: Task 13A keeps transport and process/engine boundaries injectable so tests
 remain offline and deterministic. Task 13B must preserve the native/container identity split and make
 private-port reservation plus gateway ownership atomic with accepted lifecycle generations.
+
+#### Task 13A fix round 1 — artifact and runtime hardening (2026-08-29)
+
+- Native slim identities now match release archives for Realtime (`bin/server`), Analytics (`bin/logflare`),
+  and Supavisor (`bin/server`, `bin/supavisor`, `bin/migrate`); catalog tests pin executable and required paths.
+- `SlimServicesSource` uses injected Effect process tar list/link/extract boundaries, validates member/link
+  traversal (including relative links), verifies SHA256SUMS and compressed bytes before extraction, and
+  validates extracted realpaths. Tests cover internal links, PAX long names, malformed archives, and
+  interruption without publication.
+- Runtime specs flatten nested settings with service-recognized aliases, use native loopback versus the
+  container `supabase-database` network alias, expose `containerResolutionFor`, and mount Functions' sole
+  `functionsRoot` at `/__supabase_functions` read-only with aligned `--main-service` arguments.
+- Docker/Podman serializers accept only owned env-file paths (never secret `NAME=value` argv) and serialize
+  exact network aliases. Compiler integration proves the managed database password slot is persisted once
+  and reused. Task 13B still owns env-file creation, gateway/port lifecycle, and production composition.

@@ -172,6 +172,28 @@ describe("closed capability compiler", () => {
     }),
   );
 
+  it.live("persists and reuses the managed database password slot", () =>
+    Effect.gen(function* () {
+      const first = yield* compile({});
+      const initial = first.secrets.filter(
+        (entry) => entry.slot === "secret:database.internal.password",
+      );
+      expect(initial).toHaveLength(1);
+      const second = yield* compile(
+        {},
+        { kind: "native" },
+        {
+          definition: first.definition,
+          inputFingerprint: first.inputFingerprint,
+        },
+      );
+      expect(
+        second.secrets.filter((entry) => entry.slot === "secret:database.internal.password"),
+      ).toHaveLength(1);
+      expect(second.secrets[0]?.slot).toBe(initial[0]?.slot);
+    }),
+  );
+
   it.live("rejects unknown fields at the public compiler boundary", () =>
     Effect.gen(function* () {
       const exit = yield* compile({

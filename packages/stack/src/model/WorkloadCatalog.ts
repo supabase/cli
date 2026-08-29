@@ -79,8 +79,8 @@ export const WORKLOAD_CATALOG: Readonly<Record<string, WorkloadCatalogEntry>> = 
     "realtime",
     "v2.129.9",
     "supabase/realtime:v2.129.9",
-    "app/bin/server",
-    ["usr/bin/tini", "usr/bin/sh", "app/entry.sh", "app/bin/server"],
+    "bin/server",
+    ["bin/migrate", "bin/realtime", "bin/server"],
   ),
   "storage:storage": native(
     "storage:storage",
@@ -127,8 +127,8 @@ export const WORKLOAD_CATALOG: Readonly<Record<string, WorkloadCatalogEntry>> = 
     "analytics",
     "v1.50.6",
     "supabase/logflare:v1.50.6",
-    "app/entry.sh",
-    ["usr/bin/tini", "usr/bin/sh", "app/entry.sh"],
+    "bin/logflare",
+    ["bin/logflare"],
   ),
   "analytics:vector": native(
     "analytics:vector",
@@ -144,15 +144,8 @@ export const WORKLOAD_CATALOG: Readonly<Record<string, WorkloadCatalogEntry>> = 
     "pooler",
     "v2.9.12",
     "ghcr.io/supabase/supavisor:v2.9.12",
-    "app/bin/server",
-    [
-      "usr/bin/tini",
-      "usr/bin/sh",
-      "app/entry.sh",
-      "app/bin/migrate",
-      "app/bin/supavisor",
-      "app/bin/server",
-    ],
+    "bin/server",
+    ["bin/migrate", "bin/supavisor", "bin/server"],
   ),
 };
 

@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Crypto, Effect, Exit, FileSystem, Option } from "effect";
+import { Cause, Crypto, Deferred, Effect, Exit, Fiber, FileSystem, Option } from "effect";
 import { zstdCompress } from "node:zlib";
 import { makeArtifactStore, type ArtifactRequest } from "./ArtifactStore.ts";
 import { digestHex } from "./Integrity.ts";
@@ -28,16 +28,58 @@ const request: ArtifactRequest = {
   executablePath: "bin/demo",
 };
 
-const tar = (name: string, content: string): Uint8Array => {
-  const bytes = new Uint8Array(1024);
-  const header = bytes.subarray(0, 512);
-  header.set(new TextEncoder().encode(name), 0);
-  const size = content.length.toString(8).padStart(11, "0");
-  header.set(new TextEncoder().encode(`${size}\0`), 124);
-  header[156] = 48;
-  header.set(new TextEncoder().encode("ustar\0"), 257);
-  bytes.set(new TextEncoder().encode(content), 512);
+const tarEntries = (
+  entries: ReadonlyArray<{
+    readonly name: string;
+    readonly content?: string;
+    readonly link?: string;
+    readonly type?: number;
+  }>,
+): Uint8Array => {
+  const blocks = entries.map((entry) => Math.max(1, Math.ceil((entry.content?.length ?? 0) / 512)));
+  const bytes = new Uint8Array((1 + blocks.reduce((sum, value) => sum + value, 0) + 2) * 512);
+  let offset = 0;
+  for (const [index, entry] of entries.entries()) {
+    const header = bytes.subarray(offset, offset + 512);
+    header.set(new TextEncoder().encode(entry.name), 0);
+    header.set(new TextEncoder().encode("0000755\0"), 100);
+    header.set(new TextEncoder().encode("0000000\0"), 108);
+    header.set(new TextEncoder().encode("0000000\0"), 116);
+    const content = entry.content ?? "";
+    header.set(new TextEncoder().encode(`${content.length.toString(8).padStart(11, "0")}\0`), 124);
+    header[156] = entry.type ?? (entry.link === undefined ? 48 : 50);
+    if (entry.link !== undefined) header.set(new TextEncoder().encode(entry.link), 157);
+    header.set(new TextEncoder().encode("ustar\0"), 257);
+    header.fill(32, 148, 156);
+    const checksum = header
+      .reduce((sum, value) => sum + value, 0)
+      .toString(8)
+      .padStart(6, "0");
+    header.set(new TextEncoder().encode(`${checksum}\0 `), 148);
+    offset += 512;
+    if (content.length > 0) {
+      bytes.set(new TextEncoder().encode(content), offset);
+    }
+    offset += (blocks[index] ?? 1) * 512;
+  }
   return bytes;
+};
+
+const tar = (name: string, content: string): Uint8Array => tarEntries([{ name, content }]);
+
+const paxTar = (name: string): Uint8Array => {
+  const raw = `path=${name}\n`;
+  let record = `${raw.length + 3} ${raw}`;
+  while (
+    record.length.toString().length + 1 + raw.length !==
+    Number(record.slice(0, record.indexOf(" ")))
+  ) {
+    record = `${record.length.toString().length + 1 + raw.length} ${raw}`;
+  }
+  return tarEntries([
+    { name: "PaxHeaders.0/x", content: record, type: 120 },
+    { name: "x", content: "demo" },
+  ]);
 };
 
 const compress = (bytes: Uint8Array) =>
@@ -62,7 +104,9 @@ describe("slim-services artifact source", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const archive = yield* compress(tar("bin/demo", "demo"));
-        const checksums = "0".repeat(64) + "  demo-v1.0.0-linux-amd64.tar.zst\n";
+        const crypto = yield* Crypto.Crypto;
+        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
+        const checksums = expected + "  demo-v1.0.0-linux-amd64.tar.zst\n";
         const fetcher: FetchLike = (input) => {
           const url = requestUrl(input);
           if (url.endsWith("SHA256SUMS")) return Promise.resolve(new Response(checksums));
@@ -74,11 +118,11 @@ describe("slim-services artifact source", () => {
             );
           return Promise.resolve(new Response(archive));
         };
-        expect(yield* slimServicesChecksum(artifact, fetcher)).toBe("0".repeat(64));
+        expect(yield* slimServicesChecksum(artifact, fetcher)).toBe(expected);
         const source = makeSlimServicesSource(() => artifact, fetcher);
         const fs = yield* FileSystem.FileSystem;
         const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-source-" });
-        yield* source.materialize(request, destination);
+        yield* source.materialize({ ...request, sha256: expected }, destination);
         expect(yield* fs.readFileString(`${destination}/bin/demo`)).toBe("demo");
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
@@ -88,8 +132,12 @@ describe("slim-services artifact source", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const archive = yield* compress(tar("../outside", "unsafe"));
+        const crypto = yield* Crypto.Crypto;
+        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
         const fetcher: FetchLike = (input) => {
           const url = requestUrl(input);
+          if (url.endsWith("SHA256SUMS"))
+            return Promise.resolve(new Response(expected + "  demo-v1.0.0-linux-amd64.tar.zst\n"));
           if (url.endsWith("manifest.json"))
             return Promise.resolve(
               new Response(
@@ -101,9 +149,137 @@ describe("slim-services artifact source", () => {
         const source = makeSlimServicesSource(() => artifact, fetcher);
         const fs = yield* FileSystem.FileSystem;
         const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-unsafe-" });
-        const failed = yield* source.materialize(request, destination).pipe(Effect.exit);
+        const failed = yield* source
+          .materialize({ ...request, sha256: expected }, destination)
+          .pipe(Effect.exit);
         expect(errorOf(failed)).toBeDefined();
         expect(yield* fs.exists(`${destination}/outside`)).toBe(false);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live("allows internal symlinks while rejecting malformed archives", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const archive = yield* compress(
+          tarEntries([
+            { name: "bin/demo", content: "demo" },
+            { name: "bin/current", link: "demo" },
+          ]),
+        );
+        const crypto = yield* Crypto.Crypto;
+        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
+        const fetcher: FetchLike = (input) => {
+          const url = requestUrl(input);
+          if (url.endsWith("SHA256SUMS"))
+            return Promise.resolve(new Response(expected + "  demo-v1.0.0-linux-amd64.tar.zst\n"));
+          if (url.endsWith("manifest.json"))
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
+              ),
+            );
+          return Promise.resolve(new Response(archive));
+        };
+        const fs = yield* FileSystem.FileSystem;
+        const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-links-" });
+        yield* makeSlimServicesSource(() => artifact, fetcher).materialize(
+          { ...request, sha256: expected },
+          destination,
+        );
+        expect(yield* fs.readFileString(`${destination}/bin/current`)).toBe("demo");
+
+        const malformed = yield* compress(new Uint8Array([1, 2, 3]));
+        const malformedDigest = digestHex(yield* crypto.digest("SHA-256", malformed));
+        const malformedFetcher: FetchLike = (input) => {
+          const url = requestUrl(input);
+          if (url.endsWith("SHA256SUMS"))
+            return Promise.resolve(
+              new Response(malformedDigest + "  demo-v1.0.0-linux-amd64.tar.zst\n"),
+            );
+          if (url.endsWith("manifest.json"))
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
+              ),
+            );
+          return Promise.resolve(new Response(malformed));
+        };
+        const failed = yield* makeSlimServicesSource(() => artifact, malformedFetcher)
+          .materialize({ ...request, sha256: malformedDigest }, destination)
+          .pipe(Effect.exit);
+        expect(errorOf(failed)).toBeDefined();
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live("interrupts an in-flight download without publishing a staging artifact", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const started = yield* Deferred.make<void>();
+        let signal: AbortSignal | undefined;
+        const fetcher: FetchLike = (input, init) => {
+          const url = requestUrl(input);
+          if (url.endsWith("manifest.json"))
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
+              ),
+            );
+          if (url.endsWith("SHA256SUMS"))
+            return Promise.resolve(
+              new Response("0".repeat(64) + "  demo-v1.0.0-linux-amd64.tar.zst\n"),
+            );
+          signal = init?.signal ?? undefined;
+          // oxlint-disable-next-line effecttsgo/run-effect-inside-effect -- signal the test's injected fetch boundary
+          void Effect.runPromise(Deferred.succeed(started, undefined));
+          // oxlint-disable-next-line effecttsgo/new-promise -- fetch fixture intentionally remains pending until abort
+          return new Promise<Response>((_resolve, reject) => {
+            signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true });
+          });
+        };
+        const fs = yield* FileSystem.FileSystem;
+        const destination = yield* fs.makeTempDirectoryScoped({
+          prefix: "slim-services-interrupt-",
+        });
+        const fiber = yield* Effect.forkChild(
+          makeSlimServicesSource(() => artifact, fetcher).materialize(request, destination),
+          { startImmediately: true },
+        );
+        yield* Deferred.await(started);
+        yield* Fiber.interrupt(fiber);
+        expect(signal?.aborted).toBe(true);
+        expect(yield* fs.readDirectory(destination)).toEqual([]);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
+  it.live("accepts PAX long paths through the system tar boundary", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const longName = `bin/${"long-function-name-".repeat(8)}.js`;
+        const archive = yield* compress(paxTar(longName));
+        const crypto = yield* Crypto.Crypto;
+        const expected = digestHex(yield* crypto.digest("SHA-256", archive));
+        const fetcher: FetchLike = (input) => {
+          const url = requestUrl(input);
+          if (url.endsWith("SHA256SUMS"))
+            return Promise.resolve(new Response(expected + "  demo-v1.0.0-linux-amd64.tar.zst\n"));
+          if (url.endsWith("manifest.json"))
+            return Promise.resolve(
+              new Response(
+                JSON.stringify({ service: "demo", version: "v1.0.0", target: "linux-amd64" }),
+              ),
+            );
+          return Promise.resolve(new Response(archive));
+        };
+        const fs = yield* FileSystem.FileSystem;
+        const destination = yield* fs.makeTempDirectoryScoped({ prefix: "slim-services-pax-" });
+        yield* makeSlimServicesSource(() => artifact, fetcher).materialize(
+          { ...request, sha256: expected },
+          destination,
+        );
+        expect(yield* fs.exists(`${destination}/${longName}`)).toBe(true);
       }).pipe(Effect.provide(NodeServices.layer)),
     ),
   );

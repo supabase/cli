@@ -151,12 +151,11 @@ export const serializePodmanCommand = (command: ContainerCommand): ContainerProc
             ])
           : [];
       const environment =
-        command.spec.env === undefined
+        command.spec.envFile === undefined ? [] : ["--env-file", command.spec.envFile];
+      const networkAliases =
+        command.spec.networkAliases === undefined
           ? []
-          : Object.entries(command.spec.env).flatMap(([name, value]) => [
-              "--env",
-              `${name}=${value}`,
-            ]);
+          : command.spec.networkAliases.flatMap((alias) => ["--network-alias", alias]);
       return {
         args: [
           "create",
@@ -164,6 +163,7 @@ export const serializePodmanCommand = (command: ContainerCommand): ContainerProc
           command.spec.name,
           "--network",
           command.spec.network,
+          ...networkAliases,
           ...commandLabels(command.spec),
           ...bindMounts,
           ...volumeMounts,

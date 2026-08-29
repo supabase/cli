@@ -1,10 +1,62 @@
-import { Effect, FileSystem, Schema } from "effect";
+import { Crypto, Effect, FileSystem, Path, Schema } from "effect";
 import { zstdDecompress } from "node:zlib";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type { ArtifactRequest, ArtifactSource } from "./ArtifactStore.ts";
 import type { NativeWorkloadArtifact } from "../model/WorkloadCatalog.ts";
 import { StackPreparationError } from "../public/Errors.ts";
+import { verifySha256 } from "./Integrity.ts";
 
 type Fetcher = (input: string, init?: RequestInit) => Promise<Response>;
+
+export interface TarBoundary {
+  readonly list: (
+    archivePath: string,
+  ) => Effect.Effect<string, StackPreparationError, ChildProcessSpawner.ChildProcessSpawner>;
+  readonly links: (
+    archivePath: string,
+  ) => Effect.Effect<string, StackPreparationError, ChildProcessSpawner.ChildProcessSpawner>;
+  readonly extract: (
+    archivePath: string,
+    destination: string,
+  ) => Effect.Effect<number, StackPreparationError, ChildProcessSpawner.ChildProcessSpawner>;
+}
+
+/** The system tar boundary is argv-based so archive paths never enter a shell string. */
+export const systemTarBoundary: TarBoundary = {
+  list: (archivePath) =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      return yield* spawner
+        .string(ChildProcess.make("tar", ["-tf", archivePath]))
+        .pipe(
+          Effect.mapError(
+            (cause) => new StackPreparationError({ message: "tar listing failed", cause }),
+          ),
+        );
+    }),
+  links: (archivePath) =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      return yield* spawner
+        .string(ChildProcess.make("tar", ["-tvf", archivePath]))
+        .pipe(
+          Effect.mapError(
+            (cause) => new StackPreparationError({ message: "tar link listing failed", cause }),
+          ),
+        );
+    }),
+  extract: (archivePath, destination) =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      return yield* spawner
+        .exitCode(ChildProcess.make("tar", ["-xf", archivePath, "-C", destination]))
+        .pipe(
+          Effect.mapError(
+            (cause) => new StackPreparationError({ message: "tar extraction failed", cause }),
+          ),
+        );
+    }),
+};
 // The slim-services transport is a foreign HTTP boundary; production wiring
 // may provide an Effect HttpClient-backed fetcher through RuntimeFactory.
 // oxlint-disable-next-line effecttsgo/global-fetch
@@ -56,14 +108,16 @@ const decompress = (bytes: Uint8Array): Effect.Effect<Uint8Array, StackPreparati
         ),
       );
     }
-    return Effect.void;
+    return Effect.sync(() => {
+      done = true;
+    });
   });
 
 const checksumFor = (contents: string, archiveName: string): string | undefined =>
   contents
     .split(/\r?\n/u)
-    .map((line) => line.trim().split(/\s+/u))
-    .find((parts) => parts[1] === archiveName || parts[1]?.endsWith(`/${archiveName}`))?.[0];
+    .map((line) => line.trim().match(/^([a-f0-9]{64})\s+[* ]?(.+)$/iu))
+    .find((match) => match?.[2] === archiveName || match?.[2]?.endsWith(`/${archiveName}`))?.[1];
 
 export const slimServicesChecksum = (
   artifact: NativeWorkloadArtifact,
@@ -85,74 +139,66 @@ export const slimServicesChecksum = (
     }),
   );
 
-const text = (bytes: Uint8Array): string => new TextDecoder().decode(bytes).replace(/\0+$/u, "");
-const octal = (bytes: Uint8Array): number => Number.parseInt(text(bytes).trim() || "0", 8);
+const unsafeArchivePath = (value: string): boolean => {
+  const normalized = value.trim();
+  if (normalized.length === 0) return false;
+  if (normalized.startsWith("/") || /^[A-Za-z]:[\\/]/u.test(normalized)) return true;
+  let depth = 0;
+  for (const segment of normalized.split(/[\\/]/u)) {
+    if (segment.length === 0 || segment === ".") continue;
+    if (segment === "..") {
+      if (depth === 0) return true;
+      depth -= 1;
+    } else depth += 1;
+  }
+  return false;
+};
 
-const writeFile = (fs: FileSystem.FileSystem, path: string, bytes: Uint8Array) =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const file = yield* fs.open(path, { flag: "wx", mode: 0o700 });
-      yield* file.writeAll(bytes);
-    }),
-  );
+const archiveLinkEscapes = (member: string, target: string): boolean => {
+  if (target.trim().startsWith("/") || /^[A-Za-z]:[\\/]/u.test(target.trim())) return true;
+  const depth =
+    member
+      .trim()
+      .split(/[\\/]/u)
+      .filter((segment) => segment.length > 0 && segment !== ".").length - 1;
+  let remaining = Math.max(0, depth);
+  for (const segment of target.trim().split(/[\\/]/u)) {
+    if (segment.length === 0 || segment === ".") continue;
+    if (segment === "..") {
+      if (remaining === 0) return true;
+      remaining -= 1;
+    } else remaining += 1;
+  }
+  return false;
+};
 
-const extractTar = (
+const unsafeManifestCommand = (value: string): boolean =>
+  value.split(/[\\/]/u).some((segment) => segment === "..");
+
+const validateExtractedTree = (
   fs: FileSystem.FileSystem,
+  path: Path.Path,
   destination: string,
-  archive: Uint8Array,
 ): Effect.Effect<void, StackPreparationError> =>
   Effect.gen(function* () {
-    let offset = 0;
-    let pendingPath: string | undefined;
-    while (offset + 512 <= archive.length) {
-      const header = archive.subarray(offset, offset + 512);
-      offset += 512;
-      if (header.every((byte) => byte === 0)) break;
-      const name = text(header.subarray(0, 100));
-      const prefix = text(header.subarray(345, 500));
-      const member = pendingPath ?? (prefix.length === 0 ? name : `${prefix}/${name}`);
-      const unsafe =
-        member.startsWith("/") ||
-        member.split("/").some((part) => part === ".." || (part.length === 0 && part !== ""));
-      if (unsafe)
+    const root = yield* fs.realPath(destination);
+    const entries = yield* fs.readDirectory(destination, { recursive: true });
+    for (const entry of entries) {
+      const candidate = path.join(destination, entry);
+      const resolved = yield* fs.realPath(candidate);
+      const relative = path.relative(root, resolved);
+      if (path.isAbsolute(relative) || relative === ".." || relative.startsWith(`..${path.sep}`))
         return yield* new StackPreparationError({
-          message: "Slim-services archive contains an unsafe path",
-          path: member,
+          message: "Slim-services archive entry escapes its staging directory",
+          path: entry,
         });
-      const size = octal(header.subarray(124, 136));
-      const type = header[156];
-      const target = `${destination}/${member}`;
-      if (type === 120 || type === 76) {
-        const pax = text(archive.subarray(offset, offset + size));
-        pendingPath =
-          type === 76
-            ? pax
-            : pax
-                .split(/\n/u)
-                .find((record) => record.includes(" path="))
-                ?.split(" path=")[1]
-                ?.trim();
-      } else if (type === 53) {
-        yield* fs.makeDirectory(target, { recursive: true, mode: 0o700 });
-      } else if (type === 48 || type === 0 || type === undefined) {
-        const parent = target.slice(0, target.lastIndexOf("/"));
-        yield* fs.makeDirectory(parent, { recursive: true, mode: 0o700 });
-        yield* writeFile(fs, target, archive.subarray(offset, offset + size));
-      } else {
-        return yield* new StackPreparationError({
-          message: "Slim-services archive contains an unsupported entry",
-          path: member,
-        });
-      }
-      if (type !== 120 && type !== 76) pendingPath = undefined;
-      offset += Math.ceil(size / 512) * 512;
     }
   }).pipe(
     Effect.mapError((error) =>
       error instanceof StackPreparationError
         ? error
         : new StackPreparationError({
-            message: "Unable to extract slim-services archive",
+            message: "Unable to validate extracted slim-services archive",
             cause: error,
           }),
     ),
@@ -161,6 +207,7 @@ const extractTar = (
 export const makeSlimServicesSource = (
   resolve: (request: ArtifactRequest) => NativeWorkloadArtifact | undefined,
   fetchRequest: Fetcher = fetcher,
+  tarBoundary: TarBoundary = systemTarBoundary,
 ): ArtifactSource => ({
   materialize: (request, destination) => {
     const artifact = resolve(request);
@@ -170,6 +217,7 @@ export const makeSlimServicesSource = (
       );
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const manifestBytes = yield* fetchBytes(artifact.manifestUrl, fetchRequest);
       const manifestText = new TextDecoder().decode(manifestBytes);
       const manifest = yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(
@@ -196,9 +244,114 @@ export const makeSlimServicesSource = (
           version: artifact.version,
           target: artifact.target,
         });
+      const entrypoint = "entrypoint" in manifest ? manifest.entrypoint : undefined;
+      const command = "cmd" in manifest ? manifest.cmd : undefined;
+      if (
+        (entrypoint !== undefined &&
+          (!Array.isArray(entrypoint) ||
+            !entrypoint.every((value) => typeof value === "string") ||
+            entrypoint.some(unsafeManifestCommand))) ||
+        (command !== undefined &&
+          (!Array.isArray(command) ||
+            !command.every((value) => typeof value === "string") ||
+            command.some(unsafeManifestCommand)))
+      )
+        return yield* new StackPreparationError({
+          message: "Slim-services manifest command is invalid",
+          service: artifact.service,
+          version: artifact.version,
+        });
+      const listedChecksum = yield* slimServicesChecksum(artifact, fetchRequest);
+      if (listedChecksum !== request.sha256.toLowerCase())
+        return yield* new StackPreparationError({
+          message: "Slim-services checksum does not match the artifact request",
+          service: artifact.service,
+          version: artifact.version,
+        });
       const compressed = yield* fetchBytes(artifact.downloadUrl, fetchRequest);
+      const crypto = yield* Crypto.Crypto;
+      yield* verifySha256(compressed, request.sha256).pipe(
+        Effect.provideService(Crypto.Crypto, crypto),
+        Effect.mapError(
+          (cause) =>
+            new StackPreparationError({
+              message: "Slim-services archive digest does not match the artifact request",
+              service: artifact.service,
+              version: artifact.version,
+              cause,
+            }),
+        ),
+      );
       const archive = yield* decompress(compressed);
-      yield* extractTar(fs, destination, archive);
+      const archivePath = path.join(destination, ".slim-services.tar");
+      yield* fs.writeFile(archivePath, archive).pipe(
+        Effect.mapError(
+          (cause) =>
+            new StackPreparationError({
+              message: "Unable to stage slim-services archive",
+              cause,
+            }),
+        ),
+      );
+      const members = yield* tarBoundary.list(archivePath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new StackPreparationError({
+              message: "Unable to list slim-services archive",
+              cause,
+            }),
+        ),
+      );
+      const unsafeMember = members
+        .split(/\r?\n/u)
+        .map((member) => member.trim())
+        .find(unsafeArchivePath);
+      if (unsafeMember !== undefined)
+        return yield* new StackPreparationError({
+          message: "Slim-services archive contains an unsafe path",
+          path: unsafeMember,
+        });
+      const links = yield* tarBoundary.links(archivePath).pipe(
+        Effect.mapError(
+          (cause) =>
+            new StackPreparationError({
+              message: "Unable to inspect slim-services archive links",
+              cause,
+            }),
+        ),
+      );
+      const unsafeLink = links
+        .split(/\r?\n/u)
+        .map((line) => {
+          const arrow = line.indexOf(" -> ");
+          const hardLink = line.indexOf(" link to ");
+          const marker = arrow >= 0 ? arrow : hardLink;
+          if (marker < 0) return undefined;
+          const member = line.slice(0, marker).trim().split(/\s+/u).at(-1) ?? "";
+          const target = line.slice(marker + (arrow >= 0 ? 4 : 9)).trim();
+          return archiveLinkEscapes(member, target) ? target : undefined;
+        })
+        .find((target): target is string => target !== undefined);
+      if (unsafeLink !== undefined)
+        return yield* new StackPreparationError({
+          message: "Slim-services archive contains an unsafe link target",
+          path: unsafeLink,
+        });
+      const exitCode = yield* tarBoundary.extract(archivePath, destination).pipe(
+        Effect.mapError(
+          (cause) =>
+            new StackPreparationError({
+              message: "Unable to extract slim-services archive",
+              cause,
+            }),
+        ),
+      );
+      if (exitCode !== 0)
+        return yield* new StackPreparationError({
+          message: `Slim-services archive extraction exited with code ${exitCode}`,
+        });
+      yield* validateExtractedTree(fs, path, destination);
+      yield* fs.remove(archivePath, { force: true }).pipe(Effect.ignore);
       return compressed;
     });
   },

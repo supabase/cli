@@ -2,7 +2,11 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option } from "effect";
 import { compileStack } from "./Compiler.ts";
-import { resolveNativeArtifactForWorkload, targetForPlatform } from "./WorkloadCatalog.ts";
+import {
+  resolveNativeArtifactForWorkload,
+  targetForPlatform,
+  WORKLOAD_CATALOG,
+} from "./WorkloadCatalog.ts";
 import { StackPreparationError } from "../public/Errors.ts";
 
 const compile = (config: Parameters<typeof compileStack>[0]["config"]) =>
@@ -11,6 +15,39 @@ const compile = (config: Parameters<typeof compileStack>[0]["config"]) =>
   );
 
 describe("complete workload catalog", () => {
+  it("matches the executable paths shipped by slim-services archives", () => {
+    const expected = {
+      "database:database": "share/supabase-cli/bin/supabase-postgres-init.sh",
+      "rest:rest": "bin/postgrest",
+      "auth:auth": "bin/auth",
+      "realtime:realtime": "bin/server",
+      "storage:storage": "app/dist/start/server.js",
+      "storage:imgproxy": "bin/imgproxy",
+      "functions:edge-runtime": "bin/.edge-runtime-wrapped",
+      "studio:studio": "app/apps/studio/server.js",
+      "studio:pgmeta": "app/dist/server/server.js",
+      "mail:mail": "bin/mailpit",
+      "analytics:analytics": "bin/logflare",
+      "analytics:vector": "bin/vector",
+      "pooler:pooler": "bin/server",
+    } as const;
+    for (const [id, executable] of Object.entries(expected)) {
+      expect(WORKLOAD_CATALOG[id]?.executablePath).toBe(executable);
+      expect(WORKLOAD_CATALOG[id]?.requiredRuntimePaths).toContain(executable);
+    }
+    expect(WORKLOAD_CATALOG["realtime:realtime"]?.requiredRuntimePaths).toEqual([
+      "bin/migrate",
+      "bin/realtime",
+      "bin/server",
+    ]);
+    expect(WORKLOAD_CATALOG["analytics:analytics"]?.requiredRuntimePaths).toEqual(["bin/logflare"]);
+    expect(WORKLOAD_CATALOG["pooler:pooler"]?.requiredRuntimePaths).toEqual([
+      "bin/migrate",
+      "bin/supavisor",
+      "bin/server",
+    ]);
+  });
+
   it.live("resolves every declared workload to a slim-services native release", () =>
     Effect.gen(function* () {
       const result = yield* compile({
