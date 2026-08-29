@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { ChildProcess } from "effect/unstable/process";
-import type { ExternalCleanupAction, ServiceDef } from "./ServiceDef.ts";
+import type { ExternalCleanupAction, PosixResourceLimits, ServiceDef } from "./ServiceDef.ts";
 import { defaults } from "./ServiceDef.ts";
 import {
   isSupervisorSelfDispatchEnabled,
@@ -14,6 +14,7 @@ interface SupervisorRuntimeConfig {
   readonly shutdownSignal: ChildProcess.Signal;
   readonly shutdownTimeoutMs: number;
   readonly cleanup: ReadonlyArray<ExternalCleanupAction>;
+  readonly posixResourceLimits?: PosixResourceLimits;
 }
 
 export const supervisorRuntimePath = fileURLToPath(
@@ -30,6 +31,9 @@ export const makeSupervisedCommand = (def: ServiceDef) => {
     shutdownSignal: def.shutdown?.signal ?? defaults.shutdown.signal,
     shutdownTimeoutMs: (def.shutdown?.timeoutSeconds ?? defaults.shutdown.timeoutSeconds) * 1000,
     cleanup: def.supervision?.orphanCleanup ?? [],
+    ...(def.posixResourceLimits === undefined
+      ? {}
+      : { posixResourceLimits: def.posixResourceLimits }),
   };
   const encoded = Buffer.from(JSON.stringify(runtimeConfig)).toString("base64url");
   const selfDispatch = isSupervisorSelfDispatchEnabled(import.meta.url);

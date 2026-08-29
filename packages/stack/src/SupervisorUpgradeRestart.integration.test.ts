@@ -14,17 +14,13 @@ import {
 } from "./managed/control.ts";
 import type { ManagedStack, ManagedStackManagerShape } from "./managed/manager.ts";
 import type { SupervisorStartMessage } from "./SupervisorProtocol.ts";
-import { SERVICE_CATALOG, SERVICE_NAMES } from "./ServiceCatalog.ts";
 import type { ServiceName } from "./ServiceName.ts";
 import { reservePortSet } from "./PortAllocator.ts";
 import { prepareUpgradeReplacement } from "./SupervisorUpgradeRestart.ts";
 import { StopTimeout, UpgradePreflightError, UpgradeRestartError } from "./errors.ts";
 import type { DaemonConfigInput } from "./StackConfigResolver.ts";
-import { fillServiceVersionManifest } from "./versions.ts";
 
 const roots: Array<string> = [];
-
-const allPersistedVersions = fillServiceVersionManifest({});
 
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
@@ -374,37 +370,6 @@ describe("incompatible supervisor upgrade restart", () => {
       ).pipe(Effect.provide(NodeServices.layer));
     },
   );
-
-  it.live("keeps restart-request exclusions from enabling native Docker-only services", () => {
-    const context = setup(allPersistedVersions);
-    const launch = context.input.launch ?? { versions: {} };
-    const input = {
-      ...context.input,
-      launch: { ...launch, excludedServices: ["studio", "analytics"] },
-    };
-    return prepareUpgradeReplacement({
-      ...context,
-      input,
-      configInput: context.configInput,
-      controlTransport: context.transport,
-    }).pipe(
-      Effect.provide(NodeServices.layer),
-      Effect.scoped,
-      Effect.tap((result) =>
-        Effect.sync(() => {
-          for (const service of SERVICE_NAMES) {
-            if (SERVICE_CATALOG[service].runtimeSupport === "docker-only") {
-              const configKey = SERVICE_CATALOG[service].configKey;
-              expect(result.effectiveConfigInput[configKey]).toEqual(
-                context.configInput[configKey],
-              );
-            }
-          }
-        }),
-      ),
-      Effect.asVoid,
-    );
-  });
 
   it.effect("reports the refreshed owner state when stop times out", () => {
     const context = setup();

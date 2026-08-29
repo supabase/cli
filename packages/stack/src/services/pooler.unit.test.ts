@@ -8,7 +8,10 @@ const makePooler = (mode: "transaction" | "session") =>
     binPath: "/cache/pooler/v2.9.10/darwin-arm64",
     runtimeRoot: "/tmp/stacks/project-a/runtime",
     adminPort: 54329,
-    port: 54330,
+    sessionPort: 54330,
+    transactionPort: 54331,
+    nodeName: "supavisor_id_stack_a",
+    releaseCookie: "supabase_stack_a_cookie",
     dbPort: 54322,
     poolMode: mode,
     defaultPoolSize: 20,
@@ -53,19 +56,23 @@ describe("makePoolerServicesNative", () => {
     });
   });
 
-  it("only binds the selected public proxy listener and keeps the other dormant", () => {
+  it("binds both public proxy listeners with the stack identity", () => {
     const transaction = makePooler("transaction").server;
     expect(transaction.env).toMatchObject({
       PORT: "54329",
-      PROXY_PORT_TRANSACTION: "54330",
-      PROXY_PORT_SESSION: "0",
+      PROXY_PORT_TRANSACTION: "54331",
+      PROXY_PORT_SESSION: "54330",
+      NODE_NAME: "supavisor_id_stack_a",
+      NODE_IP: "127.0.0.1",
+      RELEASE_NODE: "supavisor_id_stack_a@127.0.0.1",
+      RELEASE_COOKIE: "supabase_stack_a_cookie",
       ELIXIR_ERL_OPTIONS: "+fnu +S 1:1 +SDio 1 +sbwt none +sbwtdcpu none +sbwtdio none",
       ERL_CRASH_DUMP: "/tmp/stacks/project-a/runtime/pooler/erl_crash.dump",
     });
 
     const session = makePooler("session").server;
     expect(session.env).toMatchObject({
-      PROXY_PORT_TRANSACTION: "0",
+      PROXY_PORT_TRANSACTION: "54331",
       PROXY_PORT_SESSION: "54330",
     });
   });

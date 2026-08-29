@@ -16,7 +16,7 @@ import {
 } from "./service-utils.ts";
 import bootstrapSource from "./edge-runtime-main.ts" with { type: "text" };
 import { stackHealthBudgets } from "./health-budgets.ts";
-import { edgeRuntimeNofileUlimit } from "./nofile-limit.ts";
+import { edgeRuntimeNofileSoftLimit, edgeRuntimeNofileUlimit } from "./nofile-limit.ts";
 
 interface EdgeRuntimeOptions {
   readonly runtimeRoot: string;
@@ -140,6 +140,7 @@ export const makeEdgeRuntimeServiceNative = (opts: NativeEdgeRuntimeOptions): Se
     args: [...edgeRuntimeArgs(opts, opts.bootstrapDir)],
     cwd: opts.projectDir,
     env: edgeRuntimeEnv(opts),
+    posixResourceLimits: { nofileSoft: edgeRuntimeNofileSoftLimit },
     dependencies: opts.dependencies,
     healthCheck: edgeRuntimeHealthCheck(opts.port),
   });

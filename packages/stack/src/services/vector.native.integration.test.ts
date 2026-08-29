@@ -4,6 +4,7 @@ import { NodeFileSystem } from "@effect/platform-node";
 import { it } from "@effect/vitest";
 import { Effect, FileSystem, Layer } from "effect";
 import { describe, expect } from "vitest";
+import { NATIVE_LOG_SEGMENTS, nativeServiceLogSegmentPaths } from "../NativeLogWriter.ts";
 import { makeVectorServiceNative, prepareVectorConfig } from "./vector.ts";
 
 describe("prepareVectorConfig", () => {
@@ -23,12 +24,14 @@ describe("prepareVectorConfig", () => {
       expect(prepared.configPath).toBe(`${runtimeRoot}/vector/vector.yaml`);
       expect(prepared.dataDir).toBe(`${runtimeRoot}/vector/data_dir`);
       expect(dataDirectoryExists).toBe(true);
-      expect(config).toContain(`- "${runtimeRoot}/logs/*.jsonl"`);
-      expect(config).toContain(`- "${runtimeRoot}/logs/*.jsonl.1"`);
-      expect(config).toContain(`- "${runtimeRoot}/logs/*.jsonl.2"`);
-      expect(config).toContain(`- "${runtimeRoot}/logs/*.jsonl.3"`);
-      expect(config).toContain(`- "${runtimeRoot}/logs/vector.jsonl"`);
-      expect(config).toContain(`- "${runtimeRoot}/logs/vector.jsonl.3"`);
+      for (let index = 0; index < NATIVE_LOG_SEGMENTS; index += 1) {
+        expect(config).toContain(
+          `- "${runtimeRoot}/logs/*.jsonl${index === 0 ? "" : `.${index}`}"`,
+        );
+      }
+      for (const path of nativeServiceLogSegmentPaths(runtimeRoot, "vector")) {
+        expect(config).toContain(`- "${path}"`);
+      }
       expect(config).toContain("codec: json");
       expect(config).toContain('uri: "http://127.0.0.1:54327/api/logs?source_name=postgres.logs"');
       expect(config).toContain('x-api-key: "analytics-key"');

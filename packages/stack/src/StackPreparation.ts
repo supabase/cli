@@ -10,9 +10,8 @@ import type {
   DownloadError,
 } from "./errors.ts";
 import { BinaryNotFoundError, DockerPullError, isDockerDaemonDownMessage } from "./errors.ts";
-import { isDockerOnlyService, requiredPreparationDependencies } from "./ServiceCatalog.ts";
+import { requiredPreparationDependencies, SERVICE_NAMES } from "./ServiceCatalog.ts";
 import {
-  SERVICE_NAMES,
   defaultVersionsForRuntime,
   dockerImageForService,
   normalizeServiceVersions,
@@ -115,11 +114,7 @@ export const preparationClosure = (
 };
 
 const selectedServices = (input: StackPreparationInput): ReadonlyArray<ServiceName> => {
-  const defaults =
-    input.mode === "docker"
-      ? SERVICE_NAMES
-      : SERVICE_NAMES.filter((service) => !isDockerOnlyService(service));
-  return preparationClosure(input.services ?? defaults, input.enabledServices);
+  return preparationClosure(input.services ?? SERVICE_NAMES, input.enabledServices);
 };
 
 const versionsForInput = (input: StackPreparationInput): VersionManifest => ({
@@ -138,9 +133,6 @@ const plannedResolution = (
       type: "docker",
       image: dockerImageForService(service, version),
     });
-  }
-  if (isDockerOnlyService(service)) {
-    return Effect.fail(new BinaryNotFoundError({ service, platform: "native" }));
   }
   return resolver
     .plan({ service, version })

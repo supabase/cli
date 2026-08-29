@@ -48,8 +48,9 @@ const basePorts: AllocatedPorts = {
   studioPort: 3017,
   analyticsPort: 3018,
   vectorAdminPort: 3021,
-  poolerPort: 3019,
-  poolerApiPort: 3020,
+  poolerSessionPort: 3019,
+  poolerTransactionPort: 3020,
+  poolerApiPort: 3021,
 };
 
 const baseConfig: ResolvedStackConfig = {

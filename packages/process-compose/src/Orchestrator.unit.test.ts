@@ -341,6 +341,20 @@ const svc = (name: string, overrides?: Partial<ServiceDef>): ServiceDef => ({
 // --- Tests ---
 
 describe("Orchestrator", () => {
+  it.live("keeps a service without resource limits as a direct command", () => {
+    const args = ["argument with spaces", "$(not-a-command)"];
+    const { layer, proc } = setupOrchestrator([
+      svc("direct", { command: "service-command", args, restart: "no" }),
+    ]);
+
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.start();
+      yield* proc.waitForSpawnCount(1);
+      expect(proc.spawned[0]).toEqual({ command: "service-command", args });
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   it.live("start() spawns all services", () => {
     const { layer, proc } = setupOrchestrator([svc("a"), svc("b"), svc("c")]);
     return Effect.gen(function* () {

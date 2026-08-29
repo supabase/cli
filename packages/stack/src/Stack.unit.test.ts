@@ -45,8 +45,9 @@ const defaultPorts: AllocatedPorts = {
   studioPort: 54337,
   analyticsPort: 54338,
   vectorAdminPort: 54341,
-  poolerPort: 54339,
-  poolerApiPort: 54340,
+  poolerSessionPort: 54339,
+  poolerTransactionPort: 54340,
+  poolerApiPort: 54341,
 };
 
 const defaultConfig: ResolvedStackConfig = {
@@ -1547,6 +1548,8 @@ describe("Stack", () => {
           port: defaultPorts.mailpitPort,
           smtpPort: defaultPorts.mailpitSmtpPort,
           pop3Port: defaultPorts.mailpitPop3Port,
+          dataDir: "/tmp/stack/mailpit",
+          dataDirIsAutoManaged: false,
           version: DEFAULT_VERSIONS.mailpit,
           adminEmail: "admin@example.com",
           senderName: "Admin",

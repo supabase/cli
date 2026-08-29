@@ -64,7 +64,7 @@ import { projectStackStates, type StackServiceProjectionCatalog } from "./StackS
 import { StackServiceState } from "./StackServiceState.ts";
 import { Stack } from "./Stack.ts";
 import type { EdgeRuntimeReloadConfig, StackInfo } from "./Stack.ts";
-import { startNativeLogWriter } from "./NativeLogWriter.ts";
+import { startNativeLogWriter, type NativeLogWriter } from "./NativeLogWriter.ts";
 import { SERVICE_NAMES, type ServiceName } from "./versions.ts";
 
 type LifecyclePhase = "idle" | "starting" | "running" | "stopping" | "stopped" | "disposed";
@@ -185,7 +185,11 @@ const stackInfoFor = (config: ResolvedStackConfig): StackInfo => {
       ...(config.pooler === false
         ? {}
         : {
-            pooler: `postgresql://postgres:postgres@127.0.0.1:${config.pooler.port}/postgres`,
+            pooler: `postgresql://postgres:postgres@127.0.0.1:${
+              config.pooler.mode === "session"
+                ? config.pooler.sessionPort
+                : config.pooler.transactionPort
+            }/postgres`,
             pooler_admin: `http://127.0.0.1:${config.pooler.apiPort}`,
           }),
     },
@@ -325,6 +329,7 @@ export const localStackLayer = (
       let runtimeState: RuntimeState | undefined;
       let runtimeDeferred: Deferred.Deferred<RuntimeState, StackBuildError> | undefined;
       let exactCleanupTargets: CleanupTargets | undefined;
+      let nativeLogWriter: NativeLogWriter | undefined;
 
       const preparationInput = (
         services: ReadonlyArray<ServiceName>,
@@ -512,7 +517,7 @@ export const localStackLayer = (
             exactCleanupTargets = cleanupTargets;
 
             if (config.runtime.mode === "native") {
-              yield* startNativeLogWriter(logBuffer, config.runtimeRoot).pipe(
+              nativeLogWriter = yield* startNativeLogWriter(logBuffer, config.runtimeRoot).pipe(
                 Effect.provideService(FileSystem.FileSystem, fs),
                 Effect.provideService(Scope.Scope, scope),
               );
@@ -816,6 +821,7 @@ export const localStackLayer = (
               Effect.provideService(FileSystem.FileSystem, fs),
               Effect.ensuring(providePlatform(clearFunctionsRuntimeConfig(config.runtimeRoot))),
               Effect.ensuring(portLease.releaseAll),
+              Effect.ensuring(Effect.suspend(() => nativeLogWriter?.shutdown ?? Effect.void)),
               Effect.ensuring(Ref.set(phaseRef, "disposed")),
             );
           }).pipe(withLifecycleLock);

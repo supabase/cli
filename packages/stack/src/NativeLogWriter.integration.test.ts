@@ -16,6 +16,7 @@ import {
   PlatformError,
   PubSub,
   Scope,
+  Stream,
 } from "effect";
 import { LogBuffer } from "@supabase/process-compose";
 import { join } from "node:path";
@@ -177,6 +178,101 @@ const flakyRenameFileSystemLayer = Layer.effect(
   }),
 ).pipe(Layer.provide(NodeFileSystem.layer));
 
+const persistentWriteFailureFileSystem = (
+  gates: Partial<{
+    readonly authWriteStarted: Deferred.Deferred<void>;
+    readonly authFailureDone: Deferred.Deferred<void>;
+    readonly postgresWritten: Deferred.Deferred<void>;
+    readonly releaseAuth: Deferred.Deferred<void>;
+  }> = {},
+) => {
+  let failingAuthWrites = true;
+  let authOpens = 0;
+  let authFailures = 0;
+  const layer = Layer.effect(
+    FileSystem.FileSystem,
+    Effect.map(FileSystem.FileSystem, (base) => {
+      return {
+        ...base,
+        open: (path: string, options?: Parameters<typeof base.open>[1]) =>
+          base.open(path, options).pipe(
+            Effect.map((file) => {
+              if (path.endsWith("auth.jsonl")) authOpens += 1;
+              return {
+                [FileSystem.FileTypeId]: file[FileSystem.FileTypeId],
+                get stat() {
+                  return file.stat;
+                },
+                seek: (offset, from) => file.seek(offset, from),
+                get sync() {
+                  return file.sync;
+                },
+                read: (buffer) => file.read(buffer),
+                readAlloc: (size) => file.readAlloc(size),
+                truncate: (length) => file.truncate(length),
+                write: (buffer) => file.write(buffer),
+                writeAll: (buffer) =>
+                  path.endsWith("auth.jsonl") && failingAuthWrites
+                    ? (gates.authWriteStarted === undefined
+                        ? Effect.void
+                        : Deferred.succeed(gates.authWriteStarted, undefined).pipe(Effect.asVoid)
+                      ).pipe(
+                        Effect.andThen(
+                          gates.releaseAuth === undefined
+                            ? Effect.void
+                            : Deferred.await(gates.releaseAuth),
+                        ),
+                        Effect.andThen(
+                          Effect.fail(
+                            PlatformError.systemError({
+                              _tag: "Unknown",
+                              module: "test",
+                              method: "writeAll",
+                              description: "injected persistent write failure",
+                            }),
+                          ),
+                        ),
+                        Effect.tapError(() =>
+                          Effect.sync(() => (authFailures += 1)).pipe(
+                            Effect.flatMap((count) =>
+                              count >= 4 && gates.authFailureDone !== undefined
+                                ? Deferred.succeed(gates.authFailureDone, undefined).pipe(
+                                    Effect.asVoid,
+                                  )
+                                : Effect.void,
+                            ),
+                          ),
+                        ),
+                      )
+                    : file
+                        .writeAll(buffer)
+                        .pipe(
+                          Effect.tap(() =>
+                            gates.postgresWritten === undefined
+                              ? Effect.void
+                              : Deferred.succeed(gates.postgresWritten, undefined),
+                          ),
+                        ),
+              } satisfies FileSystem.File;
+            }),
+          ),
+      } satisfies FileSystem.FileSystem;
+    }),
+  ).pipe(Layer.provide(NodeFileSystem.layer));
+  return {
+    layer,
+    recover: () => {
+      failingAuthWrites = false;
+    },
+    get authOpens() {
+      return authOpens;
+    },
+    get authFailures() {
+      return authFailures;
+    },
+  };
+};
+
 describe("native log writer", () => {
   it.live("journals each LogBuffer entry below only its owning runtime root", () =>
     withLogBuffer((logBuffer, fs, root, sibling, signal) =>
@@ -207,7 +303,7 @@ describe("native log writer", () => {
           message: "authenticated",
         });
         expect(typeof event.timestamp).toBe("number");
-        expect(contents).not.toContain("postgres");
+        expect(yield* fs.exists(nativeServiceLogPath(root, "postgres"))).toBe(false);
         expect(nativeLogRoot(root)).toContain(root);
         expect(yield* fs.exists(nativeLogRoot(sibling))).toBe(false);
       }),
@@ -349,6 +445,127 @@ describe("native log writer", () => {
         );
       }),
     ).pipe(Effect.provide(NodeFileSystem.layer)),
+  );
+
+  it.live("drains teardown entries before direct scope disposal closes the writer", () =>
+    Effect.gen(function* () {
+      const signal = yield* PubSub.unbounded<string>();
+      const fs = yield* FileSystem.FileSystem.pipe(Effect.provide(journalFileSystemLayer(signal)));
+      const root = yield* fs.makeTempDirectory({ prefix: "supabase-native-logs-" });
+      const writerScope = yield* Scope.make("sequential");
+      const services = yield* Layer.build(LogBuffer.layer);
+      const logBuffer = Context.get(services, LogBuffer);
+      yield* startNativeLogWriter(logBuffer, root).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Scope.Scope, writerScope),
+      );
+      yield* Scope.addFinalizer(writerScope, logBuffer.append("auth", "stderr", "shutdown-entry"));
+
+      yield* Scope.close(writerScope, Exit.void);
+
+      expect(yield* fs.readFileString(nativeServiceLogPath(root, "auth"))).toContain(
+        '"message":"shutdown-entry"',
+      );
+      yield* fs.remove(root, { recursive: true, force: true });
+    }).pipe(Effect.provide(NodeFileSystem.layer)),
+  );
+
+  it.live("isolates a blocked journal from a healthy sibling", () =>
+    Effect.gen(function* () {
+      const signal = yield* PubSub.unbounded<string>();
+      const authWriteStarted = yield* Deferred.make<void>();
+      const authFailureDone = yield* Deferred.make<void>();
+      const postgresWritten = yield* Deferred.make<void>();
+      const releaseAuth = yield* Deferred.make<void>();
+      const injected = persistentWriteFailureFileSystem({
+        authWriteStarted,
+        authFailureDone,
+        postgresWritten,
+        releaseAuth,
+      });
+      const fs = yield* FileSystem.FileSystem.pipe(
+        Effect.provide(journalFileSystemLayer(signal, injected.layer)),
+      );
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-native-logs-" });
+      const services = yield* Layer.build(LogBuffer.layer);
+      const realLogBuffer = Context.get(services, LogBuffer);
+      const logBuffer = {
+        ...realLogBuffer,
+        subscribeAll: Stream.make(
+          {
+            timestamp: 0,
+            service: "auth",
+            stream: "stdout",
+            line: "failed",
+          },
+          {
+            timestamp: 0,
+            service: "postgres",
+            stream: "stdout",
+            line: "healthy",
+          },
+        ),
+      };
+      yield* startNativeLogWriter(logBuffer, root).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+      );
+
+      yield* Effect.gen(function* () {
+        yield* Deferred.await(authWriteStarted);
+        // The auth write is still blocked at this point, so postgres can only
+        // reach this gate when per-service flushing is isolated.
+        yield* Deferred.await(postgresWritten);
+        yield* Deferred.succeed(releaseAuth, undefined);
+        yield* Deferred.await(authFailureDone);
+      }).pipe(Effect.timeout(Duration.seconds(5)));
+      expect(yield* fs.readFileString(nativeServiceLogPath(root, "postgres"))).toContain(
+        '"message":"healthy"',
+      );
+      expect(yield* fs.readFileString(nativeServiceLogPath(root, "auth"))).toBe("");
+      expect(injected.authOpens).toBeGreaterThan(1);
+    }).pipe(Effect.provide(NodeFileSystem.layer)),
+  );
+
+  it.live("reopens a failed service after persistent write failure clears", () =>
+    Effect.gen(function* () {
+      const signal = yield* PubSub.unbounded<string>();
+      const injected = persistentWriteFailureFileSystem();
+      const fs = yield* FileSystem.FileSystem.pipe(
+        Effect.provide(journalFileSystemLayer(signal, injected.layer)),
+      );
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-native-logs-" });
+      const services = yield* Layer.build(LogBuffer.layer);
+      const logBuffer = Context.get(services, LogBuffer);
+      yield* startNativeLogWriter(logBuffer, root).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+      );
+
+      yield* awaitDirectoryState(
+        fs,
+        nativeLogRoot(root),
+        {
+          ["auth.jsonl"]: () => true,
+          ["postgres.jsonl"]: (content) => content.includes('"message":"healthy"'),
+        },
+        Effect.gen(function* () {
+          yield* logBuffer.append("auth", "stdout", "failed");
+          yield* logBuffer.append("postgres", "stdout", "healthy");
+        }),
+        signal,
+      );
+      injected.recover();
+      yield* awaitDirectoryState(
+        fs,
+        nativeLogRoot(root),
+        {
+          ["auth.jsonl"]: (content) => content.includes('"message":"recovered"'),
+          ["postgres.jsonl"]: (content) => content.includes('"message":"healthy"'),
+        },
+        logBuffer.append("auth", "stdout", "recovered"),
+        signal,
+      );
+      expect(injected.authOpens).toBeGreaterThan(1);
+    }).pipe(Effect.provide(NodeFileSystem.layer)),
   );
 
   it.live("recovers rotation after one rename failure and continues journaling", () =>

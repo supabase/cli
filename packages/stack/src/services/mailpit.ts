@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerNetworkArgs } from "../Platform.ts";
 import type { StackIdentity } from "../StackIdentity.ts";
+import { removePathOnOrphanCleanup } from "./docker-cleanup.ts";
 import {
   dockerRunService,
   hostHttpHealthCheck,
@@ -19,10 +20,16 @@ interface MailpitServiceOptions {
   readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
+const orphanCleanup = (
+  opts: Pick<NativeMailpitOptions, "dataDir"> & { cleanupDataDirOnExit?: boolean },
+) =>
+  opts.cleanupDataDirOnExit ? removePathOnOrphanCleanup(opts.dataDir, { recursive: true }) : [];
+
 export interface NativeMailpitOptions extends MailpitServiceOptions {
   readonly binPath: string;
   /** Directory owned by this stack for Mailpit's SQLite database. */
   readonly dataDir: string;
+  readonly cleanupDataDirOnExit?: boolean;
 }
 
 interface DockerMailpitOptions extends MailpitServiceOptions, ContainerRuntimeOptions {
@@ -60,11 +67,13 @@ export const makeMailpitServiceDocker = (opts: DockerMailpitOptions): ServiceDef
     healthCheck: mailpitHealthCheck(opts.webPort),
   });
 
-export const makeMailpitServiceNative = (opts: NativeMailpitOptions): ServiceDef =>
-  nativeRunService({
+export const makeMailpitServiceNative = (opts: NativeMailpitOptions): ServiceDef => ({
+  ...nativeRunService({
     name: "mailpit",
     command: `${opts.binPath}/bin/mailpit`,
     env: mailpitEnv(opts, "127.0.0.1", opts.dataDir),
     dependencies: opts.dependencies,
     healthCheck: mailpitHealthCheck(opts.webPort),
-  });
+  }),
+  supervision: { orphanCleanup: orphanCleanup(opts) },
+});

@@ -43,6 +43,7 @@ export interface NativeRunServiceOptions {
   readonly env?: Record<string, string>;
   readonly cwd?: string;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
+  readonly posixResourceLimits?: ServiceDef["posixResourceLimits"];
   readonly healthCheck?: ServiceDef["healthCheck"];
   readonly shutdown?: ServiceDef["shutdown"];
   readonly restart?: ServiceDef["restart"];
@@ -55,6 +56,9 @@ export const nativeRunService = (opts: NativeRunServiceOptions): ServiceDef => (
   ...(opts.env === undefined ? {} : { env: opts.env }),
   ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }),
   dependencies: opts.dependencies,
+  ...(opts.posixResourceLimits === undefined
+    ? {}
+    : { posixResourceLimits: opts.posixResourceLimits }),
   ...(opts.healthCheck === undefined ? {} : { healthCheck: opts.healthCheck }),
   ...(opts.shutdown === undefined ? {} : { shutdown: opts.shutdown }),
   supervision: {},
@@ -79,17 +83,23 @@ const envArgs = (env: Record<string, string>): ReadonlyArray<string> =>
 export const hostHttpHealthCheck = (
   port: number,
   path: string,
-  opts: Omit<ServiceDef["healthCheck"], "probe"> = {},
-): ServiceDef["healthCheck"] => ({
-  probe: {
-    _tag: "Http",
-    host: "127.0.0.1",
-    port,
-    path,
-    scheme: "http",
-  },
-  ...opts,
-});
+  opts: Omit<NonNullable<ServiceDef["healthCheck"]>, "probe"> & {
+    readonly headers?: Readonly<Record<string, string>>;
+  } = {},
+): ServiceDef["healthCheck"] => {
+  const { headers, ...healthCheck } = opts;
+  return {
+    probe: {
+      _tag: "Http",
+      host: "127.0.0.1",
+      port,
+      path,
+      scheme: "http",
+      ...(headers === undefined ? {} : { headers }),
+    },
+    ...healthCheck,
+  };
+};
 
 export const dockerExecHealthCheck = (
   runtime: ContainerRuntime,

@@ -1,6 +1,6 @@
 // Raised from the daemon default so many concurrent Deno isolates can run
 // (supabase/cli#5151).
-const desiredNofile = 65536;
+export const edgeRuntimeNofileSoftLimit = 65536;
 
 // `userLimits.open_files.hard` from a `process.report.getReport()` diagnostic
 // report — a number or "unlimited". Narrowed structurally because getReport()
@@ -29,7 +29,9 @@ const hostHardNofileLimit = (platformOs: string): number | undefined =>
 // (elsewhere the daemon runs in a VM), and only downward: a client more
 // constrained than its daemon yields a smaller fd budget, never a failed start.
 export const clampNofileLimit = (hardLimit: number | undefined): number =>
-  hardLimit === undefined ? desiredNofile : Math.min(desiredNofile, hardLimit);
+  hardLimit === undefined
+    ? edgeRuntimeNofileSoftLimit
+    : Math.min(edgeRuntimeNofileSoftLimit, hardLimit);
 
 interface EdgeRuntimeNofileUlimit {
   /** The docker `--ulimit` value, `nofile=<limit>:<limit>`. */
@@ -49,10 +51,10 @@ export const edgeRuntimeNofileUlimit = (
   return {
     arg: `nofile=${limit}:${limit}`,
     limit,
-    ...(limit < desiredNofile && {
+    ...(limit < edgeRuntimeNofileSoftLimit && {
       clampWarning:
         `Edge Runtime file descriptor limit lowered to ${limit}: ` +
-        `the host's hard limit (ulimit -Hn) is below the default ${desiredNofile}. ` +
+        `the host's hard limit (ulimit -Hn) is below the default ${edgeRuntimeNofileSoftLimit}. ` +
         `Heavy Edge Function workloads may exhaust file descriptors.`,
     }),
   };

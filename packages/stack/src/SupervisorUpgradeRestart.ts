@@ -13,7 +13,7 @@ import type { ManagedStackLaunch } from "./managed/document.ts";
 import { PORT_CATALOG, PORT_FIELDS, type PortField } from "./PortCatalog.ts";
 import { reservePortSet } from "./PortAllocator.ts";
 import { portFieldsForConfigInput } from "./ServicePorts.ts";
-import { SERVICE_CATALOG, SERVICE_NAMES } from "./ServiceCatalog.ts";
+import { SERVICE_NAMES } from "./ServiceCatalog.ts";
 import { expandExcludedServices } from "./ServiceExclusions.ts";
 import {
   portRequestsForConfig,
@@ -66,32 +66,15 @@ const persistedPortField = (key: string): PortField | undefined => {
       return "studioPort";
     case "analytics.port":
       return "analyticsPort";
-    case "db.pooler.port":
-      return "poolerPort";
+    case "db.pooler.session_port":
+      return "poolerSessionPort";
+    case "db.pooler.transaction_port":
+      return "poolerTransactionPort";
+    case "db.pooler.api_port":
+      return "poolerApiPort";
     default:
       return undefined;
   }
-};
-
-const isCatalogDefaultServiceConfig = (value: unknown): boolean => {
-  if (value === undefined) return true;
-  if (typeof value !== "object" || value === null) return false;
-  return Object.keys(value).every((key) => key === "version");
-};
-
-export const applyNativeDefaults = (config: DaemonConfigInput): DaemonConfigInput => {
-  const servicePolicies = { ...config.servicePolicies };
-  for (const service of SERVICE_NAMES) {
-    const metadata = SERVICE_CATALOG[service];
-    if (
-      metadata.runtimeSupport === "docker-only" &&
-      servicePolicies[service] === undefined &&
-      isCatalogDefaultServiceConfig(config[metadata.configKey])
-    ) {
-      servicePolicies[service] = "off";
-    }
-  }
-  return { ...config, servicePolicies };
 };
 
 const enableService = (
@@ -180,9 +163,7 @@ const applyPersistedLaunch = (
   const persistedExclusions = expandExcludedServices(persisted.excludedServices ?? []);
   const servicesToEnable = new Set<(typeof SERVICE_NAMES)[number]>();
   for (const service of restartRequestExclusions) {
-    if (persisted.mode !== "native" || SERVICE_CATALOG[service].runtimeSupport !== "docker-only") {
-      servicesToEnable.add(service);
-    }
+    servicesToEnable.add(service);
   }
   for (const service of SERVICE_NAMES) {
     if (
@@ -264,10 +245,7 @@ const preflight = (
       existing.launch,
       context.input.launch,
     );
-    const effectiveConfigInput =
-      persistedRuntime.mode === "native" && context.configInput.mode === undefined
-        ? applyNativeDefaults(withExclusions)
-        : withExclusions;
+    const effectiveConfigInput = withExclusions;
     const portRequests = yield* portRequestsForConfig(effectiveConfigInput, {
       runtime: persistedRuntime,
     }).pipe(Effect.mapError((cause) => preflightError(context, causeMessage(cause))));

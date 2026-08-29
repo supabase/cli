@@ -9,13 +9,13 @@ import {
   Effect,
   Exit,
   Fiber,
+  FileSystem,
   Layer,
   Option,
   Predicate,
   Sink,
   Stream,
 } from "effect";
-import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Stack } from "./Stack.ts";
@@ -184,8 +184,9 @@ const ports = (base: number): PortSet => ({
   studioPort: base + 14,
   analyticsPort: base + 15,
   vectorAdminPort: base + 16,
-  poolerPort: base + 17,
-  poolerApiPort: base + 18,
+  poolerSessionPort: base + 17,
+  poolerTransactionPort: base + 18,
+  poolerApiPort: base + 19,
 });
 
 const allBinaries = Object.fromEntries(
@@ -295,10 +296,11 @@ describe("native service graph lifecycle", () => {
     "starts mixed eager services, retries lazy Storage JIT, and restarts its owner closure",
     () =>
       Effect.gen(function* () {
-        const root = yield* Effect.acquireRelease(
-          Effect.sync(() => mkdtempSync(join(tmpdir(), "supabase-native-lifecycle-"))),
-          (path) => Effect.sync(() => rmSync(path, { recursive: true, force: true })),
-        );
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          directory: tmpdir(),
+          prefix: "supabase-native-lifecycle-",
+        });
         const config = yield* makeConfig(root, 45_000).pipe(Effect.provide(NodeServices.layer));
         const resolver = mockBinaryResolver({
           binaries: allBinaries,
@@ -379,19 +381,20 @@ describe("native service graph lifecycle", () => {
           }
           yield* stack.dispose;
         }).pipe(Effect.provide(layer));
-      }).pipe(Effect.scoped),
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.live("recovers one crashed Storage stack without affecting a sibling stack", () =>
     Effect.gen(function* () {
-      const rootA = yield* Effect.acquireRelease(
-        Effect.sync(() => mkdtempSync(join(tmpdir(), "supabase-native-lifecycle-a-"))),
-        (path) => Effect.sync(() => rmSync(path, { recursive: true, force: true })),
-      );
-      const rootB = yield* Effect.acquireRelease(
-        Effect.sync(() => mkdtempSync(join(tmpdir(), "supabase-native-lifecycle-b-"))),
-        (path) => Effect.sync(() => rmSync(path, { recursive: true, force: true })),
-      );
+      const fs = yield* FileSystem.FileSystem;
+      const rootA = yield* fs.makeTempDirectoryScoped({
+        directory: tmpdir(),
+        prefix: "supabase-native-lifecycle-a-",
+      });
+      const rootB = yield* fs.makeTempDirectoryScoped({
+        directory: tmpdir(),
+        prefix: "supabase-native-lifecycle-b-",
+      });
       const configA = yield* makeConfig(rootA, 45_100).pipe(Effect.provide(NodeServices.layer));
       const configB = yield* makeConfig(rootB, 45_200).pipe(Effect.provide(NodeServices.layer));
       const spawnerA = controllableSpawner();
@@ -459,6 +462,6 @@ describe("native service graph lifecycle", () => {
       expect(spawnerB.killed).toEqual(killedBeforeDispose);
       expect((yield* stackB.getState("storage")).status).toBe("Healthy");
       yield* stackB.dispose;
-    }).pipe(Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });

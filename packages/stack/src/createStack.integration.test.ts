@@ -35,8 +35,9 @@ const testPorts: PortSet = {
   pgmetaPort: 40_013,
   studioPort: 40_014,
   analyticsPort: 40_015,
-  poolerPort: 40_016,
-  poolerApiPort: 40_017,
+  poolerSessionPort: 40_016,
+  poolerTransactionPort: 40_017,
+  poolerApiPort: 40_018,
 };
 
 afterEach(() => {

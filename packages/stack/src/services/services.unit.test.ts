@@ -16,7 +16,11 @@ import { makePostgresInitService, makePostgresInitServiceDocker } from "./postgr
 import { makePostgresService, makePostgresServiceDocker } from "./postgres.ts";
 import { makePostgrestService, makePostgrestServiceDocker } from "./postgrest.ts";
 import { makeRealtimeServiceDocker, makeRealtimeServicesNative } from "./realtime.ts";
-import { makePoolerServiceDocker, poolerContainerPorts } from "./pooler.ts";
+import {
+  makePoolerServiceDocker,
+  makePoolerServicesNative,
+  poolerContainerPorts,
+} from "./pooler.ts";
 import { dockerRunService } from "./service-utils.ts";
 import {
   LOCAL_S3_PROTOCOL_ACCESS_KEY_ID,
@@ -411,6 +415,7 @@ describe("native auxiliary service definitions", () => {
     });
 
     expect(def.command).toBe(`${artifactRoot}/bin/.edge-runtime-wrapped`);
+    expect(def.posixResourceLimits).toEqual({ nofileSoft: 65536 });
     expect(def.args).toEqual([
       "start",
       `--main-service=${bootstrapDir}`,
@@ -436,6 +441,8 @@ describe("native auxiliary service definitions", () => {
     const dependencies = [{ service: "postgres", condition: "healthy" }] as const;
     const bundle = makeRealtimeServicesNative({
       binPath: artifactRoot,
+      nodeName: "realtime_id_stack_a",
+      releaseCookie: "supabase_stack_a_cookie",
       port: 54330,
       dbPort: DB_PORT,
       jwtSecret: JWT_SECRET,
@@ -474,13 +481,56 @@ describe("native auxiliary service definitions", () => {
       API_JWT_JWKS: "native-jwks",
       SECRET_KEY_BASE: "native-secret-key-base",
       MAX_HEADER_LENGTH: "4096",
+      NODE_NAME: "realtime_id_stack_a",
+      NODE_IP: "127.0.0.1",
+      RELEASE_NODE: "realtime_id_stack_a@127.0.0.1",
+      RELEASE_COOKIE: "supabase_stack_a_cookie",
     });
     expect(bundle.server.healthCheck?.probe).toEqual({
       _tag: "Http",
       host: "127.0.0.1",
       port: 54330,
-      path: "/healthcheck",
+      path: "/api/ping",
       scheme: "http",
+      headers: { Host: "native-realtime" },
+    });
+  });
+
+  it("binds both native Pooler protocol ports with stack-unique distribution identity", () => {
+    const artifactRoot = "/cache/pooler/v2.9.10/linux-amd64";
+    const dependencies = [{ service: "postgres", condition: "healthy" }] as const;
+    const bundle = makePoolerServicesNative({
+      binPath: artifactRoot,
+      runtimeRoot: "/tmp/stacks/project-a/runtime",
+      adminPort: 54329,
+      sessionPort: 54330,
+      transactionPort: 54331,
+      nodeName: "supavisor_id_stack_a",
+      releaseCookie: "supabase_stack_a_cookie",
+      dbPort: DB_PORT,
+      poolMode: "transaction",
+      defaultPoolSize: 20,
+      maxClientConn: 100,
+      jwtSecret: JWT_SECRET,
+      tenantId: "native-pooler",
+      encryptionKey: "native-encryption-key",
+      secretKeyBase: "native-secret-key-base",
+      dependencies,
+    });
+
+    expect(bundle.server.env).toMatchObject({
+      PORT: "54329",
+      PROXY_PORT_SESSION: "54330",
+      PROXY_PORT_TRANSACTION: "54331",
+      NODE_NAME: "supavisor_id_stack_a",
+      NODE_IP: "127.0.0.1",
+      RELEASE_NODE: "supavisor_id_stack_a@127.0.0.1",
+      RELEASE_COOKIE: "supabase_stack_a_cookie",
+    });
+    expect(bundle.migrate.env).toMatchObject({
+      NODE_NAME: "supavisor_id_stack_a",
+      NODE_IP: "127.0.0.1",
+      RELEASE_COOKIE: "supabase_stack_a_cookie",
     });
   });
 
@@ -564,7 +614,6 @@ describe("native auxiliary service definitions", () => {
       MP_SMTP_DISABLE_RDNS: "true",
       MP_DATABASE: `${dataDir}/mailpit.db`,
     });
-    expect(def.env?.MP_DATABASE).not.toContain("project-b");
     expect(def.healthCheck?.probe).toEqual({
       _tag: "Http",
       host: "127.0.0.1",
@@ -572,6 +621,33 @@ describe("native auxiliary service definitions", () => {
       path: "/readyz",
       scheme: "http",
     });
+  });
+
+  it("cleans up only auto-managed native Mailpit data after an orphaned supervisor", () => {
+    const dataDir = "/tmp/stacks/project-a/data/mailpit";
+    const managed = makeMailpitServiceNative({
+      binPath: "/cache/mailpit/v1.30.2/linux-amd64",
+      dataDir,
+      webPort: 54323,
+      smtpPort: 54324,
+      pop3Port: 54325,
+      cleanupDataDirOnExit: true,
+      dependencies: [],
+    });
+    const explicit = makeMailpitServiceNative({
+      binPath: "/cache/mailpit/v1.30.2/linux-amd64",
+      dataDir,
+      webPort: 54323,
+      smtpPort: 54324,
+      pop3Port: 54325,
+      cleanupDataDirOnExit: false,
+      dependencies: [],
+    });
+
+    expect(managed.supervision?.orphanCleanup).toEqual([
+      { _tag: "RemovePath", path: dataDir, recursive: true },
+    ]);
+    expect(explicit.supervision?.orphanCleanup).toEqual([]);
   });
 
   it("couples native Storage and imgproxy on one owning data root", () => {
@@ -921,13 +997,14 @@ describe("docker-backed auxiliary services", () => {
     expect(def.args).toContain("54328:4000");
   });
 
-  it("keeps pooler container ports fixed and maps only the selected proxy port outward", () => {
+  it("keeps pooler container ports fixed and maps both proxy ports outward", () => {
     const def = makePoolerServiceDocker({
       runtime: "docker",
       image: dockerImageForService("pooler", DEFAULT_VERSIONS.pooler),
       identity: EPHEMERAL_IDENTITY,
       hostAdminPort: 54329,
-      hostPort: 54330,
+      hostSessionPort: 54330,
+      hostTransactionPort: 54331,
       platformOs: "linux",
       dbHost: "127.0.0.1",
       dbPort: DB_PORT,
@@ -952,6 +1029,7 @@ describe("docker-backed auxiliary services", () => {
     expect(def.env?.PROXY_PORT_SESSION).toBe(String(poolerContainerPorts.session));
     expect(def.env?.PROXY_PORT_TRANSACTION).toBe(String(poolerContainerPorts.transaction));
     expect(def.args).toContain(`54329:${poolerContainerPorts.admin}`);
-    expect(def.args).toContain(`54330:${poolerContainerPorts.transaction}`);
+    expect(def.args).toContain(`54330:${poolerContainerPorts.session}`);
+    expect(def.args).toContain(`54331:${poolerContainerPorts.transaction}`);
   });
 });

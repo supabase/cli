@@ -10,6 +10,7 @@ export type {
   HookTrigger,
   HookLog,
   LifecycleHook,
+  PosixResourceLimits,
   OrchestratorConfig,
   ServiceStartOptions,
   ServiceDef,

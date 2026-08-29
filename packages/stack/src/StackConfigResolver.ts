@@ -338,6 +338,7 @@ function resolveMailpitConfig(
   input: MailpitConfig | undefined,
   raw: MailpitConfig | false | undefined,
   ports: PortSet,
+  stackRoot: string,
   versions: VersionResolutionOptions,
 ): Effect.Effect<ResolvedMailpitConfig | false, StackBuildError> {
   if (raw === false) return Effect.succeed(false);
@@ -351,6 +352,8 @@ function resolveMailpitConfig(
       port,
       smtpPort,
       pop3Port,
+      dataDir: resolveDataDir(cfg.dataDir, stackRoot, "mailpit"),
+      dataDirIsAutoManaged: cfg.dataDir === undefined,
       version: resolveServiceVersion("mailpit", cfg.version, versions),
       adminEmail: cfg.adminEmail ?? "admin@email.com",
       senderName: cfg.senderName ?? "Admin",
@@ -436,11 +439,13 @@ function resolvePoolerConfig(
   if (raw === false) return Effect.succeed(false);
   const cfg = input ?? {};
   return Effect.all({
-    port: requiredPort(ports, "poolerPort"),
+    sessionPort: requiredPort(ports, "poolerSessionPort"),
+    transactionPort: requiredPort(ports, "poolerTransactionPort"),
     apiPort: requiredPort(ports, "poolerApiPort"),
   }).pipe(
-    Effect.map(({ port, apiPort }) => ({
-      port,
+    Effect.map(({ sessionPort, transactionPort, apiPort }) => ({
+      sessionPort,
+      transactionPort,
       apiPort,
       mode: cfg.mode ?? "transaction",
       version: resolveServiceVersion("pooler", cfg.version, versions),
@@ -468,11 +473,7 @@ export const rawServiceEnabled = (config: StackConfig, service: ServiceName): bo
     case "auth":
       return config.auth !== false;
     case "edge-runtime":
-      return (
-        ((config.mode ?? "native") !== "native" || config.edgeRuntime !== undefined) &&
-        config.edgeRuntime !== false &&
-        (config.edgeRuntime?.enabled ?? true) !== false
-      );
+      return config.edgeRuntime !== false && (config.edgeRuntime?.enabled ?? true) !== false;
     case "realtime":
       return config.realtime !== undefined && config.realtime !== false;
     case "storage":
@@ -651,8 +652,10 @@ export const portRequestsForConfig = (
           return analyticsInput?.port;
         case "vectorAdminPort":
           return undefined;
-        case "poolerPort":
-          return poolerInput?.port;
+        case "poolerSessionPort":
+          return poolerInput?.sessionPort;
+        case "poolerTransactionPort":
+          return poolerInput?.transactionPort;
         case "poolerApiPort":
           return poolerInput?.apiPort;
         case "postgrestPort":
@@ -838,7 +841,13 @@ export function resolveConfig(
           ? yield* resolveImgproxyConfig(imgproxyInput, config.imgproxy, ports, versionResolution)
           : false,
         mailpit: mailpitEnabled
-          ? yield* resolveMailpitConfig(mailpitInput, config.mailpit, ports, versionResolution)
+          ? yield* resolveMailpitConfig(
+              mailpitInput,
+              config.mailpit,
+              ports,
+              roots.stackRoot,
+              versionResolution,
+            )
           : false,
         pgmeta: pgmetaEnabled
           ? yield* resolvePgmetaConfig(pgmetaInput, config.pgmeta, ports, versionResolution)

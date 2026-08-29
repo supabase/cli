@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 // oxlint-disable-next-line effecttsgo/node-builtin-import -- This test uses native path handling for its temporary fixture.
 import { join } from "node:path";
 import * as Net from "node:net";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- This test needs a real HTTP server to verify request headers.
+import * as Http from "node:http";
 import { describe, expect, it } from "@effect/vitest";
 import { layer as BunChildProcessSpawnerLayer } from "@effect/platform-bun/BunChildProcessSpawner";
 import { layer as BunFileSystemLayer } from "@effect/platform-bun/BunFileSystem";
@@ -117,6 +119,93 @@ describe("HealthProbe", () => {
       Effect.ensuring(Effect.sync(() => (globalThis.fetch = originalFetch))),
       Effect.provide(platformLayer),
     );
+  });
+
+  it.live("passes configured headers to HTTP probes", () => {
+    return Effect.gen(function* () {
+      const server = Http.createServer((request, response) => {
+        if (request.headers.host === "realtime-dev") {
+          response.writeHead(200).end();
+        } else {
+          response.writeHead(404).end();
+        }
+      });
+      const port = yield* Effect.callback<number>((resume) => {
+        server.listen(0, "127.0.0.1", () => {
+          const address = server.address();
+          if (address !== null && typeof address !== "string") {
+            resume(Effect.succeed(address.port));
+          }
+        });
+        return Effect.sync(() => server.close());
+      });
+
+      const fetchWithHostHeader = Object.assign(
+        (input: RequestInfo | URL, init?: RequestInit) => {
+          const url = typeof input === "string" ? input : input instanceof URL ? input : input.url;
+          const requestHeaders =
+            init?.headers === undefined
+              ? undefined
+              : Array.isArray(init.headers)
+                ? Object.fromEntries(init.headers)
+                : init.headers instanceof Headers
+                  ? Object.fromEntries(init.headers.entries())
+                  : init.headers;
+          // oxlint-disable-next-line effecttsgo/new-promise -- The fetch replacement adapts node:http callbacks to the Fetch contract.
+          return new Promise<Response>((resolve, reject) => {
+            const request = Http.request(
+              url,
+              {
+                method: init?.method,
+                headers: requestHeaders,
+              },
+              (response) => {
+                const chunks: Array<Uint8Array> = [];
+                response.on("data", (chunk: Uint8Array) => chunks.push(chunk));
+                response.on("end", () => {
+                  const responseHeaders = Object.fromEntries(
+                    Object.entries(response.headers).flatMap(([key, value]) =>
+                      value === undefined
+                        ? []
+                        : [[key, Array.isArray(value) ? value.join(", ") : value]],
+                    ),
+                  );
+                  resolve(
+                    new Response(Buffer.concat(chunks), {
+                      status: response.statusCode,
+                      headers: responseHeaders,
+                    }),
+                  );
+                });
+              },
+            );
+            request.on("error", reject);
+            request.end(init?.body as string | Uint8Array | undefined);
+          });
+        },
+        { preconnect: globalThis.fetch.preconnect },
+      );
+
+      const { healthySignal, config, isHealthy } = yield* setupProbe({
+        _tag: "Http",
+        scheme: "http",
+        host: "127.0.0.1",
+        port,
+        path: "/api/ping",
+        headers: { Host: "realtime-dev" },
+      });
+      const fiber = yield* Effect.forkChild(
+        runHealthProbe(config).pipe(
+          Effect.provide(Layer.succeed(FetchHttpClient.Fetch, fetchWithHostHeader)),
+        ),
+      );
+      yield* Deferred.await(healthySignal).pipe(Effect.timeout(Duration.seconds(5)));
+      expect(isHealthy()).toBe(true);
+      yield* Fiber.interrupt(fiber);
+      yield* Effect.callback<void>((resume) => {
+        server.close(() => resume(Effect.void));
+      });
+    }).pipe(Effect.provide(platformLayer));
   });
 
   it.live("Exec probes require explicit args", () =>

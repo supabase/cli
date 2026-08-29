@@ -39,8 +39,9 @@ const testPorts = (config?: Parameters<typeof resolveConfigEffect>[0]): PortSet 
     studioPort: 40_014,
     analyticsPort: 40_015,
     vectorAdminPort: 40_018,
-    poolerPort: 40_016,
-    poolerApiPort: 40_017,
+    poolerSessionPort: 40_016,
+    poolerTransactionPort: 40_017,
+    poolerApiPort: 40_018,
   } satisfies Record<PortField, number>;
   return { ...ports, apiPort: config?.port ?? ports.apiPort };
 };
@@ -169,11 +170,16 @@ describe("StackConfigResolver", () => {
 });
 
 describe("resolveConfig edge runtime defaults", () => {
-  it("disables edge runtime when omitted in native mode", async () => {
+  it("enables edge runtime when omitted in native mode", async () => {
     const config = await resolveConfig({ mode: "native" });
 
     expect(config.runtime).toEqual({ mode: "native", containerRuntime: null });
-    expect(config.edgeRuntime).toBe(false);
+    expect(config.edgeRuntime).toEqual(
+      expect.objectContaining({
+        enabled: true,
+        version: DEFAULT_VERSIONS["edge-runtime"],
+      }),
+    );
   });
 
   it("enables edge runtime when omitted in Docker mode", async () => {
@@ -215,18 +221,6 @@ describe("resolveConfig edge runtime defaults", () => {
       }),
     );
   });
-
-  it("preserves explicit edge runtime opt-in in native mode for builder validation", async () => {
-    const config = await resolveConfig({ mode: "native", edgeRuntime: {} });
-
-    expect(config.runtime).toEqual({ mode: "native", containerRuntime: null });
-    expect(config.edgeRuntime).toEqual(
-      expect.objectContaining({
-        enabled: true,
-        version: DEFAULT_VERSIONS["edge-runtime"],
-      }),
-    );
-  });
 });
 
 describe("portRequestsForConfig explicit ports", () => {
@@ -255,15 +249,21 @@ describe("portRequestsForConfig explicit ports", () => {
         edgeRuntime: false,
         postgrest: false,
         auth: false,
-        pooler: { port: 42423, apiPort: 42424 },
+        pooler: { sessionPort: 42423, transactionPort: 42425, apiPort: 42424 },
       },
       {
         runtime: { mode: "docker", containerRuntime: "docker" },
-        ports: { ...testPorts(), poolerPort: 42423, poolerApiPort: 42424 },
+        ports: {
+          ...testPorts(),
+          poolerSessionPort: 42423,
+          poolerTransactionPort: 42425,
+          poolerApiPort: 42424,
+        },
       },
     );
 
-    expect(config.ports.poolerPort).toBe(42423);
+    expect(config.ports.poolerSessionPort).toBe(42423);
+    expect(config.ports.poolerTransactionPort).toBe(42425);
     expect(config.ports.poolerApiPort).toBe(42424);
   });
 

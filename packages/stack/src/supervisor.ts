@@ -98,7 +98,7 @@ import {
   StackRpcTransportError,
   SupervisorStartError,
 } from "./errors.ts";
-import { runtimeSelectionForLaunch, applyNativeDefaults } from "./SupervisorUpgradeRestart.ts";
+import { runtimeSelectionForLaunch } from "./SupervisorUpgradeRestart.ts";
 import type {
   SupervisorErrorMessage,
   SupervisorStartMessage,
@@ -673,10 +673,7 @@ const makeRunManagedExecution = (
           ownedPersistedRuntime === undefined
             ? yield* selectStackRuntime(requestedMode)
             : yield* validateStackRuntime(ownedPersistedRuntime);
-        const runtimeConfigInput =
-          runtime.mode === "native" && requestedMode === undefined
-            ? applyNativeDefaults(configInput)
-            : configInput;
+        const runtimeConfigInput = configInput;
         const activeFields = portFieldsForConfigInput({
           ...runtimeConfigInput,
           mode: runtime.mode,

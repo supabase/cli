@@ -45,24 +45,18 @@ import {
 } from "./services/health-budgets.ts";
 import type { PreparedStackArtifacts, ServiceResolution } from "./StackPreparation.ts";
 import type { StackServiceProjectionCatalog } from "./StackStateProjection.ts";
-import { SERVICE_NAMES, serviceMetadata } from "./ServiceCatalog.ts";
+import { SERVICE_NAMES, serviceMetadata, type ServiceConfigKey } from "./ServiceCatalog.ts";
 import type { ServiceName } from "./ServiceName.ts";
 import { INSTANCE_ID_PATTERN, type ResolvedStackConfig } from "./StackConfig.ts";
 import { dockerContainerName, stackIdentity } from "./StackIdentity.ts";
 import type { VersionManifest } from "./versions.ts";
+import { prepareNativeDirectory } from "./native-filesystem.ts";
 
 export interface BuildResult {
   readonly graph: ResolvedGraph;
   readonly cleanupTargets: CleanupTargets;
   readonly serviceProjection: StackServiceProjectionCatalog;
 }
-
-const dockerOnlyServices = SERVICE_NAMES.filter(
-  (service) => serviceMetadata(service).runtimeSupport === "docker-only",
-);
-const nativeServices = SERVICE_NAMES.filter(
-  (service) => serviceMetadata(service).runtimeSupport !== "docker-only",
-);
 
 // Serial health-check paths used by dependency waits; keep each path aligned
 // with the corresponding service's transitive dependencies.
@@ -73,6 +67,10 @@ const analyticsStartupPath: ReadonlyArray<ServiceName> = ["postgres", "analytics
 /** Derive a stack-unique, valid Erlang short node name from the owned identity. */
 const analyticsNodeName = (identityKey: string): string =>
   `logflare_${identityKey.replaceAll("-", "_")}`;
+const beamNodeName = (service: "realtime" | "pooler", identityKey: string): string =>
+  `${service}_${identityKey.replaceAll("-", "_")}`;
+const beamReleaseCookie = (identityKey: string): string =>
+  `supabase_${identityKey.replaceAll("-", "_")}_cookie`;
 
 const postgresDependencyTimeoutSeconds = dependencyTimeoutSecondsForServices(postgresStartupPath);
 
@@ -80,18 +78,10 @@ const postgresDependencies: ReadonlyArray<ServiceDependency> = [
   { service: "postgres-init", condition: "completed" },
 ];
 
-const privateServiceOwners: Readonly<Record<string, string>> = {
-  "postgres-init": "postgres",
-  "realtime-migrate": "realtime",
-  "realtime-seed": "realtime",
-  "analytics-migrate": "analytics",
-  "pooler-migrate": "pooler",
-  "pooler-bootstrap": "pooler",
-};
-
 const publicServiceProjection = (
   defs: ReadonlyArray<ServiceDef>,
-): StackServiceProjectionCatalog => {
+  privateOwners: ReadonlyMap<string, string>,
+): Effect.Effect<StackServiceProjectionCatalog, StackBuildError> => {
   const serviceProjection = new Map<
     string,
     {
@@ -103,17 +93,25 @@ const publicServiceProjection = (
   for (const def of defs) {
     if (SERVICE_NAMES.some((service) => service === def.name)) {
       serviceProjection.set(def.name, { visibility: "public" });
+      continue;
     }
-    const owner = privateServiceOwners[def.name];
+    const owner = privateOwners.get(def.name);
     if (owner !== undefined) {
       serviceProjection.set(def.name, {
         visibility: "internal",
         owner,
         ownerStatusWhileActive: "Initializing",
       });
+      continue;
     }
+    return Effect.fail(
+      new StackBuildError({
+        detail: `Service ${def.name} is not classified as public or private`,
+        reason: "invalid_config",
+      }),
+    );
   }
-  return serviceProjection;
+  return Effect.succeed(serviceProjection);
 };
 
 const hasAutoManagedPath = (config: ResolvedStackConfig, path: string) =>
@@ -124,22 +122,23 @@ const hasAutoManagedPath = (config: ResolvedStackConfig, path: string) =>
       path.startsWith(`${managedPath}\\`),
   );
 
-const prepareNativeDirectory = (
-  path: string,
-  detail: string,
-): Effect.Effect<void, StackBuildError, FileSystem.FileSystem> =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    yield* fs
-      .makeDirectory(path, { recursive: true, mode: 0o700 })
-      .pipe(Effect.mapError((cause) => new StackBuildError({ detail, cause })));
-  });
+const resolvedConfigForService = <Name extends ServiceName>(
+  config: ResolvedStackConfig,
+  service: Name,
+): ResolvedStackConfig[ServiceConfigKey<Name>] => config[serviceMetadata(service).configKey];
 
-const resolvedConfigForService = (config: ResolvedStackConfig, service: ServiceName) =>
-  config[serviceMetadata(service).configKey];
+type EnabledResolvedConfig<Name extends ServiceName> = ResolvedStackConfig & {
+  readonly [Key in ServiceConfigKey<Name>]: Exclude<ResolvedStackConfig[Key], false>;
+};
 
-const configuredServiceEnabled = (config: ResolvedStackConfig, service: ServiceName): boolean =>
+const configuredServiceEnabled = <Name extends ServiceName>(
+  config: ResolvedStackConfig,
+  service: Name,
+): config is EnabledResolvedConfig<Name> =>
   config.servicePolicies[service] !== "off" && resolvedConfigForService(config, service) !== false;
+
+export const enabledServicesForConfig = (config: ResolvedStackConfig): ReadonlyArray<ServiceName> =>
+  SERVICE_NAMES.filter((service) => configuredServiceEnabled(config, service));
 
 const prepareNativePostgresAlias = (
   preparedPath: string,
@@ -193,18 +192,6 @@ export const validateResolvedConfig = (
       });
     }
 
-    if (config.runtime.mode === "native") {
-      const enabledDockerOnly = dockerOnlyServices.filter(
-        (service) => resolvedConfigForService(config, service) !== false,
-      );
-      if (enabledDockerOnly.length > 0) {
-        return yield* new StackBuildError({
-          detail: `Native mode supports only ${nativeServices.join(", ")}. Disable ${enabledDockerOnly.join(", ")} or select Docker mode with a usable Docker or Podman runtime.`,
-          reason: "invalid_config",
-        });
-      }
-    }
-
     if (
       configuredServiceEnabled(config, "imgproxy") &&
       !configuredServiceEnabled(config, "storage")
@@ -232,13 +219,6 @@ export const validateResolvedConfig = (
       });
     }
   });
-
-export const enabledServicesForConfig = (config: ResolvedStackConfig): ReadonlyArray<ServiceName> =>
-  SERVICE_NAMES.filter(
-    (service) =>
-      config.servicePolicies?.[service] !== "off" &&
-      resolvedConfigForService(config, service) !== false,
-  );
 
 export const versionsForConfig = (config: ResolvedStackConfig): Partial<VersionManifest> => {
   const versions: Partial<Record<ServiceName, string>> = {};
@@ -316,8 +296,7 @@ export class StackBuilder extends Context.Service<
         const postgrestResolution = !configuredServiceEnabled(config, "postgrest")
           ? false
           : yield* requirePreparedResolution(prepared, "postgrest");
-        const mailpitEnabled =
-          config.mailpit !== false && configuredServiceEnabled(config, "mailpit");
+        const mailpitEnabled = configuredServiceEnabled(config, "mailpit");
         const mailpitSmtpHost = mailpitEnabled ? serviceHost : undefined;
         const nativeMailpitSmtpHost = mailpitEnabled ? "127.0.0.1" : undefined;
         const mailpitSmtpPort = mailpitEnabled ? config.mailpit.smtpPort : undefined;
@@ -362,9 +341,10 @@ export class StackBuilder extends Context.Service<
             enabled: true,
           },
         ];
+        const privateOwners = new Map<string, string>();
 
-        defs.push({
-          ...(postgresResolution.type === "binary"
+        const postgresInit =
+          postgresResolution.type === "binary"
             ? makePostgresInitService({
                 postgresDir: postgresResolution.path,
                 dbPort: config.dbPort,
@@ -381,16 +361,15 @@ export class StackBuilder extends Context.Service<
                 autoExposeNewTables: config.postgres.autoExposeNewTables,
                 identity,
                 dependencies: [{ service: "postgres", condition: "healthy" }],
-              })),
+              });
+        privateOwners.set(postgresInit.name, "postgres");
+        defs.push({
+          ...postgresInit,
           dependencyTimeoutSeconds: postgresDependencyTimeoutSeconds,
           enabled: true,
         });
 
-        if (
-          config.postgrest !== false &&
-          configuredServiceEnabled(config, "postgrest") &&
-          postgrestResolution !== false
-        ) {
+        if (configuredServiceEnabled(config, "postgrest") && postgrestResolution !== false) {
           defs.push({
             ...(postgrestResolution.type === "binary"
               ? makePostgrestService({
@@ -423,11 +402,7 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (
-          config.auth !== false &&
-          configuredServiceEnabled(config, "auth") &&
-          authResolution !== false
-        ) {
+        if (configuredServiceEnabled(config, "auth") && authResolution !== false) {
           defs.push({
             ...(authResolution.type === "binary"
               ? makeAuthServiceNative({
@@ -467,7 +442,7 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (config.edgeRuntime !== false && configuredServiceEnabled(config, "edge-runtime")) {
+        if (configuredServiceEnabled(config, "edge-runtime")) {
           const edgeRuntimeResolution = yield* requirePreparedResolution(prepared, "edge-runtime");
           const edgeRuntimeBootstrapDir = yield* prepareEdgeRuntimeBootstrap(config.runtimeRoot);
           defs.push({
@@ -502,16 +477,20 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (config.mailpit !== false && configuredServiceEnabled(config, "mailpit")) {
+        if (configuredServiceEnabled(config, "mailpit")) {
           const mailpitResolution = yield* requirePreparedResolution(prepared, "mailpit");
+          const mailpitDataDir = config.mailpit.dataDir;
           defs.push({
             ...(mailpitResolution.type === "binary"
               ? makeMailpitServiceNative({
                   binPath: mailpitResolution.path,
-                  dataDir: join(config.stackRoot, "data", "mailpit"),
+                  dataDir: mailpitDataDir,
                   webPort: config.mailpit.port,
                   smtpPort: config.mailpit.smtpPort,
                   pop3Port: config.mailpit.pop3Port,
+                  cleanupDataDirOnExit:
+                    config.mailpit.dataDirIsAutoManaged &&
+                    hasAutoManagedPath(config, mailpitDataDir),
                   dependencies: [],
                 })
               : makeMailpitServiceDocker({
@@ -528,17 +507,19 @@ export class StackBuilder extends Context.Service<
           });
           if (mailpitResolution.type === "binary") {
             yield* prepareNativeDirectory(
-              join(config.stackRoot, "data", "mailpit"),
+              mailpitDataDir,
               "Failed to prepare the native Mailpit data directory",
             );
           }
         }
 
-        if (config.realtime !== false && configuredServiceEnabled(config, "realtime")) {
+        if (configuredServiceEnabled(config, "realtime")) {
           const realtimeResolution = yield* requirePreparedResolution(prepared, "realtime");
           if (realtimeResolution.type === "binary") {
             const bundle = makeRealtimeServicesNative({
               binPath: realtimeResolution.path,
+              nodeName: beamNodeName("realtime", identity.key),
+              releaseCookie: beamReleaseCookie(identity.key),
               port: config.realtime.port,
               dbPort: config.dbPort,
               jwtSecret: config.jwtSecret,
@@ -549,6 +530,8 @@ export class StackBuilder extends Context.Service<
               maxHeaderLength: config.realtime.maxHeaderLength,
               dependencies: postgresDependencies,
             });
+            privateOwners.set(bundle.migrate.name, "realtime");
+            privateOwners.set(bundle.seed.name, "realtime");
             defs.push(
               {
                 ...bundle.migrate,
@@ -590,7 +573,7 @@ export class StackBuilder extends Context.Service<
           }
         }
 
-        if (config.storage !== false && configuredServiceEnabled(config, "storage")) {
+        if (configuredServiceEnabled(config, "storage")) {
           const storageResolution = yield* requirePreparedResolution(prepared, "storage");
           const imgproxyEnabled = configuredServiceEnabled(config, "imgproxy");
           const imgproxyPort = config.imgproxy === false ? 0 : config.imgproxy.port;
@@ -643,7 +626,7 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (config.imgproxy !== false && configuredServiceEnabled(config, "imgproxy")) {
+        if (configuredServiceEnabled(config, "imgproxy")) {
           const storageConfig = config.storage;
           const imgproxyResolution = yield* requirePreparedResolution(prepared, "imgproxy");
           defs.push({
@@ -667,7 +650,7 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (config.pgmeta !== false && configuredServiceEnabled(config, "pgmeta")) {
+        if (configuredServiceEnabled(config, "pgmeta")) {
           const pgmetaResolution = yield* requirePreparedResolution(prepared, "pgmeta");
           defs.push({
             ...(pgmetaResolution.type === "binary"
@@ -692,7 +675,7 @@ export class StackBuilder extends Context.Service<
           });
         }
 
-        if (config.analytics !== false && configuredServiceEnabled(config, "analytics")) {
+        if (configuredServiceEnabled(config, "analytics")) {
           const analyticsResolution = yield* requirePreparedResolution(prepared, "analytics");
           if (analyticsResolution.type === "binary") {
             yield* prepareNativeDirectory(
@@ -709,6 +692,7 @@ export class StackBuilder extends Context.Service<
               backend: config.analytics.backend,
               dependencies: postgresDependencies,
             });
+            privateOwners.set(bundle.migrate.name, "analytics");
             defs.push(
               {
                 ...bundle.migrate,
@@ -741,7 +725,7 @@ export class StackBuilder extends Context.Service<
           }
         }
 
-        if (config.vector !== false && configuredServiceEnabled(config, "vector")) {
+        if (configuredServiceEnabled(config, "vector")) {
           const analyticsConfig = config.analytics;
           const vectorResolution = yield* requirePreparedResolution(prepared, "vector");
           if (analyticsConfig === false) {
@@ -794,7 +778,7 @@ export class StackBuilder extends Context.Service<
           }
         }
 
-        if (config.pooler !== false && configuredServiceEnabled(config, "pooler")) {
+        if (configuredServiceEnabled(config, "pooler")) {
           const poolerResolution = yield* requirePreparedResolution(prepared, "pooler");
           if (poolerResolution.type === "binary") {
             yield* prepareNativeDirectory(
@@ -805,7 +789,10 @@ export class StackBuilder extends Context.Service<
               binPath: poolerResolution.path,
               runtimeRoot: config.runtimeRoot,
               adminPort: config.pooler.apiPort,
-              port: config.pooler.port,
+              sessionPort: config.pooler.sessionPort,
+              transactionPort: config.pooler.transactionPort,
+              nodeName: beamNodeName("pooler", identity.key),
+              releaseCookie: beamReleaseCookie(identity.key),
               dbPort: config.dbPort,
               poolMode: config.pooler.mode,
               defaultPoolSize: config.pooler.defaultPoolSize,
@@ -816,6 +803,8 @@ export class StackBuilder extends Context.Service<
               secretKeyBase: config.pooler.secretKeyBase,
               dependencies: postgresDependencies,
             });
+            privateOwners.set(bundle.migrate.name, "pooler");
+            privateOwners.set(bundle.bootstrap.name, "pooler");
             defs.push(
               {
                 ...bundle.migrate,
@@ -840,7 +829,8 @@ export class StackBuilder extends Context.Service<
                 image: poolerResolution.image,
                 identity,
                 hostAdminPort: config.pooler.apiPort,
-                hostPort: config.pooler.port,
+                hostSessionPort: config.pooler.sessionPort,
+                hostTransactionPort: config.pooler.transactionPort,
                 platformOs: platform.os,
                 dbHost: serviceHost,
                 dbPort: config.dbPort,
@@ -859,7 +849,7 @@ export class StackBuilder extends Context.Service<
           }
         }
 
-        if (config.studio !== false && configuredServiceEnabled(config, "studio")) {
+        if (configuredServiceEnabled(config, "studio")) {
           const pgmetaConfig = config.pgmeta;
           const studioResolution = yield* requirePreparedResolution(prepared, "studio");
           const analyticsConfig = config.analytics;
@@ -947,7 +937,7 @@ export class StackBuilder extends Context.Service<
           cleanupTargets: {
             dockerContainerNames,
           },
-          serviceProjection: publicServiceProjection(defs),
+          serviceProjection: yield* publicServiceProjection(defs, privateOwners),
         };
       }),
   });

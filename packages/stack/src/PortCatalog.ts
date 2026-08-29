@@ -20,7 +20,8 @@ export interface AllocatedPorts {
   readonly analyticsPort: number;
   /** Native Vector's private administration/health listener. Docker keeps this internal. */
   readonly vectorAdminPort: number;
-  readonly poolerPort: number;
+  readonly poolerSessionPort: number;
+  readonly poolerTransactionPort: number;
   readonly poolerApiPort: number;
 }
 
@@ -41,13 +42,17 @@ export type ConfigPortKey =
   | "local_smtp.pop3_port"
   | "studio.port"
   | "analytics.port"
-  | "db.pooler.port";
+  | "db.pooler.session_port"
+  | "db.pooler.transaction_port"
+  | "db.pooler.api_port";
 
 export interface PortCatalogEntry {
   readonly field: PortField;
   readonly configKey?: ConfigPortKey;
   readonly preferred?: number;
   readonly service?: ServiceName;
+  /** The field is leased only by native runtime processes. */
+  readonly nativeOnly?: boolean;
   readonly persistence: "runtime" | "sticky";
 }
 
@@ -124,16 +129,30 @@ const PORT_CATALOG_ENTRIES: {
   vectorAdminPort: {
     field: "vectorAdminPort",
     service: "vector",
+    nativeOnly: true,
     persistence: "runtime",
   },
-  poolerPort: {
-    field: "poolerPort",
-    configKey: "db.pooler.port",
+  poolerSessionPort: {
+    field: "poolerSessionPort",
+    configKey: "db.pooler.session_port",
     preferred: 54329,
     service: "pooler",
     persistence: "sticky",
   },
-  poolerApiPort: { field: "poolerApiPort", service: "pooler", persistence: "runtime" },
+  poolerTransactionPort: {
+    field: "poolerTransactionPort",
+    configKey: "db.pooler.transaction_port",
+    preferred: 54330,
+    service: "pooler",
+    persistence: "sticky",
+  },
+  poolerApiPort: {
+    field: "poolerApiPort",
+    configKey: "db.pooler.api_port",
+    preferred: 54331,
+    service: "pooler",
+    persistence: "sticky",
+  },
 };
 
 export const PORT_CATALOG = PORT_CATALOG_ENTRIES;
@@ -155,7 +174,8 @@ export const PORT_FIELDS = [
   "studioPort",
   "analyticsPort",
   "vectorAdminPort",
-  "poolerPort",
+  "poolerSessionPort",
+  "poolerTransactionPort",
   "poolerApiPort",
 ] as const satisfies ReadonlyArray<PortField>;
 export const stickyPortFields: ReadonlyArray<PortField> = PORT_FIELDS.filter(
@@ -185,7 +205,9 @@ export const DEFAULT_PORTS: PortSet = {
   mailpitPop3Port: preferredPort("mailpitPop3Port"),
   studioPort: preferredPort("studioPort"),
   analyticsPort: preferredPort("analyticsPort"),
-  poolerPort: preferredPort("poolerPort"),
+  poolerSessionPort: preferredPort("poolerSessionPort"),
+  poolerTransactionPort: preferredPort("poolerTransactionPort"),
+  poolerApiPort: preferredPort("poolerApiPort"),
 };
 
 export const AllocatedPortsSchema = Schema.Struct({
@@ -206,7 +228,8 @@ export const AllocatedPortsSchema = Schema.Struct({
   studioPort: Schema.Finite,
   analyticsPort: Schema.Finite,
   vectorAdminPort: Schema.Finite,
-  poolerPort: Schema.Finite,
+  poolerSessionPort: Schema.Finite,
+  poolerTransactionPort: Schema.Finite,
   poolerApiPort: Schema.Finite,
 });
 
@@ -228,7 +251,8 @@ export const PortSetSchema = Schema.Struct({
   studioPort: Schema.optionalKey(Schema.Finite),
   analyticsPort: Schema.optionalKey(Schema.Finite),
   vectorAdminPort: Schema.optionalKey(Schema.Finite),
-  poolerPort: Schema.optionalKey(Schema.Finite),
+  poolerSessionPort: Schema.optionalKey(Schema.Finite),
+  poolerTransactionPort: Schema.optionalKey(Schema.Finite),
   poolerApiPort: Schema.optionalKey(Schema.Finite),
 });
 

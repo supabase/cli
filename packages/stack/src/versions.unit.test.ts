@@ -148,15 +148,12 @@ describe("dockerImageForService", () => {
 
   it("publishes native slim-services artifacts for every service", () => {
     expect(SERVICE_CATALOG.imgproxy).toMatchObject({
-      runtimeSupport: "native-preferred",
       artifact: { docker: { repository: "imgproxy" }, native: expect.any(Object) },
     });
     expect(SERVICE_CATALOG.mailpit).toMatchObject({
-      runtimeSupport: "native-preferred",
       artifact: { docker: { repository: "mailpit" }, native: expect.any(Object) },
     });
     expect(SERVICE_CATALOG.vector).toMatchObject({
-      runtimeSupport: "native-preferred",
       artifact: { docker: { repository: "vector" }, native: expect.any(Object) },
     });
   });

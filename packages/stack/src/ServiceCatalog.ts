@@ -3,7 +3,6 @@ import { nativeTargetForPlatform, type NativeTarget, type PlatformInfo } from ".
 import type { PortField } from "./PortCatalog.ts";
 import type { ServiceName } from "./ServiceName.ts";
 
-type ServiceRuntimeSupport = "native-preferred" | "docker-only";
 type ArchiveFormat = "tar.zst";
 export type ServicePreparationPolicy = "off" | "lazy" | "eager";
 
@@ -34,7 +33,7 @@ interface DockerImageSource {
 
 interface ServiceArtifactDefinition {
   readonly docker: DockerImageSource;
-  readonly native?: NativeReleaseSource;
+  readonly native: NativeReleaseSource;
 }
 
 interface ServiceVersionDefaults {
@@ -57,26 +56,28 @@ interface ServicePreparationMetadata {
   readonly dependencies: ReadonlyArray<ServiceName>;
 }
 
-type ServiceConfigKey =
-  | "postgres"
-  | "postgrest"
-  | "auth"
-  | "edgeRuntime"
-  | "realtime"
-  | "storage"
-  | "imgproxy"
-  | "mailpit"
-  | "pgmeta"
-  | "studio"
-  | "analytics"
-  | "vector"
-  | "pooler";
+interface ServiceConfigKeyByService {
+  readonly postgres: "postgres";
+  readonly postgrest: "postgrest";
+  readonly auth: "auth";
+  readonly "edge-runtime": "edgeRuntime";
+  readonly realtime: "realtime";
+  readonly storage: "storage";
+  readonly imgproxy: "imgproxy";
+  readonly mailpit: "mailpit";
+  readonly pgmeta: "pgmeta";
+  readonly studio: "studio";
+  readonly analytics: "analytics";
+  readonly vector: "vector";
+  readonly pooler: "pooler";
+}
+
+export type ServiceConfigKey<Name extends ServiceName> = ServiceConfigKeyByService[Name];
 
 export interface ServiceCatalogEntry<Name extends ServiceName> {
   readonly name: Name;
-  readonly configKey: ServiceConfigKey;
+  readonly configKey: ServiceConfigKey<Name>;
   readonly defaultVersions: ServiceVersionDefaults;
-  readonly runtimeSupport: ServiceRuntimeSupport;
   readonly artifact: ServiceArtifactDefinition;
   readonly activation: ServiceActivationPolicy;
   readonly preparation: ServicePreparationMetadata;
@@ -115,6 +116,15 @@ const nativeRelease = (
   };
 };
 
+const nativeSource = (
+  service: ServiceName,
+  requiredRuntimePaths: ReadonlyArray<string>,
+): NativeReleaseSource => ({
+  provider: "github.com/supabase/slim-services",
+  resolve: (version, platform) =>
+    nativeRelease(service, version, platform, { requiredRuntimePaths }),
+});
+
 const preparation = (
   supported: ReadonlyArray<Exclude<ServicePreparationPolicy, "off">>,
   defaultPolicy: Exclude<ServicePreparationPolicy, "off">,
@@ -136,24 +146,17 @@ export const SERVICE_CATALOG: {
     name: "postgres",
     configKey: "postgres",
     defaultVersions: { native: "17.6.1.165", docker: "17.6.1.165" },
-    runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "postgres" },
-      native: {
-        provider: "github.com/supabase/slim-services",
-        resolve: (version, platform) =>
-          nativeRelease("postgres", version, platform, {
-            requiredRuntimePaths: [
-              "bin/postgres",
-              "bin/pg_isready",
-              "bin/psql",
-              "share/supabase-cli/bin/supabase-postgres-init.sh",
-              "share/supabase-cli/config/pgsodium_getkey.sh",
-              "share/supabase-cli/migrations",
-              "lib",
-            ],
-          }),
-      },
+      native: nativeSource("postgres", [
+        "bin/postgres",
+        "bin/pg_isready",
+        "bin/psql",
+        "share/supabase-cli/bin/supabase-postgres-init.sh",
+        "share/supabase-cli/config/pgsodium_getkey.sh",
+        "share/supabase-cli/migrations",
+        "lib",
+      ]),
     },
     activation: { activates: [], owns: [] },
     preparation: preparation(["eager"], "eager"),
@@ -163,16 +166,9 @@ export const SERVICE_CATALOG: {
     name: "postgrest",
     configKey: "postgrest",
     defaultVersions: { native: "v16.2", docker: "v16.2" },
-    runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "postgrest" },
-      native: {
-        provider: "github.com/supabase/slim-services",
-        resolve: (version, platform) =>
-          nativeRelease("postgrest", version, platform, {
-            requiredRuntimePaths: ["bin/postgrest"],
-          }),
-      },
+      native: nativeSource("postgrest", ["bin/postgrest"]),
     },
     activation: { activates: [], owns: [] },
     preparation: preparation(["lazy", "eager"], "lazy", ["postgres"]),
@@ -182,16 +178,9 @@ export const SERVICE_CATALOG: {
     name: "auth",
     configKey: "auth",
     defaultVersions: { native: "v2.196.0", docker: "v2.196.0" },
-    runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "auth" },
-      native: {
-        provider: "github.com/supabase/slim-services",
-        resolve: (version, platform) =>
-          nativeRelease("auth", version, platform, {
-            requiredRuntimePaths: ["bin/auth"],
-          }),
-      },
+      native: nativeSource("auth", ["bin/auth"]),
     },
     activation: { activates: [], owns: [] },
     preparation: preparation(["lazy", "eager"], "lazy", ["postgres"]),
@@ -201,16 +190,9 @@ export const SERVICE_CATALOG: {
     name: "edge-runtime",
     configKey: "edgeRuntime",
     defaultVersions: { native: "v1.74.3", docker: "v1.74.3" },
-    runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "edge-runtime" },
-      native: {
-        provider: "github.com/supabase/slim-services",
-        resolve: (version, platform) =>
-          nativeRelease("edge-runtime", version, platform, {
-            requiredRuntimePaths: ["bin/.edge-runtime-wrapped"],
-          }),
-      },
+      native: nativeSource("edge-runtime", ["bin/.edge-runtime-wrapped"]),
     },
     activation: { activates: [], owns: [] },
     preparation: preparation(["lazy", "eager"], "lazy", ["postgres"]),
@@ -220,16 +202,9 @@ export const SERVICE_CATALOG: {
     name: "realtime",
     configKey: "realtime",
     defaultVersions: { native: "v2.129.1", docker: "v2.129.9" },
-    runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "realtime" },
-      native: {
-        provider: "github.com/supabase/slim-services",
-        resolve: (version, platform) =>
-          nativeRelease("realtime", version, platform, {
-            requiredRuntimePaths: ["bin/migrate", "bin/realtime", "bin/server"],
-          }),
-      },
+      native: nativeSource("realtime", ["bin/migrate", "bin/realtime", "bin/server"]),
     },
     activation: { activates: [], owns: [] },
     preparation: preparation(["eager"], "eager", ["postgres"]),
@@ -239,16 +214,9 @@ export const SERVICE_CATALOG: {
     name: "storage",
     configKey: "storage",
     defaultVersions: { native: "v1.70.1", docker: "v1.71.0" },
-    runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "storage" },
-      native: {
-        provider: "github.com/supabase/slim-services",
-        resolve: (version, platform) =>
-          nativeRelease("storage", version, platform, {
-            requiredRuntimePaths: ["bin/storage"],
-          }),
-      },
+      native: nativeSource("storage", ["bin/storage"]),
     },
     activation: { activates: ["imgproxy"], owns: ["imgproxy"] },
     preparation: preparation(["lazy", "eager"], "lazy", ["postgres", "imgproxy"]),
@@ -258,16 +226,9 @@ export const SERVICE_CATALOG: {
     name: "imgproxy",
     configKey: "imgproxy",
     defaultVersions: { native: "v3.8.0", docker: "v3.8.0" },
-    runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "imgproxy" },
-      native: {
-        provider: "github.com/supabase/slim-services",
-        resolve: (version, platform) =>
-          nativeRelease("imgproxy", version, platform, {
-            requiredRuntimePaths: ["bin/imgproxy"],
-          }),
-      },
+      native: nativeSource("imgproxy", ["bin/imgproxy"]),
     },
     activation: { activates: [], owns: [] },
     preparation: preparation(["lazy", "eager"], "lazy", ["storage"]),
@@ -277,16 +238,9 @@ export const SERVICE_CATALOG: {
     name: "mailpit",
     configKey: "mailpit",
     defaultVersions: { native: "v1.30.2", docker: "v1.30.2" },
-    runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "mailpit" },
-      native: {
-        provider: "github.com/supabase/slim-services",
-        resolve: (version, platform) =>
-          nativeRelease("mailpit", version, platform, {
-            requiredRuntimePaths: ["bin/mailpit"],
-          }),
-      },
+      native: nativeSource("mailpit", ["bin/mailpit"]),
     },
     activation: { activates: [], owns: [] },
     preparation: preparation(["eager"], "eager"),
@@ -296,16 +250,9 @@ export const SERVICE_CATALOG: {
     name: "pgmeta",
     configKey: "pgmeta",
     defaultVersions: { native: "v0.98.0", docker: "v0.98.0" },
-    runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "pgmeta" },
-      native: {
-        provider: "github.com/supabase/slim-services",
-        resolve: (version, platform) =>
-          nativeRelease("pgmeta", version, platform, {
-            requiredRuntimePaths: ["bin/pgmeta"],
-          }),
-      },
+      native: nativeSource("pgmeta", ["bin/pgmeta"]),
     },
     activation: { activates: [], owns: [] },
     preparation: preparation(["lazy", "eager"], "lazy", ["postgres"]),
@@ -318,16 +265,9 @@ export const SERVICE_CATALOG: {
       native: "2026.08.17-sha-0c1da8f",
       docker: "2026.08.24-sha-8ec45b2",
     },
-    runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "studio" },
-      native: {
-        provider: "github.com/supabase/slim-services",
-        resolve: (version, platform) =>
-          nativeRelease("studio", version, platform, {
-            requiredRuntimePaths: ["bin/studio"],
-          }),
-      },
+      native: nativeSource("studio", ["bin/studio"]),
     },
     activation: { activates: ["analytics"], owns: [] },
     preparation: preparation(["eager"], "eager", ["pgmeta", "analytics"]),
@@ -337,16 +277,9 @@ export const SERVICE_CATALOG: {
     name: "analytics",
     configKey: "analytics",
     defaultVersions: { native: "v1.50.3", docker: "v1.50.6" },
-    runtimeSupport: "native-preferred",
     artifact: {
       docker: { repository: "analytics" },
-      native: {
-        provider: "github.com/supabase/slim-services",
-        resolve: (version, platform) =>
-          nativeRelease("analytics", version, platform, {
-            requiredRuntimePaths: ["bin/logflare"],
-          }),
-      },
+      native: nativeSource("analytics", ["bin/logflare"]),
     },
     activation: { activates: ["vector"], owns: ["vector"] },
     preparation: preparation(["lazy", "eager"], "lazy", ["postgres", "vector"]),
@@ -356,16 +289,9 @@ export const SERVICE_CATALOG: {
     name: "vector",
     configKey: "vector",
     defaultVersions: { native: "0.53.0", docker: "0.53.0-alpine" },
-    runtimeSupport: "native-preferred",
     artifact: {
       docker: { registry: SUPABASE_GHCR_REGISTRY, repository: "vector" },
-      native: {
-        provider: "github.com/supabase/slim-services",
-        resolve: (version, platform) =>
-          nativeRelease("vector", version, platform, {
-            requiredRuntimePaths: ["bin/vector"],
-          }),
-      },
+      native: nativeSource("vector", ["bin/vector"]),
     },
     activation: { activates: [], owns: [] },
     preparation: preparation(["lazy", "eager"], "lazy", ["analytics"]),
@@ -377,20 +303,13 @@ export const SERVICE_CATALOG: {
     name: "pooler",
     configKey: "pooler",
     defaultVersions: { native: "v2.9.10", docker: "2.9.7" },
-    runtimeSupport: "native-preferred",
     artifact: {
       docker: { registry: SUPABASE_GHCR_REGISTRY, repository: "supavisor" },
-      native: {
-        provider: "github.com/supabase/slim-services",
-        resolve: (version, platform) =>
-          nativeRelease("pooler", version, platform, {
-            requiredRuntimePaths: ["bin/migrate", "bin/supavisor", "bin/server"],
-          }),
-      },
+      native: nativeSource("pooler", ["bin/migrate", "bin/supavisor", "bin/server"]),
     },
     activation: { activates: [], owns: [] },
     preparation: preparation(["eager"], "eager", ["postgres"]),
-    portFields: ["poolerPort", "poolerApiPort"],
+    portFields: ["poolerSessionPort", "poolerTransactionPort", "poolerApiPort"],
   },
 };
 
@@ -406,18 +325,16 @@ export const DOCKER_DEFAULT_VERSIONS: Readonly<Record<ServiceName, string>> = Re
   (metadata) => metadata.defaultVersions.docker,
 );
 
-export const serviceMetadata = (service: ServiceName): ServiceCatalogEntry<ServiceName> =>
-  SERVICE_CATALOG[service];
+export const serviceMetadata = <Name extends ServiceName>(
+  service: Name,
+): ServiceCatalogEntry<Name> => SERVICE_CATALOG[service];
 
 export const nativeReleaseForService = (
   service: ServiceName,
   version: string,
   platform: PlatformInfo,
 ): NativeReleaseArtifact | undefined =>
-  serviceMetadata(service).artifact.native?.resolve(version, platform);
-
-export const isDockerOnlyService = (service: ServiceName): boolean =>
-  SERVICE_CATALOG[service].runtimeSupport === "docker-only";
+  serviceMetadata(service).artifact.native.resolve(version, platform);
 
 export const DEFAULT_SERVICE_POLICIES: Readonly<
   Record<ServiceName, Exclude<ServicePreparationPolicy, "off">>

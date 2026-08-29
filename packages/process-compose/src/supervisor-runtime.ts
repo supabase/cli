@@ -15,7 +15,8 @@ import {
   Schedule,
 } from "effect";
 import type { ChildProcess } from "effect/unstable/process";
-import type { ExternalCleanupAction } from "./ServiceDef.ts";
+import type { ExternalCleanupAction, PosixResourceLimits } from "./ServiceDef.ts";
+import { makePosixNofileLimitedCommand } from "./PosixResourceLimits.ts";
 import {
   supervisorRuntimeConfigFromEnv,
   withoutSupervisorRuntimeEnv,
@@ -28,6 +29,10 @@ class SupervisorCleanupError extends Data.TaggedError("SupervisorCleanupError")<
   readonly cause: unknown;
 }> {}
 
+class SupervisorSpawnError extends Data.TaggedError("SupervisorSpawnError")<{
+  readonly cause: unknown;
+}> {}
+
 interface SupervisorRuntimeConfig {
   readonly command: string;
   readonly args?: ReadonlyArray<string>;
@@ -35,6 +40,7 @@ interface SupervisorRuntimeConfig {
   readonly shutdownSignal?: ChildProcess.Signal;
   readonly shutdownTimeoutMs?: number;
   readonly cleanup?: ReadonlyArray<ExternalCleanupAction>;
+  readonly posixResourceLimits?: PosixResourceLimits;
 }
 
 interface ChildExit {
@@ -177,6 +183,14 @@ const cleanupActionsFrom = (value: unknown): ReadonlyArray<ExternalCleanupAction
   return actions.every((action) => action != null) ? actions : undefined;
 };
 
+const posixResourceLimitsFrom = (value: unknown): PosixResourceLimits | undefined => {
+  if (!isObject(value)) return undefined;
+  const nofileSoft = getField(value, "nofileSoft");
+  return typeof nofileSoft === "number" && Number.isSafeInteger(nofileSoft) && nofileSoft > 0
+    ? { nofileSoft }
+    : undefined;
+};
+
 const parseSupervisorRuntimeConfig = (encodedConfig: string): SupervisorRuntimeConfig => {
   const value: unknown = JSON.parse(Buffer.from(encodedConfig, "base64url").toString("utf8"));
   if (!isObject(value)) {
@@ -195,6 +209,14 @@ const parseSupervisorRuntimeConfig = (encodedConfig: string): SupervisorRuntimeC
   if (cleanupValue !== undefined && cleanup === undefined) {
     throw new Error("Invalid supervisor cleanup");
   }
+  const posixResourceLimitsValue = getField(value, "posixResourceLimits");
+  const posixResourceLimits =
+    posixResourceLimitsValue === undefined
+      ? undefined
+      : posixResourceLimitsFrom(posixResourceLimitsValue);
+  if (posixResourceLimitsValue !== undefined && posixResourceLimits === undefined) {
+    throw new Error("Invalid supervisor POSIX resource limits");
+  }
 
   return {
     command,
@@ -203,6 +225,7 @@ const parseSupervisorRuntimeConfig = (encodedConfig: string): SupervisorRuntimeC
     shutdownSignal: signalFrom(getField(value, "shutdownSignal")),
     shutdownTimeoutMs: typeof shutdownTimeoutMs === "number" ? shutdownTimeoutMs : undefined,
     cleanup,
+    posixResourceLimits,
   };
 };
 
@@ -239,18 +262,30 @@ const waitForExit = (
     Effect.map(Option.isSome),
   );
 
-const runSupervisorRuntimeEffect = (config: SupervisorRuntimeConfig): Effect.Effect<void> =>
+const runSupervisorRuntimeEffect = (
+  config: SupervisorRuntimeConfig,
+): Effect.Effect<void, SupervisorSpawnError> =>
   Effect.scoped(
     Effect.gen(function* () {
       const childEnv = withoutSupervisorRuntimeEnv();
-      const child = yield* Effect.sync(() =>
-        spawn(config.command, config.args ?? [], {
-          cwd: process.cwd(),
-          env: childEnv,
-          stdio: ["ignore", "pipe", "pipe"],
-          detached: !isWindows,
-        }),
-      );
+      const childCommand =
+        config.posixResourceLimits === undefined
+          ? { command: config.command, args: config.args ?? [] }
+          : makePosixNofileLimitedCommand(
+              config.command,
+              config.args ?? [],
+              config.posixResourceLimits.nofileSoft,
+            );
+      const child = yield* Effect.try({
+        try: () =>
+          spawn(childCommand.command, childCommand.args, {
+            cwd: process.cwd(),
+            env: childEnv,
+            stdio: ["ignore", "pipe", "pipe"],
+            detached: !isWindows,
+          }),
+        catch: (cause) => new SupervisorSpawnError({ cause }),
+      });
       if (child.stdout != null) child.stdout.pipe(process.stdout);
       if (child.stderr != null) child.stderr.pipe(process.stderr);
 

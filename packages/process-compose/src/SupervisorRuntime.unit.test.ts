@@ -281,6 +281,28 @@ describe("supervisor-runtime", () => {
     }
   });
 
+  test("rejects an invalid POSIX nofile limit before spawning", async () => {
+    const tempDir = mkdtempSync(path.join(tmpdir(), "process-compose-supervisor-invalid-limit-"));
+    const childMarker = path.join(tempDir, "child-started");
+    const encodedConfig = Buffer.from(
+      JSON.stringify({
+        command: process.execPath,
+        args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(childMarker)}, "started")`],
+        posixResourceLimits: { nofileSoft: 0 },
+      }),
+    ).toString("base64url");
+    const supervisor = spawnSupervisor("source path", encodedConfig);
+
+    try {
+      await waitFor(() => supervisor.exitCode != null);
+      expect(supervisor.exitCode).not.toBe(0);
+      expect(existsSync(childMarker)).toBe(false);
+    } finally {
+      supervisor.kill("SIGKILL");
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("removes supervisor protocol variables from the managed child environment", () => {
     const childEnv = withoutSupervisorRuntimeEnv({
       KEEP_ME: "value",

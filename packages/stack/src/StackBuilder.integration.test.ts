@@ -34,8 +34,9 @@ const ports: AllocatedPorts = {
   studioPort: 41014,
   analyticsPort: 41015,
   vectorAdminPort: 41016,
-  poolerPort: 41017,
-  poolerApiPort: 41018,
+  poolerSessionPort: 41017,
+  poolerTransactionPort: 41018,
+  poolerApiPort: 41019,
 };
 
 const binaryRoots: Record<string, string> = Object.fromEntries(
@@ -145,6 +146,15 @@ describe("StackBuilder native graph", () => {
         port: ports.vectorAdminPort,
         path: "/health",
         scheme: "http",
+      });
+      expect(
+        result.graph.startOrder.find((service) => service.name === "pooler")?.env,
+      ).toMatchObject({
+        PORT: String(ports.poolerApiPort),
+        PROXY_PORT_SESSION: String(ports.poolerSessionPort),
+        PROXY_PORT_TRANSACTION: String(ports.poolerTransactionPort),
+        NODE_NAME: `pooler_${ports.apiPort}`,
+        NODE_IP: "127.0.0.1",
       });
       expect(result.serviceProjection.get("realtime-migrate")).toEqual({
         visibility: "internal",

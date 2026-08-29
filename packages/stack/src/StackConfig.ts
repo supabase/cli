@@ -123,6 +123,7 @@ export interface MailpitConfig {
   readonly port?: number;
   readonly smtpPort?: number;
   readonly pop3Port?: number;
+  readonly dataDir?: string;
   readonly version?: string;
   readonly adminEmail?: string;
   readonly senderName?: string;
@@ -151,7 +152,8 @@ export interface VectorConfig {
 }
 
 export interface PoolerConfig {
-  readonly port?: number;
+  readonly sessionPort?: number;
+  readonly transactionPort?: number;
   readonly apiPort?: number;
   readonly mode?: "transaction" | "session";
   readonly version?: string;
@@ -262,6 +264,9 @@ export interface ResolvedMailpitConfig {
   readonly port: number;
   readonly smtpPort: number;
   readonly pop3Port: number;
+  readonly dataDir: string;
+  /** Whether the data directory came from the package-managed stack root. */
+  readonly dataDirIsAutoManaged: boolean;
   readonly version: string;
   readonly adminEmail: string;
   readonly senderName: string;
@@ -292,7 +297,8 @@ export interface ResolvedVectorConfig {
 }
 
 export interface ResolvedPoolerConfig {
-  readonly port: number;
+  readonly sessionPort: number;
+  readonly transactionPort: number;
   readonly apiPort: number;
   readonly mode: "transaction" | "session";
   readonly version: string;

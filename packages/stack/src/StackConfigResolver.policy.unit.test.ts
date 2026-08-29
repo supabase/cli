@@ -29,8 +29,9 @@ const testPorts: PortSet = {
   studioPort: 40_012,
   analyticsPort: 40_013,
   vectorAdminPort: 40_018,
-  poolerPort: 40_014,
-  poolerApiPort: 40_015,
+  poolerSessionPort: 40_014,
+  poolerTransactionPort: 40_015,
+  poolerApiPort: 40_019,
 };
 
 const resolveConfig = (
@@ -89,6 +90,13 @@ describe("resolved service preparation policies", () => {
     expect(config.servicePolicies.mailpit).toBe("eager");
   });
 
+  it("enables Edge Runtime in native mode when omitted, matching Docker defaults", async () => {
+    const config = await resolveConfig();
+
+    expect(config.edgeRuntime).not.toBe(false);
+    expect(config.servicePolicies["edge-runtime"]).toBe("lazy");
+  });
+
   it("resolves Docker-specific Vector and Pooler defaults", async () => {
     const config = await resolveConfig(
       { mode: "docker", analytics: {}, vector: {}, pooler: {} },
@@ -97,6 +105,30 @@ describe("resolved service preparation policies", () => {
 
     expect(config.vector).toMatchObject({ version: "0.53.0-alpine" });
     expect(config.pooler).toMatchObject({ version: "2.9.7" });
+  });
+
+  it("resolves independent Pooler protocol ports and Mailpit data ownership", async () => {
+    const config = await resolveConfig(
+      {
+        pooler: { sessionPort: 41_001, transactionPort: 41_002, apiPort: 41_003 },
+        mailpit: { dataDir: "/tmp/explicit-mailpit" },
+      },
+      {
+        ports: {
+          ...testPorts,
+          poolerSessionPort: 41_001,
+          poolerTransactionPort: 41_002,
+          poolerApiPort: 41_003,
+        },
+      },
+    );
+
+    expect(config.pooler).toMatchObject({
+      sessionPort: 41_001,
+      transactionPort: 41_002,
+      apiPort: 41_003,
+    });
+    expect(config.mailpit).toMatchObject({ dataDir: "/tmp/explicit-mailpit" });
   });
 
   it("normalizes explicit Pooler versions for the selected runtime", async () => {

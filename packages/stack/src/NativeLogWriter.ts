@@ -6,6 +6,7 @@ import {
   Effect,
   Exit,
   FileSystem,
+  Fiber,
   Pull,
   Schedule,
   Scope,
@@ -13,6 +14,7 @@ import {
 } from "effect";
 import { LogBuffer, type LogEntry } from "@supabase/process-compose";
 import { StackBuildError } from "./errors.ts";
+import { prepareNativeDirectory, writeNativeFile } from "./native-filesystem.ts";
 import type { ServiceName } from "./versions.ts";
 
 /** Native journals live below the runtime root and are private to one stack. */
@@ -33,9 +35,15 @@ export const nativeServiceLogPath = (runtimeRoot: string, service: ServiceName):
  */
 const NATIVE_LOG_SEGMENT_BYTES = 64 * 1024;
 const NATIVE_LOG_SEGMENT_RECORDS = 1_000;
-const NATIVE_LOG_SEGMENTS = 3;
+/** Number of JSONL files retained for each service (active + rotated segments). */
+export const NATIVE_LOG_SEGMENTS = 3;
 /** Retry transient journal failures with interruptible exponential backoff. */
-const nativeLogWriteRetry = Schedule.exponential(Duration.millis(50)).pipe(Schedule.jittered);
+const nativeLogWriteRetry = Schedule.exponential(Duration.millis(50)).pipe(
+  Schedule.jittered,
+  Schedule.upTo({ times: 3 }),
+);
+
+const textEncoder = new TextEncoder();
 
 interface Segment {
   readonly service: string;
@@ -46,14 +54,27 @@ interface Segment {
   records: number;
 }
 
+export interface NativeLogWriter {
+  readonly shutdown: Effect.Effect<void, never>;
+}
+
 const pathForService = (runtimeRoot: string, service: string, index = 0): string => {
   const active = join(nativeLogRoot(runtimeRoot), `${serviceFileName(service)}.jsonl`);
   return index === 0 ? active : `${active}.${index}`;
 };
 
+/** Paths for the active journal and every rotated segment of one service. */
+export const nativeServiceLogSegmentPaths = (
+  runtimeRoot: string,
+  service: ServiceName,
+): ReadonlyArray<string> =>
+  Array.from({ length: NATIVE_LOG_SEGMENTS }, (_, index) =>
+    pathForService(runtimeRoot, service, index),
+  );
+
 const encodeEntry = (entry: LogEntry): Uint8Array => {
   const encodeMessage = (message: string): Uint8Array =>
-    new TextEncoder().encode(
+    textEncoder.encode(
       `${JSON.stringify({
         timestamp: entry.timestamp,
         service: entry.service,
@@ -92,25 +113,19 @@ const encodeEntry = (entry: LogEntry): Uint8Array => {
 export const startNativeLogWriter = (
   logBuffer: LogBuffer["Service"],
   runtimeRoot: string,
-): Effect.Effect<void, StackBuildError, FileSystem.FileSystem | Scope.Scope> =>
+): Effect.Effect<NativeLogWriter, StackBuildError, FileSystem.FileSystem | Scope.Scope> =>
   Effect.suspend(() =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const parentScope = yield* Effect.scope;
       const logRoot = nativeLogRoot(runtimeRoot);
-      yield* fs.makeDirectory(logRoot, { recursive: true, mode: 0o700 }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new StackBuildError({
-              detail: `Failed to create native log directory ${logRoot}`,
-              cause,
-            }),
-        ),
-      );
+      yield* prepareNativeDirectory(logRoot, `Failed to create native log directory ${logRoot}`);
 
       // Existing journals have no trusted record metadata, so oversized lines
       // are discarded rather than copied past the bound during normalization.
-      const normalizeExistingSegment = (path: string): Effect.Effect<string, StackBuildError> =>
+      const normalizeExistingSegment = (
+        path: string,
+      ): Effect.Effect<string, StackBuildError, FileSystem.FileSystem> =>
         Effect.gen(function* () {
           const content = yield* fs.readFileString(path).pipe(
             Effect.mapError(
@@ -127,29 +142,27 @@ export const startNativeLogWriter = (
             .split("\n")
             .filter((line) => line.length > 0)
             .toReversed()) {
-            const encoded = new TextEncoder().encode(`${line}\n`);
+            const encoded = textEncoder.encode(`${line}\n`);
             if (encoded.byteLength > NATIVE_LOG_SEGMENT_BYTES) continue;
             if (kept.length >= NATIVE_LOG_SEGMENT_RECORDS) break;
             if (bytes + encoded.byteLength > NATIVE_LOG_SEGMENT_BYTES) break;
-            kept.unshift(`${line}\n`);
+            kept.push(`${line}\n`);
             bytes += encoded.byteLength;
           }
+          kept.reverse();
           const normalized = kept.join("");
           if (normalized !== content) {
-            yield* fs.writeFileString(path, normalized, { flag: "w", mode: 0o600 }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new StackBuildError({
-                    detail: `Failed to bound native log segment ${path}`,
-                    cause,
-                  }),
-              ),
-            );
+            yield* writeNativeFile(path, normalized, `Failed to bound native log segment ${path}`, {
+              flag: "w",
+              mode: 0o600,
+            });
           }
           return normalized;
         });
 
-      const rotateExistingActive = (activePath: string): Effect.Effect<void, StackBuildError> =>
+      const rotateExistingActive = (
+        activePath: string,
+      ): Effect.Effect<void, StackBuildError, FileSystem.FileSystem> =>
         Effect.gen(function* () {
           const content = yield* normalizeExistingSegment(activePath);
           if (content.length === 0) return;
@@ -215,10 +228,15 @@ export const startNativeLogWriter = (
         yield* rotateExistingActive(activePath);
       }
 
+      // Keep journal handles in a writer-owned scope. The parent scope receives a
+      // finalizer below, after this writer has been registered and before the
+      // orchestrator is built, so direct scope disposal drains after services
+      // have emitted their shutdown logs.
+      const writerScope = yield* Scope.make("sequential");
       const segments = new Map<string, Segment>();
       const openSegment = (service: string): Effect.Effect<Segment, StackBuildError> =>
         Effect.gen(function* () {
-          const segmentScope = yield* Scope.fork(parentScope, "sequential");
+          const segmentScope = yield* Scope.fork(writerScope, "sequential");
           const path = pathForService(runtimeRoot, service);
           const opened = yield* fs.open(path, { flag: "a", mode: 0o600 }).pipe(
             Effect.provideService(Scope.Scope, segmentScope),
@@ -323,15 +341,43 @@ export const startNativeLogWriter = (
           segment.records += 1;
         });
 
+      const invalidateSegment = (service: string): Effect.Effect<void> =>
+        Effect.suspend(() => {
+          const segment = segments.get(service);
+          if (segment === undefined) return Effect.void;
+          segments.delete(service);
+          return Scope.close(segment.scope, Exit.void);
+        });
+
+      const failedServices = new Set<string>();
+
       const writeEntryWithRecovery = (entry: LogEntry): Effect.Effect<void, StackBuildError> =>
-        writeEntry(entry).pipe(
-          Effect.tapError((error) =>
-            Effect.logError(`Native log write failed; retrying ${entry.service}: ${error.detail}`),
-          ),
-          Effect.retry(nativeLogWriteRetry),
-        );
+        Effect.suspend(() => {
+          const retry = !failedServices.has(entry.service);
+          const attempt = writeEntry(entry).pipe(
+            Effect.tapError(() => invalidateSegment(entry.service)),
+          );
+          const write = retry ? attempt.pipe(Effect.retry(nativeLogWriteRetry)) : attempt;
+          return write.pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                failedServices.delete(entry.service);
+              }),
+            ),
+            Effect.catchTag("StackBuildError", (error) =>
+              Effect.suspend(() => {
+                const firstFailure = !failedServices.has(entry.service);
+                failedServices.add(entry.service);
+                return firstFailure
+                  ? Effect.logError(`Native log write dropped ${entry.service}: ${error.detail}`)
+                  : Effect.void;
+              }),
+            ),
+          );
+        });
 
       const subscribed = Deferred.makeUnsafe<void, StackBuildError>();
+      const shutdownMarker = `\u0000native-log-writer:${runtimeRoot}`;
       const worker = Effect.gen(function* () {
         const pull = yield* Stream.toPull(logBuffer.subscribeAll);
         yield* Deferred.succeed(subscribed, undefined);
@@ -341,7 +387,24 @@ export const startNativeLogWriter = (
           if (chunk === null) {
             running = false;
           } else {
-            yield* Effect.forEach(chunk, writeEntryWithRecovery, { discard: true });
+            const byService = new Map<string, Array<LogEntry>>();
+            for (const entry of chunk) {
+              if (entry.service === shutdownMarker && entry.line === shutdownMarker) {
+                running = false;
+                break;
+              }
+              const entries = byService.get(entry.service);
+              if (entries === undefined) {
+                byService.set(entry.service, [entry]);
+              } else {
+                entries.push(entry);
+              }
+            }
+            yield* Effect.forEach(
+              byService.values(),
+              (entries) => Effect.forEach(entries, writeEntryWithRecovery, { discard: true }),
+              { discard: true, concurrency: "unbounded" },
+            );
           }
         }
       }).pipe(
@@ -358,7 +421,51 @@ export const startNativeLogWriter = (
         ),
       );
 
-      yield* Effect.forkIn(worker, parentScope, { startImmediately: true });
+      const workerFiber = yield* Effect.forkIn(worker, writerScope, { startImmediately: true });
       yield* Deferred.await(subscribed);
+
+      const closeSegments = Effect.gen(function* () {
+        for (const segment of segments.values()) {
+          yield* Scope.close(segment.scope, Exit.void);
+        }
+        segments.clear();
+        yield* Scope.close(writerScope, Exit.void);
+      });
+      const shutdownResult = yield* Deferred.make<Exit.Exit<void, never>>();
+      const runExit = (exit: Exit.Exit<void, never>) =>
+        Exit.match(exit, {
+          onSuccess: (value) => Effect.succeed(value),
+          onFailure: (cause) => Effect.failCause(cause),
+        });
+      let shutdownStarted = false;
+      const shutdown = Effect.suspend(() => {
+        if (shutdownStarted) {
+          return Deferred.await(shutdownResult).pipe(Effect.flatMap(runExit));
+        }
+        shutdownStarted = true;
+        return Effect.exit(
+          logBuffer
+            .append(shutdownMarker, "stderr", shutdownMarker)
+            .pipe(
+              Effect.andThen(
+                Fiber.join(workerFiber).pipe(
+                  Effect.catchTag("StackBuildError", (error) =>
+                    Effect.logError(`Native log writer stopped: ${error.detail}`).pipe(
+                      Effect.asVoid,
+                    ),
+                  ),
+                ),
+              ),
+              Effect.andThen(closeSegments),
+            ),
+        ).pipe(
+          Effect.flatMap((exit) =>
+            Deferred.succeed(shutdownResult, exit).pipe(Effect.andThen(runExit(exit))),
+          ),
+        );
+      }).pipe(Effect.uninterruptible);
+
+      yield* Scope.addFinalizer(parentScope, shutdown);
+      return { shutdown };
     }),
   );

@@ -30,7 +30,11 @@ export interface NativePoolerOptions extends Omit<PoolerServiceOptions, "dbHost"
   readonly binPath: string;
   readonly runtimeRoot: string;
   readonly adminPort: number;
-  readonly port: number;
+  readonly sessionPort: number;
+  readonly transactionPort: number;
+  /** Stack-unique Erlang short name and cookie for host-level distribution. */
+  readonly nodeName: string;
+  readonly releaseCookie: string;
 }
 
 export interface NativePoolerServiceBundle {
@@ -47,7 +51,8 @@ interface DockerPoolerOptions extends PoolerServiceOptions, ContainerRuntimeOpti
   readonly identity: StackIdentity;
   readonly platformOs: string;
   readonly hostAdminPort: number;
-  readonly hostPort: number;
+  readonly hostSessionPort: number;
+  readonly hostTransactionPort: number;
 }
 
 const poolerHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
@@ -105,13 +110,8 @@ export const makePoolerServiceDocker = (opts: DockerPoolerOptions): ServiceDef =
       image: opts.image,
       networkArgs: dockerPortMapArgs(opts.platformOs, [
         { host: opts.hostAdminPort, container: poolerContainerPorts.admin },
-        {
-          host: opts.hostPort,
-          container:
-            opts.poolMode === "session"
-              ? poolerContainerPorts.session
-              : poolerContainerPorts.transaction,
-        },
+        { host: opts.hostSessionPort, container: poolerContainerPorts.session },
+        { host: opts.hostTransactionPort, container: poolerContainerPorts.transaction },
       ]),
       env: {
         PORT: String(poolerContainerPorts.admin),
@@ -147,8 +147,8 @@ export const makePoolerServiceDocker = (opts: DockerPoolerOptions): ServiceDef =
 
 const poolerNativeEnv = (opts: NativePoolerOptions): Record<string, string> => ({
   PORT: String(opts.adminPort),
-  PROXY_PORT_SESSION: String(opts.poolMode === "session" ? opts.port : 0),
-  PROXY_PORT_TRANSACTION: String(opts.poolMode === "transaction" ? opts.port : 0),
+  PROXY_PORT_SESSION: String(opts.sessionPort),
+  PROXY_PORT_TRANSACTION: String(opts.transactionPort),
   DATABASE_URL: `ecto://postgres:postgres@127.0.0.1:${opts.dbPort}/_supabase`,
   CLUSTER_POSTGRES: "true",
   SECRET_KEY_BASE: opts.secretKeyBase,
@@ -161,6 +161,10 @@ const poolerNativeEnv = (opts: NativePoolerOptions): Record<string, string> => (
   RLIMIT_NOFILE: "",
   ELIXIR_ERL_OPTIONS: "+fnu +S 1:1 +SDio 1 +sbwt none +sbwtdcpu none +sbwtdio none",
   ERL_CRASH_DUMP: join(opts.runtimeRoot, "pooler", "erl_crash.dump"),
+  NODE_NAME: opts.nodeName,
+  NODE_IP: "127.0.0.1",
+  RELEASE_NODE: `${opts.nodeName}@127.0.0.1`,
+  RELEASE_COOKIE: opts.releaseCookie,
 });
 
 export const makePoolerServicesNative = (opts: NativePoolerOptions): NativePoolerServiceBundle => {

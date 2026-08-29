@@ -14,7 +14,9 @@ const executeProbe = (
 > => {
   return Match.valueTags(probe, {
     Http: (probe) =>
-      HttpClient.get(`${probe.scheme}://${probe.host}:${probe.port}${probe.path}`).pipe(
+      HttpClient.get(`${probe.scheme}://${probe.host}:${probe.port}${probe.path}`, {
+        headers: probe.headers,
+      }).pipe(
         Effect.timeout(Duration.seconds(timeoutSeconds)),
         Effect.map((res) => res.status >= 200 && res.status < 300),
         Effect.orElseSucceed(() => false),

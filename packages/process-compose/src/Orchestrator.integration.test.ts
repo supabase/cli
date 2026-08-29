@@ -75,6 +75,63 @@ const waitForStatuses = (
 
 describe("Orchestrator integration", () => {
   it.live(
+    "applies a POSIX nofile limit without changing command arguments",
+    () => {
+      const specialArgument = "argument with spaces;$(not-a-command)";
+      const resultFile = `/tmp/pc-nofile-${randomUUID()}.txt`;
+      const script = [
+        "soft=$(ulimit -n)",
+        "hard=$(ulimit -Hn)",
+        'printf "%s\\n%s\\n%s\\n" "$soft" "$hard" "$2" > "$1"',
+        "exec sleep 60",
+      ].join("; ");
+      const defs: ServiceDef[] = [
+        {
+          name: "nofile-service",
+          command: "sh",
+          args: ["-c", script, "nofile-service", resultFile, specialArgument],
+          posixResourceLimits: { nofileSoft: 4096 },
+          supervision: {},
+          restart: "no",
+          healthCheck: {
+            probe: fileExistsProbe(resultFile),
+            periodSeconds: 0.1,
+            timeoutSeconds: 2,
+            failureThreshold: 3,
+          },
+        },
+      ];
+      const { layer } = setupReal(defs);
+
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        yield* waitForStatuses(orc, [
+          { name: "nofile-service", predicate: (state) => state.status === "Healthy" },
+        ]);
+
+        const [soft, hard, argument] = (yield* fs.readFileString(resultFile)).trim().split("\n");
+        const expectedSoft = hard === "unlimited" ? 4096 : Math.min(4096, Number(hard));
+        expect(Number(soft)).toBe(expectedSoft);
+        expect(argument).toBe(specialArgument);
+
+        yield* orc.stop;
+      }).pipe(
+        Effect.ensuring(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            yield* fs.remove(resultFile, { force: true });
+          }).pipe(Effect.provide(BunFileSystemLayer), Effect.ignore),
+        ),
+        Effect.provide(Layer.mergeAll(layer, BunFileSystemLayer)),
+        Effect.scoped,
+      );
+    },
+    { timeout: 15000 },
+  );
+
+  it.live(
     "serializes a concurrent start and stop lifecycle command",
     () => {
       const defs: ServiceDef[] = [

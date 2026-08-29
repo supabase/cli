@@ -7,7 +7,12 @@ import type { ContainerRuntime } from "../ContainerRuntime.ts";
 import { dockerContainerName, type StackIdentity } from "../StackIdentity.ts";
 import { Effect, FileSystem } from "effect";
 import { StackBuildError } from "../errors.ts";
-import { nativeLogRoot, nativeServiceLogPath } from "../NativeLogWriter.ts";
+import {
+  NATIVE_LOG_SEGMENTS,
+  nativeLogRoot,
+  nativeServiceLogSegmentPaths,
+} from "../NativeLogWriter.ts";
+import { prepareNativeDirectory, writeNativeFile } from "../native-filesystem.ts";
 import {
   dockerExecHealthCheck,
   dockerRunService,
@@ -85,14 +90,11 @@ const nativeVectorConfig = (opts: VectorConfigPreparationOptions): string => {
   // ingestion on that source so the Analytics release accepts the payload;
   // each stack owns an isolated Analytics database and source backend.
   const logRoot = nativeLogRoot(opts.runtimeRoot);
-  const vectorLogPath = nativeServiceLogPath(opts.runtimeRoot, "vector");
-  const include = [
-    `${logRoot}/*.jsonl`,
-    `${logRoot}/*.jsonl.1`,
-    `${logRoot}/*.jsonl.2`,
-    `${logRoot}/*.jsonl.3`,
-  ];
-  const exclude = [vectorLogPath, `${vectorLogPath}.1`, `${vectorLogPath}.2`, `${vectorLogPath}.3`];
+  const include = Array.from(
+    { length: NATIVE_LOG_SEGMENTS },
+    (_, index) => `${logRoot}/*.jsonl${index === 0 ? "" : `.${index}`}`,
+  );
+  const exclude = nativeServiceLogSegmentPaths(opts.runtimeRoot, "vector");
 
   return `data_dir: ${yamlString(join(opts.runtimeRoot, "vector", "data_dir"))}
 
@@ -137,45 +139,21 @@ export const prepareVectorConfig = (
   opts: VectorConfigPreparationOptions,
 ): Effect.Effect<PreparedVectorConfig, StackBuildError, FileSystem.FileSystem> =>
   Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
     const paths = vectorRuntimePaths(opts.runtimeRoot);
-    yield* fs
-      .makeDirectory(join(opts.runtimeRoot, "vector"), {
-        recursive: true,
-        mode: 0o700,
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new StackBuildError({
-              detail: "Failed to create the native Vector runtime directory",
-              cause,
-            }),
-        ),
-      );
-    yield* fs.makeDirectory(paths.dataDir, { recursive: true, mode: 0o700 }).pipe(
-      Effect.mapError(
-        (cause) =>
-          new StackBuildError({
-            detail: "Failed to create the native Vector checkpoint directory",
-            cause,
-          }),
-      ),
+    yield* prepareNativeDirectory(
+      join(opts.runtimeRoot, "vector"),
+      "Failed to create the native Vector runtime directory",
     );
-    yield* fs
-      .writeFileString(paths.configPath, nativeVectorConfig(opts), {
-        flag: "w",
-        mode: 0o600,
-      })
-      .pipe(
-        Effect.mapError(
-          (cause) =>
-            new StackBuildError({
-              detail: "Failed to write the native Vector configuration",
-              cause,
-            }),
-        ),
-      );
+    yield* prepareNativeDirectory(
+      paths.dataDir,
+      "Failed to create the native Vector checkpoint directory",
+    );
+    yield* writeNativeFile(
+      paths.configPath,
+      nativeVectorConfig(opts),
+      "Failed to write the native Vector configuration",
+      { flag: "w", mode: 0o600 },
+    );
     return paths;
   });
 

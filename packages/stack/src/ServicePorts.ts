@@ -8,12 +8,7 @@ const serviceEnabledForConfig = (config: StackConfig, service: keyof typeof SERV
     return config[service === "postgres" ? "postgres" : service] !== false;
   }
   if (service === "edge-runtime") {
-    const mode = config.mode ?? "native";
-    return (
-      !(mode === "native" && config.edgeRuntime === undefined) &&
-      config.edgeRuntime !== false &&
-      (config.edgeRuntime?.enabled ?? true) !== false
-    );
+    return config.edgeRuntime !== false && (config.edgeRuntime?.enabled ?? true) !== false;
   }
   const configKey = SERVICE_CATALOG[service].configKey;
   if (configKey === "vector") return config.vector !== undefined && config.vector !== false;
@@ -27,9 +22,9 @@ export const portFieldsForConfigInput = (config: StackConfig = {}): ReadonlyArra
     if (field === "apiPort" || field === "dbPort") return true;
     const service = PORT_CATALOG[field].service;
     if (service === undefined || !serviceEnabledForConfig(config, service)) return false;
-    // Vector's admin/health endpoint is a private native listener. Docker's
-    // admin API stays inside the container and must not consume a host lease.
-    return !(field === "vectorAdminPort" && mode !== "native");
+    // Native-only listeners (such as Vector's admin API) stay inside Docker
+    // containers and therefore must not consume a host lease there.
+    return !(PORT_CATALOG[field].nativeOnly === true && mode !== "native");
   });
 };
 
@@ -37,6 +32,6 @@ export const portFieldsForService = (name: string, mode: StackMode): ReadonlyArr
   const service = SERVICE_NAMES.find((candidate) => candidate === name);
   if (service === undefined) return [];
   return SERVICE_CATALOG[service].portFields.filter(
-    (field) => !(field === "vectorAdminPort" && mode !== "native"),
+    (field) => !(PORT_CATALOG[field].nativeOnly === true && mode !== "native"),
   );
 };

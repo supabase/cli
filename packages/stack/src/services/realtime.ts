@@ -3,6 +3,7 @@ import { dockerNetworkArgs } from "../Platform.ts";
 import type { StackIdentity } from "../StackIdentity.ts";
 import {
   dockerRunService,
+  hostHttpHealthCheck,
   nativeRunService,
   type ContainerRuntimeOptions,
   type ServiceDependency,
@@ -24,6 +25,9 @@ interface RealtimeServiceOptions {
 
 export interface NativeRealtimeOptions extends Omit<RealtimeServiceOptions, "dbHost"> {
   readonly binPath: string;
+  /** Stack-unique Erlang short name and cookie for host-level distribution. */
+  readonly nodeName: string;
+  readonly releaseCookie: string;
 }
 
 export interface NativeRealtimeServiceBundle {
@@ -42,7 +46,11 @@ interface DockerRealtimeOptions extends RealtimeServiceOptions, ContainerRuntime
 }
 
 const realtimeEnv = (
-  opts: Omit<RealtimeServiceOptions, "dbHost"> & { readonly dbHost?: string },
+  opts: Omit<RealtimeServiceOptions, "dbHost"> & {
+    readonly dbHost?: string;
+    readonly nodeName?: string;
+    readonly releaseCookie?: string;
+  },
 ): Record<string, string> => ({
   PORT: String(opts.port),
   DB_HOST: opts.dbHost ?? "127.0.0.1",
@@ -63,6 +71,14 @@ const realtimeEnv = (
   SEED_SELF_HOST: "true",
   RUN_JANITOR: "true",
   MAX_HEADER_LENGTH: String(opts.maxHeaderLength),
+  ...(opts.nodeName === undefined || opts.releaseCookie === undefined
+    ? {}
+    : {
+        NODE_NAME: opts.nodeName,
+        NODE_IP: "127.0.0.1",
+        RELEASE_NODE: `${opts.nodeName}@127.0.0.1`,
+        RELEASE_COOKIE: opts.releaseCookie,
+      }),
 });
 
 const realtimeDockerHealthCheck = (port: number, tenantId: string): ServiceDef["healthCheck"] => ({
@@ -82,16 +98,11 @@ const realtimeDockerHealthCheck = (port: number, tenantId: string): ServiceDef["
   ...stackHealthBudgets.realtime,
 });
 
-const realtimeNativeHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
-  probe: {
-    _tag: "Http",
-    host: "127.0.0.1",
-    port,
-    path: "/healthcheck",
-    scheme: "http",
-  },
-  ...stackHealthBudgets.realtime,
-});
+const realtimeNativeHealthCheck = (port: number, tenantId: string): ServiceDef["healthCheck"] =>
+  hostHttpHealthCheck(port, "/api/ping", {
+    ...stackHealthBudgets.realtime,
+    headers: { Host: tenantId },
+  });
 
 export const makeRealtimeServiceDocker = (opts: DockerRealtimeOptions): ServiceDef =>
   dockerRunService({
@@ -129,7 +140,7 @@ export const makeRealtimeServicesNative = (
     command: `${opts.binPath}/bin/server`,
     env,
     dependencies: [{ service: seed.name, condition: "completed" }],
-    healthCheck: realtimeNativeHealthCheck(opts.port),
+    healthCheck: realtimeNativeHealthCheck(opts.port, opts.tenantId),
   });
   return { migrate, seed, server };
 };

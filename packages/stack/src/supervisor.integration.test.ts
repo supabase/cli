@@ -159,6 +159,7 @@ const messageFor = (
     cwd: roots.root,
     projectDir: roots.root,
     mode: "native",
+    edgeRuntime: false,
     auth: false,
     postgrest: false,
     realtime: false,
@@ -792,6 +793,7 @@ describe("detached supervisor child journeys", () => {
         {
           projectDir: roots.root,
           mode: "native",
+          edgeRuntime: false,
           auth: false,
           postgrest: false,
           realtime: false,

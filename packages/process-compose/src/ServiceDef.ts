@@ -15,6 +15,7 @@ export type ProbeConfig =
       readonly port: number;
       readonly path: string;
       readonly scheme: "http" | "https";
+      readonly headers?: Readonly<Record<string, string>>;
     }
   | {
       readonly _tag: "Exec";
@@ -71,6 +72,12 @@ export interface SupervisionConfig {
   readonly orphanCleanup?: ReadonlyArray<ExternalCleanupAction>;
 }
 
+/** Resource limits supported by native POSIX process launches. */
+export interface PosixResourceLimits {
+  /** Soft open-file limit requested for the service process. */
+  readonly nofileSoft: number;
+}
+
 export interface ServiceDef {
   readonly name: string;
   readonly command: string;
@@ -85,6 +92,7 @@ export interface ServiceDef {
   readonly maxRestarts?: number;
   readonly cleanup?: Effect.Effect<void, Error>;
   readonly supervision?: SupervisionConfig;
+  readonly posixResourceLimits?: PosixResourceLimits;
   readonly hooks?: ReadonlyArray<LifecycleHook>;
   readonly enabled?: boolean;
 }

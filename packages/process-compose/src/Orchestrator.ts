@@ -34,6 +34,7 @@ import type {
 import { defaults } from "./ServiceDef.ts";
 import { initial, ServiceState, type ServiceDesiredState } from "./ServiceState.ts";
 import { makeSupervisedCommand, usesSupervisor } from "./Supervisor.ts";
+import { makePosixNofileLimitedCommand } from "./PosixResourceLimits.ts";
 import {
   CyclicDependencyError,
   MissingDependencyError,
@@ -44,6 +45,17 @@ import {
 import { type ServiceEvent, transition } from "./ServiceTransition.ts";
 
 const DIAGNOSTIC_LOG_LINES = 20;
+
+const withPosixNofileLimit = (
+  command: ChildProcess.StandardCommand,
+  requested: number,
+): ChildProcess.StandardCommand => {
+  const wrapped = makePosixNofileLimitedCommand(command.command, command.args, requested);
+  return ChildProcess.make(wrapped.command, wrapped.args, {
+    ...command.options,
+    shell: false,
+  });
+};
 
 const willRestartAfterExit = (def: ServiceDef, state: ServiceState): boolean => {
   if (state.exitCode === null) return false;
@@ -325,8 +337,24 @@ export class Orchestrator extends Context.Service<
                   const generationResult = Deferred.makeUnsafe<SpawnResult>();
                   const supervised = usesSupervisor(def);
 
+                  const limited = def.posixResourceLimits;
+                  if (limited !== undefined) {
+                    if (!Number.isSafeInteger(limited.nofileSoft) || limited.nofileSoft <= 0) {
+                      return yield* new SpawnError({
+                        service: def.name,
+                        cause: new Error("POSIX nofile soft limit must be a positive safe integer"),
+                      });
+                    }
+                    if (process.platform === "win32") {
+                      return yield* new SpawnError({
+                        service: def.name,
+                        cause: new Error("POSIX resource limits are unavailable on Windows"),
+                      });
+                    }
+                  }
+
                   // Build command
-                  const cmd = supervised
+                  const command = supervised
                     ? makeSupervisedCommand(def)
                     : ChildProcess.make(def.command, def.args ?? [], {
                         cwd: def.cwd,
@@ -334,6 +362,10 @@ export class Orchestrator extends Context.Service<
                         extendEnv: true,
                         stdin: "ignore",
                       });
+                  const cmd =
+                    limited === undefined || supervised
+                      ? command
+                      : withPosixNofileLimit(command, limited.nofileSoft);
 
                   // Release external resources such as port reservations only
                   // once dependencies are satisfied and spawning is imminent.
