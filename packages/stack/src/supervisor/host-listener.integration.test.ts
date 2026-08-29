@@ -38,8 +38,16 @@ describe("host listener binding", () => {
         const address = held.binding.server.address();
         if (typeof address !== "object" || address === null)
           return yield* Effect.die("bound listener did not expose an address");
-        const failed = yield* bindHostListener("127.0.0.1", address.port, "api").pipe(Effect.exit);
+        let failedServer: HttpServer | undefined;
+        const failed = yield* bindHostListenerWithOptions("127.0.0.1", address.port, "api", {
+          createHttpServer: () => {
+            const created = createServer();
+            failedServer = created;
+            return created;
+          },
+        }).pipe(Effect.exit);
         expect(errorOf(failed)).toBeInstanceOf(PortUnavailableError);
+        expect(failedServer?.listening).toBe(false);
       }),
     ),
   );

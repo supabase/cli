@@ -179,7 +179,15 @@ export const makePortCoordinator = (
             current.privatePorts.map((entry) => [bindingKey(entry), entry]),
           );
 
-          if (lifecycle === "running" && current.desiredLifecycle === "running") {
+          // A newly accepted generation has running durable intent before its first ingress
+          // acquisition, but has no assignments yet. Enforce the no-change fence only once the
+          // prior generation actually owns ports; this preserves same-generation no-rebind while
+          // allowing the initial listener transaction to materialize its assignments.
+          if (
+            lifecycle === "running" &&
+            current.desiredLifecycle === "running" &&
+            (current.ports.length > 0 || current.privatePorts.length > 0)
+          ) {
             for (const field of fields) {
               const intent = listenerIntents[field];
               const prior = existing.get(field);

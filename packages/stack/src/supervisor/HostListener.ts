@@ -55,6 +55,13 @@ const bind = <T extends HttpServer | NetServer>(
       if (settled) return;
       settled = true;
       cleanup();
+      const swallow = () => undefined;
+      server.once("error", swallow);
+      try {
+        server.close(() => server.off("error", swallow));
+      } catch {
+        server.off("error", swallow);
+      }
       resume(
         Effect.fail(
           new PortUnavailableError({

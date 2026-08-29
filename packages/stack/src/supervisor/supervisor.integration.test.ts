@@ -2,7 +2,11 @@ import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path, Ref, Stream } from "effect";
 import type { LogOptions, StackLogEntry } from "../public/Logs.ts";
-import { StackNotRunningError, StackUpgradeRequiredError } from "../public/Errors.ts";
+import {
+  GatewayActivationError,
+  StackNotRunningError,
+  StackUpgradeRequiredError,
+} from "../public/Errors.ts";
 import {
   RuntimeDriverError,
   type RuntimeDriver,
@@ -12,6 +16,7 @@ import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import { deriveStackId } from "../identity/Identity.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
 import { makeSupervisor, type SupervisorRuntime } from "./Supervisor.ts";
+import type { SupervisorIngress, SupervisorIngressReservation } from "./Ingress.ts";
 
 const identity = {
   projectRoot: "/tmp/supabase-supervisor",
@@ -26,7 +31,62 @@ const identity = {
 const errorOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
 
-const makeFixture = () =>
+const makeMockIngress = (
+  timeline: Ref.Ref<ReadonlyArray<string>>,
+  failOpen = false,
+): SupervisorIngress => {
+  let latest: SupervisorIngressReservation | undefined;
+  let openedGeneration: number | undefined;
+  return {
+    acquire: (input) =>
+      Effect.gen(function* () {
+        if (latest?.generation === input.generation) {
+          yield* Ref.update(timeline, (current) => [
+            ...current,
+            `acquire:cached:${input.generation}`,
+          ]);
+          return { ...latest, fresh: false };
+        }
+        const reservation: SupervisorIngressReservation = {
+          assignments: {},
+          privateAssignments: [],
+          hostListeners: [],
+          generation: input.generation,
+          fresh: true,
+        };
+        latest = reservation;
+        openedGeneration = undefined;
+        yield* Ref.update(timeline, (current) => [...current, `acquire:${input.generation}`]);
+        return reservation;
+      }),
+    open: (input, reservation) =>
+      Effect.gen(function* () {
+        if (openedGeneration === reservation.generation) {
+          yield* Ref.update(timeline, (current) => [
+            ...current,
+            `open:cached:${reservation.generation}`,
+          ]);
+          return;
+        }
+        yield* Ref.update(timeline, (current) => [...current, `open:${input.generation}`]);
+        if (failOpen)
+          return yield* new GatewayActivationError({ message: "injected ingress open failure" });
+        openedGeneration = reservation.generation;
+      }),
+    close: Effect.gen(function* () {
+      yield* Ref.update(timeline, (current) => [...current, "close"]);
+      latest = undefined;
+      openedGeneration = undefined;
+    }),
+  };
+};
+
+const makeFixture = (
+  fixtureOptions: {
+    readonly ingress?: SupervisorIngress;
+    readonly timeline?: Ref.Ref<ReadonlyArray<string>>;
+  } = {},
+) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-supervisor-" });
@@ -50,6 +110,11 @@ const makeFixture = () =>
       observe: () => Ref.get(resources),
       start: (key, workload: PlannedWorkload) =>
         Effect.gen(function* () {
+          if (fixtureOptions.timeline !== undefined)
+            yield* Ref.update(fixtureOptions.timeline, (current) => [
+              ...current,
+              `start:${workload.id}`,
+            ]);
           yield* Ref.update(calls, (current) => [...current, `start:${workload.id}`]);
           const ready = { ...key, state: "ready" as const };
           yield* Ref.update(resources, (current) => [
@@ -59,9 +124,16 @@ const makeFixture = () =>
           return ready;
         }),
       stop: (key) =>
-        Ref.update(resources, (current) =>
-          current.filter((entry) => entry.workloadId !== key.workloadId),
-        ),
+        Effect.gen(function* () {
+          if (fixtureOptions.timeline !== undefined)
+            yield* Ref.update(fixtureOptions.timeline, (current) => [
+              ...current,
+              `stop:${key.workloadId}`,
+            ]);
+          yield* Ref.update(resources, (current) =>
+            current.filter((entry) => entry.workloadId !== key.workloadId),
+          );
+        }),
       remove: (key) =>
         Ref.update(resources, (current) =>
           current.filter((entry) => entry.workloadId !== key.workloadId),
@@ -70,6 +142,11 @@ const makeFixture = () =>
         Effect.gen(function* () {
           if (destroy && (yield* Ref.get(failDestroy)))
             return yield* new RuntimeDriverError({ message: "destroy failed" });
+          if (fixtureOptions.timeline !== undefined)
+            yield* Ref.update(fixtureOptions.timeline, (current) => [
+              ...current,
+              `cleanup:${destroy ? "destroy" : "stop"}`,
+            ]);
           yield* Ref.update(calls, (current) => [
             ...current,
             `cleanup:${destroy ? "destroy" : "stop"}`,
@@ -89,6 +166,7 @@ const makeFixture = () =>
       driver,
       preflight: () => Effect.succeed({}),
       activate: () => Effect.succeed({ host: "127.0.0.1", port: 9999 }),
+      ...(fixtureOptions.ingress === undefined ? {} : { ingress: fixtureOptions.ingress }),
       logStore: {
         path: "memory://logs",
         append: () => Effect.succeed(entry),
@@ -259,6 +337,86 @@ describe("Supervisor composition", () => {
         expect(status.desiredLifecycle).toBe("running");
         expect(status.lifecycle).toBe("running");
         expect(yield* Ref.get(fixture.calls)).toContain("recover");
+      }),
+    ),
+  );
+
+  it.live("acquires ingress before eager workloads and opens it after readiness", () =>
+    run(
+      Effect.gen(function* () {
+        const timeline = yield* Ref.make<ReadonlyArray<string>>([]);
+        const fixture = yield* makeFixture({
+          timeline,
+          ingress: makeMockIngress(timeline),
+        });
+        yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
+        const events = yield* Ref.get(timeline);
+        expect(events.indexOf("acquire:1")).toBeGreaterThanOrEqual(0);
+        expect(events.indexOf("start:database:database")).toBeGreaterThan(0);
+        expect(events.indexOf("open:1")).toBeGreaterThan(events.indexOf("start:rest:rest"));
+      }),
+    ),
+  );
+
+  it.live("keeps same-generation ingress identity on repeated start", () =>
+    run(
+      Effect.gen(function* () {
+        const timeline = yield* Ref.make<ReadonlyArray<string>>([]);
+        const fixture = yield* makeFixture({
+          timeline,
+          ingress: makeMockIngress(timeline),
+        });
+        yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
+        yield* fixture.supervisor.start();
+        const events = yield* Ref.get(timeline);
+        expect(events.filter((event) => event === "acquire:1")).toHaveLength(1);
+        expect(events).toContain("acquire:cached:1");
+        expect(events).toContain("open:cached:1");
+      }),
+    ),
+  );
+
+  it.live("closes ingress before cleanup and reopens it for the next generation", () =>
+    run(
+      Effect.gen(function* () {
+        const timeline = yield* Ref.make<ReadonlyArray<string>>([]);
+        const fixture = yield* makeFixture({
+          timeline,
+          ingress: makeMockIngress(timeline),
+        });
+        yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
+        yield* fixture.supervisor.restart();
+        const events = yield* Ref.get(timeline);
+        const closeIndex = events.indexOf("close");
+        const cleanupIndex = events.findIndex(
+          (event, index) => index > closeIndex && event === "cleanup:stop",
+        );
+        expect(closeIndex).toBeGreaterThanOrEqual(0);
+        expect(closeIndex).toBeLessThan(cleanupIndex);
+        expect(events).toContain("acquire:3");
+        expect(events).toContain("open:3");
+      }),
+    ),
+  );
+
+  it.live("closes a fresh ingress reservation when opening fails", () =>
+    run(
+      Effect.gen(function* () {
+        const timeline = yield* Ref.make<ReadonlyArray<string>>([]);
+        const fixture = yield* makeFixture({
+          timeline,
+          ingress: makeMockIngress(timeline, true),
+        });
+        const failed = yield* fixture.supervisor
+          .start({ config: { capabilities: { rest: {} } } })
+          .pipe(Effect.exit);
+        expect(errorOf(failed)).toBeInstanceOf(GatewayActivationError);
+        const events = yield* Ref.get(timeline);
+        expect(events).toEqual(
+          expect.arrayContaining(["acquire:1", "start:database:database", "open:1", "close"]),
+        );
+        expect((yield* fixture.store.read(fixture.id))?.desiredLifecycle).toBe("running");
+        expect((yield* fixture.supervisor.status).lifecycle).toBe("stopped");
       }),
     ),
   );

@@ -311,6 +311,44 @@ describe("sticky port coordination", () => {
     ),
   );
 
+  it.live("materializes ports for a newly accepted running generation", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-port-running-initial-",
+        });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const identity = makeIdentity(root, "running-initial");
+        const stackId = yield* deriveStackId(identity);
+        yield* store.write(stackId, {
+          ...baseState(stackId, identity, "running"),
+          desiredGeneration: 5,
+          ports: [],
+          privatePorts: [],
+        });
+        const registry = yield* makePortRegistry({ stateRoot: root, store });
+        const coordinator = makePortCoordinator(registry, store, {
+          bindHost: bindTestNative,
+        });
+        const result = yield* coordinator.planAndReserve(
+          stackId,
+          {
+            ...disabledIntents(),
+            api: { enabled: true, address: "127.0.0.1", port: 55440 },
+          },
+          {
+            lifecycle: "running",
+            expectedGeneration: 5,
+            nextGeneration: 5,
+          },
+        );
+        expect(result.assignments.api?.port).toBe(55440);
+        expect((yield* store.read(stackId))?.desiredLifecycle).toBe("running");
+      }),
+    ),
+  );
+
   it.live("allows exact assignments to coexist while stopped but rejects live conflicts", () =>
     withPlatform(
       Effect.gen(function* () {
