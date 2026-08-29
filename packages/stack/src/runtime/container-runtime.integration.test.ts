@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option } from "effect";
 import { NodeServices } from "@effect/platform-node";
-import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
+import type { ExecutionPlan, PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { ContainerArtifact } from "../model/CapabilityModule.ts";
 import { StackIdSchema } from "../public/StackId.ts";
 import {
@@ -50,6 +50,38 @@ const workload = (selected: PlannedWorkload["selected"] = containerArtifact): Pl
   },
   selected,
   specHash: key.specHash,
+});
+
+const recoveryPlan = (workloads: ReadonlyArray<PlannedWorkload>): ExecutionPlan => ({
+  runtime: { kind: "container", engine: "docker" },
+  activation: {
+    database: "eager",
+    rest: "eager",
+    auth: "eager",
+    realtime: "eager",
+    storage: "eager",
+    functions: "eager",
+    studio: "eager",
+    mail: "eager",
+    analytics: "eager",
+    pooler: "eager",
+  },
+  startOrder: ["database"],
+  stopOrder: ["database"],
+  dependencies: {
+    database: [],
+    rest: [],
+    auth: [],
+    realtime: [],
+    storage: [],
+    functions: [],
+    studio: [],
+    mail: [],
+    analytics: [],
+    pooler: [],
+  },
+  routes: [],
+  workloads,
 });
 
 const commandResult = (value: unknown): ContainerCommandResult => ({
@@ -681,6 +713,112 @@ describe("container runtime", () => {
       expect(removeIndex).toBeGreaterThan(stopIndex);
       expect(createIndex).toBeGreaterThan(removeIndex);
     }),
+  );
+
+  it.live("runs database bootstrap before reporting an adopted running container ready", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [
+          {
+            id: "adopted-database",
+            name: "adopted-database",
+            kind: "workload",
+            state: "running",
+            labels: {
+              stackId: key.stackId,
+              ownerSessionId: "previous-owner",
+              desiredGeneration: key.desiredGeneration,
+              workloadId: key.workloadId,
+              specHash: key.specHash,
+              role: "workload",
+            },
+          },
+        ],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const order: string[] = [];
+      const runtime = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "new-owner",
+        bootstrapDatabase: () => Effect.sync(() => order.push("bootstrap")),
+      });
+      const databaseWorkload = { ...workload(), bootstrap: "database" as const };
+      const adopted = yield* runtime.recover({
+        stackId: key.stackId,
+        desiredGeneration: key.desiredGeneration,
+        desiredLifecycle: "running",
+        plan: recoveryPlan([databaseWorkload]),
+      });
+      expect(order).toEqual(["bootstrap"]);
+      expect(adopted).toEqual([{ ...key, state: "ready" }]);
+      expect(state.calls.some((call) => call.startsWith("stop:"))).toBe(false);
+    }),
+  );
+
+  it.live(
+    "stops but does not remove an adopted database after bootstrap failure, then retries",
+    () =>
+      Effect.gen(function* () {
+        const state: FakeContainerState = {
+          resources: [
+            {
+              id: "adopted-database",
+              name: "adopted-database",
+              kind: "workload",
+              state: "running",
+              labels: {
+                stackId: key.stackId,
+                ownerSessionId: "previous-owner",
+                desiredGeneration: key.desiredGeneration,
+                workloadId: key.workloadId,
+                specHash: key.specHash,
+                role: "workload",
+              },
+            },
+          ],
+          imagePresent: true,
+          calls: [],
+          createdSpecs: [],
+          nextId: 1,
+        };
+        const bootstrapError = new RuntimeDriverError({
+          message: "recovered database bootstrap failed",
+          stackId: key.stackId,
+          workloadId: key.workloadId,
+        });
+        let attempts = 0;
+        const runtime = yield* makeContainerRuntime({
+          engine: fakeContainerEngine(state),
+          ownerSessionId: "new-owner",
+          bootstrapDatabase: () =>
+            Effect.gen(function* () {
+              attempts += 1;
+              if (attempts === 1) return yield* Effect.fail(bootstrapError);
+            }),
+        });
+        const databaseWorkload = { ...workload(), bootstrap: "database" as const };
+        const failed = yield* runtime
+          .recover({
+            stackId: key.stackId,
+            desiredGeneration: key.desiredGeneration,
+            desiredLifecycle: "running",
+            plan: recoveryPlan([databaseWorkload]),
+          })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+        expect(state.resources.find((resource) => resource.id === "adopted-database")?.state).toBe(
+          "stopped",
+        );
+        expect(state.calls.some((call) => call.startsWith("stop:"))).toBe(true);
+        expect(state.calls.some((call) => call.startsWith("remove:"))).toBe(false);
+        const retry = yield* runtime.start(key, databaseWorkload);
+        expect(retry.state).toBe("ready");
+        expect(attempts).toBe(2);
+        expect(state.calls.some((call) => call.startsWith("remove:"))).toBe(false);
+      }),
   );
 
   it.live("leaves foreign and sanitized-name collisions untouched", () =>

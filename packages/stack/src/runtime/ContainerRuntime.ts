@@ -595,6 +595,9 @@ export const makeContainerRuntime = (
           const desiredHashes = new Map(
             request.plan.workloads.map((workload) => [workload.id, workload.specHash]),
           );
+          const desiredWorkloads = new Map(
+            request.plan.workloads.map((workload) => [workload.id, workload]),
+          );
           const adopted: Array<ObservedWorkload> = [];
           const adoptedIdentities = new Set<string>();
           let retainedNetworkId: string | undefined;
@@ -621,6 +624,13 @@ export const makeContainerRuntime = (
                 ),
               );
             });
+          const stopAdopted = (
+            entry: ContainerResource & { readonly labels: ContainerWorkloadLabels },
+          ) =>
+            withEngine(
+              { stackId: request.stackId, workloadId: entry.labels.workloadId },
+              options.engine.stopContainer(entry.id),
+            );
 
           // Recovery never starts or creates anything. Workload identities are evaluated before
           // retaining the network so stale resources cannot leak into the new owner.
@@ -640,6 +650,32 @@ export const makeContainerRuntime = (
               continue;
             }
             adoptedIdentities.add(identity);
+            const desiredWorkload = desiredWorkloads.get(entry.labels.workloadId);
+            if (entry.state === "running" && desiredWorkload?.bootstrap === "database") {
+              const key: RuntimeWorkloadKey = {
+                stackId: entry.labels.stackId,
+                desiredGeneration: entry.labels.desiredGeneration,
+                workloadId: entry.labels.workloadId,
+                specHash: entry.labels.specHash,
+              };
+              const bootstrap =
+                options.bootstrapDatabase === undefined
+                  ? Effect.fail(
+                      toDriverError(
+                        key,
+                        new Error("Database bootstrap resolver is not configured"),
+                      ),
+                    )
+                  : options.bootstrapDatabase(key, desiredWorkload, entry);
+              const bootstrapExit = yield* Effect.exit(bootstrap);
+              if (Exit.isFailure(bootstrapExit)) {
+                recoveryCause = Cause.combine(recoveryCause, bootstrapExit.cause);
+                const stopExit = yield* Effect.exit(stopAdopted(entry));
+                if (Exit.isFailure(stopExit))
+                  recoveryCause = Cause.combine(recoveryCause, stopExit.cause);
+                continue;
+              }
+            }
             adopted.push({
               stackId: entry.labels.stackId,
               desiredGeneration: entry.labels.desiredGeneration,
