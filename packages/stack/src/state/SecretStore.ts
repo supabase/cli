@@ -1,4 +1,4 @@
-import { Crypto, Effect, FileSystem, Path, Redacted, Schema } from "effect";
+import { Clock, Crypto, Effect, FileSystem, Path, Redacted, Schema } from "effect";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import { createHmac, createPrivateKey, createSign } from "node:crypto";
 import {
@@ -60,7 +60,7 @@ const validSlot = (slot: string): boolean => /^[A-Za-z0-9_.:/-]+$/.test(slot);
 const AUTH_JWT_SECRET_SLOT = "secret:auth.settings.jwt_secret";
 const JWT_ISSUER = "supabase-demo";
 const JWT_HMAC_EXPIRY = 1_983_812_996;
-const JWT_ASYMMETRIC_EXPIRY = 2_103_000_000;
+const JWT_ASYMMETRIC_EXPIRY_SECONDS = 60 * 60 * 24 * 365 * 10;
 const BASE64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 const JwtHeaderSchema = Schema.Struct({
@@ -222,8 +222,21 @@ const readSigningJwk = (
     const relative = path.relative(projectRoot, candidate);
     if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
       return yield* invalidSigningMaterial();
+    const canonicalRoot = yield* fs
+      .realPath(projectRoot)
+      .pipe(Effect.mapError(() => invalidSigningMaterial()));
+    const canonicalCandidate = yield* fs
+      .realPath(candidate)
+      .pipe(Effect.mapError(() => invalidSigningMaterial()));
+    const canonicalRelative = path.relative(canonicalRoot, canonicalCandidate);
+    if (
+      canonicalRelative === ".." ||
+      canonicalRelative.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(canonicalRelative)
+    )
+      return yield* invalidSigningMaterial();
     const raw = yield* fs
-      .readFileString(candidate)
+      .readFileString(canonicalCandidate)
       .pipe(Effect.mapError(() => invalidSigningMaterial()));
     const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(JwkFileSchema))(raw).pipe(
       Effect.mapError(() => invalidSigningMaterial()),
@@ -241,7 +254,7 @@ const signWithJwk = (
   payload: string,
 ): Effect.Effect<string, InvalidJwtSigningMaterialError> =>
   Effect.gen(function* () {
-    const header =
+    const header: JwtHeader =
       jwk.kid === undefined
         ? { alg: jwk.alg, typ: "JWT" }
         : { alg: jwk.alg, kid: jwk.kid, typ: "JWT" };
@@ -267,7 +280,7 @@ const generateJwtToken = (
   generator: Extract<SecretGenerator, { readonly kind: "jwt-token" }>,
   jwtSecret: string | undefined,
 ): Effect.Effect<string, InvalidJwtSigningMaterialError, FileSystem.FileSystem | Path.Path> => {
-  const payloadFor = (expiry: number) => ({
+  const payloadFor = (expiry: number): JwtPayload => ({
     iss: JWT_ISSUER,
     role: generator.role,
     exp: expiry,
@@ -295,9 +308,15 @@ const generateJwtToken = (
   }
   return readSigningJwk(generator.signing).pipe(
     Effect.flatMap((jwk) =>
-      encodeJwtPayload(payloadFor(JWT_ASYMMETRIC_EXPIRY)).pipe(
-        Effect.mapError(() => invalidSigningMaterial()),
-        Effect.flatMap((payload) => signWithJwk(jwk, payload)),
+      Clock.currentTimeMillis.pipe(
+        Effect.flatMap((nowMillis) =>
+          encodeJwtPayload(
+            payloadFor(Math.floor(nowMillis / 1000) + JWT_ASYMMETRIC_EXPIRY_SECONDS),
+          ).pipe(
+            Effect.mapError(() => invalidSigningMaterial()),
+            Effect.flatMap((payload) => signWithJwk(jwk, payload)),
+          ),
+        ),
       ),
     ),
   );

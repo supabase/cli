@@ -1,6 +1,7 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Option, Path, Redacted } from "effect";
+import * as TestClock from "effect/testing/TestClock";
 import { createHmac, generateKeyPairSync, createVerify } from "node:crypto";
 import {
   InvalidJwtSigningMaterialError,
@@ -172,6 +173,40 @@ describe("managed and pass-through secrets", () => {
     }).pipe(Effect.provide(layer)),
   );
 
+  it.effect("derives asymmetric JWT expiry from the Effect Clock", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1_700_000_123_456);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-credentials-" });
+      const { privateKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+      const privateJwk = { ...privateKey.export({ format: "jwk" }), alg: "ES256" };
+      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json
+      yield* fs.writeFileString(path.join(root, "keys.json"), JSON.stringify([privateJwk]));
+      const compiled = yield* compileStack({
+        projectRoot: root,
+        runtime: { kind: "native" },
+        config: { security: { jwt: { signing: { kind: "jwks-file", path: "keys.json" } } } },
+      });
+      const resolved = yield* resolveSecrets(
+        { declarations: compiled.secrets },
+        undefined,
+        "stopped",
+      );
+      const token = resolved.persisted["secret:auth.settings.anon_key"]?.value;
+      expect(token).toBeDefined();
+      const payloadText = Buffer.from(token!.split(".")[1]!, "base64url").toString();
+      // oxlint-disable-next-line effecttsgo/prefer-schema-over-json
+      const payload = JSON.parse(payloadText);
+      expect(payload).toEqual({
+        iss: "supabase-demo",
+        role: "anon",
+        exp: 1_700_000_123 + 60 * 60 * 24 * 365 * 10,
+      });
+      expect(payload).not.toHaveProperty("iat");
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.live("fails closed for public-only or escaping JWKS material", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -209,6 +244,27 @@ describe("managed and pass-through secrets", () => {
         "stopped",
       ).pipe(Effect.exit);
       expect(errorOf(escapingExit)).toBeInstanceOf(InvalidJwtSigningMaterialError);
+
+      const outside = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-stack-outside-" });
+      yield* fs.writeFileString(
+        path.join(outside, "private.json"),
+        // oxlint-disable-next-line effecttsgo/prefer-schema-over-json
+        JSON.stringify([{ kty: "EC", alg: "ES256", crv: "P-256", d: "d", x: "x", y: "y" }]),
+      );
+      yield* fs.symlink(path.join(outside, "private.json"), path.join(root, "linked.json"));
+      const symlinkEscape = yield* compileStack({
+        projectRoot: root,
+        runtime: { kind: "native" },
+        config: {
+          security: { jwt: { signing: { kind: "jwks-file", path: "linked.json" } } },
+        },
+      });
+      const symlinkExit = yield* resolveSecrets(
+        { declarations: symlinkEscape.secrets },
+        undefined,
+        "stopped",
+      ).pipe(Effect.exit);
+      expect(errorOf(symlinkExit)).toBeInstanceOf(InvalidJwtSigningMaterialError);
     }).pipe(Effect.provide(layer)),
   );
 
