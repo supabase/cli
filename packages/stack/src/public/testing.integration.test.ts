@@ -41,7 +41,14 @@ const status = (
   capabilities: CAPABILITY_NAMES.map((name) => ({
     name,
     activation: name === "functions" ? "lazy" : "eager",
-    state: lifecycle === "running" ? (name === "functions" ? functionsState : "ready") : "stopped",
+    state:
+      lifecycle === "running"
+        ? name === "pooler"
+          ? "disabled"
+          : name === "functions"
+            ? functionsState
+            : "ready"
+        : "stopped",
   })),
 });
 
@@ -98,7 +105,7 @@ const fakeStack = (
 });
 
 describe("test stack resource", () => {
-  it("starts, waits for readiness, and destroys only its owned identity", async () => {
+  it("starts with default-disabled pooler readiness and destroys only its owned identity", async () => {
     const events: Array<string> = [];
     const removed: Array<string> = [];
     const operations: TestStackOperations = {

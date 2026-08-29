@@ -576,3 +576,11 @@ Implementation continues after recording a ruling; this file is not a question q
 - Focused verification: stack facade/model/compiler 3 files/40 tests; CLI Functions/start/restart/update
   5 files/9 tests plus legacy/config units 2 files/9 tests; both workspace types; lint/format/diff checks
   passed.
+
+#### Fix round 3/5 evidence — 2026-08-29
+
+- Test-resource readiness now treats the public `disabled` capability state as terminal-ready even for
+  default-disabled capabilities such as pooler. The ordinary isolated-stack fixture models pooler as
+  disabled and resolves successfully; explicit disabled Functions/API coverage remains intact.
+- Focused testing integration (5 tests), stack types, Effect/generic lint, formatting, and diff checks
+  passed.

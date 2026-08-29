@@ -57,6 +57,7 @@ const waitForReadiness = async (
     status.capabilities.every(
       (capability) =>
         disabledCapabilities.has(capability.name) ||
+        capability.state === "disabled" ||
         capability.state === "ready" ||
         capability.state === "dormant",
     ) &&
