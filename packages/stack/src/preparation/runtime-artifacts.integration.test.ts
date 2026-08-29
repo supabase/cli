@@ -55,6 +55,7 @@ const containerEngine = (present: boolean, calls: string[]): ContainerEngine => 
   createVolume: (_spec: ContainerVolumeSpec) => Effect.die("unused"),
   removeVolume: () => Effect.void,
   createContainer: (_spec: ContainerContainerSpec) => Effect.die("unused"),
+  copyToContainer: () => Effect.die("unused"),
   startContainer: () => Effect.void,
   stopContainer: () => Effect.void,
   removeContainer: () => Effect.void,

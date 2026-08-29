@@ -140,6 +140,7 @@ const makeEngine = (state: EngineState): ContainerEngine => {
         state.resources.push(resource);
         return resource;
       }),
+    copyToContainer: () => Effect.void,
     startContainer: (id) =>
       Effect.sync(() => {
         state.calls.push(`start:${id}`);

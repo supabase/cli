@@ -6,7 +6,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./effect": "./src/effect.ts",
-    "./testing": "./src/testing.ts"
+    "./testing": "./src/testing.ts",
+    "./functions/serve-main-bundler": "./src/functions/serve-main-bundler.ts",
+    "./functions/serve-main-deps": "./src/functions/serve-main-deps.ts"
   },
   "scripts": {
     "test": "pnpm run test:unit && pnpm run test:integration",
@@ -18,12 +20,14 @@
   },
   "dependencies": {
     "@effect/platform-node": "catalog:",
-    "effect": "catalog:"
+    "effect": "catalog:",
+    "jose": "^6.2.9"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@tsconfig/bun": "catalog:",
     "@types/bun": "catalog:",
+    "esbuild": "^0.28.2",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

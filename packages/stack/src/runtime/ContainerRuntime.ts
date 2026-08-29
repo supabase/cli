@@ -45,6 +45,8 @@ export interface ContainerWorkloadResolution {
   /** Private host-loopback publications used by the in-process gateway. */
   readonly publications?: ReadonlyArray<ContainerPortPublicationInput>;
   readonly command?: ReadonlyArray<string>;
+  /** Owner-created bootstrap copied into a newly-created container before start. */
+  readonly bootstrap?: Readonly<{ readonly source: string; readonly destination: string }>;
   readonly waitForReadiness?: (
     key: RuntimeWorkloadKey,
     workload: PlannedWorkload,
@@ -389,6 +391,29 @@ export const makeContainerRuntime = (
             } satisfies ContainerContainerSpec),
           );
           created = true;
+          if (resolution.bootstrap !== undefined) {
+            const copied = yield* Effect.exit(
+              withEngine(
+                key,
+                options.engine.copyToContainer(
+                  container.id,
+                  resolution.bootstrap.source,
+                  resolution.bootstrap.destination,
+                ),
+              ),
+            );
+            if (Exit.isFailure(copied)) {
+              const removed = yield* Effect.exit(
+                withEngine(key, options.engine.removeContainer(container.id)),
+              );
+              const cleanupCause = Exit.isFailure(removed) ? removed.cause : Cause.empty;
+              return yield* Effect.failCause(
+                cleanupCause.reasons.length === 0
+                  ? copied.cause
+                  : Cause.combine(copied.cause, cleanupCause),
+              );
+            }
+          }
           yield* withEngine(key, options.engine.startContainer(container.id));
           startedByUs = true;
         }

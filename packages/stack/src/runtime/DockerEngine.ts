@@ -175,6 +175,8 @@ export const serializeDockerCommand = (command: ContainerCommand): ContainerProc
         ],
       };
     }
+    case "copy-container":
+      return { args: ["cp", command.source, `${command.id}:${command.destination}`] };
     case "start-container":
       return { args: ["start", command.id] };
     case "stop-container":

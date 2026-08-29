@@ -65,6 +65,7 @@ interface FakeContainerState {
   createdSpecs: Array<ContainerContainerSpec>;
   nextId: number;
   inspectImageFailure?: ContainerCommandError;
+  copyFailure?: ContainerCommandError;
 }
 
 const fakeContainerEngine = (state: FakeContainerState): ContainerEngine => {
@@ -141,6 +142,12 @@ const fakeContainerEngine = (state: FakeContainerState): ContainerEngine => {
         state.resources.push(resource);
         return resource;
       }),
+    copyToContainer: (resourceId: string, source: string, destination: string) =>
+      state.copyFailure !== undefined
+        ? Effect.fail(state.copyFailure)
+        : Effect.sync(() => {
+            state.calls.push(`copy:${resourceId}:${source}:${destination}`);
+          }),
     startContainer: (resourceId: string) =>
       Effect.sync(() => {
         state.calls.push(`start:${resourceId}`);
@@ -498,6 +505,22 @@ describe("container runtime", () => {
       const podman = serializePodmanCommand({ operation: "inspect-networks", stackId });
       expect(podman.args.join(" ")).toContain("{{index .Labels");
       expect(podman.args.join(" ")).not.toContain("host-gateway");
+      expect(
+        serializeDockerCommand({
+          operation: "copy-container",
+          id: "container-id",
+          source: "/tmp/functions-main.ts",
+          destination: "/root",
+        }).args,
+      ).toEqual(["cp", "/tmp/functions-main.ts", "container-id:/root"]);
+      expect(
+        serializePodmanCommand({
+          operation: "copy-container",
+          id: "container-id",
+          source: "/tmp/functions-main.ts",
+          destination: "/root",
+        }).args,
+      ).toEqual(["cp", "/tmp/functions-main.ts", "container-id:/root"]);
       const unsupported = yield* makePodmanEngine({
         runner: makeControlledCommandRunner({ run: () => Effect.succeed(commandResult("ok")) }),
         platform: { os: "darwin" },
@@ -804,6 +827,62 @@ describe("container runtime", () => {
         expect(state.calls.some((call) => call.startsWith("stop:"))).toBe(true);
         expect(state.calls.some((call) => call.startsWith("remove:"))).toBe(true);
       }),
+  );
+
+  it.live(
+    "copies a new functions bootstrap before starting and never copies an adopted container",
+    () =>
+      Effect.gen(function* () {
+        const state: FakeContainerState = {
+          resources: [],
+          imagePresent: true,
+          calls: [],
+          createdSpecs: [],
+          nextId: 1,
+        };
+        const runtime = yield* makeContainerRuntime({
+          engine: fakeContainerEngine(state),
+          ownerSessionId: "owner-session",
+          resolveWorkload: () =>
+            Effect.succeed({ bootstrap: { source: "/tmp/main.ts", destination: "/root" } }),
+        });
+        yield* runtime.start(key, workload());
+        const copyIndex = state.calls.findIndex((call) => call.startsWith("copy:"));
+        const startIndex = state.calls.findIndex((call) => call.startsWith("start:"));
+        expect(copyIndex).toBeGreaterThanOrEqual(0);
+        expect(startIndex).toBeGreaterThan(copyIndex);
+        state.calls.length = 0;
+        yield* runtime.start(key, workload());
+        expect(state.calls.some((call) => call.startsWith("copy:"))).toBe(false);
+      }),
+  );
+
+  it.live("removes a newly-created container when bootstrap copy fails", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+        copyFailure: new ContainerCommandError({
+          operation: "copy-container",
+          message: "bootstrap copy failed",
+        }),
+      };
+      const runtime = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "owner-session",
+        resolveWorkload: () =>
+          Effect.succeed({ bootstrap: { source: "/tmp/main.ts", destination: "/root" } }),
+      });
+      const result = yield* runtime.start(key, workload()).pipe(Effect.exit);
+      expect(Exit.isFailure(result)).toBe(true);
+      expect(state.calls.some((call) => call.startsWith("copy:"))).toBe(false);
+      expect(state.calls.some((call) => call.startsWith("remove:"))).toBe(true);
+      expect(state.calls.some((call) => call.startsWith("start:"))).toBe(false);
+      expect(state.resources.some((resource) => resource.kind === "workload")).toBe(false);
+    }),
   );
 
   it.live("serializes concurrent starts and does not mutate when image inspection fails", () =>

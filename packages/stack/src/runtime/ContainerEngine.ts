@@ -118,6 +118,12 @@ export type ContainerCommand =
   | { readonly operation: "create-volume"; readonly spec: ContainerVolumeSpec }
   | { readonly operation: "remove-volume"; readonly id: string }
   | { readonly operation: "create-container"; readonly spec: ContainerContainerSpec }
+  | {
+      readonly operation: "copy-container";
+      readonly id: string;
+      readonly source: string;
+      readonly destination: string;
+    }
   | { readonly operation: "start-container"; readonly id: string }
   | { readonly operation: "stop-container"; readonly id: string }
   | { readonly operation: "remove-container"; readonly id: string };
@@ -313,6 +319,12 @@ export interface ContainerEngine {
   readonly createContainer: (
     spec: ContainerContainerSpec,
   ) => Effect.Effect<ContainerResource, ContainerEngineFailure>;
+  /** Copies an owner-created bootstrap path into a newly-created container. */
+  readonly copyToContainer: (
+    id: string,
+    source: string,
+    destination: string,
+  ) => Effect.Effect<void, ContainerEngineFailure>;
   readonly startContainer: (id: string) => Effect.Effect<void, ContainerEngineFailure>;
   readonly stopContainer: (id: string) => Effect.Effect<void, ContainerEngineFailure>;
   readonly removeContainer: (id: string) => Effect.Effect<void, ContainerEngineFailure>;
@@ -414,6 +426,8 @@ export const makeContainerEngineCore = (options: ContainerEngineOptions): Contai
             ),
           );
     },
+    copyToContainer: (id, source, destination) =>
+      noResult("copy-container", { operation: "copy-container", id, source, destination }),
     startContainer: (id) => noResult("start-container", { operation: "start-container", id }),
     stopContainer: (id) => noResult("stop-container", { operation: "stop-container", id }),
     removeContainer: (id) => noResult("remove-container", { operation: "remove-container", id }),

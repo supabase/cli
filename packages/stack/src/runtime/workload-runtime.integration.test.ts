@@ -8,6 +8,7 @@ import { CAPABILITY_NAMES } from "../public/Capability.ts";
 import { compileStack } from "../model/Compiler.ts";
 import {
   containerResolutionFor,
+  FUNCTIONS_BOOTSTRAP_CONTAINER_PATH,
   FUNCTIONS_CONTAINER_ROOT,
   privateBindingIntentsFor,
   resolveContainerResolutionFor,
@@ -354,7 +355,7 @@ describe("workload runtime catalog", () => {
           hostRoute: { host: "host.docker.internal", gateway: "host-gateway" },
         });
         expect(resolution?.command.join(" ")).toContain(
-          `--main-service=${FUNCTIONS_CONTAINER_ROOT}`,
+          `--main-service=${FUNCTIONS_BOOTSTRAP_CONTAINER_PATH}`,
         );
         expect(resolution?.mounts).toEqual([
           {
@@ -375,6 +376,22 @@ describe("workload runtime catalog", () => {
           host: "host.docker.internal",
           gateway: "host-gateway",
         });
+        const bootstrapResolution = containerResolutionFor(configured, functions, {
+          functions: { bootstrapPath: "/tmp/functions/4/main.ts" },
+        });
+        expect(bootstrapResolution?.bootstrap).toEqual({
+          source: "/tmp/functions/4/main.ts",
+          destination: "/root",
+        });
+        expect(
+          runtimeSpecFor(functions)?.nativeProcess(
+            "/tmp/edge-artifact",
+            configured,
+            functions,
+            9000,
+            { functions: { bootstrapPath: "/tmp/functions/4/main.ts" } },
+          ).args,
+        ).toContain("--main-service=/tmp/functions/4");
         const studio = runtimeSpecFor(planned("studio:studio"));
         expect(
           studio?.env(configured, planned("studio:studio"), 3000, "container", {

@@ -42,6 +42,11 @@ export interface WorkloadRuntimeInputs {
     readonly gcpJwtPath?: string;
     readonly vectorConfigPath?: string;
   }>;
+  /** Stack-owned Edge Runtime bootstrap source and its private container target. */
+  readonly functions?: Readonly<{
+    readonly bootstrapPath?: string;
+    readonly bootstrapContainerPath?: string;
+  }>;
   /** Host route used by containers to reach StackGateway. */
   readonly hostRoute?: ContainerHostRoute;
 }
@@ -97,6 +102,7 @@ export interface WorkloadRuntimeSpec {
     state: PersistedStackState,
     workload: PlannedWorkload,
     port: number,
+    inputs?: WorkloadRuntimeInputs,
   ) => NativeProcessResolution;
 }
 
@@ -122,6 +128,7 @@ export interface ContainerWorkloadResolution {
     readonly containerPort: number;
   }>;
   readonly hostRoute?: ContainerHostRoute;
+  readonly bootstrap?: Readonly<{ readonly source: string; readonly destination: string }>;
 }
 
 /**
@@ -216,6 +223,7 @@ export const validateWorkloadRuntimeInputs = (
   });
 
 export const FUNCTIONS_CONTAINER_ROOT = "/__supabase_functions";
+export const FUNCTIONS_BOOTSTRAP_CONTAINER_PATH = "/root";
 const DATABASE_NETWORK_ALIAS = "supabase-database";
 
 const MAIL_NETWORK_ALIAS = "supabase-mail";
@@ -354,6 +362,31 @@ const edgeRuntimeJwtEnvironment = (
     SUPABASE_JWKS: inputs.auth?.jwks ?? '{"keys":[]}',
   });
 
+const functionsConfigEnvironment = (state: PersistedStackState): string => {
+  const settings = settingsFor(state, "functions");
+  const configured = isRecord(settings) && isRecord(settings.functions) ? settings.functions : {};
+  const result: Record<string, unknown> = {};
+  for (const [slug, value] of Object.entries(configured)) {
+    if (!isRecord(value)) continue;
+    const env = isRecord(value.env)
+      ? Object.fromEntries(
+          Object.entries(value.env).map(([key, entry]) => [key, settingValue(state, entry)]),
+        )
+      : {};
+    result[slug] = {
+      enabled: value.enabled ?? true,
+      verify_jwt: value.verify_jwt ?? true,
+      import_map: settingValue(state, value.import_map),
+      entrypoint: settingValue(state, value.entrypoint),
+      static_files: Array.isArray(value.static_files)
+        ? value.static_files.map((entry) => settingValue(state, entry))
+        : [],
+      env,
+    };
+  }
+  return JSON.stringify(result);
+};
+
 const common = (workload: PlannedWorkload, port: number): Record<string, string> => ({
   SUPABASE_STACK_WORKLOAD: workload.id,
   SUPABASE_STACK_PRIVATE_PORT: String(port),
@@ -395,6 +428,7 @@ const nativeProcessFor = (
   workload: PlannedWorkload,
   port: number,
   spec: WorkloadRuntimeSpecDefinition,
+  inputs: WorkloadRuntimeInputs = {},
 ): NativeProcessResolution => {
   const metadata: NativeWorkloadProcess | undefined = WORKLOAD_CATALOG[workload.id]?.nativeProcess;
   if (metadata !== undefined)
@@ -407,14 +441,27 @@ const nativeProcessFor = (
     };
   const executablePath = WORKLOAD_CATALOG[workload.id]?.executablePath;
   const resolvedPort = privatePortFor(state, workload.id, "primary") ?? port;
+  const args = spec
+    .args(state, workload, resolvedPort, "native")
+    .map((arg) =>
+      arg.startsWith("app/") || arg.startsWith("share/") ? artifactPath(artifactRoot, arg) : arg,
+    );
+  const nativeArgs =
+    workload.id === "functions:edge-runtime" && inputs.functions?.bootstrapPath !== undefined
+      ? (() => {
+          const bootstrapPath = inputs.functions?.bootstrapPath;
+          if (bootstrapPath === undefined) return args;
+          const bootstrapDirectory =
+            bootstrapPath.slice(0, bootstrapPath.lastIndexOf("/")) || bootstrapPath;
+          return args.map((arg) =>
+            arg.startsWith("--main-service=") ? `--main-service=${bootstrapDirectory}` : arg,
+          );
+        })()
+      : args;
   return {
     executable:
       executablePath === undefined ? artifactRoot : artifactPath(artifactRoot, executablePath),
-    args: spec
-      .args(state, workload, resolvedPort, "native")
-      .map((arg) =>
-        arg.startsWith("app/") || arg.startsWith("share/") ? artifactPath(artifactRoot, arg) : arg,
-      ),
+    args: nativeArgs,
     cwd: spec.cwd?.(state, workload) ?? state.identity.projectRoot,
   };
 };
@@ -917,13 +964,17 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       `--port=${port}`,
       `--policy=${valueAt(state, "functions", "edge_runtime.policy") || "per_worker"}`,
     ],
-    env: (state, workload, port, _runtime = "native", inputs = {}) => ({
+    env: (state, workload, port, runtime = "native", inputs = {}) => ({
       ...common(workload, port),
       ...capabilityEnv(state, "functions", "FUNCTIONS"),
       ...edgeRuntimeJwtEnvironment(state, inputs),
       EDGE_RUNTIME_PORT: String(port),
       FUNCTIONS_ROOT: functionsRoot(state),
       FUNCTIONS_CONTAINER_ROOT,
+      SUPABASE_INTERNAL_FUNCTIONS_ROOT:
+        runtime === "container" ? FUNCTIONS_CONTAINER_ROOT : functionsRoot(state),
+      SUPABASE_INTERNAL_FUNCTIONS_CONFIG: functionsConfigEnvironment(state),
+      SUPABASE_URL: apiGatewayUrl(state, runtime === "container" ? inputs : undefined),
       EDGE_RUNTIME_POLICY: valueAt(state, "functions", "edge_runtime.policy") || "per_worker",
       EDGE_RUNTIME_DENO_VERSION: valueAt(state, "functions", "edge_runtime.deno_version") || "2",
       INSPECTOR_MODE: valueAt(state, "functions", "inspector.mode"),
@@ -931,7 +982,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     }),
     containerArgs: (state, _workload, port) => [
       "start",
-      `--main-service=${FUNCTIONS_CONTAINER_ROOT}`,
+      `--main-service=${FUNCTIONS_BOOTSTRAP_CONTAINER_PATH}`,
       `--port=${port}`,
       `--policy=${valueAt(state, "functions", "edge_runtime.policy") || "per_worker"}`,
     ],
@@ -1190,8 +1241,8 @@ export const runtimeSpecFor = (workload: PlannedWorkload): WorkloadRuntimeSpec |
           runtime,
           aliasFor(workload),
         )),
-    nativeProcess: (artifactRoot, state, currentWorkload, port) =>
-      nativeProcessFor(artifactRoot, state, currentWorkload, port, spec),
+    nativeProcess: (artifactRoot, state, currentWorkload, port, inputs = {}) =>
+      nativeProcessFor(artifactRoot, state, currentWorkload, port, spec, inputs),
   };
 };
 
@@ -1222,6 +1273,15 @@ export const containerResolutionFor = (
             },
           ];
     }),
+    ...(workload.id === "functions:edge-runtime" && inputs.functions?.bootstrapPath !== undefined
+      ? {
+          bootstrap: {
+            source: inputs.functions.bootstrapPath,
+            destination:
+              inputs.functions.bootstrapContainerPath ?? FUNCTIONS_BOOTSTRAP_CONTAINER_PATH,
+          },
+        }
+      : {}),
     ...(inputs.hostRoute === undefined ? {} : { hostRoute: inputs.hostRoute }),
   };
 };
