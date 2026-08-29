@@ -2,8 +2,6 @@ import { Cause, Deferred, Effect, Exit, Fiber, Ref, Scope, Semaphore, Stream } f
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ExitCode } from "effect/unstable/process/ChildProcessSpawner";
 import type * as ChildProcessSpawnerService from "effect/unstable/process/ChildProcessSpawner";
-import type { DatabaseBootstrapOptions, DatabaseSession } from "../model/DatabaseBootstrap.ts";
-import { runDatabaseBootstrap } from "../model/DatabaseBootstrap.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { StackId } from "../public/StackId.ts";
 import type { LogStore } from "../supervisor/LogStore.ts";
@@ -47,16 +45,12 @@ export interface NativeRuntimeOptions {
     workload: NativeWorkload,
     process: NativeProcess,
   ) => Effect.Effect<void, RuntimeDriverError>;
-  /** A ready-database session is required for the database bootstrap marker. */
-  readonly resolveDatabaseSession?: (
+  /** Runs the one-shot initial database bootstrap after readiness. */
+  readonly bootstrapDatabase?: (
     key: RuntimeWorkloadKey,
     workload: NativeWorkload,
-    process: NativeProcess,
-  ) => Effect.Effect<DatabaseSession | undefined, RuntimeDriverError>;
-  readonly resolveDatabaseBootstrap?: (
-    key: RuntimeWorkloadKey,
-    workload: NativeWorkload,
-  ) => Effect.Effect<DatabaseBootstrapOptions, RuntimeDriverError>;
+    process?: NativeProcess,
+  ) => Effect.Effect<void, RuntimeDriverError>;
   readonly logStore?: LogStore;
 }
 
@@ -285,20 +279,11 @@ export const makeNativeRuntime = (
           if (resource.stopRequested)
             return yield* driverError(key, "Native workload was stopped while starting");
           if (workload.bootstrap === "database") {
-            if (options.resolveDatabaseSession === undefined)
-              return yield* driverError(
-                key,
-                "Database bootstrap session resolver is not configured",
-              );
-            if (options.resolveDatabaseBootstrap === undefined)
-              return yield* driverError(key, "Database bootstrap plan resolver is not configured");
-            const session = yield* options.resolveDatabaseSession(key, workload, process);
-            if (session === undefined)
-              return yield* driverError(key, "Database bootstrap session is unavailable");
-            const plan = yield* options.resolveDatabaseBootstrap(key, workload);
-            yield* runDatabaseBootstrap(session, plan).pipe(
-              Effect.mapError((error) => driverError(key, error.message, error)),
-            );
+            if (options.bootstrapDatabase === undefined)
+              return yield* driverError(key, "Database bootstrap resolver is not configured");
+            yield* options
+              .bootstrapDatabase(key, workload, process)
+              .pipe(Effect.mapError((error) => driverError(key, error.message, error)));
           }
           if (resource.stopRequested)
             return yield* driverError(key, "Native workload was stopped while starting");

@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Redacted, Semaphore } from "effect";
 import {
   DatabaseBootstrapError,
+  type DatabaseBootstrapSetting,
   type DatabaseBootstrapCredentials,
   type DatabaseSession,
   runDatabaseBootstrap,
@@ -23,6 +24,7 @@ const makeSession = (
     const operations: string[] = [];
     const successfulRevisions: string[] = [];
     const passwords: Array<[string, string]> = [];
+    const settings: Array<[string, string | number]> = [];
     const session: DatabaseSession = {
       execute: (statement) =>
         Effect.sync(() => {
@@ -69,6 +71,15 @@ const makeSession = (
                       new DatabaseBootstrapError({ message: "password rejected secret-password" }),
                     )
                   : Effect.sync(() => passwords.push([role, Redacted.value(password)])),
+              setDatabaseSetting: (setting: DatabaseBootstrapSetting) =>
+                Effect.sync(() => {
+                  settings.push([
+                    setting.name,
+                    setting.name === "app.settings.jwt_secret"
+                      ? Redacted.value(setting.value)
+                      : setting.value,
+                  ]);
+                }),
               query: () => Effect.succeed(applied.map((revision) => ({ revision }))),
             };
             yield* use(tx);
@@ -76,7 +87,7 @@ const makeSession = (
           }),
         ),
     };
-    return { session, applied, operations, passwords, successfulRevisions };
+    return { session, applied, operations, passwords, settings, successfulRevisions };
   });
 
 describe("database bootstrap", () => {
@@ -89,10 +100,12 @@ describe("database bootstrap", () => {
       yield* runDatabaseBootstrap(state.session, {
         revisions,
         credentials,
+        settings: { jwtSecret: Redacted.make("secret-jwt"), jwtExpiry: 3600 },
       });
       yield* runDatabaseBootstrap(state.session, {
         revisions,
         credentials,
+        settings: { jwtSecret: Redacted.make("secret-jwt"), jwtExpiry: 3600 },
       });
       expect(state.applied).toEqual(revisions.map(({ id }) => id));
       // Credential reconciliation is intentionally a separate idempotent
@@ -101,6 +114,12 @@ describe("database bootstrap", () => {
       expect(state.passwords).toEqual([
         ["postgres", "secret-password"],
         ["postgres", "secret-password"],
+      ]);
+      expect(state.settings).toEqual([
+        ["app.settings.jwt_secret", "secret-jwt"],
+        ["app.settings.jwt_exp", 3600],
+        ["app.settings.jwt_secret", "secret-jwt"],
+        ["app.settings.jwt_exp", 3600],
       ]);
       expect(state.operations.join(" ")).not.toContain("secret-password");
     }),
@@ -151,6 +170,7 @@ describe("database bootstrap", () => {
             supabase_read_only_user: password,
           },
         },
+        settings: { jwtSecret: Redacted.make("secret-jwt"), jwtExpiry: 3600 },
       });
       expect(state.passwords).toEqual([
         ["postgres", "secret-password"],

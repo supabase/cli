@@ -33,6 +33,12 @@ export interface ContainerRuntimeOptions {
     key: RuntimeWorkloadKey,
     workload: PlannedWorkload,
   ) => Effect.Effect<ContainerWorkloadResolution, RuntimeDriverError>;
+  /** Runs the one-shot initial database bootstrap after readiness. */
+  readonly bootstrapDatabase?: (
+    key: RuntimeWorkloadKey,
+    workload: PlannedWorkload,
+    resource: ContainerResource,
+  ) => Effect.Effect<void, RuntimeDriverError>;
 }
 
 export interface ContainerWorkloadResolution {
@@ -421,11 +427,23 @@ export const makeContainerRuntime = (
           resolution.waitForReadiness === undefined
             ? Effect.void
             : resolution.waitForReadiness(key, workload, container);
-        const ready = yield* readiness.pipe(Effect.exit);
+        const startup = Effect.gen(function* () {
+          yield* readiness;
+          if (workload.bootstrap === "database") {
+            if (options.bootstrapDatabase === undefined)
+              return yield* toDriverError(
+                key,
+                new Error("Database bootstrap resolver is not configured"),
+              );
+            yield* options.bootstrapDatabase(key, workload, container);
+          }
+        });
+        const ready = yield* startup.pipe(Effect.exit);
         if (Exit.isFailure(ready)) {
-          const stopExit = startedByUs
-            ? yield* Effect.exit(withEngine(key, options.engine.stopContainer(container.id)))
-            : Exit.succeed(undefined);
+          const stopExit =
+            startedByUs || workload.bootstrap === "database"
+              ? yield* Effect.exit(withEngine(key, options.engine.stopContainer(container.id)))
+              : Exit.succeed(undefined);
           const removeExit = created
             ? yield* Effect.exit(withEngine(key, options.engine.removeContainer(container.id)))
             : Exit.succeed(undefined);

@@ -829,6 +829,115 @@ describe("container runtime", () => {
       }),
   );
 
+  it.live("runs database bootstrap after readiness and before reporting ready", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const order: string[] = [];
+      const runtime = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "owner-session",
+        resolveWorkload: () =>
+          Effect.succeed({ waitForReadiness: () => Effect.sync(() => order.push("readiness")) }),
+        bootstrapDatabase: () => Effect.sync(() => order.push("bootstrap")),
+      });
+      const ready = yield* runtime.start(key, workload());
+      expect(ready.state).toBe("ready");
+      order.length = 0;
+
+      const databaseWorkload = { ...workload(), bootstrap: "database" as const };
+      const databaseReady = yield* runtime.start(
+        { ...key, specHash: "database-bootstrap" },
+        databaseWorkload,
+      );
+      expect(databaseReady.state).toBe("ready");
+      expect(order).toEqual(["readiness", "bootstrap"]);
+    }),
+  );
+
+  it.live("cleans up a newly created container when database bootstrap fails", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const bootstrapError = new RuntimeDriverError({
+        message: "database bootstrap failed",
+        stackId: key.stackId,
+        workloadId: key.workloadId,
+      });
+      const runtime = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "owner-session",
+        bootstrapDatabase: () => Effect.fail(bootstrapError),
+      });
+      const databaseWorkload = { ...workload(), bootstrap: "database" as const };
+      const result = yield* runtime.start(key, databaseWorkload).pipe(Effect.exit);
+      expect(Exit.isFailure(result)).toBe(true);
+      if (Exit.isFailure(result)) {
+        const error = Cause.findErrorOption(result.cause);
+        expect(Option.isSome(error)).toBe(true);
+        if (Option.isSome(error)) expect(error.value).toBe(bootstrapError);
+      }
+      expect(state.resources.some((resource) => resource.kind === "workload")).toBe(false);
+      expect(state.calls.some((call) => call.startsWith("stop:"))).toBe(true);
+      expect(state.calls.some((call) => call.startsWith("remove:"))).toBe(true);
+    }),
+  );
+
+  it.live("does not remove an adopted running database container on bootstrap failure", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      const owner = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "previous-owner",
+      });
+      yield* owner.start(key, workload());
+      state.calls.length = 0;
+      const bootstrapError = new RuntimeDriverError({
+        message: "adopted database bootstrap failed",
+        stackId: key.stackId,
+        workloadId: key.workloadId,
+      });
+      let attempts = 0;
+      const adopted = yield* makeContainerRuntime({
+        engine: fakeContainerEngine(state),
+        ownerSessionId: "new-owner",
+        bootstrapDatabase: () =>
+          Effect.gen(function* () {
+            attempts += 1;
+            if (attempts === 1) return yield* Effect.fail(bootstrapError);
+          }),
+      });
+      const result = yield* adopted
+        .start(key, { ...workload(), bootstrap: "database" as const })
+        .pipe(Effect.exit);
+      expect(Exit.isFailure(result)).toBe(true);
+      expect(state.calls.some((call) => call.startsWith("stop:"))).toBe(true);
+      expect(state.calls.some((call) => call.startsWith("remove:"))).toBe(false);
+      expect(state.resources.find((resource) => resource.kind === "workload")?.state).toBe(
+        "stopped",
+      );
+      const retry = yield* adopted.start(key, { ...workload(), bootstrap: "database" as const });
+      expect(retry.state).toBe("ready");
+      expect(attempts).toBe(2);
+    }),
+  );
+
   it.live(
     "copies a new functions bootstrap before starting and never copies an adopted container",
     () =>

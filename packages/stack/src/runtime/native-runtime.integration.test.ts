@@ -3,11 +3,6 @@ import { describe, expect, it } from "@effect/vitest";
 import { Data, Deferred, Effect, Exit, Fiber, FileSystem, Path, Ref, Stream } from "effect";
 import { ChildProcess } from "effect/unstable/process";
 import { LogStoreError, makeLogStore, type LogStore } from "../supervisor/LogStore.ts";
-import type {
-  DatabaseBootstrapOptions,
-  DatabaseSession,
-  DatabaseTransaction,
-} from "../model/DatabaseBootstrap.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import { StackIdSchema } from "../public/StackId.ts";
 import type { RuntimeWorkloadKey } from "./RuntimeDriver.ts";
@@ -286,31 +281,13 @@ describe("native runtime", () => {
     withPlatform(
       Effect.gen(function* () {
         let applied = false;
-        const session: DatabaseSession = {
-          execute: () => Effect.void,
-          transaction: (use) =>
-            Effect.gen(function* () {
-              let record = false;
-              const transaction: DatabaseTransaction = {
-                execute: (statement) =>
-                  Effect.sync(() => {
-                    if (statement.includes("INSERT INTO")) record = true;
-                  }),
-                setRolePassword: () => Effect.void,
-                query: () => Effect.succeed(applied ? [{ revision: "fixture" }] : []),
-              };
-              yield* use(transaction);
-              if (record) applied = true;
-            }),
-        };
-        const bootstrap: DatabaseBootstrapOptions = {
-          revisions: [{ id: "fixture", statement: "CREATE TABLE fixture" }],
-        };
         const runtime = yield* makeNativeRuntime({
           resolveProcess: () => Effect.succeed(fixtureProcess("database")),
           waitForReadiness: () => Effect.void,
-          resolveDatabaseSession: () => Effect.succeed(session),
-          resolveDatabaseBootstrap: () => Effect.succeed(bootstrap),
+          bootstrapDatabase: () =>
+            Effect.sync(() => {
+              applied = true;
+            }),
         });
         const key = keyFor("bootstrap");
         const ready = yield* runtime.start(key, workload("bootstrap", "database"));
@@ -331,6 +308,28 @@ describe("native runtime", () => {
         });
         const result = yield* runtime
           .start(keyFor("missing-bootstrap"), workload("missing-bootstrap", "database"))
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        expect(yield* runtime.observe(stackId)).toEqual([]);
+      }),
+    ),
+  );
+
+  it.live("cleans up the native process when database bootstrap fails", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const bootstrapError = new RuntimeDriverError({
+          message: "database bootstrap failed",
+          stackId,
+          workloadId: "database:failed-bootstrap",
+        });
+        const runtime = yield* makeNativeRuntime({
+          resolveProcess: () => Effect.succeed(fixtureProcess("database")),
+          waitForReadiness: () => Effect.void,
+          bootstrapDatabase: () => Effect.fail(bootstrapError),
+        });
+        const result = yield* runtime
+          .start(keyFor("failed-bootstrap"), workload("failed-bootstrap", "database"))
           .pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
         expect(yield* runtime.observe(stackId)).toEqual([]);

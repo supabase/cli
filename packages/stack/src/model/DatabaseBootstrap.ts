@@ -26,15 +26,35 @@ const DATABASE_BOOTSTRAP_ROLES: ReadonlyArray<DatabaseBootstrapRole> = [
   "supabase_read_only_user",
 ];
 
+/** Database-level settings written by the initial managed bootstrap. */
+export type DatabaseBootstrapSettingName = "app.settings.jwt_secret" | "app.settings.jwt_exp";
+
+export type DatabaseBootstrapSetting =
+  | {
+      readonly name: "app.settings.jwt_secret";
+      readonly value: Redacted.Redacted<string>;
+    }
+  | {
+      readonly name: "app.settings.jwt_exp";
+      readonly value: number;
+    };
+
 /** Values come from resolved managed secret slots and never become SQL text. */
 export interface DatabaseBootstrapCredentials {
   readonly roles?: Readonly<Partial<Record<DatabaseBootstrapRole, Redacted.Redacted<string>>>>;
+}
+
+export interface DatabaseBootstrapSettings {
+  readonly jwtSecret: Redacted.Redacted<string>;
+  readonly jwtExpiry: number;
 }
 
 export interface DatabaseBootstrapOptions {
   /** Ordered plan resolved for the pinned database release. */
   readonly revisions: ReadonlyArray<DatabaseBootstrapRevision>;
   readonly credentials?: DatabaseBootstrapCredentials;
+  /** Configuration values are reconciled on every invocation, like role passwords. */
+  readonly settings?: DatabaseBootstrapSettings;
 }
 
 export class DatabaseBootstrapError extends Data.TaggedError("DatabaseBootstrapError")<{
@@ -57,6 +77,9 @@ export interface DatabaseTransaction {
   readonly setRolePassword: (
     role: DatabaseBootstrapRole,
     password: Redacted.Redacted<string>,
+  ) => Effect.Effect<void, DatabaseBootstrapError>;
+  readonly setDatabaseSetting: (
+    setting: DatabaseBootstrapSetting,
   ) => Effect.Effect<void, DatabaseBootstrapError>;
   readonly query: (
     statement: string,
@@ -187,23 +210,53 @@ export const runDatabaseBootstrap = (
           ),
         );
     }
-    if (options.credentials?.roles !== undefined) {
+    if (options.credentials?.roles !== undefined || options.settings !== undefined) {
       yield* session.transaction((transaction) =>
         Effect.gen(function* () {
           yield* transaction
             .execute(ADVISORY_LOCK_STATEMENT)
             .pipe(Effect.mapError((error) => statementError(error, ADVISORY_LOCK_STATEMENT)));
-          for (const role of DATABASE_BOOTSTRAP_ROLES) {
-            const password = options.credentials?.roles?.[role];
-            if (password === undefined) continue;
-            yield* transaction.setRolePassword(role, password).pipe(
-              Effect.mapError(
-                () =>
-                  new DatabaseBootstrapError({
-                    message: `Unable to configure internal database role ${role}`,
-                  }),
-              ),
-            );
+          if (options.credentials?.roles !== undefined) {
+            for (const role of DATABASE_BOOTSTRAP_ROLES) {
+              const password = options.credentials.roles[role];
+              if (password === undefined) continue;
+              yield* transaction.setRolePassword(role, password).pipe(
+                Effect.mapError(
+                  () =>
+                    new DatabaseBootstrapError({
+                      message: `Unable to configure internal database role ${role}`,
+                    }),
+                ),
+              );
+            }
+          }
+          if (options.settings !== undefined) {
+            yield* transaction
+              .setDatabaseSetting({
+                name: "app.settings.jwt_secret",
+                value: options.settings.jwtSecret,
+              })
+              .pipe(
+                Effect.mapError(
+                  () =>
+                    new DatabaseBootstrapError({
+                      message: "Unable to configure database JWT secret",
+                    }),
+                ),
+              );
+            yield* transaction
+              .setDatabaseSetting({
+                name: "app.settings.jwt_exp",
+                value: options.settings.jwtExpiry,
+              })
+              .pipe(
+                Effect.mapError(
+                  () =>
+                    new DatabaseBootstrapError({
+                      message: "Unable to configure database JWT expiry",
+                    }),
+                ),
+              );
           }
         }),
       );
