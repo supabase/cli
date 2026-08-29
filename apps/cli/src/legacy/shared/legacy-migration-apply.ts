@@ -73,6 +73,8 @@ const ALTER_DATABASE_TABLESPACE_PATTERN =
   /^ALTER\s+DATABASE\s+(?:"[^"]*"|\S+)\s+SET\s+TABLESPACE(?:\s|$)/u;
 const ALTER_SUBSCRIPTION_REFRESH_PATTERN =
   /^ALTER\s+SUBSCRIPTION\s+(?:"[^"]*"|\S+)\s+(?:REFRESH\s+PUBLICATION|(?:SET|ADD|DROP)\s+PUBLICATION)(?:\s|$)/u;
+const ALL_IN_TABLESPACE_PATTERN =
+  /^ALTER\s+(?:TABLE|INDEX|MATERIALIZED\s+VIEW)\s+ALL\s+IN\s+TABLESPACE(?:\s|$)/u;
 const DETACH_PARTITION_PATTERN =
   /^ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?(?:"[^"]*"|\S+)\s+DETACH\s+PARTITION\s+(?:"[^"]*"|\S+)\s+(?:CONCURRENTLY|FINALIZE)(?:\s|$)/u;
 const TRANSACTION_CONTROL_PATTERN =
@@ -113,7 +115,8 @@ const legacyTrimLeadingSqlComments = (sql: string): string => {
  * `CREATE`/`DROP SUBSCRIPTION`, `DISCARD ALL`,
  * `ALTER DATABASE … SET TABLESPACE`,
  * `ALTER SUBSCRIPTION … REFRESH`/`SET`/`ADD`/`DROP PUBLICATION`,
- * `ALTER TABLE … DETACH PARTITION … CONCURRENTLY`/`FINALIZE`. Such statements fail with
+ * `ALTER TABLE … DETACH PARTITION … CONCURRENTLY`/`FINALIZE`,
+ * `ALTER TABLE`/`INDEX`/`MATERIALIZED VIEW ALL IN TABLESPACE`. Such statements fail with
  * SQLSTATE 25001 inside the transaction
  * created by a migration batch, so `execMigrationBatch` runs them standalone.
  * Port of `isPipelineIncompatible` (`pkg/migration/file.go`, supabase/cli#5156),
@@ -136,7 +139,8 @@ export const legacyIsPipelineIncompatible = (sql: string): boolean => {
     DISCARD_ALL_PATTERN.test(upper) ||
     ALTER_DATABASE_TABLESPACE_PATTERN.test(upper) ||
     ALTER_SUBSCRIPTION_REFRESH_PATTERN.test(upper) ||
-    DETACH_PARTITION_PATTERN.test(upper)
+    DETACH_PARTITION_PATTERN.test(upper) ||
+    ALL_IN_TABLESPACE_PATTERN.test(upper)
   );
 };
 

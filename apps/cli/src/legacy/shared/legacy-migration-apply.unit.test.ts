@@ -1169,6 +1169,22 @@ describe("legacyIsPipelineIncompatible", () => {
     ["reindex table non-concurrent", "REINDEX TABLE public.widgets", false],
     ["alter database", "ALTER DATABASE demo SET search_path = public", false],
     ["alter database set tablespace", "ALTER DATABASE demo SET TABLESPACE fast", true],
+    [
+      "alter table all in tablespace",
+      "ALTER TABLE ALL IN TABLESPACE old_ts SET TABLESPACE fast",
+      true,
+    ],
+    [
+      "alter index all in tablespace",
+      "ALTER INDEX ALL IN TABLESPACE old_ts SET TABLESPACE fast",
+      true,
+    ],
+    [
+      "alter materialized view all in tablespace",
+      "ALTER MATERIALIZED VIEW ALL IN TABLESPACE old_ts SET TABLESPACE fast",
+      true,
+    ],
+    ["alter table set tablespace single", "ALTER TABLE t SET TABLESPACE fast", false],
     ["alter database set tablespace multiline", "ALTER DATABASE demo\n SET TABLESPACE fast", true],
     [
       "alter database with tablespace inside a literal",

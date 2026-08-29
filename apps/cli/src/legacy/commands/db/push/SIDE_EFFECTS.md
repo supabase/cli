@@ -122,7 +122,8 @@ stdout is payload-only. A single `result` object is emitted:
   `CREATE`/`DROP DATABASE`, `CREATE`/`DROP TABLESPACE`, `REINDEX DATABASE`/`SYSTEM`/`SCHEMA`,
   `CREATE`/`DROP SUBSCRIPTION`, `DISCARD ALL`, `ALTER DATABASE … SET TABLESPACE`, and
   `ALTER SUBSCRIPTION … REFRESH`/`SET`/`ADD`/`DROP PUBLICATION`,
-  `ALTER TABLE … DETACH PARTITION … CONCURRENTLY`/`FINALIZE`
+  `ALTER TABLE … DETACH PARTITION … CONCURRENTLY`/`FINALIZE`,
+  `ALTER TABLE`/`INDEX`/`MATERIALIZED VIEW ALL IN TABLESPACE`
   cannot run inside a
   transaction block (SQLSTATE 25001). The apply flushes (commits) the open batch, runs
   the statement standalone outside any transaction, then resumes batching; the history
