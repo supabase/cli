@@ -756,3 +756,46 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
   requests and sockets are destroyed on interruption and failures are typed without carrying secret
   material. Focused integration evidence covers native/container artifact outcomes, env permissions,
   validation/cleanup, readiness success/failure, and interruption.
+
+#### Task 13B2c — stack-owned Edge Runtime functions bootstrap (2026-08-29)
+
+- The offline-bundled Edge Runtime main service now belongs to `@supabase/stack`; the CLI imports
+  the stack bundler rather than maintaining a second template. Request-time discovery reads the
+  mounted functions root on every request, uses persisted overrides or complete defaults, and
+  creates workers with `forceCreate`/no module cache so new, edited, and deleted functions are
+  reflected without restarting the stack. Root containment and realpath checks fail closed for
+  traversal and symlink escapes.
+- Functions workloads use a private stack-owned generation bootstrap (`0700` directory/`0600`
+  file). Containers retain one read-only functions-root bind and copy the bootstrap into `/root`
+  after create and before start; adopted containers are never recopied. Native launchers receive
+  the owner-resolved bootstrap directory through runtime inputs. Docker and Podman copy commands
+  use argv only, with no shell or secret-bearing arguments. The published package exports the
+  stack-owned bundler/template directly, and the generated runtime environment keeps the resolved
+  `functionsRoot`, `SUPABASE_INTERNAL_FUNCTIONS_ROOT`, and JWT/API host-port material in the exact
+  workload env contract without duplicating CLI helpers.
+- Focused stack bundler/bootstrap/workload/container and CLI function tests pass; stack package
+  type-checking now passes after the lifecycle/secret-store Clock follow-up.
+
+#### Task 13B2b1 correction — harden managed credential generation (2026-08-29)
+
+- Managed ES256/RS256 API-key JWTs now derive their ten-year expiry from the injected Effect Clock,
+  while the legacy HS256 path retains its fixed `1_983_812_996` expiry and exact claim shape.
+- JWK signing resolves canonical project-root and file realpaths before reading, rejecting symlink
+  escapes with the existing redacted typed error. Header/payload construction is explicitly typed;
+  focused coverage uses TestClock and a temp-directory symlink escape.
+
+#### Task 13B2b2a — Supervisor-owned ingress lifecycle foundation (2026-08-29)
+
+- `SupervisorRuntime` may provide one cohesive ingress owner. Accepted running generations reserve
+  sticky public/private ports and bind host listeners before eager workload reconciliation; the
+  gateway is opened only after reconciliation succeeds. Same-generation starts reuse the exact
+  listener/server identity, while restart/stop/destroy close ingress before runtime cleanup.
+- Persisted-running recovery adopts runtime resources, starts missing eager workloads (lazy routes
+  remain dormant), then acquires and opens ingress before the owner reports readiness. Reconcile,
+  gateway, and listener failures close newly acquired resources while preserving the original typed
+  cause for recovery retry.
+- Production ingress composes `PortCoordinator`, `privateBindingIntentsFor`, `routeCatalogFor`, and
+  `makeGateway`; API forwarding material is read only from persisted key/JWT slots. The host listener
+  binder uses `node:http` for HTTP fields and half-open `node:net` for TCP fields, with interruption-
+  safe, scope-owned close and typed occupied-port failures. Focused host-listener integration tests
+  cover HTTP/TCP binding, adoption metadata, and occupied exact ports.
