@@ -1,6 +1,21 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Path, Redacted, Ref, Stream } from "effect";
+import {
+  Cause,
+  Deferred,
+  Effect,
+  Exit,
+  FileSystem,
+  Option,
+  Path,
+  Redacted,
+  Ref,
+  Scope,
+  Stream,
+} from "effect";
+import { Headers } from "effect/unstable/http";
+import { Rpc } from "effect/unstable/rpc";
+import { RequestId } from "effect/unstable/rpc/RpcMessage";
 import type { LogOptions, StackLogEntry } from "../public/Logs.ts";
 import {
   GatewayActivationError,
@@ -13,10 +28,12 @@ import {
   type RuntimeDriver,
   type ObservedWorkload,
 } from "../runtime/RuntimeDriver.ts";
+import type { EffectStackCredentials } from "../public/Credentials.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import { deriveStackId } from "../identity/Identity.ts";
 import { makeStackStateStore } from "../state/StackStateStore.ts";
-import { makeSupervisor, type SupervisorRuntime } from "./Supervisor.ts";
+import { StackRpcGroup, type StackRpcError } from "../control/StackRpc.ts";
+import { makeSupervisor, type Supervisor, type SupervisorRuntime } from "./Supervisor.ts";
 import type { SupervisorIngress, SupervisorIngressReservation } from "./Ingress.ts";
 
 const identity = {
@@ -31,6 +48,25 @@ const identity = {
 
 const errorOf = <E>(exit: Exit.Exit<unknown, E>): E | undefined =>
   Exit.isFailure(exit) ? Option.getOrUndefined(Cause.findErrorOption(exit.cause)) : undefined;
+
+const invokeCredentials = (
+  supervisor: Supervisor,
+): Effect.Effect<EffectStackCredentials, StackRpcError, Scope.Scope> =>
+  Effect.gen(function* () {
+    const handler = yield* StackRpcGroup.accessHandler("credentials").pipe(
+      Effect.provide(
+        StackRpcGroup.toLayerHandler("credentials", supervisor.rpcHandlers.credentials),
+      ),
+    );
+    const value = yield* handler(undefined, {
+      client: new Rpc.ServerClient(1),
+      requestId: RequestId(1),
+      headers: Headers.empty,
+    });
+    if (Deferred.isDeferred<EffectStackCredentials, StackRpcError>(value))
+      return yield* Deferred.await(value);
+    return value;
+  });
 
 const makeMockIngress = (
   timeline: Ref.Ref<ReadonlyArray<string>>,
@@ -233,13 +269,13 @@ describe("Supervisor composition", () => {
               ports: [
                 { field: "api", port: 55433, intent: "exact" },
                 { field: "database", port: 55432, intent: "exact" },
-              ],
+              ] as const,
               portsGeneration: running.desiredGeneration,
             },
             running.desiredGeneration,
           )
           .pipe(Effect.provideContext(fixture.context));
-        const credentials = yield* fixture.supervisor.rpcHandlers.credentials();
+        const credentials = yield* invokeCredentials(fixture.supervisor);
         expect(credentials.database.url).toEqual(expect.anything());
         expect(Redacted.value(credentials.database.url)).toMatch(
           /^postgresql:\/\/postgres:.+@127\.0\.0\.1:\d+\/postgres$/,
@@ -255,7 +291,9 @@ describe("Supervisor composition", () => {
             accessKeyId: "625729a08b95bf1b7ff351a663f3a23c",
           }),
         );
-        expect(Redacted.value(credentials.storage?.secretAccessKey)).toBe(
+        if (credentials.storage === undefined)
+          return yield* new StackStateInvalidError({ message: "storage credentials are missing" });
+        expect(Redacted.value(credentials.storage.secretAccessKey)).toBe(
           "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907",
         );
       }),
@@ -285,7 +323,7 @@ describe("Supervisor composition", () => {
           ports: [
             { field: "api", port: 55433, intent: "exact" as const },
             { field: "database", port: 55432, intent: "exact" as const },
-          ],
+          ] as const,
           portsGeneration: running.desiredGeneration,
           secrets: {
             ...running.secrets,
@@ -298,7 +336,7 @@ describe("Supervisor composition", () => {
         yield* fixture.store
           .replace(fixture.id, state, running.desiredGeneration)
           .pipe(Effect.provideContext(fixture.context));
-        const credentials = yield* fixture.supervisor.rpcHandlers.credentials();
+        const credentials = yield* invokeCredentials(fixture.supervisor);
         expect(Redacted.value(credentials.database.url)).toBe(
           "postgresql://postgres:p%40ss%3Aword@[2001:db8::1]:55432/postgres",
         );
@@ -323,13 +361,13 @@ describe("Supervisor composition", () => {
           ports: [
             { field: "api", port: 55433, intent: "exact" as const },
             { field: "database", port: 55432, intent: "exact" as const },
-          ],
+          ] as const,
           portsGeneration: running.desiredGeneration,
         };
         yield* fixture.store
           .replace(fixture.id, state, running.desiredGeneration)
           .pipe(Effect.provideContext(fixture.context));
-        const credentials = yield* fixture.supervisor.rpcHandlers.credentials();
+        const credentials = yield* invokeCredentials(fixture.supervisor);
         expect(credentials.storage).toBeUndefined();
       }),
     ),
@@ -347,13 +385,13 @@ describe("Supervisor composition", () => {
           return yield* new StackStateInvalidError({ message: "running fixture state is missing" });
         const stale = {
           ...running,
-          ports: [{ field: "database", port: 55432, intent: "exact" as const }],
+          ports: [{ field: "database", port: 55432, intent: "exact" as const }] as const,
           portsGeneration: running.desiredGeneration - 1,
         };
         yield* fixture.store
           .replace(fixture.id, stale, running.desiredGeneration)
           .pipe(Effect.provideContext(fixture.context));
-        const staleExit = yield* fixture.supervisor.rpcHandlers.credentials().pipe(Effect.exit);
+        const staleExit = yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit);
         expect(errorOf(staleExit)).toEqual(
           expect.objectContaining({ tag: "StackNotRunningError" }),
         );
@@ -365,8 +403,38 @@ describe("Supervisor composition", () => {
         yield* fixture.store
           .replace(fixture.id, stopped, stale.desiredGeneration)
           .pipe(Effect.provideContext(fixture.context));
-        const stoppedExit = yield* fixture.supervisor.rpcHandlers.credentials().pipe(Effect.exit);
+        const stoppedExit = yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit);
         expect(errorOf(stoppedExit)).toEqual(
+          expect.objectContaining({ tag: "StackNotRunningError" }),
+        );
+      }),
+    ),
+  );
+
+  it.live("fails closed when a persisted running generation is newer than this owner", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
+        const running = yield* fixture.store
+          .read(fixture.id)
+          .pipe(Effect.provideContext(fixture.context));
+        if (running === undefined)
+          return yield* new StackStateInvalidError({ message: "running fixture state is missing" });
+        const advancedGeneration = running.desiredGeneration + 1;
+        yield* fixture.store
+          .replace(
+            fixture.id,
+            {
+              ...running,
+              desiredGeneration: advancedGeneration,
+              portsGeneration: advancedGeneration,
+            },
+            running.desiredGeneration,
+          )
+          .pipe(Effect.provideContext(fixture.context));
+        const staleOwnerExit = yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit);
+        expect(errorOf(staleOwnerExit)).toEqual(
           expect.objectContaining({ tag: "StackNotRunningError" }),
         );
       }),
@@ -390,13 +458,13 @@ describe("Supervisor composition", () => {
           ports: [
             { field: "api", port: 55433, intent: "exact" as const },
             { field: "database", port: 55432, intent: "exact" as const },
-          ],
+          ] as const,
           portsGeneration: running.desiredGeneration,
         };
         yield* fixture.store
           .replace(fixture.id, state, running.desiredGeneration)
           .pipe(Effect.provideContext(fixture.context));
-        const authDisabled = yield* fixture.supervisor.rpcHandlers.credentials().pipe(Effect.exit);
+        const authDisabled = yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit);
         expect(errorOf(authDisabled)).toEqual(
           expect.objectContaining({ tag: "StackNotRunningError" }),
         );
@@ -430,7 +498,7 @@ describe("Supervisor composition", () => {
         yield* fixture.store
           .replace(fixture.id, missingSecret, state.desiredGeneration)
           .pipe(Effect.provideContext(fixture.context));
-        const missingExit = yield* fixture.supervisor.rpcHandlers.credentials().pipe(Effect.exit);
+        const missingExit = yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit);
         expect(errorOf(missingExit)).toEqual(
           expect.objectContaining({ tag: "StackSecretMismatchError" }),
         );
@@ -445,19 +513,19 @@ describe("Supervisor composition", () => {
         yield* fixture.store
           .replace(fixture.id, storageSecretMissing, state.desiredGeneration)
           .pipe(Effect.provideContext(fixture.context));
-        const storageExit = yield* fixture.supervisor.rpcHandlers.credentials().pipe(Effect.exit);
+        const storageExit = yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit);
         expect(errorOf(storageExit)).toEqual(
           expect.objectContaining({ tag: "StackSecretMismatchError" }),
         );
         const complete = { ...missingSecret, secrets: baseSecrets };
         const missingApiListener = {
           ...complete,
-          ports: [{ field: "database", port: 55432, intent: "exact" as const }],
+          ports: [{ field: "database", port: 55432, intent: "exact" as const }] as const,
         };
         yield* fixture.store
           .replace(fixture.id, missingApiListener, state.desiredGeneration)
           .pipe(Effect.provideContext(fixture.context));
-        const listenerExit = yield* fixture.supervisor.rpcHandlers.credentials().pipe(Effect.exit);
+        const listenerExit = yield* invokeCredentials(fixture.supervisor).pipe(Effect.exit);
         expect(errorOf(listenerExit)).toEqual(
           expect.objectContaining({ tag: "StackNotRunningError" }),
         );

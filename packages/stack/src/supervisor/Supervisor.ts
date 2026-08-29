@@ -732,11 +732,13 @@ export const makeSupervisor = (options: SupervisorOptions): Effect.Effect<Superv
           ),
         );
         const actualPhase = yield* Ref.get(phase);
+        const adoptedGeneration = yield* Ref.get(generation);
         if (
           state === undefined ||
           actualPhase !== "running" ||
           state.desiredLifecycle !== "running" ||
-          state.portsGeneration !== state.desiredGeneration
+          state.portsGeneration !== state.desiredGeneration ||
+          adoptedGeneration !== state.desiredGeneration
         )
           return yield* Effect.fail(
             rpcError("StackNotRunningError", "Stack credentials are unavailable"),
