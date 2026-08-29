@@ -111,7 +111,8 @@ export const validateWorkloadRuntimeInputs = (
       workload.id === "rest:rest" ||
       workload.id === "auth:auth" ||
       workload.id === "realtime:realtime" ||
-      workload.id === "storage:storage";
+      workload.id === "storage:storage" ||
+      workload.id === "functions:edge-runtime";
     if (
       jwksConsumer &&
       (signing?.kind === "jwks-file" || thirdParty.value !== undefined) &&
@@ -280,6 +281,15 @@ const usesResolvedJwks = (state: PersistedStackState): boolean => {
   const thirdParty = resolveThirdPartyIssuer(settingsFor(state, "auth"));
   return signing?.kind === "jwks-file" || (thirdParty.ok && thirdParty.value !== undefined);
 };
+
+const edgeRuntimeJwtEnvironment = (
+  state: PersistedStackState,
+  inputs: WorkloadRuntimeInputs,
+): Record<string, string> =>
+  compactEnvironment({
+    SUPABASE_INTERNAL_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
+    SUPABASE_JWKS: inputs.auth?.jwks ?? '{"keys":[]}',
+  });
 
 const common = (workload: PlannedWorkload, port: number): Record<string, string> => ({
   SUPABASE_STACK_WORKLOAD: workload.id,
@@ -830,9 +840,10 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       `--port=${port}`,
       `--policy=${valueAt(state, "functions", "edge_runtime.policy") || "per_worker"}`,
     ],
-    env: (state, workload, port) => ({
+    env: (state, workload, port, _runtime = "native", inputs = {}) => ({
       ...common(workload, port),
       ...capabilityEnv(state, "functions", "FUNCTIONS"),
+      ...edgeRuntimeJwtEnvironment(state, inputs),
       EDGE_RUNTIME_PORT: String(port),
       FUNCTIONS_ROOT: functionsRoot(state),
       FUNCTIONS_CONTAINER_ROOT,

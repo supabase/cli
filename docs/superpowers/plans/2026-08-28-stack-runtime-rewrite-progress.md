@@ -662,3 +662,11 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
   with compiler validation for required fields and one-provider exclusivity.
 - Studio native entrypoint cwd is the artifact `app`; Vector requires its shipped config; Postgres
   slim artifacts receive a contained `init-scripts` alias for the current archive layout.
+
+#### Task 13A fix round 4 — provide Edge Runtime JWT material (2026-08-29)
+
+- Functions validation now treats the stack-owned Edge Runtime as a JWT consumer, requiring owner-
+  resolved JWKS material for `jwks-file` and third-party Auth modes before container/process creation.
+- Edge Runtime receives the same `SUPABASE_INTERNAL_JWT_SECRET` managed Auth slot as GoTrue plus a
+  valid `SUPABASE_JWKS` document (owner-resolved when available, otherwise the empty-key fallback);
+  integration coverage exercises symmetric, jwks-file, and Firebase third-party paths.

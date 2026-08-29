@@ -36,6 +36,7 @@ const state: PersistedStackState = {
   secrets: {
     "secret:database.internal.password": { policy: "managed", value: "postgres" },
     "secret:security.jwt.signing.secret": { policy: "managed", value: "symmetric-secret" },
+    "secret:auth.settings.jwt_secret": { policy: "managed", value: "symmetric-secret" },
   },
 };
 
@@ -406,6 +407,63 @@ describe("workload runtime catalog", () => {
         auth: { jwks: '{"keys":[]}' },
       }).pipe(Effect.exit);
       expect(Exit.isSuccess(valid)).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("passes Edge Runtime the JWT material used by functions serve", () =>
+    Effect.gen(function* () {
+      const functions = planned("functions:edge-runtime");
+      const symmetricDefault = containerResolutionFor(state, functions);
+      expect(symmetricDefault?.env).toMatchObject({
+        SUPABASE_INTERNAL_JWT_SECRET: "symmetric-secret",
+        SUPABASE_JWKS: '{"keys":[]}',
+      });
+      const symmetric = containerResolutionFor(state, functions, {
+        auth: { jwks: '{"keys":[{"kty":"EC"}]}' },
+      });
+      expect(symmetric?.env).toMatchObject({
+        SUPABASE_INTERNAL_JWT_SECRET: "symmetric-secret",
+        SUPABASE_JWKS: '{"keys":[{"kty":"EC"}]}',
+      });
+
+      const jwksCompiled = yield* compileStack({
+        projectRoot: state.identity.projectRoot,
+        runtime: { kind: "native" },
+        config: { security: { jwt: { signing: { kind: "jwks-file", path: "jwt.json" } } } },
+      }).pipe(Effect.provide(NodeServices.layer));
+      const jwksState: PersistedStackState = { ...state, definition: jwksCompiled.definition };
+      const jwksResolution = yield* resolveContainerResolutionFor(jwksState, functions, {
+        auth: { jwtKeys: '[{"kty":"EC"}]', jwks: '{"keys":[{"kty":"EC"}]}' },
+      });
+      expect(jwksResolution?.env).toMatchObject({
+        SUPABASE_JWKS: '{"keys":[{"kty":"EC"}]}',
+        SUPABASE_INTERNAL_JWT_SECRET: "symmetric-secret",
+      });
+
+      const thirdPartyCompiled = yield* compileStack({
+        projectRoot: state.identity.projectRoot,
+        runtime: { kind: "native" },
+        config: {
+          capabilities: {
+            auth: {
+              settings: {
+                third_party: { firebase: { enabled: true, project_id: "project-42" } },
+              },
+            },
+          },
+        },
+      }).pipe(Effect.provide(NodeServices.layer));
+      const thirdPartyState: PersistedStackState = {
+        ...state,
+        definition: thirdPartyCompiled.definition,
+      };
+      const thirdPartyResolution = yield* resolveContainerResolutionFor(
+        thirdPartyState,
+        functions,
+        { auth: { jwks: '{"keys":[{"kty":"EC"}]}' } },
+      );
+      expect(thirdPartyResolution?.env.SUPABASE_JWKS).toBe('{"keys":[{"kty":"EC"}]}');
+      expect(thirdPartyResolution?.env.SUPABASE_INTERNAL_JWT_SECRET).toBe("symmetric-secret");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });
