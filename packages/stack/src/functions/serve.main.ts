@@ -2,7 +2,14 @@
 declare const Deno: any;
 declare const EdgeRuntime: any;
 
-import { dirname, join, STATUS_CODE, STATUS_TEXT, toFileUrl } from "./serve-main-deps.ts";
+import { dirname, STATUS_CODE, STATUS_TEXT, toFileUrl } from "./serve-main-deps.ts";
+import {
+  packageJsonPathFor,
+  resolveFunctionConfig,
+  type FunctionConfig,
+  type FunctionFileSystem,
+  type FunctionOverrides,
+} from "./serve-main-resolver.ts";
 import * as jose from "jose";
 
 const EXCLUDED_ENVS = ["HOME", "HOSTNAME", "PATH", "PWD"];
@@ -49,16 +56,7 @@ export enum RequestErrors {
   UnsupportedTokenAlgorithm = "UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM",
 }
 
-interface FunctionConfig {
-  entrypointPath: string;
-  importMapPath: string;
-  staticFiles: string[];
-  verifyJWT: boolean;
-  enabled: boolean;
-  env?: Record<string, string>;
-}
-
-const parseConfig = (): Record<string, any> => {
+const parseConfig = (): FunctionOverrides => {
   const raw = Deno.env.get("SUPABASE_INTERNAL_FUNCTIONS_CONFIG");
   if (!raw) return {};
   try {
@@ -153,90 +151,34 @@ export async function verifyHybridJWT(jwtSecret: string, jwksUrl: URL, jwt: stri
   }
 }
 
-const exists = async (path: string): Promise<boolean> => {
+const denoFileSystem: FunctionFileSystem = {
+  lstat: async (path) => {
+    const info = await Deno.lstat(path);
+    return {
+      isDirectory: info.isDirectory,
+      isFile: info.isFile,
+      isSymbolicLink: info.isSymlink,
+    };
+  },
+  realPath: (path) => Deno.realPath(path),
+  readDirectory: async (path) => {
+    const entries: string[] = [];
+    for await (const entry of Deno.readDir(path)) entries.push(entry.name);
+    return entries;
+  },
+};
+
+const functionConfig = (slug: string): Promise<FunctionConfig | undefined> =>
+  resolveFunctionConfig({ root: FUNCTIONS_ROOT, slug, overrides: configured, fs: denoFileSystem });
+
+const shouldUsePackageJsonDiscovery = async (config: FunctionConfig): Promise<boolean> => {
+  if (config.importMapPath) return false;
   try {
-    await Deno.lstat(path);
+    await denoFileSystem.lstat(packageJsonPathFor(config));
     return true;
   } catch {
     return false;
   }
-};
-
-const relativePath = (base: string, value: string): string =>
-  value.length === 0 ? "" : value.startsWith("/") ? value : join(base, value);
-
-const isContained = (root: string, candidate: string): boolean =>
-  candidate === root || candidate.startsWith(`${root.replace(/\/+$/u, "")}/`);
-
-const isContainedRealPath = async (root: string, candidate: string): Promise<boolean> => {
-  if (!isContained(root, candidate)) return false;
-  try {
-    return isContained(await Deno.realPath(root), await Deno.realPath(candidate));
-  } catch {
-    return false;
-  }
-};
-
-const functionConfig = async (slug: string): Promise<FunctionConfig | undefined> => {
-  if (!/^[A-Za-z0-9_-]+$/u.test(slug) || slug === "_shared") return undefined;
-  const override = configured[slug];
-  if (override?.enabled === false) return undefined;
-  const root = FUNCTIONS_ROOT.length > 0 ? FUNCTIONS_ROOT : undefined;
-  if (override === undefined) {
-    if (root === undefined || !(await exists(join(root, slug)))) return undefined;
-  }
-  const functionDirectory = root === undefined ? "" : join(root, slug);
-  if (root !== undefined && !(await isContainedRealPath(root, functionDirectory))) return undefined;
-  const rawEntrypoint = override?.entrypointPath ?? override?.entrypoint ?? "index.ts";
-  const entrypointPath = relativePath(functionDirectory, rawEntrypoint);
-  let importMapPath = relativePath(
-    functionDirectory,
-    override?.importMapPath ?? override?.import_map ?? "",
-  );
-  if (importMapPath === functionDirectory) importMapPath = "";
-  if (importMapPath.length === 0) {
-    for (const candidate of ["deno.json", "deno.jsonc"]) {
-      const path = join(functionDirectory, candidate);
-      if (await exists(path)) {
-        importMapPath = path;
-        break;
-      }
-    }
-  }
-  const staticFiles = (override?.staticFiles ?? override?.static_files ?? []).map((value: string) =>
-    relativePath(functionDirectory, value),
-  );
-  if (root !== undefined) {
-    if (!isContained(root, entrypointPath) || (importMapPath && !isContained(root, importMapPath)))
-      return undefined;
-    for (const pattern of staticFiles) {
-      const wildcard = pattern.search(/[!*?[{]/u);
-      const prefix = wildcard < 0 ? pattern : pattern.slice(0, wildcard);
-      if (!isContained(root, prefix)) return undefined;
-      if ((await exists(prefix)) && !(await isContainedRealPath(root, prefix))) return undefined;
-    }
-    if ((await exists(entrypointPath)) && !(await isContainedRealPath(root, entrypointPath)))
-      return undefined;
-    if (
-      importMapPath &&
-      (await exists(importMapPath)) &&
-      !(await isContainedRealPath(root, importMapPath))
-    )
-      return undefined;
-  }
-  return {
-    entrypointPath,
-    importMapPath,
-    staticFiles,
-    verifyJWT: override?.verifyJWT ?? override?.verify_jwt ?? true,
-    enabled: override?.enabled ?? true,
-    env: override?.env,
-  };
-};
-
-const shouldUsePackageJsonDiscovery = async (config: FunctionConfig): Promise<boolean> => {
-  if (config.importMapPath) return false;
-  return exists(join(dirname(config.entrypointPath), "package.json"));
 };
 
 export function prepareUserRequest(request: Request): Request {
@@ -265,8 +207,6 @@ Deno.serve({
       const authFailure = await verifyHybridJWT(JWT_SECRET, JWKS_ENDPOINT, token);
       if (authFailure) return getAuthErrorResponse(authFailure);
     }
-    if (!(await exists(config.entrypointPath)))
-      return getResponse("Function not found", STATUS_CODE.NotFound);
     const envVarsObj = {
       ...Deno.env.toObject(),
       ...Object.fromEntries(
@@ -313,7 +253,6 @@ Deno.serve({
         {
           code: STATUS_TEXT[STATUS_CODE.InternalServerError],
           message: "Request failed due to an internal server error",
-          trace: JSON.stringify(error?.stack),
         },
         STATUS_CODE.InternalServerError,
       );
@@ -328,12 +267,11 @@ Deno.serve({
       `Serving functions on http://127.0.0.1:${HOST_PORT}/functions/v1/<function-name>${examples.length ? `\n${examples.join("\n")}` : ""}\nUsing ${Deno.version.deno}`,
     );
   },
-  onError: (error) =>
+  onError: () =>
     getResponse(
       {
         code: STATUS_TEXT[500],
         message: "Request failed due to an internal server error",
-        trace: JSON.stringify(error?.stack),
       },
       500,
     ),
