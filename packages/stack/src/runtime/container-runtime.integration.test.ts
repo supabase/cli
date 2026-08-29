@@ -388,13 +388,13 @@ describe("container runtime", () => {
           },
           network: "private",
           mounts: [],
-          publications: [{ hostPort: 5432, containerPort: 5432 }],
+          publications: [{ address: "127.0.0.1", hostPort: 5432, containerPort: 5432 }],
           volumeMounts: [],
           role: "workload",
         })
         .pipe(Effect.exit);
       expect(Exit.isFailure(result)).toBe(true);
-      expect(calls).toBe(1);
+      expect(calls).toBe(2);
     }),
   );
 
@@ -453,31 +453,32 @@ describe("container runtime", () => {
 
   it.live("keeps Docker and Podman command codecs independent and closed", () =>
     Effect.gen(function* () {
-      const gateway = {
-        name: "gateway",
-        image: "example/gateway:1",
+      const workload = {
+        name: "backend",
+        image: "example/backend:1",
         labels: {
           stackId,
           ownerSessionId: "owner",
           desiredGeneration: 7,
-          workloadId: "gateway",
+          workloadId: "backend",
           specHash: key.specHash,
-          role: "gateway" as const,
+          role: "workload" as const,
         },
         network: "private",
         mounts: [],
         volumeMounts: [],
-        publications: [{ hostPort: 54321, containerPort: 8000 }],
+        publications: [{ address: "127.0.0.1" as const, hostPort: 54321, containerPort: 8000 }],
         envFile: "/tmp/supabase-owned.env",
         networkAliases: ["supabase-database"],
         command: ["serve", "--port", "8000"],
         hostRoute: { host: "host.docker.internal", gateway: "host-gateway" },
-        role: "gateway" as const,
+        role: "workload" as const,
       };
-      const docker = serializeDockerCommand({ operation: "create-container", spec: gateway });
+      const docker = serializeDockerCommand({ operation: "create-container", spec: workload });
       expect(docker.args).toContain("--add-host");
       expect(docker.args).toContain("host.docker.internal:host-gateway");
       expect(docker.args).toContain("--publish");
+      expect(docker.args).toContain("127.0.0.1:54321:8000");
       expect(docker.args).toContain("--network-alias");
       expect(docker.args).toContain("supabase-database");
       expect(docker.args).toContain("--env-file");
@@ -486,9 +487,10 @@ describe("container runtime", () => {
       expect(docker.args.slice(-3)).toEqual(["serve", "--port", "8000"]);
       const podmanCreate = serializePodmanCommand({
         operation: "create-container",
-        spec: gateway,
+        spec: workload,
       });
       expect(podmanCreate.args).toContain("--env-file");
+      expect(podmanCreate.args).toContain("127.0.0.1:54321:8000");
       expect(podmanCreate.args).toContain("--network-alias");
       expect(podmanCreate.args).toContain("/tmp/supabase-owned.env");
       expect(podmanCreate.args.join(" ")).not.toContain("value");
@@ -525,6 +527,7 @@ describe("container runtime", () => {
             exitCode: 0,
           }),
       });
+
       const podmanEngine = makePodmanEngine({
         runner: rowRunner,
         platform: { os: "linux", rootless: true },
@@ -540,6 +543,39 @@ describe("container runtime", () => {
         "network",
         "volume",
       ]);
+    }),
+  );
+
+  it.live("rejects non-loopback publications before preflight or daemon mutation", () =>
+    Effect.gen(function* () {
+      const state: FakeContainerState = {
+        resources: [],
+        imagePresent: true,
+        calls: [],
+        createdSpecs: [],
+        nextId: 1,
+      };
+      let preflightCalls = 0;
+      const base = fakeContainerEngine(state);
+      const runtime = yield* makeContainerRuntime({
+        engine: {
+          ...base,
+          preflight: Effect.sync(() => {
+            preflightCalls += 1;
+            return { host: "host.docker.internal" };
+          }),
+        },
+        ownerSessionId: "owner-session",
+        resolveWorkload: () =>
+          Effect.succeed({
+            publications: [{ address: "0.0.0.0", hostPort: 30_000, containerPort: 8080 }],
+          }),
+      });
+      const result = yield* runtime.start(key, workload()).pipe(Effect.exit);
+      expect(Exit.isFailure(result)).toBe(true);
+      expect(preflightCalls).toBe(0);
+      expect(state.calls).toEqual([]);
+      expect(state.createdSpecs).toEqual([]);
     }),
   );
 

@@ -4,7 +4,11 @@ import {
   StackStateFormatUnsupportedError,
   StackStateInvalidError,
 } from "../public/Errors.ts";
-import type { HostPortAssignment, PersistedStackState } from "./StackState.ts";
+import type {
+  HostPortAssignment,
+  PersistedStackState,
+  PrivatePortAssignment,
+} from "./StackState.ts";
 import { withRegistryLock, type StackStateStore } from "./StackStateStore.ts";
 
 export type PortRegistryError =
@@ -28,6 +32,13 @@ export interface PortRegistry {
     stackId: string,
   ) => Effect.Effect<
     ReadonlyArray<HostPortAssignment>,
+    PortRegistryError,
+    FileSystem.FileSystem | Path.Path | Crypto.Crypto
+  >;
+  readonly privateAssignments: (
+    stackId: string,
+  ) => Effect.Effect<
+    ReadonlyArray<PrivatePortAssignment>,
     PortRegistryError,
     FileSystem.FileSystem | Path.Path | Crypto.Crypto
   >;
@@ -67,4 +78,6 @@ export const makePortRegistry = (options: {
     }),
     assignments: (stackId) =>
       options.store.read(stackId).pipe(Effect.map((state) => state?.ports ?? [])),
+    privateAssignments: (stackId) =>
+      options.store.read(stackId).pipe(Effect.map((state) => state?.privatePorts ?? [])),
   });

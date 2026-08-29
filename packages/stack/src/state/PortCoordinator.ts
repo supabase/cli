@@ -14,7 +14,11 @@ import {
   StackStateGenerationMismatchError,
   StackStateInvalidError,
 } from "../public/Errors.ts";
-import type { HostPortAssignment, PersistedStackState } from "./StackState.ts";
+import type {
+  HostPortAssignment,
+  PersistedStackState,
+  PrivatePortAssignment,
+} from "./StackState.ts";
 import type { StackStateStore } from "./StackStateStore.ts";
 import type { PortRegistry } from "./PortRegistry.ts";
 
@@ -26,16 +30,22 @@ export interface ListenerIntent {
 
 export type ListenerIntents = Readonly<Record<PortField, ListenerIntent>>;
 
-export interface NativeListener {
+/** A workload endpoint reachable by the host gateway on a durable loopback port. */
+export interface PrivatePortIntent {
+  readonly workloadId: string;
+  readonly binding: string;
+}
+
+export interface HostListener {
   readonly field: PortField;
   readonly address: string;
   readonly port: number;
   readonly close: Effect.Effect<void>;
   /** The exact bound listener may be adopted by a gateway without rebind. */
-  readonly binding: NativeListenerBinding;
+  readonly binding: HostListenerBinding;
 }
 
-export type NativeListenerBinding =
+export type HostListenerBinding =
   | { readonly kind: "http"; readonly server: HttpServer }
   | { readonly kind: "tcp"; readonly server: NetServer; readonly allowHalfOpen: true };
 
@@ -45,27 +55,24 @@ export interface PortPlanOptions {
   readonly expectedGeneration?: number;
   /** Generation to persist after this transaction; unchanged unless explicitly supplied. */
   readonly nextGeneration?: number;
+  /** Requested durable workload endpoints. Every binding receives an automatic port. */
+  readonly privateBindings?: ReadonlyArray<PrivatePortIntent>;
 }
 
 export interface PortReservation {
   readonly assignments: Readonly<Partial<Record<PortField, HostPortAssignment>>>;
-  /** Already-bound native listeners that can be adopted by a gateway. */
-  readonly nativeListeners: ReadonlyArray<NativeListener>;
+  readonly privateAssignments: ReadonlyArray<PrivatePortAssignment>;
+  /** Already-bound host listeners that can be adopted by a gateway. */
+  readonly hostListeners: ReadonlyArray<HostListener>;
 }
 
 export interface PortCoordinatorOptions {
-  /** Binds and retains a native listener. The enclosing Scope owns its release. */
-  readonly bindNative?: (
+  /** Binds and retains a host listener. The enclosing Scope owns its release. */
+  readonly bindHost?: (
     address: string,
     port: number,
     field: PortField,
-  ) => Effect.Effect<NativeListener, PortUnavailableError, Scope.Scope>;
-  /** Publishes one container listener through the authoritative engine. */
-  readonly publishContainer?: (
-    address: string,
-    port: number,
-    field: PortField,
-  ) => Effect.Effect<void, PortUnavailableError>;
+  ) => Effect.Effect<HostListener, PortUnavailableError, Scope.Scope>;
   /** Optional non-owning host probe used to skip occupied automatic ports. */
   readonly checkHostPort?: (
     address: string,
@@ -93,9 +100,16 @@ export interface PortCoordinator {
 }
 
 const fields: ReadonlyArray<PortField> = PORT_FIELDS;
+const PRIVATE_PORT_MIN = 30_000;
+const PRIVATE_PORT_MAX = 39_999;
+const PUBLIC_PORT_MIN = 40_000;
+const PUBLIC_PORT_MAX = 65_535;
 
 const assignmentMap = (assignments: ReadonlyArray<HostPortAssignment>) =>
   new Map(assignments.map((assignment) => [assignment.field, assignment]));
+
+const bindingKey = (assignment: Pick<PrivatePortAssignment, "workloadId" | "binding">): string =>
+  `${assignment.workloadId}\u0000${assignment.binding}`;
 
 const validPort = (port: number): boolean => Schema.is(NetworkPortSchema)(port);
 
@@ -109,7 +123,7 @@ const automaticConflict = (port: number, field: PortField) =>
     message: `Port ${port} for ${field} is reserved by another stack's automatic assignment`,
   });
 
-const lifecycleConflict = (field: PortField) =>
+const lifecycleConflict = (field: string) =>
   new StackLifecycleConflictError({
     field,
     message: `Cannot change the ${field} port assignment while the stack is running`,
@@ -141,18 +155,33 @@ export const makePortCoordinator = (
             (current.desiredLifecycle === "running" ? "running" : "stopped");
           const runtime = planOptions.runtime ?? current.runtime;
           const allStates = yield* registry.states;
-          const usedAutomatic = new Set<number>();
-          const usedLive = new Set<number>();
-          const usedReserved = new Set<number>();
+          const usedAutomaticPublic = new Set<number>();
+          const usedLivePublic = new Set<number>();
+          const usedReservedPublic = new Set<number>();
+          const usedReservedPrivate = new Set<number>();
           for (const entry of allStates) {
             if (entry.stackId === stackId) continue;
             for (const assignment of entry.state.ports) {
-              usedReserved.add(assignment.port);
-              if (assignment.intent === "automatic") usedAutomatic.add(assignment.port);
-              if (entry.state.desiredLifecycle === "running") usedLive.add(assignment.port);
+              usedReservedPublic.add(assignment.port);
+              if (assignment.intent === "automatic") usedAutomaticPublic.add(assignment.port);
+              if (entry.state.desiredLifecycle === "running") usedLivePublic.add(assignment.port);
             }
+            for (const assignment of entry.state.privatePorts)
+              usedReservedPrivate.add(assignment.port);
           }
+
           const existing = assignmentMap(current.ports);
+          const requestedPrivate = planOptions.privateBindings;
+          const privateIntents: ReadonlyArray<PrivatePortIntent> =
+            requestedPrivate ??
+            current.privatePorts.map(({ workloadId, binding }) => ({
+              workloadId,
+              binding,
+            }));
+          const existingPrivate = new Map(
+            current.privatePorts.map((entry) => [bindingKey(entry), entry]),
+          );
+
           if (lifecycle === "running" && current.desiredLifecycle === "running") {
             for (const field of fields) {
               const intent = listenerIntents[field];
@@ -165,7 +194,15 @@ export const makePortCoordinator = (
                   : !intent.enabled && prior === undefined;
               if (!unchanged) return yield* lifecycleConflict(field);
             }
+            const priorKeys = new Set(current.privatePorts.map(bindingKey));
+            const nextKeys = new Set(privateIntents.map(bindingKey));
+            if (
+              priorKeys.size !== nextKeys.size ||
+              [...priorKeys].some((key) => !nextKeys.has(key))
+            )
+              return yield* lifecycleConflict("private workload");
           }
+
           const assignments: HostPortAssignment[] = [];
           const byField: Partial<Record<PortField, HostPortAssignment>> = {};
           const usedByThisStack = new Set<number>();
@@ -179,11 +216,12 @@ export const makePortCoordinator = (
                 assignment = prior;
               } else {
                 let selected: number | undefined;
-                for (let port = 40_000; port <= 65_535; port += 1) {
+                for (let port = PUBLIC_PORT_MIN; port <= PUBLIC_PORT_MAX; port += 1) {
                   if (
-                    !usedAutomatic.has(port) &&
-                    !usedLive.has(port) &&
-                    !usedReserved.has(port) &&
+                    !usedAutomaticPublic.has(port) &&
+                    !usedLivePublic.has(port) &&
+                    !usedReservedPublic.has(port) &&
+                    !usedReservedPrivate.has(port) &&
                     !usedByThisStack.has(port)
                   ) {
                     if (options.checkHostPort !== undefined) {
@@ -200,14 +238,16 @@ export const makePortCoordinator = (
                     message: "No automatic host port is available",
                   });
                 assignment = { field, port: selected, intent: "automatic" };
-                usedAutomatic.add(selected);
+                usedAutomaticPublic.add(selected);
               }
             } else {
               if (!validPort(intent.port)) return yield* unavailable(intent.port, field);
-              if (usedAutomatic.has(intent.port))
+              if (usedAutomaticPublic.has(intent.port))
                 return yield* automaticConflict(intent.port, field);
+              if (usedReservedPrivate.has(intent.port))
+                return yield* unavailable(intent.port, field);
               if (usedByThisStack.has(intent.port)) return yield* unavailable(intent.port, field);
-              if (lifecycle === "running" && usedLive.has(intent.port))
+              if (lifecycle === "running" && usedLivePublic.has(intent.port))
                 return yield* unavailable(intent.port, field);
               assignment = { field, port: intent.port, intent: "exact" };
             }
@@ -215,19 +255,70 @@ export const makePortCoordinator = (
             byField[field] = assignment;
             usedByThisStack.add(assignment.port);
           }
+
+          const privateAssignments: PrivatePortAssignment[] = [];
+          const usedPrivateByThisStack = new Set<number>();
+          const usedAllByThisStack = new Set(usedByThisStack);
+          for (const intent of privateIntents) {
+            if (intent.workloadId.length === 0 || intent.binding.length === 0)
+              return yield* new PortAllocationError({
+                field: `${intent.workloadId}:${intent.binding}`,
+                message: "Private workload binding is invalid",
+              });
+            const key = bindingKey(intent);
+            if (privateAssignments.some((entry) => bindingKey(entry) === key))
+              return yield* new PortAllocationError({
+                field: `${intent.workloadId}:${intent.binding}`,
+                message: "Duplicate private workload binding",
+              });
+            const prior = existingPrivate.get(key);
+            let port: number | undefined;
+            if (prior !== undefined && !usedPrivateByThisStack.has(prior.port)) port = prior.port;
+            else {
+              for (
+                let candidate = PRIVATE_PORT_MIN;
+                candidate <= PRIVATE_PORT_MAX;
+                candidate += 1
+              ) {
+                if (
+                  !usedReservedPrivate.has(candidate) &&
+                  !usedReservedPublic.has(candidate) &&
+                  !usedPrivateByThisStack.has(candidate) &&
+                  !usedAllByThisStack.has(candidate)
+                ) {
+                  port = candidate;
+                  break;
+                }
+              }
+            }
+            if (port === undefined)
+              return yield* new PortAllocationError({
+                field: `${intent.workloadId}:${intent.binding}`,
+                message: "No automatic private port is available",
+              });
+            privateAssignments.push({
+              workloadId: intent.workloadId,
+              binding: intent.binding,
+              port,
+            });
+            usedPrivateByThisStack.add(port);
+            usedAllByThisStack.add(port);
+          }
+
           const next: PersistedStackState = {
             ...current,
             // Keep a running lifecycle only after ownership/publication succeeds.
             desiredLifecycle: lifecycle === "running" ? current.desiredLifecycle : lifecycle,
             desiredGeneration: planOptions.nextGeneration ?? current.desiredGeneration,
             ports: assignments,
+            privatePorts: privateAssignments,
           };
           yield* store.replaceUnlocked(stackId, next, expected);
-          return { current, next, lifecycle, runtime, byField };
+          return { current, next, lifecycle, runtime, byField, privateAssignments };
         }),
       );
 
-      const nativeListeners: NativeListener[] = [];
+      const hostListeners: HostListener[] = [];
       const runningState: PersistedStackState = {
         ...committed.next,
         desiredLifecycle: "running",
@@ -249,12 +340,12 @@ export const makePortCoordinator = (
         const assignment = committed.byField[field];
         return intent.enabled && assignment !== undefined ? [{ field, intent, assignment }] : [];
       });
-      if (committed.lifecycle === "running" && committed.runtime.kind === "native") {
-        if (options.bindNative === undefined) {
+      if (committed.lifecycle === "running") {
+        const bindHost = options.bindHost;
+        if (bindHost === undefined) {
           const first = enabledAssignments[0];
           return yield* unavailable(first?.assignment.port ?? 0, first?.field ?? "api");
         }
-        const bindNative = options.bindNative;
         const parentScope = yield* Scope.Scope;
         const acquired = yield* Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
@@ -262,7 +353,7 @@ export const makePortCoordinator = (
             const bound = yield* Effect.exit(
               restore(
                 Effect.forEach(enabledAssignments, ({ field, intent, assignment }) =>
-                  bindNative(intent.address, assignment.port, field).pipe(
+                  bindHost(intent.address, assignment.port, field).pipe(
                     Effect.catchTag("PortUnavailableError", () =>
                       Effect.fail(unavailable(assignment.port, field)),
                     ),
@@ -283,19 +374,13 @@ export const makePortCoordinator = (
             return bound.value;
           }),
         );
-        nativeListeners.push(...acquired);
-      }
-      if (committed.lifecycle === "running" && committed.runtime.kind === "container") {
-        if (options.publishContainer === undefined) {
-          const first = enabledAssignments[0];
-          return yield* unavailable(first?.assignment.port ?? 0, first?.field ?? "api");
-        }
-        for (const { field, intent, assignment } of enabledAssignments)
-          yield* options.publishContainer(intent.address, assignment.port, field);
+        hostListeners.push(...acquired);
       }
 
-      if (committed.lifecycle === "running" && committed.runtime.kind !== "native")
-        yield* commitRunning;
-      return { assignments: committed.byField, nativeListeners };
+      return {
+        assignments: committed.byField,
+        privateAssignments: committed.privateAssignments,
+        hostListeners,
+      };
     }),
 });

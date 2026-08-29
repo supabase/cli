@@ -41,6 +41,7 @@ const state = (
   definition,
   inputFingerprint: definition === undefined ? undefined : "d".repeat(64),
   ports: [],
+  privatePorts: [],
   secrets: {},
 });
 

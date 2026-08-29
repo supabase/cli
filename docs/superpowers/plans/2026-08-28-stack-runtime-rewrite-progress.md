@@ -670,3 +670,20 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
 - Edge Runtime receives the same `SUPABASE_INTERNAL_JWT_SECRET` managed Auth slot as GoTrue plus a
   valid `SUPABASE_JWKS` document (owner-resolved when available, otherwise the empty-key fallback);
   integration coverage exercises symmetric, jwks-file, and Firebase third-party paths.
+
+#### Task 13B1 — unify ingress and private ports (2026-08-29)
+
+- Persisted stack state now requires `privatePorts`, identifying every workload endpoint by the
+  `(workloadId, binding)` pair. State decoding rejects duplicate bindings, duplicate ports, and any
+  overlap between public and private assignments; omitted state fields fail closed without a migration.
+- `PortCoordinator` allocates sticky private loopback ports from `30000–39999` and public host ports
+  from `40000–65535` in one registry-lock transaction. Claims are scanned across every stack,
+  retained while stopped, and returned as complete public/private assignment sets.
+- Public host listeners use one `bindHost`/`HostListener` path for native and container stacks and are
+  returned for direct adoption by the Supervisor-owned gateway. Container workloads publish only
+  exact `127.0.0.1:<private>:<internal>` endpoints; Docker/Podman reject malformed or non-loopback
+  publications before daemon mutation.
+- The obsolete gateway container, activation server, activation file, and wire protocol were removed;
+  lazy activation remains a direct in-process Supervisor call in both runtime modes.
+- Focused ports/state, container-runtime/recovery, and gateway integration coverage passes. Production
+  Supervisor/RuntimeFactory lifecycle wiring and credentials/log integration remain Task 13B's next slice.

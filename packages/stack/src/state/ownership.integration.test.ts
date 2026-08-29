@@ -33,6 +33,7 @@ const stateFor = (stackId: string): PersistedStackState => ({
   desiredGeneration: 0,
   desiredLifecycle: "unconfigured",
   ports: [],
+  privatePorts: [],
   secrets: {},
 });
 

@@ -39,6 +39,7 @@ const makeFixture = () =>
       desiredGeneration: 0,
       desiredLifecycle: "unconfigured",
       ports: [],
+      privatePorts: [],
       secrets: {},
     });
     const resources = yield* Ref.make<ReadonlyArray<ObservedWorkload>>([]);

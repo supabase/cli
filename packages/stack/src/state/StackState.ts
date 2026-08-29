@@ -50,6 +50,14 @@ export const HostPortAssignmentSchema = Schema.Struct({
 });
 export type HostPortAssignment = Schema.Schema.Type<typeof HostPortAssignmentSchema>;
 
+/** A durable loopback endpoint used by the host gateway to reach one workload. */
+export const PrivatePortAssignmentSchema = Schema.Struct({
+  workloadId: Schema.String.check(Schema.isNonEmpty()),
+  binding: Schema.String.check(Schema.isNonEmpty()),
+  port: NetworkPortSchema,
+});
+export type PrivatePortAssignment = Schema.Schema.Type<typeof PrivatePortAssignmentSchema>;
+
 export const PersistedSecretEntrySchema = Schema.Struct({
   policy: Schema.Literals(["managed", "passthrough"] as const),
   value: Schema.String,
@@ -282,6 +290,21 @@ const PortAssignmentsSchema = Schema.Array(HostPortAssignmentSchema).pipe(
   }),
 );
 
+const PrivatePortAssignmentsSchema = Schema.Array(PrivatePortAssignmentSchema).pipe(
+  Schema.decode({
+    decode: SchemaGetter.checkEffect((assignments) =>
+      Effect.succeed(
+        new Set(assignments.map(({ workloadId, binding }) => `${workloadId}\u0000${binding}`))
+          .size === assignments.length &&
+          new Set(assignments.map(({ port }) => port)).size === assignments.length
+          ? undefined
+          : "Duplicate persisted private binding or port",
+      ),
+    ),
+    encode: SchemaGetter.passthrough(),
+  }),
+);
+
 const StackGenerationSchema = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
 const stateShape = Schema.Struct({
@@ -293,6 +316,7 @@ const stateShape = Schema.Struct({
   definition: Schema.optional(StackDefinitionSchema),
   inputFingerprint: Schema.optional(Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/))),
   ports: PortAssignmentsSchema,
+  privatePorts: PrivatePortAssignmentsSchema,
   secrets: PersistedSecretValuesSchema,
 });
 
@@ -301,9 +325,11 @@ export const PersistedStackStateSchema = stateShape.pipe(
   Schema.decode({
     decode: SchemaGetter.checkEffect((state) =>
       Effect.succeed(
-        (state.definition === undefined) === (state.inputFingerprint === undefined)
-          ? undefined
-          : "definition and inputFingerprint must be persisted together",
+        (state.definition === undefined) !== (state.inputFingerprint === undefined)
+          ? "definition and inputFingerprint must be persisted together"
+          : state.ports.some(({ port }) => state.privatePorts.some((entry) => entry.port === port))
+            ? "Public and private persisted ports must not overlap"
+            : undefined,
       ),
     ),
     encode: SchemaGetter.passthrough(),

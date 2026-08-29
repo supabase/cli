@@ -15,7 +15,7 @@ import {
 import { createLazyActivator, makeGateway, type BackendEndpoint } from "./Gateway.ts";
 import { makeHttpGateway } from "./HttpGateway.ts";
 import { makeTcpGateway } from "./TcpGateway.ts";
-import type { NativeListener } from "../state/PortCoordinator.ts";
+import type { HostListener } from "../state/PortCoordinator.ts";
 import { FunctionSettingsDefaults } from "../model/capabilities/functions.ts";
 import { makeFunctionsRoot } from "../functions/FunctionsRoot.ts";
 import {
@@ -138,7 +138,7 @@ describe("stack gateway", () => {
         if (typeof address !== "object" || address === null) return;
         let released = false;
         let releaseCalls = 0;
-        const listener: NativeListener = {
+        const listener: HostListener = {
           field: "api",
           address: "127.0.0.1",
           port: address.port,
@@ -223,7 +223,7 @@ describe("stack gateway", () => {
         const preboundAddress = prebound.address();
         if (typeof preboundAddress !== "object" || preboundAddress === null) return;
         const endpoint: BackendEndpoint = { host: "127.0.0.1", port: backendAddress.port };
-        const listener: NativeListener = {
+        const listener: HostListener = {
           field: "database",
           address: "127.0.0.1",
           port: preboundAddress.port,
@@ -277,14 +277,14 @@ describe("stack gateway", () => {
         )
           return;
         const closeNative = (server: Server) => closeServer(server);
-        const httpListener: NativeListener = {
+        const httpListener: HostListener = {
           field: "api",
           address: "127.0.0.1",
           port: httpAddress.port,
           binding: { kind: "http", server: httpServer },
           close: closeNative(httpServer),
         };
-        const badTcpListener: NativeListener = {
+        const badTcpListener: HostListener = {
           field: "database",
           address: "127.0.0.1",
           port: badTcpAddress.port,

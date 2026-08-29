@@ -33,6 +33,7 @@ const state: PersistedStackState = {
     { field: "database", port: 55432, intent: "exact" },
     { field: "api", port: 54321, intent: "exact" },
   ],
+  privatePorts: [],
   secrets: {
     "secret:database.internal.password": { policy: "managed", value: "postgres" },
     "secret:security.jwt.signing.secret": { policy: "managed", value: "symmetric-secret" },

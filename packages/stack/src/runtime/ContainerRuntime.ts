@@ -42,12 +42,21 @@ export interface ContainerWorkloadResolution {
   readonly envFile?: string;
   readonly networkAliases?: ReadonlyArray<string>;
   readonly hostRoute?: ContainerHostRoute;
+  /** Private host-loopback publications used by the in-process gateway. */
+  readonly publications?: ReadonlyArray<ContainerPortPublicationInput>;
   readonly command?: ReadonlyArray<string>;
   readonly waitForReadiness?: (
     key: RuntimeWorkloadKey,
     workload: PlannedWorkload,
     resource: ContainerResource,
   ) => Effect.Effect<void, RuntimeDriverError>;
+}
+
+/** Untrusted host-publication input validated before any engine operation. */
+export interface ContainerPortPublicationInput {
+  readonly address: string;
+  readonly hostPort: number;
+  readonly containerPort: number;
 }
 
 export interface ContainerVolumeRequest {
@@ -162,13 +171,23 @@ const isWorkloadResource = (
 const isManagedContainer = (
   entry: ContainerResource,
 ): entry is ContainerResource & { readonly labels: ContainerWorkloadLabels } =>
-  (entry.kind === "workload" || entry.kind === "gateway") &&
-  (entry.labels.role === "workload" || entry.labels.role === "gateway");
+  entry.kind === "workload" && entry.labels.role === "workload";
 
 const isNetworkResource = (
   entry: ContainerResource,
 ): entry is ContainerResource & { readonly labels: ContainerNetworkLabels } =>
   entry.kind === "network" && entry.labels.role === "network";
+
+const isValidPublication = (
+  publication: ContainerPortPublicationInput,
+): publication is ContainerPortPublicationInput & { readonly address: "127.0.0.1" } =>
+  publication.address === "127.0.0.1" &&
+  Number.isInteger(publication.hostPort) &&
+  Number.isInteger(publication.containerPort) &&
+  publication.hostPort >= 1 &&
+  publication.hostPort <= 65_535 &&
+  publication.containerPort >= 1 &&
+  publication.containerPort <= 65_535;
 
 /** RuntimeDriver implementation backed by one exact, injected container engine. */
 export const makeContainerRuntime = (
@@ -229,8 +248,15 @@ export const makeContainerRuntime = (
           ? Effect.succeed<ContainerWorkloadResolution>({})
           : options.resolveWorkload(key, workload);
       const startEffect = Effect.gen(function* () {
-        yield* withEngine(key, options.engine.preflight);
         const resolution = yield* resolved;
+        const requestedPublications = resolution.publications ?? [];
+        if (requestedPublications.some((publication) => !isValidPublication(publication)))
+          return yield* toDriverError(
+            key,
+            new Error("Container publications must use valid loopback host ports"),
+          );
+        const publications = requestedPublications.filter(isValidPublication);
+        yield* withEngine(key, options.engine.preflight);
         const volumeRequest = resolution.volume;
         if (volumeRequest !== undefined && volumeRequest.target.length === 0)
           return yield* toDriverError(key, new Error("Container volume mapping is invalid"));
@@ -259,9 +285,7 @@ export const makeContainerRuntime = (
           (entry) => entry.kind === "workload" && sameWorkloadIdentity(entry.labels, labels),
         );
         const namedCollision = entries.find(
-          (entry) =>
-            (entry.kind === "workload" || entry.kind === "gateway") &&
-            entry.name === nameFor(key, "workload"),
+          (entry) => entry.kind === "workload" && entry.name === nameFor(key, "workload"),
         );
         const collision =
           namedCollision !== undefined && isManagedContainer(namedCollision)
@@ -353,7 +377,7 @@ export const makeContainerRuntime = (
               labels,
               network: networkResource.id,
               mounts: resolution.mounts ?? [],
-              publications: [],
+              publications,
               volumeMounts: volumeRequest === undefined ? [] : [volumeMountFor(key, volumeRequest)],
               role: "workload",
               ...(resolution.envFile === undefined ? {} : { envFile: resolution.envFile }),
@@ -474,7 +498,7 @@ export const makeContainerRuntime = (
               if (Exit.isFailure(result)) cleanupCause = Cause.combine(cleanupCause, result.cause);
             });
 
-          // Stop and remove every stack workload/gateway before touching its network. A failed
+          // Stop and remove every stack workload before touching its network. A failed
           // stop does not prevent the remove attempt; all failures are returned together.
           for (const entry of owned.filter(isManagedContainer)) {
             if (entry.state === "running")
@@ -555,13 +579,9 @@ export const makeContainerRuntime = (
               );
             });
 
-          // Recovery never starts or creates anything. Every gateway is removed first so a new
-          // owner cannot expose stale ingress while workload identities are being evaluated.
+          // Recovery never starts or creates anything. Workload identities are evaluated before
+          // retaining the network so stale resources cannot leak into the new owner.
           for (const entry of owned.filter(isManagedContainer)) {
-            if (entry.kind === "gateway") {
-              yield* stopAndRemove(entry);
-              continue;
-            }
             const hash = desiredHashes.get(entry.labels.workloadId);
             const current =
               entry.labels.desiredGeneration === request.desiredGeneration &&
@@ -591,7 +611,7 @@ export const makeContainerRuntime = (
             });
           }
 
-          // Networks are only considered after all containers and gateways. Keep one network for
+          // Networks are only considered after all workloads. Keep one network for
           // the exact current generation; duplicate or stale-generation networks are ephemera.
           for (const entry of owned.filter(isNetworkResource)) {
             if (

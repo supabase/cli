@@ -462,6 +462,7 @@ const stateInitial = (
   desiredGeneration: 0,
   desiredLifecycle: "unconfigured",
   ports: [],
+  privatePorts: [],
   secrets: {},
 });
 

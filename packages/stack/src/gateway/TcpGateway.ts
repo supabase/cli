@@ -9,12 +9,12 @@ import type {
   GatewayRouteRequest,
   LazyActivator,
 } from "./Gateway.ts";
-import type { NativeListener } from "../state/PortCoordinator.ts";
+import type { HostListener } from "../state/PortCoordinator.ts";
 
 export interface TcpGatewayOptions {
   readonly address?: string;
   readonly port?: number;
-  readonly listener?: NativeListener;
+  readonly listener?: HostListener;
   readonly routes: ReadonlyArray<GatewayRoute>;
   readonly activate: LazyActivator["activate"];
   readonly resolveBackend?: (

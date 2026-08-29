@@ -273,20 +273,6 @@ describe("runtime recovery", () => {
             labels: workloadLabels(stackId, "owner", key.specHash),
           },
           {
-            id: "gateway",
-            name: "gateway",
-            kind: "gateway",
-            state: "running",
-            labels: {
-              stackId,
-              ownerSessionId: "owner",
-              desiredGeneration: key.desiredGeneration,
-              workloadId: "gateway",
-              specHash: "gateway-hash",
-              role: "gateway",
-            },
-          },
-          {
             id: "network",
             name: networkName,
             kind: "network",
@@ -312,9 +298,7 @@ describe("runtime recovery", () => {
         ownerSessionId: "new-owner",
       });
       yield* runtime.cleanup({ stackId, destroy: false });
-      expect(state.calls.slice(0, 6)).toEqual([
-        "stop:gateway",
-        "remove:gateway",
+      expect(state.calls.slice(0, 3)).toEqual([
         "stop:workload",
         "remove:workload",
         "remove-network:network",
@@ -330,7 +314,7 @@ describe("runtime recovery", () => {
     }),
   );
 
-  it.live("recovers containers without starting and removes stale workloads and gateways", () =>
+  it.live("recovers containers without starting and removes stale workloads", () =>
     Effect.gen(function* () {
       const state: EngineState = {
         calls: [],
@@ -375,20 +359,6 @@ describe("runtime recovery", () => {
             labels: {
               ...workloadLabels(stackId, "old-owner", "hash-unplanned"),
               workloadId: "storage:storage",
-            },
-          },
-          {
-            id: "gateway",
-            name: "gateway",
-            kind: "gateway",
-            state: "running",
-            labels: {
-              stackId,
-              ownerSessionId: "old-owner",
-              desiredGeneration: key.desiredGeneration,
-              workloadId: "gateway",
-              specHash: "gateway-hash",
-              role: "gateway",
             },
           },
           {

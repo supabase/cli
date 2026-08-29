@@ -143,13 +143,10 @@ export const serializePodmanCommand = (command: ContainerCommand): ContainerProc
         "--mount",
         `type=volume,src=${mount.volume},dst=${mount.target}${mount.readOnly ? ",ro" : ""}`,
       ]);
-      const publications =
-        command.spec.role === "gateway"
-          ? command.spec.publications.flatMap((port) => [
-              "--publish",
-              `${port.hostPort}:${port.containerPort}`,
-            ])
-          : [];
+      const publications = command.spec.publications.flatMap((port) => [
+        "--publish",
+        `${port.address}:${port.hostPort}:${port.containerPort}`,
+      ]);
       const environment =
         command.spec.envFile === undefined ? [] : ["--env-file", command.spec.envFile];
       const networkAliases =
@@ -256,7 +253,7 @@ const workloadLabels = (
     generation === undefined ||
     workload === undefined ||
     hash === undefined ||
-    (role !== "workload" && role !== "gateway")
+    role !== "workload"
   )
     return Effect.fail(protocol(operation));
   return decodeIdentity(operation, stack).pipe(
@@ -297,7 +294,7 @@ const decodeContainers = (result: ContainerCommandResult) =>
       hash === undefined ||
       role === undefined ||
       state === undefined ||
-      (role !== "workload" && role !== "gateway")
+      role !== "workload"
     )
       return Effect.fail(protocol("inspect-containers"));
     return workloadLabels("inspect-containers", [

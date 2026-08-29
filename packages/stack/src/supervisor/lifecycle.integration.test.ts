@@ -91,6 +91,7 @@ const makeFixture = (runtime: StackRuntime = { kind: "native" }) =>
       desiredGeneration: 0,
       desiredLifecycle: "unconfigured",
       ports: [],
+      privatePorts: [],
       secrets: {},
     });
     const state: BackendState = { calls: [], preflight: [] };

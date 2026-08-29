@@ -1,8 +1,9 @@
-import { Data, Effect, Predicate, Stream } from "effect";
+import { Data, Effect, Predicate, Schema, Stream } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import type * as ChildProcessSpawnerService from "effect/unstable/process/ChildProcessSpawner";
 import type { ContainerArtifact } from "../model/CapabilityModule.ts";
 import type { StackId } from "../public/StackId.ts";
+import { NetworkPortSchema } from "../public/Status.ts";
 
 export type ContainerEngineKind = "docker" | "podman";
 export interface ContainerPlatform {
@@ -36,7 +37,7 @@ export type ContainerEngineFailure =
   | ContainerEngineProtocolError
   | ContainerCommandError;
 
-export type ContainerResourceRole = "network" | "volume" | "workload" | "gateway";
+export type ContainerResourceRole = "network" | "volume" | "workload";
 interface ContainerIdentityLabels {
   readonly stackId: StackId;
   readonly ownerSessionId: string;
@@ -48,7 +49,7 @@ export interface ContainerNetworkLabels extends ContainerIdentityLabels {
 export interface ContainerWorkloadLabels extends ContainerIdentityLabels {
   readonly workloadId: string;
   readonly specHash: string;
-  readonly role: "workload" | "gateway";
+  readonly role: "workload";
 }
 export interface ContainerVolumeLabels {
   readonly stackId: StackId;
@@ -77,6 +78,7 @@ export interface ContainerVolumeMount {
   readonly readOnly: boolean;
 }
 export interface ContainerPortPublication {
+  readonly address: "127.0.0.1";
   readonly hostPort: number;
   readonly containerPort: number;
 }
@@ -97,7 +99,7 @@ export interface ContainerContainerSpec {
   readonly volumeMounts: ReadonlyArray<ContainerVolumeMount>;
   readonly publications: ReadonlyArray<ContainerPortPublication>;
   readonly hostRoute?: ContainerHostRoute;
-  readonly role: "workload" | "gateway";
+  readonly role: "workload";
   readonly command?: ReadonlyArray<string>;
   /** Path to an owned 0600 env file. Secret values must never be argv. */
   readonly envFile?: string;
@@ -392,19 +394,26 @@ export const makeContainerEngineCore = (options: ContainerEngineOptions): Contai
         ),
       ),
     removeVolume: (id) => noResult("remove-volume", { operation: "remove-volume", id }),
-    createContainer: (spec) =>
-      spec.role === "workload" && (spec.publications.length > 0 || spec.hostRoute !== undefined)
+    createContainer: (spec) => {
+      const invalidPublication = spec.publications.some(
+        (publication) =>
+          publication.address !== "127.0.0.1" ||
+          !Schema.is(NetworkPortSchema)(publication.hostPort) ||
+          !Schema.is(NetworkPortSchema)(publication.containerPort),
+      );
+      return invalidPublication
         ? Effect.fail(
             new ContainerEngineProtocolError({
               operation: "create-container",
-              message: "Only the gateway container may publish host ports or host routes",
+              message: "Container publications must use valid loopback host ports",
             }),
           )
         : check("create-container", { operation: "create-container", spec }).pipe(
             Effect.flatMap((result) =>
               options.codecs.decodeCreate("create-container", result, spec, spec.role),
             ),
-          ),
+          );
+    },
     startContainer: (id) => noResult("start-container", { operation: "start-container", id }),
     stopContainer: (id) => noResult("stop-container", { operation: "stop-container", id }),
     removeContainer: (id) => noResult("remove-container", { operation: "remove-container", id }),

@@ -25,7 +25,7 @@ import type {
   PreparedGatewayRoute,
 } from "./Gateway.ts";
 import { GatewayRouteNotFoundError } from "./Gateway.ts";
-import type { NativeListener } from "../state/PortCoordinator.ts";
+import type { HostListener } from "../state/PortCoordinator.ts";
 
 class GatewayBackendError extends Data.TaggedError("GatewayBackendError")<{
   readonly cause?: unknown;
@@ -34,7 +34,7 @@ class GatewayBackendError extends Data.TaggedError("GatewayBackendError")<{
 export interface HttpGatewayOptions {
   readonly address?: string;
   readonly port?: number;
-  readonly listener?: NativeListener;
+  readonly listener?: HostListener;
   readonly routes: ReadonlyArray<GatewayRoute>;
   readonly activate: LazyActivator["activate"];
   readonly resolveBackend?: (
