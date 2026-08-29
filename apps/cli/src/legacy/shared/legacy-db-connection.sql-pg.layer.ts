@@ -1177,12 +1177,16 @@ const connect = (
               Effect.tapError(() =>
                 Effect.suspend(() => {
                   if (batchQuery?.outcome !== "submitted") return Effect.void;
-                  return Effect.promise(() =>
-                    activeClient.query("ROLLBACK").then(
-                      () => true,
-                      () => false,
-                    ),
-                  ).pipe(
+                  return Effect.promise(() => {
+                    try {
+                      return activeClient.query("ROLLBACK").then(
+                        () => true,
+                        () => false,
+                      );
+                    } catch {
+                      return Promise.resolve(false);
+                    }
+                  }).pipe(
                     Effect.timeoutOption(1000),
                     Effect.map((result) => {
                       rolledBack = Option.getOrElse(result, () => false);

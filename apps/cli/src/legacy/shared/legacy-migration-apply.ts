@@ -66,7 +66,7 @@ const ALTER_SYSTEM_PATTERN = /^ALTER\s+SYSTEM(?:\s|$)/u;
 const CLUSTER_PATTERN = /^CLUSTER(?:\s|$)/u;
 const DATABASE_DDL_PATTERN = /^(?:CREATE|DROP)\s+DATABASE(?:\s|$)/u;
 const TABLESPACE_DDL_PATTERN = /^(?:CREATE|DROP)\s+TABLESPACE(?:\s|$)/u;
-const REINDEX_DATABASE_PATTERN = /^REINDEX(?:\s+\([^)]*\))?\s+(?:DATABASE|SYSTEM|SCHEMA)(?:\s|$)/u;
+const REINDEX_DATABASE_PATTERN = /^REINDEX(?:\s*\([^)]*\))?\s+(?:DATABASE|SYSTEM|SCHEMA)(?:\s|$)/u;
 const SUBSCRIPTION_DDL_PATTERN = /^(?:CREATE|DROP)\s+SUBSCRIPTION(?:\s|$)/u;
 const DISCARD_ALL_PATTERN = /^DISCARD\s+ALL(?:\s|$)/u;
 const ALTER_DATABASE_TABLESPACE_PATTERN = /^ALTER\s+DATABASE\s[\s\S]*\sSET\s+TABLESPACE(?:\s|$)/u;
@@ -115,7 +115,8 @@ const legacyTrimLeadingSqlComments = (sql: string): string => {
  * `ALTER DATABASE … SET TABLESPACE`,
  * `ALTER SUBSCRIPTION … REFRESH`/`SET`/`ADD`/`DROP PUBLICATION`,
  * `ALTER TABLE … DETACH PARTITION … CONCURRENTLY`/`FINALIZE`,
- * `ALTER TABLE`/`INDEX`/`MATERIALIZED VIEW ALL IN TABLESPACE`. Such statements fail with
+ * `ALTER TABLE`/`INDEX`/`MATERIALIZED VIEW ALL IN TABLESPACE`. Such statements (in
+ * their default forms) fail with
  * SQLSTATE 25001 inside the transaction
  * created by a migration batch, so `execMigrationBatch` runs them standalone.
  * Port of `isPipelineIncompatible` (`pkg/migration/file.go`, supabase/cli#5156),

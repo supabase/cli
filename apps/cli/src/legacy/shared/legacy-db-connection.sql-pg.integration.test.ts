@@ -704,7 +704,7 @@ describe("legacyDbConnectionSqlPgLayer extended batches", () => {
     }),
   );
 
-  it.live("absorbs a socket death during the release-path rollback instead of crashing", () =>
+  it.live("absorbs a socket death during the error-path rollback instead of crashing", () =>
     Effect.gen(function* () {
       const server = yield* Effect.promise(() =>
         fakeBatchServer({ failExecuteAt: 3, destroyOnRollback: true }),
