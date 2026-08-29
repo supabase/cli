@@ -32,20 +32,24 @@
 | `GET`  | `/v2/projects/{ref}/workers/{name}`          | Bearer token                                | none                                                | `build_state`, `state_reason`, `image_version`, `spec` |
 | `GET`  | `/v1/projects/{ref}`                         | Bearer token                                | none                                                | linked-project cache miss only — name, org, region     |
 
-`GET` is polled until `build_state` leaves `building`.
+`GET /v2/projects/{ref}/workers/{name}` is requested **only with `--wait`**, and
+is then polled until `build_state` leaves `building`. Without it the command
+returns on the deploy response, which carries the accepted spec and a
+`build_state` of `building`.
 
 ## Exit Codes
 
-| Code | Condition                                               |
-| ---- | ------------------------------------------------------- |
-| `0`  | success                                                 |
-| `1`  | no workers named and none found in the project          |
-| `1`  | a worker's source is missing, not a directory, or empty |
-| `1`  | a worker's source directory cannot be read              |
-| `1`  | a worker's source links to a path outside itself        |
-| `1`  | build context upload failed                             |
-| `1`  | the build reached `failed`, or never left `building`    |
-| `1`  | API error, or project not enrolled in the alpha         |
+| Code | Condition                                                           |
+| ---- | ------------------------------------------------------------------- |
+| `0`  | success                                                             |
+| `1`  | no workers named and none found in the project                      |
+| `1`  | a worker's source is missing, not a directory, or empty             |
+| `1`  | a worker's source directory cannot be read                          |
+| `1`  | a worker's source links to a path outside itself                    |
+| `1`  | build context upload failed                                         |
+| `1`  | the deploy was answered with `build_state: failed`                  |
+| `1`  | with `--wait`: the build reached `failed`, or never left `building` |
+| `1`  | API error, or project not enrolled in the alpha                     |
 
 ## Environment Variables
 
@@ -72,16 +76,20 @@ payload always carries a `workers` array, which a flat `KEY=value` list cannot
 express, and discovering that at the end would fail the command with the remote
 project already changed.
 
-A multi-worker run stops at the first failure, and names the workers it never
-attempted on stderr in **every** format, machine ones included: that run is a
-CI run, where nobody watched the loop and "what still needs deploying" is the
-question the failure raises. The per-worker `Deploying Worker n/N:` announcement
-is text-only by contrast, since it is progress rather than an outcome.
+Without `--wait` the deploy returns with the build still running, so the
+follow-up hint (`workers status`, and `--wait`) is emitted as a success trailer:
+stderr, once, at the end of the run rather than between workers. **Text output
+only** — like the rest of the human deploy report it sits behind
+`output.format === "text"` and the `-o` check, so `--output-format json`,
+`stream-json` and every legacy `-o` mode emit no hint. Machine callers read
+`build_state` from the payload instead. The hint carries an explicit
+`--project-ref` when the flag supplied one, since it is copy-pasted verbatim.
 
-Both retry suggestions — the one on a failed build and the one on a build that
-never settled — carry an explicit `--project-ref` when the flag supplied the
-ref, since they are copy-pasted verbatim. A suggestion that dropped it would
-re-resolve against whatever this checkout happens to be linked to.
+A multi-worker run stops at the first failure, and names the workers it never
+attempted on stderr in **every** format, machine ones included — unlike the
+trailer above, `reportUnattempted` has no format guard: that run is a
+CI run, where nobody watched the loop and "what still needs deploying" is the
+question the failure raises.
 
 The presigned `PUT` above is the one request whose URL is itself a credential.
 `--debug` logs every request URL, so `legacyHttpClientLayer` redacts query
