@@ -1,5 +1,6 @@
+import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit } from "effect";
+import { Effect, Exit, FileSystem } from "effect";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { ArtifactRequest, ArtifactStore, PreparedArtifact } from "./ArtifactStore.ts";
 import type {
@@ -8,7 +9,10 @@ import type {
   ContainerVolumeSpec,
   ContainerContainerSpec,
 } from "../runtime/ContainerEngine.ts";
-import { makeRuntimeArtifactPreparer } from "./RuntimeArtifacts.ts";
+import {
+  makeProductionRuntimeArtifactPreparer,
+  makeRuntimeArtifactPreparer,
+} from "./RuntimeArtifacts.ts";
 
 const nativeWorkload = (selected: PlannedWorkload["selected"]): PlannedWorkload => ({
   id: "database:database",
@@ -62,6 +66,25 @@ const containerEngine = (present: boolean, calls: string[]): ContainerEngine => 
 });
 
 describe("runtime artifact preparation", () => {
+  it.live("constructs only the persisted container engine", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-artifact-runtime-" });
+        const preparer = yield* makeProductionRuntimeArtifactPreparer({
+          stateRoot: root,
+          runtime: { kind: "container", engine: "podman" },
+        });
+        expect(preparer.containerEngine?.kind).toBe("podman");
+        const native = yield* makeProductionRuntimeArtifactPreparer({
+          stateRoot: root,
+          runtime: { kind: "native" },
+        });
+        expect(native.containerEngine).toBeUndefined();
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
   it("resolves native catalog metadata, checksum, and one ArtifactRequest", () => {
     const requests: ArtifactRequest[] = [];
     const store: ArtifactStore = {

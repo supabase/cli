@@ -19,6 +19,7 @@ import {
   makeProcessCommandRunner,
   type ContainerEngine,
   type ContainerPlatform,
+  type ContainerEngineKind,
 } from "../runtime/ContainerEngine.ts";
 import { makeDockerEngine } from "../runtime/DockerEngine.ts";
 import { makePodmanEngine } from "../runtime/PodmanEngine.ts";
@@ -40,6 +41,8 @@ export interface RuntimeArtifactPreparer {
     runtime: StackRuntime,
     workload: PlannedWorkload,
   ) => Effect.Effect<PreparedWorkloadArtifact, RuntimeArtifactPreparationError>;
+  /** Selected production container engine, when this preparer was built for containers. */
+  readonly containerEngine?: ContainerEngine;
 }
 
 export type RuntimeArtifactPreparationError = ArtifactStoreError | StackPreparationError;
@@ -53,7 +56,7 @@ export interface RuntimeArtifactPreparerOptions {
     ) => Effect.Effect<string, StackPreparationError>;
     readonly platform?: { readonly os: string; readonly arch: string };
   };
-  readonly containers?: Readonly<{ docker: ContainerEngine; podman: ContainerEngine }>;
+  readonly containers?: Readonly<Partial<Record<ContainerEngineKind, ContainerEngine>>>;
 }
 
 const error = (message: string, fields: Readonly<Record<string, unknown>> = {}) =>
@@ -164,6 +167,7 @@ const nativeResult = (
 export const makeProductionRuntimeArtifactPreparer = (options: {
   readonly stateRoot: string;
   readonly platform?: ContainerPlatform;
+  readonly runtime?: StackRuntime;
 }): Effect.Effect<
   RuntimeArtifactPreparer,
   RuntimeArtifactPreparationError,
@@ -196,16 +200,28 @@ export const makeProductionRuntimeArtifactPreparer = (options: {
               : "linux",
         desktop: process.platform === "darwin",
       } satisfies ContainerPlatform);
-    const dockerRunner = yield* makeProcessCommandRunner({ executable: "docker" }).pipe(
-      Effect.mapError(() => error("Unable to configure Docker artifact engine")),
-    );
-    const podmanRunner = yield* makeProcessCommandRunner({ executable: "podman" }).pipe(
-      Effect.mapError(() => error("Unable to configure Podman artifact engine")),
-    );
-    const docker = makeDockerEngine({ runner: dockerRunner, platform });
-    const podman = makePodmanEngine({ runner: podmanRunner, platform });
-    return makeRuntimeArtifactPreparer({
+    const selectedEngine =
+      options.runtime?.kind === "container" ? options.runtime.engine : undefined;
+    const containerEngine =
+      selectedEngine === undefined
+        ? undefined
+        : yield* makeProcessCommandRunner({ executable: selectedEngine }).pipe(
+            Effect.mapError(() => error(`Unable to configure ${selectedEngine} artifact engine`)),
+            Effect.map((runner) =>
+              selectedEngine === "docker"
+                ? makeDockerEngine({ runner, platform })
+                : makePodmanEngine({ runner, platform }),
+            ),
+          );
+    const containers =
+      selectedEngine === undefined || containerEngine === undefined
+        ? undefined
+        : selectedEngine === "docker"
+          ? { docker: containerEngine }
+          : { podman: containerEngine };
+    const preparer = makeRuntimeArtifactPreparer({
       native: { store, checksum },
-      containers: { docker, podman },
+      containers,
     });
+    return containerEngine === undefined ? preparer : { ...preparer, containerEngine };
   });

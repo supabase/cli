@@ -173,6 +173,30 @@ describe("workload runtime catalog", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.live("uses owner-resolved StackId data paths for native persistence", () =>
+    Effect.sync(() => {
+      const database = planned("database:database");
+      const storage = planned("storage:storage");
+      const databaseSpec = runtimeSpecFor(database);
+      const storageSpec = runtimeSpecFor(storage);
+      expect(
+        databaseSpec?.env(state, database, 5432, "native", {
+          database: { dataPath: "/state/stack/data/database" },
+        }).PGDATA,
+      ).toBe("/state/stack/data/database");
+      expect(
+        storageSpec?.env(state, storage, 5000, "native", {
+          storage: { dataPath: "/state/stack/data/storage" },
+        }).FILE_STORAGE_BACKEND_PATH,
+      ).toBe("/state/stack/data/storage");
+      expect(
+        storageSpec?.env(state, storage, 5000, "container", {
+          storage: { dataPath: "/ignored/native/path" },
+        }).FILE_STORAGE_BACKEND_PATH,
+      ).toBe("/var/lib/storage");
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.live(
     "consumes nested capability settings and separates native/container database endpoints",
     () =>

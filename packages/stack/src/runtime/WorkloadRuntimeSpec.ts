@@ -47,6 +47,9 @@ export interface WorkloadRuntimeInputs {
     readonly bootstrapPath?: string;
     readonly bootstrapContainerPath?: string;
   }>;
+  /** Stack-owned native persistent data paths. Containers use their named volumes instead. */
+  readonly database?: Readonly<{ readonly dataPath?: string }>;
+  readonly storage?: Readonly<{ readonly dataPath?: string }>;
   /** Host route used by containers to reach StackGateway. */
   readonly hostRoute?: ContainerHostRoute;
 }
@@ -780,8 +783,14 @@ const withStorageSettings = (
     DATABASE_URL: dbUrl(state, "supabase_storage_admin", runtime),
     FILE_SIZE_LIMIT: valueAt(state, "storage", "file_size_limit") || "50MiB",
     STORAGE_BACKEND: "file",
-    FILE_STORAGE_BACKEND_PATH: "/var/lib/storage",
-    STORAGE_FILE_BACKEND_PATH: "/var/lib/storage",
+    FILE_STORAGE_BACKEND_PATH:
+      runtime === "container"
+        ? "/var/lib/storage"
+        : (inputs.storage?.dataPath ?? `${state.identity.projectRoot}/.supabase/storage`),
+    STORAGE_FILE_BACKEND_PATH:
+      runtime === "container"
+        ? "/var/lib/storage"
+        : (inputs.storage?.dataPath ?? `${state.identity.projectRoot}/.supabase/storage`),
     ENABLE_IMAGE_TRANSFORMATION:
       valueAt(state, "storage", "image_transformation.enabled") || "false",
     S3_PROTOCOL_ENABLED: valueAt(state, "storage", "s3_protocol.enabled") || "true",
@@ -880,7 +889,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
         PGDATA:
           runtime === "container"
             ? "/var/lib/postgresql/data"
-            : `${state.identity.projectRoot}/.supabase/db/data`,
+            : (_inputs.database?.dataPath ?? `${state.identity.projectRoot}/.supabase/db/data`),
         POSTGRES_PASSWORD: secret(state, "secret:database.internal.password"),
         TZDIR: "/var/db/timezone/zoneinfo",
       }),

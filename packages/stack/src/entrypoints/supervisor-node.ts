@@ -13,6 +13,7 @@ import {
 import { makeStackStateStore } from "../state/StackStateStore.ts";
 import { StackIdSchema } from "../public/StackId.ts";
 import { makeSupervisor } from "../supervisor/Supervisor.ts";
+import { makeProductionRuntimeFactory } from "../runtime/ProductionRuntime.ts";
 import { startOwnerSession } from "../supervisor/OwnerSession.ts";
 import { STACK_RPC_RELEASE } from "../control/StackRpc.ts";
 import { OwnerSessionIdSchema } from "../control/MaintenanceProtocol.ts";
@@ -103,6 +104,13 @@ export const runSupervisor = (args: SupervisorArgs) =>
       });
       const released = yield* Deferred.make<void, never>();
       const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+      const runtimeFactory = yield* makeProductionRuntimeFactory({
+        stateRoot: args.stateRoot,
+        stackId: args.stackId,
+        ownerSessionId,
+        stateStore: store,
+        context,
+      });
       const supervisor = yield* makeSupervisor({
         identity: args.identity,
         stackId: args.stackId,
@@ -110,6 +118,7 @@ export const runSupervisor = (args: SupervisorArgs) =>
         rpcRelease: args.rpcRelease || STACK_RPC_RELEASE,
         stateStore: store,
         context,
+        runtimeFactory,
       });
       const session = yield* startOwnerSession({
         endpoint: lease.metadata.endpoint,
