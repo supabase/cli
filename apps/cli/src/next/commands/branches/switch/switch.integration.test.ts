@@ -11,6 +11,7 @@ import {
   mockProjectLinkState,
 } from "../../../../../tests/helpers/mocks.ts";
 import { switchBranch } from "./switch.handler.ts";
+import { StackIdSchema } from "@supabase/stack/effect";
 
 const MAIN = {
   id: "00000000-0000-4000-8000-000000000001",
@@ -99,6 +100,35 @@ describe("branches switch handler", () => {
       Effect.tap((exit) =>
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
+        }),
+      ),
+    );
+  });
+
+  it.live("guides a running stack to restart after switching branches", () => {
+    const { out, layer } = setup();
+    const operations = {
+      findStack: () =>
+        Effect.succeed(
+          Option.some({
+            id: StackIdSchema.make(
+              "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+            ),
+            projectRoot: process.cwd(),
+            name: "default",
+            branchContext: "refs/heads/main",
+            runtime: { kind: "native" as const },
+            desiredLifecycle: "running" as const,
+          }),
+        ),
+    };
+    return switchBranch({ name: Option.some("dev") }, operations).pipe(
+      Effect.provide(layer),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(out.messages.some((message) => message.message.includes("supabase restart"))).toBe(
+            true,
+          );
         }),
       ),
     );

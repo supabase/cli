@@ -1,5 +1,4 @@
 import { Redacted } from "effect";
-import { join } from "node:path";
 import type { CliConfig } from "@supabase/config";
 import type {
   AuthSettings,
@@ -108,10 +107,8 @@ const toRestSettings = (api: CliConfig["api"] | undefined): RestSettings => ({
 const toFunctionsSettings = (
   edgeRuntime: CliConfig["edge_runtime"] | undefined,
   functions: CliConfig["functions"] | undefined,
-  projectRoot: string | undefined,
 ): FunctionsSettings => ({
-  functions_root:
-    projectRoot === undefined ? "supabase/functions" : join(projectRoot, "supabase", "functions"),
+  functions_root: "supabase/functions",
   edge_runtime:
     edgeRuntime === undefined
       ? undefined
@@ -236,7 +233,6 @@ export function toStartStackConfig(
   config: CliConfig | undefined,
   exclude: ReadonlyArray<ExcludedStackService>,
   mode?: StartMode,
-  projectRoot?: string,
 ): StackConfig {
   const excluded = new Set(exclude);
   const native = mode === "native";
@@ -252,7 +248,7 @@ export function toStartStackConfig(
   const analytics = config?.analytics;
   const pooler = db?.pooler;
   const databaseSettings = toDatabaseSettings(db);
-  const functionSettings = toFunctionsSettings(edgeRuntime, functions, projectRoot);
+  const functionSettings = toFunctionsSettings(edgeRuntime, functions);
   const authSettings = toAuthSettings(auth);
   const studioSettings =
     studio === undefined
@@ -317,7 +313,9 @@ export function toStartStackConfig(
         edgeRuntime === undefined ? undefined : { port: edgeRuntime.inspector_port },
     },
     security:
-      auth?.jwt_secret === undefined && auth?.jwt_issuer === undefined
+      auth?.jwt_secret === undefined &&
+      auth?.jwt_issuer === undefined &&
+      auth?.signing_keys_path === undefined
         ? undefined
         : {
             jwt: {
@@ -331,14 +329,6 @@ export function toStartStackConfig(
             },
           },
   };
-}
-
-export function withServiceVersions(
-  stackConfig: StackConfig,
-  versions: Partial<Record<string, string>>,
-): StackConfig {
-  void versions;
-  return stackConfig;
 }
 
 export function runtimePreference(mode?: StartMode): StackRuntimePreference | undefined {

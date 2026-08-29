@@ -9,7 +9,6 @@ import {
   Redacted,
   Scope,
   Schema,
-  SchemaAST,
   Stream,
 } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -39,13 +38,14 @@ import type { PreparedCapability, PrepareStackResult } from "./EffectStack.ts";
 // oxlint-disable effecttsgo/any-unknown-in-error-context -- Promise callers receive native rejection values.
 
 /** Recursively replaces Effect `Redacted` leaves with their plain value. */
-export type Unredacted<T> = [T] extends [Redacted.Redacted<infer Value>]
-  ? Unredacted<Value>
-  : T extends readonly (infer Item)[]
-    ? ReadonlyArray<Unredacted<Item>>
-    : T extends object
-      ? { readonly [Key in keyof T]: Unredacted<T[Key]> }
-      : T;
+export type Unredacted<T> =
+  T extends Redacted.Redacted<infer Value>
+    ? Unredacted<Value>
+    : T extends readonly (infer Item)[]
+      ? ReadonlyArray<Unredacted<Item>>
+      : T extends object
+        ? { readonly [Key in keyof T]: Unredacted<T[Key]> }
+        : T;
 
 export type PromiseStackConfig = Unredacted<StackConfig>;
 export type PromiseStartStackOptions = Omit<StartStackOptions, "config"> & {
@@ -85,77 +85,12 @@ type RuntimeRequirements =
   | Crypto.Crypto
   | ChildProcessSpawner.ChildProcessSpawner;
 
-const isRedactedSchema = (ast: SchemaAST.AST): boolean => {
-  if (ast._tag !== "Declaration") return false;
-  const representation = ast.annotations?.representation;
-  return (
-    typeof representation === "object" &&
-    representation !== null &&
-    "id" in representation &&
-    representation.id === "effect/schema/Redacted"
-  );
-};
-
-const literalFields = (ast: SchemaAST.AST): ReadonlyArray<SchemaAST.PropertySignature> => {
-  if (ast._tag !== "Objects") return [];
-  return ast.propertySignatures.filter((property) => property.type._tag === "Literal");
-};
-
-const isRecord = (input: unknown): input is Record<PropertyKey, unknown> =>
-  typeof input === "object" && input !== null && !Array.isArray(input);
-
-/** Wraps plain Promise config values according to the Effect config schema. */
-const redactBySchema = (ast: SchemaAST.AST, input: unknown): unknown => {
-  if (input === undefined || input === null) return input;
-  if (isRedactedSchema(ast)) return Redacted.isRedacted(input) ? input : Redacted.make(input);
-  switch (ast._tag) {
-    case "Objects": {
-      if (!isRecord(input)) return input;
-      const source = input;
-      const output: Record<PropertyKey, unknown> = { ...source };
-      const properties = new Map(
-        ast.propertySignatures.map((property) => [property.name, property.type]),
-      );
-      for (const [name, value] of Object.entries(source)) {
-        const property = properties.get(name);
-        if (property !== undefined) output[name] = redactBySchema(property, value);
-        else {
-          for (const index of ast.indexSignatures) {
-            output[name] = redactBySchema(index.type, value);
-            break;
-          }
-        }
-      }
-      return output;
-    }
-    case "Arrays":
-      return Array.isArray(input)
-        ? input.map((value, index) =>
-            redactBySchema(ast.elements[index] ?? ast.rest[0] ?? ast, value),
-          )
-        : input;
-    case "Union": {
-      if (input === undefined) return input;
-      const branch =
-        ast.types.find((candidate) => {
-          const fields = literalFields(candidate);
-          return (
-            fields.length > 0 &&
-            fields.every((field) => {
-              if (!isRecord(input)) return false;
-              const literal = field.type;
-              return literal._tag === "Literal" && input[field.name] === literal.literal;
-            })
-          );
-        }) ?? ast.types.find((candidate) => candidate._tag !== "Undefined");
-      return branch === undefined ? input : redactBySchema(branch, input);
-    }
-    case "Suspend":
-      return redactBySchema(ast.thunk(), input);
-    default:
-      return input;
-  }
-};
+// Canonical JSON decoding follows all schema transformations, including Redacted
+// declarations nested in records and arrays. At this explicit Promise boundary,
+// plain JSON strings become Effect Redacted values for the Effect handle.
+const stackConfigJsonCodec = Schema.toCodecJson(StackConfigSchema);
+const decodePromiseConfig = (input: PromiseStackConfig): StackConfig =>
+  Schema.decodeSync(stackConfigJsonCodec)(input);
 
 /** Recursively unwraps every Redacted value at the Promise boundary. */
 export function unredact<T>(input: T): Unredacted<T>;
@@ -179,24 +114,48 @@ export const adaptEffectStack = (
   handleScope?: Scope.Scope,
 ): PromiseStack => {
   let closed = false;
+  let closePromise: Promise<void> | undefined;
   const active: Set<() => Promise<unknown>> = new Set();
+  const closedError = () => new Error("Stack handle is closed");
   const iterable = <A>(stream: Stream.Stream<A, unknown>): AsyncIterable<A> => ({
     [Symbol.asyncIterator]() {
+      if (closed) {
+        return {
+          next: async () => Promise.reject(closedError()),
+          return: async () => ({ done: true, value: undefined }),
+          throw: async () => Promise.reject(closedError()),
+        };
+      }
       const iterator = adaptStream(stream)[Symbol.asyncIterator]();
       const cancel = () => Promise.resolve(iterator.return?.());
       active.add(cancel);
       return {
-        next: (...args: [] | [undefined]) => iterator.next(...args),
+        next: async (...args: [] | [undefined]) => {
+          try {
+            const result = await iterator.next(...args);
+            if (result.done === true) active.delete(cancel);
+            return result;
+          } catch (error) {
+            active.delete(cancel);
+            throw error;
+          }
+        },
         return: async (value?: unknown) => {
           active.delete(cancel);
           return iterator.return?.(value) ?? { done: true, value: undefined };
         },
-        throw: iterator.throw,
+        throw:
+          iterator.throw === undefined
+            ? undefined
+            : async (error?: unknown) => {
+                active.delete(cancel);
+                return iterator.throw!(error);
+              },
       };
     },
   });
   const invoke = <A>(effect: Effect.Effect<A, unknown>): Promise<A> => {
-    if (closed) return Promise.reject(new Error("Stack handle is closed"));
+    if (closed) return Promise.reject(closedError());
     return Effect.runPromise(effect);
   };
   return {
@@ -213,11 +172,7 @@ export const adaptEffectStack = (
             ? {
                 ...options,
                 config:
-                  options.config === undefined
-                    ? undefined
-                    : Schema.decodeUnknownSync(StackConfigSchema)(
-                        redactBySchema(StackConfigSchema.ast, options.config),
-                      ),
+                  options.config === undefined ? undefined : decodePromiseConfig(options.config),
               }
             : undefined,
         ),
@@ -228,11 +183,7 @@ export const adaptEffectStack = (
           options
             ? {
                 config:
-                  options.config === undefined
-                    ? undefined
-                    : Schema.decodeUnknownSync(StackConfigSchema)(
-                        redactBySchema(StackConfigSchema.ast, options.config),
-                      ),
+                  options.config === undefined ? undefined : decodePromiseConfig(options.config),
               }
             : undefined,
         ),
@@ -243,26 +194,45 @@ export const adaptEffectStack = (
           options
             ? {
                 config:
-                  options.config === undefined
-                    ? undefined
-                    : Schema.decodeUnknownSync(StackConfigSchema)(
-                        redactBySchema(StackConfigSchema.ast, options.config),
-                      ),
+                  options.config === undefined ? undefined : decodePromiseConfig(options.config),
               }
             : undefined,
         ),
       ),
     stop: () => invoke(effectStack.stop()),
     destroy: () => invoke(effectStack.destroy()),
-    close: async () => {
-      if (closed) return;
+    close: () => {
+      if (closePromise !== undefined) return closePromise;
       closed = true;
-      await Promise.all([...active].map((cancel) => cancel()));
-      try {
-        await Effect.runPromise(effectStack.close());
-      } finally {
-        if (handleScope !== undefined) await Effect.runPromise(Scope.close(handleScope, Exit.void));
-      }
+      closePromise = (async () => {
+        const failures: Array<unknown> = [];
+        await Promise.all(
+          [...active].map(async (cancel) => {
+            try {
+              await cancel();
+            } catch (error) {
+              failures.push(error);
+            } finally {
+              active.delete(cancel);
+            }
+          }),
+        );
+        try {
+          await Effect.runPromise(effectStack.close());
+        } catch (error) {
+          failures.push(error);
+        } finally {
+          if (handleScope !== undefined) {
+            try {
+              await Effect.runPromise(Scope.close(handleScope, Exit.void));
+            } catch (error) {
+              failures.push(error);
+            }
+          }
+        }
+        if (failures.length > 0) throw new AggregateError(failures, "Failed to close stack handle");
+      })();
+      return closePromise;
     },
     watchStatus: () => iterable(effectStack.watchStatus()),
     logs: (options) => iterable(effectStack.logs(options)),

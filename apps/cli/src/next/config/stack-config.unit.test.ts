@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { toStartStackConfig, withServiceVersions } from "./stack-config.ts";
+import { CliConfigSchema } from "@supabase/config";
+import { Schema } from "effect";
+import { toStartStackConfig } from "./stack-config.ts";
 
 describe("toStartStackConfig", () => {
   it("leaves runtime selection to the stack when mode is unset", () => {
@@ -21,11 +23,20 @@ describe("toStartStackConfig", () => {
     expect(config.capabilities?.storage).toEqual({ enabled: false });
     expect(config.capabilities?.rest).toMatchObject({ settings: expect.any(Object) });
   });
-});
 
-describe("withServiceVersions", () => {
-  it("preserves capability configuration while catalog versions are stack-owned", () => {
-    const config = toStartStackConfig(undefined, [], "docker");
-    expect(withServiceVersions(config, { postgres: "17.6.1" })).toEqual(config);
+  it("emits project-relative Functions roots and JWKS security from loaded config", () => {
+    const loaded = Schema.decodeUnknownSync(CliConfigSchema)({
+      auth: { signing_keys_path: "supabase/jwks.json" },
+      edge_runtime: { secrets: { EDGE_TOKEN: "env(EDGE_TOKEN)" } },
+      functions: { hello: { env: { FUNCTION_TOKEN: "env(FUNCTION_TOKEN)" } } },
+    });
+    const config = toStartStackConfig(loaded, [], "native");
+    expect(config.capabilities?.functions).toMatchObject({
+      settings: { functions_root: "supabase/functions" },
+    });
+    expect(config.security?.jwt?.signing).toEqual({
+      kind: "jwks-file",
+      path: "supabase/jwks.json",
+    });
   });
 });

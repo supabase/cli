@@ -10,9 +10,16 @@ import { NonInteractiveError } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { BranchNotFoundError } from "../errors.ts";
 
-export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
-  name: Option.Option<string>;
-}) {
+export interface BranchSwitchOperations {
+  readonly findStack: typeof findStack;
+}
+
+const defaultOperations: BranchSwitchOperations = { findStack };
+
+export const switchBranch = Effect.fn("branches.switch")(function* (
+  opts: { name: Option.Option<string> },
+  operations: BranchSwitchOperations = defaultOperations,
+) {
   const output = yield* Output;
   const projectLinkState = yield* ProjectLinkState;
   const api = yield* PlatformApi;
@@ -85,15 +92,15 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
   }
 
   // Branch switching updates the linked project state. A running local stack
-  // remains untouched; users can restart it explicitly with `supabase start`.
-  const descriptor = yield* findStack({ projectRoot: cliProjectHome.projectRoot });
+  // remains untouched; users can restart it explicitly with `supabase restart`.
+  const descriptor = yield* operations.findStack({ projectRoot: cliProjectHome.projectRoot });
   if (
     Option.isSome(descriptor) &&
     descriptor.value.desiredLifecycle === "running" &&
     output.format === "text"
   ) {
     yield* output.info(
-      "The local stack is running. Restart it with `supabase start` to apply the new branch.",
+      "The local stack is running. Restart it with `supabase restart` to apply the new branch.",
     );
   }
 

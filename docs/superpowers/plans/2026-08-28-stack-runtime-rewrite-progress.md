@@ -554,3 +554,14 @@ Implementation continues after recording a ruling; this file is not a question q
 - RED/GREEN evidence: facade integration (`promise.integration.test.ts`, `testing.integration.test.ts`)
   passed 3 tests; migrated CLI integration scenarios passed 36 tests across 12 files. Stack and CLI type
   checks passed; generic and Effect lint, oxfmt, and `git diff --check` passed.
+
+#### Fix round 1/5 evidence — 2026-08-29
+
+- Canonical JSON schema decoding now covers nested Promise secret leaves; stream close and
+  `createTestStack` cleanup preserve primary failures while finalizing exact owned resources.
+- CLI Functions serving maps loaded config/manifest/env-file and managed readiness/API/logs; roots are
+  project-relative, JWKS signing paths are emitted, and both top-level and `stack` restart commands
+  provide explicit restart guidance.
+- Post-fix focused verification: stack facade integration 2 files/7 tests; CLI integration 13 files/40
+  tests; CLI units 4 files/10 tests; both workspace types; generic/Effect lint, formatting, and diff
+  checks passed.

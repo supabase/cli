@@ -1,84 +1,128 @@
-import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Layer, Option, Redacted, Schema, Stream } from "effect";
+import { describe, expect, it } from "@effect/vitest";
 import { CliConfigSchema } from "@supabase/config";
-import type { EffectStack } from "@supabase/stack/effect";
+import type { FunctionsManifest } from "@supabase/config";
+import { Effect, Layer, Option, Redacted, Schema, Stream } from "effect";
+import type { StackConfig, StackId, StackStatus } from "@supabase/stack/effect";
+import { CAPABILITY_NAMES, StackIdSchema } from "@supabase/stack/effect";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
-import { serveManagedFunctions } from "./functions-dev-runtime.ts";
+import {
+  serveManagedFunctions,
+  type ManagedFunctionsStack,
+  type ServeManagedFunctionsOperations,
+} from "./functions-dev-runtime.ts";
 
-const fakeStatus = {
-  lifecycle: "running",
-  desiredLifecycle: "running",
+const stackId: StackId = StackIdSchema.make(
+  "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+);
+const status = (lifecycle: StackStatus["lifecycle"]): StackStatus => ({
+  id: stackId,
+  lifecycle,
+  desiredLifecycle:
+    lifecycle === "starting" || lifecycle === "stopping" || lifecycle === "resetting-database"
+      ? "running"
+      : lifecycle,
   runtime: { kind: "container", engine: "docker" },
-  endpoints: {},
+  endpoints:
+    lifecycle === "running"
+      ? {
+          api: {
+            protocol: "http",
+            address: "127.0.0.1",
+            port: 54321,
+            url: "http://127.0.0.1:54321",
+          },
+        }
+      : {},
   versions: {},
-  capabilities: [],
-};
+  capabilities: CAPABILITY_NAMES.map((name) => ({
+    name,
+    activation: name === "functions" ? "lazy" : "eager",
+    state: lifecycle === "running" ? (name === "functions" ? "dormant" : "ready") : "stopped",
+  })),
+});
 
 describe("managed Functions serving", () => {
-  it.live("starts the Functions capability with the live functions root and streams logs", () => {
-    let startedConfig: unknown;
-    const stack = {
-      id: "stack-test",
-      start: (options?: { config?: unknown }) =>
+  it.live("maps flags and live manifest, waits for gateway readiness, then streams logs", () => {
+    let startedConfig: StackConfig | undefined;
+    const stack: ManagedFunctionsStack = {
+      id: stackId,
+      status: () => Effect.succeed(status("running")),
+      start: (options) =>
         Effect.sync(() => {
           startedConfig = options?.config;
-          return fakeStatus;
+          return status("starting");
         }),
+      watchStatus: () => Stream.succeed(status("running")),
       logs: () =>
         Stream.fromIterable([
           {
             cursor: { opaque: "1" },
             timestamp: "now",
-            source: "functions",
-            stream: "stdout",
+            source: "functions" as const,
+            stream: "stdout" as const,
             message: "ready",
           },
         ]),
       close: () => Effect.void,
-    } as unknown as EffectStack;
-    const out = mockOutput({ interactive: false });
-    const operations = {
+    };
+    const output = mockOutput({ interactive: false });
+    const manifest: FunctionsManifest = {
+      hello: {
+        enabled: true,
+        verify_jwt: true,
+        import_map: "",
+        entrypoint: "./functions/hello/index.ts",
+        static_files: [],
+        env: { CONFIG_TOKEN: "config-secret" },
+      },
+    };
+    const operations: ServeManagedFunctionsOperations = {
       findStack: () => Effect.succeed(Option.none()),
       createStack: () => Effect.succeed(stack),
       openStack: () => Effect.succeed(stack),
       loadConfig: () =>
         Effect.succeed(
           Schema.decodeUnknownSync(CliConfigSchema)({
-            project_id: "demo",
-            api: { schemas: ["private"] },
-            auth: { jwt_secret: "jwt-secret-for-tests" },
-            db: { vault: { DB_PASSWORD: "vault-secret" } },
-            edge_runtime: { secrets: { EDGE_TOKEN: "edge-secret" } },
+            edge_runtime: { inspector_port: 8090 },
           }),
         ),
-    } as const;
-    return Effect.scoped(
-      serveManagedFunctions({ projectRoot: "/tmp/project", stackName: "default" }, operations),
+      loadManifest: () => Effect.succeed(manifest),
+      readEnvFile: () => Effect.succeed({ ENV_TOKEN: "env-secret" }),
+    };
+    return serveManagedFunctions(
+      {
+        projectRoot: "/tmp/project",
+        stackName: "default",
+        envFile: "flags.env",
+        noVerifyJwt: true,
+        importMap: "supabase/functions/custom-deno.json",
+        inspectMode: "wait",
+        inspectMain: true,
+      },
+      operations,
     ).pipe(
-      Effect.provide(Layer.mergeAll(out.layer, BunServices.layer)),
+      Effect.provide(Layer.mergeAll(output.layer, BunServices.layer)),
       Effect.tap(() =>
         Effect.sync(() => {
-          expect(startedConfig).toMatchObject({
-            capabilities: {
-              functions: { settings: { functions_root: "/tmp/project/supabase/functions" } },
-            },
-          });
-          const config = startedConfig as {
-            capabilities: {
-              rest: { settings: { schemas: string[] } };
-              auth: { settings: { jwt_secret: Redacted.Redacted<string> } };
-              database: { settings: { vault: { DB_PASSWORD: Redacted.Redacted<string> } } };
-            };
-          };
-          expect(config.capabilities.rest.settings.schemas).toEqual(["private"]);
-          expect(Redacted.value(config.capabilities.auth.settings.jwt_secret)).toBe(
-            "jwt-secret-for-tests",
+          const functions = startedConfig?.capabilities?.functions;
+          const functionSettings =
+            functions !== undefined && "settings" in functions ? functions.settings : undefined;
+          const hello = functionSettings?.functions?.hello;
+          expect(functionSettings?.functions_root).toBe("supabase/functions");
+          expect(hello?.verify_jwt).toBe(false);
+          expect(hello?.import_map).toBe("supabase/functions/custom-deno.json");
+          const configToken = hello?.env?.CONFIG_TOKEN;
+          const envToken = hello?.env?.ENV_TOKEN;
+          expect(configToken).toBeDefined();
+          expect(envToken).toBeDefined();
+          if (configToken !== undefined) expect(Redacted.value(configToken)).toBe("config-secret");
+          if (envToken !== undefined) expect(Redacted.value(envToken)).toBe("env-secret");
+          expect(startedConfig?.listeners?.functionsInspector).toEqual({ port: 8090 });
+          expect(output.messages).toContainEqual(
+            expect.objectContaining({ message: "http://127.0.0.1:54321/functions/v1" }),
           );
-          expect(Redacted.value(config.capabilities.database.settings.vault.DB_PASSWORD)).toBe(
-            "vault-secret",
-          );
-          expect(out.messages.some((message) => message.message.includes("ready"))).toBe(true);
+          expect(output.messages.some((message) => message.message.includes("ready"))).toBe(true);
         }),
       ),
     );

@@ -17,6 +17,7 @@ import { logsCommand } from "../commands/logs/logs.command.ts";
 import { apiCommand } from "../commands/platform/api.command.ts";
 import { servicesCommand } from "../commands/services/services.command.ts";
 import { startCommand } from "../commands/start/start.command.ts";
+import { restartCommand } from "../commands/restart/restart.command.ts";
 import { statusCommand } from "../commands/status/status.command.ts";
 import { stopCommand } from "../commands/stop/stop.command.ts";
 import { telemetryCommand } from "../commands/telemetry/telemetry.command.ts";
@@ -28,7 +29,14 @@ import { jsonCliOutputFormatter } from "../../shared/output/json-formatter.ts";
 const stackCommand = Command.make("stack").pipe(
   Command.withDescription("Manage the local Supabase runtime for this project."),
   Command.withShortDescription("Manage local stack lifecycle and versions"),
-  Command.withSubcommands([startCommand, stopCommand, statusCommand, listCommand, updateCommand]),
+  Command.withSubcommands([
+    startCommand,
+    restartCommand,
+    stopCommand,
+    statusCommand,
+    listCommand,
+    updateCommand,
+  ]),
 );
 
 export const nextRoot = Command.make("supabase").pipe(
@@ -45,6 +53,7 @@ export const nextRoot = Command.make("supabase").pipe(
     servicesCommand,
     stackCommand,
     startCommand,
+    restartCommand,
     stopCommand,
     statusCommand,
     logsCommand,

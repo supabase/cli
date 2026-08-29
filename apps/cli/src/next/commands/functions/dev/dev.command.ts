@@ -10,6 +10,7 @@ import { functionsDev } from "./dev.handler.ts";
 const flags = {
   stack: Flag.string("stack").pipe(Flag.withDefault(DEFAULT_MANAGED_STACK_NAME)),
   envFile: Flag.string("env-file").pipe(Flag.optional),
+  importMap: Flag.string("import-map").pipe(Flag.optional),
   noVerifyJwt: Flag.boolean("no-verify-jwt").pipe(Flag.withDefault(false)),
 } as const;
 export type FunctionsDevFlags = CliCommand.Command.Config.Infer<typeof flags>;

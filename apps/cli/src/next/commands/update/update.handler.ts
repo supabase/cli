@@ -35,7 +35,7 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
   const cliProjectHome = yield* CliProjectHome;
   const projectLinkState = yield* ProjectLinkState;
 
-  yield* output.intro("Update local Supabase stack versions");
+  yield* output.intro("Refresh linked project metadata");
   yield* ensureProjectStateIgnored(cliProjectHome.projectRoot);
 
   const linkedState = yield* projectLinkState.load;

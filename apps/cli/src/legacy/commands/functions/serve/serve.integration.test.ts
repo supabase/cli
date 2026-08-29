@@ -1,74 +1,101 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
+import { CliConfigSchema, type FunctionsManifest } from "@supabase/config";
+import type { StackConfig, StackId, StackStatus } from "@supabase/stack/effect";
+import { CAPABILITY_NAMES, StackIdSchema } from "@supabase/stack/effect";
 import { Effect, Layer, Option, Redacted, Schema, Stream } from "effect";
-import { CliConfigSchema } from "@supabase/config";
-import type { EffectStack } from "@supabase/stack/effect";
 import {
   mockLegacyCliSettings,
   mockLegacyTelemetryStateLayer,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import type { LegacyFunctionsServeFlags } from "./serve.handler.ts";
-import { legacyFunctionsServe } from "./serve.handler.ts";
+import {
+  legacyFunctionsServe,
+  type ServeManagedFunctionsOperations,
+  type ManagedFunctionsStack,
+} from "./serve.handler.ts";
 
 const baseFlags = (): LegacyFunctionsServeFlags => ({
-  noVerifyJwt: Option.none(),
+  noVerifyJwt: Option.some(true),
   envFile: Option.none(),
-  importMap: Option.none(),
+  importMap: Option.some("supabase/functions/deno.json"),
   inspect: false,
   inspectMode: Option.none(),
   inspectMain: false,
   all: true,
 });
 
-const fakeStatus = {
-  lifecycle: "running" as const,
-  desiredLifecycle: "running" as const,
-  runtime: { kind: "container" as const, engine: "docker" as const },
-  endpoints: {},
+const stackId: StackId = StackIdSchema.make(
+  "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+);
+const status = (lifecycle: StackStatus["lifecycle"]): StackStatus => ({
+  id: stackId,
+  lifecycle,
+  desiredLifecycle:
+    lifecycle === "starting" || lifecycle === "stopping" || lifecycle === "resetting-database"
+      ? "running"
+      : lifecycle,
+  runtime: { kind: "container", engine: "docker" },
+  endpoints:
+    lifecycle === "running"
+      ? {
+          api: {
+            protocol: "http",
+            address: "127.0.0.1",
+            port: 54321,
+            url: "http://127.0.0.1:54321",
+          },
+        }
+      : {},
   versions: {},
-  capabilities: [],
-};
+  capabilities: CAPABILITY_NAMES.map((name) => ({
+    name,
+    activation: name === "functions" ? "lazy" : "eager",
+    state: lifecycle === "running" ? (name === "functions" ? "dormant" : "ready") : "stopped",
+  })),
+});
 
 describe("legacy functions serve", () => {
-  it.live("starts the managed Functions capability with config and streams stack logs", () => {
-    let startedConfig: unknown;
-    const stack = {
-      id: "stack-test",
-      start: (options?: { config?: unknown }) =>
+  it.live("uses managed Functions with flags, gateway readiness, and stack logs", () => {
+    let startedConfig: StackConfig | undefined;
+    const stack: ManagedFunctionsStack = {
+      id: stackId,
+      status: () => Effect.succeed(status("running")),
+      start: (options) =>
         Effect.sync(() => {
           startedConfig = options?.config;
-          return fakeStatus;
+          return status("starting");
         }),
+      watchStatus: () => Stream.succeed(status("running")),
       logs: () =>
-        Stream.fromIterable([
-          {
-            cursor: { opaque: "1" },
-            timestamp: "now",
-            source: "functions",
-            stream: "stdout",
-            message: "ready",
-          },
-        ]),
+        Stream.succeed({
+          cursor: { opaque: "1" },
+          timestamp: "now",
+          source: "functions" as const,
+          stream: "stdout" as const,
+          message: "ready",
+        }),
       close: () => Effect.void,
-    } as unknown as EffectStack;
+    };
     const output = mockOutput({ interactive: false });
-    const operations = {
+    const manifest: FunctionsManifest = {
+      hello: {
+        enabled: true,
+        verify_jwt: true,
+        import_map: "",
+        entrypoint: "./functions/hello/index.ts",
+        static_files: [],
+        env: {},
+      },
+    };
+    const operations: ServeManagedFunctionsOperations = {
       findStack: () => Effect.succeed(Option.none()),
       createStack: () => Effect.succeed(stack),
       openStack: () => Effect.succeed(stack),
-      loadConfig: () =>
-        Effect.succeed(
-          Schema.decodeUnknownSync(CliConfigSchema)({
-            project_id: "demo",
-            api: { schemas: ["private"] },
-            auth: { jwt_secret: "jwt-secret-for-tests" },
-            db: { vault: { DB_PASSWORD: "vault-secret" } },
-            edge_runtime: { secrets: { EDGE_TOKEN: "edge-secret" } },
-          }),
-        ),
-    } as const;
-
+      loadConfig: () => Effect.succeed(Schema.decodeUnknownSync(CliConfigSchema)({})),
+      loadManifest: () => Effect.succeed(manifest),
+    };
     return legacyFunctionsServe(baseFlags(), operations).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -80,27 +107,18 @@ describe("legacy functions serve", () => {
       ),
       Effect.tap(() =>
         Effect.sync(() => {
-          expect(startedConfig).toMatchObject({
-            capabilities: {
-              rest: { settings: { schemas: ["private"] } },
-              functions: {
-                settings: { functions_root: expect.stringContaining("supabase/functions") },
-              },
-            },
-          });
-          const config = startedConfig as {
-            capabilities: {
-              auth: { settings: { jwt_secret: Redacted.Redacted<string> } };
-              database: { settings: { vault: { DB_PASSWORD: Redacted.Redacted<string> } } };
-            };
-          };
-          expect(Redacted.value(config.capabilities.auth.settings.jwt_secret)).toBe(
-            "jwt-secret-for-tests",
-          );
-          expect(Redacted.value(config.capabilities.database.settings.vault.DB_PASSWORD)).toBe(
-            "vault-secret",
+          const functions = startedConfig?.capabilities?.functions;
+          const functionSettings =
+            functions !== undefined && "settings" in functions ? functions.settings : undefined;
+          const hello = functionSettings?.functions?.hello;
+          expect(functionSettings?.functions_root).toBe("supabase/functions");
+          expect(hello?.verify_jwt).toBe(false);
+          expect(hello?.import_map).toBe("supabase/functions/deno.json");
+          expect(output.messages).toContainEqual(
+            expect.objectContaining({ message: "http://127.0.0.1:54321/functions/v1" }),
           );
           expect(output.messages.some((message) => message.message.includes("ready"))).toBe(true);
+          expect(Redacted.isRedacted(hello?.env?.ANY)).toBe(false);
         }),
       ),
     );
