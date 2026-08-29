@@ -111,7 +111,7 @@ const LEGACY_TLS_GATED_SQLSTATE = "28000";
 
 // Class 08 (connection exception) plus the operator-intervention terminations that
 // close the session; 57014 (query_canceled) stays a statement failure.
-const LEGACY_SESSION_ENDING_SQLSTATES = new Set(["57P01", "57P02", "57P03", "57P05"]);
+const LEGACY_SESSION_ENDING_SQLSTATES = new Set(["57P01", "57P02", "57P03", "57P04", "57P05"]);
 const legacyIsConnectionEndingSqlState = (code: string): boolean =>
   code.startsWith("08") || LEGACY_SESSION_ENDING_SQLSTATES.has(code);
 
