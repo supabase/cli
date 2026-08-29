@@ -3,13 +3,21 @@ import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { CapabilityName } from "../public/Capability.ts";
 import type { ContainerHostRoute, ContainerMount } from "./ContainerEngine.ts";
 import { WORKLOAD_CATALOG, type NativeWorkloadProcess } from "../model/WorkloadCatalog.ts";
+import { resolveThirdPartyIssuer } from "../model/capabilities/auth-third-party.ts";
+import { Effect } from "effect";
+import { StackPreparationError } from "../public/Errors.ts";
 
 export type WorkloadRuntimeKind = "native" | "container";
 
 /** Inputs resolved by the owner before a process/container is created. */
 export interface WorkloadRuntimeInputs {
   /** Resolved GoTrue signing key JSON and public JWKS. */
-  readonly auth?: Readonly<{ readonly jwtKeys?: string; readonly jwks?: string }>;
+  readonly auth?: Readonly<{
+    readonly jwtKeys?: string;
+    readonly jwks?: string;
+    /** Base URL serving the configured Auth email templates through the gateway. */
+    readonly templateBaseUrl?: string;
+  }>;
   /** Resolved host path for the BigQuery service-account file. */
   readonly analytics?: Readonly<{
     readonly gcpJwtPath?: string;
@@ -80,6 +88,96 @@ export interface ContainerWorkloadResolution {
   readonly networkAliases: ReadonlyArray<string>;
   readonly hostRoute?: ContainerHostRoute;
 }
+
+/**
+ * Validates owner-resolved material before a process/container is created.
+ * Network/file discovery stays outside this pure runtime specification; the
+ * owner supplies the resulting values through WorkloadRuntimeInputs.
+ */
+export const validateWorkloadRuntimeInputs = (
+  state: PersistedStackState,
+  workload: PlannedWorkload,
+  inputs: WorkloadRuntimeInputs = {},
+): Effect.Effect<void, StackPreparationError> =>
+  Effect.gen(function* () {
+    const signing = state.definition?.security.jwt.signing;
+    const thirdParty = resolveThirdPartyIssuer(settingsFor(state, "auth"));
+    if (!thirdParty.ok)
+      return yield* new StackPreparationError({
+        message: thirdParty.message,
+        workload: workload.id,
+      });
+    const jwksConsumer =
+      workload.id === "rest:rest" ||
+      workload.id === "auth:auth" ||
+      workload.id === "realtime:realtime" ||
+      workload.id === "storage:storage";
+    if (
+      jwksConsumer &&
+      (signing?.kind === "jwks-file" || thirdParty.value !== undefined) &&
+      (inputs.auth?.jwks === undefined || inputs.auth.jwks.length === 0)
+    )
+      return yield* new StackPreparationError({
+        message: "Resolved JWKS material is required for the configured auth mode",
+        workload: workload.id,
+      });
+    if (
+      jwksConsumer &&
+      signing?.kind !== "jwks-file" &&
+      thirdParty.value === undefined &&
+      secret(state, "secret:security.jwt.signing.secret").length === 0
+    )
+      return yield* new StackPreparationError({
+        message: "Managed JWT signing secret is required for the configured auth mode",
+        workload: workload.id,
+      });
+    if (workload.id === "auth:auth") {
+      const signing = state.definition?.security.jwt.signing;
+      if (
+        signing?.kind === "jwks-file" &&
+        (inputs.auth?.jwtKeys === undefined || inputs.auth.jwtKeys.length === 0)
+      )
+        return yield* new StackPreparationError({
+          message: "Resolved JWT signing keys are required for Auth",
+          workload: workload.id,
+        });
+    }
+    if (workload.id === "analytics:analytics") {
+      const backend = valueAt(state, "analytics", "backend") || "postgres";
+      if (
+        backend === "bigquery" &&
+        valueAt(state, "analytics", "gcp_jwt_path").length > 0 &&
+        (inputs.analytics?.gcpJwtPath === undefined || inputs.analytics.gcpJwtPath.length === 0)
+      )
+        return yield* new StackPreparationError({
+          message: "Resolved Analytics service-account path is required",
+          workload: workload.id,
+        });
+    }
+    if (workload.id === "auth:auth") {
+      const email = settingsFor(state, "auth");
+      const emailSettings = isRecord(email) && isRecord(email.email) ? email.email : undefined;
+      const templates = emailSettings?.template;
+      const notifications = emailSettings?.notification;
+      const hasContent =
+        (isRecord(templates) &&
+          Object.values(templates).some(
+            (value) => isRecord(value) && settingValue(state, value.content_path).length > 0,
+          )) ||
+        (isRecord(notifications) &&
+          Object.values(notifications).some(
+            (value) => isRecord(value) && settingValue(state, value.content_path).length > 0,
+          ));
+      if (
+        hasContent &&
+        (inputs.auth?.templateBaseUrl === undefined || inputs.auth.templateBaseUrl.length === 0)
+      )
+        return yield* new StackPreparationError({
+          message: "Resolved Auth template base URL is required",
+          workload: workload.id,
+        });
+    }
+  });
 
 export const FUNCTIONS_CONTAINER_ROOT = "/__supabase_functions";
 const DATABASE_NETWORK_ALIAS = "supabase-database";
@@ -177,6 +275,12 @@ const dbUrl = (state: PersistedStackState, role: string, runtime: WorkloadRuntim
   return `postgresql://${role}:${secret(state, "secret:database.internal.password")}@${dbHost(runtime)}:${port}/postgres`;
 };
 
+const usesResolvedJwks = (state: PersistedStackState): boolean => {
+  const signing = state.definition?.security.jwt.signing;
+  const thirdParty = resolveThirdPartyIssuer(settingsFor(state, "auth"));
+  return signing?.kind === "jwks-file" || (thirdParty.ok && thirdParty.value !== undefined);
+};
+
 const common = (workload: PlannedWorkload, port: number): Record<string, string> => ({
   SUPABASE_STACK_WORKLOAD: workload.id,
   SUPABASE_STACK_PRIVATE_PORT: String(port),
@@ -244,10 +348,9 @@ const withRestSettings = (
     PGRST_DB_SCHEMAS: valueAt(state, "rest", "schemas") || "public,graphql_public",
     PGRST_DB_EXTRA_SEARCH_PATH: valueAt(state, "rest", "extra_search_path") || "public,extensions",
     PGRST_DB_ANON_ROLE: "anon",
-    // PostgREST validates the compact JWT with the managed signing secret;
-    // resolved JWKS belongs to services that consume public key sets (Auth,
-    // Realtime and Storage), not this HMAC setting.
-    PGRST_JWT_SECRET: secret(state, "secret:security.jwt.signing.secret"),
+    PGRST_JWT_SECRET: usesResolvedJwks(state)
+      ? (_inputs.auth?.jwks ?? "")
+      : secret(state, "secret:security.jwt.signing.secret"),
     PGRST_SERVER_PORT: String(port),
     PGRST_DB_MAX_ROWS: valueAt(state, "rest", "max_rows") || "1000",
   });
@@ -255,6 +358,7 @@ const withRestSettings = (
 const authNestedEnvironment = (
   state: PersistedStackState,
   jwtIssuer: string,
+  inputs: WorkloadRuntimeInputs,
 ): Record<string, string> => {
   const out: Record<string, string> = {};
   const settings = settingsFor(state, "auth");
@@ -286,6 +390,16 @@ const authNestedEnvironment = (
     }
   const email = settings.email;
   if (isRecord(email)) {
+    const templateBaseUrl = inputs.auth?.templateBaseUrl?.replace(/\/+$/u, "");
+    const fileExtension = (path: string): string => {
+      const file = path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
+      const dot = file.lastIndexOf(".");
+      return dot <= 0 ? "" : file.slice(dot);
+    };
+    const templateUrl = (id: string, contentPath: string): string | undefined =>
+      templateBaseUrl === undefined
+        ? undefined
+        : `${templateBaseUrl}/email/${id}${fileExtension(contentPath)}`;
     const templates = email.template;
     if (isRecord(templates))
       for (const [name, value] of Object.entries(templates)) {
@@ -295,7 +409,8 @@ const authNestedEnvironment = (
         const contentPath = settingValue(state, value.content_path);
         if (value.subject !== null && value.subject !== undefined)
           out[`GOTRUE_MAILER_SUBJECTS_${normalized}`] = subject;
-        if (contentPath.length > 0) out[`GOTRUE_MAILER_TEMPLATES_${normalized}`] = contentPath;
+        const url = contentPath.length > 0 ? templateUrl(name, contentPath) : undefined;
+        if (url !== undefined) out[`GOTRUE_MAILER_TEMPLATES_${normalized}`] = url;
       }
     const notifications = email.notification;
     if (isRecord(notifications))
@@ -307,10 +422,16 @@ const authNestedEnvironment = (
           state,
           value.enabled,
         );
-        out[`GOTRUE_MAILER_NOTIFICATIONS_${normalized}_SUBJECT`] = settingValue(
-          state,
-          value.subject,
-        );
+        const contentPath = settingValue(state, value.content_path);
+        const notificationUrl =
+          contentPath.length > 0 ? templateUrl(`${name}_notification`, contentPath) : undefined;
+        if (notificationUrl !== undefined)
+          out[`GOTRUE_MAILER_TEMPLATES_${normalized}_NOTIFICATION`] = notificationUrl;
+        if (value.subject !== null && value.subject !== undefined)
+          out[`GOTRUE_MAILER_SUBJECTS_${normalized}_NOTIFICATION`] = settingValue(
+            state,
+            value.subject,
+          );
       }
   }
   return out;
@@ -381,7 +502,11 @@ const withAuthSettings = (
       "GOTRUE",
       (key) => key === "GOTRUE_SIGNING_KEYS_PATH" || key.startsWith("GOTRUE_THIRD_PARTY_"),
     ),
-    ...authNestedEnvironment(state, valueAt(state, "auth", "jwt_issuer") || authExternalUrl(state)),
+    ...authNestedEnvironment(
+      state,
+      valueAt(state, "auth", "jwt_issuer") || authExternalUrl(state),
+      inputs,
+    ),
     GOTRUE_DB_DATABASE_URL: dbUrl(state, "supabase_auth_admin", runtime),
     GOTRUE_DB_DRIVER: "postgres",
     GOTRUE_SITE_URL: valueAt(state, "auth", "site_url") || "http://127.0.0.1:3000",
@@ -908,3 +1033,13 @@ export const containerResolutionFor = (
     ...(inputs.hostRoute === undefined ? {} : { hostRoute: inputs.hostRoute }),
   };
 };
+
+/** Effect boundary used by owners that need typed validation before creating a container. */
+export const resolveContainerResolutionFor = (
+  state: PersistedStackState,
+  workload: PlannedWorkload,
+  inputs: WorkloadRuntimeInputs = {},
+): Effect.Effect<ContainerWorkloadResolution | undefined, StackPreparationError> =>
+  validateWorkloadRuntimeInputs(state, workload, inputs).pipe(
+    Effect.map(() => containerResolutionFor(state, workload, inputs)),
+  );

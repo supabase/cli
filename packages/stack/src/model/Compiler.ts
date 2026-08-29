@@ -29,6 +29,7 @@ import {
   StudioModule,
   AnalyticsModule,
 } from "./capabilities/index.ts";
+import { resolveThirdPartyIssuer } from "./capabilities/auth-third-party.ts";
 import { CAPABILITY_MODULES, createExecutionPlan, type ExecutionPlan } from "./ExecutionPlan.ts";
 import type { CapabilityModule, CapabilityRelease } from "./CapabilityModule.ts";
 
@@ -665,6 +666,12 @@ export const compileStack = (
       specHashes,
       false,
     );
+    const thirdParty = resolveThirdPartyIssuer(authResult.settings);
+    if (!thirdParty.ok)
+      return yield* new InvalidStackConfigError({
+        message: thirdParty.message,
+        ...(thirdParty.provider === undefined ? {} : { provider: thirdParty.provider }),
+      });
     const realtimeResult = yield* materializeCapability(
       RealtimeModule,
       extract(rawCapabilities, "realtime"),

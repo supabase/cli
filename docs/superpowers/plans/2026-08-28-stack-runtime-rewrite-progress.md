@@ -650,3 +650,15 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
 - Fix-round evidence: catalog/compiler/database-bootstrap/runtime/slim/container integration tests pass
   (80 targeted tests in the latest run); Task 13B still owns env-file materialization, gateway/port
   lifecycle, credentials wiring, and production composition.
+
+#### Task 13A fix round 3 — close remaining workload contract gaps (2026-08-29)
+
+- PostgREST now selects the managed symmetric JWT secret or owner-resolved JWKS according to the
+  persisted signing/third-party mode; typed resolution validation rejects missing JWKS and template
+  base inputs before process/container creation.
+- Auth mailer templates and enabled notifications use the legacy `GOTRUE_MAILER_TEMPLATES_*`,
+  `SUBJECTS_*`, and notification suffixes with owner-resolved gateway URLs and file extensions.
+- Third-party Auth issuer derivation is a closed pure mapping (Firebase/Auth0/Cognito/Clerk/WorkOS),
+  with compiler validation for required fields and one-provider exclusivity.
+- Studio native entrypoint cwd is the artifact `app`; Vector requires its shipped config; Postgres
+  slim artifacts receive a contained `init-scripts` alias for the current archive layout.

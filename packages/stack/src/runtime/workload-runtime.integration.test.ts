@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect } from "effect";
+import { Effect, Exit } from "effect";
 import { WORKLOAD_CATALOG } from "../model/WorkloadCatalog.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
@@ -9,7 +9,9 @@ import { compileStack } from "../model/Compiler.ts";
 import {
   containerResolutionFor,
   FUNCTIONS_CONTAINER_ROOT,
+  resolveContainerResolutionFor,
   runtimeSpecFor,
+  validateWorkloadRuntimeInputs,
 } from "./WorkloadRuntimeSpec.ts";
 
 const state: PersistedStackState = {
@@ -33,6 +35,7 @@ const state: PersistedStackState = {
   ],
   secrets: {
     "secret:database.internal.password": { policy: "managed", value: "postgres" },
+    "secret:security.jwt.signing.secret": { policy: "managed", value: "symmetric-secret" },
   },
 };
 
@@ -113,7 +116,23 @@ describe("workload runtime catalog", () => {
                   enable_signup: false,
                   minimum_password_length: 12,
                   password_requirements: "letters_digits",
-                  email: { double_confirm_changes: true, secure_password_change: false },
+                  email: {
+                    double_confirm_changes: true,
+                    secure_password_change: false,
+                    template: {
+                      confirmation: {
+                        content_path: "templates/confirmation.html",
+                        subject: "Confirm",
+                      },
+                    },
+                    notification: {
+                      password_recovery: {
+                        enabled: true,
+                        content_path: "templates/recovery.html",
+                        subject: "Reset",
+                      },
+                    },
+                  },
                   sms: {
                     enable_signup: true,
                     twilio: { enabled: true, account_sid: "AC123", message_service_sid: "MG123" },
@@ -182,6 +201,27 @@ describe("workload runtime catalog", () => {
           GOTRUE_SMTP_HOST: "127.0.0.1",
           GOTRUE_SMTP_PORT: "1025",
         });
+        expect(
+          auth?.env(configured, planned("auth:auth"), 9999, "native", {
+            auth: { templateBaseUrl: "http://supabase-gateway:8088" },
+          }),
+        ).toMatchObject({
+          GOTRUE_MAILER_TEMPLATES_CONFIRMATION:
+            "http://supabase-gateway:8088/email/confirmation.html",
+          GOTRUE_MAILER_SUBJECTS_CONFIRMATION: "Confirm",
+          GOTRUE_MAILER_NOTIFICATIONS_PASSWORD_RECOVERY_ENABLED: "true",
+          GOTRUE_MAILER_TEMPLATES_PASSWORD_RECOVERY_NOTIFICATION:
+            "http://supabase-gateway:8088/email/password_recovery_notification.html",
+          GOTRUE_MAILER_SUBJECTS_PASSWORD_RECOVERY_NOTIFICATION: "Reset",
+        });
+        yield* validateWorkloadRuntimeInputs(configured, planned("auth:auth"), {
+          auth: { templateBaseUrl: "http://supabase-gateway:8088" },
+        });
+        const missingTemplateBase = yield* validateWorkloadRuntimeInputs(
+          configured,
+          planned("auth:auth"),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(missingTemplateBase)).toBe(true);
         expect(auth?.env(configured, planned("auth:auth"), 9999)).toMatchObject({
           GOTRUE_JWT_ISSUER: "https://issuer.example",
           GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI: "https://issuer.example/callback",
@@ -277,7 +317,7 @@ describe("workload runtime catalog", () => {
         ).toEqual({
           executable: "/tmp/native-artifact/node/bin/node",
           args: ["/tmp/native-artifact/app/apps/studio/docker-entrypoint.mjs"],
-          cwd: "/tmp/native-artifact/app/apps/studio",
+          cwd: "/tmp/native-artifact/app",
         });
         expect(
           runtimeSpecFor(planned("analytics:vector"))?.nativeProcess(
@@ -311,5 +351,61 @@ describe("workload runtime catalog", () => {
           { source: "/tmp/vector.yaml", target: "/etc/vector/vector.yaml", readOnly: true },
         ]);
       }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("selects PostgREST symmetric and resolved-JWKS credentials", () =>
+    Effect.gen(function* () {
+      const rest = runtimeSpecFor(planned("rest:rest"));
+      expect(rest?.env(state, planned("rest:rest"), 3000).PGRST_JWT_SECRET).toBe(
+        "symmetric-secret",
+      );
+      const compiled = yield* compileStack({
+        projectRoot: state.identity.projectRoot,
+        runtime: { kind: "native" },
+        config: { security: { jwt: { signing: { kind: "jwks-file", path: "jwt.json" } } } },
+      }).pipe(Effect.provide(NodeServices.layer));
+      const configured: PersistedStackState = { ...state, definition: compiled.definition };
+      expect(
+        rest?.env(configured, planned("rest:rest"), 3000, "native", {
+          auth: { jwks: '{"keys":[]}' },
+        }).PGRST_JWT_SECRET,
+      ).toBe('{"keys":[]}');
+      const failed = yield* validateWorkloadRuntimeInputs(configured, planned("rest:rest")).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(failed)).toBe(true);
+      const unresolved = yield* resolveContainerResolutionFor(
+        configured,
+        planned("rest:rest"),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(unresolved)).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("requires resolved JWKS material for an enabled third-party provider", () =>
+    Effect.gen(function* () {
+      const compiled = yield* compileStack({
+        projectRoot: state.identity.projectRoot,
+        runtime: { kind: "native" },
+        config: {
+          capabilities: {
+            auth: {
+              settings: {
+                third_party: { firebase: { enabled: true, project_id: "project-42" } },
+              },
+            },
+          },
+        },
+      }).pipe(Effect.provide(NodeServices.layer));
+      const configured: PersistedStackState = { ...state, definition: compiled.definition };
+      const failed = yield* validateWorkloadRuntimeInputs(configured, planned("rest:rest")).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(failed)).toBe(true);
+      const valid = yield* validateWorkloadRuntimeInputs(configured, planned("rest:rest"), {
+        auth: { jwks: '{"keys":[]}' },
+      }).pipe(Effect.exit);
+      expect(Exit.isSuccess(valid)).toBe(true);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

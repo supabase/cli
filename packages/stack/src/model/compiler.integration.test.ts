@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Option, Redacted } from "effect";
 import { InvalidStackConfigError, StackVersionUnsupportedError } from "../public/Errors.ts";
 import { canonicalize, compileStack } from "./Compiler.ts";
+import { resolveThirdPartyIssuer } from "./capabilities/auth-third-party.ts";
 
 const layer = NodeServices.layer;
 const compile = (
@@ -73,6 +74,59 @@ describe("closed capability compiler", () => {
         expect(result.secrets.find((entry) => entry.slot === slot)?.policy).toBe("managed");
       }
       expect(canonicalize(result.executionPlan)).not.toContain("secret-value");
+    }),
+  );
+
+  it.live("derives each supported third-party issuer and rejects invalid combinations", () =>
+    Effect.gen(function* () {
+      const cases = [
+        [
+          { firebase: { enabled: true, project_id: "project-42" } },
+          "https://securetoken.google.com/project-42",
+        ],
+        [
+          { auth0: { enabled: true, tenant: "tenant", tenant_region: "eu" } },
+          "https://tenant.eu.auth0.com",
+        ],
+        [
+          {
+            aws_cognito: { enabled: true, user_pool_id: "eu_pool", user_pool_region: "eu-west-1" },
+          },
+          "https://cognito-idp.eu-west-1.amazonaws.com/eu_pool",
+        ],
+        [
+          { clerk: { enabled: true, domain: "example.clerk.accounts.dev" } },
+          "https://example.clerk.accounts.dev",
+        ],
+        [
+          { workos: { enabled: true, issuer_url: "https://login.example.test" } },
+          "https://login.example.test",
+        ],
+      ] as const;
+      for (const [settings, issuer] of cases) {
+        const result = resolveThirdPartyIssuer(settings);
+        expect(result).toEqual({ ok: true, value: expect.objectContaining({ issuer }) });
+      }
+      const invalid = yield* compile({
+        capabilities: {
+          auth: {
+            settings: {
+              third_party: {
+                firebase: { enabled: true, project_id: "project-42" },
+                auth0: { enabled: true, tenant: "tenant" },
+              },
+            },
+          },
+        },
+      }).pipe(Effect.exit);
+      expect(failureOf(invalid)).toBeInstanceOf(InvalidStackConfigError);
+      expect(resolveThirdPartyIssuer({ firebase: { enabled: true } })).toMatchObject({
+        ok: false,
+        provider: "firebase",
+      });
+      expect(
+        resolveThirdPartyIssuer({ clerk: { enabled: true, domain: "not-a-clerk-domain" } }),
+      ).toMatchObject({ ok: false, provider: "clerk" });
     }),
   );
 

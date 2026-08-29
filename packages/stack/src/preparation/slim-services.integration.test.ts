@@ -6,6 +6,7 @@ import { makeArtifactStore, type ArtifactRequest } from "./ArtifactStore.ts";
 import { digestHex } from "./Integrity.ts";
 import {
   makeSlimServicesSource,
+  normalizeSlimServicesLayout,
   slimServicesChecksum,
   systemTarBoundary,
   type ZstdDecompressor,
@@ -105,6 +106,24 @@ const requestUrl = (input: Parameters<typeof fetch>[0]): string =>
   typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
 
 describe("slim-services artifact source", () => {
+  it.live("normalizes the Postgres init-script path within the artifact root", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const destination = yield* fs.makeTempDirectoryScoped({
+          prefix: "slim-services-postgres-",
+        });
+        const initScripts = `${destination}/share/supabase-cli/migrations/init-scripts`;
+        yield* fs.makeDirectory(initScripts, { recursive: true });
+        const postgresArtifact = { ...artifact, service: "postgres" };
+        yield* normalizeSlimServicesLayout(postgresArtifact, destination);
+        expect(yield* fs.realPath(`${destination}/share/supabase-cli/init-scripts`)).toBe(
+          yield* fs.realPath(initScripts),
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
   it.live("verifies checksums and extracts a manifest-matched archive using injected fetch", () =>
     Effect.scoped(
       Effect.gen(function* () {

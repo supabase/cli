@@ -224,6 +224,71 @@ const validateExtractedTree = (
     ),
   );
 
+/**
+ * Current Postgres slim archives keep init scripts below `migrations/`, while
+ * the shipped init entrypoint looks for the historical sibling directory.
+ * Publish one contained relative alias so the entrypoint and archive layout
+ * agree without copying or reimplementing the bootstrap revisions.
+ */
+export const normalizeSlimServicesLayout = (
+  artifact: NativeWorkloadArtifact,
+  destination: string,
+): Effect.Effect<void, StackPreparationError, FileSystem.FileSystem | Path.Path> => {
+  if (artifact.service !== "postgres") return Effect.void;
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const exists = (candidate: string): Effect.Effect<boolean, StackPreparationError> =>
+      fs.exists(candidate).pipe(
+        Effect.mapError(
+          (cause) =>
+            new StackPreparationError({
+              message: "Unable to inspect Postgres slim init-scripts layout",
+              path: candidate,
+              cause,
+            }),
+        ),
+      );
+    const target = path.join(destination, "share/supabase-cli/migrations/init-scripts");
+    const alias = path.join(destination, "share/supabase-cli/init-scripts");
+    const targetExists = yield* exists(target);
+    if (!targetExists)
+      return yield* new StackPreparationError({
+        message: "Postgres slim artifact is missing its init-scripts directory",
+        path: "share/supabase-cli/migrations/init-scripts",
+      });
+    const aliasExists = yield* exists(alias);
+    if (!aliasExists) {
+      yield* fs.symlink("migrations/init-scripts", alias).pipe(
+        Effect.mapError(
+          (cause) =>
+            new StackPreparationError({
+              message: "Unable to normalize Postgres slim init-scripts layout",
+              cause,
+            }),
+        ),
+      );
+      return;
+    }
+    const [realTarget, realAlias] = yield* Effect.all([
+      fs.realPath(target),
+      fs.realPath(alias),
+    ]).pipe(
+      Effect.mapError(
+        (cause) =>
+          new StackPreparationError({
+            message: "Unable to validate Postgres slim init-scripts layout",
+            cause,
+          }),
+      ),
+    );
+    if (realTarget !== realAlias)
+      return yield* new StackPreparationError({
+        message: "Postgres slim init-scripts alias resolves outside its target",
+      });
+  });
+};
+
 export const makeSlimServicesSource = (
   resolve: (request: ArtifactRequest) => NativeWorkloadArtifact | undefined,
   fetchRequest: Fetcher = fetcher,
@@ -371,6 +436,7 @@ export const makeSlimServicesSource = (
         return yield* new StackPreparationError({
           message: `Slim-services archive extraction exited with code ${exitCode}`,
         });
+      yield* normalizeSlimServicesLayout(artifact, destination);
       yield* validateExtractedTree(fs, path, destination);
       yield* fs.remove(archivePath, { force: true }).pipe(Effect.ignore);
       return compressed;

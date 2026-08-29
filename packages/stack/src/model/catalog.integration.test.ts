@@ -40,7 +40,14 @@ describe("complete workload catalog", () => {
       "bin/realtime",
       "bin/server",
     ]);
+    expect(WORKLOAD_CATALOG["database:database"]?.requiredRuntimePaths).toContain(
+      "share/supabase-cli/init-scripts",
+    );
     expect(WORKLOAD_CATALOG["analytics:analytics"]?.requiredRuntimePaths).toEqual(["bin/logflare"]);
+    expect(WORKLOAD_CATALOG["analytics:vector"]?.requiredRuntimePaths).toEqual([
+      "bin/vector",
+      "share/doc/vector/config/vector.yaml",
+    ]);
     expect(WORKLOAD_CATALOG["pooler:pooler"]?.requiredRuntimePaths).toEqual([
       "bin/migrate",
       "bin/supavisor",
@@ -76,7 +83,7 @@ describe("complete workload catalog", () => {
     expect(WORKLOAD_CATALOG["studio:studio"]?.nativeProcess).toEqual({
       executablePath: "node/bin/node",
       args: ["app/apps/studio/docker-entrypoint.mjs"],
-      cwd: "app/apps/studio",
+      cwd: "app",
     });
   });
 
