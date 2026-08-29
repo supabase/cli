@@ -10,6 +10,8 @@ export interface FunctionsBootstrapOwner {
     readonly content: string;
   }) => Effect.Effect<string, StackPreparationError>;
   readonly cleanupGeneration: (generation: number) => Effect.Effect<void, StackPreparationError>;
+  /** Removes only this stack's functions bootstrap root. */
+  readonly cleanupAll: Effect.Effect<void, StackPreparationError>;
 }
 
 export interface FunctionsBootstrapOwnerOptions {
@@ -112,5 +114,10 @@ export const makeFunctionsBootstrapOwner = (
             "clean functions bootstrap generation",
             fs.remove(path.join(root, String(generation)), { recursive: true, force: true }),
           );
-    return { write, cleanupGeneration };
+    const cleanupAll = mapFs(
+      root,
+      "clean functions bootstrap files",
+      fs.remove(root, { recursive: true, force: true }),
+    );
+    return { write, cleanupGeneration, cleanupAll };
   });

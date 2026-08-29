@@ -21,6 +21,10 @@ describe("functions bootstrap owner", () => {
       expect(yield* fs.readFileString(target)).toBe("export default 1");
       yield* owner.cleanupGeneration(4);
       expect(yield* fs.exists(target)).toBe(false);
+      const stale = yield* owner.write({ generation: 5, content: "export default 2" });
+      yield* owner.cleanupAll;
+      expect(yield* fs.exists(stale)).toBe(false);
+      expect(yield* fs.exists(path.join(root, stackId, "runtime", "functions"))).toBe(false);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

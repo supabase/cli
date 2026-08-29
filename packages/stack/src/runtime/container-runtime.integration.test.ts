@@ -743,6 +743,7 @@ describe("container runtime", () => {
       const runtime = yield* makeContainerRuntime({
         engine: fakeContainerEngine(state),
         ownerSessionId: "new-owner",
+        waitForReadiness: () => Effect.sync(() => order.push("readiness")),
         bootstrapDatabase: () => Effect.sync(() => order.push("bootstrap")),
       });
       const databaseWorkload = { ...workload(), bootstrap: "database" as const };
@@ -752,7 +753,7 @@ describe("container runtime", () => {
         desiredLifecycle: "running",
         plan: recoveryPlan([databaseWorkload]),
       });
-      expect(order).toEqual(["bootstrap"]);
+      expect(order).toEqual(["readiness", "bootstrap"]);
       expect(adopted).toEqual([{ ...key, state: "ready" }]);
       expect(state.calls.some((call) => call.startsWith("stop:"))).toBe(false);
     }),

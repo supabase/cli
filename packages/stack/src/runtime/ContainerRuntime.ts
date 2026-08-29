@@ -39,6 +39,12 @@ export interface ContainerRuntimeOptions {
     workload: PlannedWorkload,
     resource: ContainerResource,
   ) => Effect.Effect<void, RuntimeDriverError>;
+  /** Probes an adopted or newly-started workload before reporting it ready. */
+  readonly waitForReadiness?: (
+    key: RuntimeWorkloadKey,
+    workload: PlannedWorkload,
+    resource: ContainerResource,
+  ) => Effect.Effect<void, RuntimeDriverError>;
 }
 
 export interface ContainerWorkloadResolution {
@@ -425,7 +431,9 @@ export const makeContainerRuntime = (
         }
         const readiness =
           resolution.waitForReadiness === undefined
-            ? Effect.void
+            ? options.waitForReadiness === undefined
+              ? Effect.void
+              : options.waitForReadiness(key, workload, container)
             : resolution.waitForReadiness(key, workload, container);
         const startup = Effect.gen(function* () {
           yield* readiness;
@@ -651,13 +659,26 @@ export const makeContainerRuntime = (
             }
             adoptedIdentities.add(identity);
             const desiredWorkload = desiredWorkloads.get(entry.labels.workloadId);
+            const key: RuntimeWorkloadKey = {
+              stackId: entry.labels.stackId,
+              desiredGeneration: entry.labels.desiredGeneration,
+              workloadId: entry.labels.workloadId,
+              specHash: entry.labels.specHash,
+            };
+            if (entry.state === "running" && desiredWorkload !== undefined) {
+              const readiness = options.waitForReadiness;
+              if (readiness !== undefined) {
+                const readinessExit = yield* Effect.exit(readiness(key, desiredWorkload, entry));
+                if (Exit.isFailure(readinessExit)) {
+                  recoveryCause = Cause.combine(recoveryCause, readinessExit.cause);
+                  const stopExit = yield* Effect.exit(stopAdopted(entry));
+                  if (Exit.isFailure(stopExit))
+                    recoveryCause = Cause.combine(recoveryCause, stopExit.cause);
+                  continue;
+                }
+              }
+            }
             if (entry.state === "running" && desiredWorkload?.bootstrap === "database") {
-              const key: RuntimeWorkloadKey = {
-                stackId: entry.labels.stackId,
-                desiredGeneration: entry.labels.desiredGeneration,
-                workloadId: entry.labels.workloadId,
-                specHash: entry.labels.specHash,
-              };
               const bootstrap =
                 options.bootstrapDatabase === undefined
                   ? Effect.fail(

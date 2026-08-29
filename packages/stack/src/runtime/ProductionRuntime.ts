@@ -405,79 +405,83 @@ export const makeProductionRuntimeFactory = (
               return endpoint;
             });
 
-          const nativeDriver = yield* makeNativeRuntime({
-            resolveProcess: (key, workload) =>
-              freshState(key).pipe(
-                Effect.flatMap((fresh) =>
-                  Effect.gen(function* () {
-                    const spec = runtimeSpecFor(workload);
-                    if (spec === undefined)
-                      return yield* driverError(
-                        key,
-                        `Unknown runtime specification for ${workload.id}`,
+          let driver: RuntimeDriver;
+          if (state.runtime.kind === "native") {
+            driver = yield* makeNativeRuntime({
+              resolveProcess: (key, workload) =>
+                freshState(key).pipe(
+                  Effect.flatMap((fresh) =>
+                    Effect.gen(function* () {
+                      const spec = runtimeSpecFor(workload);
+                      if (spec === undefined)
+                        return yield* driverError(
+                          key,
+                          `Unknown runtime specification for ${workload.id}`,
+                        );
+                      const inputs = yield* runtimeInputs(
+                        workload,
+                        key.desiredGeneration,
+                        undefined,
+                      ).pipe(Effect.mapError((error) => mapDriverError(key, error)));
+                      yield* validateWorkloadRuntimeInputs(fresh, workload, inputs).pipe(
+                        Effect.mapError((error) => mapDriverError(key, error)),
                       );
-                    const inputs = yield* runtimeInputs(
-                      workload,
-                      key.desiredGeneration,
-                      undefined,
-                    ).pipe(Effect.mapError((error) => mapDriverError(key, error)));
-                    yield* validateWorkloadRuntimeInputs(fresh, workload, inputs).pipe(
-                      Effect.mapError((error) => mapDriverError(key, error)),
-                    );
-                    yield* validatePrivateAssignments(fresh, workload).pipe(
-                      Effect.mapError((error) => mapDriverError(key, error)),
-                    );
-                    const prepared = yield* prepare(fresh.runtime, workload).pipe(
-                      Effect.mapError((error) => mapDriverError(key, error)),
-                    );
-                    if (prepared.artifactRoot === undefined)
-                      return yield* driverError(
-                        key,
-                        `Native artifact root is unavailable for ${workload.id}`,
+                      yield* validatePrivateAssignments(fresh, workload).pipe(
+                        Effect.mapError((error) => mapDriverError(key, error)),
                       );
-                    const endpoint = spec.privateEndpoint(fresh, spec.readiness.binding, "native");
-                    if (endpoint === undefined)
-                      return yield* driverError(
-                        key,
-                        `Missing private port assignment for ${workload.id}`,
+                      const prepared = yield* prepare(fresh.runtime, workload).pipe(
+                        Effect.mapError((error) => mapDriverError(key, error)),
                       );
-                    const process = spec.nativeProcess(
-                      prepared.artifactRoot,
-                      fresh,
-                      workload,
-                      endpoint.port,
-                      inputs,
-                    );
-                    return {
-                      ...process,
-                      env: spec.env(fresh, workload, endpoint.port, "native", inputs),
-                    };
-                  }),
+                      if (prepared.artifactRoot === undefined)
+                        return yield* driverError(
+                          key,
+                          `Native artifact root is unavailable for ${workload.id}`,
+                        );
+                      const endpoint = spec.privateEndpoint(
+                        fresh,
+                        spec.readiness.binding,
+                        "native",
+                      );
+                      if (endpoint === undefined)
+                        return yield* driverError(
+                          key,
+                          `Missing private port assignment for ${workload.id}`,
+                        );
+                      const process = spec.nativeProcess(
+                        prepared.artifactRoot,
+                        fresh,
+                        workload,
+                        endpoint.port,
+                        inputs,
+                      );
+                      return {
+                        ...process,
+                        env: spec.env(fresh, workload, endpoint.port, "native", inputs),
+                      };
+                    }),
+                  ),
                 ),
+              waitForReadiness: (key, workload) =>
+                freshState(key).pipe(
+                  Effect.flatMap((fresh) => readinessFor(fresh, workload)),
+                  Effect.mapError((error) => mapDriverError(key, error)),
+                ),
+              bootstrapDatabase: (key, workload) =>
+                workload.bootstrap === "database"
+                  ? freshState(key).pipe(
+                      Effect.flatMap((fresh) => bootstrapDatabase(fresh)),
+                      Effect.mapError((error) => mapDriverError(key, error)),
+                    )
+                  : Effect.void,
+              logStore: logs,
+            }).pipe(
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childSpawner),
+              Effect.provideService(Scope.Scope, ownerScope),
+              Effect.mapError((error) =>
+                preparationError("Unable to initialize native runtime", error),
               ),
-            waitForReadiness: (key, workload) =>
-              freshState(key).pipe(
-                Effect.flatMap((fresh) => readinessFor(fresh, workload)),
-                Effect.mapError((error) => mapDriverError(key, error)),
-              ),
-            bootstrapDatabase: (key, workload) =>
-              workload.bootstrap === "database"
-                ? freshState(key).pipe(
-                    Effect.flatMap((fresh) => bootstrapDatabase(fresh)),
-                    Effect.mapError((error) => mapDriverError(key, error)),
-                  )
-                : Effect.void,
-            logStore: logs,
-          }).pipe(
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childSpawner),
-            Effect.provideService(Scope.Scope, ownerScope),
-            Effect.mapError((error) =>
-              preparationError("Unable to initialize native runtime", error),
-            ),
-          );
-
-          let driver: RuntimeDriver = nativeDriver;
-          if (state.runtime.kind === "container") {
+            );
+          } else {
             if (containerEngine === undefined || containerEngine.kind !== state.runtime.engine)
               return yield* preparationError("Selected container engine is unavailable");
             driver = yield* makeContainerRuntime({
@@ -535,10 +539,20 @@ export const makeProductionRuntimeFactory = (
                       return {
                         ...withoutEnv,
                         envFile,
+                        waitForReadiness: (resourceKey, resourceWorkload) =>
+                          freshState(resourceKey).pipe(
+                            Effect.flatMap((current) => readinessFor(current, resourceWorkload)),
+                            Effect.mapError((error) => mapDriverError(resourceKey, error)),
+                          ),
                         ...(volume === undefined ? {} : { volume }),
                       } satisfies ContainerWorkloadResolution;
                     }),
                   ),
+                ),
+              waitForReadiness: (key, workload) =>
+                freshState(key).pipe(
+                  Effect.flatMap((fresh) => readinessFor(fresh, workload)),
+                  Effect.mapError((error) => mapDriverError(key, error)),
                 ),
               bootstrapDatabase: (key, workload) =>
                 workload.bootstrap === "database"
@@ -549,8 +563,23 @@ export const makeProductionRuntimeFactory = (
                   : Effect.void,
             });
           }
+          const runtimeDriver = driver;
+          const ownedCleanup = (stackId: StackId): Effect.Effect<void, RuntimeDriverError> =>
+            Effect.all([envFiles.cleanupAll, functionsBootstrap.cleanupAll], {
+              concurrency: "unbounded",
+              discard: true,
+            }).pipe(
+              Effect.mapError((error) =>
+                driverError({ stackId, workloadId: "" }, "Unable to clean runtime files", error),
+              ),
+            );
+          const ownedDriver: RuntimeDriver = {
+            ...runtimeDriver,
+            cleanup: (request) =>
+              runtimeDriver.cleanup(request).pipe(Effect.andThen(ownedCleanup(request.stackId))),
+          };
           return {
-            driver,
+            driver: ownedDriver,
             preflight,
             activate,
             ingress,

@@ -48,7 +48,7 @@ export interface RuntimeArtifactPreparer {
 export type RuntimeArtifactPreparationError = ArtifactStoreError | StackPreparationError;
 
 export interface RuntimeArtifactPreparerOptions {
-  readonly native: {
+  readonly native?: {
     readonly store: ArtifactStore;
     /** Injected in tests; production defaults to the published SHA256SUMS boundary. */
     readonly checksum?: (
@@ -79,6 +79,11 @@ export const makeRuntimeArtifactPreparer = (
 ): RuntimeArtifactPreparer => ({
   prepare: (runtime, workload) => {
     if (runtime.kind === "native") {
+      const native = options.native;
+      if (native === undefined)
+        return Effect.fail(
+          error("Native runtime has no configured artifact store", { workload: workload.id }),
+        );
       if (workload.selected.kind !== "native")
         return Effect.fail(
           error("Native runtime received a container workload artifact", {
@@ -86,17 +91,17 @@ export const makeRuntimeArtifactPreparer = (
           }),
         );
       return Effect.gen(function* () {
-        const artifact = yield* resolveNativeArtifactForWorkload(workload, options.native.platform);
-        const checksum = yield* options.native.checksum === undefined
+        const artifact = yield* resolveNativeArtifactForWorkload(workload, native.platform);
+        const checksum = yield* native.checksum === undefined
           ? slimServicesChecksum(artifact)
-          : options.native.checksum(artifact);
+          : native.checksum(artifact);
         const request = {
           key: artifactKey(artifact),
           sha256: checksum,
           requiredRuntimePaths: artifact.requiredRuntimePaths,
           executablePath: artifact.executablePath,
         };
-        const prepared = yield* options.native.store.prepare(request);
+        const prepared = yield* native.store.prepare(request);
         return nativeResult(workload, artifact, prepared);
       });
     }
@@ -183,8 +188,13 @@ export const makeProductionRuntimeArtifactPreparer = (options: {
     const path = yield* Path.Path;
     const cacheRoot = path.join(path.resolve(options.stateRoot), "artifacts");
     const artifacts = new Map<string, NativeWorkloadArtifact>();
-    const source: ArtifactSource = makeSlimServicesSource((request) => artifacts.get(request.key));
-    const store = yield* makeArtifactStore({ cacheRoot, source });
+    const store =
+      options.runtime?.kind === "container"
+        ? undefined
+        : yield* makeArtifactStore({
+            cacheRoot,
+            source: makeSlimServicesSource((request) => artifacts.get(request.key)),
+          });
     const checksum = (artifact: NativeWorkloadArtifact) => {
       artifacts.set(artifactKey(artifact), artifact);
       return slimServicesChecksum(artifact);
@@ -220,7 +230,7 @@ export const makeProductionRuntimeArtifactPreparer = (options: {
           ? { docker: containerEngine }
           : { podman: containerEngine };
     const preparer = makeRuntimeArtifactPreparer({
-      native: { store, checksum },
+      ...(store === undefined ? {} : { native: { store, checksum } }),
       containers,
     });
     return containerEngine === undefined ? preparer : { ...preparer, containerEngine };

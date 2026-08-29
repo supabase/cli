@@ -1,6 +1,6 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit, FileSystem } from "effect";
+import { Effect, Exit, FileSystem, Path } from "effect";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import type { ArtifactRequest, ArtifactStore, PreparedArtifact } from "./ArtifactStore.ts";
 import type {
@@ -70,12 +70,14 @@ describe("runtime artifact preparation", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-artifact-runtime-" });
         const preparer = yield* makeProductionRuntimeArtifactPreparer({
           stateRoot: root,
           runtime: { kind: "container", engine: "podman" },
         });
         expect(preparer.containerEngine?.kind).toBe("podman");
+        expect(yield* fs.exists(path.join(root, "artifacts"))).toBe(false);
         const native = yield* makeProductionRuntimeArtifactPreparer({
           stateRoot: root,
           runtime: { kind: "native" },
