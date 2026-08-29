@@ -1,14 +1,36 @@
-import { Crypto, Effect, Redacted } from "effect";
-import { StackMustBeStoppedError, StackSecretMismatchError } from "../public/Errors.ts";
+import { Crypto, Effect, FileSystem, Path, Redacted, Schema } from "effect";
+// oxlint-disable-next-line effecttsgo/node-builtin-import
+import { createHmac, createPrivateKey, createSign } from "node:crypto";
+import {
+  InvalidJwtSigningMaterialError,
+  StackMustBeStoppedError,
+  StackSecretMismatchError,
+} from "../public/Errors.ts";
 import type { DesiredStackLifecycle } from "../public/Status.ts";
 import type { PersistedSecretValues } from "./StackState.ts";
 
 export type SecretPolicy = "managed" | "passthrough";
 
+export type SecretJwtSigning =
+  | { readonly kind: "symmetric" }
+  | { readonly kind: "jwks-file"; readonly projectRoot: string; readonly path: string };
+
+/** Lifecycle-only metadata for generating omitted managed credentials. */
+export type SecretGenerator =
+  | { readonly kind: "publishable-key" }
+  | { readonly kind: "secret-key" }
+  | { readonly kind: "jwt-secret" }
+  | {
+      readonly kind: "jwt-token";
+      readonly role: "anon" | "service_role";
+      readonly signing: SecretJwtSigning;
+    };
+
 export interface SecretDeclaration {
   readonly slot: string;
   readonly policy: SecretPolicy;
   readonly value?: Redacted.Redacted<unknown>;
+  readonly generator?: SecretGenerator;
 }
 
 export interface SecretCandidate {
@@ -35,6 +57,63 @@ const readSecret = (value: Redacted.Redacted<unknown>): string => {
 };
 const validSlot = (slot: string): boolean => /^[A-Za-z0-9_.:/-]+$/.test(slot);
 
+const AUTH_JWT_SECRET_SLOT = "secret:auth.settings.jwt_secret";
+const JWT_ISSUER = "supabase-demo";
+const JWT_HMAC_EXPIRY = 1_983_812_996;
+const JWT_ASYMMETRIC_EXPIRY = 2_103_000_000;
+const BASE64URL = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+const JwtHeaderSchema = Schema.Struct({
+  alg: Schema.String,
+  kid: Schema.optionalKey(Schema.String),
+  typ: Schema.Literal("JWT"),
+});
+type JwtHeader = Schema.Schema.Type<typeof JwtHeaderSchema>;
+const JwtPayloadSchema = Schema.Struct({
+  iss: Schema.Literal(JWT_ISSUER),
+  role: Schema.Literals(["anon", "service_role"] as const),
+  exp: Schema.Finite,
+});
+type JwtPayload = Schema.Schema.Type<typeof JwtPayloadSchema>;
+const JwkSchema = Schema.Struct({
+  alg: Schema.optionalKey(Schema.String),
+  crv: Schema.optionalKey(Schema.String),
+  d: Schema.optionalKey(Schema.String),
+  dp: Schema.optionalKey(Schema.String),
+  dq: Schema.optionalKey(Schema.String),
+  e: Schema.optionalKey(Schema.String),
+  kty: Schema.String,
+  kid: Schema.optionalKey(Schema.String),
+  n: Schema.optionalKey(Schema.String),
+  p: Schema.optionalKey(Schema.String),
+  q: Schema.optionalKey(Schema.String),
+  qi: Schema.optionalKey(Schema.String),
+  x: Schema.optionalKey(Schema.String),
+  y: Schema.optionalKey(Schema.String),
+});
+const JwkFileSchema = Schema.Union([Schema.Array(JwkSchema), JwkSchema]);
+const encodeJwtHeader = (value: JwtHeader) =>
+  Schema.encodeEffect(Schema.fromJsonString(JwtHeaderSchema))(value);
+const encodeJwtPayload = (value: JwtPayload) =>
+  Schema.encodeEffect(Schema.fromJsonString(JwtPayloadSchema))(value);
+
+const base64UrlEncode = (bytes: Uint8Array): string => {
+  let output = "";
+  for (let index = 0; index < bytes.length; index += 3) {
+    const first = bytes[index] ?? 0;
+    const second = bytes[index + 1];
+    const third = bytes[index + 2];
+    output += BASE64URL[first >> 2] ?? "";
+    output += BASE64URL[((first & 3) << 4) | ((second ?? 0) >> 4)] ?? "";
+    if (second !== undefined) output += BASE64URL[((second & 15) << 2) | ((third ?? 0) >> 6)] ?? "";
+    if (third !== undefined) output += BASE64URL[third & 63] ?? "";
+  }
+  return output;
+};
+
+const base64UrlEncodeText = (value: string): string =>
+  base64UrlEncode(new TextEncoder().encode(value));
+
 /** Redacts known exact values without attempting to infer transformed/derived secrets. */
 export const redactKnownSecrets = (message: string, known: Iterable<string>): string => {
   let result = message;
@@ -52,6 +131,205 @@ const generatedSecret = (crypto: Crypto.Crypto) =>
     ),
   );
 
+const randomEncoded = (
+  crypto: Crypto.Crypto,
+  bytes: number,
+  slot: string,
+): Effect.Effect<string, StackSecretMismatchError> =>
+  crypto.randomBytes(bytes).pipe(
+    Effect.map(base64UrlEncode),
+    Effect.mapError((error) =>
+      secretMismatch(slot, `Unable to generate managed secret: ${error.message}`),
+    ),
+  );
+
+interface SigningJwk {
+  readonly kty: "EC" | "RSA";
+  readonly alg: "ES256" | "RS256";
+  readonly d: string;
+  readonly kid?: string;
+  readonly crv?: string;
+  readonly x?: string;
+  readonly y?: string;
+  readonly n?: string;
+  readonly e?: string;
+  readonly p?: string;
+  readonly q?: string;
+  readonly dp?: string;
+  readonly dq?: string;
+  readonly qi?: string;
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+const stringField = (record: Record<string, unknown>, key: string): string | undefined => {
+  const value = record[key];
+  return value === undefined ? undefined : typeof value === "string" ? value : undefined;
+};
+
+const privateSigningJwk = (value: unknown): SigningJwk | undefined => {
+  if (!isRecord(value)) return undefined;
+  const kty = value.kty;
+  const alg = value.alg;
+  const d = stringField(value, "d");
+  if (typeof d !== "string") return undefined;
+  const kid = stringField(value, "kid");
+  if (kty === "EC" && alg === "ES256") {
+    const crv = stringField(value, "crv");
+    const x = stringField(value, "x");
+    const y = stringField(value, "y");
+    if (crv !== "P-256" || x === undefined || y === undefined) return undefined;
+    return { kty, alg, d, ...(kid === undefined ? {} : { kid }), crv, x, y };
+  }
+  if (kty === "RSA" && alg === "RS256") {
+    const n = stringField(value, "n");
+    const e = stringField(value, "e");
+    const p = stringField(value, "p");
+    const q = stringField(value, "q");
+    if (n === undefined || e === undefined || p === undefined || q === undefined) return undefined;
+    const dp = stringField(value, "dp");
+    const dq = stringField(value, "dq");
+    const qi = stringField(value, "qi");
+    return {
+      kty,
+      alg,
+      d,
+      ...(kid === undefined ? {} : { kid }),
+      n,
+      e,
+      p,
+      q,
+      ...(dp === undefined ? {} : { dp }),
+      ...(dq === undefined ? {} : { dq }),
+      ...(qi === undefined ? {} : { qi }),
+    };
+  }
+  return undefined;
+};
+
+const invalidSigningMaterial = () =>
+  new InvalidJwtSigningMaterialError({ message: "Unable to resolve JWT signing material" });
+
+const readSigningJwk = (
+  signing: Extract<SecretJwtSigning, { readonly kind: "jwks-file" }>,
+): Effect.Effect<SigningJwk, InvalidJwtSigningMaterialError, FileSystem.FileSystem | Path.Path> =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    const fs = yield* FileSystem.FileSystem;
+    const projectRoot = path.resolve(signing.projectRoot);
+    const candidate = path.resolve(projectRoot, signing.path);
+    const relative = path.relative(projectRoot, candidate);
+    if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+      return yield* invalidSigningMaterial();
+    const raw = yield* fs
+      .readFileString(candidate)
+      .pipe(Effect.mapError(() => invalidSigningMaterial()));
+    const parsed = yield* Schema.decodeEffect(Schema.fromJsonString(JwkFileSchema))(raw).pipe(
+      Effect.mapError(() => invalidSigningMaterial()),
+    );
+    const entries = Array.isArray(parsed) ? parsed : [parsed];
+    for (const entry of entries) {
+      const jwk = privateSigningJwk(entry);
+      if (jwk !== undefined) return jwk;
+    }
+    return yield* invalidSigningMaterial();
+  });
+
+const signWithJwk = (
+  jwk: SigningJwk,
+  payload: string,
+): Effect.Effect<string, InvalidJwtSigningMaterialError> =>
+  Effect.gen(function* () {
+    const header =
+      jwk.kid === undefined
+        ? { alg: jwk.alg, typ: "JWT" }
+        : { alg: jwk.alg, kid: jwk.kid, typ: "JWT" };
+    const headerJson = yield* encodeJwtHeader(header).pipe(
+      Effect.mapError(() => invalidSigningMaterial()),
+    );
+    const data = `${base64UrlEncodeText(headerJson)}.${base64UrlEncodeText(payload)}`;
+    return yield* Effect.try({
+      try: () => {
+        const privateKey = createPrivateKey({ key: jwk, format: "jwk" });
+        const signer = createSign(jwk.alg === "RS256" ? "RSA-SHA256" : "sha256").update(data);
+        const signature =
+          jwk.alg === "RS256"
+            ? signer.end().sign(privateKey)
+            : signer.end().sign({ key: privateKey, dsaEncoding: "ieee-p1363" });
+        return `${data}.${base64UrlEncode(signature)}`;
+      },
+      catch: () => invalidSigningMaterial(),
+    });
+  });
+
+const generateJwtToken = (
+  generator: Extract<SecretGenerator, { readonly kind: "jwt-token" }>,
+  jwtSecret: string | undefined,
+): Effect.Effect<string, InvalidJwtSigningMaterialError, FileSystem.FileSystem | Path.Path> => {
+  const payloadFor = (expiry: number) => ({
+    iss: JWT_ISSUER,
+    role: generator.role,
+    exp: expiry,
+  });
+  if (generator.signing.kind === "symmetric") {
+    if (jwtSecret === undefined || jwtSecret.length === 0)
+      return Effect.fail(invalidSigningMaterial());
+    return Effect.gen(function* () {
+      const header = base64UrlEncodeText(
+        yield* encodeJwtHeader({ alg: "HS256", typ: "JWT" }).pipe(
+          Effect.mapError(() => invalidSigningMaterial()),
+        ),
+      );
+      const payload = base64UrlEncodeText(
+        yield* encodeJwtPayload(payloadFor(JWT_HMAC_EXPIRY)).pipe(
+          Effect.mapError(() => invalidSigningMaterial()),
+        ),
+      );
+      const data = `${header}.${payload}`;
+      return yield* Effect.try({
+        try: () => `${data}.${createHmac("sha256", jwtSecret).update(data).digest("base64url")}`,
+        catch: () => invalidSigningMaterial(),
+      });
+    });
+  }
+  return readSigningJwk(generator.signing).pipe(
+    Effect.flatMap((jwk) =>
+      encodeJwtPayload(payloadFor(JWT_ASYMMETRIC_EXPIRY)).pipe(
+        Effect.mapError(() => invalidSigningMaterial()),
+        Effect.flatMap((payload) => signWithJwk(jwk, payload)),
+      ),
+    ),
+  );
+};
+
+const generatedFor = (
+  declaration: SecretDeclaration,
+  crypto: Crypto.Crypto,
+  resolved: Record<string, { readonly policy: SecretPolicy; readonly value: string }>,
+): Effect.Effect<
+  string,
+  StackSecretMismatchError | InvalidJwtSigningMaterialError,
+  FileSystem.FileSystem | Path.Path
+> => {
+  const generator = declaration.generator;
+  if (generator === undefined) return generatedSecret(crypto);
+  switch (generator.kind) {
+    case "publishable-key":
+      return randomEncoded(crypto, 24, declaration.slot).pipe(
+        Effect.map((value) => `sb_publishable_${value}`),
+      );
+    case "secret-key":
+      return randomEncoded(crypto, 24, declaration.slot).pipe(
+        Effect.map((value) => `sb_secret_${value}`),
+      );
+    case "jwt-secret":
+      return randomEncoded(crypto, 32, declaration.slot);
+    case "jwt-token":
+      return generateJwtToken(generator, resolved[AUTH_JWT_SECRET_SLOT]?.value);
+  }
+};
+
 /**
  * Resolves managed and pass-through secret declarations against dedicated persisted values.
  * Managed omission reuses/generates exactly once; pass-through declarations are complete and
@@ -63,8 +341,8 @@ export const resolveSecrets = (
   lifecycle: DesiredStackLifecycle,
 ): Effect.Effect<
   ResolvedSecrets,
-  StackSecretMismatchError | StackMustBeStoppedError,
-  Crypto.Crypto
+  StackSecretMismatchError | StackMustBeStoppedError | InvalidJwtSigningMaterialError,
+  Crypto.Crypto | FileSystem.FileSystem | Path.Path
 > =>
   Effect.gen(function* () {
     const crypto = yield* Crypto.Crypto;
@@ -80,6 +358,7 @@ export const resolveSecrets = (
     }
 
     const resolved: Record<string, { readonly policy: SecretPolicy; readonly value: string }> = {};
+    const deferred: Array<[string, SecretDeclaration]> = [];
     for (const [slot, declaration] of declarations) {
       const old = previous[slot];
       if (old !== undefined && old.policy !== declaration.policy) {
@@ -96,7 +375,11 @@ export const resolveSecrets = (
             );
           resolved[slot] = old;
         } else {
-          const value = supplied ?? (yield* generatedSecret(crypto));
+          if (supplied === undefined && declaration.generator?.kind === "jwt-token") {
+            deferred.push([slot, declaration]);
+            continue;
+          }
+          const value = supplied ?? (yield* generatedFor(declaration, crypto, resolved));
           resolved[slot] = { policy: "managed", value };
         }
       } else {
@@ -110,6 +393,11 @@ export const resolveSecrets = (
           return yield* lifecycleChange(slot);
         resolved[slot] = { policy: "passthrough", value };
       }
+    }
+
+    for (const [slot, declaration] of deferred) {
+      const value = yield* generatedFor(declaration, crypto, resolved);
+      resolved[slot] = { policy: "managed", value };
     }
 
     for (const [slot, old] of Object.entries(previous)) {

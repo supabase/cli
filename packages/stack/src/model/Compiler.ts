@@ -32,6 +32,7 @@ import {
 import { resolveThirdPartyIssuer } from "./capabilities/auth-third-party.ts";
 import { CAPABILITY_MODULES, createExecutionPlan, type ExecutionPlan } from "./ExecutionPlan.ts";
 import type { CapabilityModule, CapabilityRelease } from "./CapabilityModule.ts";
+import type { SecretGenerator, SecretJwtSigning } from "../state/SecretStore.ts";
 
 export type InputFingerprint = Schema.Schema.Type<typeof InputFingerprintSchema>;
 const InputFingerprintSchema = Schema.String.pipe(Schema.brand("InputFingerprint"));
@@ -98,6 +99,8 @@ export interface SecretSlotInput {
   readonly slot: string;
   readonly policy: "managed" | "passthrough";
   readonly value?: Redacted.Redacted<unknown>;
+  /** Private lifecycle-only generator metadata; never materialized into StackDefinition. */
+  readonly generator?: SecretGenerator;
 }
 
 const AUTH_JWT_SECRET_SLOT = "secret:auth.settings.jwt_secret";
@@ -231,6 +234,38 @@ const ensureCanonicalJwtSlot = (
   const existing = slots[existingIndex];
   if (existing !== undefined && existing.value === undefined && value !== undefined)
     slots[existingIndex] = { ...existing, value };
+};
+
+const attachAuthSecretGenerators = (
+  slots: SecretSlotInput[],
+  projectRoot: string,
+  signing: JwtSigning | undefined,
+): void => {
+  const jwtSigning: SecretJwtSigning =
+    signing?.kind === "jwks-file"
+      ? { kind: "jwks-file", projectRoot, path: signing.path }
+      : { kind: "symmetric" };
+  for (let index = 0; index < slots.length; index++) {
+    const entry = slots[index];
+    if (entry === undefined || entry.policy !== "managed") continue;
+    const generator =
+      entry.slot === "secret:auth.settings.publishable_key"
+        ? ({ kind: "publishable-key" } satisfies SecretGenerator)
+        : entry.slot === "secret:auth.settings.secret_key"
+          ? ({ kind: "secret-key" } satisfies SecretGenerator)
+          : entry.slot === AUTH_JWT_SECRET_SLOT
+            ? ({ kind: "jwt-secret" } satisfies SecretGenerator)
+            : entry.slot === "secret:auth.settings.anon_key"
+              ? ({ kind: "jwt-token", role: "anon", signing: jwtSigning } satisfies SecretGenerator)
+              : entry.slot === "secret:auth.settings.service_role_key"
+                ? ({
+                    kind: "jwt-token",
+                    role: "service_role",
+                    signing: jwtSigning,
+                  } satisfies SecretGenerator)
+                : undefined;
+    if (generator !== undefined) slots[index] = { ...entry, generator };
+  }
 };
 
 const setMaterializedPath = (
@@ -669,6 +704,7 @@ export const compileStack = (
       const slots: SecretSlotInput[] = [];
       for (const slot of INTERNAL_MANAGED_SECRET_SLOTS) slots.push({ slot, policy: "managed" });
       collectSuppliedSecrets(config, slots, jwtSecret);
+      attachAuthSecretGenerators(slots, input.projectRoot, config.security?.jwt?.signing);
       const executionPlan = yield* planForDefinition(input.runtime, previous.definition, crypto);
       return {
         definition: previous.definition,
@@ -833,6 +869,7 @@ export const compileStack = (
     } satisfies Record<PortField, MaterializedListener>;
     const rawJwt = config.security?.jwt;
     ensureCanonicalJwtSlot(slots, jwtSecret);
+    attachAuthSecretGenerators(slots, input.projectRoot, rawJwt?.signing);
     const security = {
       jwt: {
         issuer: rawJwt?.issuer ?? null,

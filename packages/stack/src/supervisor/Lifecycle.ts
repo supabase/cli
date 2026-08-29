@@ -123,6 +123,7 @@ const declarationsFromCompiled = (compiled: CompiledStack): SecretCandidate => (
     slot: entry.slot,
     policy: entry.policy,
     ...(entry.value === undefined ? {} : { value: entry.value }),
+    ...(entry.generator === undefined ? {} : { generator: entry.generator }),
   })),
 });
 

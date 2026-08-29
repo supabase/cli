@@ -157,6 +157,17 @@ describe("closed capability compiler", () => {
       expect(result.secrets.filter((entry) => entry.slot.includes("jwt"))).toEqual([
         expect.objectContaining({ slot: "secret:auth.settings.jwt_secret", policy: "managed" }),
       ]);
+      expect(
+        result.secrets.find((entry) => entry.slot === "secret:auth.settings.anon_key")?.generator,
+      ).toEqual({
+        kind: "jwt-token",
+        role: "anon",
+        signing: {
+          kind: "jwks-file",
+          projectRoot: "/tmp/supabase-project",
+          path: "jwt.json",
+        },
+      });
     }),
   );
 
