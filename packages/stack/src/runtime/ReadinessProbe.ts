@@ -1,0 +1,155 @@
+import { Duration, Effect, Schedule } from "effect";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Node callback boundary owns cancellation.
+import { request as httpRequest, type IncomingMessage } from "node:http";
+// oxlint-disable-next-line effecttsgo/node-builtin-import -- Node callback boundary owns cancellation.
+import { createConnection, type Socket } from "node:net";
+import { RuntimeDriverError } from "./RuntimeDriver.ts";
+import { StackPreparationError } from "../public/Errors.ts";
+
+export interface ReadinessTarget {
+  readonly mode: "http" | "tcp";
+  readonly host: string;
+  readonly port: number;
+  readonly path?: string;
+}
+
+export interface ReadinessProbeOptions {
+  /** Number of retries after the initial attempt. */
+  readonly retries?: number;
+  /** Delay between attempts; defaults to a short spaced schedule. */
+  readonly retryDelay?: Duration.Input;
+}
+
+const preparationError = (message: string): StackPreparationError =>
+  new StackPreparationError({ message });
+
+const runtimeError = (
+  target: ReadinessTarget,
+  message: string,
+  cause?: unknown,
+): RuntimeDriverError =>
+  new RuntimeDriverError({
+    message,
+    cause,
+  });
+
+const validateTarget = (target: ReadinessTarget): Effect.Effect<void, StackPreparationError> => {
+  if (target.host.length === 0 || target.host.includes("\u0000") || /[\r\n]/u.test(target.host))
+    return Effect.fail(preparationError("Readiness host is invalid"));
+  if (!Number.isInteger(target.port) || target.port < 1 || target.port > 65_535)
+    return Effect.fail(preparationError("Readiness port is invalid"));
+  if (target.mode === "http" && target.path !== undefined && !target.path.startsWith("/"))
+    return Effect.fail(preparationError("Readiness HTTP path must begin with '/'"));
+  return Effect.void;
+};
+
+const httpAttempt = (target: ReadinessTarget): Effect.Effect<void, RuntimeDriverError> =>
+  Effect.callback<void, RuntimeDriverError>((resume) => {
+    let settled = false;
+    let request: ReturnType<typeof httpRequest> | undefined;
+    let response: IncomingMessage | undefined;
+    const cleanup = () => {
+      request?.off("error", onError);
+      if (response !== undefined) {
+        response.off("error", onError);
+        response.off("aborted", onAborted);
+        response.off("end", onEnd);
+      }
+    };
+    const finish = (effect: Effect.Effect<void, RuntimeDriverError>) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resume(effect);
+    };
+    const onError = (cause: Error) =>
+      finish(Effect.fail(runtimeError(target, "Readiness HTTP request failed", cause)));
+    const onAborted = () =>
+      finish(Effect.fail(runtimeError(target, "Readiness HTTP response aborted")));
+    const onEnd = () => {
+      if (response === undefined) return;
+      if ((response.statusCode ?? 500) >= 200 && (response.statusCode ?? 500) < 300)
+        finish(Effect.void);
+      else finish(Effect.fail(runtimeError(target, "Readiness HTTP status was not successful")));
+    };
+    request = httpRequest(
+      {
+        host: target.host,
+        port: target.port,
+        path: target.path ?? "/",
+        method: "GET",
+      },
+      (incoming) => {
+        response = incoming;
+        incoming.once("error", onError);
+        incoming.once("aborted", onAborted);
+        incoming.once("end", onEnd);
+        incoming.resume();
+      },
+    );
+    request.once("error", onError);
+    request.end();
+    return Effect.sync(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      response?.once("error", () => undefined);
+      response?.destroy();
+      request?.once("error", () => undefined);
+      request?.destroy();
+    });
+  });
+
+const tcpAttempt = (target: ReadinessTarget): Effect.Effect<void, RuntimeDriverError> =>
+  Effect.callback<void, RuntimeDriverError>((resume) => {
+    let settled = false;
+    let socket: Socket | undefined;
+    const cleanup = () => {
+      socket?.off("connect", onConnect);
+      socket?.off("error", onError);
+      socket?.off("close", onClose);
+    };
+    const finish = (effect: Effect.Effect<void, RuntimeDriverError>) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      socket?.destroy();
+      resume(effect);
+    };
+    const onConnect = () => finish(Effect.void);
+    const onError = (cause: Error) =>
+      finish(Effect.fail(runtimeError(target, "Readiness TCP connection failed", cause)));
+    const onClose = () => {
+      if (!settled) finish(Effect.fail(runtimeError(target, "Readiness TCP connection closed")));
+    };
+    socket = createConnection({ host: target.host, port: target.port });
+    socket.once("connect", onConnect);
+    socket.once("error", onError);
+    socket.once("close", onClose);
+    return Effect.sync(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      socket?.destroy();
+    });
+  });
+
+/**
+ * Probes one exact private endpoint. Retry is expressed through Effect's
+ * Schedule so cancellation interrupts the owned request/socket immediately.
+ */
+export const probeReadiness = (
+  target: ReadinessTarget,
+  options: ReadinessProbeOptions = {},
+): Effect.Effect<void, RuntimeDriverError | StackPreparationError> =>
+  Effect.gen(function* () {
+    yield* validateTarget(target);
+    const retries = options.retries ?? 3;
+    if (!Number.isSafeInteger(retries) || retries < 0)
+      return yield* preparationError("Readiness retry count is invalid");
+    const attempt = target.mode === "http" ? httpAttempt(target) : tcpAttempt(target);
+    const schedule = Schedule.spaced(options.retryDelay ?? "100 millis").pipe(
+      Schedule.upTo({ times: retries }),
+    );
+    yield* Effect.retry(attempt, schedule);
+  });
