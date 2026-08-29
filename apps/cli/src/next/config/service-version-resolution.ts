@@ -1,6 +1,6 @@
-import type { ServiceName, StackVersionPlan, VersionManifest } from "@supabase/stack/effect";
+import type { ServiceName, StackVersionPlan, VersionRuntime } from "@supabase/stack/effect";
 import {
-  DEFAULT_VERSIONS,
+  defaultVersionsForRuntime,
   normalizeServiceVersion,
   planStackVersions,
   SERVICE_NAMES,
@@ -33,6 +33,7 @@ function isServiceName(value: string): value is ServiceName {
 
 export const parseServiceVersionOverrides = Effect.fnUntraced(function* (
   rawOverrides: ReadonlyArray<string>,
+  runtime: VersionRuntime = "native",
 ) {
   const overrides: Partial<Record<ServiceName, string>> = {};
 
@@ -55,12 +56,12 @@ export const parseServiceVersionOverrides = Effect.fnUntraced(function* (
       return yield* Effect.fail(
         new InvalidServiceVersionOverrideError({
           detail: `Invalid service version override '${rawOverride}'. Expected format service=version.`,
-          suggestion: `Pass --service-version ${rawService}=${DEFAULT_VERSIONS[rawService]}.`,
+          suggestion: `Pass --service-version ${rawService}=${defaultVersionsForRuntime(runtime)[rawService]}.`,
         }),
       );
     }
 
-    overrides[rawService] = normalizeServiceVersion(rawService, rawVersion);
+    overrides[rawService] = normalizeServiceVersion(rawService, rawVersion, runtime);
   }
 
   return overrides;
@@ -68,16 +69,18 @@ export const parseServiceVersionOverrides = Effect.fnUntraced(function* (
 
 export const resolveServiceVersionContext = Effect.fnUntraced(function* (
   rawOverrides: ReadonlyArray<string>,
-  pinnedBaselineOverride?: VersionManifest,
+  pinnedBaselineOverride?: Partial<Record<ServiceName, string | undefined>>,
+  runtime?: VersionRuntime,
 ) {
   const projectLinkState = yield* ProjectLinkState;
   const cliProjectLocalServiceVersions = yield* CliProjectLocalServiceVersions;
 
-  const flagOverrides = yield* parseServiceVersionOverrides(rawOverrides);
+  const flagOverrides = yield* parseServiceVersionOverrides(rawOverrides, runtime);
   const localState = yield* cliProjectLocalServiceVersions.load;
   const linkedState = yield* projectLinkState.load;
 
   return planStackVersions({
+    runtime,
     candidateBaseline: Option.match(linkedState, {
       onNone: () => undefined,
       onSome: (state) => state.versions,

@@ -2,7 +2,6 @@ import { Context, Effect, Layer, Option, Predicate } from "effect";
 import { loadCliConfig } from "@supabase/config/effect";
 import {
   connectLayer,
-  fillServiceVersionManifest,
   resolveStackSummary,
   Stack,
   type StackSummary,
@@ -183,7 +182,8 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
     const message = "Local Supabase stack is stopped.";
     const serviceVersionContext = yield* resolveServiceVersionContext(
       [],
-      fillServiceVersionManifest(summary.value.versions),
+      summary.value.versions,
+      summary.value.launch.mode,
     );
     const data = {
       stack: summary.value.name,
@@ -241,7 +241,8 @@ export const status = Effect.fnUntraced(function* (_flags: StatusFlags) {
   const { info, services } = stackResult;
   const serviceVersionContext = yield* resolveServiceVersionContext(
     [],
-    fillServiceVersionManifest(summary.versions),
+    summary.versions,
+    summary.launch.mode,
   );
   const sortedServices = [...services].sort((a, b) => a.name.localeCompare(b.name));
   const allReady = services.every((service) =>

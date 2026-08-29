@@ -1,8 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_VERSIONS } from "./versions.ts";
+import { DEFAULT_VERSIONS, DOCKER_DEFAULT_VERSIONS } from "./versions.ts";
 import { planStackVersions } from "./version-plan.ts";
 
 describe("planStackVersions", () => {
+  it("uses Docker defaults and normalization when planning a Docker runtime", () => {
+    expect(
+      planStackVersions({
+        runtime: "docker",
+        flagOverrides: { pooler: "v2.9.7" },
+      }),
+    ).toMatchObject({
+      candidateBaseline: DOCKER_DEFAULT_VERSIONS,
+      pinnedBaseline: DOCKER_DEFAULT_VERSIONS,
+      runtimeVersions: {
+        ...DOCKER_DEFAULT_VERSIONS,
+        pooler: "2.9.7",
+      },
+      activeOverrides: [{ service: "pooler", version: "2.9.7", source: "flag" }],
+    });
+  });
+
   it("fills the candidate baseline from linked versions and defaults", () => {
     expect(
       planStackVersions({
@@ -78,16 +95,16 @@ describe("planStackVersions", () => {
       availableUpdates: [
         {
           service: "auth",
-          pinnedVersion: "2.188.0-rc.15",
+          pinnedVersion: "v2.188.0-rc.15",
           availableVersion: "v2.188.1",
         },
         {
           service: "storage",
-          pinnedVersion: "1.41.8",
+          pinnedVersion: "v1.41.8",
           availableVersion: "v1.43.3",
         },
       ],
-      updateFingerprint: "auth:2.188.0-rc.15->v2.188.1|storage:1.41.8->v1.43.3",
+      updateFingerprint: "auth:v2.188.0-rc.15->v2.188.1|storage:v1.41.8->v1.43.3",
     });
   });
 });

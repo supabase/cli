@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import {
-  DEFAULT_VERSIONS,
+  DOCKER_DEFAULT_VERSIONS,
   connectLayer,
   fillServiceVersionManifest,
   planStackVersions,
@@ -34,8 +34,9 @@ describe("start handler", () => {
             Effect.provide(fixture.baseLayer),
             Effect.flatMap((stackLayer) => {
               const out = mockOutput({ interactive: false });
-              const versions = fillServiceVersionManifest(DEFAULT_VERSIONS);
+              const versions = fillServiceVersionManifest(DOCKER_DEFAULT_VERSIONS, "docker");
               const serviceVersionContext = planStackVersions({
+                runtime: "docker",
                 pinnedBaseline: versions,
                 candidateBaseline: versions,
               });

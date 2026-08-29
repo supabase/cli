@@ -1,4 +1,4 @@
-import { DEFAULT_VERSIONS } from "@supabase/stack/effect";
+import { DEFAULT_VERSIONS, DOCKER_DEFAULT_VERSIONS } from "@supabase/stack/effect";
 import { describe, expect, test } from "vitest";
 import { Effect, Layer } from "effect";
 import {
@@ -78,6 +78,31 @@ describe("service version overrides", () => {
       ],
       availableUpdates: [],
       updateFingerprint: undefined,
+    });
+  });
+
+  test("uses Docker defaults and tags when explicitly resolving Docker versions", async () => {
+    await expect(
+      Effect.runPromise(
+        resolveServiceVersionContext(["pooler=v2.9.7"], undefined, "docker").pipe(
+          Effect.provide(
+            Layer.mergeAll(mockProjectLinkState(), mockCliProjectLocalServiceVersions()),
+          ),
+        ),
+      ),
+    ).resolves.toMatchObject({
+      candidateBaseline: DOCKER_DEFAULT_VERSIONS,
+      pinnedBaseline: DOCKER_DEFAULT_VERSIONS,
+      runtimeVersions: { ...DOCKER_DEFAULT_VERSIONS, pooler: "2.9.7" },
+      activeOverrides: [{ service: "pooler", version: "2.9.7", source: "flag" }],
+    });
+  });
+
+  test("suggests the Docker default for an empty Docker override", async () => {
+    await expect(
+      Effect.runPromise(parseServiceVersionOverrides(["pooler="], "docker").pipe(Effect.flip)),
+    ).resolves.toMatchObject({
+      suggestion: "Pass --service-version pooler=2.9.7.",
     });
   });
 });

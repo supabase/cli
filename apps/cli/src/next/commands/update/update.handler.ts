@@ -59,7 +59,7 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
         projectDir: cliProjectHome.projectRoot,
       })).map((stack) => ({
         stackName: stack.name,
-        services: fillServiceVersionManifest(stack.versions),
+        services: fillServiceVersionManifest(stack.versions, stack.launch.mode),
       })),
     );
     const changedVersions = diffCachedLinkedVersions(
@@ -99,7 +99,11 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
     [],
     Option.match(existingSummary, {
       onNone: () => undefined,
-      onSome: (summary) => fillServiceVersionManifest(summary.versions),
+      onSome: (summary) => summary.versions,
+    }),
+    Option.match(existingSummary, {
+      onNone: () => undefined,
+      onSome: (summary) => summary.launch.mode,
     }),
   );
 

@@ -1,8 +1,4 @@
-import {
-  fillServiceVersionManifest,
-  planStackVersions,
-  resolveStackSummary,
-} from "@supabase/stack/effect";
+import { planStackVersions, resolveStackSummary } from "@supabase/stack/effect";
 import { Effect, Exit, Option } from "effect";
 import { Credentials } from "../../auth/credentials.service.ts";
 import { CliSettings } from "../../config/cli-settings.service.ts";
@@ -47,7 +43,10 @@ export const services = Effect.fnUntraced(function* () {
   const serviceVersionContext = planStackVersions({
     ...(Option.isSome(linkedState) ? { candidateBaseline: linkedState.value.versions } : {}),
     ...(Option.isSome(existingSummary)
-      ? { pinnedBaseline: fillServiceVersionManifest(existingSummary.value.versions) }
+      ? {
+          pinnedBaseline: existingSummary.value.versions,
+          runtime: existingSummary.value.launch.mode,
+        }
       : {}),
     ...(Option.isSome(localServiceVersions)
       ? { localOverrides: localServiceVersions.value.versions }

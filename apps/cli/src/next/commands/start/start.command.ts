@@ -4,8 +4,8 @@ import {
   DEFAULT_MANAGED_STACK_NAME,
   daemonLayer,
   restartManagedStackForUpgrade,
-  fillServiceVersionManifest,
   resolveStackSummary,
+  selectStackRuntime,
   type StackSummary,
 } from "@supabase/stack/effect";
 import { Command, Flag } from "effect/unstable/cli";
@@ -178,17 +178,17 @@ export const startCommand = Command.make("start", flags).pipe(
         cwd: runtimeInfo.cwd,
         name: flags.stack,
       }).pipe(Effect.catchTag("NoRunningStackError", () => Effect.succeed(undefined)));
+      const requestedMode = flags.mode ?? existingSummary?.launch.mode;
+      const effectiveMode = requestedMode ?? (yield* selectStackRuntime()).mode;
       const serviceVersionContext = yield* resolveServiceVersionContext(
         flags.serviceVersion,
-        existingSummary === undefined
-          ? undefined
-          : fillServiceVersionManifest(existingSummary.versions),
+        existingSummary?.versions,
+        effectiveMode,
       );
       const loadedCliConfig = yield* loadCliConfig(cliProjectHome.projectRoot);
       // Tri-state in config.toml: unset and explicit `true` both auto-expose new entities in
       // `public` (the cloud default); only explicit `false` revokes the default Data API GRANTs.
       const autoExposeNewTables = loadedCliConfig?.config.api.auto_expose_new_tables ?? true;
-      const effectiveMode = flags.mode ?? existingSummary?.launch.mode;
       const baseStackConfig = withServiceVersions(
         toStartStackConfig(flags.exclude, effectiveMode),
         serviceVersionContext.runtimeVersions,
@@ -212,7 +212,7 @@ export const startCommand = Command.make("start", flags).pipe(
               portDocument: portIntents,
             });
       const launch = {
-        ...(flags.mode === undefined ? {} : { mode: flags.mode }),
+        mode: effectiveMode,
         versions: serviceVersionContext.pinnedBaseline,
         excludedServices: flags.exclude,
         ...(existingSummary?.lastNotifiedUpdateFingerprint === undefined

@@ -5,6 +5,7 @@ import {
   SERVICE_NAMES,
   type AvailableServiceVersionUpdate,
   type ServiceName,
+  type VersionRuntime,
   type VersionManifest,
 } from "./versions.ts";
 
@@ -15,8 +16,9 @@ export interface StackVersionOverride {
 }
 
 export interface StackVersionPlanInput {
+  readonly runtime?: VersionRuntime;
   readonly candidateBaseline?: Partial<Record<ServiceName, string | undefined>>;
-  readonly pinnedBaseline?: VersionManifest;
+  readonly pinnedBaseline?: Partial<Record<ServiceName, string | undefined>>;
   readonly localOverrides?: Partial<Record<ServiceName, string | undefined>>;
   readonly flagOverrides?: Partial<Record<ServiceName, string | undefined>>;
 }
@@ -46,12 +48,17 @@ function fingerprintAvailableVersionUpdates(
 }
 
 export function planStackVersions(input: StackVersionPlanInput): StackVersionPlan {
+  const runtime = input.runtime ?? "native";
   const candidateBaseline = fillServiceVersionManifest(
-    normalizeServiceVersions(input.candidateBaseline ?? {}),
+    normalizeServiceVersions(input.candidateBaseline ?? {}, runtime),
+    runtime,
   );
-  const pinnedBaseline = input.pinnedBaseline ?? candidateBaseline;
-  const localOverrides = normalizeServiceVersions(input.localOverrides ?? {});
-  const flagOverrides = normalizeServiceVersions(input.flagOverrides ?? {});
+  const pinnedBaseline = fillServiceVersionManifest(
+    normalizeServiceVersions(input.pinnedBaseline ?? candidateBaseline, runtime),
+    runtime,
+  );
+  const localOverrides = normalizeServiceVersions(input.localOverrides ?? {}, runtime);
+  const flagOverrides = normalizeServiceVersions(input.flagOverrides ?? {}, runtime);
 
   const activeOverrideMap = new Map<ServiceName, StackVersionOverride>();
   for (const service of SERVICE_NAMES) {
@@ -75,11 +82,14 @@ export function planStackVersions(input: StackVersionPlanInput): StackVersionPla
     }
   }
 
-  const runtimeVersions = fillServiceVersionManifest({
-    ...pinnedBaseline,
-    ...localOverrides,
-    ...flagOverrides,
-  });
+  const runtimeVersions = fillServiceVersionManifest(
+    {
+      ...pinnedBaseline,
+      ...localOverrides,
+      ...flagOverrides,
+    },
+    runtime,
+  );
   const availableUpdates = diffPinnedAndAvailableVersions(pinnedBaseline, candidateBaseline);
 
   return {

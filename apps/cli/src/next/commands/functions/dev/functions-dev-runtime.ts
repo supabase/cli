@@ -53,7 +53,7 @@ const startFullStack = Effect.fnUntraced(function* (opts: FunctionsDevStackOptio
   yield* output.info("No local stack is running. Starting the local Supabase stack...");
   yield* ensureProjectStateIgnored(cliProjectHome.projectRoot);
 
-  const serviceVersionContext = yield* resolveServiceVersionContext([], undefined);
+  const serviceVersionContext = yield* resolveServiceVersionContext([], undefined, "docker");
   const loadedCliConfig = yield* loadCliConfig(cliProjectHome.projectRoot);
   const stackConfig = {
     ...withServiceVersions(toStartStackConfig([], "docker"), serviceVersionContext.runtimeVersions),

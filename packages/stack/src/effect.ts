@@ -137,9 +137,16 @@ export {
   resolveFunctionsRuntimeConfig,
 } from "./functions.ts";
 
-export type { AvailableServiceVersionUpdate, ServiceName, VersionManifest } from "./versions.ts";
+export type {
+  AvailableServiceVersionUpdate,
+  ServiceName,
+  VersionManifest,
+  VersionRuntime,
+} from "./versions.ts";
 export {
   DEFAULT_VERSIONS,
+  DOCKER_DEFAULT_VERSIONS,
+  defaultVersionsForRuntime,
   diffPinnedAndAvailableVersions,
   dockerImageForService,
   fillServiceVersionManifest,

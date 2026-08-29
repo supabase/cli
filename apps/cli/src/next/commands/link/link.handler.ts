@@ -129,7 +129,7 @@ export const link = Effect.fnUntraced(function* (flags: LinkFlags) {
       projectDir: cliProjectHome.projectRoot,
     })).map((stack) => ({
       stackName: stack.name,
-      services: fillServiceVersionManifest(stack.versions),
+      services: fillServiceVersionManifest(stack.versions, stack.launch.mode),
     })),
   );
   const linkedProject = refreshed.linkedProject;
