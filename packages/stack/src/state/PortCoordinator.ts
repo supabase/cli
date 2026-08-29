@@ -179,15 +179,11 @@ export const makePortCoordinator = (
             current.privatePorts.map((entry) => [bindingKey(entry), entry]),
           );
 
-          // A newly accepted generation has running durable intent before its first ingress
-          // acquisition, but has no assignments yet. Enforce the no-change fence only once the
-          // prior generation actually owns ports; this preserves same-generation no-rebind while
-          // allowing the initial listener transaction to materialize its assignments.
-          if (
-            lifecycle === "running" &&
-            current.desiredLifecycle === "running" &&
-            (current.ports.length > 0 || current.privatePorts.length > 0)
-          ) {
+          // A running generation may reject listener/private intent changes only after its
+          // assignment materialization has committed. The marker is explicit so an empty set of
+          // assignments is still fenced, while a failed first bind (which leaves the marker old)
+          // can be retried for the accepted generation.
+          if (lifecycle === "running" && current.portsGeneration === current.desiredGeneration) {
             for (const field of fields) {
               const intent = listenerIntents[field];
               const prior = existing.get(field);
@@ -315,6 +311,10 @@ export const makePortCoordinator = (
             // Keep a running lifecycle only after ownership/publication succeeds.
             desiredLifecycle: lifecycle === "running" ? current.desiredLifecycle : lifecycle,
             desiredGeneration: planOptions.nextGeneration ?? current.desiredGeneration,
+            portsGeneration:
+              lifecycle === "running"
+                ? current.portsGeneration
+                : (planOptions.nextGeneration ?? current.desiredGeneration),
             ports: assignments,
             privatePorts: privateAssignments,
           };
@@ -327,6 +327,7 @@ export const makePortCoordinator = (
       const runningState: PersistedStackState = {
         ...committed.next,
         desiredLifecycle: "running",
+        portsGeneration: committed.next.desiredGeneration,
       };
       const commitRunning = registry.withLock(
         Effect.gen(function* () {

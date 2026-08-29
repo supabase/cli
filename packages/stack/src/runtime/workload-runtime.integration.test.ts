@@ -30,6 +30,7 @@ const state: PersistedStackState = {
   },
   runtime: { kind: "native" },
   desiredGeneration: 1,
+  portsGeneration: 1,
   desiredLifecycle: "running",
   ports: [
     { field: "database", port: 55432, intent: "exact" },

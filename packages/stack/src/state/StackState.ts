@@ -312,6 +312,8 @@ const stateShape = Schema.Struct({
   identity: PersistedStackIdentitySchema,
   runtime: StackRuntimeSchema,
   desiredGeneration: StackGenerationSchema,
+  /** Generation for which the persisted public/private assignments are materialized. */
+  portsGeneration: Schema.NullOr(StackGenerationSchema),
   desiredLifecycle: DesiredStackLifecycleSchema,
   definition: Schema.optional(StackDefinitionSchema),
   inputFingerprint: Schema.optional(Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/))),

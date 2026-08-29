@@ -48,6 +48,7 @@ const baseState = (
   },
   runtime: { kind: "native" },
   desiredGeneration: 0,
+  portsGeneration: null,
   desiredLifecycle,
   ports: [],
   privatePorts: [],
@@ -237,12 +238,14 @@ describe("sticky port coordination", () => {
         yield* store.write(exactId, {
           ...baseState(exactId, exactIdentity, "running"),
           desiredGeneration: 7,
+          portsGeneration: 7,
           ports: [{ field: "api", port: 55435, intent: "exact" }],
           privatePorts: [],
         });
         yield* store.write(automaticId, {
           ...baseState(automaticId, automaticIdentity, "running"),
           desiredGeneration: 9,
+          portsGeneration: 9,
           ports: [{ field: "api", port: 55436, intent: "automatic" }],
           privatePorts: [],
         });
@@ -290,6 +293,7 @@ describe("sticky port coordination", () => {
         yield* store.write(stackId, {
           ...baseState(stackId, identity, "running"),
           desiredGeneration: 11,
+          portsGeneration: 11,
           ports: [{ field: "api", port: 55439, intent: "exact" }],
           privatePorts: [],
         });
@@ -345,6 +349,53 @@ describe("sticky port coordination", () => {
         );
         expect(result.assignments.api?.port).toBe(55440);
         expect((yield* store.read(stackId))?.desiredLifecycle).toBe("running");
+        expect((yield* store.read(stackId))?.portsGeneration).toBe(5);
+      }),
+    ),
+  );
+
+  it.live("fences a newly accepted running generation with no listeners", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({
+          prefix: "supabase-stack-port-running-empty-",
+        });
+        const store = yield* makeStackStateStore({ stateRoot: root });
+        const identity = makeIdentity(root, "running-empty");
+        const stackId = yield* deriveStackId(identity);
+        yield* store.write(stackId, {
+          ...baseState(stackId, identity, "running"),
+          desiredGeneration: 6,
+        });
+        const registry = yield* makePortRegistry({ stateRoot: root, store });
+        const coordinator = makePortCoordinator(registry, store, {
+          bindHost: bindTestNative,
+        });
+        const result = yield* coordinator.planAndReserve(stackId, disabledIntents(), {
+          lifecycle: "running",
+          expectedGeneration: 6,
+          nextGeneration: 6,
+        });
+        expect(result.hostListeners).toHaveLength(0);
+        expect((yield* store.read(stackId))?.portsGeneration).toBe(6);
+        const changed = yield* coordinator
+          .planAndReserve(
+            stackId,
+            { ...disabledIntents(), api: { enabled: true, address: "127.0.0.1", port: 55441 } },
+            { lifecycle: "running", expectedGeneration: 6, nextGeneration: 6 },
+          )
+          .pipe(Effect.exit);
+        expect(errorOf(changed)).toBeInstanceOf(StackLifecycleConflictError);
+        const privateChanged = yield* coordinator
+          .planAndReserve(stackId, disabledIntents(), {
+            lifecycle: "running",
+            expectedGeneration: 6,
+            nextGeneration: 6,
+            privateBindings: [{ workloadId: "database:database", binding: "primary" }],
+          })
+          .pipe(Effect.exit);
+        expect(errorOf(privateChanged)).toBeInstanceOf(StackLifecycleConflictError);
       }),
     ),
   );
@@ -514,6 +565,12 @@ describe("sticky port coordination", () => {
           .pipe(Effect.exit);
         expect(errorOf(exit)).toBeInstanceOf(PortUnavailableError);
         expect(bound).toHaveLength(0);
+        expect((yield* store.read(stackId))?.portsGeneration).toBeNull();
+        const retry = yield* coordinator.planAndReserve(stackId, intents("automatic"), {
+          lifecycle: "running",
+        });
+        expect(retry.hostListeners).toHaveLength(2);
+        expect((yield* store.read(stackId))?.portsGeneration).toBe(0);
       }),
     ),
   );
@@ -556,7 +613,7 @@ describe("sticky port coordination", () => {
             stackId,
             {
               ...disabledIntents(),
-              api: { enabled: true, address: "127.0.0.1", port: "automatic" },
+              api: { enabled: true, address: "127.0.0.1", port: 55443 },
             },
             { lifecycle: "running" },
           ),
@@ -565,12 +622,14 @@ describe("sticky port coordination", () => {
         yield* Deferred.await(entered);
         const current = yield* store.read(stackId);
         if (current === undefined) return;
+        expect(current.portsGeneration).toBeNull();
         yield* store.replace(stackId, { ...current, desiredGeneration: 1 }, 0);
         yield* Deferred.succeed(release, undefined);
         const result = yield* Fiber.join(reservation).pipe(Effect.exit);
         expect(errorOf(result)).toBeInstanceOf(StackStateGenerationMismatchError);
         expect(bound).toHaveLength(0);
         expect(closed).toHaveLength(1);
+        expect((yield* store.read(stackId))?.portsGeneration).toBeNull();
       }),
     ),
   );
@@ -627,6 +686,7 @@ describe("sticky port coordination", () => {
           bindings.length,
         );
         expect(first.privateAssignments.every((entry) => entry.port >= 30_000)).toBe(true);
+        expect((yield* store.read(stackId))?.portsGeneration).toBe(0);
         const stopped = yield* coordinator.planAndReserve(stackId, disabledIntents(), {
           lifecycle: "stopped",
           privateBindings: bindings,

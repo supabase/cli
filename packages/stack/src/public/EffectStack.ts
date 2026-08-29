@@ -460,6 +460,7 @@ const stateInitial = (
   identity: toPersistedIdentity(identity, stackId),
   runtime,
   desiredGeneration: 0,
+  portsGeneration: null,
   desiredLifecycle: "unconfigured",
   ports: [],
   privatePorts: [],

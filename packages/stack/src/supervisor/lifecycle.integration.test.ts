@@ -89,6 +89,7 @@ const makeFixture = (runtime: StackRuntime = { kind: "native" }) =>
       identity: { ...identity, stackId: id },
       runtime,
       desiredGeneration: 0,
+      portsGeneration: null,
       desiredLifecycle: "unconfigured",
       ports: [],
       privatePorts: [],

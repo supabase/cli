@@ -37,6 +37,7 @@ const state = (
   identity: { ...identity, stackId },
   runtime: { kind: "native" },
   desiredGeneration: generation,
+  portsGeneration: null,
   desiredLifecycle: "stopped",
   definition,
   inputFingerprint: definition === undefined ? undefined : "d".repeat(64),
@@ -80,6 +81,10 @@ describe("atomic stack state", () => {
         const complete = state(stackId, 2, compiled.definition);
         yield* store.write(stackId, complete);
         expect(yield* store.read(stackId)).toEqual(complete);
+        const materialized = { ...complete, portsGeneration: 2 };
+        yield* store.replace(stackId, materialized, 2);
+        expect(yield* store.read(stackId)).toEqual(materialized);
+        yield* store.replace(stackId, complete, 2);
 
         const encoded = yield* Schema.encodeEffect(PersistedStackStateSchema)(complete);
         const statePath = path.join(root, stackId, "state.json");
