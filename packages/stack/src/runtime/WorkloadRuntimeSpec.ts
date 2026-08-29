@@ -359,6 +359,11 @@ const edgeRuntimeJwtEnvironment = (
 ): Record<string, string> =>
   compactEnvironment({
     SUPABASE_INTERNAL_JWT_SECRET: secret(state, "secret:auth.settings.jwt_secret"),
+    SUPABASE_INTERNAL_PUBLISHABLE_KEY: secret(state, "secret:auth.settings.publishable_key"),
+    SUPABASE_INTERNAL_SECRET_KEY: secret(state, "secret:auth.settings.secret_key"),
+    SUPABASE_INTERNAL_HOST_PORT: String(
+      state.ports.find((assignment) => assignment.field === "api")?.port ?? "",
+    ),
     SUPABASE_JWKS: inputs.auth?.jwks ?? '{"keys":[]}',
   });
 

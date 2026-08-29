@@ -55,6 +55,11 @@ const state: PersistedStackState = {
   secrets: {
     "secret:database.internal.password": { policy: "managed", value: "postgres" },
     "secret:auth.settings.jwt_secret": { policy: "managed", value: "symmetric-secret" },
+    "secret:auth.settings.publishable_key": {
+      policy: "managed",
+      value: "sb_publishable_test",
+    },
+    "secret:auth.settings.secret_key": { policy: "managed", value: "sb_secret_test" },
   },
 };
 
@@ -621,11 +626,36 @@ describe("workload runtime catalog", () => {
   it.live("passes Edge Runtime the JWT material used by functions serve", () =>
     Effect.gen(function* () {
       const functions = planned("functions:edge-runtime");
+      const functionSpec = runtimeSpecFor(functions);
+      expect(functionSpec).toBeDefined();
+      if (functionSpec === undefined) return;
       const symmetricDefault = containerResolutionFor(state, functions);
       expect(symmetricDefault?.env).toMatchObject({
         SUPABASE_INTERNAL_JWT_SECRET: "symmetric-secret",
+        SUPABASE_INTERNAL_PUBLISHABLE_KEY: "sb_publishable_test",
+        SUPABASE_INTERNAL_SECRET_KEY: "sb_secret_test",
+        SUPABASE_INTERNAL_HOST_PORT: "54321",
         SUPABASE_JWKS: '{"keys":[]}',
       });
+      expect(
+        functionSpec?.containerArgs(state, functions, functionSpec.containerPort),
+      ).not.toContain("sb_publishable_test");
+      expect(
+        functionSpec?.containerArgs(state, functions, functionSpec.containerPort),
+      ).not.toContain("sb_secret_test");
+      expect(functionSpec?.args(state, functions, functionSpec.containerPort)).not.toContain(
+        "sb_publishable_test",
+      );
+      expect(functionSpec?.args(state, functions, functionSpec.containerPort)).not.toContain(
+        "sb_secret_test",
+      );
+      const withoutApiAssignment: PersistedStackState = {
+        ...state,
+        ports: state.ports.filter((assignment) => assignment.field !== "api"),
+      };
+      expect(containerResolutionFor(withoutApiAssignment, functions)?.env).not.toHaveProperty(
+        "SUPABASE_INTERNAL_HOST_PORT",
+      );
       const symmetric = containerResolutionFor(state, functions, {
         auth: { jwks: '{"keys":[{"kty":"EC"}]}' },
       });
