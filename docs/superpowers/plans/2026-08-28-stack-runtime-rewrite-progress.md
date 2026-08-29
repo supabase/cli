@@ -827,3 +827,25 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
   without removing it, allowing an idempotent retry on the next reconciliation.
 - Initial runtime settings are intentionally distinct from caller-driven database migrations, seeds, and
   reset. The reset/session flow remains deferred to the final rewrite slice.
+
+#### Task 13B2b4 — production runtime composition (2026-08-29)
+
+- The real Supervisor entrypoint now composes one runtime factory from the persisted runtime choice. Native
+  stacks construct only the slim-artifact/native driver path; container stacks construct only their selected
+  Docker or Podman engine and never probe or prepare the opposite runtime.
+- Every workload operation re-reads persisted state before resolving artifacts, private endpoints, env, and
+  bootstrap inputs. Immutable preparation is cached per workload identity, container env remains in owned
+  `0600` generation files, native env remains on fd4, and database bootstrap runs only after a real loopback
+  readiness probe for both new and recovered workloads.
+- Database and Storage use disjoint identity-scoped persistent roots. Container volumes survive stop and are
+  removed only on destroy; native paths remain under `<stack>/data/database` and `<stack>/data/storage`.
+  Functions bootstrap files and container env files are exact stack-owned runtime resources and are removed
+  on stop/destroy even when process/engine cleanup also fails, with both typed causes preserved.
+- The runtime exposes the same loopback private endpoint to lazy gateway activation in native and container
+  modes. Runtime logs re-read current secret slots before every append/read/stream operation, so secrets
+  materialized after factory creation are redacted before persistence and in retained output.
+- Review corrections removed eager native construction in container mode, added container readiness on start
+  and recovery before database bootstrap, and made runtime-file cleanup independent of engine cleanup.
+- Fresh evidence: production-runtime, container-runtime, runtime-artifact, and functions-bootstrap integration
+  suites pass (32 tests), and `@supabase/stack` type-checking passes. Complete container log attachment,
+  public `credentials`/`prepare` handlers, and owner-resolved service file inputs remain later Task 13 slices.
