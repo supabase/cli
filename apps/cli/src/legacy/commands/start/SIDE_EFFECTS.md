@@ -105,13 +105,13 @@ Kong's `custom_nginx.template`, Vector's `vector.yaml`, and Postgres's own boots
 script (`postgresql.conf`-equivalent setup) are all rendered in memory and injected
 directly into each container's entrypoint (a `sh -c '... heredoc ...'` command) —
 never written to the host filesystem, since none of them carries secret content.
-`SUPABASE_USE_SLIM_IMAGES` rewrites image names to `ghcr.io/supabase/cli/*`. Postgres,
-storage, edge-runtime, and Vector share the docker.io container specs (root start,
-`sh`/`wget`, `/mnt` and `/root/.cache/deno` mounts). Vector still writes `vector.yaml`
-via the Logflare-wait `sh` heredoc. Distroless slim services with no `/bin/sh`
-(auth, studio, pg-meta) omit Docker healthchecks — `docker create --health-cmd` is
-always `CMD-SHELL` — and `legacyCheckContainerReady` treats `Running` as ready.
-Realtime, analytics, and pooler keep a busybox `wget --spider` probe.
+`SUPABASE_USE_SLIM_IMAGES` rewrites image names to `ghcr.io/supabase/cli/*`.
+Postgres, storage, edge-runtime, Vector, auth, studio, and pg-meta share the
+docker.io container specs (`sh`/`wget`/`node`). Vector still writes `vector.yaml`
+via the Logflare-wait `sh` heredoc. Elixir images (realtime, analytics, pooler)
+keep a PATH `wget --spider` probe — they ship busybox wget but not curl.
+Slim analytics also keeps the image `/app/entry.sh` (`/app/bin/logflare`, not
+docker.io's `./logflare` `run.sh` wrapper).
 Kong's `kong.yml`/TLS cert/TLS key, Postgres's `pgsodium_root.key`, and Supavisor's
 `pooler_tenant.exs` DO carry secret content (a service-role-key-derived bearer/query
 key, TLS private key material, and the DB password respectively). Since
