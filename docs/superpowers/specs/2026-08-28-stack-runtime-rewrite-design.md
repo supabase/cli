@@ -45,6 +45,10 @@ These decisions are closed for this rewrite:
   there is no idle eviction.
 - Native and container stacks are strictly separate, and every catalog workload has both a native
   and a container artifact. One stack identity can never mix them.
+- `supabase/slim-services` is the canonical workload release contract: a supported service version
+  uses its portable archive in native mode and the image derived from that same archive in container
+  mode. The initial database catalog supports only PostgreSQL `17.6.1.166`; PostgreSQL 15 can be
+  added when its matching archive and image exist, while every other selector fails before mutation.
 - Functions have exactly one serving path: the stack-owned Edge Runtime. This applies to normal
   stack traffic and `supabase functions serve`; there is no separate Docker or standalone serving
   workflow. `functionsRoot` is the only host root and the only read-only container mount, and every
@@ -58,9 +62,8 @@ These decisions are closed for this rewrite:
   ordered steps selected by that exact artifact; they are not a second public version input.
 - Corrupt durable state fails closed. Logs redact every exact known secret and never persist or emit
   full secret environments, files, or arguments.
-- There is no all-in-one `resetDatabase` operation. Stack owns lifecycle fencing, data recreation,
-  and internal bootstrap; the caller owns migrations, declarative schemas, and seeds through the
-  narrow reset-session API designed in the final behavioral slice of the rewrite.
+- Database reset is outside this rewrite. No reset operation, session, lifecycle state, or durable
+  reset metadata is included; the caller continues to own migrations, declarative schemas, and seeds.
 
 The design follows the object-level separation used by Docker without copying its CLI:
 
@@ -148,13 +151,7 @@ type CapabilityState =
   "disabled" | "dormant" | "preparing" | "starting" | "ready" | "stopping" | "stopped" | "failed";
 
 type StackLifecycle =
-  | "unconfigured"
-  | "stopped"
-  | "starting"
-  | "running"
-  | "resetting-database"
-  | "stopping"
-  | "destroying";
+  "unconfigured" | "stopped" | "starting" | "running" | "stopping" | "destroying";
 
 type DesiredStackLifecycle = "unconfigured" | "stopped" | "running" | "destroying";
 type ActivationMode = "eager" | "lazy";
@@ -906,27 +903,9 @@ Build observable vertical slices in this order:
 6. Promise facade and release: mechanical adaptation of the authoritative Effect contract,
    including plain-string credentials, explicit handle closure, `Option`, streams, and tagged
    failures.
-7. Deferred final database-reset slice described below, after the runtime/catalog/Functions work is
-   stable.
 
-## Deferred final database-reset slice
-
-The rewrite removes the single all-in-one database reset operation from the primary API. The caller
-owns migrations, declarative schemas, seeds, progress, and their errors. Stack owns lifecycle
-fencing, stopping database dependents, exact database-data recreation, internal idempotent bootstrap,
-and preventing premature activation.
-
-The eventual durable interface is a reset session, for example `beginDatabaseReset`, returning a
-session with a database connection and explicit `complete`/`fail` operations. This API and its
-persisted session shape are intentionally not frozen until this final slice. While a session exists,
-the observable lifecycle is `resetting-database`, the ultimate desired lifecycle remains `running`,
-and separate durable reset-session metadata fences dependents. Caller loss never silently resumes
-dependents; a later caller may resume or initiate recovery. Migration history remains in the
-database, not stack state.
-
-This is the final behavioral slice of the rewrite, after the main runtime, catalog, and Functions
-work. Its integration tests cover session fencing, exact data recreation, bootstrap ordering,
-explicit completion/failure, caller loss, later resumption, and mechanical Promise adaptation.
+Database reset will be designed and implemented in a separate future session after this rewrite is
+complete. This document intentionally does not reserve its API, state shape, or lifecycle vocabulary.
 
 ## Testing strategy
 
@@ -1003,16 +982,13 @@ Gateway, activation, and Functions:
 - `supabase functions serve` uses the managed stack, waits for readiness, streams logs, observes
   edits, requires explicit restart for incompatible persisted settings, and closes only its handle.
 
-Recovery and deferred reset (final slice, after the initial suite):
+Recovery:
 
 - Corrupt state fails closed beside exact remnants; destructive recovery is explicit and identity-
   scoped.
 - Native owner loss terminates exact process trees; containers fail closed until recovery. Adoption
   requires identity, generation, and workload-spec hash; stale/foreign resources are untouched.
 - Machine reboot does not auto-start stacks; caller failure leaves durable running intent.
-- Final reset-session tests are added only after the main runtime/catalog/Functions suite and cover
-  dependent fencing, exact data recreation, bootstrap, explicit completion/failure, caller loss,
-  later resumption, and Promise adaptation.
 
 The Effect API is the behavioral test surface. Promise tests cover only mechanical adaptation and
 handle ownership. Tests synchronize on readiness, events, control connections, files, or process

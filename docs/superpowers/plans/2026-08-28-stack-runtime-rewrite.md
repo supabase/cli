@@ -39,8 +39,11 @@ and Node, Effect RPC, Vitest with `@effect/vitest`, pnpm/Turbo, native subproces
 - Lazy activation is mandatory in both runtimes and has no idle eviction.
 - Functions are served only through the stack Edge Runtime. `functionsRoot` is the sole host root and
   container mount; reject traversal, absolute, and symlink escapes.
-- The caller owns migrations, declarative schemas, and seeds. The durable database reset session is
-  the final implementation slice.
+- Use the portable archive and image from the same qualified `supabase/slim-services` release for
+  each workload. Initially accept only PostgreSQL `17.6.1.166`; add PostgreSQL 15 only after its
+  matching archive and image are published.
+- The caller owns migrations, declarative schemas, and seeds. Database reset is outside this rewrite;
+  do not add a reset API, state, lifecycle variant, or compatibility placeholder.
 - Tests follow strict red-green-refactor and exercise consumed behavior. Prefer integration tests;
   unit-test only pure compiler/planner/state-machine logic. No arbitrary sleeps, released-port reuse,
   global process scans, or broad cleanup.
@@ -671,49 +674,8 @@ artifact keys, state schemas, drivers, or control protocols.
   git commit -m "feat(stack): complete the workload catalog"
   ```
 
-### Task 14: Deferred final database reset session
-
-**Files:**
-
-- Create: `packages/stack/src/supervisor/DatabaseReset.ts`
-- Modify: public Effect/Promise contracts, durable state, Supervisor/Reconciler/status
-- Create: `packages/stack/src/supervisor/database-reset.integration.test.ts`
-
-**Interfaces:**
-
-- Produces `beginDatabaseReset` returning a fenced durable session with database credentials and
-  explicit `complete`/`fail`; no all-in-one migration/seed/reset method.
-- While active, observable lifecycle is `resetting-database`, desired lifecycle remains running, and
-  database dependents stay stopped across caller loss.
-
-- [ ] **Step 1: Freeze the smallest session schema from observed needs**
-
-  Record the final field/API choice as a ruling in progress before implementation. The persisted
-  session contains only session identity, generation fence, phase, and timestamps needed for recovery;
-  migration history stays in PostgreSQL.
-
-- [ ] **Step 2: Write session integration scenarios and verify RED**
-
-  Cover exact data recreation, bootstrap ordering, dependent fencing, explicit complete/fail, caller
-  loss, later resumption/recovery, stale session rejection, and mechanical Promise adaptation.
-
-- [ ] **Step 3: Implement the durable session**
-
-  Database recreation and bootstrap are Stack-owned. The session exposes the ready database to the
-  caller, which owns migrations/declarative schemas/seeds and reports completion or failure.
-
-- [ ] **Step 4: Verify and commit**
-
-  Run only `database-reset.integration.test.ts`, lifecycle tests affected by the new state, facade
-  adaptation tests, and stack type-check. Commit:
-
-  ```bash
-  git add packages/stack docs/superpowers/plans/2026-08-28-stack-runtime-rewrite-progress.md
-  git commit -m "feat(stack): add caller-driven database reset sessions"
-  ```
-
-This is the last behavioral implementation task. Do not begin it until the runtime, complete
-catalog, managed Functions path, Promise facade, and CLI migration are stable.
+Database reset is deliberately not an implementation task in this plan. It will be designed from
+observed caller needs in a separate session after this rewrite is complete.
 
 ### Final documentation and completion audit
 
@@ -726,7 +688,7 @@ catalog, managed Functions path, Promise facade, and CLI migration are stable.
 
 **Interfaces:**
 
-- Confirms all ten capabilities and the final reset session, limits public exports to `.`,
+- Confirms all ten capabilities, limits public exports to `.`,
   `./effect`, and `./testing`, and leaves no process-compose or legacy stack surface.
 
 - [ ] **Step 1: Audit every spec requirement against authoritative evidence**
@@ -736,9 +698,8 @@ catalog, managed Functions path, Promise facade, and CLI migration are stable.
 
 - [ ] **Step 2: Fill audit gaps test-first**
 
-  Treat any missing catalog/platform evidence as incomplete Task 13 work and any missing reset-flow
-  evidence as incomplete Task 14 work. Add the smallest compiled CLI smoke for start/status/stop and
-  managed Functions serving.
+  Treat any missing catalog/platform evidence as incomplete Task 13 work. Add the smallest compiled
+  CLI smoke for start/status/stop and managed Functions serving.
 
 - [ ] **Step 3: Run final targeted verification**
 

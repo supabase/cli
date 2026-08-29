@@ -86,10 +86,17 @@ updated in the same commit as each completed slice. Scratch review packages live
 
 > **Ruling:** Functions have one serving path through the managed stack Edge Runtime in both native
 > and container modes; `supabase functions serve` is a managed-stack client, not a separate Docker
-> workflow. The caller owns migrations, schemas, and seeds, while the narrow database reset session
-> is deliberately the last behavioral implementation slice after the complete catalog and facade/CLI
-> migration — cost if wrong: changing either ownership boundary would require reshaping the public
-> lifecycle contract rather than adding another adapter.
+> workflow. The caller owns migrations, schemas, and seeds. Database reset is deliberately outside
+> this rewrite and reserves no API, durable state, or lifecycle variant; it will be designed in a
+> separate future session from observed caller needs — cost if wrong: reset work would require an
+> explicit later public-contract change rather than a placeholder in this implementation.
+
+> **Ruling:** `supabase/slim-services` is the canonical release contract for native and container
+> workloads: each supported version uses its portable archive and the GHCR image derived from that
+> archive. The initial database catalog supports only PostgreSQL `17.6.1.166`; PostgreSQL 15 is added
+> only after both artifacts are published, and all other selectors fail before mutation — cost if
+> wrong: adding a version is a catalog change, while retaining unsupported historical selectors would
+> create runtime identities that cannot be prepared.
 
 When the design does not determine another choice, record it here as:
 
@@ -101,10 +108,10 @@ Implementation continues after recording a ruling; this file is not a question q
 
 ### Plan self-review — 2026-08-28
 
-- Mapped all design sections to 15 implementation tasks: cleanup, public model, identity, compiler,
+- Mapped all design sections to the implementation tasks for cleanup, public model, identity, compiler,
   durable state/secrets/ports, ownership, reconciliation/observability, native preparation/runtime,
   gateway/activation, Functions, container runtime, lifecycle/recovery, facades/CLI, complete
-  catalog/platform coverage, the final reset session, and completion audit.
+  catalog/platform coverage, and completion audit. Database reset is tracked outside this rewrite.
 - Removed an ordering conflict: public `StackConfig` is defined with capability Modules before the
   durable state schema consumes `StackDefinition`.
 - Verified 55 executable steps, 42 balanced Markdown fences, and no placeholder patterns.
@@ -825,8 +832,8 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
   statements are built by parameterized `format()` calls so generated secret SQL is never exposed in
   mapped errors. A bootstrap failure cleans up new resources and stops an adopted database container
   without removing it, allowing an idempotent retry on the next reconciliation.
-- Initial runtime settings are intentionally distinct from caller-driven database migrations, seeds, and
-  reset. The reset/session flow remains deferred to the final rewrite slice.
+- Initial runtime settings are intentionally distinct from caller-driven database migrations and seeds.
+  Database reset is outside this rewrite and will be tackled in a separate future session.
 
 #### Task 13B2b4 — production runtime composition (2026-08-29)
 
