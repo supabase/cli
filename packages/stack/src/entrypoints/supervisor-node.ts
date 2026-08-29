@@ -103,7 +103,7 @@ export const runSupervisor = (args: SupervisorArgs) =>
       });
       const released = yield* Deferred.make<void, never>();
       const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
-      const supervisor = makeSupervisor({
+      const supervisor = yield* makeSupervisor({
         identity: args.identity,
         stackId: args.stackId,
         ownerSessionId,

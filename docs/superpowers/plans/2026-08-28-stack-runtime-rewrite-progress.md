@@ -498,3 +498,38 @@ Implementation continues after recording a ruling; this file is not a question q
   across 3 files).
 - Generic and Effect lint over all Task 10 sources/tests, formatting over sources/tests/docs, and
   `git diff --check` — passed.
+
+### Task 11 — 2026-08-29
+
+- Added one Effect-native lifecycle controller over durable state and an injected runtime backend.
+  Start materializes and commits complete intent before reconciliation, reuses omitted configured
+  input, treats identical running input as reconciliation, and rejects changed running input with
+  explicit restart guidance. Stop retains durable state and reruns idempotent cleanup after a failed
+  attempt; restart is generation-fenced so a concurrent stop wins; destroy retains the destroying
+  fence until exact runtime/data cleanup succeeds and can be retried.
+- Added running-only runtime recovery and exact stopped cleanup. Container recovery adopts only one
+  exact current-generation workload/network, removes stale and duplicate owned resources plus every
+  stale gateway, retains persistent volumes and foreign stacks, and never starts missing work.
+  Native recovery similarly adopts only exact local resources without starting them. Stopped and
+  unconfigured recovery use cleanup, so no current-generation ephemeral network is retained.
+- Composed recovery, lifecycle, reconciliation, lazy activation, status, status watching, and logs
+  in the Supervisor. Recovery completes before owner readiness; a persisted running intent recovers
+  exact resources but reports the new owner stopped and never auto-starts after reboot. Lazy
+  capabilities remain dormant until explicit activation, then activate their dependency closure and
+  remain active for the generation. Actual phase is independent from durable desired intent, and
+  complete status snapshots are published only at observable transitions.
+- Maintenance quiesce releases ownership only after successful cleanup. Public Effect handles pass
+  log options and expose scoped status/log streams. Expected lifecycle/runtime failures retain their
+  exact RPC error tags instead of collapsing into a generic reconciliation error.
+- The owner entrypoint intentionally has no concrete runtime factory yet. Its unavailable default
+  makes a production start fail closed; Task 13 must wire the exhaustive native/container artifact,
+  route, preparation, activation, and log-store catalogs before end-to-end stack startup can work.
+  Credentials and prepare remain explicit unavailable stubs for the same later composition slice.
+- Review RED/GREEN closed the stopped-recovery network ambiguity by making `recover` accept only a
+  running desired lifecycle; stopped/unconfigured states must call `cleanup`. Independent review
+  found no further Critical or Important lifecycle, recovery, lazy-activation, status/log, RPC, or
+  quiesce defect, and separately identified the deliberately deferred production runtime wiring
+  above.
+- Focused lifecycle/runtime/reconciliation/Supervisor/handle/control verification passed (90 tests
+  across 8 integration files), followed by the stack type-check. Generic and Effect lint over all 14
+  changed TypeScript files, formatting, and `git diff --check` passed.

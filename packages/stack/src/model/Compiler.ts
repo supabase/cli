@@ -520,6 +520,20 @@ const planForDefinition = (
   );
 };
 
+/** Rebuilds the private execution plan from a persisted, fully materialized definition. */
+export const rebuildExecutionPlan = (
+  runtime: StackRuntime,
+  definition: StackDefinition,
+): Effect.Effect<
+  ExecutionPlan,
+  InvalidStackConfigError | StackVersionUnsupportedError,
+  Crypto.Crypto
+> =>
+  Effect.gen(function* () {
+    const crypto = yield* Crypto.Crypto;
+    return yield* planForDefinition(runtime, definition, crypto);
+  });
+
 const collectSuppliedSecrets = (config: StackConfig, slots: SecretSlotInput[]): void => {
   const capabilities = config.capabilities;
   for (const name of CAPABILITY_NAMES) {

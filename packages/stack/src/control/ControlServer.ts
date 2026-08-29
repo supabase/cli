@@ -170,7 +170,7 @@ const demuxSocket = (
             yield* sendJson(response);
             yield* close;
             yield* markPrefaceReady;
-            if (options.onMaintenanceComplete !== undefined) {
+            if (response.ok && options.onMaintenanceComplete !== undefined) {
               // The connection scope closes as soon as the close frame is sent;
               // completion belongs to the owner session and must outlive it.
               yield* Effect.forkDetach(options.onMaintenanceComplete(request.value.op));

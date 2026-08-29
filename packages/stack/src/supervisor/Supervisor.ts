@@ -1,31 +1,107 @@
-import { Context, Crypto, Effect, FileSystem, Path, Schema, Stream } from "effect";
+import { Context, Crypto, Effect, FileSystem, Path, Ref, Schema, Stream } from "effect";
 import type { StackIdentity } from "../identity/Identity.ts";
-import type { PersistedStackState } from "../state/StackState.ts";
-import type { StackStateStore } from "../state/StackStateStore.ts";
+import { rebuildExecutionPlan } from "../model/Compiler.ts";
+import type { ExecutionPlan } from "../model/ExecutionPlan.ts";
 import {
   CAPABILITY_NAMES,
   type CapabilityName,
   type CapabilityStatus,
 } from "../public/Capability.ts";
-import type { StackEndpoint, StackStatus } from "../public/Status.ts";
-import { StackIdSchema, type StackId } from "../public/StackId.ts";
+import type { StackConfig } from "../public/Config.ts";
 import {
-  StackStateFormatUnsupportedError,
-  StackStateInvalidError,
+  GatewayActivationError,
+  InvalidStackIdentityError,
   InvalidProjectRootError,
+  InvalidStackConfigError,
+  StackDefinitionRequiredError,
+  StackLifecycleConflictError,
+  StackNotFoundError,
+  StackNotRunningError,
+  StackMustBeStoppedError,
+  StackOwnershipConflictError,
+  StackRuntimeMismatchError,
+  StackReconciliationError,
+  StackVersionUnsupportedError,
+  StackStateFormatUnsupportedError,
+  StackUpgradeRequiredError,
+  StackUpgradeReplacementError,
+  StackStateGenerationMismatchError,
+  StackSecretMismatchError,
+  InvalidJwtSigningMaterialError,
+  PortAllocationError,
+  PortUnavailableError,
+  ServiceStartError,
+  ServiceReadinessError,
+  ContainerEngineError,
+  StackDestructionError,
+  GatewayAuthenticationError,
+  GatewayStaleGenerationError,
+  StackPreparationError,
+  ArtifactIntegrityError,
+  ContainerPullError,
+  StackStateInvalidError,
   type StackError,
 } from "../public/Errors.ts";
+import type { StackEndpoint, StackStatus } from "../public/Status.ts";
+import { StackIdSchema, type StackId } from "../public/StackId.ts";
+import type { LogOptions, StackLogEntry } from "../public/Logs.ts";
+import type {
+  RuntimeDriver,
+  RuntimeRecoveryRequest,
+  ObservedWorkload,
+} from "../runtime/RuntimeDriver.ts";
+import { RuntimeDriverError, RuntimeGenerationMismatchError } from "../runtime/RuntimeDriver.ts";
+import type { PersistedStackState } from "../state/StackState.ts";
+import type { StackStateStore } from "../state/StackStateStore.ts";
+import { makeReconciler, type Reconciler } from "./Reconciler.ts";
+import {
+  makeLifecycleController,
+  type LifecycleBackend,
+  type LifecycleInput,
+  type LifecyclePrepared,
+} from "./Lifecycle.ts";
+import { makeStatusHub } from "./StatusHub.ts";
+import type { LogStore } from "./LogStore.ts";
 import { StackRpcGroup, type StackRpcError, type StackRpcHandlers } from "../control/StackRpc.ts";
 import type { MaintenanceResponse } from "../control/MaintenanceProtocol.ts";
+
+export interface ActivationResult {
+  readonly capability: CapabilityName;
+  readonly endpoint: { readonly host: string; readonly port: number };
+}
+
+/** Runtime construction is injected so catalog/artifact resolution can evolve independently. */
+export interface SupervisorRuntime {
+  readonly driver: RuntimeDriver;
+  readonly preflight?: (input: LifecycleInput) => Effect.Effect<LifecyclePrepared, StackError>;
+  readonly activate?: (
+    capability: CapabilityName,
+    input: LifecycleInput,
+  ) => Effect.Effect<ActivationResult["endpoint"], GatewayActivationError | StackError>;
+  readonly logStore?: LogStore;
+}
+
+export interface SupervisorRuntimeFactory {
+  readonly make: (state: PersistedStackState) => Effect.Effect<SupervisorRuntime, StackError>;
+}
 
 export interface Supervisor {
   readonly identity: StackIdentity;
   readonly stackId: StackId;
   readonly ownerSessionId: string;
-  readonly status: Effect.Effect<
-    StackStatus,
-    InvalidProjectRootError | StackStateInvalidError | StackStateFormatUnsupportedError
-  >;
+  readonly status: Effect.Effect<StackStatus, StackError>;
+  readonly start: (options?: {
+    readonly config?: StackConfig;
+  }) => Effect.Effect<StackStatus, StackError>;
+  readonly restart: (options?: {
+    readonly config?: StackConfig;
+  }) => Effect.Effect<StackStatus, StackError>;
+  readonly destroy: Effect.Effect<void, StackError>;
+  readonly watchStatus: Stream.Stream<StackStatus, StackError>;
+  readonly logs: (options?: LogOptions) => Stream.Stream<StackLogEntry, StackError>;
+  readonly activate: (
+    capability: CapabilityName,
+  ) => Effect.Effect<ActivationResult, GatewayActivationError | StackError>;
   readonly maintenanceHandlers: {
     readonly probe: Effect.Effect<MaintenanceResponse>;
     readonly stop: Effect.Effect<MaintenanceResponse>;
@@ -41,201 +117,544 @@ export interface SupervisorOptions {
   readonly rpcRelease: string;
   readonly stateStore: StackStateStore;
   readonly context: Context.Context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>;
+  /** Tests and future catalog composition may provide a concrete runtime. */
+  readonly runtime?: SupervisorRuntime;
+  readonly runtimeFactory?: SupervisorRuntimeFactory;
 }
 
+type ActualPhase = "stopped" | "starting" | "running" | "stopping" | "destroying";
+
+const rpcError = (tag: StackRpcError["tag"], message: string): StackRpcError => ({ tag, message });
+const stateErrorMessage = (error: StackError | { readonly message?: string }): string =>
+  typeof error.message === "string" ? error.message : "Stack operation failed";
+
+const runtimeUnavailable = (): SupervisorRuntime => {
+  const unavailable = (operation: string): Effect.Effect<never, RuntimeDriverError> =>
+    Effect.fail(new RuntimeDriverError({ message: `Runtime ${operation} is unavailable` }));
+  const driver: RuntimeDriver = {
+    observe: () => Effect.succeed([]),
+    start: () => unavailable("start"),
+    stop: () => unavailable("stop"),
+    remove: () => unavailable("remove"),
+    cleanup: () => unavailable("cleanup"),
+    recover: () => unavailable("recovery"),
+  };
+  return {
+    driver,
+    preflight: () =>
+      Effect.fail(new StackReconciliationError({ message: "Stack runtime is unavailable" })),
+  };
+};
+
+const eagerCapabilities = (plan: ExecutionPlan): Set<CapabilityName> => {
+  const active = new Set<CapabilityName>();
+  const visit = (name: CapabilityName): void => {
+    if (active.has(name)) return;
+    active.add(name);
+    for (const dependency of plan.dependencies[name]) visit(dependency);
+  };
+  for (const name of CAPABILITY_NAMES) if (plan.activation[name] === "eager") visit(name);
+  return active;
+};
+
+const activePlan = (plan: ExecutionPlan, active: ReadonlySet<CapabilityName>): ExecutionPlan => ({
+  ...plan,
+  workloads: plan.workloads.filter((workload) => active.has(workload.capability)),
+  startOrder: plan.startOrder.filter((name) => active.has(name)),
+  stopOrder: plan.stopOrder.filter((name) => active.has(name)),
+});
+
 const capabilityState = (
-  configured: { readonly enabled: boolean } | undefined,
-): CapabilityStatus["state"] =>
-  configured === undefined || !configured.enabled ? "disabled" : "stopped";
+  name: CapabilityName,
+  state: PersistedStackState,
+  observed: ReadonlyArray<ObservedWorkload>,
+  active: ReadonlySet<CapabilityName>,
+  phase: ActualPhase,
+): CapabilityStatus["state"] => {
+  const configured = state.definition?.capabilities[name];
+  if (configured === undefined || !configured.enabled) return "disabled";
+  if (
+    state.desiredLifecycle !== "running" ||
+    phase === "stopped" ||
+    phase === "stopping" ||
+    phase === "destroying"
+  )
+    return "stopped";
+  if (configured.activation === "lazy" && !active.has(name)) return "dormant";
+  if (phase === "starting") return "starting";
+  const resources = observed.filter((entry) => entry.workloadId.startsWith(`${name}:`));
+  if (resources.some((entry) => entry.state === "failed")) return "failed";
+  if (resources.some((entry) => entry.state === "starting")) return "starting";
+  if (resources.length > 0 && resources.every((entry) => entry.state === "ready")) return "ready";
+  return "stopped";
+};
 
 const statusFor = (
   state: PersistedStackState,
-): Effect.Effect<StackStatus, StackStateInvalidError> => {
-  const definition = state.definition;
-  const capabilities = CAPABILITY_NAMES.map((name) => {
-    const configured = definition?.capabilities[name];
-    return {
-      name,
-      activation: configured?.activation ?? "eager",
-      state: capabilityState(configured),
-    };
-  });
-  const versions: Partial<Record<CapabilityName, string>> = {};
-  if (definition !== undefined) {
-    for (const name of CAPABILITY_NAMES) versions[name] = definition.capabilities[name].version;
-  }
-  const endpoints = state.ports.reduce<
-    Readonly<
-      Partial<
-        Record<
-          | "api"
-          | "database"
-          | "pooler"
-          | "studio"
-          | "mailUi"
-          | "smtp"
-          | "pop3"
-          | "functionsInspector",
-          StackEndpoint
-        >
-      >
-    >
-  >((result, assignment) => {
-    const tcp =
-      assignment.field === "database" ||
-      assignment.field === "pooler" ||
-      assignment.field === "smtp" ||
-      assignment.field === "pop3";
-    const protocol = tcp ? "tcp" : "http";
-    const listener = state.definition?.listeners[assignment.field];
-    return {
-      ...result,
-      [assignment.field]: {
-        protocol,
-        address: listener?.address ?? "127.0.0.1",
-        port: assignment.port,
-        url: `${protocol}://${listener?.address ?? "127.0.0.1"}:${assignment.port}`,
-      },
-    };
-  }, {});
-  return Schema.decodeEffect(StackIdSchema)(state.identity.stackId).pipe(
+  observed: ReadonlyArray<ObservedWorkload>,
+  active: ReadonlySet<CapabilityName>,
+  phase: ActualPhase,
+): Effect.Effect<StackStatus, StackStateInvalidError> =>
+  Schema.decodeEffect(StackIdSchema)(state.identity.stackId).pipe(
     Effect.mapError(
       (error) =>
         new StackStateInvalidError({ message: `Invalid persisted StackId: ${String(error)}` }),
     ),
-    Effect.map((id) => ({
-      id,
-      lifecycle:
+    Effect.map((id) => {
+      const definition = state.definition;
+      const capabilities = CAPABILITY_NAMES.map((name) => ({
+        name,
+        activation: definition?.capabilities[name].activation ?? "eager",
+        state: capabilityState(name, state, observed, active, phase),
+      }));
+      const versions: Partial<Record<CapabilityName, string>> = {};
+      if (definition !== undefined)
+        for (const name of CAPABILITY_NAMES) versions[name] = definition.capabilities[name].version;
+      const endpoints = state.ports.reduce<
+        Readonly<
+          Partial<
+            Record<
+              | "api"
+              | "database"
+              | "pooler"
+              | "studio"
+              | "mailUi"
+              | "smtp"
+              | "pop3"
+              | "functionsInspector",
+              StackEndpoint
+            >
+          >
+        >
+      >((result, assignment) => {
+        const tcp =
+          assignment.field === "database" ||
+          assignment.field === "pooler" ||
+          assignment.field === "smtp" ||
+          assignment.field === "pop3";
+        const protocol = tcp ? "tcp" : "http";
+        const listener = state.definition?.listeners[assignment.field];
+        return {
+          ...result,
+          [assignment.field]: {
+            protocol,
+            address: listener?.address ?? "127.0.0.1",
+            port: assignment.port,
+            url: `${protocol}://${listener?.address ?? "127.0.0.1"}:${assignment.port}`,
+          },
+        };
+      }, {});
+      const activeStates = capabilities.filter(
+        ({ name }) => active.has(name) && definition?.capabilities[name].enabled,
+      );
+      const anyStarting = activeStates.some(({ state }) => state === "starting");
+      const anyFailed = activeStates.some(({ state }) => state === "failed");
+      const allReady =
+        activeStates.length > 0 && activeStates.every(({ state }) => state === "ready");
+      const lifecycle =
         state.desiredLifecycle === "unconfigured"
           ? "unconfigured"
           : state.desiredLifecycle === "destroying"
             ? "destroying"
-            : "stopped",
-      desiredLifecycle: state.desiredLifecycle,
-      runtime: state.runtime,
-      desiredGeneration: state.desiredGeneration,
-      endpoints,
-      versions,
-      capabilities,
-    })),
-  );
-};
-
-const rpcError = (tag: StackRpcError["tag"], message: string): StackRpcError => ({ tag, message });
-
-const stateErrorMessage = (error: StackError | { readonly message?: string }): string =>
-  typeof error.message === "string" ? error.message : "Stack operation failed";
-
-export const makeSupervisor = (options: SupervisorOptions): Supervisor => {
-  const read = options.stateStore
-    .read(options.stackId)
-    .pipe(Effect.provideContext(options.context));
-  const status = read.pipe(
-    Effect.flatMap((state) =>
-      state === undefined
-        ? Effect.fail(new StackStateInvalidError({ message: "Stack state is missing" }))
-        : statusFor(state),
-    ),
-  );
-
-  const stop = read.pipe(
-    Effect.flatMap((state) => {
-      if (state === undefined)
-        return Effect.fail(new StackStateInvalidError({ message: "Stack state is missing" }));
-      if (state.desiredLifecycle === "unconfigured" || state.desiredLifecycle === "stopped")
-        return Effect.void;
-      return options.stateStore
-        .replace(
-          options.stackId,
-          {
-            ...state,
-            desiredLifecycle: "stopped",
-            desiredGeneration: state.desiredGeneration + 1,
-          },
-          state.desiredGeneration,
-        )
-        .pipe(Effect.provideContext(options.context));
+            : state.desiredLifecycle === "stopped"
+              ? "stopped"
+              : phase === "starting"
+                ? "starting"
+                : phase === "stopping"
+                  ? "stopping"
+                  : phase === "destroying"
+                    ? "destroying"
+                    : anyFailed
+                      ? "stopped"
+                      : anyStarting
+                        ? "starting"
+                        : allReady
+                          ? "running"
+                          : "stopped";
+      return {
+        id,
+        lifecycle,
+        desiredLifecycle: state.desiredLifecycle,
+        runtime: state.runtime,
+        desiredGeneration: state.desiredGeneration,
+        endpoints,
+        versions,
+        capabilities,
+      } satisfies StackStatus;
     }),
   );
 
-  const maintenanceHandlers = {
-    probe: Effect.succeed({
-      ok: true,
-      op: "probe",
-      ownerSessionId: options.ownerSessionId,
-      stackId: options.stackId,
-      rpcRelease: options.rpcRelease,
-    } satisfies MaintenanceResponse),
-    stop: stop.pipe(
-      Effect.as({ ok: true, op: "stop" } satisfies MaintenanceResponse),
-      Effect.orElseSucceed(
-        () =>
-          ({
-            ok: false,
-            error: { tag: "operation-failed", message: "Unable to stop stack" },
-          }) satisfies MaintenanceResponse,
-      ),
-    ),
-    quiesce: Effect.succeed({ ok: true, op: "quiesce" } satisfies MaintenanceResponse),
-  };
+const mapReconcileError = (error: unknown): StackError => {
+  if (error instanceof StackStateInvalidError) return error;
+  if (error instanceof RuntimeGenerationMismatchError)
+    return new StackLifecycleConflictError({ message: error.message });
+  return new StackReconciliationError({
+    message: error instanceof Error ? error.message : String(error),
+    cause: error,
+  });
+};
 
-  const rpcHandlers: StackRpcHandlers = StackRpcGroup.of({
-    status: () =>
-      status.pipe(
-        Effect.mapError((error) => rpcError("StackStateInvalidError", stateErrorMessage(error))),
-      ),
-    credentials: () => Effect.fail(rpcError("StackNotRunningError", "Stack is not running")),
-    prepare: () =>
-      Effect.fail(rpcError("StackPreparationError", "Stack preparation is not available yet")),
-    start: () =>
-      read.pipe(
-        Effect.mapError(() => rpcError("StackStateInvalidError", "Unable to read stack state")),
-        Effect.flatMap((state) =>
-          state?.definition === undefined
-            ? Effect.fail(
-                rpcError(
-                  "StackDefinitionRequiredError",
-                  "A stack definition is required before starting",
-                ),
-              )
-            : Effect.fail(
-                rpcError("StackReconciliationError", "Stack runtime is not available yet"),
+const rpcTag = (error: StackError, fallback: StackRpcError["tag"]): StackRpcError["tag"] => {
+  if (error instanceof InvalidStackIdentityError) return "InvalidStackIdentityError";
+  if (error instanceof InvalidProjectRootError) return "InvalidProjectRootError";
+  if (error instanceof InvalidStackConfigError) return "InvalidStackConfigError";
+  if (error instanceof StackNotFoundError) return "StackNotFoundError";
+  if (error instanceof StackOwnershipConflictError) return "StackOwnershipConflictError";
+  if (error instanceof StackRuntimeMismatchError) return "StackRuntimeMismatchError";
+  if (error instanceof StackDefinitionRequiredError) return "StackDefinitionRequiredError";
+  if (error instanceof StackVersionUnsupportedError) return "StackVersionUnsupportedError";
+  if (error instanceof StackLifecycleConflictError) return "StackLifecycleConflictError";
+  if (error instanceof StackNotRunningError) return "StackNotRunningError";
+  if (error instanceof StackMustBeStoppedError) return "StackMustBeStoppedError";
+  if (error instanceof StackStateInvalidError) return "StackStateInvalidError";
+  if (error instanceof StackStateFormatUnsupportedError) return "StackStateFormatUnsupportedError";
+  if (error instanceof StackStateGenerationMismatchError)
+    return "StackStateGenerationMismatchError";
+  if (error instanceof StackUpgradeRequiredError) return "StackUpgradeRequiredError";
+  if (error instanceof StackUpgradeReplacementError) return "StackUpgradeReplacementError";
+  if (error instanceof StackSecretMismatchError) return "StackSecretMismatchError";
+  if (error instanceof InvalidJwtSigningMaterialError) return "InvalidJwtSigningMaterialError";
+  if (error instanceof PortAllocationError) return "PortAllocationError";
+  if (error instanceof PortUnavailableError) return "PortUnavailableError";
+  if (error instanceof ServiceStartError) return "ServiceStartError";
+  if (error instanceof ServiceReadinessError) return "ServiceReadinessError";
+  if (error instanceof ContainerEngineError) return "ContainerEngineError";
+  if (error instanceof StackReconciliationError) return "StackReconciliationError";
+  if (error instanceof StackDestructionError) return "StackDestructionError";
+  if (error instanceof GatewayAuthenticationError) return "GatewayAuthenticationError";
+  if (error instanceof GatewayStaleGenerationError) return "GatewayStaleGenerationError";
+  if (error instanceof GatewayActivationError) return "GatewayActivationError";
+  if (error instanceof StackPreparationError) return "StackPreparationError";
+  if (error instanceof ArtifactIntegrityError) return "ArtifactIntegrityError";
+  if (error instanceof ContainerPullError) return "ContainerPullError";
+  return fallback;
+};
+
+/** Compose one owner process around the durable lifecycle controller and a runtime driver. */
+export const makeSupervisor = (options: SupervisorOptions): Effect.Effect<Supervisor, StackError> =>
+  Effect.gen(function* () {
+    const read = () =>
+      options.stateStore.read(options.stackId).pipe(Effect.provideContext(options.context));
+    const initial = yield* read();
+    if (initial === undefined)
+      return yield* new StackStateInvalidError({ message: "Stack state is missing" });
+    const runtime =
+      options.runtime ??
+      (options.runtimeFactory === undefined
+        ? runtimeUnavailable()
+        : yield* options.runtimeFactory.make(initial));
+    const reconciler: Reconciler = yield* makeReconciler({
+      driver: runtime.driver,
+      readGeneration: (stackId) =>
+        options.stateStore.read(stackId).pipe(
+          Effect.provideContext(options.context),
+          Effect.flatMap((state) =>
+            state === undefined
+              ? Effect.fail(new RuntimeDriverError({ message: "Stack state is missing", stackId }))
+              : Effect.succeed(state.desiredGeneration),
+          ),
+          Effect.mapError((error) =>
+            error instanceof RuntimeDriverError
+              ? error
+              : new RuntimeDriverError({ message: error.message, stackId, cause: error }),
+          ),
+        ),
+    });
+    const active = yield* Ref.make<ReadonlySet<CapabilityName>>(new Set());
+    const generation = yield* Ref.make(initial.desiredGeneration);
+    const phase = yield* Ref.make<ActualPhase>("stopped");
+    const initializeActivation = (
+      plan: ExecutionPlan,
+      observed: ReadonlyArray<ObservedWorkload> = [],
+    ) => {
+      const next = eagerCapabilities(plan);
+      for (const entry of observed) {
+        const capability = CAPABILITY_NAMES.find((name) => entry.workloadId.startsWith(`${name}:`));
+        if (capability !== undefined) next.add(capability);
+      }
+      return Ref.set(active, next);
+    };
+    const resetForGeneration = (input: LifecycleInput) =>
+      Effect.gen(function* () {
+        const current = yield* Ref.get(generation);
+        if (current === input.generation && input.desiredLifecycle === "running") return;
+        yield* Ref.set(generation, input.generation);
+        yield* initializeActivation(input.plan);
+      });
+    const observe = () =>
+      runtime.driver.observe(options.stackId).pipe(Effect.mapError(mapReconcileError));
+
+    if (initial.definition !== undefined) {
+      const plan = yield* rebuildExecutionPlan(initial.runtime, initial.definition).pipe(
+        Effect.provideContext(options.context),
+        Effect.mapError(
+          (error) => new StackStateInvalidError({ message: error.message, cause: error }),
+        ),
+      );
+      if (initial.desiredLifecycle === "running") {
+        const request: RuntimeRecoveryRequest = {
+          stackId: options.stackId,
+          desiredGeneration: initial.desiredGeneration,
+          desiredLifecycle: "running",
+          plan,
+        };
+        const recovered = yield* runtime.driver
+          .recover(request)
+          .pipe(Effect.mapError(mapReconcileError));
+        yield* initializeActivation(plan, recovered);
+      } else {
+        yield* runtime.driver
+          .cleanup({ stackId: options.stackId, destroy: false })
+          .pipe(Effect.mapError(mapReconcileError));
+        yield* Ref.set(active, new Set());
+      }
+    } else if (options.runtime !== undefined || options.runtimeFactory !== undefined) {
+      yield* runtime.driver
+        .cleanup({ stackId: options.stackId, destroy: false })
+        .pipe(Effect.mapError(mapReconcileError));
+    }
+
+    const initialObserved = yield* observe();
+    const initialStatus = yield* statusFor(
+      initial,
+      initialObserved,
+      yield* Ref.get(active),
+      yield* Ref.get(phase),
+    );
+    const hub = yield* makeStatusHub(initialStatus);
+    const snapshot = (): Effect.Effect<StackStatus, StackError> =>
+      Effect.gen(function* () {
+        const state = yield* read();
+        if (state === undefined)
+          return yield* new StackStateInvalidError({ message: "Stack state is missing" });
+        const status = yield* statusFor(
+          state,
+          yield* observe(),
+          yield* Ref.get(active),
+          yield* Ref.get(phase),
+        );
+        return status;
+      });
+    const publish = (): Effect.Effect<StackStatus, StackError> =>
+      snapshot().pipe(Effect.tap((value) => hub.publish(value)));
+    const restorePhase = (previous: ActualPhase): Effect.Effect<void, never> =>
+      Effect.gen(function* () {
+        const state = yield* read().pipe(Effect.orElseSucceed(() => undefined));
+        const next: ActualPhase =
+          previous === "running" && state?.desiredLifecycle === "running" ? "running" : "stopped";
+        yield* Ref.set(phase, next);
+        yield* publish().pipe(Effect.ignore);
+      });
+
+    const backend: LifecycleBackend = {
+      preflight: (input) =>
+        runtime.preflight === undefined ? Effect.succeed({}) : runtime.preflight(input),
+      reconcile: (input) =>
+        Effect.gen(function* () {
+          yield* resetForGeneration(input);
+          const selected = yield* Ref.get(active);
+          const plan =
+            input.desiredLifecycle === "running" ? activePlan(input.plan, selected) : input.plan;
+          const result = yield* reconciler
+            .reconcile({
+              stackId: options.stackId,
+              desiredGeneration: input.generation,
+              desiredLifecycle: input.desiredLifecycle,
+              plan,
+            })
+            .pipe(Effect.mapError(mapReconcileError));
+          if (result.failed.length > 0)
+            return yield* new StackReconciliationError({
+              message: result.failed
+                .map(({ workloadId, error }) => `${workloadId}: ${error.message}`)
+                .join("; "),
+            });
+          yield* publish();
+        }),
+      cleanup: () =>
+        runtime.driver
+          .cleanup({ stackId: options.stackId, destroy: false })
+          .pipe(
+            Effect.mapError(mapReconcileError),
+            Effect.andThen(Ref.set(active, new Set())),
+            Effect.andThen(Ref.set(phase, "stopped")),
+            Effect.andThen(publish()),
+          ),
+      destroyData: () =>
+        runtime.driver
+          .cleanup({ stackId: options.stackId, destroy: true })
+          .pipe(Effect.mapError(mapReconcileError)),
+    };
+    const controller = yield* makeLifecycleController({
+      stackId: options.stackId,
+      runtime: initial.runtime,
+      stateStore: options.stateStore,
+      backend,
+    }).pipe(Effect.provideContext(options.context));
+    const status = snapshot();
+
+    const activate = (
+      capability: CapabilityName,
+    ): Effect.Effect<ActivationResult, GatewayActivationError | StackError> =>
+      Effect.gen(function* () {
+        const state = yield* read();
+        if (state === undefined)
+          return yield* new StackStateInvalidError({ message: "Stack state is missing" });
+        if (state.desiredLifecycle !== "running")
+          return yield* new StackNotRunningError({
+            message: "Stack must be running before activation",
+          });
+        const definition = state.definition;
+        if (definition === undefined || !definition.capabilities[capability].enabled)
+          return yield* new GatewayActivationError({
+            message: `Capability ${capability} is not enabled`,
+          });
+        const plan = yield* rebuildExecutionPlan(state.runtime, definition).pipe(
+          Effect.provideContext(options.context),
+          Effect.mapError(
+            (error) => new StackStateInvalidError({ message: error.message, cause: error }),
+          ),
+        );
+        const next = new Set(yield* Ref.get(active));
+        const visit = (name: CapabilityName): void => {
+          if (next.has(name)) return;
+          next.add(name);
+          for (const dependency of plan.dependencies[name]) visit(dependency);
+        };
+        visit(capability);
+        yield* Ref.set(active, next);
+        const input: LifecycleInput = {
+          stackId: options.stackId,
+          generation: state.desiredGeneration,
+          desiredLifecycle: "running",
+          state,
+          previous: state,
+          definition,
+          inputFingerprint: state.inputFingerprint ?? "",
+          secrets: state.secrets,
+          plan,
+        };
+        yield* backend.reconcile(input);
+        if (runtime.activate === undefined)
+          return yield* new GatewayActivationError({
+            message: `Capability ${capability} has no route endpoint`,
+          });
+        const endpoint = yield* runtime.activate(capability, input);
+        yield* Ref.set(phase, "running");
+        yield* publish();
+        return { capability, endpoint };
+      });
+
+    const startOperation = (startOptions?: { readonly config?: StackConfig }) =>
+      Effect.gen(function* () {
+        const previous = yield* Ref.get(phase);
+        yield* Ref.set(phase, "starting");
+        yield* publish();
+        yield* controller.start({ config: startOptions?.config }).pipe(
+          Effect.provideContext(options.context),
+          Effect.tapError(() => restorePhase(previous)),
+        );
+        yield* Ref.set(phase, "running");
+        return yield* publish();
+      });
+    const restartOperation = (startOptions?: { readonly config?: StackConfig }) =>
+      Effect.gen(function* () {
+        const previous = yield* Ref.get(phase);
+        yield* Ref.set(phase, "starting");
+        yield* publish();
+        yield* controller.restart({ config: startOptions?.config }).pipe(
+          Effect.provideContext(options.context),
+          Effect.tapError(() => restorePhase(previous)),
+        );
+        yield* Ref.set(phase, "running");
+        return yield* publish();
+      });
+    const operation = <A>(effect: Effect.Effect<A, StackError>, fallback: StackRpcError["tag"]) =>
+      effect.pipe(
+        Effect.mapError((error) => rpcError(rpcTag(error, fallback), stateErrorMessage(error))),
+      );
+    const destroy = controller
+      .destroy()
+      .pipe(Effect.provideContext(options.context), Effect.andThen(Ref.set(phase, "stopped")));
+    const logs = (logOptions?: LogOptions): Stream.Stream<StackLogEntry, StackError> =>
+      runtime.logStore === undefined
+        ? Stream.fail(new StackNotRunningError({ message: "Stack logs are unavailable" }))
+        : runtime.logStore
+            .stream(logOptions)
+            .pipe(
+              Stream.mapError(
+                (error) => new StackStateInvalidError({ message: error.message, cause: error }),
               ),
+            );
+    const watchStatus = hub.changes;
+    const maintenanceHandlers = {
+      probe: Effect.succeed({
+        ok: true,
+        op: "probe",
+        ownerSessionId: options.ownerSessionId,
+        stackId: options.stackId,
+        rpcRelease: options.rpcRelease,
+      } satisfies MaintenanceResponse),
+      stop: controller.stop().pipe(
+        Effect.provideContext(options.context),
+        Effect.as({ ok: true, op: "stop" } satisfies MaintenanceResponse),
+        Effect.orElseSucceed(
+          () =>
+            ({
+              ok: false,
+              error: { tag: "operation-failed", message: "Unable to stop stack" },
+            }) satisfies MaintenanceResponse,
         ),
       ),
-    restart: () =>
-      read.pipe(
-        Effect.mapError(() => rpcError("StackStateInvalidError", "Unable to read stack state")),
-        Effect.flatMap((state) =>
-          state?.definition === undefined
-            ? Effect.fail(
-                rpcError(
-                  "StackDefinitionRequiredError",
-                  "A stack definition is required before restarting",
-                ),
-              )
-            : Effect.fail(
-                rpcError("StackReconciliationError", "Stack runtime is not available yet"),
-              ),
+      quiesce: controller.stop().pipe(
+        Effect.provideContext(options.context),
+        Effect.as({ ok: true, op: "quiesce" } satisfies MaintenanceResponse),
+        Effect.orElseSucceed(
+          () =>
+            ({
+              ok: false,
+              error: { tag: "operation-failed", message: "Unable to quiesce stack" },
+            }) satisfies MaintenanceResponse,
         ),
       ),
-    destroy: () =>
-      Effect.fail(rpcError("StackDestructionError", "Stack destruction is not available yet")),
-    logs: () => Stream.fail(rpcError("StackNotRunningError", "Stack logs are not available yet")),
-    watchStatus: () =>
-      Stream.fromEffect(
+    };
+    const rpcHandlers: StackRpcHandlers = StackRpcGroup.of({
+      status: () =>
         status.pipe(
           Effect.mapError((error) => rpcError("StackStateInvalidError", stateErrorMessage(error))),
         ),
-      ),
+      credentials: () =>
+        Effect.fail(rpcError("StackNotRunningError", "Stack credentials are unavailable")),
+      prepare: () =>
+        Effect.fail(rpcError("StackPreparationError", "Stack preparation is not available yet")),
+      start: ({ config }: { readonly config?: StackConfig }) =>
+        operation(startOperation({ config }), "StackReconciliationError"),
+      restart: ({ config }: { readonly config?: StackConfig }) =>
+        operation(restartOperation({ config }), "StackReconciliationError"),
+      destroy: () => operation(destroy, "StackDestructionError"),
+      logs: (logOptions: LogOptions) =>
+        logs(logOptions).pipe(
+          Stream.mapError((error) =>
+            rpcError(rpcTag(error, "StackStateInvalidError"), stateErrorMessage(error)),
+          ),
+        ),
+      watchStatus: () =>
+        watchStatus.pipe(
+          Stream.mapError((error) => rpcError("StackStateInvalidError", String(error))),
+        ),
+    });
+    return {
+      identity: options.identity,
+      stackId: options.stackId,
+      ownerSessionId: options.ownerSessionId,
+      status,
+      start: startOperation,
+      restart: restartOperation,
+      destroy,
+      watchStatus,
+      logs,
+      activate,
+      maintenanceHandlers,
+      rpcHandlers,
+    } satisfies Supervisor;
   });
-
-  return {
-    identity: options.identity,
-    stackId: options.stackId,
-    ownerSessionId: options.ownerSessionId,
-    status,
-    maintenanceHandlers,
-    rpcHandlers,
-  };
-};

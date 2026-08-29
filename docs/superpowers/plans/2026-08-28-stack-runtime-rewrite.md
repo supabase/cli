@@ -567,20 +567,20 @@ artifact keys, state schemas, drivers, or control protocols.
 - `restart` preflights, quiesces through stable maintenance, may apply allowed stopped-time changes,
   and loses to concurrent stop. Destroy removes exact data; stop retains state/data/logs/artifacts.
 
-- [ ] **Step 1: Write the complete lifecycle matrix and verify RED**
+- [x] **Step 1: Write the complete lifecycle matrix and verify RED**
 
   Cover identical/changed fingerprints, pass-through-only changes, version rules, initialized database
   immutability, concurrent calls, stop winning restart, owner replacement failure, reboot no-autostart,
   native owner loss, container fail-closed, exact adoption fences, corrupt state, and explicit exact
   destructive cleanup.
 
-- [ ] **Step 2: Implement durable transitions**
+- [x] **Step 2: Implement durable transitions**
 
   Commit validated complete intent before reconciliation. Use stable maintenance only for stop/quiesce;
   protocol mismatch is an upgrade signal. Keep replacement interruptible outside the narrow
   acquisition-to-registration mask and preserve unrecognized Causes.
 
-- [ ] **Step 3: Verify and commit**
+- [x] **Step 3: Verify and commit**
 
   Run both targeted lifecycle files and stack type-check, then commit:
 

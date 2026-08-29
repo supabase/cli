@@ -381,7 +381,7 @@ const makeHandle = (
       ownerSessionId: metadata.ownerSessionId,
       rpcRelease: metadata.rpcRelease,
     });
-    const check = <A, E>(effect: Effect.Effect<A, E>) =>
+    const check = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       Ref.get(closed).pipe(Effect.flatMap((isClosed) => (isClosed ? Effect.interrupt : effect)));
     const invoke = <A, E extends StackError>(
       call: (rpc: StackRpcClient) => Effect.Effect<A, StackRpcError | RpcClientError>,
@@ -412,9 +412,42 @@ const makeHandle = (
         ),
       destroy: () => invoke((rpc) => rpc.destroy(undefined), destroyError),
       close: () => Ref.set(closed, true),
-      watchStatus: () => Stream.fromEffect(status()),
-      logs: () =>
-        Stream.fail(new StackNotRunningError({ message: "Stack logs are not available yet" })),
+      watchStatus: () =>
+        Stream.unwrap(
+          check(
+            client.rpc.pipe(
+              Effect.map((rpc) => rpc.watchStatus(undefined).pipe(Stream.mapError(statusError))),
+              Effect.mapError(statusError),
+            ),
+          ),
+        ).pipe(Stream.scoped),
+      logs: (options) =>
+        Stream.unwrap(
+          check(
+            client.rpc.pipe(
+              Effect.map((rpc) =>
+                rpc.logs(options ?? {}).pipe(
+                  Stream.mapError((error) => {
+                    const mapped = errorForRpc(error);
+                    return mapped instanceof StackNotFoundError ||
+                      mapped instanceof StackNotRunningError ||
+                      mapped instanceof StackStateInvalidError
+                      ? mapped
+                      : new StackStateInvalidError({ message: "Stack logs are unavailable" });
+                  }),
+                ),
+              ),
+              Effect.mapError((error) => {
+                const mapped = errorForRpc(error);
+                return mapped instanceof StackNotFoundError ||
+                  mapped instanceof StackNotRunningError ||
+                  mapped instanceof StackStateInvalidError
+                  ? mapped
+                  : new StackStateInvalidError({ message: "Stack logs are unavailable" });
+              }),
+            ),
+          ),
+        ).pipe(Stream.scoped),
     } satisfies EffectStack;
   });
 

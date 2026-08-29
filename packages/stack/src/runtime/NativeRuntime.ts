@@ -10,6 +10,8 @@ import type { LogStore } from "../supervisor/LogStore.ts";
 import { LogStoreError } from "../supervisor/LogStore.ts";
 import {
   RuntimeDriverError,
+  type RuntimeCleanupRequest,
+  type RuntimeRecoveryRequest,
   type ObservedWorkload,
   type RuntimeDriver,
   type RuntimeWorkloadKey,
@@ -387,6 +389,53 @@ export const makeNativeRuntime = (
         (resource) => Ref.get(resource.state),
       );
 
+    const stopResource = (resource: Resource): Effect.Effect<void, RuntimeDriverError> =>
+      Effect.gen(function* () {
+        const { key } = resource;
+        resource.stopRequested = true;
+        if (resource.startFiber !== undefined) {
+          yield* Deferred.fail(
+            resource.result,
+            driverError(key, "Native workload was stopped while starting"),
+          );
+        }
+        const nativeProcess = resource.process;
+        const killResult =
+          nativeProcess === undefined
+            ? Exit.succeed(undefined)
+            : yield* nativeProcess.isRunning.pipe(
+                Effect.mapError((error) => processError(error, key, "probe")),
+                Effect.flatMap((running) =>
+                  running
+                    ? nativeProcess.kill.pipe(
+                        Effect.mapError((error) => processError(error, key, "stop")),
+                      )
+                    : Effect.void,
+                ),
+                Effect.exit,
+              );
+        if (resource.startFiber !== undefined) yield* Fiber.interrupt(resource.startFiber);
+        if (Exit.isFailure(killResult)) {
+          yield* Ref.update(resource.state, (current): ObservedWorkload => ({
+            ...current,
+            state: "failed",
+            error: Cause.pretty(killResult.cause),
+          }));
+          return yield* Effect.failCause(killResult.cause);
+        }
+        yield* Ref.update(resource.state, (current): ObservedWorkload => ({
+          ...current,
+          state: "stopped",
+        }));
+      });
+
+    const removeResource = (resource: Resource): Effect.Effect<void, RuntimeDriverError> =>
+      Effect.gen(function* () {
+        resource.stopRequested = true;
+        if (resource.startFiber !== undefined) yield* Fiber.interrupt(resource.startFiber);
+        yield* cleanup(resource);
+      });
+
     const stop = (key: RuntimeWorkloadKey): Effect.Effect<void, RuntimeDriverError> =>
       lifecycle.withPermit(
         Effect.gen(function* () {
@@ -394,43 +443,7 @@ export const makeNativeRuntime = (
           if (resource === undefined) return;
           if (!sameKey(resource.key, key))
             return yield* driverError(key, "Native workload identity mismatch");
-          resource.stopRequested = true;
-          if (resource.startFiber !== undefined) {
-            yield* Deferred.fail(
-              resource.result,
-              driverError(key, "Native workload was stopped while starting"),
-            );
-          }
-          const nativeProcess = resource.process;
-          const killResult =
-            nativeProcess === undefined
-              ? Exit.succeed(undefined)
-              : yield* nativeProcess.isRunning.pipe(
-                  Effect.mapError((error) => processError(error, key, "probe")),
-                  Effect.flatMap((running) =>
-                    running
-                      ? nativeProcess.kill.pipe(
-                          Effect.mapError((error) => processError(error, key, "stop")),
-                        )
-                      : Effect.void,
-                  ),
-                  Effect.exit,
-                );
-          if (resource.startFiber !== undefined) {
-            yield* Fiber.interrupt(resource.startFiber);
-          }
-          if (Exit.isFailure(killResult)) {
-            yield* Ref.update(resource.state, (current): ObservedWorkload => ({
-              ...current,
-              state: "failed",
-              error: Cause.pretty(killResult.cause),
-            }));
-            return yield* Effect.failCause(killResult.cause);
-          }
-          yield* Ref.update(resource.state, (current): ObservedWorkload => ({
-            ...current,
-            state: "stopped",
-          }));
+          yield* stopResource(resource);
         }),
       );
 
@@ -441,15 +454,64 @@ export const makeNativeRuntime = (
           if (resource === undefined) return;
           if (!sameKey(resource.key, key))
             return yield* driverError(key, "Native workload identity mismatch");
-          resource.stopRequested = true;
-          if (resource.startFiber !== undefined) {
-            yield* Fiber.interrupt(resource.startFiber);
-          }
-          yield* cleanup(resource);
+          yield* removeResource(resource);
         }),
       );
 
-    return { observe, start, stop, remove } satisfies RuntimeDriver;
+    const cleanupRuntime = (
+      request: RuntimeCleanupRequest,
+    ): Effect.Effect<void, RuntimeDriverError> =>
+      lifecycle.withPermit(
+        Effect.gen(function* () {
+          let cleanupCause: Cause.Cause<RuntimeDriverError> = Cause.empty;
+          const attempt = <A>(effect: Effect.Effect<A, RuntimeDriverError>) =>
+            Effect.gen(function* () {
+              const result = yield* Effect.exit(effect);
+              if (Exit.isFailure(result)) cleanupCause = Cause.combine(cleanupCause, result.cause);
+            });
+          const owned = [...resources.values()].filter(
+            (resource) => resource.key.stackId === request.stackId,
+          );
+          for (const resource of owned) {
+            yield* attempt(stopResource(resource));
+            yield* attempt(removeResource(resource));
+          }
+          if (cleanupCause.reasons.length > 0) return yield* Effect.failCause(cleanupCause);
+        }),
+      );
+
+    const recover = (
+      request: RuntimeRecoveryRequest,
+    ): Effect.Effect<ReadonlyArray<ObservedWorkload>, RuntimeDriverError> =>
+      lifecycle.withPermit(
+        Effect.gen(function* () {
+          let recoveryCause: Cause.Cause<RuntimeDriverError> = Cause.empty;
+          const attempt = <A>(effect: Effect.Effect<A, RuntimeDriverError>) =>
+            Effect.gen(function* () {
+              const result = yield* Effect.exit(effect);
+              if (Exit.isFailure(result))
+                recoveryCause = Cause.combine(recoveryCause, result.cause);
+            });
+          const owned = [...resources.values()].filter(
+            (resource) => resource.key.stackId === request.stackId,
+          );
+          for (const resource of owned) {
+            yield* attempt(stopResource(resource));
+            yield* attempt(removeResource(resource));
+          }
+          if (recoveryCause.reasons.length > 0) return yield* Effect.failCause(recoveryCause);
+          return [];
+        }),
+      );
+
+    return {
+      observe,
+      start,
+      stop,
+      remove,
+      cleanup: cleanupRuntime,
+      recover,
+    } satisfies RuntimeDriver;
   });
 
 export const makeNativeRuntimeDriver = makeNativeRuntime;

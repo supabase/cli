@@ -97,6 +97,8 @@ const fakeDriver = (options: {
         Ref.update(resources, (current) =>
           current.filter((entry) => entry.workloadId !== key.workloadId),
         ),
+      cleanup: () => Effect.void,
+      recover: () => Effect.succeed([]),
     };
     return { driver, resources, starts };
   });
@@ -194,6 +196,8 @@ describe("stack reconciler", () => {
           }),
         stop: () => Effect.void,
         remove: () => Effect.void,
+        cleanup: () => Effect.void,
+        recover: () => Effect.succeed([]),
       };
       const reconciler = yield* makeReconciler({
         driver,
@@ -262,6 +266,8 @@ describe("stack reconciler", () => {
           }).pipe(Effect.ensuring(Ref.update(active, (value) => value - 1))),
         stop: () => Effect.void,
         remove: () => Effect.void,
+        cleanup: () => Effect.void,
+        recover: () => Effect.succeed([]),
       };
       const reconciler = yield* makeReconciler({ driver, readGeneration: () => Effect.succeed(1) });
       const request = {
@@ -301,6 +307,8 @@ describe("stack reconciler", () => {
         },
         stop: () => Effect.void,
         remove: () => Effect.void,
+        cleanup: () => Effect.void,
+        recover: () => Effect.succeed([]),
       };
       const reconciler = yield* makeReconciler({
         driver,
@@ -341,6 +349,8 @@ describe("stack reconciler", () => {
         },
         stop: () => Effect.void,
         remove: () => Effect.void,
+        cleanup: () => Effect.void,
+        recover: () => Effect.succeed([]),
       };
       const reconciler = yield* makeReconciler({
         driver,
@@ -377,6 +387,8 @@ describe("stack reconciler", () => {
         start: () => Effect.die("unexpected start"),
         stop: (key) => Ref.update(trace, (current) => [...current, `stop:${key.workloadId}`]),
         remove: (key) => Ref.update(trace, (current) => [...current, `remove:${key.workloadId}`]),
+        cleanup: () => Effect.void,
+        recover: () => Effect.succeed([]),
       };
       const reconciler = yield* makeReconciler({
         driver,
@@ -429,6 +441,8 @@ describe("stack reconciler", () => {
           ),
         stop: () => Effect.void,
         remove: () => Effect.void,
+        cleanup: () => Effect.void,
+        recover: () => Effect.succeed([]),
       };
       const reconciler = yield* makeReconciler({
         driver,

@@ -18,6 +18,8 @@ import {
 } from "./ContainerEngine.ts";
 import {
   RuntimeDriverError,
+  type RuntimeCleanupRequest,
+  type RuntimeRecoveryRequest,
   type ObservedWorkload,
   type RuntimeDriver,
   type RuntimeWorkloadKey,
@@ -118,6 +120,20 @@ const sameLabels = (left: ContainerLabels, right: ContainerLabels): boolean =>
           "specHash" in right &&
           left.specHash === right.specHash)));
 
+/** Recovery identity deliberately excludes ownerSessionId. The ownership lock fences adoption. */
+const sameWorkloadIdentity = (left: ContainerLabels, right: ContainerWorkloadLabels): boolean =>
+  left.role === "workload" &&
+  left.stackId === right.stackId &&
+  left.desiredGeneration === right.desiredGeneration &&
+  left.workloadId === right.workloadId &&
+  left.specHash === right.specHash;
+
+/** Networks are adopted by stack and desired generation, never by old owner session. */
+const sameNetworkIdentity = (left: ContainerLabels, right: ContainerNetworkLabels): boolean =>
+  left.role === "network" &&
+  left.stackId === right.stackId &&
+  left.desiredGeneration === right.desiredGeneration;
+
 const toDriverError = (
   key: Pick<RuntimeWorkloadKey, "stackId" | "workloadId">,
   error: unknown,
@@ -169,11 +185,7 @@ export const makeContainerRuntime = (
         Effect.map((entries) =>
           entries
             .filter(isWorkloadResource)
-            .filter(
-              (entry) =>
-                entry.labels.ownerSessionId === options.ownerSessionId &&
-                entry.labels.stackId === stackId,
-            )
+            .filter((entry) => entry.labels.stackId === stackId)
             .map((entry) => ({
               stackId: entry.labels.stackId,
               desiredGeneration: entry.labels.desiredGeneration,
@@ -238,7 +250,7 @@ export const makeContainerRuntime = (
           }
         }
         const exact = entries.find(
-          (entry) => isManagedContainer(entry) && sameLabels(entry.labels, labels),
+          (entry) => entry.kind === "workload" && sameWorkloadIdentity(entry.labels, labels),
         );
         const namedCollision = entries.find(
           (entry) =>
@@ -254,7 +266,6 @@ export const makeContainerRuntime = (
           namedCollision !== undefined &&
           (collision === undefined ||
             collision.labels.stackId !== key.stackId ||
-            collision.labels.ownerSessionId !== options.ownerSessionId ||
             collision.labels.workloadId !== key.workloadId ||
             collision.labels.role !== "workload")
         )
@@ -265,7 +276,7 @@ export const makeContainerRuntime = (
 
         const exactNetwork = entries
           .filter(isNetworkResource)
-          .find((entry) => sameLabels(entry.labels, networkLabels));
+          .find((entry) => sameNetworkIdentity(entry.labels, networkLabels));
         const namedNetworkCollision = entries.find(
           (entry) => entry.kind === "network" && entry.name === networkName,
         );
@@ -276,9 +287,7 @@ export const makeContainerRuntime = (
         if (
           exactNetwork === undefined &&
           namedNetworkCollision !== undefined &&
-          (networkCollision === undefined ||
-            networkCollision.labels.stackId !== key.stackId ||
-            networkCollision.labels.ownerSessionId !== options.ownerSessionId)
+          (networkCollision === undefined || networkCollision.labels.stackId !== key.stackId)
         )
           return yield* toDriverError(
             key,
@@ -394,10 +403,11 @@ export const makeContainerRuntime = (
             Effect.flatMap((entries) => {
               const exact = entries
                 .filter(isWorkloadResource)
-                .find(
-                  (entry) =>
-                    entry.labels.ownerSessionId === options.ownerSessionId &&
-                    sameLabels(entry.labels, workloadLabelsFor(key, options.ownerSessionId)),
+                .find((entry) =>
+                  sameWorkloadIdentity(
+                    entry.labels,
+                    workloadLabelsFor(key, options.ownerSessionId),
+                  ),
                 );
               return exact === undefined
                 ? Effect.void
@@ -426,7 +436,7 @@ export const makeContainerRuntime = (
           const exact = entries
             .filter(isWorkloadResource)
             .find((entry) =>
-              sameLabels(entry.labels, workloadLabelsFor(key, options.ownerSessionId)),
+              sameWorkloadIdentity(entry.labels, workloadLabelsFor(key, options.ownerSessionId)),
             );
           if (exact === undefined) return;
           if (exact.state === "running")
@@ -435,5 +445,164 @@ export const makeContainerRuntime = (
         }),
       );
 
-    return { observe, start, stop, remove } satisfies RuntimeDriver;
+    const cleanup = (request: RuntimeCleanupRequest): Effect.Effect<void, RuntimeDriverError> =>
+      lifecycle.withPermit(
+        Effect.gen(function* () {
+          const entries = yield* withEngine(
+            { stackId: request.stackId, workloadId: "" },
+            options.engine.listResources(request.stackId),
+          );
+          const owned = entries
+            .filter((entry) => entry.labels.stackId === request.stackId)
+            .sort((left, right) => left.id.localeCompare(right.id));
+          let cleanupCause: Cause.Cause<RuntimeDriverError> = Cause.empty;
+          const attempt = <A>(effect: Effect.Effect<A, RuntimeDriverError>) =>
+            Effect.gen(function* () {
+              const result = yield* Effect.exit(effect);
+              if (Exit.isFailure(result)) cleanupCause = Cause.combine(cleanupCause, result.cause);
+            });
+
+          // Stop and remove every stack workload/gateway before touching its network. A failed
+          // stop does not prevent the remove attempt; all failures are returned together.
+          for (const entry of owned.filter(isManagedContainer)) {
+            if (entry.state === "running")
+              yield* attempt(
+                withEngine(
+                  { stackId: request.stackId, workloadId: "" },
+                  options.engine.stopContainer(entry.id),
+                ),
+              );
+            yield* attempt(
+              withEngine(
+                { stackId: request.stackId, workloadId: "" },
+                options.engine.removeContainer(entry.id),
+              ),
+            );
+          }
+          for (const entry of owned.filter(isNetworkResource))
+            yield* attempt(
+              withEngine(
+                { stackId: request.stackId, workloadId: "" },
+                options.engine.removeNetwork(entry.id),
+              ),
+            );
+          if (request.destroy)
+            for (const entry of owned.filter((candidate) => candidate.kind === "volume"))
+              yield* attempt(
+                withEngine(
+                  { stackId: request.stackId, workloadId: "" },
+                  options.engine.removeVolume(entry.id),
+                ),
+              );
+
+          for (const id of resources.keys())
+            if (id.startsWith(`${request.stackId}:`)) resources.delete(id);
+          if (cleanupCause.reasons.length > 0) return yield* Effect.failCause(cleanupCause);
+        }),
+      );
+
+    const recover = (
+      request: RuntimeRecoveryRequest,
+    ): Effect.Effect<ReadonlyArray<ObservedWorkload>, RuntimeDriverError> =>
+      lifecycle.withPermit(
+        Effect.gen(function* () {
+          const entries = yield* withEngine(
+            { stackId: request.stackId, workloadId: "" },
+            options.engine.listResources(request.stackId),
+          );
+          const owned = entries
+            .filter((entry) => entry.labels.stackId === request.stackId)
+            .sort((left, right) => left.id.localeCompare(right.id));
+          const desiredHashes = new Map(
+            request.plan.workloads.map((workload) => [workload.id, workload.specHash]),
+          );
+          const adopted: Array<ObservedWorkload> = [];
+          const adoptedIdentities = new Set<string>();
+          let retainedNetworkId: string | undefined;
+          let recoveryCause: Cause.Cause<RuntimeDriverError> = Cause.empty;
+          const attempt = <A>(effect: Effect.Effect<A, RuntimeDriverError>) =>
+            Effect.gen(function* () {
+              const result = yield* Effect.exit(effect);
+              if (Exit.isFailure(result))
+                recoveryCause = Cause.combine(recoveryCause, result.cause);
+            });
+          const stopAndRemove = (entry: ContainerResource) =>
+            Effect.gen(function* () {
+              if (entry.state === "running")
+                yield* attempt(
+                  withEngine(
+                    { stackId: request.stackId, workloadId: "" },
+                    options.engine.stopContainer(entry.id),
+                  ),
+                );
+              yield* attempt(
+                withEngine(
+                  { stackId: request.stackId, workloadId: "" },
+                  options.engine.removeContainer(entry.id),
+                ),
+              );
+            });
+
+          // Recovery never starts or creates anything. Every gateway is removed first so a new
+          // owner cannot expose stale ingress while workload identities are being evaluated.
+          for (const entry of owned.filter(isManagedContainer)) {
+            if (entry.kind === "gateway") {
+              yield* stopAndRemove(entry);
+              continue;
+            }
+            const hash = desiredHashes.get(entry.labels.workloadId);
+            const current =
+              entry.labels.desiredGeneration === request.desiredGeneration &&
+              hash !== undefined &&
+              hash === entry.labels.specHash;
+            if (!current) {
+              yield* stopAndRemove(entry);
+              continue;
+            }
+            const identity = `${entry.labels.desiredGeneration}:${entry.labels.workloadId}:${entry.labels.specHash}`;
+            if (adoptedIdentities.has(identity)) {
+              yield* stopAndRemove(entry);
+              continue;
+            }
+            adoptedIdentities.add(identity);
+            adopted.push({
+              stackId: entry.labels.stackId,
+              desiredGeneration: entry.labels.desiredGeneration,
+              workloadId: entry.labels.workloadId,
+              specHash: entry.labels.specHash,
+              state:
+                entry.state === "running"
+                  ? "ready"
+                  : entry.state === "stopped"
+                    ? "stopped"
+                    : "starting",
+            });
+          }
+
+          // Networks are only considered after all containers and gateways. Keep one network for
+          // the exact current generation; duplicate or stale-generation networks are ephemera.
+          for (const entry of owned.filter(isNetworkResource)) {
+            if (
+              retainedNetworkId === undefined &&
+              entry.labels.desiredGeneration === request.desiredGeneration
+            ) {
+              retainedNetworkId = entry.id;
+              continue;
+            }
+            yield* attempt(
+              withEngine(
+                { stackId: request.stackId, workloadId: "" },
+                options.engine.removeNetwork(entry.id),
+              ),
+            );
+          }
+
+          for (const id of resources.keys())
+            if (id.startsWith(`${request.stackId}:`)) resources.delete(id);
+          if (recoveryCause.reasons.length > 0) return yield* Effect.failCause(recoveryCause);
+          return adopted;
+        }),
+      );
+
+    return { observe, start, stop, remove, cleanup, recover } satisfies RuntimeDriver;
   });

@@ -608,7 +608,8 @@ describe("container runtime", () => {
 
   it.live("leaves foreign and sanitized-name collisions untouched", () =>
     Effect.gen(function* () {
-      const foreignKey = { ...key, workloadId: "api:api" };
+      const foreignStackId = StackIdSchema.make("c".repeat(64));
+      const foreignKey = { ...key, stackId: foreignStackId, workloadId: "api:api" };
       const foreignName = `supabase-${stackId.slice(0, 16)}-${foreignKey.desiredGeneration}-api-api-workload`;
       const state: FakeContainerState = {
         resources: [
@@ -618,7 +619,7 @@ describe("container runtime", () => {
             kind: "workload",
             state: "running",
             labels: {
-              stackId,
+              stackId: foreignStackId,
               ownerSessionId: "other-session",
               desiredGeneration: foreignKey.desiredGeneration,
               workloadId: foreignKey.workloadId,
@@ -636,7 +637,9 @@ describe("container runtime", () => {
         engine: fakeContainerEngine(state),
         ownerSessionId: "owner-session",
       });
-      const foreign = yield* runtime.start(foreignKey, workload()).pipe(Effect.exit);
+      const foreign = yield* runtime
+        .start({ ...foreignKey, stackId }, workload())
+        .pipe(Effect.exit);
       expect(Exit.isFailure(foreign)).toBe(true);
       expect(state.calls).not.toContain("pull-image");
       expect(state.calls).not.toContain("create-container");
