@@ -1,5 +1,4 @@
 import { Crypto, Effect, Exit, FileSystem, Path, Scope, Schema } from "effect";
-import type { StackRuntime } from "../public/Runtime.ts";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
 import type { Server as HttpServer } from "node:http";
 // oxlint-disable-next-line effecttsgo/node-builtin-import
@@ -51,7 +50,6 @@ export type HostListenerBinding =
 
 export interface PortPlanOptions {
   readonly lifecycle?: "stopped" | "running";
-  readonly runtime?: StackRuntime;
   readonly expectedGeneration?: number;
   /** Generation to persist after this transaction; unchanged unless explicitly supplied. */
   readonly nextGeneration?: number;
@@ -153,7 +151,6 @@ export const makePortCoordinator = (
           const lifecycle =
             planOptions.lifecycle ??
             (current.desiredLifecycle === "running" ? "running" : "stopped");
-          const runtime = planOptions.runtime ?? current.runtime;
           const allStates = yield* registry.states;
           const usedAutomaticPublic = new Set<number>();
           const usedLivePublic = new Set<number>();
@@ -314,7 +311,7 @@ export const makePortCoordinator = (
             privatePorts: privateAssignments,
           };
           yield* store.replaceUnlocked(stackId, next, expected);
-          return { current, next, lifecycle, runtime, byField, privateAssignments };
+          return { current, next, lifecycle, byField, privateAssignments };
         }),
       );
 

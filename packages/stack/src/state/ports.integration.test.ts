@@ -255,7 +255,7 @@ describe("sticky port coordination", () => {
               ...disabledIntents(),
               api: { enabled: true, address: "127.0.0.1", port: 55437 },
             },
-            { lifecycle: "running", runtime: { kind: "native" } },
+            { lifecycle: "running" },
           )
           .pipe(Effect.exit);
         expect(errorOf(exactToDifferent)).toBeInstanceOf(StackLifecycleConflictError);
@@ -268,7 +268,7 @@ describe("sticky port coordination", () => {
               ...disabledIntents(),
               api: { enabled: true, address: "127.0.0.1", port: 55438 },
             },
-            { lifecycle: "running", runtime: { kind: "native" } },
+            { lifecycle: "running" },
           )
           .pipe(Effect.exit);
         expect(errorOf(automaticToExact)).toBeInstanceOf(StackLifecycleConflictError);
@@ -303,7 +303,7 @@ describe("sticky port coordination", () => {
             ...disabledIntents(),
             api: { enabled: true, address: "127.0.0.1", port: 55439 },
           },
-          { lifecycle: "running", runtime: { kind: "native" } },
+          { lifecycle: "running" },
         );
         expect(result.assignments.api?.port).toBe(55439);
         expect((yield* store.read(stackId))?.desiredGeneration).toBe(11);
@@ -393,7 +393,7 @@ describe("sticky port coordination", () => {
               ...disabledIntents(),
               api: { enabled: true, address: "127.0.0.1", port: occupiedPort },
             },
-            { lifecycle: "running", runtime: { kind: "native" } },
+            { lifecycle: "running" },
           )
           .pipe(Effect.exit);
         expect(errorOf(exit)).toBeInstanceOf(PortUnavailableError);
@@ -432,7 +432,6 @@ describe("sticky port coordination", () => {
           });
           const result = yield* coordinator.planAndReserve(e, intents("automatic"), {
             lifecycle: "running",
-            runtime: { kind: "native" },
           });
           expect(result.hostListeners).toHaveLength(2);
           expect(closed).toBe(0);
@@ -473,7 +472,6 @@ describe("sticky port coordination", () => {
         const exit = yield* coordinator
           .planAndReserve(stackId, intents("automatic"), {
             lifecycle: "running",
-            runtime: { kind: "native" },
           })
           .pipe(Effect.exit);
         expect(errorOf(exit)).toBeInstanceOf(PortUnavailableError);
@@ -522,7 +520,7 @@ describe("sticky port coordination", () => {
               ...disabledIntents(),
               api: { enabled: true, address: "127.0.0.1", port: "automatic" },
             },
-            { lifecycle: "running", runtime: { kind: "native" } },
+            { lifecycle: "running" },
           ),
           { startImmediately: true },
         );
@@ -556,7 +554,6 @@ describe("sticky port coordination", () => {
         const exit = yield* coordinator
           .planAndReserve(f, intents(55433), {
             lifecycle: "running",
-            runtime: { kind: "container", engine: "docker" },
           })
           .pipe(Effect.exit);
         expect(errorOf(exit)).toBeInstanceOf(PortUnavailableError);
