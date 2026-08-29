@@ -2,6 +2,8 @@ import { NodeServices, NodeSocket } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { Data, Deferred, Effect, Exit, Fiber, FileSystem, Path, Ref, Stream } from "effect";
 import { ChildProcess } from "effect/unstable/process";
+// oxlint-disable-next-line effecttsgo/node-builtin-import
+import { spawnSync } from "node:child_process";
 import { LogStoreError, makeLogStore, type LogStore } from "../supervisor/LogStore.ts";
 import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import { StackIdSchema } from "../public/StackId.ts";
@@ -43,6 +45,14 @@ const fixtureProcess = (message: string) => ({
   args: [
     "-e",
     `process.stdout.write(${JSON.stringify(`${message}\n`)}); process.stderr.write(${JSON.stringify("stderr\n")}); setInterval(() => {}, 1000)`,
+  ],
+});
+
+const oneShotProcess = (stdout: string, exitCode = 0) => ({
+  executable: process.execPath,
+  args: [
+    "-e",
+    `process.stdout.write(${JSON.stringify(`${stdout}\n`)}); process.stderr.write(${JSON.stringify("startup-stderr\n")}); process.exit(${exitCode})`,
   ],
 });
 
@@ -233,6 +243,177 @@ describe("native runtime", () => {
           .pipe(Effect.exit);
         expect(Exit.isFailure(result)).toBe(true);
         expect(yield* runtime.observe(stackId)).toEqual([]);
+      }),
+    ),
+  );
+
+  it.live("runs native startup processes before main readiness and captures their logs", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-native-startup-" });
+        const logStore = yield* makeLogStore({ path: path.join(root, "logs.json") });
+        const logs = yield* logStore.stream({ follow: true }).pipe(
+          Stream.takeUntil((entry) => entry.message === "main"),
+          Stream.runCollect,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        let observedReady = false;
+        const runtime = yield* makeNativeRuntime({
+          resolveProcess: () =>
+            Effect.succeed({
+              startup: [oneShotProcess("startup")],
+              main: fixtureProcess("main"),
+            }),
+          logStore,
+          waitForReadiness: () =>
+            Effect.sync(() => {
+              observedReady = true;
+            }),
+        });
+        const key = keyFor("startup-order");
+        const ready = yield* runtime.start(key, workload("startup-order"));
+        expect(ready.state).toBe("ready");
+        expect(observedReady).toBe(true);
+        const messages = (yield* Fiber.join(logs)).map((entry) => entry.message);
+        expect(messages.indexOf("startup")).toBeGreaterThanOrEqual(0);
+        expect(messages).toContain("startup-stderr");
+        expect(messages.indexOf("main")).toBeGreaterThan(messages.indexOf("startup"));
+        yield* runtime.remove(key);
+      }),
+    ),
+  );
+
+  it.live("does not spawn the native main process when startup exits nonzero", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        let readinessCalled = false;
+        const runtime = yield* makeNativeRuntime({
+          resolveProcess: () =>
+            Effect.succeed({
+              startup: [oneShotProcess("startup-failed", 7)],
+              // This path is intentionally invalid: a correct runtime must
+              // fail on the startup process before attempting to spawn it.
+              main: { executable: "/missing/native-main" },
+            }),
+          waitForReadiness: () =>
+            Effect.sync(() => {
+              readinessCalled = true;
+            }),
+        });
+        const result = yield* runtime
+          .start(keyFor("startup-failed"), workload("startup-failed"))
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        expect(readinessCalled).toBe(false);
+        expect(yield* runtime.observe(stackId)).toEqual([]);
+      }),
+    ),
+  );
+
+  // oxlint-disable effecttsgo/prefer-schema-over-json
+  it.live("drains startup output after the child exits", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-native-drain-" });
+        const releasePath = path.join(root, "release");
+        expect(spawnSync("mkfifo", [releasePath]).status).toBe(0);
+        const logStore = yield* makeLogStore({ path: path.join(root, "logs.json") });
+        const descendant = `
+          const fs = require("node:fs");
+          process.stdout.write("startup-late\\n");
+          const fd = fs.openSync(${JSON.stringify(releasePath)}, "r");
+          fs.readSync(fd, Buffer.alloc(1), 0, 1, null);
+          fs.closeSync(fd);
+        `;
+        const runtime = yield* makeNativeRuntime({
+          resolveProcess: () =>
+            Effect.succeed({
+              startup: [
+                {
+                  executable: process.execPath,
+                  args: [
+                    "-e",
+                    `const { spawn } = require("node:child_process"); spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}], { stdio: ["ignore", "inherit", "inherit"] }); process.exit(0)`,
+                  ],
+                },
+              ],
+              main: fixtureProcess("drained-main"),
+            }),
+          logStore,
+          waitForReadiness: () => Effect.void,
+        });
+        const startupOutput = yield* logStore.stream({ follow: true }).pipe(
+          Stream.takeUntil((entry) => entry.message === "startup-late"),
+          Stream.runCollect,
+          Effect.forkChild({ startImmediately: true }),
+        );
+        const caller = yield* runtime
+          .start(keyFor("startup-drain"), workload("startup-drain"))
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Fiber.join(startupOutput);
+        // The startup parent has exited, but its descendant intentionally keeps
+        // the inherited stdout pipe open until this observable release signal.
+        const writer = spawnSync(process.execPath, [
+          "-e",
+          `require("node:fs").writeFileSync(${JSON.stringify(releasePath)}, "x")`,
+        ]);
+        expect(writer.status).toBe(0);
+        const ready = yield* Fiber.join(caller);
+        expect(ready.state).toBe("ready");
+        yield* runtime.remove(keyFor("startup-drain"));
+      }),
+    ),
+  );
+  // oxlint-enable effecttsgo/prefer-schema-over-json
+
+  it.live("interrupts a startup process through its exact child scope", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "supabase-native-interrupt-" });
+        const pidPath = path.join(root, "pid");
+        const logStore = yield* makeLogStore({ path: path.join(root, "logs.json") });
+        const started = yield* logStore
+          .stream({ follow: true })
+          .pipe(Stream.take(1), Stream.runCollect, Effect.forkChild({ startImmediately: true }));
+        const runtime = yield* makeNativeRuntime({
+          resolveProcess: () =>
+            Effect.succeed({
+              startup: [
+                {
+                  executable: process.execPath,
+                  args: [
+                    "-e",
+                    `require("node:fs").writeFileSync(${JSON.stringify(pidPath)},String(process.pid)); process.stdout.write("started\\n"); setInterval(()=>{},1000)`,
+                  ],
+                },
+              ],
+              main: fixtureProcess("never-main"),
+            }),
+          logStore,
+          waitForReadiness: () => Effect.void,
+        });
+        const key = keyFor("startup-interrupted");
+        const caller = yield* runtime
+          .start(key, workload("startup-interrupted"))
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Fiber.join(started);
+        yield* runtime.stop(key);
+        yield* Fiber.interrupt(caller);
+        const pid = Number.parseInt(yield* fs.readFileString(pidPath), 10);
+        expect(Number.isSafeInteger(pid)).toBe(true);
+        const processState = yield* Effect.sync(() => {
+          const result = spawnSync("ps", ["-p", String(pid), "-o", "stat="], {
+            encoding: "utf8",
+          });
+          return result.stdout.trim();
+        });
+        expect(processState === "" || processState.startsWith("Z")).toBe(true);
       }),
     ),
   );

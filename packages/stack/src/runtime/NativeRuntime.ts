@@ -34,11 +34,11 @@ export interface NativeRuntimeOptions {
     key: RuntimeWorkloadKey,
     workload: NativeWorkload,
   ) => Effect.Effect<NativeProcessLauncher, RuntimeDriverError>;
-  /** Resolves the complete native process command for one workload. */
+  /** Resolves the complete native process plan for one workload. */
   readonly resolveProcess: (
     key: RuntimeWorkloadKey,
     workload: NativeWorkload,
-  ) => Effect.Effect<NativeProcessSpec, RuntimeDriverError>;
+  ) => Effect.Effect<NativeProcessSpec | NativeProcessPlan, RuntimeDriverError>;
   /** Private readiness is resolved by the owning Supervisor/gateway seam. */
   readonly waitForReadiness: (
     key: RuntimeWorkloadKey,
@@ -52,6 +52,12 @@ export interface NativeRuntimeOptions {
     process?: NativeProcess,
   ) => Effect.Effect<void, RuntimeDriverError>;
   readonly logStore?: LogStore;
+}
+
+/** One-shot startup processes followed by the long-lived workload process. */
+export interface NativeProcessPlan {
+  readonly startup: ReadonlyArray<NativeProcessSpec>;
+  readonly main: NativeProcessSpec;
 }
 
 interface OutputAccumulator {
@@ -149,6 +155,14 @@ const observeOutput = (
     appendLines(logStore, resource, stream, bytes),
   ).pipe(Effect.andThen(flushLines(logStore, resource, stream)));
 
+const nativeProcessPlan = (resolved: NativeProcessSpec | NativeProcessPlan): NativeProcessPlan =>
+  "main" in resolved
+    ? resolved
+    : {
+        startup: [],
+        main: resolved,
+      };
+
 /** Creates a Supervisor-owned native runtime with exact process identity fencing. */
 export const makeNativeRuntime = (
   options: NativeRuntimeOptions,
@@ -235,6 +249,114 @@ export const makeNativeRuntime = (
       }).pipe(Effect.forkIn(resource.scope), Effect.asVoid);
     };
 
+    /** Runs one short-lived, service-owned startup process in its own scope. */
+    const runStartupProcess = (
+      resource: Resource,
+      spec: NativeProcessSpec,
+      launcher: NativeProcessLauncher | undefined,
+    ): Effect.Effect<void, RuntimeDriverError> =>
+      Effect.gen(function* () {
+        const startupScope = yield* Scope.fork(resource.scope, "parallel");
+        let started: NativeProcess | undefined;
+        const run = Effect.gen(function* () {
+          const process = yield* spawnNativeProcess(spec, launcher).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childSpawner),
+            Scope.provide(startupScope),
+            Effect.mapError((error) => processError(error, resource.key, "startup spawn")),
+          );
+          started = process;
+          const exitCode = yield* Effect.cached(
+            process.exitCode.pipe(
+              Effect.mapError((error) => processError(error, resource.key, "startup")),
+            ),
+          );
+          const consume =
+            options.logStore === undefined
+              ? Effect.all([Stream.runDrain(process.stdout), Stream.runDrain(process.stderr)], {
+                  concurrency: "unbounded",
+                  discard: true,
+                })
+              : Effect.all(
+                  [
+                    observeOutput(options.logStore, resource, process, "stdout"),
+                    observeOutput(options.logStore, resource, process, "stderr"),
+                  ],
+                  { concurrency: "unbounded", discard: true },
+                );
+          const consumed = consume.pipe(
+            Effect.mapError((error) =>
+              driverError(
+                resource.key,
+                `Native startup log stream failed for ${resource.key.workloadId}: ${errorMessage(error)}`,
+                error,
+              ),
+            ),
+          );
+          const outputFiber = yield* Effect.forkIn(consumed, startupScope);
+          // A one-shot process is complete only after both its exit and output
+          // streams have completed. Effect.all keeps the stream drain alive
+          // when the child exits before its pipes finish, while a stream
+          // failure interrupts the exit waiter and startup cleanup kills the
+          // exact child.
+          yield* Effect.all([exitCode.pipe(Effect.asVoid), Fiber.join(outputFiber)], {
+            concurrency: "unbounded",
+            discard: true,
+          });
+          const result = yield* exitCode.pipe(Effect.exit);
+          if (Exit.isFailure(result))
+            return yield* driverError(
+              resource.key,
+              `Native startup process failed for ${resource.key.workloadId}`,
+              result.cause,
+            );
+          if (result.value !== 0)
+            return yield* driverError(
+              resource.key,
+              `Native startup process exited with code ${String(result.value)} for ${resource.key.workloadId}`,
+            );
+        });
+        yield* Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            const result = yield* restore(run).pipe(Effect.exit);
+            const terminated =
+              started === undefined
+                ? Exit.succeed(undefined)
+                : yield* Effect.suspend(() => {
+                    const child = started;
+                    if (child === undefined) return Effect.void;
+                    return child.isRunning.pipe(
+                      Effect.mapError((error) =>
+                        processError(error, resource.key, "startup probe"),
+                      ),
+                      Effect.flatMap((running) =>
+                        running
+                          ? child.kill.pipe(
+                              Effect.mapError((error) =>
+                                processError(error, resource.key, "startup stop"),
+                              ),
+                            )
+                          : Effect.void,
+                      ),
+                    );
+                  }).pipe(Effect.exit);
+            const closed = yield* Scope.close(startupScope, Exit.void).pipe(Effect.exit);
+            if (Exit.isFailure(result) && Exit.isFailure(terminated) && Exit.isFailure(closed))
+              return yield* Effect.failCause(
+                Cause.combine(result.cause, Cause.combine(terminated.cause, closed.cause)),
+              );
+            if (Exit.isFailure(result) && Exit.isFailure(terminated))
+              return yield* Effect.failCause(Cause.combine(result.cause, terminated.cause));
+            if (Exit.isFailure(result) && Exit.isFailure(closed))
+              return yield* Effect.failCause(Cause.combine(result.cause, closed.cause));
+            if (Exit.isFailure(terminated) && Exit.isFailure(closed))
+              return yield* Effect.failCause(Cause.combine(terminated.cause, closed.cause));
+            if (Exit.isFailure(result)) return yield* Effect.failCause(result.cause);
+            if (Exit.isFailure(terminated)) return yield* Effect.failCause(terminated.cause);
+            if (Exit.isFailure(closed)) return yield* Effect.failCause(closed.cause);
+          }),
+        );
+      });
+
     const runStart = (resource: Resource): Effect.Effect<void> =>
       Effect.gen(function* () {
         const { key, workload } = resource;
@@ -243,8 +365,12 @@ export const makeNativeRuntime = (
             options.resolveLauncher === undefined
               ? undefined
               : yield* options.resolveLauncher(key, workload);
-          const process = yield* options.resolveProcess(key, workload).pipe(
-            Effect.flatMap((spec) => spawnNativeProcess(spec, launcher)),
+          const resolved = yield* options
+            .resolveProcess(key, workload)
+            .pipe(Effect.map(nativeProcessPlan));
+          for (const startup of resolved.startup)
+            yield* runStartupProcess(resource, startup, launcher);
+          const process = yield* spawnNativeProcess(resolved.main, launcher).pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childSpawner),
             Scope.provide(resource.scope),
             Effect.mapError((error) => processError(error, key, "spawn")),

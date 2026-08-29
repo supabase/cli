@@ -62,6 +62,7 @@ export interface NativeProcessResolution {
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
   readonly cwd: string;
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 /** Complete process-side contract for one catalog workload. */
@@ -112,18 +113,36 @@ export interface WorkloadRuntimeSpec {
     port: number,
     inputs?: WorkloadRuntimeInputs,
   ) => NativeProcessResolution;
+  /** Service-owned, short-lived native processes to run before the main process. */
+  readonly nativeStartupProcesses: (
+    artifactRoot: string,
+    state: PersistedStackState,
+    workload: PlannedWorkload,
+    port: number,
+    inputs?: WorkloadRuntimeInputs,
+  ) => ReadonlyArray<NativeProcessResolution>;
 }
 
 type WorkloadRuntimeSpecDefinition = Omit<
   WorkloadRuntimeSpec,
-  "containerPort" | "cwd" | "privateEndpoint" | "nativeProcess" | "readiness"
+  | "containerPort"
+  | "cwd"
+  | "privateEndpoint"
+  | "nativeProcess"
+  | "nativeStartupProcesses"
+  | "readiness"
 > &
   Readonly<{
     readonly readiness: Omit<WorkloadRuntimeSpec["readiness"], "binding"> & {
       readonly binding?: WorkloadBindingName;
     };
   }> &
-  Partial<Pick<WorkloadRuntimeSpec, "cwd" | "privateEndpoint" | "nativeProcess">>;
+  Partial<
+    Pick<
+      WorkloadRuntimeSpec,
+      "cwd" | "privateEndpoint" | "nativeProcess" | "nativeStartupProcesses"
+    >
+  >;
 
 export interface ContainerWorkloadResolution {
   readonly command: ReadonlyArray<string>;
@@ -501,6 +520,54 @@ const nativeProcessFor = (
     args: nativeArgs,
     cwd: spec.cwd?.(state, workload) ?? state.identity.projectRoot,
   };
+};
+
+const nativeStartupProcessesFor = (
+  artifactRoot: string,
+  _state: PersistedStackState,
+  workload: PlannedWorkload,
+  inputs: WorkloadRuntimeInputs = {},
+): ReadonlyArray<NativeProcessResolution> => {
+  const artifact = (relative: string): string => artifactPath(artifactRoot, relative);
+  const cwd = artifactRoot;
+  switch (workload.id) {
+    case "auth:auth":
+      return [{ executable: artifact("bin/auth"), args: ["migrate"], cwd }];
+    case "storage:storage":
+      return [
+        {
+          executable: artifact("node/bin/node"),
+          args: [artifact("app/dist/scripts/migrate-call.js")],
+          cwd: artifact("app"),
+        },
+      ];
+    case "realtime:realtime":
+      return [{ executable: artifact("bin/migrate"), args: [], cwd }];
+    case "analytics:analytics":
+      return [
+        {
+          executable: artifact("bin/logflare"),
+          args: ["eval", "Logflare.Release.migrate"],
+          cwd,
+        },
+      ];
+    case "pooler:pooler": {
+      const migrate = { executable: artifact("bin/migrate"), args: [], cwd };
+      const tenantPath = inputs.pooler?.tenantPath;
+      if (tenantPath === undefined) return [migrate];
+      return [
+        migrate,
+        {
+          executable: "/bin/sh",
+          args: ["-c", `${artifact("bin/supavisor")} eval "$(cat "$SUPABASE_POOLER_TENANT_PATH")"`],
+          cwd,
+          env: { SUPABASE_POOLER_TENANT_PATH: tenantPath },
+        },
+      ];
+    }
+    default:
+      return [];
+  }
 };
 
 const withRestSettings = (
@@ -972,7 +1039,9 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     args: () => [],
     env: (state, workload, port, runtime = "native", inputs = {}) =>
       withAuthSettings(state, runtime, port, workload, inputs),
-    containerArgs: () => [],
+    // The slim Auth image has an empty ENTRYPOINT. Run its idempotent
+    // migration before handing control back to the image's gotrue command.
+    containerArgs: () => ["/bin/sh", "-c", "gotrue migrate && exec gotrue"],
     networkAliases: ["supabase-auth"],
     readiness: { protocol: "http", path: "/health" },
   },
@@ -1014,7 +1083,14 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
     args: () => [],
     env: (state, workload, port, runtime = "native", inputs = {}) =>
       withStorageSettings(state, runtime, port, workload, inputs),
-    containerArgs: () => [],
+    // The slim Storage image has an empty ENTRYPOINT and ships the bundled
+    // Node runtime on PATH. Keep migration and the long-lived server in one
+    // command so both modes share the same startup contract.
+    containerArgs: () => [
+      "/usr/bin/sh",
+      "-c",
+      "node dist/scripts/migrate-call.js && exec node dist/start/server.js",
+    ],
     networkAliases: ["supabase-storage"],
     readiness: { protocol: "http", path: "/status" },
   },
@@ -1026,7 +1102,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       IMGPROXY_BIND: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${port}`,
       IMGPROXY_LOCAL_FILESYSTEM_ROOT:
         runtime === "container"
-          ? "/"
+          ? "/mnt"
           : (inputs.storage?.dataPath ?? `${state.identity.projectRoot}/.supabase/storage`),
     }),
     containerArgs: () => [],
@@ -1137,10 +1213,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       smtp: { containerPort: 1025 },
       pop3: { containerPort: 1110 },
     },
-    args: (state, _workload, port) => [
-      "--ui",
-      `127.0.0.1:${privatePortFor(state, "mail:mail", "ui") ?? port}`,
-    ],
+    args: () => [],
     env: (state, workload, port, runtime = "native") => ({
       ...common(workload, port),
       ...capabilityEnv(state, "mail", "MAIL"),
@@ -1149,7 +1222,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       MP_POP3_BIND_ADDR: `${runtime === "container" ? "0.0.0.0" : "127.0.0.1"}:${workloadPort(state, "mail:mail", "pop3", runtime, 1110)}`,
       MP_SMTP_DISABLE_RDNS: "true",
     }),
-    containerArgs: () => ["--ui", "0.0.0.0:8025"],
+    containerArgs: () => [],
     networkAliases: [MAIL_NETWORK_ALIAS],
     readiness: { protocol: "http", path: "/readyz", binding: "ui" },
   },
@@ -1209,7 +1282,7 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
   "pooler:pooler": {
     bindings: { primary: { containerPort: 6543 } },
     args: () => ["start"],
-    env: (state, workload, port, runtime = "native") => ({
+    env: (state, workload, port, runtime = "native", inputs = {}) => ({
       ...common(workload, port),
       ...capabilityEnv(state, "pooler", "POOLER"),
       PORT: "4000",
@@ -1232,10 +1305,30 @@ const specs: Readonly<Record<string, WorkloadRuntimeSpecDefinition>> = {
       DEFAULT_POOL_SIZE: valueAt(state, "pooler", "default_pool_size") || "20",
       MAX_CLIENT_CONN: valueAt(state, "pooler", "max_client_conn") || "100",
       POOL_MODE: valueAt(state, "pooler", "pool_mode") || "transaction",
+      ...(inputs.pooler?.tenantPath === undefined
+        ? {}
+        : { SUPABASE_POOLER_TENANT_PATH: "/app/pooler_tenant.exs" }),
     }),
     // The slim container entrypoint performs Supavisor migrations. Tenant
     // provisioning is a separate owner/bootstrap phase.
-    containerArgs: () => [],
+    containerArgs: (_state, _workload, _port, inputs = {}) =>
+      inputs.pooler?.tenantPath === undefined
+        ? []
+        : [
+            "/usr/bin/sh",
+            "-c",
+            '/app/bin/supavisor eval "$(cat "$SUPABASE_POOLER_TENANT_PATH")" && exec /app/bin/server',
+          ],
+    containerMounts: (_state, _workload, inputs = {}) =>
+      inputs.pooler?.tenantPath === undefined
+        ? []
+        : [
+            {
+              source: inputs.pooler.tenantPath,
+              target: "/app/pooler_tenant.exs",
+              readOnly: true,
+            },
+          ],
     networkAliases: ["supabase-pooler"],
     readiness: { protocol: "tcp" },
   },
@@ -1342,6 +1435,9 @@ export const runtimeSpecFor = (workload: PlannedWorkload): WorkloadRuntimeSpec |
         )),
     nativeProcess: (artifactRoot, state, currentWorkload, port, inputs = {}) =>
       nativeProcessFor(artifactRoot, state, currentWorkload, port, spec, inputs),
+    nativeStartupProcesses: (artifactRoot, state, currentWorkload, _port, inputs = {}) =>
+      spec.nativeStartupProcesses?.(artifactRoot, state, currentWorkload, _port, inputs) ??
+      nativeStartupProcessesFor(artifactRoot, state, currentWorkload, inputs),
   };
 };
 

@@ -495,9 +495,27 @@ export const makeProductionRuntimeFactory = (
                         endpoint.port,
                         inputs,
                       );
+                      const environment = spec.env(
+                        fresh,
+                        workload,
+                        endpoint.port,
+                        "native",
+                        inputs,
+                      );
                       return {
-                        ...process,
-                        env: spec.env(fresh, workload, endpoint.port, "native", inputs),
+                        startup: spec
+                          .nativeStartupProcesses(
+                            prepared.artifactRoot,
+                            fresh,
+                            workload,
+                            endpoint.port,
+                            inputs,
+                          )
+                          .map((startup) => ({
+                            ...startup,
+                            env: { ...environment, ...startup.env },
+                          })),
+                        main: { ...process, env: environment },
                       };
                     }),
                   ),
@@ -574,8 +592,18 @@ export const makeProductionRuntimeFactory = (
                         workload.id === "database:database"
                           ? { target: "/var/lib/postgresql/data", readOnly: false }
                           : workload.id === "storage:storage"
-                            ? { target: "/var/lib/storage", readOnly: false }
-                            : undefined;
+                            ? {
+                                target: "/mnt",
+                                readOnly: false,
+                                ownerWorkloadId: "storage:storage",
+                              }
+                            : workload.id === "storage:imgproxy"
+                              ? {
+                                  target: "/mnt",
+                                  readOnly: true,
+                                  ownerWorkloadId: "storage:storage",
+                                }
+                              : undefined;
                       const { env: _env, ...withoutEnv } = resolution;
                       return {
                         ...withoutEnv,

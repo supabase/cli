@@ -212,6 +212,81 @@ describe("workload runtime catalog", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it("resolves service-owned startup processes and slim container command contracts", () => {
+    const root = "/tmp/slim-artifact";
+    const auth = planned("auth:auth");
+    expect(runtimeSpecFor(auth)?.nativeStartupProcesses(root, state, auth, 9999)).toEqual([
+      { executable: `${root}/bin/auth`, args: ["migrate"], cwd: root },
+    ]);
+    const storage = planned("storage:storage");
+    expect(runtimeSpecFor(storage)?.nativeStartupProcesses(root, state, storage, 5000)).toEqual([
+      {
+        executable: `${root}/node/bin/node`,
+        args: [`${root}/app/dist/scripts/migrate-call.js`],
+        cwd: `${root}/app`,
+      },
+    ]);
+    const realtime = planned("realtime:realtime");
+    expect(runtimeSpecFor(realtime)?.nativeStartupProcesses(root, state, realtime, 4000)).toEqual([
+      { executable: `${root}/bin/migrate`, args: [], cwd: root },
+    ]);
+    const analytics = planned("analytics:analytics");
+    expect(runtimeSpecFor(analytics)?.nativeStartupProcesses(root, state, analytics, 4000)).toEqual(
+      [
+        {
+          executable: `${root}/bin/logflare`,
+          args: ["eval", "Logflare.Release.migrate"],
+          cwd: root,
+        },
+      ],
+    );
+    const pooler = planned("pooler:pooler");
+    expect(runtimeSpecFor(pooler)?.nativeStartupProcesses(root, state, pooler, 6543)).toEqual([
+      { executable: `${root}/bin/migrate`, args: [], cwd: root },
+    ]);
+    const tenantInput = { pooler: { tenantPath: "/tmp/pooler-tenant.exs" } };
+    const tenantStartup = runtimeSpecFor(pooler)?.nativeStartupProcesses(
+      root,
+      state,
+      pooler,
+      6543,
+      tenantInput,
+    );
+    expect(tenantStartup).toHaveLength(2);
+    expect(tenantStartup?.[1]).toEqual({
+      executable: "/bin/sh",
+      args: ["-c", `${root}/bin/supavisor eval "$(cat "$SUPABASE_POOLER_TENANT_PATH")"`],
+      cwd: root,
+      env: { SUPABASE_POOLER_TENANT_PATH: "/tmp/pooler-tenant.exs" },
+    });
+    expect(tenantStartup?.[1]?.args.join(" ")).not.toContain("secret");
+
+    expect(containerResolutionFor(state, auth)?.command).toEqual([
+      "/bin/sh",
+      "-c",
+      "gotrue migrate && exec gotrue",
+    ]);
+    expect(containerResolutionFor(state, storage)?.command).toEqual([
+      "/usr/bin/sh",
+      "-c",
+      "node dist/scripts/migrate-call.js && exec node dist/start/server.js",
+    ]);
+    expect(containerResolutionFor(state, realtime)?.command).toEqual([]);
+    expect(containerResolutionFor(state, analytics)?.command).toEqual([]);
+    expect(containerResolutionFor(state, pooler)?.command).toEqual([]);
+    const poolerWithTenant = containerResolutionFor(state, pooler, tenantInput);
+    expect(poolerWithTenant?.command).toEqual([
+      "/usr/bin/sh",
+      "-c",
+      '/app/bin/supavisor eval "$(cat "$SUPABASE_POOLER_TENANT_PATH")" && exec /app/bin/server',
+    ]);
+    expect(poolerWithTenant?.mounts).toEqual([
+      { source: "/tmp/pooler-tenant.exs", target: "/app/pooler_tenant.exs", readOnly: true },
+    ]);
+    expect(poolerWithTenant?.env.SUPABASE_POOLER_TENANT_PATH).toBe("/app/pooler_tenant.exs");
+    expect(poolerWithTenant?.command.join(" ")).not.toContain("secret");
+  });
+
   it.live(
     "consumes nested capability settings and separates native/container database endpoints",
     () =>
