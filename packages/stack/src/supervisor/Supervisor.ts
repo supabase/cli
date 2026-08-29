@@ -12,14 +12,15 @@ import {
   Stream,
 } from "effect";
 import type { StackIdentity } from "../identity/Identity.ts";
-import { rebuildExecutionPlan } from "../model/Compiler.ts";
-import type { ExecutionPlan } from "../model/ExecutionPlan.ts";
+import { compileStack, rebuildExecutionPlan } from "../model/Compiler.ts";
+import type { ExecutionPlan, PlannedWorkload } from "../model/ExecutionPlan.ts";
 import {
   CAPABILITY_NAMES,
   type CapabilityName,
   type CapabilityStatus,
 } from "../public/Capability.ts";
 import type { StackConfig } from "../public/Config.ts";
+import type { StackRuntime } from "../public/Runtime.ts";
 import {
   GatewayActivationError,
   InvalidStackIdentityError,
@@ -78,6 +79,7 @@ import type { LogStore } from "./LogStore.ts";
 import type { SupervisorIngress } from "./Ingress.ts";
 import { StackRpcGroup, type StackRpcError, type StackRpcHandlers } from "../control/StackRpc.ts";
 import type { MaintenanceResponse } from "../control/MaintenanceProtocol.ts";
+import type { PreparedWorkloadArtifact } from "../preparation/RuntimeArtifacts.ts";
 
 export interface ActivationResult {
   readonly capability: CapabilityName;
@@ -87,6 +89,11 @@ export interface ActivationResult {
 /** Runtime construction is injected so catalog/artifact resolution can evolve independently. */
 export interface SupervisorRuntime {
   readonly driver: RuntimeDriver;
+  /** Verifies and prepares immutable workload artifacts without changing lifecycle state. */
+  readonly prepare?: (
+    runtime: StackRuntime,
+    workloads: ReadonlyArray<PlannedWorkload>,
+  ) => Effect.Effect<ReadonlyArray<PreparedWorkloadArtifact>, StackError>;
   readonly preflight?: (input: LifecycleInput) => Effect.Effect<LifecyclePrepared, StackError>;
   readonly activate?: (
     capability: CapabilityName,
@@ -832,14 +839,115 @@ export const makeSupervisor = (options: SupervisorOptions): Effect.Effect<Superv
         } satisfies EffectStackCredentials;
       },
     );
+    const prepareOperation = (prepareOptions?: {
+      readonly config?: StackConfig;
+      readonly capabilities?: ReadonlyArray<CapabilityName>;
+    }) =>
+      Effect.gen(function* () {
+        // Preparation is deliberately based on one fresh state read and never writes it. A
+        // supplied config is compiled only to validate/materialize a prospective plan; its secret
+        // declarations are intentionally not resolved here.
+        const state = yield* read();
+        if (state === undefined)
+          return yield* new StackStateInvalidError({ message: "Stack state is missing" });
+
+        let definition: import("../model/Compiler.ts").StackDefinition;
+        let plan: ExecutionPlan;
+        if (prepareOptions?.config === undefined && state.definition !== undefined) {
+          if (state.inputFingerprint === undefined)
+            return yield* new StackStateInvalidError({
+              stackId: options.stackId,
+              message: "Persisted stack definition fingerprint is missing",
+            });
+          definition = state.definition;
+          plan = yield* rebuildExecutionPlan(state.runtime, definition).pipe(
+            Effect.provideContext(options.context),
+          );
+        } else {
+          if (
+            prepareOptions?.config === undefined &&
+            state.desiredLifecycle !== "unconfigured" &&
+            state.definition === undefined
+          )
+            return yield* new StackDefinitionRequiredError({
+              stackId: options.stackId,
+              message: "A complete stack definition is required",
+            });
+          const compiled = yield* compileStack({
+            projectRoot: state.identity.projectRoot,
+            runtime: state.runtime,
+            config: prepareOptions?.config,
+          }).pipe(Effect.provideContext(options.context));
+          definition = compiled.definition;
+          plan = compiled.executionPlan;
+        }
+
+        const selected = new Set<CapabilityName>();
+        const visit = (name: CapabilityName): Effect.Effect<void, StackPreparationError> => {
+          if (selected.has(name)) return Effect.void;
+          const capability = definition.capabilities[name];
+          if (!capability.enabled)
+            return Effect.fail(
+              new StackPreparationError({
+                stackId: options.stackId,
+                capability: name,
+                message: `Capability ${name} is disabled`,
+              }),
+            );
+          selected.add(name);
+          return Effect.forEach(plan.dependencies[name], visit, { discard: true });
+        };
+        if (prepareOptions?.capabilities === undefined) {
+          for (const name of CAPABILITY_NAMES)
+            if (definition.capabilities[name].enabled) selected.add(name);
+        } else {
+          for (const name of new Set(prepareOptions.capabilities)) yield* visit(name);
+        }
+
+        const workloads = plan.workloads.filter((workload) => selected.has(workload.capability));
+        if (runtime.prepare === undefined)
+          return yield* new StackPreparationError({
+            stackId: options.stackId,
+            message: "Stack runtime artifact preparation is unavailable",
+          });
+        const artifacts = yield* runtime.prepare(state.runtime, workloads);
+        const byCapability = new Map<CapabilityName, ReadonlyArray<PreparedWorkloadArtifact>>();
+        for (const artifact of artifacts) {
+          const existing = byCapability.get(artifact.capability) ?? [];
+          byCapability.set(artifact.capability, [...existing, artifact]);
+        }
+        const capabilities = plan.startOrder
+          .filter((name) => selected.has(name))
+          .map((name) => {
+            const entries = byCapability.get(name) ?? [];
+            const outcome: "cached" | "downloaded" | "pulled" =
+              state.runtime.kind === "native"
+                ? entries.some((entry) => entry.outcome === "downloaded")
+                  ? "downloaded"
+                  : "cached"
+                : entries.some((entry) => entry.outcome === "pulled")
+                  ? "pulled"
+                  : "cached";
+            return {
+              capability: name,
+              version: definition.capabilities[name].version,
+              outcome,
+            };
+          });
+        return { capabilities };
+      }).pipe(Effect.provideContext(options.context));
     const rpcHandlers: StackRpcHandlers = StackRpcGroup.of({
       status: () =>
         status.pipe(
           Effect.mapError((error) => rpcError("StackStateInvalidError", stateErrorMessage(error))),
         ),
       credentials: () => credentials,
-      prepare: () =>
-        Effect.fail(rpcError("StackPreparationError", "Stack preparation is not available yet")),
+      prepare: ({ config, capabilities }) =>
+        prepareOperation({ config, capabilities }).pipe(
+          Effect.mapError((error) =>
+            rpcError(rpcTag(error, "StackPreparationError"), stateErrorMessage(error)),
+          ),
+        ),
       start: ({ config }: { readonly config?: StackConfig }) =>
         operation(startOperation({ config }), "StackReconciliationError"),
       restart: ({ config }: { readonly config?: StackConfig }) =>

@@ -3,6 +3,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Path, Crypto, Stream } from "effect";
 import type { StackLogEntry } from "../public/Logs.ts";
 import { StackIdSchema } from "../public/StackId.ts";
+import type { StackRuntime } from "../public/Runtime.ts";
 import type { PersistedStackState } from "../state/StackState.ts";
 import type { StackStateStore } from "../state/StackStateStore.ts";
 import type { SupervisorIngress } from "../supervisor/Ingress.ts";
@@ -10,6 +11,7 @@ import type { LogStore } from "../supervisor/LogStore.ts";
 import { makeProductionRuntimeFactory, withOwnedRuntimeFileCleanup } from "./ProductionRuntime.ts";
 import { RuntimeDriverError, type RuntimeDriver } from "./RuntimeDriver.ts";
 import type { RuntimeArtifactPreparer } from "../preparation/RuntimeArtifacts.ts";
+import type { PlannedWorkload } from "../model/ExecutionPlan.ts";
 import {
   makeFunctionsBootstrapOwner,
   type FunctionsBootstrapOwner,
@@ -19,7 +21,10 @@ import { makeRuntimeEnvFileOwner } from "./RuntimeEnvFile.ts";
 
 const stackId = StackIdSchema.make("a".repeat(64));
 
-const stateFor = (secrets: PersistedStackState["secrets"]): PersistedStackState => ({
+const stateFor = (
+  secrets: PersistedStackState["secrets"],
+  runtime: StackRuntime = { kind: "native" },
+): PersistedStackState => ({
   format: "supabase-stack-state-v1",
   identity: {
     stackId,
@@ -31,13 +36,35 @@ const stateFor = (secrets: PersistedStackState["secrets"]): PersistedStackState 
     localProjectKey: ".",
     stackName: "production-runtime",
   },
-  runtime: { kind: "native" },
+  runtime,
   desiredGeneration: 1,
   portsGeneration: null,
   desiredLifecycle: "stopped",
   ports: [],
   privatePorts: [],
   secrets,
+});
+
+const workloadFor = (
+  id: string,
+  capability: PlannedWorkload["capability"],
+  selected: PlannedWorkload["selected"],
+): PlannedWorkload => ({
+  id,
+  capability,
+  dependencies: [],
+  readiness: { mode: "tcp" },
+  restart: { maxAttempts: 1, backoffMs: 0 },
+  artifacts: {
+    native: { kind: "native", service: "postgres", release: "17.6.1.166" },
+    container: {
+      kind: "container",
+      service: "postgres",
+      image: "ghcr.io/supabase/cli/postgres:17.6.1.166",
+    },
+  },
+  selected,
+  specHash: `hash-${id}`,
 });
 
 const stateStoreFor = (current: { value: PersistedStackState }): StackStateStore => ({
@@ -91,6 +118,65 @@ const bootstrap: FunctionsBootstrapOwner = {
 };
 
 describe("production runtime composition", () => {
+  it.live("exposes artifact-only preparation without starting workloads or mutating state", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const current = { value: stateFor({}) };
+        const preparedCalls: string[] = [];
+        const preparer: RuntimeArtifactPreparer = {
+          prepare: (_runtime, workload) =>
+            Effect.sync(() => {
+              preparedCalls.push(workload.id);
+              return {
+                workloadId: workload.id,
+                capability: workload.capability,
+                version: "17.6.1.166",
+                outcome: workload.id.endsWith("download")
+                  ? ("downloaded" as const)
+                  : ("cached" as const),
+                artifactRoot: "/tmp/prepared",
+              };
+            }),
+        };
+        const context = yield* Effect.context<FileSystem.FileSystem | Path.Path | Crypto.Crypto>();
+        const factory = yield* makeProductionRuntimeFactory({
+          stateRoot: "/tmp/production-runtime-prepare-state",
+          stackId,
+          ownerSessionId: "owner",
+          stateStore: stateStoreFor(current),
+          context,
+          ingress,
+          artifactPreparer: preparer,
+          envFileOwner: envFiles,
+          functionsBootstrapOwner: bootstrap,
+          logStore: memoryLogStore([]),
+          bootstrapDatabase: () => Effect.void,
+        });
+        const runtime = yield* factory.make(current.value);
+        if (runtime.prepare === undefined) return yield* Effect.die("prepare seam missing");
+        const before = current.value;
+        const result = yield* runtime.prepare({ kind: "native" }, [
+          workloadFor("database:database", "database", {
+            kind: "native",
+            service: "postgres",
+            release: "17.6.1.166",
+          }),
+          workloadFor("rest:download", "rest", {
+            kind: "native",
+            service: "postgres",
+            release: "17.6.1.166",
+          }),
+        ]);
+        expect(result.map(({ workloadId, outcome }) => [workloadId, outcome])).toEqual([
+          ["database:database", "cached"],
+          ["rest:download", "downloaded"],
+        ]);
+        expect(preparedCalls).toEqual(["database:database", "rest:download"]);
+        expect(current.value).toEqual(before);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    ),
+  );
+
   it.live("redacts logs using secret slots materialized after factory creation", () =>
     Effect.scoped(
       Effect.gen(function* () {

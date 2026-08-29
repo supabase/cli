@@ -16,6 +16,8 @@ import type { StackRuntime } from "../public/Runtime.ts";
 import {
   GatewayActivationError,
   StackPreparationError,
+  ArtifactIntegrityError,
+  ContainerPullError,
   StackRuntimeMismatchError,
   StackStateInvalidError,
   type StackError,
@@ -325,12 +327,21 @@ export const makeProductionRuntimeFactory = (
             return cached === undefined
               ? preparer.prepare(runtime, workload).pipe(
                   Effect.mapError((error) =>
-                    preparationError(`Unable to prepare ${workload.id}`, error),
+                    error instanceof ArtifactIntegrityError || error instanceof ContainerPullError
+                      ? error
+                      : preparationError(`Unable to prepare ${workload.id}`, error),
                   ),
                   Effect.tap((prepared) => Effect.sync(() => artifacts.set(key, prepared))),
                 )
               : Effect.succeed(cached);
           };
+          const prepareArtifacts = (
+            runtime: StackRuntime,
+            workloads: ReadonlyArray<PlannedWorkload>,
+          ) =>
+            Effect.forEach(workloads, (workload) => prepare(runtime, workload), {
+              concurrency: 4,
+            });
           const functionsPath = (
             generation: number,
           ): Effect.Effect<string, StackPreparationError> => {
@@ -597,6 +608,7 @@ export const makeProductionRuntimeFactory = (
           const ownedDriver = withOwnedRuntimeFileCleanup(driver, envFiles, functionsBootstrap);
           return {
             driver: ownedDriver,
+            prepare: prepareArtifacts,
             preflight,
             activate,
             ingress,
