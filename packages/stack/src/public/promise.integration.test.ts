@@ -100,6 +100,22 @@ describe("Promise stack facade", () => {
     await stack.close();
   });
 
+  it("removes naturally completed streams and rejects new streams after close", async () => {
+    const stack = adaptEffectStack(effectStack());
+    const statusIterator = stack.watchStatus()[Symbol.asyncIterator]();
+    await expect(statusIterator.next()).resolves.toMatchObject({ done: false });
+    await expect(statusIterator.next()).resolves.toMatchObject({ done: true });
+    const logsIterator = stack.logs()[Symbol.asyncIterator]();
+    await expect(logsIterator.next()).resolves.toMatchObject({ done: true });
+    await stack.close();
+    await expect(stack.watchStatus()[Symbol.asyncIterator]().next()).rejects.toThrow(
+      "Stack handle is closed",
+    );
+    await expect(stack.logs()[Symbol.asyncIterator]().next()).rejects.toThrow(
+      "Stack handle is closed",
+    );
+  });
+
   it("redacts nested config secrets for prepare, start, and restart", async () => {
     let preparedConfig: StartStackOptions["config"] | undefined;
     let startedConfig: StartStackOptions["config"] | undefined;

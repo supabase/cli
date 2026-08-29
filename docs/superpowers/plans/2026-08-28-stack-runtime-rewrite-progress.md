@@ -565,3 +565,14 @@ Implementation continues after recording a ruling; this file is not a question q
 - Post-fix focused verification: stack facade integration 2 files/7 tests; CLI integration 13 files/40
   tests; CLI units 4 files/10 tests; both workspace types; generic/Effect lint, formatting, and diff
   checks passed.
+
+#### Fix round 2/5 evidence — 2026-08-29
+
+- Closed Functions inspector mode/main settings preserve `run`/`brk`/`wait` and `--inspect-main` for
+  both serve registrations without eager activation. Test-resource readiness is now derived from
+  supplied config (disabled capabilities/listeners are exempt), with exact cleanup on close failure.
+- Added natural/post-close Promise stream coverage, start changed-running `supabase restart` guidance,
+  restart exclusion preservation, and honest linked/unlinked update output.
+- Focused verification: stack facade/model/compiler 3 files/40 tests; CLI Functions/start/restart/update
+  5 files/9 tests plus legacy/config units 2 files/9 tests; both workspace types; lint/format/diff checks
+  passed.

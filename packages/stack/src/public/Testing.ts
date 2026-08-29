@@ -35,14 +35,35 @@ const defaultOperations: TestStackOperations = {
 const waitForReadiness = async (
   stack: PromiseStack,
   initial: Awaited<ReturnType<PromiseStack["status"]>>,
+  config: PromiseStackConfig | undefined,
 ) => {
+  const disabledCapabilities = new Set(
+    Object.entries(config?.capabilities ?? {}).flatMap(([name, capability]) =>
+      capability !== undefined && "enabled" in capability && capability.enabled === false
+        ? [name]
+        : [],
+    ),
+  );
+  const configuredListeners = Object.entries(config?.listeners ?? {}).flatMap(
+    ([name, listener]) => {
+      if (listener === undefined || ("enabled" in listener && listener.enabled === false)) {
+        return [];
+      }
+      return [name];
+    },
+  );
   const ready = (status: typeof initial) =>
     status.lifecycle === "running" &&
-    status.endpoints.api !== undefined &&
-    status.capabilities.some(
+    status.capabilities.every(
       (capability) =>
-        capability.name === "functions" &&
-        (capability.state === "ready" || capability.state === "dormant"),
+        disabledCapabilities.has(capability.name) ||
+        capability.state === "ready" ||
+        capability.state === "dormant",
+    ) &&
+    configuredListeners.every((name) =>
+      Object.entries(status.endpoints).some(
+        ([endpointName, endpoint]) => endpointName === name && endpoint !== undefined,
+      ),
     );
   if (ready(initial)) return;
   for await (const status of stack.watchStatus()) {
@@ -96,7 +117,7 @@ export const createTestStackWith = async (
         ? undefined
         : ({ config: options.config } satisfies PromiseStartStackOptions),
     );
-    await waitForReadiness(stack, started);
+    await waitForReadiness(stack, started, options.config);
     const resource = stack;
     return {
       ...resource,

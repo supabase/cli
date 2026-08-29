@@ -110,6 +110,7 @@ describe("managed Functions serving", () => {
             functions !== undefined && "settings" in functions ? functions.settings : undefined;
           const hello = functionSettings?.functions?.hello;
           expect(functionSettings?.functions_root).toBe("supabase/functions");
+          expect(functionSettings?.inspector).toEqual({ mode: "wait", main: true });
           expect(hello?.verify_jwt).toBe(false);
           expect(hello?.import_map).toBe("supabase/functions/custom-deno.json");
           const configToken = hello?.env?.CONFIG_TOKEN;

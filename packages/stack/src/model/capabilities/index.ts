@@ -5,11 +5,13 @@ export {
   FunctionSettingsDefaults,
   FunctionsModule,
   FunctionsSettingsSchema,
+  FunctionsInspectorSettingsSchema,
   type FunctionOverride,
   type FunctionSecret,
   type FunctionSettings,
   type MaterializedFunctionSettings,
   type FunctionsSettings,
+  type FunctionsInspectorSettings,
 } from "./functions.ts";
 export { MailModule, MailSettingsSchema, type MailSettings } from "./mail.ts";
 export { PoolerModule, PoolerSettingsSchema, type PoolerSettings } from "./pooler.ts";

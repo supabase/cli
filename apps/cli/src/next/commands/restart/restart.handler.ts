@@ -53,7 +53,7 @@ export const restart = Effect.fnUntraced(function* (
     return yield* new StackNotFoundError({ message: "No local Supabase stack was found." });
   }
   const loadedConfig = yield* operations.loadConfig(project.projectRoot);
-  const config = toStartStackConfig(loadedConfig, []);
+  const config = toStartStackConfig(loadedConfig, flags.exclude);
   yield* Effect.scoped(
     Effect.gen(function* () {
       const stack = yield* operations.openStack(descriptor.value.id);

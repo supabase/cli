@@ -21,8 +21,8 @@ const baseFlags = (): LegacyFunctionsServeFlags => ({
   envFile: Option.none(),
   importMap: Option.some("supabase/functions/deno.json"),
   inspect: false,
-  inspectMode: Option.none(),
-  inspectMain: false,
+  inspectMode: Option.some("run"),
+  inspectMain: true,
   all: true,
 });
 
@@ -112,6 +112,7 @@ describe("legacy functions serve", () => {
             functions !== undefined && "settings" in functions ? functions.settings : undefined;
           const hello = functionSettings?.functions?.hello;
           expect(functionSettings?.functions_root).toBe("supabase/functions");
+          expect(functionSettings?.inspector).toEqual({ mode: "run", main: true });
           expect(hello?.verify_jwt).toBe(false);
           expect(hello?.import_map).toBe("supabase/functions/deno.json");
           expect(output.messages).toContainEqual(

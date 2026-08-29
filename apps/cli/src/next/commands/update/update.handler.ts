@@ -39,7 +39,10 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
   yield* ensureProjectStateIgnored(cliProjectHome.projectRoot);
 
   const linkedState = yield* projectLinkState.load;
-  if (Option.isSome(linkedState)) {
+  if (Option.isNone(linkedState)) {
+    yield* output.info("No linked project metadata is configured; nothing to refresh.");
+    yield* output.success("No linked project metadata to refresh.", { stack: flags.stack });
+  } else {
     const refreshed = yield* refreshLinkedProjectSnapshot(linkedState.value.project.ref, []);
     const changedVersions = diffCachedLinkedVersions(
       linkedState.value.versions,
@@ -63,8 +66,10 @@ export const update = Effect.fnUntraced(function* (flags: UpdateFlags) {
         `Some remote service versions could not be fetched and will keep using CLI defaults: ${refreshed.linkedProject.unavailableServices.join(", ")}`,
       );
     }
+    yield* output.success("Linked project metadata refreshed.", {
+      stack: flags.stack,
+      project: refreshed.linkedProject.ref,
+    });
   }
-
-  yield* output.success("Stack configuration is up to date.", { stack: flags.stack });
-  yield* output.outro(`Stack ${flags.stack} is ready.`);
+  yield* output.outro(`Linked project metadata refresh complete for ${flags.stack}.`);
 });

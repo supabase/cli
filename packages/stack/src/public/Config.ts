@@ -6,7 +6,9 @@ import { RealtimeSettingsSchema, type RealtimeSettings } from "../model/capabili
 import { StorageSettingsSchema, type StorageSettings } from "../model/capabilities/storage.ts";
 import {
   FunctionsSettingsSchema,
+  FunctionsInspectorSettingsSchema,
   type FunctionsSettings,
+  type FunctionsInspectorSettings,
 } from "../model/capabilities/functions.ts";
 import { StudioSettingsSchema, type StudioSettings } from "../model/capabilities/studio.ts";
 import { MailSettingsSchema, type MailSettings } from "../model/capabilities/mail.ts";
@@ -97,6 +99,7 @@ export {
   RealtimeSettingsSchema,
   StorageSettingsSchema,
   FunctionsSettingsSchema,
+  FunctionsInspectorSettingsSchema,
   StudioSettingsSchema,
   MailSettingsSchema,
   AnalyticsSettingsSchema,
@@ -109,6 +112,7 @@ export type {
   RealtimeSettings,
   StorageSettings,
   FunctionsSettings,
+  FunctionsInspectorSettings,
   StudioSettings,
   MailSettings,
   AnalyticsSettings,

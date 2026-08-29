@@ -135,6 +135,9 @@ export const runFunctionsDevRuntime = Effect.fnUntraced(function* (flags: Functi
     envFile: Option.getOrUndefined(flags.envFile),
     noVerifyJwt: flags.noVerifyJwt,
     importMap: Option.getOrUndefined(flags.importMap),
+    inspect: flags.inspect,
+    inspectMode: Option.getOrUndefined(flags.inspectMode),
+    inspectMain: flags.inspectMain,
   });
 });
 
@@ -170,6 +173,19 @@ export const serveManagedFunctions = Effect.fnUntraced(function* (
               resolve(options.projectRoot, options.envFile),
             );
       const translated = toStartStackConfig(loadedConfig, [], "docker");
+      if (options.inspect && options.inspectMode !== undefined) {
+        return yield* Effect.fail(
+          new Error(
+            "if any flags in the group [inspect inspect-mode] are set none of the others can be; [inspect inspect-mode] were all set",
+          ),
+        );
+      }
+      const inspectorMode = options.inspectMode ?? (options.inspect ? "brk" : undefined);
+      if (options.inspectMain && inspectorMode === undefined) {
+        return yield* Effect.fail(
+          new Error("--inspect-main must be used together with --inspect or --inspect-mode"),
+        );
+      }
       const functionsCapability = translated.capabilities?.functions;
       const existingSettings =
         functionsCapability !== undefined && "settings" in functionsCapability
@@ -181,10 +197,12 @@ export const serveManagedFunctions = Effect.fnUntraced(function* (
         settings: {
           ...existingSettings,
           functions_root: "supabase/functions",
+          ...(inspectorMode === undefined
+            ? {}
+            : { inspector: { mode: inspectorMode, main: options.inspectMain === true } }),
           functions: toFunctionOverrides(manifest, options, envFile),
         },
       };
-      const inspectRequested = options.inspect === true || options.inspectMode !== undefined;
       const inspectorPort = loadedConfig?.edge_runtime?.inspector_port ?? 8083;
       const status = yield* stack.start({
         config: {
@@ -195,7 +213,7 @@ export const serveManagedFunctions = Effect.fnUntraced(function* (
           },
           listeners: {
             ...translated.listeners,
-            ...(inspectRequested ? { functionsInspector: { port: inspectorPort } } : {}),
+            ...(inspectorMode === undefined ? {} : { functionsInspector: { port: inspectorPort } }),
           },
         },
       });

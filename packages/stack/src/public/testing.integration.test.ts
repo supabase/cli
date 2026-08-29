@@ -12,7 +12,11 @@ const stackId = StackIdSchema.make(
   "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
 );
 
-const status = (lifecycle: StackStatus["lifecycle"]): StackStatus => ({
+const status = (
+  lifecycle: StackStatus["lifecycle"],
+  includeApi = true,
+  functionsState: "ready" | "dormant" | "stopped" = "dormant",
+): StackStatus => ({
   id: stackId,
   lifecycle,
   desiredLifecycle:
@@ -23,7 +27,7 @@ const status = (lifecycle: StackStatus["lifecycle"]): StackStatus => ({
         : lifecycle,
   runtime: { kind: "native" },
   endpoints:
-    lifecycle === "running"
+    lifecycle === "running" && includeApi
       ? {
           api: {
             protocol: "http",
@@ -37,7 +41,7 @@ const status = (lifecycle: StackStatus["lifecycle"]): StackStatus => ({
   capabilities: CAPABILITY_NAMES.map((name) => ({
     name,
     activation: name === "functions" ? "lazy" : "eager",
-    state: lifecycle === "running" ? (name === "functions" ? "dormant" : "ready") : "stopped",
+    state: lifecycle === "running" ? (name === "functions" ? functionsState : "ready") : "stopped",
   })),
 });
 
@@ -51,9 +55,12 @@ const fakeStack = (
   events: Array<string>,
   failStart = false,
   reachesReadiness = true,
+  failClose = false,
+  includeApi = true,
+  functionsState: "ready" | "dormant" | "stopped" = "dormant",
 ): PromiseStack => ({
   id: stackId,
-  status: async () => status("running"),
+  status: async () => status("running", includeApi, functionsState),
   credentials: async () => ({
     database: { url: "postgres://test", password: "test" },
     api: {
@@ -73,7 +80,7 @@ const fakeStack = (
   start: async () => {
     events.push("start");
     if (failStart) throw new Error("startup failed");
-    return status("starting");
+    return status("starting", includeApi, functionsState);
   },
   restart: async () => status("running"),
   stop: async () => undefined,
@@ -83,8 +90,10 @@ const fakeStack = (
   },
   close: async () => {
     events.push("close");
+    if (failClose) throw new Error("close failed");
   },
-  watchStatus: () => stream([status(reachesReadiness ? "running" : "starting")]),
+  watchStatus: () =>
+    stream([status(reachesReadiness ? "running" : "starting", includeApi, functionsState)]),
   logs: () => stream([]),
 });
 
@@ -133,10 +142,41 @@ describe("test stack resource", () => {
         removed.push(root);
       },
     };
-    await expect(createTestStackWith({}, operations)).rejects.toThrow(
-      "did not reach running readiness",
-    );
+    await expect(
+      createTestStackWith({ config: { capabilities: { database: {} } } }, operations),
+    ).rejects.toThrow("did not reach running readiness");
     expect(events).toEqual(["start", "destroy", "close"]);
     expect(removed).toEqual(["/tmp/stack-test-unready"]);
+  });
+
+  it("removes the exact root when disposal close fails and preserves that primary error", async () => {
+    const events: Array<string> = [];
+    const removed: Array<string> = [];
+    const operations: TestStackOperations = {
+      createRoot: async () => "/tmp/stack-test-close-failed",
+      createStack: async () => fakeStack(events, false, true, true),
+      removeRoot: async (root) => {
+        removed.push(root);
+      },
+    };
+    const stack = await createTestStackWith({}, operations);
+    await expect(stack[Symbol.asyncDispose]()).rejects.toThrow("close failed");
+    expect(events).toEqual(["start", "destroy", "close"]);
+    expect(removed).toEqual(["/tmp/stack-test-close-failed"]);
+  });
+
+  it("does not require disabled Functions or an unconfigured API listener", async () => {
+    const events: Array<string> = [];
+    const operations: TestStackOperations = {
+      createRoot: async () => "/tmp/stack-test-disabled-surfaces",
+      createStack: async () => fakeStack(events, false, true, false, false, "stopped"),
+      removeRoot: async () => undefined,
+    };
+    const stack = await createTestStackWith(
+      { config: { capabilities: { functions: { enabled: false } } } },
+      operations,
+    );
+    await stack[Symbol.asyncDispose]();
+    expect(events).toEqual(["start", "destroy", "close"]);
   });
 });

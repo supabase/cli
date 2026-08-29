@@ -49,7 +49,7 @@ describe("restart handler", () => {
       openStack: () => Effect.succeed(stack),
       loadConfig: () => Effect.succeed(undefined),
     };
-    return restart({ stack: "default" }, operations).pipe(
+    return restart({ stack: "default", exclude: ["auth"] }, operations).pipe(
       Effect.provide(
         Layer.mergeAll(
           emptyEnv(),
@@ -59,7 +59,9 @@ describe("restart handler", () => {
       ),
       Effect.tap(() =>
         Effect.sync(() => {
-          expect(receivedConfig).toMatchObject({ capabilities: expect.any(Object) });
+          expect(receivedConfig).toMatchObject({
+            capabilities: { auth: { enabled: false } },
+          });
           expect(output.messages).toContainEqual(
             expect.objectContaining({ message: "Local Supabase stack restarted." }),
           );
@@ -89,7 +91,7 @@ describe("restart handler", () => {
         }),
       loadConfig: () => Effect.succeed(undefined),
     };
-    return restart({ stack: "default" }, operations).pipe(
+    return restart({ stack: "default", exclude: [] }, operations).pipe(
       Effect.provide(Layer.mergeAll(emptyEnv(), output.layer)),
       Effect.exit,
       Effect.tap((exit) =>

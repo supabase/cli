@@ -42,10 +42,19 @@ export const EdgeRuntimeSettingsSchema = Schema.Struct({
 });
 export type EdgeRuntimeSettings = Schema.Schema.Type<typeof EdgeRuntimeSettingsSchema>;
 
+export const FunctionsInspectorSettingsSchema = Schema.Struct({
+  mode: Schema.optionalKey(Schema.Literals(["run", "brk", "wait"] as const)),
+  main: Schema.optionalKey(Schema.Boolean),
+});
+export type FunctionsInspectorSettings = Schema.Schema.Type<
+  typeof FunctionsInspectorSettingsSchema
+>;
+
 export const FunctionsSettingsSchema = Schema.Struct({
   functions_root: Schema.optionalKey(Schema.String),
   /** Edge Runtime behavior; capability enabled and functionsInspector port are public fields. */
   edge_runtime: Schema.optionalKey(EdgeRuntimeSettingsSchema),
+  inspector: Schema.optionalKey(FunctionsInspectorSettingsSchema),
   functions: Schema.optionalKey(Schema.Record(FunctionSlug, FunctionOverrideSchema)),
 });
 export type FunctionsSettings = Schema.Schema.Type<typeof FunctionsSettingsSchema>;

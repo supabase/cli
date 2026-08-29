@@ -6,12 +6,14 @@ import { provideCliProjectCommandRuntime } from "../../config/project-runtime.la
 import { withCommandInstrumentation } from "../../../shared/telemetry/command-instrumentation.ts";
 import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
 import { restart } from "./restart.handler.ts";
+import { excludeFlag } from "../start/start.command.ts";
 
 const flags = {
   stack: Flag.string("stack").pipe(
     Flag.withDescription("Name of the managed local stack for this project."),
     Flag.withDefault(DEFAULT_MANAGED_STACK_NAME),
   ),
+  exclude: excludeFlag,
 } as const;
 
 export type RestartFlags = CliCommand.Command.Config.Infer<typeof flags>;

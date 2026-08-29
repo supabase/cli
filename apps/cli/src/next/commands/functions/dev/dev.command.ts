@@ -12,6 +12,9 @@ const flags = {
   envFile: Flag.string("env-file").pipe(Flag.optional),
   importMap: Flag.string("import-map").pipe(Flag.optional),
   noVerifyJwt: Flag.boolean("no-verify-jwt").pipe(Flag.withDefault(false)),
+  inspect: Flag.boolean("inspect").pipe(Flag.withDefault(false)),
+  inspectMode: Flag.choice("inspect-mode", ["run", "brk", "wait"] as const).pipe(Flag.optional),
+  inspectMain: Flag.boolean("inspect-main").pipe(Flag.withDefault(false)),
 } as const;
 export type FunctionsDevFlags = CliCommand.Command.Config.Infer<typeof flags>;
 

@@ -1,5 +1,10 @@
 import { Crypto, Effect, FileSystem, Path, Scope } from "effect";
-import { createStack, type EffectStack, type CreateStackOptions } from "@supabase/stack/effect";
+import {
+  createStack,
+  StackUpgradeRequiredError,
+  type EffectStack,
+  type CreateStackOptions,
+} from "@supabase/stack/effect";
 import { loadCliConfig } from "@supabase/config/effect";
 import type { CliConfig } from "@supabase/config";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -51,9 +56,16 @@ export const start = Effect.fnUntraced(function* (
       });
       const config = toStartStackConfig(loadedConfig, flags.exclude, flags.mode);
       yield* stack.prepare({ config });
-      const status = yield* stack.start({
-        config,
-      });
+      const status = yield* stack.start({ config }).pipe(
+        Effect.catchTag("StackUpgradeRequiredError", (error) =>
+          Effect.fail(
+            new StackUpgradeRequiredError({
+              message: `${error.message}; run supabase restart to apply it`,
+              guidance: "Run supabase restart to apply stopped-time changes",
+            }),
+          ),
+        ),
+      );
       yield* output.success(
         status.lifecycle === "running"
           ? "Local Supabase stack is running."
