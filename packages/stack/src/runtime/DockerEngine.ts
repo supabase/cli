@@ -153,6 +153,13 @@ export const serializeDockerCommand = (command: ContainerCommand): ContainerProc
         command.spec.hostRoute?.gateway === undefined
           ? []
           : ["--add-host", `${command.spec.hostRoute.host}:${command.spec.hostRoute.gateway}`];
+      const environment =
+        command.spec.env === undefined
+          ? []
+          : Object.entries(command.spec.env).flatMap(([name, value]) => [
+              "--env",
+              `${name}=${value}`,
+            ]);
       return {
         args: [
           "create",
@@ -165,6 +172,7 @@ export const serializeDockerCommand = (command: ContainerCommand): ContainerProc
           ...volumeMounts,
           ...publications,
           ...hostRoute,
+          ...environment,
           command.spec.image,
           ...(command.spec.command ?? []),
         ],

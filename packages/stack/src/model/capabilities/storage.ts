@@ -69,6 +69,29 @@ export const StorageModule: CapabilityModule<StorageSettings> = {
   routes: [{ listener: "api", protocol: "http" }],
   secretPolicy: () => "passthrough",
   managedSecretSlots: [],
+  selectWorkloads: (settings, workloads) => {
+    const record = (value: unknown): Record<string, unknown> | undefined =>
+      typeof value === "object" && value !== null && !Array.isArray(value)
+        ? Object.fromEntries(Object.entries(value))
+        : undefined;
+    const value = record(settings)?.image_transformation;
+    const enabled = record(value)?.enabled === true;
+    return workloads
+      .filter((entry) => enabled || entry.name !== "imgproxy")
+      .map((entry) =>
+        entry.name === "storage"
+          ? {
+              ...entry,
+              dependencies: enabled
+                ? [
+                    ...entry.dependencies.filter((dependency) => dependency !== "storage:imgproxy"),
+                    "storage:imgproxy",
+                  ]
+                : entry.dependencies.filter((dependency) => dependency !== "storage:imgproxy"),
+            }
+          : entry,
+      );
+  },
   materialize: (settings) => ({
     ...settings,
     buckets: Object.fromEntries(

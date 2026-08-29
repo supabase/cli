@@ -37,6 +37,8 @@ export interface ContainerRuntimeOptions {
 export interface ContainerWorkloadResolution {
   readonly mounts?: ReadonlyArray<ContainerMount>;
   readonly volume?: ContainerVolumeRequest;
+  readonly env?: Readonly<Record<string, string>>;
+  readonly command?: ReadonlyArray<string>;
   readonly waitForReadiness?: (
     key: RuntimeWorkloadKey,
     workload: PlannedWorkload,
@@ -350,6 +352,8 @@ export const makeContainerRuntime = (
               publications: [],
               volumeMounts: volumeRequest === undefined ? [] : [volumeMountFor(key, volumeRequest)],
               role: "workload",
+              ...(resolution.env === undefined ? {} : { env: resolution.env }),
+              ...(resolution.command === undefined ? {} : { command: resolution.command }),
             } satisfies ContainerContainerSpec),
           );
           created = true;

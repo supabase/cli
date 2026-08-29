@@ -47,6 +47,11 @@ export interface CapabilityModule<Settings> {
   /** Managed slots required by the artifact even when omitted from user config. */
   readonly managedSecretSlots: ReadonlyArray<string>;
   readonly materialize: (settings: Settings, projectRoot: string) => Settings;
+  /** Selects private companion workloads from fully materialized settings. */
+  readonly selectWorkloads?: (
+    settings: unknown,
+    workloads: ReadonlyArray<WorkloadSpec>,
+  ) => ReadonlyArray<WorkloadSpec>;
 }
 
 export interface CapabilityRelease {

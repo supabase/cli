@@ -99,6 +99,7 @@ export interface ContainerContainerSpec {
   readonly hostRoute?: ContainerHostRoute;
   readonly role: "workload" | "gateway";
   readonly command?: ReadonlyArray<string>;
+  readonly env?: Readonly<Record<string, string>>;
 }
 
 export type ContainerCommand =
@@ -124,6 +125,7 @@ export interface ContainerCommandResult {
 export interface ContainerProcessRequest {
   readonly args: ReadonlyArray<string>;
   readonly stdin?: string;
+  readonly env?: Readonly<Record<string, string>>;
 }
 export interface ContainerCommandRunner {
   readonly executable: string;
@@ -206,6 +208,7 @@ export const makeProcessCommandRunner = (
             stdin,
             stdout: "pipe",
             stderr: "pipe",
+            ...(request.env === undefined ? {} : { env: request.env }),
             extendEnv: true,
           }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)),
           (handle) =>

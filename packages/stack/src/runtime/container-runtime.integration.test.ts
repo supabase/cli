@@ -468,6 +468,8 @@ describe("container runtime", () => {
         mounts: [],
         volumeMounts: [],
         publications: [{ hostPort: 54321, containerPort: 8000 }],
+        env: { TEST_SECRET: "value" },
+        command: ["serve", "--port", "8000"],
         hostRoute: { host: "host.docker.internal", gateway: "host-gateway" },
         role: "gateway" as const,
       };
@@ -475,6 +477,16 @@ describe("container runtime", () => {
       expect(docker.args).toContain("--add-host");
       expect(docker.args).toContain("host.docker.internal:host-gateway");
       expect(docker.args).toContain("--publish");
+      expect(docker.args).toContain("--env");
+      expect(docker.args).toContain("TEST_SECRET=value");
+      expect(docker.args.slice(-3)).toEqual(["serve", "--port", "8000"]);
+      const podmanCreate = serializePodmanCommand({
+        operation: "create-container",
+        spec: gateway,
+      });
+      expect(podmanCreate.args).toContain("--env");
+      expect(podmanCreate.args).toContain("TEST_SECRET=value");
+      expect(podmanCreate.args.slice(-3)).toEqual(["serve", "--port", "8000"]);
       const podman = serializePodmanCommand({ operation: "inspect-networks", stackId });
       expect(podman.args.join(" ")).toContain("{{index .Labels");
       expect(podman.args.join(" ")).not.toContain("host-gateway");

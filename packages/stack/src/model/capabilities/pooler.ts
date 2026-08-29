@@ -24,11 +24,11 @@ export const PoolerModule: CapabilityModule<PoolerSettings> = {
   },
   defaultEnabled: false,
   defaultActivation: "eager",
-  defaultVersion: "2.9.7",
+  defaultVersion: "v2.9.12",
   dependencies: ["database"],
   releases: {
-    "2.9.7": release("2.9.7", [
-      workload("pooler", "pooler", "2.9.7", "ghcr.io/supabase/supavisor:2.9.7", {
+    "v2.9.12": release("v2.9.12", [
+      workload("pooler", "pooler", "v2.9.12", "ghcr.io/supabase/supavisor:v2.9.12", {
         dependencies: ["database:database"],
         readiness: { mode: "tcp", portField: "pooler" },
       }),

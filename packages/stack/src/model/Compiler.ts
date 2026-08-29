@@ -514,9 +514,23 @@ const planForDefinition = (
     analytics: definition.capabilities.analytics.version,
     pooler: definition.capabilities.pooler.version,
   };
+  const settings = {
+    database: definition.capabilities.database.settings,
+    rest: definition.capabilities.rest.settings,
+    auth: definition.capabilities.auth.settings,
+    realtime: definition.capabilities.realtime.settings,
+    storage: definition.capabilities.storage.settings,
+    functions: definition.capabilities.functions.settings,
+    studio: definition.capabilities.studio.settings,
+    mail: definition.capabilities.mail.settings,
+    analytics: definition.capabilities.analytics.settings,
+    pooler: definition.capabilities.pooler.settings,
+  };
   const specHashes = new Map<string, string>();
   return hashDefinitionWorkloads(definition, crypto, specHashes).pipe(
-    Effect.flatMap(() => createExecutionPlan(runtime, enabled, specHashes, versions)),
+    Effect.flatMap(() =>
+      createExecutionPlan(runtime, enabled, specHashes, versions, CAPABILITY_MODULES, settings),
+    ),
   );
 };
 
@@ -798,7 +812,25 @@ export const compileStack = (
       analytics: analytics.version,
       pooler: pooler.version,
     };
-    const executionPlan = yield* createExecutionPlan(input.runtime, enabled, specHashes, versions);
+    const executionPlan = yield* createExecutionPlan(
+      input.runtime,
+      enabled,
+      specHashes,
+      versions,
+      CAPABILITY_MODULES,
+      {
+        database: database.settings,
+        rest: rest.settings,
+        auth: auth.settings,
+        realtime: realtime.settings,
+        storage: storage.settings,
+        functions: functions.settings,
+        studio: studio.settings,
+        mail: mail.settings,
+        analytics: analytics.settings,
+        pooler: pooler.settings,
+      },
+    );
     return { definition, inputFingerprint, secrets: slots, executionPlan };
   }).pipe(
     Effect.catchTag("PlatformError", (error) =>

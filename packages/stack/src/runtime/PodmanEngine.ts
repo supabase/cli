@@ -150,6 +150,13 @@ export const serializePodmanCommand = (command: ContainerCommand): ContainerProc
               `${port.hostPort}:${port.containerPort}`,
             ])
           : [];
+      const environment =
+        command.spec.env === undefined
+          ? []
+          : Object.entries(command.spec.env).flatMap(([name, value]) => [
+              "--env",
+              `${name}=${value}`,
+            ]);
       return {
         args: [
           "create",
@@ -161,6 +168,7 @@ export const serializePodmanCommand = (command: ContainerCommand): ContainerProc
           ...bindMounts,
           ...volumeMounts,
           ...publications,
+          ...environment,
           command.spec.image,
           ...(command.spec.command ?? []),
         ],

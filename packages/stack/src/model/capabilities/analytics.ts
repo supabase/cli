@@ -42,5 +42,27 @@ export const AnalyticsModule: CapabilityModule<AnalyticsSettings> = {
   routes: [{ listener: "api", protocol: "http" }],
   secretPolicy: () => "passthrough",
   managedSecretSlots: [],
+  selectWorkloads: (settings, workloads) => {
+    const value =
+      typeof settings === "object" && settings !== null && !Array.isArray(settings)
+        ? Object.fromEntries(Object.entries(settings)).vector_port
+        : undefined;
+    const enabled = typeof value === "number";
+    return workloads
+      .filter((entry) => enabled || entry.name !== "vector")
+      .map((entry) =>
+        entry.name === "analytics"
+          ? {
+              ...entry,
+              dependencies: enabled
+                ? [
+                    ...entry.dependencies.filter((dependency) => dependency !== "analytics:vector"),
+                    "analytics:vector",
+                  ]
+                : entry.dependencies.filter((dependency) => dependency !== "analytics:vector"),
+            }
+          : entry,
+      );
+  },
   materialize: (settings) => settings,
 };

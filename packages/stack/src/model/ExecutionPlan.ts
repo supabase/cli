@@ -73,6 +73,18 @@ export const createExecutionPlan = (
   specHashes: ReadonlyMap<string, string>,
   versions: Readonly<{ [Name in CapabilityName]: string }>,
   modules: typeof CAPABILITY_MODULES = CAPABILITY_MODULES,
+  settings: Readonly<{ [Name in CapabilityName]: unknown }> = {
+    database: undefined,
+    rest: undefined,
+    auth: undefined,
+    realtime: undefined,
+    storage: undefined,
+    functions: undefined,
+    studio: undefined,
+    mail: undefined,
+    analytics: undefined,
+    pooler: undefined,
+  },
 ): Effect.Effect<ExecutionPlan, InvalidStackConfigError> => {
   const dependencyMap = {
     database: modules.database.dependencies,
@@ -141,7 +153,9 @@ export const createExecutionPlan = (
     if (!enabled[name].enabled) return [];
     const release = modules[name].releases[versions[name]];
     if (release === undefined) return [];
-    return release.workloads.map((entry) => ({
+    const selectedEntries =
+      modules[name].selectWorkloads?.(settings[name], release.workloads) ?? release.workloads;
+    return selectedEntries.map((entry) => ({
       id: `${name}:${entry.name}`,
       capability: name,
       ...(entry.bootstrap === undefined ? {} : { bootstrap: entry.bootstrap }),
