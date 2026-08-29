@@ -14,6 +14,13 @@ const compile = (config: Parameters<typeof compileStack>[0]["config"]) =>
     Effect.provide(NodeServices.layer),
   );
 
+const compileContainer = (config: Parameters<typeof compileStack>[0]["config"]) =>
+  compileStack({
+    projectRoot: "/tmp/catalog-project",
+    runtime: { kind: "container", engine: "docker" },
+    config,
+  }).pipe(Effect.provide(NodeServices.layer));
+
 describe("complete workload catalog", () => {
   it("keeps native releases paired with their canonical container images", () => {
     expect(WORKLOAD_CATALOG["database:database"]).toMatchObject({
@@ -36,6 +43,15 @@ describe("complete workload catalog", () => {
     );
     expect(WORKLOAD_CATALOG["analytics:analytics"]?.containerImage).toBe(
       "ghcr.io/supabase/cli/analytics:v1.50.6",
+    );
+    expect(WORKLOAD_CATALOG["mail:mail"]?.containerImage).toBe(
+      "ghcr.io/supabase/cli/mailpit:v1.30.2",
+    );
+    expect(WORKLOAD_CATALOG["analytics:vector"]?.containerImage).toBe(
+      "ghcr.io/supabase/cli/vector:0.53.0",
+    );
+    expect(WORKLOAD_CATALOG["storage:imgproxy"]?.containerImage).toBe(
+      "ghcr.io/supabase/cli/imgproxy:v3.8.0",
     );
     expect(WORKLOAD_CATALOG["pooler:pooler"]?.containerImage).toBe(
       "ghcr.io/supabase/cli/pooler:v2.9.12",
@@ -157,6 +173,23 @@ describe("complete workload catalog", () => {
       expect(enabled.executionPlan.workloads.some(({ id }) => id === "analytics:vector")).toBe(
         true,
       );
+    }),
+  );
+
+  it.live("selects qualified slim mirror images in container plans", () =>
+    Effect.gen(function* () {
+      const result = yield* compileContainer({
+        capabilities: {
+          storage: { settings: { image_transformation: { enabled: true } } },
+          analytics: { settings: { vector_port: 9001 } },
+        },
+      });
+      const images = new Map(
+        result.executionPlan.workloads.map((entry) => [entry.id, entry.artifacts.container.image]),
+      );
+      expect(images.get("mail:mail")).toBe("ghcr.io/supabase/cli/mailpit:v1.30.2");
+      expect(images.get("storage:imgproxy")).toBe("ghcr.io/supabase/cli/imgproxy:v3.8.0");
+      expect(images.get("analytics:vector")).toBe("ghcr.io/supabase/cli/vector:0.53.0");
     }),
   );
 

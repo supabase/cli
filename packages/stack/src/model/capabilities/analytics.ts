@@ -33,7 +33,7 @@ export const AnalyticsModule: CapabilityModule<AnalyticsSettings> = {
         dependencies: ["database:database", "analytics:vector"],
         readiness: { mode: "http", portField: "api" },
       }),
-      workload("vector", "analytics", "0.53.0-alpine", "timberio/vector:0.53.0-alpine", {
+      workload("vector", "analytics", "0.53.0-alpine", "ghcr.io/supabase/cli/vector:0.53.0", {
         dependencies: [],
         readiness: { mode: "tcp" },
       }),

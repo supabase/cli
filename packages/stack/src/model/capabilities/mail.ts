@@ -16,7 +16,7 @@ export const MailModule: CapabilityModule<MailSettings> = {
   dependencies: [],
   releases: {
     "v1.30.2": release("v1.30.2", [
-      workload("mail", "mail", "v1.30.2", "axllent/mailpit:v1.30.2", {
+      workload("mail", "mail", "v1.30.2", "ghcr.io/supabase/cli/mailpit:v1.30.2", {
         readiness: { mode: "http", portField: "mailUi" },
       }),
     ]),

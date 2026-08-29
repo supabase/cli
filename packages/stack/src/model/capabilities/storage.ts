@@ -108,7 +108,7 @@ export const StorageModule: CapabilityModule<StorageSettings> = {
         dependencies: ["database:database", "storage:imgproxy"],
         readiness: { mode: "http", portField: "api" },
       }),
-      workload("imgproxy", "storage", "v3.8.0", "darthsim/imgproxy:v3.8.0", {
+      workload("imgproxy", "storage", "v3.8.0", "ghcr.io/supabase/cli/imgproxy:v3.8.0", {
         dependencies: ["database:database"],
         readiness: { mode: "http" },
       }),
