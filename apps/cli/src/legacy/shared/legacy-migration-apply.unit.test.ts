@@ -1231,7 +1231,7 @@ describe("legacyIsPipelineIncompatible", () => {
       true,
     ],
     ["detach partition concurrently", "ALTER TABLE m DETACH PARTITION p CONCURRENTLY", true],
-    ["detach partition finalize", "ALTER TABLE m DETACH PARTITION p FINALIZE", true],
+    ["detach partition finalize stays batched", "ALTER TABLE m DETACH PARTITION p FINALIZE", false],
     ["detach partition plain", "ALTER TABLE m DETACH PARTITION p", false],
     [
       "detach inside a comment over-routes conservatively",
