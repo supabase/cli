@@ -15,7 +15,6 @@ export const StackLifecycleSchema = Schema.Literals([
   "stopped",
   "starting",
   "running",
-  "resetting-database",
   "stopping",
   "destroying",
 ] as const);

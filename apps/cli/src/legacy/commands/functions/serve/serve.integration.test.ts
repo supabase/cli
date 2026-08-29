@@ -32,10 +32,7 @@ const stackId: StackId = StackIdSchema.make(
 const status = (lifecycle: StackStatus["lifecycle"]): StackStatus => ({
   id: stackId,
   lifecycle,
-  desiredLifecycle:
-    lifecycle === "starting" || lifecycle === "stopping" || lifecycle === "resetting-database"
-      ? "running"
-      : lifecycle,
+  desiredLifecycle: lifecycle === "starting" || lifecycle === "stopping" ? "running" : lifecycle,
   runtime: { kind: "container", engine: "docker" },
   endpoints:
     lifecycle === "running"

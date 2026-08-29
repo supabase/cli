@@ -19,12 +19,7 @@ const status = (
 ): StackStatus => ({
   id: stackId,
   lifecycle,
-  desiredLifecycle:
-    lifecycle === "starting" || lifecycle === "stopping"
-      ? "running"
-      : lifecycle === "resetting-database"
-        ? "running"
-        : lifecycle,
+  desiredLifecycle: lifecycle === "starting" || lifecycle === "stopping" ? "running" : lifecycle,
   runtime: { kind: "native" },
   endpoints:
     lifecycle === "running" && includeApi
