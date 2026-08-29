@@ -59,7 +59,7 @@ packages/stack/src
 ├── supervisor/   owner session, desired state, reconciler, status/log publication
 ├── preparation/  verified native/container artifacts
 ├── runtime/      common contract, native driver, container driver/engine adapters
-├── gateway/      HTTP/TCP ingress and container activation server
+├── gateway/      Supervisor-owned HTTP/TCP ingress and direct activation
 ├── functions/    safe live function discovery
 └── entrypoints/  Node/Bun Supervisor and gateway programs
 ```
@@ -448,29 +448,30 @@ artifact keys, state schemas, drivers, or control protocols.
 
 **Files:**
 
-- Create: `packages/stack/src/gateway/Gateway.ts`, `HttpGateway.ts`, `TcpGateway.ts`,
-  `ActivationServer.ts`, `ActivationFile.ts`
+- Create: `packages/stack/src/gateway/Gateway.ts`, `HttpGateway.ts`, `TcpGateway.ts`
 - Create: `packages/stack/src/gateway/gateway.integration.test.ts`
-- Create: `packages/stack/src/gateway/activation.integration.test.ts`
+- Delete after production composition replaces the provisional split path:
+  `packages/stack/src/gateway/ActivationServer.ts`, `ActivationFile.ts`,
+  `packages/stack/src/gateway/activation.integration.test.ts`
 
 **Interfaces:**
 
 - Gateway is the only public ingress and routes HTTP/WebSocket and transparent TCP listeners.
-- Native activation calls Supervisor directly; container activation uses an ephemeral exact-release
-  authenticated TCP server and read-only fenced file with activation-only authority.
+- The Supervisor-owned in-process gateway calls Supervisor activation directly in both runtime
+  modes. Container workloads expose only loopback-bound private backend ports to it.
 
 - [x] **Step 1: Write observable protocol scenarios and verify RED**
 
   Cover HTTP routes/CORS/forwarding/WebSocket, PostgreSQL/TLS/SMTP/POP3/STARTTLS byte transparency,
   backpressure/half-close, 503 activation failure, 502 backend failure, dormant health probes,
-  dependency-closure activation, generation/session/gateway fences, bounded frames/concurrency/
-  deadlines, and no idle eviction.
+  dependency-closure activation, generation/session fences, concurrent activation joining, and no
+  idle eviction.
 
 - [x] **Step 2: Implement ingress and activation**
 
-  Use stream/socket platform APIs with scoped cancellation. Capability files contain no labels or
-  command-line secrets and rotate with each owner/gateway. The activation server exposes only one
-  activation operation and has no runtime/state/filesystem/log authority.
+  Use stream/socket platform APIs with scoped cancellation. Keep the gateway in the Supervisor so
+  both runtime modes share the same direct activation path. Do not introduce a gateway artifact,
+  activation server, capability file, or second control protocol.
 
 - [x] **Step 3: Verify and commit**
 
@@ -520,21 +521,22 @@ artifact keys, state schemas, drivers, or control protocols.
 
 - Create: `packages/stack/src/runtime/ContainerEngine.ts`, `DockerEngine.ts`, `PodmanEngine.ts`,
   `ContainerRuntime.ts`
-- Modify: gateway activation host routing and Supervisor composition
+- Modify: gateway backend routing and Supervisor composition
 - Create: `packages/stack/src/runtime/container-runtime.integration.test.ts`
 
 **Interfaces:**
 
 - Docker and Podman adapters create exact identity/generation-labeled private networks, workloads,
-  persistent volumes, gateway publication, read-only activation/config files, and exact cleanup.
+  persistent volumes, loopback-only private backend publications, read-only config files, and exact
+  cleanup.
 - No native process is started for a container identity and no container is created for native.
 
 - [x] **Step 1: Write controlled engine integration scenarios and verify RED**
 
   Cover platform alias selection (`host.docker.internal`, Linux host-gateway,
-  `host.containers.internal`), unsupported routing preflight, gateway-only host publication, private
-  backend endpoints, engine bind races, semantic-hash adoption, stale removal, persistent volumes,
-  strict runtime split, and lazy Functions edits through the mounted root.
+  `host.containers.internal`), unsupported routing preflight, no public workload publication,
+  loopback-only private backend endpoints, engine bind races, semantic-hash adoption, stale removal,
+  persistent volumes, strict runtime split, and lazy Functions edits through the mounted root.
 
 - [x] **Step 2: Implement the smallest engine contract**
 

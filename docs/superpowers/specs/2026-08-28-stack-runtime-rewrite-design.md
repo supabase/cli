@@ -783,10 +783,12 @@ when that stack starts. Under the registry lock, `PortCoordinator` retains uncha
 selects missing automatic ports, and validates exact requests. It commits the complete state before
 releasing the lock and never performs downloads or runtime work in the transaction.
 
-Native listeners remain bound and transfer directly to the in-process gateway. Container mode closes
-its transient test socket before engine publication; the engine bind is authoritative. A host race
+Public listeners remain bound and transfer directly to the Supervisor-owned in-process gateway in
+both runtime modes. Container workloads publish only their backend service port to a separately
+reserved, durable `127.0.0.1` private host port; they never publish a public stack port. A host race
 returns `PortUnavailableError` and retains the assignment without silently selecting another port.
-Stop releases live sockets and publications but not logical records; destroy releases all records.
+Stop releases live sockets and loopback publications but not logical records; destroy releases all
+records.
 
 ### Gateway and mandatory lazy activation
 
@@ -794,26 +796,22 @@ Stop releases live sockets and publications but not logical records; destroy rel
 and error mapping. TCP copies bytes without interpreting PostgreSQL, TLS, SMTP, POP3, or STARTTLS.
 Backend workloads use private network endpoints; only the gateway publishes host listeners.
 
-Lazy activation is mandatory for both native and container runtimes. A native gateway invokes the
-Supervisor activation capability in process. A container gateway uses a dedicated ephemeral exact-
-release TCP `GatewayActivationServer` owned by the Supervisor, distinct from stable maintenance.
+Lazy activation is mandatory for both native and container runtimes. The Supervisor-owned gateway
+invokes the Supervisor activation capability directly in both modes. There is no gateway container,
+activation server, activation protocol, or capability file. This keeps one ingress implementation
+and one activation path while preserving the strict rule that capability workloads within a stack
+are either all native or all containerized.
 
-Before creating the gateway container, the Supervisor binds the activation server and writes an
-owner-readable ephemeral file containing endpoint, random capability, `StackId`, desiredGeneration,
-`gatewayInstanceId`, and `ownerSessionId`. The file is mounted read-only into the gateway; values are
-never placed in labels or command arguments. The selected `ContainerEngine` adapter resolves the
-host address/alias reachable from its gateway container: Docker Desktop uses
-`host.docker.internal`, Linux Docker uses a host-gateway mapping, and Podman uses
-`host.containers.internal` or its concrete equivalent. Unsupported engine/platform routing fails
-before gateway creation.
+Container workloads communicate with one another through fixed ports and aliases on their private
+network. When the host gateway needs to reach one, the engine publishes only that workload's backend
+port to its reserved `127.0.0.1` private host port. Container-to-host routes such as
+`host.docker.internal` remain available only for workloads that must call a public stack endpoint;
+unsupported engine/platform routing fails before workload creation.
 
-The server validates every fence, bounds frame size, concurrent requests, and activation deadlines,
-and grants activation only. It has no engine, artifact, filesystem, stop, destroy, configuration,
-credential, or log authority. Capability files and server sockets rotate or are destroyed with the
-owner and gateway. A request can activate only an enabled listener for the matching generation,
-gateway instance, and owner session. Activation is one-way per generation; activated workloads use
-catalog restart policy until stop/restart and are never idle-evicted. HTTP activation failure maps
-to 503, post-activation backend failure to 502, and TCP activation failure closes the connection.
+A request can activate only an enabled listener for the matching desired generation and owner
+session. Activation is one-way per generation; activated workloads use catalog restart policy until
+stop/restart and are never idle-evicted. HTTP activation failure maps to 503, post-activation backend
+failure to 502, and TCP activation failure closes the connection.
 
 ### Functions capability
 
@@ -863,7 +861,7 @@ packages/stack
 ├── supervisor/         Supervisor and StackReconciler
 ├── preparation/        verified ArtifactStore
 ├── runtime/            native and container drivers plus engine adapters
-├── gateway/            HTTP, TCP, and activation server
+├── gateway/            Supervisor-owned HTTP/TCP ingress and direct activation
 ├── control/            one owner endpoint, maintenance framing, exact-release RPC
 └── entrypoints/        Supervisor and gateway executables
 ```
@@ -899,10 +897,10 @@ Build observable vertical slices in this order:
 2. Native lifecycle: capability Modules, catalog/version validation, secrets, one representative
    workload graph, reconciliation, start, stop, explicit restart, destroy, status/watch, logs,
    credentials, and idempotent database bootstrap.
-3. Ingress and preparation: sticky ports, native listener transfer, HTTP/TCP gateway,
-   `GatewayActivationServer`, ArtifactStore, mandatory lazy activation, and live Functions.
-4. Container execution and recovery: engine adapters, private networks, gateway-only publication,
-   host-gateway aliases, activation-file fencing, workload-spec-hash adoption, and owner recovery.
+3. Ingress and preparation: sticky public and private ports, listener transfer, HTTP/TCP gateway,
+   ArtifactStore, mandatory direct lazy activation, and live Functions.
+4. Container execution and recovery: engine adapters, private networks, loopback-only private
+   backend publication, host-gateway aliases, workload-spec-hash adoption, and owner recovery.
 5. Complete catalog: every capability's native/container mappings, platform/engine activation
    integration, port and secret matrices, and a small e2e smoke suite.
 6. Promise facade and release: mechanical adaptation of the authoritative Effect contract,
@@ -989,14 +987,15 @@ Secrets, logs, and ports:
   owner-only and bounded, and expose cursor continuity.
 - Automatic port assignments remain globally/logically exclusive while stopped and running. Stopped
   exact assignments may coexist and conflict only with a live stack or host listener at start.
-- Native listener transfer avoids a rebind window; container bind races preserve the sticky claim.
+- Listener transfer avoids a public rebind window in both modes; container loopback bind races
+  preserve the sticky private claim.
 
 Gateway, activation, and Functions:
 
 - HTTP/TCP routing, WebSockets, TLS, STARTTLS, backpressure, half-close, and 503/502 mapping work
   through the gateway.
-- The ephemeral `GatewayActivationServer` uses the read-only fenced file, engine-specific host alias,
-  bounded frames/concurrency/deadlines, exact-release protocol, and activation-only authority.
+- The Supervisor-owned gateway activates workloads directly in both modes; there is no gateway
+  container, activation server, capability file, or second control protocol.
 - Lazy activation is one-way per generation, honors dependency readiness and restart policy, and has
   no idle eviction. Health/status probes never activate a dormant capability.
 - Function root traversal and symlink escapes are rejected; live create/edit/delete and shared
