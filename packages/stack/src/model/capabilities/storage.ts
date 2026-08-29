@@ -1,4 +1,4 @@
-import { Schema } from "effect";
+import { Redacted, Schema } from "effect";
 import { release, workload, type CapabilityModule } from "../CapabilityModule.ts";
 
 const Bucket = Schema.Struct({
@@ -7,6 +7,7 @@ const Bucket = Schema.Struct({
   allowed_mime_types: Schema.optionalKey(Schema.Array(Schema.String)),
   objects_path: Schema.optionalKey(Schema.String),
 });
+const Secret = Schema.Redacted(Schema.String);
 const Analytics = Schema.Struct({
   enabled: Schema.optionalKey(Schema.Boolean),
   max_namespaces: Schema.optionalKey(Schema.Finite),
@@ -26,7 +27,14 @@ export const StorageSettingsSchema = Schema.Struct({
     Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) }),
   ),
   buckets: Schema.optionalKey(Schema.Record(Schema.String, Bucket)),
-  s3_protocol: Schema.optionalKey(Schema.Struct({ enabled: Schema.optionalKey(Schema.Boolean) })),
+  s3_protocol: Schema.optionalKey(
+    Schema.Struct({
+      enabled: Schema.optionalKey(Schema.Boolean),
+      region: Schema.optionalKey(Schema.String),
+      access_key_id: Schema.optionalKey(Schema.String),
+      secret_access_key: Schema.optionalKey(Secret),
+    }),
+  ),
   analytics: Schema.optionalKey(Analytics),
   vector: Schema.optionalKey(Vector),
 });
@@ -46,7 +54,14 @@ export const StorageModule: CapabilityModule<StorageSettings> = {
     file_size_limit: "50MiB",
     image_transformation: { enabled: false },
     buckets: {},
-    s3_protocol: { enabled: true },
+    s3_protocol: {
+      enabled: true,
+      region: "local",
+      access_key_id: "625729a08b95bf1b7ff351a663f3a23c",
+      secret_access_key: Redacted.make(
+        "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907",
+      ),
+    },
     analytics: { enabled: false, max_namespaces: 5, max_tables: 10, max_catalogs: 2, buckets: {} },
     vector: { enabled: true, max_buckets: 10, max_indexes: 5, buckets: {} },
   },
@@ -67,8 +82,9 @@ export const StorageModule: CapabilityModule<StorageSettings> = {
     ]),
   },
   routes: [{ listener: "api", protocol: "http" }],
-  secretPolicy: () => "passthrough",
-  managedSecretSlots: [],
+  secretPolicy: (path) =>
+    path === "storage.settings.s3_protocol.secret_access_key" ? "managed" : "passthrough",
+  managedSecretSlots: ["storage.settings.s3_protocol.secret_access_key"],
   selectWorkloads: (settings, workloads) => {
     const record = (value: unknown): Record<string, unknown> | undefined =>
       typeof value === "object" && value !== null && !Array.isArray(value)

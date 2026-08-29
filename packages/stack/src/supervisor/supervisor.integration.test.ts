@@ -1,10 +1,11 @@
 import { NodeServices } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Option, Path, Ref, Stream } from "effect";
+import { Cause, Effect, Exit, FileSystem, Option, Path, Redacted, Ref, Stream } from "effect";
 import type { LogOptions, StackLogEntry } from "../public/Logs.ts";
 import {
   GatewayActivationError,
   StackNotRunningError,
+  StackStateInvalidError,
   StackUpgradeRequiredError,
 } from "../public/Errors.ts";
 import {
@@ -210,6 +211,256 @@ describe("Supervisor composition", () => {
         expect(status.lifecycle).toBe("running");
         expect(status.capabilities.find(({ name }) => name === "rest")?.state).toBe("ready");
         expect(yield* Ref.get(fixture.calls)).toContain("start:database:database");
+      }),
+    ),
+  );
+
+  it.live("returns persisted database, API, and storage credentials while running", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
+        const running = yield* fixture.store
+          .read(fixture.id)
+          .pipe(Effect.provideContext(fixture.context));
+        if (running === undefined || running.definition === undefined)
+          return yield* new StackStateInvalidError({ message: "running fixture state is missing" });
+        yield* fixture.store
+          .replace(
+            fixture.id,
+            {
+              ...running,
+              ports: [
+                { field: "api", port: 55433, intent: "exact" },
+                { field: "database", port: 55432, intent: "exact" },
+              ],
+              portsGeneration: running.desiredGeneration,
+            },
+            running.desiredGeneration,
+          )
+          .pipe(Effect.provideContext(fixture.context));
+        const credentials = yield* fixture.supervisor.rpcHandlers.credentials();
+        expect(credentials.database.url).toEqual(expect.anything());
+        expect(Redacted.value(credentials.database.url)).toMatch(
+          /^postgresql:\/\/postgres:.+@127\.0\.0\.1:\d+\/postgres$/,
+        );
+        expect(Redacted.value(credentials.database.password)).toEqual(expect.any(String));
+        expect(credentials.api.publishableKey).toEqual(expect.any(String));
+        expect(Redacted.value(credentials.api.secretKey)).toEqual(expect.any(String));
+        expect(credentials.api.anonJwt).toEqual(expect.any(String));
+        expect(Redacted.value(credentials.api.serviceRoleJwt)).toEqual(expect.any(String));
+        expect(credentials.storage).toEqual(
+          expect.objectContaining({
+            region: "local",
+            accessKeyId: "625729a08b95bf1b7ff351a663f3a23c",
+          }),
+        );
+        expect(Redacted.value(credentials.storage?.secretAccessKey)).toBe(
+          "850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907",
+        );
+      }),
+    ),
+  );
+
+  it.live("URL-encodes persisted database credentials and brackets IPv6 listeners", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
+        const running = yield* fixture.store
+          .read(fixture.id)
+          .pipe(Effect.provideContext(fixture.context));
+        if (running === undefined || running.definition === undefined)
+          return yield* new StackStateInvalidError({ message: "running fixture state is missing" });
+        const definition = {
+          ...running.definition,
+          listeners: {
+            ...running.definition.listeners,
+            database: { ...running.definition.listeners.database, address: "2001:db8::1" },
+          },
+        };
+        const state = {
+          ...running,
+          definition,
+          ports: [
+            { field: "api", port: 55433, intent: "exact" as const },
+            { field: "database", port: 55432, intent: "exact" as const },
+          ],
+          portsGeneration: running.desiredGeneration,
+          secrets: {
+            ...running.secrets,
+            "secret:database.internal.password": {
+              policy: "managed" as const,
+              value: "p@ss:word",
+            },
+          },
+        };
+        yield* fixture.store
+          .replace(fixture.id, state, running.desiredGeneration)
+          .pipe(Effect.provideContext(fixture.context));
+        const credentials = yield* fixture.supervisor.rpcHandlers.credentials();
+        expect(Redacted.value(credentials.database.url)).toBe(
+          "postgresql://postgres:p%40ss%3Aword@[2001:db8::1]:55432/postgres",
+        );
+      }),
+    ),
+  );
+
+  it.live("omits storage credentials when Storage is disabled", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        yield* fixture.supervisor.start({
+          config: { capabilities: { rest: {}, storage: { enabled: false } } },
+        });
+        const running = yield* fixture.store
+          .read(fixture.id)
+          .pipe(Effect.provideContext(fixture.context));
+        if (running === undefined)
+          return yield* new StackStateInvalidError({ message: "running fixture state is missing" });
+        const state = {
+          ...running,
+          ports: [
+            { field: "api", port: 55433, intent: "exact" as const },
+            { field: "database", port: 55432, intent: "exact" as const },
+          ],
+          portsGeneration: running.desiredGeneration,
+        };
+        yield* fixture.store
+          .replace(fixture.id, state, running.desiredGeneration)
+          .pipe(Effect.provideContext(fixture.context));
+        const credentials = yield* fixture.supervisor.rpcHandlers.credentials();
+        expect(credentials.storage).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.live("rejects credentials when the durable generation or phase is not running", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        yield* fixture.supervisor.start({ config: { capabilities: { rest: {} } } });
+        const running = yield* fixture.store
+          .read(fixture.id)
+          .pipe(Effect.provideContext(fixture.context));
+        if (running === undefined)
+          return yield* new StackStateInvalidError({ message: "running fixture state is missing" });
+        const stale = {
+          ...running,
+          ports: [{ field: "database", port: 55432, intent: "exact" as const }],
+          portsGeneration: running.desiredGeneration - 1,
+        };
+        yield* fixture.store
+          .replace(fixture.id, stale, running.desiredGeneration)
+          .pipe(Effect.provideContext(fixture.context));
+        const staleExit = yield* fixture.supervisor.rpcHandlers.credentials().pipe(Effect.exit);
+        expect(errorOf(staleExit)).toEqual(
+          expect.objectContaining({ tag: "StackNotRunningError" }),
+        );
+        const stopped = {
+          ...stale,
+          portsGeneration: stale.desiredGeneration,
+          desiredLifecycle: "stopped" as const,
+        };
+        yield* fixture.store
+          .replace(fixture.id, stopped, stale.desiredGeneration)
+          .pipe(Effect.provideContext(fixture.context));
+        const stoppedExit = yield* fixture.supervisor.rpcHandlers.credentials().pipe(Effect.exit);
+        expect(errorOf(stoppedExit)).toEqual(
+          expect.objectContaining({ tag: "StackNotRunningError" }),
+        );
+      }),
+    ),
+  );
+
+  it.live("fails closed when Auth is disabled or a required secret slot is absent", () =>
+    run(
+      Effect.gen(function* () {
+        const fixture = yield* makeFixture();
+        yield* fixture.supervisor.start({
+          config: { capabilities: { rest: {}, auth: { enabled: false } } },
+        });
+        const running = yield* fixture.store
+          .read(fixture.id)
+          .pipe(Effect.provideContext(fixture.context));
+        if (running === undefined)
+          return yield* new StackStateInvalidError({ message: "running fixture state is missing" });
+        const state = {
+          ...running,
+          ports: [
+            { field: "api", port: 55433, intent: "exact" as const },
+            { field: "database", port: 55432, intent: "exact" as const },
+          ],
+          portsGeneration: running.desiredGeneration,
+        };
+        yield* fixture.store
+          .replace(fixture.id, state, running.desiredGeneration)
+          .pipe(Effect.provideContext(fixture.context));
+        const authDisabled = yield* fixture.supervisor.rpcHandlers.credentials().pipe(Effect.exit);
+        expect(errorOf(authDisabled)).toEqual(
+          expect.objectContaining({ tag: "StackNotRunningError" }),
+        );
+        if (state.definition === undefined)
+          return yield* new StackStateInvalidError({ message: "running definition is missing" });
+        const baseSecrets = {
+          ...state.secrets,
+          "secret:auth.settings.publishable_key": {
+            policy: "managed" as const,
+            value: "publishable",
+          },
+          "secret:auth.settings.secret_key": { policy: "managed" as const, value: "secret" },
+          "secret:auth.settings.anon_key": { policy: "managed" as const, value: "anon" },
+          "secret:auth.settings.service_role_key": { policy: "managed" as const, value: "service" },
+        };
+        const missingSecret = {
+          ...state,
+          definition: {
+            ...state.definition,
+            capabilities: {
+              ...state.definition.capabilities,
+              auth: { ...state.definition.capabilities.auth, enabled: true },
+            },
+          },
+          secrets: Object.fromEntries(
+            Object.entries(baseSecrets).filter(
+              ([slot]) => slot !== "secret:auth.settings.publishable_key",
+            ),
+          ),
+        };
+        yield* fixture.store
+          .replace(fixture.id, missingSecret, state.desiredGeneration)
+          .pipe(Effect.provideContext(fixture.context));
+        const missingExit = yield* fixture.supervisor.rpcHandlers.credentials().pipe(Effect.exit);
+        expect(errorOf(missingExit)).toEqual(
+          expect.objectContaining({ tag: "StackSecretMismatchError" }),
+        );
+        const storageSecretMissing = {
+          ...missingSecret,
+          secrets: Object.fromEntries(
+            Object.entries(baseSecrets).filter(
+              ([slot]) => slot !== "secret:storage.settings.s3_protocol.secret_access_key",
+            ),
+          ),
+        };
+        yield* fixture.store
+          .replace(fixture.id, storageSecretMissing, state.desiredGeneration)
+          .pipe(Effect.provideContext(fixture.context));
+        const storageExit = yield* fixture.supervisor.rpcHandlers.credentials().pipe(Effect.exit);
+        expect(errorOf(storageExit)).toEqual(
+          expect.objectContaining({ tag: "StackSecretMismatchError" }),
+        );
+        const complete = { ...missingSecret, secrets: baseSecrets };
+        const missingApiListener = {
+          ...complete,
+          ports: [{ field: "database", port: 55432, intent: "exact" as const }],
+        };
+        yield* fixture.store
+          .replace(fixture.id, missingApiListener, state.desiredGeneration)
+          .pipe(Effect.provideContext(fixture.context));
+        const listenerExit = yield* fixture.supervisor.rpcHandlers.credentials().pipe(Effect.exit);
+        expect(errorOf(listenerExit)).toEqual(
+          expect.objectContaining({ tag: "StackNotRunningError" }),
+        );
       }),
     ),
   );

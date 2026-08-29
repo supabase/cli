@@ -6,6 +6,7 @@ import {
   Exit,
   FileSystem,
   Path,
+  Redacted,
   Ref,
   Schema,
   Stream,
@@ -56,6 +57,7 @@ import {
 import type { StackEndpoint, StackStatus } from "../public/Status.ts";
 import { StackIdSchema, type StackId } from "../public/StackId.ts";
 import type { LogOptions, StackLogEntry } from "../public/Logs.ts";
+import type { EffectStackCredentials } from "../public/Credentials.ts";
 import type {
   RuntimeDriver,
   RuntimeRecoveryRequest,
@@ -141,6 +143,9 @@ type ActualPhase = "stopped" | "starting" | "running" | "stopping" | "destroying
 const rpcError = (tag: StackRpcError["tag"], message: string): StackRpcError => ({ tag, message });
 const stateErrorMessage = (error: StackError | { readonly message?: string }): string =>
   typeof error.message === "string" ? error.message : "Stack operation failed";
+
+const credentialHost = (address: string): string =>
+  address.includes(":") && !address.startsWith("[") ? `[${address}]` : address;
 
 const runtimeUnavailable = (): SupervisorRuntime => {
   const unavailable = (operation: string): Effect.Effect<never, RuntimeDriverError> =>
@@ -719,13 +724,118 @@ export const makeSupervisor = (options: SupervisorOptions): Effect.Effect<Superv
         ),
       ),
     };
+    const credentials: Effect.Effect<EffectStackCredentials, StackRpcError> = Effect.gen(
+      function* () {
+        const state = yield* read().pipe(
+          Effect.mapError((error) =>
+            rpcError(rpcTag(error, "StackStateInvalidError"), stateErrorMessage(error)),
+          ),
+        );
+        const actualPhase = yield* Ref.get(phase);
+        if (
+          state === undefined ||
+          actualPhase !== "running" ||
+          state.desiredLifecycle !== "running" ||
+          state.portsGeneration !== state.desiredGeneration
+        )
+          return yield* Effect.fail(
+            rpcError("StackNotRunningError", "Stack credentials are unavailable"),
+          );
+
+        const definition = state.definition;
+        const databaseListener = definition?.listeners.database;
+        const databaseAssignment = state.ports.find(({ field }) => field === "database");
+        if (
+          definition === undefined ||
+          databaseListener === undefined ||
+          !databaseListener.enabled ||
+          databaseAssignment === undefined
+        )
+          return yield* Effect.fail(
+            rpcError("StackNotRunningError", "Stack credentials are unavailable"),
+          );
+
+        const auth = definition.capabilities.auth;
+        if (!auth.enabled)
+          return yield* Effect.fail(
+            rpcError("StackNotRunningError", "Stack credentials are unavailable"),
+          );
+
+        const requiredSecret = (slot: string): Effect.Effect<string, StackRpcError> => {
+          const value = state.secrets[slot]?.value;
+          return value === undefined || value.length === 0
+            ? Effect.fail(
+                rpcError("StackSecretMismatchError", "Required stack credential is unavailable"),
+              )
+            : Effect.succeed(value);
+        };
+
+        const databasePassword = yield* requiredSecret("secret:database.internal.password");
+        const databaseHost = credentialHost(databaseListener.address);
+        const databaseUrl = `postgresql://${encodeURIComponent("postgres")}:${encodeURIComponent(
+          databasePassword,
+        )}@${databaseHost}:${databaseAssignment.port}/postgres`;
+
+        const publishableKey = yield* requiredSecret("secret:auth.settings.publishable_key");
+        const secretKey = yield* requiredSecret("secret:auth.settings.secret_key");
+        const anonJwt = yield* requiredSecret("secret:auth.settings.anon_key");
+        const serviceRoleJwt = yield* requiredSecret("secret:auth.settings.service_role_key");
+
+        const base: EffectStackCredentials = {
+          database: {
+            url: Redacted.make(databaseUrl),
+            password: Redacted.make(databasePassword),
+          },
+          api: {
+            publishableKey,
+            secretKey: Redacted.make(secretKey),
+            anonJwt,
+            serviceRoleJwt: Redacted.make(serviceRoleJwt),
+          },
+        };
+        const storage = definition.capabilities.storage;
+        const s3 = storage.settings.s3_protocol;
+        if (!storage.enabled || s3 === null || s3 === undefined || s3.enabled !== true) return base;
+
+        const apiListener = definition.listeners.api;
+        const apiAssignment = state.ports.find(({ field }) => field === "api");
+        if (apiListener === undefined || !apiListener.enabled || apiAssignment === undefined)
+          return yield* Effect.fail(
+            rpcError("StackNotRunningError", "Stack credentials are unavailable"),
+          );
+        const accessKeyId = s3.access_key_id;
+        const region = s3.region;
+        if (
+          accessKeyId === null ||
+          accessKeyId === undefined ||
+          accessKeyId.length === 0 ||
+          region === null ||
+          region === undefined ||
+          region.length === 0
+        )
+          return yield* Effect.fail(
+            rpcError("StackStateInvalidError", "Storage credentials are unavailable"),
+          );
+        const secretAccessKey = yield* requiredSecret(
+          "secret:storage.settings.s3_protocol.secret_access_key",
+        );
+        return {
+          ...base,
+          storage: {
+            endpoint: `http://${credentialHost(apiListener.address)}:${apiAssignment.port}/storage/v1/s3`,
+            region,
+            accessKeyId,
+            secretAccessKey: Redacted.make(secretAccessKey),
+          },
+        } satisfies EffectStackCredentials;
+      },
+    );
     const rpcHandlers: StackRpcHandlers = StackRpcGroup.of({
       status: () =>
         status.pipe(
           Effect.mapError((error) => rpcError("StackStateInvalidError", stateErrorMessage(error))),
         ),
-      credentials: () =>
-        Effect.fail(rpcError("StackNotRunningError", "Stack credentials are unavailable")),
+      credentials: () => credentials,
       prepare: () =>
         Effect.fail(rpcError("StackPreparationError", "Stack preparation is not available yet")),
       start: ({ config }: { readonly config?: StackConfig }) =>

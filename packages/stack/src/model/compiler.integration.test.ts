@@ -76,6 +76,30 @@ describe("closed capability compiler", () => {
     }),
   );
 
+  it.live("persists the closed storage S3 defaults", () =>
+    Effect.gen(function* () {
+      const result = yield* compile({});
+      expect(result.definition.capabilities.storage.settings.s3_protocol).toEqual({
+        enabled: true,
+        region: "local",
+        access_key_id: "625729a08b95bf1b7ff351a663f3a23c",
+        secret_access_key: { slot: "secret:storage.settings.s3_protocol.secret_access_key" },
+      });
+      expect(result.secrets).toContainEqual(
+        expect.objectContaining({
+          slot: "secret:storage.settings.s3_protocol.secret_access_key",
+          policy: "managed",
+          value: Redacted.make("850181e4652dd023b7a98c58ae0d2d34bd487ee0cc3254aed6eda37307425907"),
+        }),
+      );
+      expect(
+        result.secrets.some(
+          (entry) => entry.slot === "secret:storage.settings.s3_protocol.access_key_id",
+        ),
+      ).toBe(false);
+    }),
+  );
+
   it.live("uses one canonical JWT secret slot for symmetric signing", () =>
     Effect.gen(function* () {
       const result = yield* compile({});
