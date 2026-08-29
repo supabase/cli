@@ -178,6 +178,105 @@ describe("runtime input owner", () => {
     ),
   );
 
+  it.live("skips JWT file and OIDC resolution when every JWT consumer is disabled", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "runtime-input-no-jwt-" });
+        const base = yield* compiledState(root);
+        if (base.definition === undefined) return yield* Effect.die("compiled definition missing");
+        const definition = base.definition;
+        const state: PersistedStackState = {
+          ...base,
+          definition: {
+            ...definition,
+            capabilities: {
+              ...definition.capabilities,
+              rest: { ...definition.capabilities.rest, enabled: false },
+              auth: { ...definition.capabilities.auth, enabled: false },
+              realtime: { ...definition.capabilities.realtime, enabled: false },
+              storage: { ...definition.capabilities.storage, enabled: false },
+              functions: { ...definition.capabilities.functions, enabled: false },
+            },
+            security: {
+              ...definition.security,
+              jwt: {
+                ...definition.security.jwt,
+                signing: { kind: "jwks-file", path: "missing.json" },
+              },
+            },
+          },
+        };
+        const owner = yield* makeRuntimeInputOwner({
+          stateRoot: root,
+          stackId,
+          fetchJson: () => Effect.die("OIDC fetch should not run"),
+        });
+        const material = yield* owner.resolve(state, 1, "native");
+        expect(material.auth).toBeUndefined();
+      }),
+    ),
+  );
+
+  it.live("resolves JWT material when Auth is disabled but Rest remains enabled", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
+          prefix: "runtime-input-rest-jwt-",
+        });
+        const base = yield* compiledState(root);
+        if (base.definition === undefined) return yield* Effect.die("compiled definition missing");
+        const state: PersistedStackState = {
+          ...base,
+          definition: {
+            ...base.definition,
+            capabilities: {
+              ...base.definition.capabilities,
+              auth: { ...base.definition.capabilities.auth, enabled: false },
+            },
+          },
+        };
+        const owner = yield* makeRuntimeInputOwner({ stateRoot: root, stackId });
+        const material = yield* owner.resolve(state, 1, "native");
+        expect(material.auth?.jwks).toContain('"kty":"oct"');
+      }),
+    ),
+  );
+
+  it.live("sanitizes OIDC URL labels in transport failures", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        const root = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
+          prefix: "runtime-input-oidc-secret-",
+        });
+        const state = yield* compiledState(root, {
+          capabilities: {
+            auth: {
+              settings: {
+                third_party: {
+                  workos: {
+                    enabled: true,
+                    issuer_url: "https://issuer.example/tenant?token=secret-token#fragment",
+                  },
+                },
+              },
+            },
+          },
+        });
+        const owner = yield* makeRuntimeInputOwner({
+          stateRoot: root,
+          stackId,
+          fetchJson: () => Effect.fail(new Error("transport failure")),
+        });
+        const failed = yield* owner.resolve(state, 1, "native").pipe(Effect.exit);
+        const error = errorOf(failed);
+        expect(error?.message).toContain("OIDC discovery request failed");
+        expect(JSON.stringify(error)).not.toContain("secret-token");
+        expect(JSON.stringify(error)).not.toContain("fragment");
+      }),
+    ),
+  );
+
   it.live("fails closed on malformed or empty third-party OIDC responses", () =>
     withPlatform(
       Effect.gen(function* () {

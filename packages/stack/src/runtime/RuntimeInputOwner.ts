@@ -121,6 +121,16 @@ const decodeJson = (value: unknown): Effect.Effect<unknown, unknown> =>
     ? Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown))(value)
     : Effect.succeed(value);
 
+/** Keeps OIDC diagnostics useful without echoing userinfo, query, or fragment data. */
+const safeUrlLabel = (value: string): string => {
+  try {
+    const url = new URL(value);
+    return `${url.origin}${url.pathname}`;
+  } catch {
+    return "<invalid-url>";
+  }
+};
+
 const base64UrlEncode = (bytes: Uint8Array): string => {
   const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
   let output = "";
@@ -312,7 +322,7 @@ export const makeRuntimeInputOwner = (
         Effect.flatMap((value) =>
           Schema.decodeUnknownEffect(oidcDiscovery)(value).pipe(
             Effect.mapError(() =>
-              failure("OIDC discovery response is invalid", { url: discoveryUrl }),
+              failure("OIDC discovery response is invalid", { url: safeUrlLabel(discoveryUrl) }),
             ),
           ),
         ),
@@ -320,18 +330,24 @@ export const makeRuntimeInputOwner = (
           const jwksUrl = discovery.jwks_uri.trim();
           if (jwksUrl.length === 0)
             return Effect.fail(
-              failure("OIDC discovery response does not expose jwks_uri", { url: discoveryUrl }),
+              failure("OIDC discovery response does not expose jwks_uri", {
+                url: safeUrlLabel(discoveryUrl),
+              }),
             );
           return fetchJson(jwksUrl).pipe(
             Effect.flatMap(decodeJson),
             Effect.flatMap((value) =>
               Schema.decodeUnknownEffect(publicRemoteJwks)(value).pipe(
-                Effect.mapError(() => failure("OIDC JWKS response is invalid", { url: jwksUrl })),
+                Effect.mapError(() =>
+                  failure("OIDC JWKS response is invalid", { url: safeUrlLabel(jwksUrl) }),
+                ),
               ),
             ),
             Effect.flatMap((jwks) =>
               jwks.keys.length === 0
-                ? Effect.fail(failure("OIDC JWKS response contains no keys", { url: jwksUrl }))
+                ? Effect.fail(
+                    failure("OIDC JWKS response contains no keys", { url: safeUrlLabel(jwksUrl) }),
+                  )
                 : Effect.succeed(jwks.keys),
             ),
           );
@@ -339,7 +355,7 @@ export const makeRuntimeInputOwner = (
         Effect.mapError((error) =>
           error instanceof StackPreparationError
             ? error
-            : failure("OIDC discovery request failed", { url: discoveryUrl }),
+            : failure("OIDC discovery request failed", { url: safeUrlLabel(discoveryUrl) }),
         ),
       );
     };
@@ -486,7 +502,11 @@ export const makeRuntimeInputOwner = (
       runtime: WorkloadRuntimeKind,
     ): Effect.Effect<RuntimeInputMaterial, StackPreparationError> =>
       Effect.gen(function* () {
-        const auth = yield* resolveAuth(state);
+        const jwtConsumers = ["rest", "auth", "realtime", "storage", "functions"] as const;
+        const resolvesAuthMaterial = jwtConsumers.some(
+          (capability) => state.definition?.capabilities[capability].enabled !== false,
+        );
+        const auth = resolvesAuthMaterial ? yield* resolveAuth(state) : undefined;
         const analyticsSettings = settingsFor(state, "analytics");
         const gcpPath = isRecord(analyticsSettings)
           ? settingValue(state, analyticsSettings.gcp_jwt_path)
@@ -503,7 +523,7 @@ export const makeRuntimeInputOwner = (
             ? undefined
             : { secrets: yield* resolveFunctionsEdgeRuntimeSecrets(state) };
         return {
-          auth,
+          ...(auth === undefined ? {} : { auth }),
           ...(analytics === undefined ? {} : { analytics }),
           ...(pooler === undefined ? {} : { pooler }),
           ...(functions === undefined ? {} : { functions }),
