@@ -285,6 +285,9 @@ Implementation continues after recording a ruling; this file is not a question q
 
 #### Task 3 review fixes — round 2 — 2026-08-28
 
+- **Superseded release decision:** the alias behavior recorded below is historical. The rewrite now
+  accepts only PostgreSQL `17.6.1.166`; PostgreSQL 15 remains deferred until its matching native
+  archive and derived image are published, and every other selector fails before mutation.
 - Preserved the authoritative database major alias: selector `13` intentionally resolves to the
   current Supabase Postgres `15.8.1.085` release. This follows
   `apps/cli-go/pkg/config/config.go:825-831` and the documented fallthrough in
