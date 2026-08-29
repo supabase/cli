@@ -168,6 +168,103 @@ describe("stack gateway", () => {
     ),
   );
 
+  it.live("applies static and prepared header transforms to HTTP and WebSocket upstreams", () =>
+    withPlatform(
+      Effect.gen(function* () {
+        let httpHeaders: IncomingMessage["headers"] | undefined;
+        let websocketHeaders: IncomingMessage["headers"] | undefined;
+        const backend = createHttpServer((_request, response) => {
+          httpHeaders = _request.headers;
+          response.end("ok");
+        });
+        backend.on("upgrade", (request, socket) => {
+          websocketHeaders = request.headers;
+          socket.end(
+            "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+          );
+        });
+        yield* Effect.callback<void, Error>((resume) => {
+          backend.once("error", (error) => resume(Effect.fail(error)));
+          backend.listen(0, "127.0.0.1", () => resume(Effect.void));
+        });
+        const address = backend.address();
+        if (typeof address !== "object" || address === null) return;
+        const endpoint: BackendEndpoint = { host: "127.0.0.1", port: address.port };
+        const gateway = yield* makeHttpGateway({
+          address: "127.0.0.1",
+          port: 0,
+          routes: [
+            {
+              capability: "rest",
+              match: (request) => request.path === "/http",
+              upstreamHeaders: (_request, headers) => {
+                const { "x-remove": _removed, ...rest } = headers;
+                return { ...rest, "x-route": "static", "x-forwarded-host": "spoofed" };
+              },
+            },
+            {
+              capability: "functions",
+              match: (request) => request.path === "/ws",
+              prepare: () =>
+                Effect.succeed({
+                  resolveBackend: () => Effect.succeed(endpoint),
+                  upstreamHeaders: (_request, headers) => {
+                    const { "x-remove": _removed, ...rest } = headers;
+                    return { ...rest, "x-route": "prepared", "x-forwarded-for": "spoofed" };
+                  },
+                }),
+            },
+          ],
+          activate: (capability) => Effect.succeed({ capability, endpoint }),
+        });
+        const response = yield* Effect.callback<number, Error>((resume) => {
+          const request = requestHttp(
+            {
+              host: "127.0.0.1",
+              port: gateway.port,
+              path: "/http",
+              headers: {
+                host: "gateway.test",
+                "x-remove": "client-secret",
+                "x-forwarded-host": "client-spoof",
+              },
+            },
+            (result) => {
+              result.resume();
+              result.once("end", () => resume(Effect.succeed(result.statusCode ?? 0)));
+            },
+          );
+          request.once("error", (error) => resume(Effect.fail(error)));
+          request.end();
+          return Effect.sync(() => request.destroy());
+        });
+        expect(response).toBe(200);
+        expect(httpHeaders?.["x-remove"]).toBeUndefined();
+        expect(httpHeaders?.["x-route"]).toBe("static");
+        expect(httpHeaders?.["x-forwarded-host"]).toBe("gateway.test");
+        const websocket = yield* Effect.callback<string, Error>((resume) => {
+          const socket = connectNet(gateway.port, "127.0.0.1");
+          const chunks: Buffer[] = [];
+          socket.once("connect", () =>
+            socket.write(
+              "GET /ws HTTP/1.1\r\nHost: gateway.test\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nx-remove: client-secret\r\n\r\n",
+            ),
+          );
+          socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+          socket.once("end", () => resume(Effect.succeed(Buffer.concat(chunks).toString())));
+          socket.once("error", (error) => resume(Effect.fail(error)));
+          return Effect.sync(() => socket.destroy());
+        });
+        expect(websocket).toContain("101 Switching Protocols");
+        expect(websocketHeaders?.["x-remove"]).toBeUndefined();
+        expect(websocketHeaders?.["x-route"]).toBe("prepared");
+        expect(websocketHeaders?.["x-forwarded-for"]).toContain("127.0.0.1");
+        yield* gateway.close;
+        yield* closeServer(backend);
+      }),
+    ),
+  );
+
   it.live("closes an idle keep-alive connection it owns", () =>
     withPlatform(
       Effect.gen(function* () {

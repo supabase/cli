@@ -21,6 +21,7 @@ import type {
   BackendEndpoint,
   GatewayRoute,
   GatewayRouteRequest,
+  GatewayHeaders,
   LazyActivator,
   PreparedGatewayRoute,
 } from "./Gateway.ts";
@@ -109,25 +110,53 @@ const preparedPath = (
   request: GatewayRouteRequest,
 ): string => prepared?.upstreamPath?.(request) ?? route.upstreamPath?.(request) ?? request.path;
 
+const filteredRequestHeaders = (request: IncomingMessage): Record<string, string | string[]> => {
+  const headers: Record<string, string | string[]> = {};
+  for (const [name, value] of Object.entries(request.headers)) {
+    if (value !== undefined && !hopByHop.has(name.toLowerCase())) headers[name] = value;
+  }
+  return headers;
+};
+
+const withForwardedHeaders = (
+  request: IncomingMessage,
+  headers: GatewayHeaders,
+): Record<string, string | string[]> => {
+  const forwarded = new Map<string, string | string[]>();
+  for (const [name, value] of Object.entries(headers)) {
+    if (!name.toLowerCase().startsWith("x-forwarded-")) forwarded.set(name, value);
+  }
+  forwarded.set("x-forwarded-host", request.headers.host ?? "");
+  forwarded.set("x-forwarded-proto", "http");
+  forwarded.set("x-forwarded-for", request.socket.remoteAddress ?? "");
+  return Object.fromEntries(forwarded);
+};
+
+const preparedHeaders = (
+  route: GatewayRoute,
+  prepared: PreparedGatewayRoute | undefined,
+  view: GatewayRouteRequest,
+  request: IncomingMessage,
+): Record<string, string | string[]> =>
+  withForwardedHeaders(
+    request,
+    prepared?.upstreamHeaders?.(view, filteredRequestHeaders(request)) ??
+      route.upstreamHeaders?.(view, filteredRequestHeaders(request)) ??
+      filteredRequestHeaders(request),
+  );
+
 const proxy = (
   request: IncomingMessage,
   response: ServerResponse,
   backend: BackendEndpoint,
   options: HttpGatewayOptions,
   upstreamPath: string,
+  headers: Record<string, string | string[]>,
 ): Effect.Effect<void, GatewayBackendError> =>
   Effect.callback<void, GatewayBackendError>((resume) => {
     let settled = false;
     let outgoing: ReturnType<typeof proxyRequest> | undefined;
     let incoming: IncomingMessage | undefined;
-    const headers: Record<string, string | string[]> = {};
-    for (const [name, value] of Object.entries(request.headers)) {
-      if (value !== undefined && !hopByHop.has(name.toLowerCase())) headers[name] = value;
-    }
-    headers["x-forwarded-host"] = request.headers.host ?? "";
-    headers["x-forwarded-proto"] = "http";
-    headers["x-forwarded-for"] = request.socket.remoteAddress ?? "";
-
     const onIncomingError = (cause: Error) => {
       if (settled) return;
       settled = true;
@@ -252,13 +281,19 @@ const handleRequest = (
                 : options.resolveBackend(route, view, result)
               : prepared.resolveBackend(result);
           return resolved.pipe(
-            Effect.map((backend) => ({ backend, path: preparedPath(route, prepared, view) })),
+            Effect.map((backend) => ({
+              backend,
+              path: preparedPath(route, prepared, view),
+              headers: preparedHeaders(route, prepared, view, request),
+            })),
             Effect.mapError((cause) => new GatewayBackendError({ cause })),
           );
         }),
       ),
     ),
-    Effect.flatMap(({ backend, path }) => proxy(request, response, backend, options, path)),
+    Effect.flatMap(({ backend, path, headers }) =>
+      proxy(request, response, backend, options, path, headers),
+    ),
   );
   // Node invokes this handler outside Effect; use the owner-scoped FiberSet
   // runtime so cancellation of the gateway interrupts in-flight activation.
@@ -282,13 +317,17 @@ const handleRequest = (
   });
 };
 
-const writeUpgrade = (request: IncomingMessage, path: string): string => {
+const writeUpgrade = (
+  request: IncomingMessage,
+  path: string,
+  forwardedHeaders: Readonly<Record<string, string | string[]>>,
+): string => {
   const lines = [`${request.method ?? "GET"} ${path} HTTP/${request.httpVersion}`];
-  for (let index = 0; index < request.rawHeaders.length; index += 2) {
-    const name = request.rawHeaders[index];
-    const value = request.rawHeaders[index + 1];
-    if (name !== undefined && value !== undefined) lines.push(`${name}: ${value}`);
+  for (const [name, value] of Object.entries(forwardedHeaders)) {
+    const values = Array.isArray(value) ? value : [value];
+    for (const item of values) lines.push(`${name}: ${item}`);
   }
+  lines.push("Connection: Upgrade", "Upgrade: websocket");
   return `${lines.join("\r\n")}\r\n\r\n`;
 };
 
@@ -323,13 +362,17 @@ const handleUpgrade = (
                 : options.resolveBackend(route, view, result)
               : prepared.resolveBackend(result);
           return resolved.pipe(
-            Effect.map((backend) => ({ backend, path: preparedPath(route, prepared, view) })),
+            Effect.map((backend) => ({
+              backend,
+              path: preparedPath(route, prepared, view),
+              headers: preparedHeaders(route, prepared, view, request),
+            })),
             Effect.mapError((cause) => new GatewayBackendError({ cause })),
           );
         }),
       ),
     ),
-    Effect.flatMap(({ backend, path }) =>
+    Effect.flatMap(({ backend, path, headers }) =>
       Effect.callback<void, GatewayBackendError>((resume) => {
         const target = new Socket();
         let settled = false;
@@ -361,7 +404,7 @@ const handleUpgrade = (
         const onSocketEnd = () => target.end();
         const onTargetEnd = () => socket.end();
         const onConnect = () => {
-          target.write(writeUpgrade(request, path));
+          target.write(writeUpgrade(request, path, headers));
           if (head.byteLength > 0) target.write(head);
           socket.pipe(target, { end: false });
           target.pipe(socket, { end: false });

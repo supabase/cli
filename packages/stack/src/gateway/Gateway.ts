@@ -31,6 +31,8 @@ export interface PreparedGatewayRoute {
   ) => Effect.Effect<BackendEndpoint, GatewayActivationError>;
   /** Optional request path sent to the activated backend. */
   readonly upstreamPath?: (request: GatewayRouteRequest) => string;
+  /** Optional header transform applied after hop-by-hop filtering. */
+  readonly upstreamHeaders?: GatewayHeaderTransform;
 }
 
 export interface LazyActivator {
@@ -151,6 +153,13 @@ export interface GatewayRouteRequest {
   readonly headers: Readonly<Record<string, string | string[] | undefined>>;
 }
 
+export type GatewayHeaderValue = string | string[];
+export type GatewayHeaders = Readonly<Record<string, GatewayHeaderValue>>;
+export type GatewayHeaderTransform = (
+  request: GatewayRouteRequest,
+  headers: GatewayHeaders,
+) => GatewayHeaders;
+
 export interface GatewayRoute {
   readonly capability: CapabilityName;
   /** Workload binding selected when a capability exposes multiple endpoints. */
@@ -158,6 +167,8 @@ export interface GatewayRoute {
   readonly match: (request: GatewayRouteRequest) => boolean;
   /** Optional path transform applied before proxying when no prepared route overrides it. */
   readonly upstreamPath?: (request: GatewayRouteRequest) => string;
+  /** Optional header transform applied after hop-by-hop filtering. */
+  readonly upstreamHeaders?: GatewayHeaderTransform;
   /** Request-time validation and preparation performed before activation. */
   readonly prepare?: (
     request: GatewayRouteRequest,

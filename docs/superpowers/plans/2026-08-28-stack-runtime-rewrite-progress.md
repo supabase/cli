@@ -706,6 +706,21 @@ private-port reservation plus gateway ownership atomic with accepted lifecycle g
   stack types, Effect/generic lint, formatting, and diff checks pass. Task 13B2b still owns production
   listener allocation/reconciliation and Edge Runtime bootstrap composition.
 
+#### Task 13B2a review fix — gateway request transforms (2026-08-29)
+
+- Gateway routes and prepared routes can transform upstream headers after hop-by-hop filtering for both
+  HTTP and WebSocket forwarding. Internal `x-forwarded-*` values are rewritten from the accepted client
+  connection, so client-supplied overrides cannot spoof them; WebSocket handshake headers are restored by
+  the gateway after transformation.
+- `routeCatalogFor` accepts owner-resolved API material and maps matching publishable/secret API keys to
+  the corresponding anonymous/service JWT. REST/Auth/Realtime/Storage/GraphQL use `Authorization`,
+  Functions use `sb-api-key`, GraphQL enforces `Content-Profile: graphql_public`, Storage S3 preserves
+  AWS Authorization, and Realtime WebSocket `apikey` query mapping preserves unrelated parameters.
+- No authentication is performed in the gateway and no API material is logged or included in failures.
+  Focused gateway/route integration tests cover transforms, spoof removal, key mappings, S3/GraphQL/
+  Realtime behavior, query preservation, Functions, and HTTP/WebSocket forwarding. Task 13B production
+  composition still owns the resolved material source and listener lifecycle.
+
 #### Task 13A fix round 5 — unify local JWT signing material (2026-08-29)
 
 - Symmetric JWT configuration now has one canonical managed `secret:auth.settings.jwt_secret` slot;
